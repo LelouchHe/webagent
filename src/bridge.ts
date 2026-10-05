@@ -18,6 +18,11 @@ import type {
   PromptBlock,
 } from "./attachment-dispatch.ts";
 import { abbreviateHomePath } from "./home-path.ts";
+import { flattenConfigOptions } from "./config-options.ts";
+import {
+  canonicalModelIdentity,
+  normalizeModelConfigOptions,
+} from "./model-identity.ts";
 import { log } from "./log.ts";
 
 const blog = log.scope("bridge");
@@ -64,6 +69,26 @@ export class AgentBridge extends EventEmitter {
     acp.SessionNotification["update"][]
   >();
   private readonly pendingAborts = new Map<string, (e: Error) => void>();
+  private readonly modelOptionIdsBySession = new Map<string, Set<string>>();
+  private readonly modelValuesBySession = new Map<
+    string,
+    Map<string, Map<string, string>>
+  >();
+  private readonly knownModelOptionIdsBySession = new Map<
+    string,
+    Set<string>
+  >();
+  private readonly currentModelOptionIdsBySession = new Map<
+    string,
+    Set<string>
+  >();
+  private readonly currentConfigOptionIdsBySession = new Map<
+    string,
+    Set<string>
+  >();
+  private readonly invalidatedSessionCodecs = new Set<string>();
+  private readonly codecEpochBySession = new Map<string, number>();
+  private codecProcessEpoch = 0;
   private deadReason: string | null = null;
   /** Capabilities advertised by the agent at initialize; gates restore/retire calls. */
   private sessionCapabilities: acp.SessionCapabilities | null = null;
@@ -98,6 +123,7 @@ export class AgentBridge extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    this.clearSessionConfigCodecs();
     // Capability state belongs to the process this call is about to start.
     // Clearing it first means a start that fails before initialize cannot
     // leave the previous process's flags behind for a later restore to act on.
@@ -194,14 +220,25 @@ export class AgentBridge extends EventEmitter {
         cwd,
         mcpServers: opts?.mcpServers ?? [],
       });
+      this.activateSessionConfigCodec(session.sessionId);
+      const bufferedUpdates = opts?.silent
+        ? (this.pendingSessionUpdates.get(session.sessionId) ?? [])
+        : [];
       if (opts?.silent) {
         this.pendingSessionUpdates.delete(session.sessionId);
         this.silentSessions.add(session.sessionId);
       } else {
         this.unboundNewSessionIds.add(session.sessionId);
       }
-      const configOptions = (session.configOptions ??
-        []) as unknown as ConfigOption[];
+      const configOptions = Array.isArray(session.configOptions)
+        ? this.normalizeSessionConfigOptions(
+            session.sessionId,
+            session.configOptions as unknown as ConfigOption[],
+          )
+        : [];
+      for (const update of bufferedUpdates) {
+        this.normalizeSilentConfigUpdate(session.sessionId, update);
+      }
       return { sessionId: session.sessionId, configOptions };
     } finally {
       this.pendingNewSessions--;
@@ -230,6 +267,7 @@ export class AgentBridge extends EventEmitter {
   discardUnboundSession(agentSessionId: string): void {
     this.unboundNewSessionIds.delete(agentSessionId);
     this.pendingSessionUpdates.delete(agentSessionId);
+    this.clearSessionConfigCodec(agentSessionId);
   }
 
   /**
@@ -240,6 +278,7 @@ export class AgentBridge extends EventEmitter {
    * so retirement can never roll back an already-successful rotation.
    */
   async retireExecution(agentSessionId: string): Promise<void> {
+    this.clearSessionConfigCodec(agentSessionId);
     if (!this.conn) return;
     const params = { sessionId: agentSessionId } as const;
     try {
@@ -295,8 +334,12 @@ export class AgentBridge extends EventEmitter {
       }
       throw err;
     }
-    const configOptions = (session.configOptions ??
-      []) as unknown as ConfigOption[];
+    const configOptions = Array.isArray(session.configOptions)
+      ? this.normalizeSessionConfigOptions(
+          agentSessionId,
+          session.configOptions as unknown as ConfigOption[],
+        )
+      : [];
     this.emit("event", {
       type: "task_created",
       taskId,
@@ -313,14 +356,25 @@ export class AgentBridge extends EventEmitter {
     value: ConfigValue,
   ): Promise<ConfigOption[]> {
     if (!this.conn) throw new Error("Not connected");
-    const result = await this.conn.setSessionConfigOption({
-      sessionId: this.agentSessionId(taskId),
+    const agentSessionId = this.agentSessionId(taskId);
+    const wireValue = this.resolveWireConfigValue(
+      agentSessionId,
       configId,
-      ...(typeof value === "boolean"
-        ? { type: "boolean" as const, value }
-        : { value }),
+      value,
+    );
+    const codecEpoch = this.sessionCodecEpoch(agentSessionId);
+    const result = await this.conn.setSessionConfigOption({
+      sessionId: agentSessionId,
+      configId,
+      ...(typeof wireValue === "boolean"
+        ? { type: "boolean" as const, value: wireValue }
+        : { value: wireValue }),
     });
-    return result.configOptions as unknown as ConfigOption[];
+    return this.acceptConfigOptionResponse(
+      agentSessionId,
+      result.configOptions,
+      codecEpoch,
+    );
   }
 
   async setAgentConfigOption(
@@ -329,14 +383,160 @@ export class AgentBridge extends EventEmitter {
     value: ConfigValue,
   ): Promise<ConfigOption[]> {
     if (!this.conn) throw new Error("Not connected");
+    const wireValue = this.resolveWireConfigValue(
+      agentSessionId,
+      configId,
+      value,
+    );
+    const codecEpoch = this.sessionCodecEpoch(agentSessionId);
     const result = await this.conn.setSessionConfigOption({
       sessionId: agentSessionId,
       configId,
-      ...(typeof value === "boolean"
-        ? { type: "boolean" as const, value }
-        : { value }),
+      ...(typeof wireValue === "boolean"
+        ? { type: "boolean" as const, value: wireValue }
+        : { value: wireValue }),
     });
-    return result.configOptions as unknown as ConfigOption[];
+    return this.acceptConfigOptionResponse(
+      agentSessionId,
+      result.configOptions,
+      codecEpoch,
+    );
+  }
+
+  private normalizeSessionConfigOptions(
+    agentSessionId: string,
+    configOptions: ConfigOption[],
+  ): ConfigOption[] {
+    const flattened = flattenConfigOptions(configOptions);
+    const normalized = normalizeModelConfigOptions(flattened);
+    this.currentConfigOptionIdsBySession.set(
+      agentSessionId,
+      new Set(flattened.map((option) => option.id)),
+    );
+    this.currentModelOptionIdsBySession.set(
+      agentSessionId,
+      normalized.modelOptionIds,
+    );
+    const knownModelOptionIds =
+      this.knownModelOptionIdsBySession.get(agentSessionId) ??
+      new Set<string>();
+    for (const id of normalized.modelOptionIds) knownModelOptionIds.add(id);
+    this.knownModelOptionIdsBySession.set(agentSessionId, knownModelOptionIds);
+    this.modelOptionIdsBySession.set(agentSessionId, knownModelOptionIds);
+    this.modelValuesBySession.set(
+      agentSessionId,
+      normalized.modelValueToWireValue,
+    );
+    this.sessionCodecEpoch(agentSessionId);
+    return normalized.configOptions;
+  }
+
+  private resolveWireConfigValue(
+    agentSessionId: string,
+    configId: string,
+    value: ConfigValue,
+  ): ConfigValue {
+    if (typeof value !== "string") return value;
+    const currentModelOption =
+      this.currentModelOptionIdsBySession.get(agentSessionId)?.has(configId) ??
+      false;
+    if (
+      configId !== "model" &&
+      !currentModelOption &&
+      this.currentConfigOptionIdsBySession.get(agentSessionId)?.has(configId)
+    ) {
+      return value;
+    }
+    const previouslyModelOption =
+      this.modelOptionIdsBySession.get(agentSessionId)?.has(configId) ?? false;
+    if (configId !== "model" && !currentModelOption && !previouslyModelOption) {
+      return value;
+    }
+    const canonicalValue = canonicalModelIdentity(value);
+    const wireValue = this.modelValuesBySession
+      .get(agentSessionId)
+      ?.get(configId)
+      ?.get(canonicalValue);
+    if (wireValue === undefined) {
+      throw new Error(
+        `cannot resolve model option for this session: ${configId}=${value}`,
+      );
+    }
+    return wireValue;
+  }
+
+  private sessionCodecEpoch(agentSessionId: string): string {
+    if (!this.codecEpochBySession.has(agentSessionId)) {
+      this.codecEpochBySession.set(agentSessionId, 0);
+    }
+    return `${this.codecProcessEpoch}:${this.codecEpochBySession.get(agentSessionId)}`;
+  }
+
+  private acceptConfigOptionResponse(
+    agentSessionId: string,
+    configOptions: unknown,
+    codecEpoch: string,
+  ): ConfigOption[] {
+    if (this.sessionCodecEpoch(agentSessionId) !== codecEpoch) {
+      throw new Error("ACP execution changed while setting a config option");
+    }
+    return Array.isArray(configOptions)
+      ? this.normalizeSessionConfigOptions(
+          agentSessionId,
+          configOptions as ConfigOption[],
+        )
+      : [];
+  }
+
+  private configOptionsFromUpdate(
+    update: acp.SessionNotification["update"],
+  ): ConfigOption[] | undefined {
+    if (update.sessionUpdate !== "config_option_update") return undefined;
+    const configOptions = (update as unknown as { configOptions?: unknown })
+      .configOptions;
+    return Array.isArray(configOptions)
+      ? (configOptions as ConfigOption[])
+      : undefined;
+  }
+
+  private normalizeSilentConfigUpdate(
+    agentSessionId: string,
+    update: acp.SessionNotification["update"],
+  ): void {
+    if (this.invalidatedSessionCodecs.has(agentSessionId)) return;
+    const configOptions = this.configOptionsFromUpdate(update);
+    if (configOptions) {
+      this.normalizeSessionConfigOptions(agentSessionId, configOptions);
+    }
+  }
+
+  private activateSessionConfigCodec(agentSessionId: string): void {
+    this.clearSessionConfigCodec(agentSessionId);
+    this.invalidatedSessionCodecs.delete(agentSessionId);
+  }
+
+  private clearSessionConfigCodec(agentSessionId: string): void {
+    this.invalidatedSessionCodecs.add(agentSessionId);
+    this.codecEpochBySession.set(
+      agentSessionId,
+      (this.codecEpochBySession.get(agentSessionId) ?? 0) + 1,
+    );
+    this.modelOptionIdsBySession.delete(agentSessionId);
+    this.knownModelOptionIdsBySession.delete(agentSessionId);
+    this.currentModelOptionIdsBySession.delete(agentSessionId);
+    this.currentConfigOptionIdsBySession.delete(agentSessionId);
+    this.modelValuesBySession.delete(agentSessionId);
+  }
+
+  private clearSessionConfigCodecs(): void {
+    this.codecProcessEpoch++;
+    this.codecEpochBySession.clear();
+    this.invalidatedSessionCodecs.clear();
+    this.modelOptionIdsBySession.clear();
+    this.knownModelOptionIdsBySession.clear();
+    this.currentModelOptionIdsBySession.clear();
+    this.currentConfigOptionIdsBySession.clear();
+    this.modelValuesBySession.clear();
   }
 
   async prompt(
@@ -474,6 +674,7 @@ export class AgentBridge extends EventEmitter {
   private markAgentDead(reason: string): void {
     if (this.deadReason) return;
     this.deadReason = reason;
+    this.clearSessionConfigCodecs();
     blog.error("agent subprocess dead", { reason });
     const aborts = [...this.pendingAborts.entries()];
     this.pendingAborts.clear();
@@ -600,6 +801,7 @@ export class AgentBridge extends EventEmitter {
       this.silentBuffers.clear();
       this.unboundNewSessionIds.clear();
       this.pendingSessionUpdates.clear();
+      this.clearSessionConfigCodecs();
 
       // 5. Clear liveTasks so ensureResumed() will re-register on next access
       tasks.liveTasks.clear();
@@ -655,6 +857,7 @@ export class AgentBridge extends EventEmitter {
     }
     this.permissionResolvers.clear();
     this.permissionRequestTasks.clear();
+    this.clearSessionConfigCodecs();
 
     const proc = this.proc;
     if (proc && !this.closedProcesses.has(proc)) {
@@ -730,29 +933,36 @@ export class AgentBridge extends EventEmitter {
   private handleSessionUpdate(params: acp.SessionNotification): Promise<void> {
     const update = params.update;
     const agentSessionId = params.sessionId;
+    if (this.deadReason) return Promise.resolve();
 
-    if (this.silentSessions.has(agentSessionId)) {
-      this.captureSilentText(agentSessionId, update);
+    const taskId = this.sessionIds.getTaskId(agentSessionId);
+    if (
+      !taskId &&
+      (this.pendingNewSessions > 0 ||
+        this.unboundNewSessionIds.has(agentSessionId))
+    ) {
+      const updates = this.pendingSessionUpdates.get(agentSessionId) ?? [];
+      updates.push(update);
+      this.pendingSessionUpdates.set(agentSessionId, updates);
+      return Promise.resolve();
+    }
+    if (this.invalidatedSessionCodecs.has(agentSessionId)) {
       return Promise.resolve();
     }
 
-    const taskId = this.sessionIds.getTaskId(agentSessionId);
+    if (this.silentSessions.has(agentSessionId)) {
+      this.captureSilentText(agentSessionId, update);
+      this.normalizeSilentConfigUpdate(agentSessionId, update);
+      return Promise.resolve();
+    }
+
     if (!taskId) {
-      if (
-        this.pendingNewSessions > 0 ||
-        this.unboundNewSessionIds.has(agentSessionId)
-      ) {
-        const updates = this.pendingSessionUpdates.get(agentSessionId) ?? [];
-        updates.push(update);
-        this.pendingSessionUpdates.set(agentSessionId, updates);
-        return Promise.resolve();
-      }
       blog.warn("ignored event for unmapped ACP session", {
         sessionId: agentSessionId,
       });
       return Promise.resolve();
     }
-    const event = this.sessionUpdateToEvent(taskId, update);
+    const event = this.sessionUpdateToEvent(taskId, agentSessionId, update);
     if (event) this.emit("event", event);
     return Promise.resolve();
   }
@@ -773,6 +983,7 @@ export class AgentBridge extends EventEmitter {
 
   private sessionUpdateToEvent(
     taskId: string,
+    agentSessionId: string,
     update: acp.SessionNotification["update"],
   ): AgentEvent | null {
     // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- only handles events with UI effects
@@ -829,14 +1040,16 @@ export class AgentBridge extends EventEmitter {
           cost: update.cost,
         };
 
-      case "config_option_update":
+      case "config_option_update": {
+        const configOptions = this.configOptionsFromUpdate(update);
         return {
           type: "config_option_update",
           taskId,
-          configOptions:
-            (update as unknown as { configOptions?: ConfigOption[] })
-              .configOptions ?? [],
+          configOptions: configOptions
+            ? this.normalizeSessionConfigOptions(agentSessionId, configOptions)
+            : [],
         };
+      }
 
       case "available_commands_update":
         return {

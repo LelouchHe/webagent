@@ -58,18 +58,35 @@ const SCREENSHOT_PROMPT_ALIASES = new Map([
   ["Request approval before running the sensitive command.", "E2E_PERMISSION"],
 ]);
 
-function createConfigOptions(): SessionConfigOption[] {
+function createConfigOptions(groupedModel = false): SessionConfigOption[] {
+  const modelOneValue = JSON.stringify(["vendor-a", "model-one"]);
+  const modelTwoValue = JSON.stringify(["vendor-a", "model-two"]);
   return [
     {
       type: "select",
       id: "model",
       name: "Model",
       category: "model",
-      currentValue: "mock-model",
-      options: [
-        { value: "mock-model", name: "Mock Model" },
-        { value: "mock-model-2", name: "Mock Model 2" },
-      ],
+      currentValue: groupedModel ? modelOneValue : "mock-model",
+      options: groupedModel
+        ? [
+            {
+              group: "vendor-a",
+              name: "Vendor A",
+              options: [
+                {
+                  value: modelOneValue,
+                  name: "Model One",
+                  description: "First choice",
+                },
+                { value: modelTwoValue, name: "Model Two", _meta: { rank: 2 } },
+              ],
+            },
+          ]
+        : [
+            { value: "mock-model", name: "Mock Model" },
+            { value: "mock-model-2", name: "Mock Model 2" },
+          ],
     },
     {
       type: "select",
@@ -475,6 +492,15 @@ class MockAgent implements Agent {
         if (typeof params.value !== "string") {
           throw new Error(`Invalid select value for ${params.configId}`);
         }
+        const grouped = opt.options.some((choice) => "options" in choice);
+        if (grouped) {
+          const values = opt.options.flatMap((choice) =>
+            "options" in choice ? choice.options : [choice],
+          );
+          if (!values.some((choice) => choice.value === params.value)) {
+            throw new Error(`Unknown select option: ${params.value}`);
+          }
+        }
         return { ...opt, currentValue: params.value };
       }
       if (typeof params.value !== "boolean") {
@@ -498,6 +524,20 @@ class MockAgent implements Agent {
     params: PromptRequest,
     text: string,
   ): Promise<PromptResponse> {
+    if (text.startsWith("E2E_GROUPED_CONFIG_OPTIONS")) {
+      const session = this.sessions.get(params.sessionId);
+      if (!session) throw new Error(`Unknown session: ${params.sessionId}`);
+      session.configOptions = createConfigOptions(true);
+      await this.conn.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "config_option_update",
+          configOptions: session.configOptions,
+        },
+      });
+      return { stopReason: "end_turn" };
+    }
+
     if (text.startsWith("E2E_RETRY_CANCEL")) {
       return await this.runPendingPrompt(params.sessionId, 0);
     }

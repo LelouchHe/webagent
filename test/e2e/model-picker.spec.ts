@@ -12,6 +12,9 @@ test("/model picker can switch the selected model", async ({ page }) => {
   await page.locator("#input").press("Enter");
 
   await expect(page.locator("#messages")).toContainText("Model → Mock Model 2");
+  const modelStatus = page.locator("#status-bar .status-model");
+  await expect(modelStatus).toHaveText("mock-model-2");
+  await expect(modelStatus).toHaveAttribute("title", "mock-model-2");
   await page.locator("#input").fill("/model");
   await page.locator("#input").press("Enter");
   await expect(page.locator("#messages")).toContainText("Model: Mock Model 2");

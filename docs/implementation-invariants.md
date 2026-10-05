@@ -56,6 +56,35 @@ and nothing more.
     3. If notifications stop working after a server update or VAPID key change, re-install the PWA (delete from home screen, re-add), then `/notify on` again. Simply toggling `/notify off` → `/notify on` may not be enough if the Service Worker cache is stale.
   - **iOS PWA quirks**: Apple's push service (`web.push.apple.com`) rejects VAPID subjects with `localhost` domains (`403 BadJwtToken`) — use a real-looking email like `mailto:noreply@example.com`. When changing `push.vapid_subject`, delete `data/vapid.json` to regenerate keys, then all clients must re-subscribe.
 
+## ACP config choices and model identity
+
+- ACP grouped select choices are flattened by `flattenConfigOptions` at the
+  bridge boundary. That helper handles protocol shape and display labels only;
+  group ids/names never contribute to model identity.
+- ACP choice values are opaque strings. `normalizeModelConfigOptions` applies
+  the application's separate model-identity policy: a JSON two-string pair is joined
+  as `provider/model-id` only when that result is a fixed point. Otherwise the
+  value remains its own identity. Identity derivation must be idempotent.
+- Keep a canonical-id → exact-wire-value codec per ACP session. Populate it
+  from each present schema: creation, load/resume, either config setter, and
+  mapped/buffered config-option updates (including silent sessions). An absent
+  schema does not erase a codec established by that session; a present schema
+  replaces its available wire mappings. Remember previously model-classified
+  ids only so an id absent from the current schema still fails closed. If an id
+  is currently advertised, its current classification wins: current model
+  options translate through the map; current non-model options pass through.
+  An id never classified as a model option remains passthrough. Never authorize
+  writes from the process-global UI schema cache.
+- Persist and return canonical model identities, including on reads of older
+  rows and stored-config overrides. Reapplying canonicalization must not change
+  the value. Reject distinct wire choices that collide on one canonical id.
+- Invalidate session codecs on execution retirement, unexpected agent death,
+  and process replacement. Ignore late config notifications for explicitly
+  invalidated executions, and fence late setter responses so they cannot restore
+  a codec after its execution was invalidated.
+- Preserve already-canonical flat option payloads byte-for-byte. Do not rewrite
+  ACP event-store payloads.
+
 ## Attachment label egress rewrite
 
 When the agent reads a user-uploaded attachment, it sees and emits the internal storage path (`<dataDir>/tasks/<sid>/attachments/<uuid>.<ext>`). Showing that to the user is unhelpful — we have the original filename in the `attachments` table, so we translate it back at egress.
@@ -114,7 +143,7 @@ ACP `clientCapabilities` (`fs`, `terminal`) and `mcpServers` are **opt-in capabi
 - **Task cancel, not host-task cancel**: ACP `cancel` only stops the current task prompt/turn. In this repo we extend that to the task's own local bash/permission/title work, but WebAgent still cannot cancel host-level tasks started outside the server's runtime (for example external Copilot CLI tool invocations or subprocesses it owns).
 - **Browser UI, not full CLI parity**: Direct CLI surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, `/skills` are not mirrored as first-class WebAgent controls. The app only renders the ACP events it receives. Autopilot mode is supported via server-side auto-approval of permissions.
 - **Silent internal tasks**: ACP-internal tasks (no WebAgent task row) suppress normal event emission for that agent binding.
-- **Agent-dependent model switching**: Model switching depends on agent support and currently goes through the SDK's unstable task-model API.
+- **Agent-dependent model switching**: Model switching depends on agent support and goes through session config options (`configOptions`, `session/set_config_option`, `config_option_update`). Provider enumeration and mutation (`unstable_listProviders` / `unstable_setProvider` / `unstable_disableProvider`) remain experimental and are unused.
 
 - **No context visibility**: ACP does not expose context window usage, token counts, or remaining capacity. The agent's context state is a black box — no way to query how full the context is.
 - **No compact/clear**: ACP has no method to compact, summarize, or clear task context. The only way to reset context is to create a new task. `unstable_forkTask` exists but is experimental.

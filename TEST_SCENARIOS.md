@@ -46,6 +46,32 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/bridge-message-limit.test.ts`
   - an ACP tool-result update just over the SDK default 32 MiB line limit reaches the bridge under WebAgent's explicit finite 128 MiB cap
 
+- `test/bridge-grouped-config.test.ts`
+  - grouped choices and per-session canonical-to-wire translation across creation, buffered notifications, restore, setters, retirement, and process replacement
+  - restore responses without configOptions preserve notification-established codecs; silent sessions update codecs without emitting config events
+  - removed model-category ids fail closed while ids never classified as models remain passthrough
+
+- `test/bridge-model-identity.test.ts`
+  - pathological pair identities send each selected choice's exact wire value
+
+- `test/bridge-model-category.test.ts`
+  - current model classification controls advertised ids; historical classification keeps only removed ids fail-closed, isolated per session
+
+- `test/bridge-flat-config.test.ts`
+  - flat canonical payloads are byte-identical at creation, restore, both setters, mapped notifications, and buffered replay
+
+- `test/bridge-config-codec-lifecycle.test.ts`
+  - late setter responses cannot repopulate codecs after retirement or process replacement; unexpected process death clears session codecs
+
+- `test/config-options.test.ts`
+  - generic grouped-select flattening preserves wire values, leaf order, and metadata independently of model policy
+
+- `test/model-identity.test.ts`
+  - value-only, idempotent model identity, regrouping stability, opaque values, and collision rejection
+
+- `test/config-model-persistence.test.ts`
+  - legacy identity migration, stale-snapshot normalization, and stable repeated writes/reopen
+
 - `test/server-event-handler.test.ts`
   - event routing: message_chunk, thought_chunk, tool_call, prompt_done, task_created, error
   - thinking↔assistant buffer flush transitions
@@ -118,16 +144,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the legacy task-only `agent_sessions` index is dropped during a timestamp table rebuild while per-agent/task uniqueness remains; reserved Root ownership still rejects cross-agent rebinding
   - `foreign_key_check` / `integrity_check` pass after the rebuild
 
-- `test/title-service.test.ts`
-  - silent title-task creation
-  - title cleanup / truncation
-  - title-task reuse
-  - setup failure handling
-  - callback emission only when a title is produced
-  - cancellation of in-flight title generation for the matching source task
-  - in-flight title-generation deduplication and retry after cancellation
-  - user-set title wins over in-flight generation
-
 - `test/daemon.test.ts`
   - subcommand recognition
   - `resolveArgs` config-path resolution
@@ -148,6 +164,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - auto-resume of non-live tasks
   - restoring an interrupted turn does not auto-continue it (recovery is user-driven)
   - input validation and bridge-not-ready errors
+
+- `test/routes-config-option.test.ts`
+  - config_set broadcasts the value resolved from the response options, not the request encoding
 
 - `test/file-viewer-routes.test.ts`
   - Bearer-gated `info` / `list` and independently HMAC-signed `content`
@@ -444,8 +463,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 ### Share links
 
-- `test/share-token.test.ts`
-  - 144-bit token shape, base64url alphabet, uniqueness across many draws
+- `test/tokens.test.ts`
+  - share token: 24-char base64url shape (144 bits), url-safe alphabet, uniqueness over 1000 draws
+  - API token and SSE ticket shapes, alphabet, and uniqueness
 
 - `test/share-store.test.ts`
   - DDL + state machine: preview (`shared_at IS NULL`) → activated (`shared_at` set)
@@ -456,10 +476,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - secret detection → hard-reject with `event_id` + `rule`
   - path / hostname soft-redact placeholders
   - markdown raw-HTML disabled; URL allowlist applied
-
-- `test/share-mutex.test.ts`
-  - per-key async mutex serializes same-key callers, parallelizes different keys
-  - propagates exceptions, cleans up Map entries (no leak)
 
 - `test/share-routes-preview.test.ts` / `test/share-routes-publish-viewer.test.ts`
   - preview create / read / staleness flag
@@ -657,7 +673,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
     after the separating space
 
 - `model-picker.spec.ts`
-  - `/model` picker changes the selected model
+  - `/model` picker changes a flat model choice without changing its label or canonical status-bar tooltip
+
+- `grouped-model-picker.spec.ts`
+  - grouped choices flatten in order with group-qualified labels and preserve leaf metadata
+  - a grouped model write sends its encoded wire value but returns, persists, and broadcasts the canonical identity
+  - the status bar shows only the model-id portion and keeps the full identity in its tooltip
 
 - `slash-menu-think-picker.spec.ts`
   - `/think` picker changes reasoning effort
