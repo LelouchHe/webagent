@@ -13,10 +13,11 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { AuthStore } from "../src/auth-store.ts";
 
 const BIN = join(process.cwd(), "bin", "webagent.mjs");
 
@@ -25,11 +26,12 @@ function spawnServer(
   port: number,
 ): { status: number | null; stdout: string; stderr: string } {
   const cfgPath = join(dataDir, "config.toml");
-  // agent_cmd = "node" so preflight passes (we never reach the bridge
-  // because auth boot exits first).
+  // Valid agent configuration so config validation passes (we never
+  // reach the bridge because auth boot exits first).
   writeFileSync(
     cfgPath,
-    `port = ${port}\ndata_dir = "${dataDir}"\nagent_cmd = "node"\n`,
+    `port = ${port}\ndata_dir = "${dataDir}"\ndefault_agent = "node"\n` +
+      `[agents.node]\ncmd = "node"\n`,
   );
   const result = spawnSync(process.execPath, [BIN, "--config", cfgPath], {
     encoding: "utf-8",
@@ -74,6 +76,80 @@ describe("server first-run bootstrap (integration)", () => {
     }
   });
 
+  it("starts and warns when the default agent binary is missing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "webagent-missing-agent-"));
+    const auth = new AuthStore(join(dir, "auth.json"));
+    await auth.load();
+    await auth.addToken("seeded", "admin");
+    await auth.close();
+    const cfgPath = join(dir, "config.toml");
+    const port = 27105;
+    writeFileSync(
+      cfgPath,
+      `port = ${port}\ndata_dir = "${dir}"\ndefault_agent = "missing"\n` +
+        `[agents.missing]\ncmd = "definitely-no-such-agent-xyzzy --acp"\n` +
+        `[agents.node]\ncmd = "node"\n`,
+    );
+    const child = spawn(process.execPath, [BIN, "--config", cfgPath]);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf-8");
+    child.stderr.setEncoding("utf-8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    try {
+      const deadline = Date.now() + 10_000;
+      while (
+        !stdout.includes("[server] listening") &&
+        Date.now() < deadline &&
+        child.exitCode === null
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.match(stdout, /\[server\] listening on/);
+      assert.match(stderr, /default agent "missing" is unavailable/);
+    } finally {
+      child.kill("SIGTERM");
+      await new Promise<void>((resolve) => {
+        if (child.exitCode !== null) {
+          resolve();
+          return;
+        }
+        child.once("exit", () => {
+          resolve();
+        });
+      });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("legacy agent_cmd fails before creating data_dir or auth.json", () => {
+    const root = mkdtempSync(join(tmpdir(), "webagent-legacy-config-"));
+    try {
+      const dataDir = join(root, "nested", "data");
+      const cfgPath = join(root, "config.toml");
+      writeFileSync(
+        cfgPath,
+        `port = 27104\ndata_dir = "${dataDir}"\nagent_cmd = "node"\n`,
+      );
+      const result = spawnSync(process.execPath, [BIN, "--config", cfgPath], {
+        encoding: "utf-8",
+        timeout: 15_000,
+      });
+      assert.equal(result.status, 1, `stderr: ${result.stderr}`);
+      assert.match(result.stderr, /agent_cmd.*no longer supported/);
+      // Config validation runs before the startup gate: no data dir, no DB,
+      // no auth.json.
+      assert.equal(existsSync(dataDir), false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("first_run_bootstrap=false + missing auth.json + no TTY → exits 78", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-bootstrap-"));
     try {
@@ -82,7 +158,8 @@ describe("server first-run bootstrap (integration)", () => {
       const cfgPath = join(dir, "config.toml");
       writeFileSync(
         cfgPath,
-        `port = 27103\ndata_dir = "${dir}"\nagent_cmd = "node"\n[auth]\nfirst_run_bootstrap = false\n`,
+        `port = 27103\ndata_dir = "${dir}"\ndefault_agent = "node"\n` +
+          `[agents.node]\ncmd = "node"\n[auth]\nfirst_run_bootstrap = false\n`,
       );
       const result = spawnSync(process.execPath, [BIN, "--config", cfgPath], {
         encoding: "utf-8",

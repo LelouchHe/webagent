@@ -157,7 +157,7 @@ describe("connection", () => {
     return es;
   }
 
-  const ROOT_ID = "root-canonical-identity";
+  const ROOT_ID = "root";
 
   function listResponse(tasks: unknown[]) {
     return tasks;
@@ -380,32 +380,34 @@ describe("connection", () => {
     assert.equal(location.hash, "");
   });
 
-  it("does not alias the obsolete literal #root to this backend's Root", async () => {
+  it("navigates to the literal #root", async () => {
     history.replaceState(null, "", "/#root");
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
       if (url === "/api/v1/tasks/root")
-        return {
-          ok: false,
-          status: 404,
-          json: async () => ({ error: "Task not found" }),
-        };
-      if (url.startsWith("/api/v1/tasks/root/events")) return mockResponse([]);
+        return mockResponse(taskResponse("root"));
+      if (url.startsWith("/api/v1/tasks/root/events"))
+        return mockResponse({ events: [], streaming: {} });
+      if (url === "/api/v1/tasks/root/snapshot")
+        return mockResponse({
+          version: 1,
+          seq: 0,
+          task: {},
+          runtime: { busy: null },
+        });
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
     connection.connect();
-    await flush(30);
+    await flush(100);
 
-    assert.equal(state.taskId, null);
-    assert.ok(dom.messages.textContent.includes("Task not found (root)"));
-    assert.equal(
-      fetchCalls.some((call) => call.url === `/api/v1/tasks/${ROOT_ID}`),
-      false,
-    );
+    assert.equal(state.taskId, "root");
+    assert.equal(state.rootTaskId, "root");
+    assert.equal(location.hash, "");
+    assert.ok(fetchCalls.some((call) => call.url === "/api/v1/tasks/root"));
   });
 
-  it("404s a foreign derived Root then falls back to a listed current-backend task", async () => {
+  it("404s a missing ordinary root-* task then falls back to a listed task", async () => {
     const foreignRootId = "root-foreign-derived-id";
     history.replaceState(null, "", `/#${foreignRootId}`);
     setFetch(async (url: string) => {
@@ -614,20 +616,17 @@ describe("connection", () => {
     assert.equal(state.lastEventSeq, 2);
   });
 
-  it("refreshes canonical Root identity when reconnecting to another backend", async () => {
-    configRootId = "root-new-backend";
+  it("refreshes the constant Root authority on reconnect", async () => {
     state.rootTaskId = ROOT_ID;
     state.taskId = ROOT_ID;
     setFetch(async (url: string) => {
-      if (url === `/api/v1/tasks/${configRootId}`)
-        return mockResponse(
-          taskResponse(configRootId, { rootTaskId: configRootId }),
-        );
-      if (url.startsWith(`/api/v1/tasks/${configRootId}/events`))
+      if (url === `/api/v1/tasks/${ROOT_ID}`)
+        return mockResponse(taskResponse(ROOT_ID));
+      if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
         return mockResponse([]);
       if (url === "/api/v1/tasks")
-        return mockResponse([{ id: configRootId, hasUserInput: false }]);
-      if (url === `/api/v1/tasks/${configRootId}/snapshot`)
+        return mockResponse([{ id: ROOT_ID, hasUserInput: false }]);
+      if (url === `/api/v1/tasks/${ROOT_ID}/snapshot`)
         return mockResponse({
           version: 1,
           seq: 0,
@@ -642,17 +641,16 @@ describe("connection", () => {
     assert.equal(state.rootTaskId, null);
     await flush(100);
 
-    assert.equal(state.rootTaskId, configRootId);
-    assert.equal(state.taskId, configRootId);
+    assert.equal(state.rootTaskId, ROOT_ID);
+    assert.equal(state.taskId, ROOT_ID);
     assert.equal(location.hash, "");
     assert.ok(
-      fetchCalls.some((call) => call.url === `/api/v1/tasks/${configRootId}`),
+      fetchCalls.some((call) => call.url === `/api/v1/tasks/${ROOT_ID}`),
     );
   });
 
-  it("recovers a stale reserved Root hash from the list when reconnect config fails", async () => {
-    const oldRootId = "root-old-backend";
-    const newRootId = "root-new-backend";
+  it("recovers a stale ordinary root-* hash from the list when reconnect config fails", async () => {
+    const oldRootId = "root-forged";
     configFailure = true;
     history.replaceState(null, "", `/#${oldRootId}`);
     state.taskId = oldRootId;
@@ -669,10 +667,10 @@ describe("connection", () => {
       if (url.startsWith(`/api/v1/tasks/${oldRootId}/events`))
         return mockResponse({ events: [], streaming: {} });
       if (url === "/api/v1/tasks")
-        return mockResponse([{ id: newRootId, hasUserInput: false }]);
-      if (url === `/api/v1/tasks/${newRootId}`)
-        return mockResponse(taskResponse(newRootId, { rootTaskId: newRootId }));
-      if (url.startsWith(`/api/v1/tasks/${newRootId}/events`))
+        return mockResponse([{ id: ROOT_ID, hasUserInput: false }]);
+      if (url === `/api/v1/tasks/${ROOT_ID}`)
+        return mockResponse(taskResponse(ROOT_ID));
+      if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
         return mockResponse({ events: [], streaming: {} });
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -680,8 +678,8 @@ describe("connection", () => {
     connection.connect();
     await flush(100);
 
-    assert.equal(state.rootTaskId, newRootId);
-    assert.equal(state.taskId, newRootId);
+    assert.equal(state.rootTaskId, ROOT_ID);
+    assert.equal(state.taskId, ROOT_ID);
     assert.equal(location.hash, "");
     assert.ok(fetchCalls.some((call) => call.url === "/api/v1/tasks"));
   });

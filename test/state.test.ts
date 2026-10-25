@@ -591,19 +591,20 @@ describe("state", () => {
       assert.equal(mod.getHashTaskId(), "abc123");
     });
 
-    it("omits only the canonical Root and preserves obsolete literal root hashes", () => {
+    it("omits the literal Root hash and keeps ordinary ids", () => {
       history.replaceState(null, "", "/?view=chat#old-task");
-      mod.state.rootTaskId = "root-derived-canonical";
+      mod.state.rootTaskId = "root";
 
-      mod.setHashTaskId("root-derived-canonical");
+      mod.setHashTaskId("root");
       assert.equal(location.pathname, "/");
       assert.equal(location.search, "?view=chat");
       assert.equal(location.hash, "");
 
-      mod.setHashTaskId("root");
-      assert.equal(location.hash, "#root");
-      mod.setHashTaskId("root-foreign-derived");
-      assert.equal(location.hash, "#root-foreign-derived");
+      // Prefix-shaped ids are ordinary tasks now.
+      mod.setHashTaskId("root-forged");
+      assert.equal(location.hash, "#root-forged");
+      mod.setHashTaskId("child-task");
+      assert.equal(location.hash, "#child-task");
     });
 
     it("setHashTaskId keeps a hash for child tasks", () => {

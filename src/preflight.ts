@@ -10,9 +10,7 @@
 
 import { accessSync, constants, mkdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { detectAgent, formatDetectionFailure } from "./agent-detect.ts";
 
 interface CheckOk {
   ok: true;
@@ -81,59 +79,6 @@ function checkDataDir(dir: string): CheckResult {
       return null;
     }
   }
-}
-
-/**
- * Resolve `agent_cmd`. If it's the "auto" sentinel, run PATH detection;
- * otherwise verify the first token (the binary) exists in PATH so we
- * fail at preflight instead of after `server.listen` with a cryptic
- * ENOENT in the bridge stderr.
- */
-function checkAgent(agentCmd: string): CheckResult & { resolved?: string } {
-  if (agentCmd === "auto") {
-    const r = detectAgent();
-    if (r.ok) {
-      return {
-        ok: true,
-        name: "acp agent",
-        detail: `${r.label} (${r.cmd})`,
-        resolved: r.cmd,
-      };
-    }
-    return {
-      ok: false,
-      name: "acp agent",
-      detail: "no ACP-ready binary in PATH",
-      hint: formatDetectionFailure(r).replace(/^\[bridge\] [^\n]*\n\n?/, ""),
-    };
-  }
-  // Explicit agent_cmd. Best-effort sanity: check first token's binary.
-  const bin = agentCmd.trim().split(/\s+/)[0];
-  if (!bin) {
-    return {
-      ok: false,
-      name: "acp agent",
-      detail: agentCmd,
-      hint: "agent_cmd is empty.",
-    };
-  }
-  // Use the same detection helper logic via a one-off PATH probe.
-  const which = process.platform === "win32" ? "where" : "which";
-  const r = spawnSync(which, [bin], { stdio: "ignore" });
-  if (r.status === 0) {
-    return {
-      ok: true,
-      name: "acp agent",
-      detail: agentCmd,
-      resolved: agentCmd,
-    };
-  }
-  return {
-    ok: false,
-    name: "acp agent",
-    detail: agentCmd,
-    hint: `'${bin}' not found in PATH.\nverify the binary is installed, or set agent_cmd to "auto" for automatic detection.`,
-  };
 }
 
 /**
@@ -209,26 +154,20 @@ async function checkPort(port: number, host: string): Promise<CheckResult> {
   };
 }
 
-export interface PreflightResult {
-  agentCmd: string;
-}
-
 /**
  * Run all preflight checks in order. Prints each result; exits process
- * (78) on first failure. On success, returns the resolved agent command
- * so the caller doesn't need to re-detect.
+ * (78) on first failure. Agent CLI availability is deliberately NOT a
+ * check: it is a per-agent runtime condition, reported as a warning so the
+ * service still starts and its tasks remain reachable.
  */
 export async function runPreflight(opts: {
   data_dir: string;
-  agent_cmd: string;
   port: number;
   host: string;
-}): Promise<PreflightResult> {
+}): Promise<void> {
   const checks: CheckResult[] = [];
   checks.push(checkNodeVersion());
   checks.push(checkDataDir(opts.data_dir));
-  const agent = checkAgent(opts.agent_cmd);
-  checks.push(agent);
   checks.push(await checkPort(opts.port, opts.host));
 
   for (const c of checks) {
@@ -238,8 +177,4 @@ export async function runPreflight(opts: {
       process.exit(78);
     }
   }
-  // After the loop above all checks are ok — narrow the agent result.
-  return {
-    agentCmd: (agent as CheckOk & { resolved: string }).resolved,
-  };
 }

@@ -23,6 +23,7 @@ import { join as pathJoin } from "node:path";
 import { runPreflight } from "./preflight.ts";
 import { AuthStore } from "./auth-store.ts";
 import { decideBootstrap, formatBootstrapBanner } from "./bootstrap.ts";
+import { assertNotLegacyDatabase } from "./legacy-database.ts";
 import { log } from "./log.ts";
 
 /** Env var the daemon parent sets when handing off to its server child. */
@@ -32,13 +33,7 @@ export interface StartupChecksConfig {
   port: number;
   host: string;
   data_dir: string;
-  agent_cmd: string;
   auth: { first_run_bootstrap: boolean };
-}
-
-export interface StartupChecksResult {
-  /** Resolved agent command (with "auto" expanded). */
-  agentCmd: string;
 }
 
 /**
@@ -48,21 +43,24 @@ export interface StartupChecksResult {
  * stops its restart loop (see `decideRestart` in daemon.ts).
  *
  * If `WEBAGENT_STARTUP_CHECKED=1` is set in the env, returns
- * immediately with the configured `agent_cmd` verbatim — assumes a
- * parent process already ran the same checks for this server's data
- * directory.
+ * immediately — assumes a parent process already ran the same checks for
+ * this server's data directory.
  */
 export async function runStartupChecks(
   config: StartupChecksConfig,
-): Promise<StartupChecksResult> {
+): Promise<void> {
   if (process.env[STARTUP_CHECKED_ENV] === "1") {
-    return { agentCmd: config.agent_cmd };
+    return;
   }
 
-  // 1. Preflight (node version, data_dir writable, agent resolvable, port free).
-  const preflight = await runPreflight({
+  // 0. Refuse the pre-multi-agent database read-only, before preflight can
+  //    create the data directory or auth handling can mint auth.json. Store
+  //    keeps its own defensive pre-open check for non-server callers.
+  assertNotLegacyDatabase(config.data_dir);
+
+  // 1. Preflight (node version, data_dir writable, port free).
+  await runPreflight({
     data_dir: config.data_dir,
-    agent_cmd: config.agent_cmd,
     port: config.port,
     host: config.host,
   });
@@ -119,6 +117,4 @@ export async function runStartupChecks(
   // Keeping it open here would tie the file to a process that's about
   // to either fork (daemon) or hand off control (server.ts top-level).
   await authStore.close();
-
-  return { agentCmd: preflight.agentCmd };
 }

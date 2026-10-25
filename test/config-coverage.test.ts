@@ -91,6 +91,14 @@ function walkSchema(schema: z.ZodTypeAny): KeyInfo[] {
           defaultValue: subDefault,
         });
       }
+    } else if (inner.constructor.name === "ZodRecord") {
+      // Dynamic [agents.<id>] tables: the id is data, not a schema key.
+      out.push({
+        path: key,
+        section: "",
+        leaf: key,
+        hasDefault: false,
+      });
     } else {
       out.push({
         path: key,
@@ -174,6 +182,13 @@ describe("config coverage", async () => {
   //     but must at least appear as a commented stub so users see the option.
   for (const k of keys) {
     it(`config.toml should cover "${k.path}"`, () => {
+      if (k.path === "agents") {
+        assert.ok(
+          /^\s*\[agents\.[a-z0-9][a-z0-9-]*\]/m.test(mainSrc),
+          "config.toml must document at least one [agents.<id>] table",
+        );
+        return;
+      }
       const block = sectionBlock(mainSrc, k.section);
       const live = sourceHasLive(block, k.leaf);
       const commented = sourceHasCommented(block, k.leaf);
@@ -211,11 +226,12 @@ describe("config coverage", async () => {
 
   // --- (3) config.dev.toml must only use real schema keys ---
   const schemaKeySet = new Set(keys.map((k) => k.path));
+  const agentKeyPattern = /^agents\.[a-z0-9][a-z0-9-]*\.cmd$/;
   const devKeys = flattenKeys(devParsed);
   for (const dk of devKeys) {
     it(`config.dev.toml key "${dk}" should exist in schema`, () => {
       assert.ok(
-        schemaKeySet.has(dk),
+        schemaKeySet.has(dk) || agentKeyPattern.test(dk),
         `config.dev.toml sets "${dk}" but no such key exists in ConfigSchema. ` +
           `Zod silently strips unknown keys — fix the typo.`,
       );

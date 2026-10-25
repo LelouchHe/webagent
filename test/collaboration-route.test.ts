@@ -99,7 +99,7 @@ describe("S3 collaboration write routes", () => {
     );
     port = (server.address() as { port: number }).port;
 
-    store.createTask("root", tmpDir, "root", "agent-root");
+    store.bindAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
     store.createTask("parent", tmpDir, "auto", "agent-parent", "root");
     store.createTask("sibling", tmpDir, "auto", "agent-sibling", "parent");
     store.updateTaskTitle("parent", "parent");

@@ -16,9 +16,7 @@ describe("MCP Task tool host", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "webagent-mcp-host-"));
     store = new Store(dir, "test-agent");
-    store.createTask("root", dir, "auto", "session-root", null, {
-      title: "Root",
-    });
+    store.bindAgentSession(store.ensureRootTask(dir).id, "session-root");
     store.createTask("alpha", dir, "auto", "session-alpha", "root", {
       title: "Alpha",
     });

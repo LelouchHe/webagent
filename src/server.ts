@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.ts";
 import { setLogLevel, log } from "./log.ts";
 import { AgentBridge } from "./bridge.ts";
-import { agentKeyFromCommand } from "./agent-key.ts";
 import { Store } from "./store.ts";
 import { TaskManager } from "./task-manager.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
@@ -28,6 +27,10 @@ import { AuthStore } from "./auth-store.ts";
 import { join as pathJoin } from "node:path";
 import { resolveTasksAnchor } from "./tasks-anchor.ts";
 import { runStartupChecks } from "./startup-checks.ts";
+import {
+  checkAgentAvailability,
+  formatAvailabilityWarnings,
+} from "./agent-availability.ts";
 import { AttachmentDispatcher } from "./attachment-dispatch.ts";
 import { buildBridgeEventHandlerConfig as _buildBridgeEventHandlerConfig } from "./bridge-event-config.ts";
 import {
@@ -50,11 +53,19 @@ for (const method of ["log", "error", "warn"] as const) {
 const config = loadConfig();
 setLogLevel(config.debug.level);
 
-// Unified startup gate: preflight (node, data_dir, agent, port) + auth
-// bootstrap (mint or refuse). Skipped via WEBAGENT_STARTUP_CHECKED=1
-// when a parent process (daemon supervisor) already ran the gate in
-// the operator's foreground TTY before forking.
-const preflight = await runStartupChecks(config);
+// Unified startup gate: preflight (node, data_dir, port) + auth bootstrap
+// (mint or refuse). Skipped via WEBAGENT_STARTUP_CHECKED=1 when a parent
+// process (daemon supervisor) already ran the gate in the operator's
+// foreground TTY before forking. Agent CLI availability is deliberately not
+// part of this gate.
+await runStartupChecks(config);
+
+for (const line of formatAvailabilityWarnings(
+  checkAgentAvailability(config.agents),
+  config.default_agent,
+)) {
+  console.warn(line);
+}
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", config.public_dir);
@@ -71,10 +82,7 @@ const PKG_VERSION = (() => {
 
 // --- Core dependencies ---
 
-const store = new Store(
-  config.data_dir,
-  agentKeyFromCommand(preflight.agentCmd),
-);
+const store = new Store(config.data_dir, config.default_agent);
 store.ensureRootTask(config.default_cwd);
 console.log(`[store] using ${config.data_dir}/`);
 
@@ -229,8 +237,9 @@ const server = createServer((req, res) => {
   void requestHandler(req, res);
 });
 
-async function initBridge(agentCmd: string): Promise<AgentBridge> {
-  const b = new AgentBridge(agentCmd, store);
+async function initBridge(agentId: string): Promise<AgentBridge> {
+  const agent = config.agents[agentId];
+  const b = new AgentBridge(agent.cmd, store, agentId);
   b.setAttachmentDispatcher(attachmentDispatcher);
 
   const eventHandlerConfig = _buildBridgeEventHandlerConfig({
@@ -311,11 +320,12 @@ server.listen(config.port, config.host, () => {
       sharePreviewCleanup = startSharePreviewCleanup(store);
       console.log(`[share] preview gc armed (24h interval)`);
     }
-    // agent_cmd resolved by preflight (handles the "auto" sentinel).
-    const agentCmd = preflight.agentCmd;
-    console.log(`[bridge] starting: ${agentCmd}...`);
+    const agentId = config.default_agent;
+    console.log(
+      `[bridge] starting ${agentId}: ${config.agents[agentId].cmd}...`,
+    );
     try {
-      await initBridge(agentCmd);
+      await initBridge(agentId);
       console.log(`[bridge] ready`);
       await tasks.ensureRootTask(bridge!);
       tasks.hydrate();

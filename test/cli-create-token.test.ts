@@ -20,7 +20,10 @@ function runCli(
 ): { status: number; stdout: string; stderr: string } {
   const cfgPath = join(dataDir, "config.toml");
   if (!existsSync(cfgPath)) {
-    writeFileSync(cfgPath, `data_dir = "${dataDir}"\n`);
+    writeFileSync(
+      cfgPath,
+      `data_dir = "${dataDir}"\ndefault_agent = "node"\n[agents.node]\ncmd = "node"\n`,
+    );
   }
   const result = spawnSync(
     process.execPath,

@@ -6908,7 +6908,7 @@ describe("events", () => {
   describe("agent reload events", () => {
     it("agent_reloading sets busy and shows system message", () => {
       state.taskId = "s1";
-      events.handleEvent({ type: "agent_reloading" });
+      events.handleEvent({ type: "agent_reloading", agentId: "test-agent" });
 
       assert.equal(state.busy, true);
       assert.equal(state.agentReloading, true);
@@ -6940,6 +6940,7 @@ describe("events", () => {
 
       events.handleEvent({
         type: "agent_reloading_failed",
+        agentId: "test-agent",
         error: "broken binary",
       });
 

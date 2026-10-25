@@ -755,8 +755,15 @@ describe("config — push section", () => {
     }
   });
 
-  it("has push defaults when no config provided", () => {
-    process.argv = ["node", "test"];
+  it("has push defaults with a minimal agent config", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "webagent-config-push-"));
+    tmpDirs.push(tmpDir);
+    const configPath = join(tmpDir, "config.toml");
+    writeFileSync(
+      configPath,
+      `default_agent = "node"\n[agents.node]\ncmd = "node"\n`,
+    );
+    process.argv = ["node", "test", "--config", configPath];
     const config = loadConfig();
 
     assert.equal(config.push.vapid_subject, "mailto:noreply@example.com");
@@ -769,6 +776,10 @@ describe("config — push section", () => {
     writeFileSync(
       configPath,
       `
+default_agent = "node"
+[agents.node]
+cmd = "node"
+
 [push]
 vapid_subject = "mailto:me@example.com"
 `,

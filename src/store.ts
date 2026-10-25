@@ -12,11 +12,17 @@ import {
 } from "./collaboration-emitter.ts";
 import { migrateTimestampsToMillis } from "./timestamp-migration.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
-import {
-  isReservedRootTaskId,
-  rootTaskIdFor,
-  ROOT_ID_PREFIX,
-} from "./agent-key.ts";
+import { assertNotLegacyDatabase } from "./legacy-database.ts";
+
+/**
+ * The workspace has exactly one Root, identified by this literal task id.
+ * It is reserved: ordinary creation/deletion/reaping/GC must refuse it.
+ */
+export const ROOT_TASK_ID = "root";
+
+export function isReservedRootTaskId(taskId: string): boolean {
+  return taskId === ROOT_TASK_ID;
+}
 
 /** One task removed by a delete (the requested id or a cascaded descendant). */
 export interface TaskDelete {
@@ -286,8 +292,11 @@ export class Store {
   constructor(dataDir: string, agentKey: string) {
     if (!agentKey) throw new Error("agentKey is required");
     this.agentKey = agentKey;
-    this.rootTaskId = rootTaskIdFor(agentKey);
+    this.rootTaskId = ROOT_TASK_ID;
     this.dataDir = dataDir;
+    // Refuse the pre-multi-agent shape read-only, before mkdir/SQLite open
+    // can write anything (including -wal/-shm side files).
+    assertNotLegacyDatabase(dataDir);
     mkdirSync(dataDir, { recursive: true });
     this.db = new Database(join(dataDir, "webagent.db"));
     this.collaborationEmitter = new CollaborationMessageEmitter({
@@ -746,107 +755,30 @@ export class Store {
     })();
   }
 
-  /** Fail closed when a reserved id is being used by a different backend. */
-  assertReservedRootOwnership(
-    taskId: string,
-    ownerKey: string = this.agentKey,
-  ): void {
-    if (!isReservedRootTaskId(taskId)) return;
-    if (taskId !== rootTaskIdFor(ownerKey)) {
-      throw new Error(`Reserved Root belongs to another agent: ${taskId}`);
-    }
-    const owners = this.db
-      .prepare(
-        "SELECT DISTINCT agent_key FROM agent_sessions WHERE task_id = ?",
-      )
-      .all(taskId) as Array<{ agent_key: string }>;
-    if (owners.some((owner) => owner.agent_key !== ownerKey)) {
-      throw new Error(`Reserved Root ownership mismatch: ${taskId}`);
-    }
-  }
-
-  /** Validate this Store's canonical Root before any runtime side effect. */
-  assertRootTaskOwnership(): void {
-    this.assertReservedRootOwnership(this.rootTaskId);
-  }
-
   /**
-   * Allocate the Root anchor for a backend without creating an ACP binding.
-   * This for-key form is used when preserving a surviving task owned by a
-   * different backend; it must never attach that backend to this Store's ACP.
+   * Ensure the workspace's single literal Root anchor exists and stays an
+   * anchor: id `root`, no parent, title `root` unless the user renamed it.
+   * No ACP execution is created here; ownership is bound lazily.
    */
-  ensureRootTaskForAgentKey(agentKey: string, cwd: string): TaskRow {
-    if (!agentKey) throw new Error("agentKey is required");
-    const id = rootTaskIdFor(agentKey);
+  ensureRootTask(cwd: string): TaskRow {
     return this.db.transaction(() => {
-      // Check ownership before looking up or mutating an existing row. Never
-      // use INSERT OR IGNORE here: a conflicting reserved row is corruption,
-      // not an invitation to alias the current backend to it.
-      this.assertReservedRootOwnership(id, agentKey);
-      const existing = this.getTaskIncludingDeleted(id);
+      const existing = this.getTaskIncludingDeleted(this.rootTaskId);
       if (!existing) {
         const now = Date.now();
         this.db
           .prepare(
             "INSERT INTO tasks (id, cwd, source, parent_id, title, created_at, last_active_at) VALUES (?, ?, 'root', NULL, 'root', ?, ?)",
           )
-          .run(id, cwd, now, now);
+          .run(this.rootTaskId, cwd, now, now);
       } else {
         this.db
           .prepare("UPDATE tasks SET parent_id = NULL WHERE id = ?")
-          .run(id);
+          .run(this.rootTaskId);
         this.db
           .prepare(
             "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
           )
-          .run(id);
-      }
-      return this.getTaskIncludingDeleted(id)!;
-    })();
-  }
-
-  /**
-   * Ensure this backend's reserved Root anchor and adopt only unambiguous,
-   * live top-level tasks that have exactly this one distinct owner.
-   */
-  ensureRootTask(cwd: string): TaskRow {
-    return this.db.transaction(() => {
-      this.ensureRootTaskForAgentKey(this.agentKey, cwd);
-      const candidates = this.db
-        .prepare(
-          `SELECT s.id, s.title FROM tasks s
-           WHERE s.id != ? AND s.parent_id IS NULL AND s.deleted_at IS NULL
-             AND substr(s.id, 1, ?) != ?
-             AND (SELECT COUNT(DISTINCT a.agent_key) FROM agent_sessions a
-                  WHERE a.task_id = s.id) = 1
-             AND EXISTS (SELECT 1 FROM agent_sessions a
-                         WHERE a.task_id = s.id AND a.agent_key = ?)`,
-        )
-        .all(
-          this.rootTaskId,
-          ROOT_ID_PREFIX.length,
-          ROOT_ID_PREFIX,
-          this.agentKey,
-        ) as Array<{
-        id: string;
-        title: string | null;
-      }>;
-      const collision = this.db.prepare(
-        `SELECT 1 AS present FROM tasks
-         WHERE parent_id = ? AND title = ? AND deleted_at IS NULL AND id != ?
-         LIMIT 1`,
-      );
-      const adopt = this.db.prepare(
-        "UPDATE tasks SET parent_id = ? WHERE id = ? AND parent_id IS NULL AND deleted_at IS NULL",
-      );
-      for (const candidate of candidates) {
-        if (
-          candidate.title !== null &&
-          collision.get(this.rootTaskId, candidate.title, candidate.id)
-        ) {
-          continue;
-        }
-        adopt.run(this.rootTaskId, candidate.id);
+          .run(this.rootTaskId);
       }
       return this.getTaskIncludingDeleted(this.rootTaskId)!;
     })();
@@ -954,8 +886,6 @@ export class Store {
    * already relied on). Tombstoned rows are rejected.
    */
   getParentTask(id: string): TaskRow | undefined {
-    if (isReservedRootTaskId(id) && id !== this.rootTaskId) return undefined;
-    this.assertReservedRootOwnership(id);
     const task = this.getTaskIncludingDeleted(id);
     if (task?.deleted_at !== null) return undefined;
     if (this.ownsTask(id) || id === this.rootTaskId) return task;
@@ -1023,7 +953,6 @@ export class Store {
     cwd?: string,
   ): AgentSessionRow {
     return this.db.transaction(() => {
-      this.assertReservedRootOwnership(taskId);
       const current = this.getAgentSessionBinding(taskId);
       if (!current) throw new Error(`Task not found: ${taskId}`);
       // Persist a requested cwd even when the agent returns the same
@@ -1054,7 +983,6 @@ export class Store {
   /** Bind an ACP execution to an existing WebAgent task without creating a row. */
   bindAgentSession(taskId: string, agentSessionId: string): AgentSessionRow {
     return this.db.transaction(() => {
-      this.assertReservedRootOwnership(taskId);
       if (!this.getTaskIncludingDeleted(taskId)) {
         throw new Error(`Task not found: ${taskId}`);
       }
@@ -1074,6 +1002,21 @@ export class Store {
 
   ownsTask(taskId: string): boolean {
     return this.getAgentSessionBinding(taskId) !== undefined;
+  }
+
+  /**
+   * Agent id currently bound to a task, independent of the current Store's
+   * agent scope. Used to route whole-agent operations such as /reload to the
+   * task's owner; P2 adds multi-bridge routing on top.
+   */
+  getTaskOwnerAgentKey(taskId: string): string | undefined {
+    return (
+      this.db
+        .prepare(
+          "SELECT agent_key FROM agent_sessions WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+        )
+        .get(taskId) as { agent_key: string } | undefined
+    )?.agent_key;
   }
 
   /**
@@ -1127,24 +1070,18 @@ export class Store {
   }
 
   /**
-   * Preserve each surviving child under the Root for its one unambiguous
-   * owner. Unknown, multiply-owned, mismatched, or title-colliding children
-   * are detached rather than assigned to the deleting backend.
+   * Preserve each surviving child under the one global Root. A title
+   * collision or a missing Root detaches the child instead of failing the
+   * delete; the task and its records are never lost here.
    */
-  private reparentChildrenToOwnerRoots(parentId: string): void {
+  private reparentChildrenToRoot(parentId: string): void {
     const children = this.db
-      .prepare(
-        "SELECT id, cwd, title, deleted_at FROM tasks WHERE parent_id = ?",
-      )
+      .prepare("SELECT id, title, deleted_at FROM tasks WHERE parent_id = ?")
       .all(parentId) as Array<{
       id: string;
-      cwd: string;
       title: string | null;
       deleted_at: number | null;
     }>;
-    const owners = this.db.prepare(
-      "SELECT DISTINCT agent_key FROM agent_sessions WHERE task_id = ?",
-    );
     const collision = this.db.prepare(
       `SELECT 1 AS present FROM tasks
        WHERE parent_id = ? AND title = ? AND deleted_at IS NULL AND id != ?
@@ -1156,35 +1093,21 @@ export class Store {
     const detach = this.db.prepare(
       "UPDATE tasks SET parent_id = NULL WHERE id = ? AND parent_id = ?",
     );
+    const root = this.getTaskIncludingDeleted(this.rootTaskId);
     for (const child of children) {
-      if (isReservedRootTaskId(child.id)) {
+      if (!root || isReservedRootTaskId(child.id)) {
         detach.run(child.id, parentId);
         continue;
       }
-      const bindings = owners.all(child.id) as Array<{ agent_key: string }>;
-      if (bindings.length !== 1) {
+      if (
+        child.deleted_at === null &&
+        child.title !== null &&
+        collision.get(root.id, child.title, child.id)
+      ) {
         detach.run(child.id, parentId);
         continue;
       }
-      try {
-        const root = this.ensureRootTaskForAgentKey(
-          bindings[0].agent_key,
-          child.cwd,
-        );
-        if (
-          child.deleted_at === null &&
-          child.title !== null &&
-          collision.get(root.id, child.title, child.id)
-        ) {
-          detach.run(child.id, parentId);
-          continue;
-        }
-        reparent.run(root.id, child.id, parentId);
-      } catch {
-        // A conflicting reserved binding is not safe to repair here. Keep
-        // the task and its records intact without a dangling parent link.
-        detach.run(child.id, parentId);
-      }
+      reparent.run(root.id, child.id, parentId);
     }
   }
 
@@ -1200,17 +1123,10 @@ export class Store {
         .prepare(
           `SELECT s.id FROM tasks s
            JOIN agent_sessions a ON a.task_id = s.id
-           WHERE s.parent_id = ? AND s.id != ?
-             AND substr(s.id, 1, ?) != ?
+           WHERE s.parent_id = ? AND s.id != ? AND s.id != ?
              AND a.agent_key = ?`,
         )
-        .all(
-          parentId,
-          parentId,
-          ROOT_ID_PREFIX.length,
-          ROOT_ID_PREFIX,
-          this.agentKey,
-        ) as Array<{
+        .all(parentId, parentId, this.rootTaskId, this.agentKey) as Array<{
         id: string;
       }>
     ).map((row) => row.id);
@@ -1246,11 +1162,14 @@ export class Store {
   /**
    * Reset Root while preserving its stable anchor row. Every descendant is
    * deleted using the ordinary task/share lifecycle, then Root's own event
-   * history and attachments are cleared. The caller rotates Root's ACP
-   * execution separately so this method remains a synchronous DB operation.
+   * history and attachments are cleared. The old execution is reported for
+   * best-effort retirement; ownership stays in the DB with an empty session
+   * id so the caller never needs a live bridge or a replacement execution.
    */
-  resetRootTask(): { affected: TaskDelete[] } {
-    this.assertRootTaskOwnership();
+  resetRootTask(): {
+    affected: TaskDelete[];
+    retiredAgentSessionId: string | null;
+  } {
     const root = this.getTaskIncludingDeleted(this.rootTaskId);
     if (!root) throw new Error("Root task not found");
     if (this.hasActiveShare(this.rootTaskId)) {
@@ -1277,7 +1196,26 @@ export class Store {
       this.db
         .prepare("UPDATE tasks SET pending_compact_summary = NULL WHERE id = ?")
         .run(this.rootTaskId);
-      return { affected };
+
+      // Rebuild the anchor and ownership in the DB only. The empty ACP
+      // session id is an intentional "not materialized yet" marker: Root
+      // stays visible/owned, and the next prompt creates a fresh ACP
+      // session without needing the old agent process.
+      const retiredAgentSessionId = this.getAgentSessionId(this.rootTaskId);
+      this.db
+        .prepare(
+          "DELETE FROM agent_sessions WHERE agent_key = ? AND task_id = ?",
+        )
+        .run(this.agentKey, this.rootTaskId);
+      this.db
+        .prepare(
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(this.agentKey, "", this.rootTaskId, Date.now());
+      this.db
+        .prepare("UPDATE tasks SET parent_id = NULL WHERE id = ?")
+        .run(this.rootTaskId);
+      return { affected, retiredAgentSessionId: retiredAgentSessionId ?? null };
     })();
     return reset;
   }
@@ -1347,7 +1285,7 @@ export class Store {
     }
     // Hard delete: re-parent any survivor (share-tombstoned descendants)
     // under Root, then drop events and the row (agent_sessions cascades).
-    this.reparentChildrenToOwnerRoots(id);
+    this.reparentChildrenToRoot(id);
     this.failOutstandingDeliveriesForDeletedTask(id);
     this.db.prepare("DELETE FROM events WHERE task_id = ?").run(id);
     this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
@@ -1380,7 +1318,7 @@ export class Store {
     // Its live children were deleted when it was tombstoned; any survivor
     // (a share-tombstoned descendant of this tombstone) still references it
     // and must be re-parented under Root before the row goes away.
-    this.reparentChildrenToOwnerRoots(taskId);
+    this.reparentChildrenToRoot(taskId);
     this.failOutstandingDeliveriesForDeletedTask(taskId);
     this.db.prepare("DELETE FROM events WHERE task_id = ?").run(taskId);
     this.db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
@@ -1399,15 +1337,14 @@ export class Store {
       JOIN agent_sessions a ON a.task_id = s.id
       LEFT JOIN events e ON e.task_id = s.id
       WHERE e.id IS NULL
-        AND substr(s.id, 1, ?) != ?
+        AND s.id != ?
         AND a.agent_key = ?
         AND s.deleted_at IS NULL
         AND s.created_at <= ?
     `,
       )
       .all(
-        ROOT_ID_PREFIX.length,
-        ROOT_ID_PREFIX,
+        this.rootTaskId,
         this.agentKey,
         Date.now() - minAgeS * 1000,
       ) as Array<{
@@ -1420,7 +1357,7 @@ export class Store {
     for (const r of empties) {
       // A junk task may still be someone's parent; keep the children by
       // re-parenting them under Root instead of deleting them.
-      this.reparentChildrenToOwnerRoots(r.id);
+      this.reparentChildrenToRoot(r.id);
       this.failOutstandingDeliveriesForDeletedTask(r.id);
       del.run(r.id);
       removed.push({ id: r.id, agentSessionId: r.agent_session_id });
