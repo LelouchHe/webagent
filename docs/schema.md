@@ -75,7 +75,7 @@ exactly one reserved Root Task row for the workspace. Its id is the literal
 | `reasoning_effort` | TEXT | Last reasoning effort selection |
 | `source` | TEXT NOT NULL DEFAULT `'auto'` | How the task was created (`auto`, `inbox`, …) |
 | `deleted_at` | INTEGER | Unix-millis tombstone marker; `NULL` = live, set = soft-deleted (kept alive only because shares still reference the row) |
-| `parent_id` | TEXT REFERENCES `tasks(id)` | Optional parent WebAgent Task; `NULL` for the Root. Deletion preserves survivors under the global Root, or detaches them with `NULL` when the Root is missing or a live sibling-title collision exists. |
+| `parent_id` | TEXT REFERENCES `tasks(id)` | Parent WebAgent Task. Ordinary tasks always have one (omitted/null attaches to the Root); `NULL` is reserved for the Root itself. Deletion preserves survivors under the global Root, or detaches them with `NULL` when the Root is missing or a live sibling-title collision exists. |
 | `pending_compact_summary` | TEXT | One-shot agent-generated handoff waiting for the next real prompt; `NULL` when consumed |
 
 ### `agent_sessions`
@@ -454,8 +454,9 @@ an existing database on the current schema instead of requiring a reset:
   This permits ordinary task bindings to be backend-scoped.
 
 The single-Root data shape is a hard break. Startup refuses a pre-multi-agent
-database (legacy `root-<32 hex>` task ids or command-path `agent_key`s) read-only,
-before any write. The only upgrade path is an explicit reset: back up the data
+database read-only, before any write: tasks without a literal `root` task, or
+`agent_sessions.agent_key` values that cannot be a configured agent id
+(command paths). The only upgrade path is an explicit reset: back up the data
 directory, remove the old database (or the whole data directory), and restart
 to create the single-Root schema. There is no in-place conversion, and startup
 never edits an old database.

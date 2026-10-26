@@ -97,6 +97,7 @@ describe("TaskManager", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-test-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     sm = new TaskManager(store, tmpDir, tmpDir);
   });
 

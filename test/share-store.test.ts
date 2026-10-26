@@ -14,6 +14,7 @@ describe("shares store", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-shares-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     store.createTask(taskId, "/tmp");
   });
 
@@ -326,6 +327,7 @@ describe("owner_prefs store", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-prefs-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
   });
 
   afterEach(() => {

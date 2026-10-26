@@ -15,6 +15,7 @@ describe("persisted model identity", () => {
     let store: Store | undefined;
     try {
       store = new Store(dir, "model-identity-test");
+      store.ensureRootTask(dir);
       store.createTask("task-1", dir, "auto", "session-1");
       store.close();
       store = undefined;
@@ -28,6 +29,7 @@ describe("persisted model identity", () => {
       }
 
       store = new Store(dir, "model-identity-test");
+      store.ensureRootTask(dir);
       assert.equal(store.getTask("task-1")?.model, "vendor-a/model-one");
 
       const db = new Database(join(dir, "webagent.db"), { readonly: true });
@@ -51,6 +53,7 @@ describe("persisted model identity", () => {
     let store: Store | undefined;
     try {
       store = new Store(dir, "model-fixed-point-test");
+      store.ensureRootTask(dir);
       store.createTask("task-1", dir, "auto", "session-1");
       store.updateTaskConfig("task-1", "model", wire);
       const firstWrite = store.getTask("task-1")?.model;
@@ -63,6 +66,7 @@ describe("persisted model identity", () => {
       store = undefined;
 
       store = new Store(dir, "model-fixed-point-test");
+      store.ensureRootTask(dir);
       assert.equal(store.getTask("task-1")?.model, firstWrite);
     } finally {
       store?.close();
@@ -74,6 +78,7 @@ describe("persisted model identity", () => {
     const dir = mkdtempSync(join(tmpdir(), "model-snapshot-"));
     const encoded = JSON.stringify(["vendor-a", "model-one"]);
     const store = new Store(dir, "model-snapshot-test");
+    store.ensureRootTask(dir);
     const tasks = new TaskManager(
       store,
       dir,

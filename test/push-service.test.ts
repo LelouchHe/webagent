@@ -25,6 +25,7 @@ describe("Store — push_subscriptions", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-test-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
   });
 
   afterEach(() => {
@@ -98,6 +99,7 @@ describe("Store — push_subscriptions", () => {
 
     // Replace for afterEach cleanup
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
   });
 });
 
@@ -129,6 +131,7 @@ describe("PushService", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-svc-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     registry = new ClientRegistry();
   });
 

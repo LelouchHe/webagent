@@ -59,6 +59,7 @@ describe("CSP header on HTML entrypoints", () => {
       );
     }
     store = new Store(join(tmpDir, "test.db"), "test-agent");
+    store.ensureRootTask(join(tmpDir, "test.db"));
     const handler = createRequestHandler({
       store,
       sseManager: { broadcast: () => {} } as any,

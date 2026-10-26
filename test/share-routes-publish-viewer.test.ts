@@ -151,6 +151,7 @@ describe("share publish route — POST /api/v1/tasks/:id/share/publish", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-pub-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     store.createTask(taskId, "/tmp/project");
     store.saveEvent(
       taskId,
@@ -353,6 +354,7 @@ describe("share public viewer — GET /s/:token + /api/v1/shared/:token/events",
       "<!doctype html><html><body data-viewer>ok</body></html>",
     );
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     store.createTask(taskId, "/tmp/project");
     store.saveEvent(
       taskId,
@@ -542,6 +544,7 @@ describe("share image proxy — GET /s/:token/attachments/:file", () => {
     );
 
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     store.createTask(taskId, "/tmp/project");
     store.saveEvent(
       taskId,

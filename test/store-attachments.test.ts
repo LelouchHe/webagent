@@ -12,6 +12,7 @@ describe("Store attachments", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-att-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     store.createTask("s1", "/tmp/cwd1");
     store.createTask("s2", "/tmp/cwd2");
   });

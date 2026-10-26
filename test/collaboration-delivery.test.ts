@@ -15,6 +15,7 @@ describe("TaskManager collaboration delivery drain", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-collaboration-delivery-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     tasks = new TaskManager(store, tmpDir, tmpDir);
     store.bindAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
     store.createTask("source", tmpDir, "auto", "agent-source", "root");

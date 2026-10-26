@@ -61,6 +61,7 @@ describe("SSE ticket flow", () => {
     writeFileSync(join(publicDir, "index.html"), "");
 
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     authStore = new AuthStore(join(tmpDir, "auth.json"));
     await authStore.load();
     token = (await authStore.addToken("ui", "api")).token;
@@ -192,6 +193,7 @@ describe("SSE revocation via heartbeat", () => {
     writeFileSync(join(publicDir, "index.html"), "");
 
     const store = new Store(dir, "test-agent");
+    store.ensureRootTask(dir);
     const authStore = new AuthStore(join(dir, "auth.json"));
     await authStore.load();
     const token = (await authStore.addToken("ephemeral", "api")).token;

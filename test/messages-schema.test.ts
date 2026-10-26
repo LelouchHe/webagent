@@ -20,6 +20,7 @@ describe("Store — messages table", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "msg-schema-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
   });
 
   afterEach(() => {

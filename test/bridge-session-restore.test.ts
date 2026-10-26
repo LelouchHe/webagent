@@ -34,6 +34,7 @@ async function startAgent(t: TestContext, profile: string) {
   const callsPath = join(dir, "calls.jsonl");
   writeFileSync(callsPath, "");
   const store = new Store(dir, "session-fixture");
+  store.ensureRootTask(dir);
   resources.store = store;
   const capabilities = new CapabilityStore();
   const tasks = new TaskManager(

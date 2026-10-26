@@ -800,6 +800,14 @@ export class Store {
         `Reserved Root id cannot be created as an ordinary task: ${id}`,
       );
     }
+    if (!this.getTaskIncludingDeleted(this.rootTaskId)) {
+      throw new Error(
+        `Root task is missing; call ensureRootTask() to create it before creating tasks`,
+      );
+    }
+    // Root is the only parentless row. Omitted/null means "attach to Root";
+    // ensureRootTask() is the only path that inserts a parentless task.
+    const resolvedParentId = parentId ?? this.rootTaskId;
     return this.db.transaction(() => {
       const now = Date.now();
       this.db
@@ -812,7 +820,7 @@ export class Store {
           id,
           cwd,
           source,
-          parentId,
+          resolvedParentId,
           opts.title ?? id,
           opts.workflowStatus ?? "idle",
           now,

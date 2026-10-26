@@ -76,6 +76,7 @@ describe("HTTP routes", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     const handler = createRequestHandler({
       store,
       publicDir,
@@ -473,6 +474,7 @@ describe("Image upload", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     // Make tasks exist so the upload handler doesn't 404. Multiple task
     // IDs are used across tests, register all of them up front.
     for (const sid of ["test-task", "s1"]) {
@@ -718,6 +720,7 @@ describe("Push API routes", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     registry = new ClientRegistry();
     pushService = new PushService(store, tmpDir, "mailto:test@localhost", {
       clientRegistry: registry,
@@ -887,6 +890,7 @@ describe("POST /api/v1/bridge/reload", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     broadcastEvents = [];
     mockBridge = {
       agentId: "test-agent",

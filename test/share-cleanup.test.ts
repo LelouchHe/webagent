@@ -18,6 +18,7 @@ describe("share preview cleanup — sweepStaleSharePreviewsOnce", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-cleanup-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     store.createTask("s", "/tmp/x");
   });
 
@@ -105,6 +106,7 @@ describe("share preview cleanup — startSharePreviewCleanup", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-cleanup-sched-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     store.createTask("s", "/tmp/x");
   });
 

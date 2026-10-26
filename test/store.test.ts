@@ -14,6 +14,7 @@ describe("Store", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-test-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
   });
 
   afterEach(() => {
@@ -86,7 +87,7 @@ describe("Store", () => {
     });
 
     it("uses the literal `root` identity for every agent key", () => {
-      const root = store.ensureRootTask("/tmp/root");
+      const root = store.getTaskIncludingDeleted("root")!;
       assert.equal(root.id, "root");
       assert.equal(root.parent_id, null);
       assert.equal(store.rootTaskId, "root");
@@ -94,7 +95,7 @@ describe("Store", () => {
 
       store = new Store(tmpDir, "test-agent");
       assert.equal(store.ensureRootTask("/tmp/changed").id, "root");
-      assert.equal(store.getTaskIncludingDeleted("root")?.cwd, "/tmp/root");
+      assert.equal(store.getTaskIncludingDeleted("root")?.cwd, tmpDir);
       store.close();
 
       const other = new Store(tmpDir, "other-agent");
@@ -118,9 +119,9 @@ describe("Store", () => {
       assert.equal(store.getAgentSessionId("root"), "session-a");
     });
 
-    it("keeps Root anchored and does not adopt parentless tasks", () => {
+    it("keeps Root anchored and reparents a corrupted Root to NULL", () => {
       store.createTask("malformed-parent", "/parent");
-      const rootId = store.ensureRootTask("/before").id;
+      const rootId = store.rootTaskId;
       store.bindAgentSession(rootId, "root-session");
       store["db"]
         .prepare("UPDATE tasks SET parent_id = ?, title = NULL WHERE id = ?")
@@ -129,11 +130,11 @@ describe("Store", () => {
       const root = store.ensureRootTask("/must-not-change-cwd");
       assert.equal(root.parent_id, null);
       assert.equal(root.title, "root");
-      assert.equal(root.cwd, "/before");
-      // Root adoption is gone: an existing top-level task keeps no parent.
+      assert.equal(root.cwd, tmpDir);
+      // createTask attaches to Root; the fix only repairs Root's own anchor.
       assert.equal(
         store.getTaskIncludingDeleted("malformed-parent")?.parent_id,
-        null,
+        rootId,
       );
       assert.equal(store.getAgentSessionId(rootId), "root-session");
     });
@@ -145,6 +146,31 @@ describe("Store", () => {
       // Without an explicit title, the stable task id is the default title
       // so every live task has a non-empty, unique display name.
       assert.equal(task.title, "sess-1");
+    });
+
+    it("requires the literal Root and attaches null parents to it", () => {
+      store["db"].prepare("DELETE FROM tasks WHERE id = 'root'").run();
+
+      assert.throws(
+        () => store.createTask("no-root", "/tmp/orphan"),
+        /Root task is missing.*ensureRootTask/s,
+      );
+      assert.equal(store.getTaskIncludingDeleted("no-root"), undefined);
+
+      store.ensureRootTask("/tmp/root");
+      const child = store.createTask(
+        "child",
+        "/tmp/child",
+        "auto",
+        "agent-child",
+        null,
+      );
+      assert.equal(child.parent_id, "root");
+
+      const parentless = store["db"]
+        .prepare("SELECT COUNT(*) AS n FROM tasks WHERE parent_id IS NULL")
+        .get() as { n: number };
+      assert.equal(parentless.n, 1);
     });
 
     it("stores an optional parent WebAgent task", () => {
@@ -164,17 +190,29 @@ describe("Store", () => {
       assert.equal(store.getTask("child")?.parent_id, "root");
     });
 
-    it("creates a non-destructive Root without adopting top-level tasks", () => {
-      store.createTask("old-1", "/tmp/one", "auto", "agent-one");
-      store.createTask("old-2", "/tmp/two", "auto", "agent-two");
+    it("never adopts pre-existing parentless tasks into Root", () => {
+      const now = Date.now();
+      const insert = store["db"].prepare(
+        "INSERT INTO tasks (id, cwd, source, parent_id, title, created_at, last_active_at) VALUES (?, ?, 'auto', NULL, ?, ?, ?)",
+      );
+      insert.run("old-1", "/tmp/one", "old-1", now, now);
+      insert.run("old-2", "/tmp/two", "old-2", now, now);
+      store["db"]
+        .prepare(
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(store.agentKey, "agent-one", "old-1", now);
+      store["db"]
+        .prepare(
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(store.agentKey, "agent-two", "old-2", now);
 
       const root = store.ensureRootTask("/tmp/root");
 
       assert.equal(root.id, store.rootTaskId);
       assert.equal(root.parent_id, null);
       assert.equal(root.title, "root");
-      // Adoption existed only to pick a per-agent Root; a single literal Root
-      // leaves pre-existing orphan tasks where they are.
       assert.equal(store.getTaskIncludingDeleted("old-1")?.parent_id, null);
       assert.equal(store.getTaskIncludingDeleted("old-2")?.parent_id, null);
       assert.deepEqual(
@@ -185,7 +223,7 @@ describe("Store", () => {
         ["old-1", "old-2"],
       );
 
-      assert.equal(store.ensureRootTask("/tmp/other").cwd, "/tmp/root");
+      assert.equal(store.ensureRootTask("/tmp/other").cwd, tmpDir);
       assert.equal(store.ensureRootTask("/tmp/other").title, "root");
     });
 
@@ -581,7 +619,7 @@ describe("Store", () => {
       assert.equal(store.getTask("collision")?.title, "duplicate");
     });
 
-    it("detaches a foreign survivor when no Root anchor exists", () => {
+    it("detaches a foreign survivor when the Root anchor was corrupted away", () => {
       store.createTask("a-parent", "/a", "auto", "parent-session");
       const b = new Store(tmpDir, "backend-b");
       b.createTask("survivor", "/b", "auto", "survivor-session", "a-parent");
@@ -592,6 +630,12 @@ describe("Store", () => {
         { from_ref: "agent" },
       );
       b.close();
+
+      // Simulate a hand-corrupted DB after the invariant was established.
+      store["db"]
+        .prepare("UPDATE tasks SET parent_id = NULL WHERE id = 'a-parent'")
+        .run();
+      store["db"].prepare("DELETE FROM tasks WHERE id = 'root'").run();
 
       store.deleteTask("a-parent");
       const survivor = store.getTaskIncludingDeleted("survivor")!;
@@ -905,6 +949,7 @@ describe("Store", () => {
         join(tmpdir(), "webagent-duplicate-events-"),
       );
       const duplicateStore = new Store(duplicateDir, "test-agent");
+      duplicateStore.ensureRootTask("/x");
       duplicateStore.createTask("duplicate-task", "/x");
       duplicateStore.saveEvent(
         "duplicate-task",

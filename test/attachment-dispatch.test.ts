@@ -22,6 +22,7 @@ const HEIC_HEAD = Buffer.from(
 before(() => {
   dataDir = mkdtempSync(join(tmpdir(), "dispatch-"));
   store = new Store(dataDir, "test-agent");
+  store.ensureRootTask(dataDir);
   anchor = resolveTasksAnchor(dataDir);
   dispatcher = new AttachmentDispatcher(store, anchor, {
     warn: (msg) => warnings.push(msg),

@@ -30,6 +30,7 @@ describe("event writers populate from_ref correctly", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-fromref-"));
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     tasks = new TaskManager(store, tmpDir, tmpDir);
     store.createTask("s1", "/tmp");
   });

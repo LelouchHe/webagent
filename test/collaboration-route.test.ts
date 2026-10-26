@@ -68,6 +68,7 @@ describe("S3 collaboration write routes", () => {
     broadcasts.length = 0;
     promptCalls.length = 0;
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     tasks = new TaskManager(store, tmpDir, tmpDir);
     let sequence = 0;
     bridge = {

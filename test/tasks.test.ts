@@ -120,6 +120,7 @@ describe("Task REST API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     tasks = new TaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
     broadcastEvents = [];
@@ -490,7 +491,7 @@ describe("Task REST API", () => {
       const check = new Store(tmpDir, "other-agent");
       assert.equal(check.getEvents("foreign-parent").length, 0);
       const taskCount = check["db"]
-        .prepare("SELECT COUNT(*) AS n FROM tasks")
+        .prepare("SELECT COUNT(*) AS n FROM tasks WHERE id != 'root'")
         .get() as { n: number };
       assert.equal(taskCount.n, 1);
       check.close();
@@ -1004,7 +1005,7 @@ describe("Task REST API", () => {
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), {
         taskId: id,
-        parentId: null,
+        parentId: "root",
         reset: false,
       });
 
@@ -1160,7 +1161,7 @@ describe("Task REST API", () => {
       ]);
       assert.deepEqual(JSON.parse(res.body), {
         taskId: "parent",
-        parentId: null,
+        parentId: "root",
         reset: false,
       });
       assert.ok(!tasks.liveTasks.has("child"));

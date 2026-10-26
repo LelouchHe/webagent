@@ -120,6 +120,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - title persistence
   - unix-millisecond `last_active_at` for stable ordering
   - the single literal `root` anchor persists across reopen and agent keys, keeps `parent_id = NULL`, preserves a renamed title, and is never adopted into a parent
+  - `createTask` refuses until `ensureRootTask` exists; omitted/null `parentId` attaches to `root`, and only the Root row is parentless
   - Root ownership is not per-agent: the same literal Root can be bound by a different agent key without an ownership error, and `ensureRootTask` is idempotent
   - ensure and rotate leave the Root anchor and cwd stable without ownership assertions
   - ordinary creation of the exact literal `root` is rejected; prefix-shaped ids are ordinary tasks
@@ -457,7 +458,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/agent-availability.test.ts`
   - missing binaries are reported as per-agent runtime availability, not startup failures; warning names the default agent and states that its tasks are read-only with no execution available
 - `test/legacy-database.test.ts`
-  - read-only refusal of legacy `root-<32 hex>` rows / command-path `agent_key`s with the database bytes and directory unchanged
+  - read-only refusal of tasks without a literal `root` / command-path `agent_key`s with the database bytes and directory unchanged
   - accepts a migrated DB (literal `root`, including a removed-but-valid agent id), ordinary prefix-shaped ids such as `root-forged` / `root-2f3a9c`, and a fresh DB
 - `test/server-bootstrap.test.ts`
   - a missing default-agent binary still starts the service and emits a prominent warning

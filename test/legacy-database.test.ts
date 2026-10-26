@@ -22,12 +22,10 @@ function sha256(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-const LEGACY_ROOT_ID = "root-0123456789abcdef0123456789abcdef";
-
 function makeLegacyDb(
   dir: string,
   agentKey: string,
-  rootId = LEGACY_ROOT_ID,
+  rootId: string | null,
 ): string {
   const dbPath = join(dir, "webagent.db");
   const db = new Database(dbPath);
@@ -47,29 +45,32 @@ function makeLegacyDb(
       PRIMARY KEY (agent_key, agent_session_id)
     );
   `);
+  if (rootId !== null) {
+    db.prepare(
+      "INSERT INTO tasks (id, cwd, title, parent_id, deleted_at) VALUES (?, ?, ?, NULL, NULL)",
+    ).run(rootId, "/tmp/legacy", "root");
+  }
   db.prepare(
-    "INSERT INTO tasks (id, cwd, title, parent_id, deleted_at) VALUES (?, ?, ?, NULL, NULL)",
-  ).run(rootId, "/tmp/legacy", "root");
-  db.prepare(
-    "INSERT INTO tasks (id, cwd, title, parent_id, deleted_at) VALUES (?, ?, ?, NULL, NULL)",
-  ).run("legacy-child", "/tmp/legacy", "child");
+    "INSERT INTO tasks (id, cwd, title, parent_id, deleted_at) VALUES (?, ?, ?, ?, NULL)",
+  ).run("legacy-child", "/tmp/legacy", "child", rootId);
   db.prepare(
     "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-  ).run(agentKey, "legacy-session", rootId, Date.now());
+  ).run(agentKey, "legacy-session", rootId ?? "legacy-child", Date.now());
   db.close();
   return dbPath;
 }
 
 describe("legacy database refusal", () => {
-  it("detects legacy root rows and command-path agent keys", () => {
+  it("detects tasks without a Root and command-path agent keys", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-detect-"));
     try {
-      const dbPath = makeLegacyDb(dir, "/opt/homebrew/bin/pi");
+      const dbPath = makeLegacyDb(dir, "/opt/homebrew/bin/pi", null);
       const db = new Database(dbPath, { readonly: true });
       try {
         const report = detectLegacyDatabase(db);
         assert.ok(report);
-        assert.deepEqual(report.legacyRoots, [LEGACY_ROOT_ID]);
+        assert.equal(report.taskCount, 1);
+        assert.equal(report.hasRoot, false);
         assert.deepEqual(report.pathLikeAgentKeys, ["/opt/homebrew/bin/pi"]);
       } finally {
         db.close();
@@ -82,7 +83,7 @@ describe("legacy database refusal", () => {
   it("refuses before any write and leaves the DB bytes unchanged", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-refuse-"));
     try {
-      const dbPath = makeLegacyDb(dir, "/opt/homebrew/bin/pi");
+      const dbPath = makeLegacyDb(dir, "/opt/homebrew/bin/pi", null);
       const beforeHash = sha256(dbPath);
       const beforeFiles = readdirSync(dir).sort();
 
@@ -91,6 +92,7 @@ describe("legacy database refusal", () => {
         (error: unknown) => {
           assert.ok(error instanceof LegacyDatabaseError);
           assert.match(error.message, /pre-multi-agent/);
+          assert.match(error.message, /no literal `root`/);
           assert.match(error.message, /back up/i);
           assert.match(error.message, /re-initialize/);
           assert.doesNotMatch(error.message, /migrate/);
@@ -107,14 +109,26 @@ describe("legacy database refusal", () => {
     }
   });
 
-  it("refuses command-path keys even without legacy root rows", () => {
+  it("refuses command-path keys even when a literal Root exists", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-key-"));
     try {
       const dbPath = makeLegacyDb(
         dir,
         "claude-agent-acp --profile work",
-        "root-forged",
+        "root",
       );
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const report = detectLegacyDatabase(db);
+        assert.ok(report);
+        assert.equal(report.taskCount, 2);
+        assert.equal(report.hasRoot, true);
+        assert.deepEqual(report.pathLikeAgentKeys, [
+          "claude-agent-acp --profile work",
+        ]);
+      } finally {
+        db.close();
+      }
       const beforeHash = sha256(dbPath);
       assert.throws(() => new Store(dir, "pi"), /pre-multi-agent/);
       assert.equal(sha256(dbPath), beforeHash);

@@ -64,6 +64,7 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
     store = new Store(tmpDir, "test-agent");
+    store.ensureRootTask(tmpDir);
     tasks = new TaskManager(store, tmpDir, tmpDir);
     newTaskCalls = [];
     newTaskOptions = [];
