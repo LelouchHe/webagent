@@ -365,7 +365,7 @@ Get task details. **Auto-resumes** the task in the ACP agent if it's not already
 | --------------- | --------------------------- | ----------------------------------------------------------------------------- |
 | `configOptions` | `ConfigOption[]`            | Current config with stored overrides applied (type defined in `src/types.ts`) |
 | `rootTaskId` | string | Canonical Root id for the workspace (always `root`) |
-| `parentId` | `string \| null` | Parent WebAgent Task; `null` only for the Root Task |
+| `parentId` | `string \| null` | Parent WebAgent Task; `null` for the Root Task, or for a survivor detached by a delete collision (see DELETE) |
 | `busy`          | boolean                     | Whether the task has an active agent prompt or bash process                |
 | `busyKind`      | `"agent" \| "bash" \| null` | What kind of work is in progress                                              |
 
@@ -380,10 +380,10 @@ parent/child hierarchy is a hard ownership link, so every descendant task
 is deleted too — immediately, with no confirmation step (a confirmation for
 child deletion is deferred until the tree UI exists). Tasks kept alive only
 for active public shares are tombstoned instead. A surviving row is re-parented
-under the Root for its exactly-one distinct `agent_key` owner. If it has no
-binding, multiple owners, a missing/mismatched Root, or a live sibling-title
-collision at the destination, it is detached (`parentId = null`) instead; its
-row, events, shares, and attachments are preserved and no parent FK dangles.
+under the workspace Root, whichever agent owns it. If the Root is missing or a
+live sibling-title collision exists at the destination, it is detached
+(`parentId = null`) instead; its row, events, shares, and attachments are
+preserved and no parent FK dangles.
 
 For a non-Root task, the response is `200`:
 

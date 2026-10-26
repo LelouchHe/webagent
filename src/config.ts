@@ -213,6 +213,11 @@ export function loadConfigFromPath(configPath: string | null): Config {
   const result = ConfigSchema.safeParse(raw);
   if (!result.success) {
     console.error("[config] validation error:", result.error.format());
+    console.error(
+      "[config] a config file must declare at least one [agents.<id>] table and " +
+        "set default_agent; run `webagent config init` to scaffold one. " +
+        "See docs/configuration.md.",
+    );
     process.exit(1);
   }
 

@@ -120,7 +120,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - title persistence
   - unix-millisecond `last_active_at` for stable ordering
   - the single literal `root` anchor persists across reopen and agent keys, keeps `parent_id = NULL`, preserves a renamed title, and is never adopted into a parent
-  - `createTask` creates the literal Root on the first direct write when absent; omitted/null `parentId` attaches to `root`, and only the Root row is parentless
+  - `createTask` creates the literal Root on the first direct write when absent; omitted/null `parentId` attaches to `root`, and creation only ever produces the Root parentless (a delete may detach a collision survivor to `NULL`)
   - Root ownership is not per-agent: the same literal Root can be bound by a different agent key without an ownership error, and `ensureRootTask` is idempotent
   - ensure and rotate leave the Root anchor and cwd stable without ownership assertions
   - ordinary creation of the exact literal `root` is rejected; prefix-shaped ids are ordinary tasks
@@ -275,7 +275,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - new-task request payloads (with custom cwd)
   - reset-task cleanup (messages, input, title, metadata)
   - global task cancel payloads, including forced cancel when frontend busy state is stale
-  - exact canonical Root hash removal, with literal `root` retained as an ordinary hash; Root identity survives per-task resets and is cleared/re-authorized across connections
+  - exact canonical Root hash removal; `#root` and stale ordinary `root-*` hashes resolve through the task list; Root identity survives per-task resets and is cleared/re-authorized across connections
 
 - `test/input.test.ts`
   - normal prompt send flow

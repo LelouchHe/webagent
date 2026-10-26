@@ -811,7 +811,9 @@ export class Store {
       if (!this.getTaskIncludingDeleted(this.rootTaskId)) {
         this.insertRootRow(cwd);
       }
-      // Root is the only parentless row. Omitted/null means "attach to Root".
+      // At creation time Root is the only parentless row; omitted/null means
+      // "attach to Root". Deleting a parent may later detach a survivor whose
+      // destination collides (see reparentChildrenToRoot).
       const resolvedParentId = parentId ?? this.rootTaskId;
       const now = Date.now();
       this.db

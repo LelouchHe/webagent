@@ -143,7 +143,7 @@ want to keep.
 
 ## Generating a Config
 
-WebAgent runs zero-config by default — no `config.toml` is required. Generate one only when you want to override defaults (custom port, data directory, etc.):
+A config file is required. It must declare at least one `[agents.<id>]` table and set `default_agent`; every other setting falls back to a default. `webagent config init` scaffolds one:
 
 ```bash
 webagent config init                  # write ./config.toml (well-commented template)
