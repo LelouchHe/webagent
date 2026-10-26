@@ -59,13 +59,15 @@ deletion contract.
 
 WebAgent Tasks. Each row is a stable user-visible work thread created
 via `POST /api/v1/tasks`; its ACP execution can be rotated by clear. There is
-one reserved Root Task row per configured backend. Its id is
-`root-` + the first 32 lowercase hex characters of SHA-256 over that backend's
-`agent_key`; every Root has `parent_id = NULL` and the default title `root`.
+exactly one reserved Root Task row for the workspace. Its id is the literal
+`root`; it has `parent_id = NULL` and the default title `root`. The first
+`Store.createTask()` inserts that row in the same transaction when absent;
+`ensureRootTask()` remains the idempotent startup path that keeps the
+configured default cwd.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | TEXT PRIMARY KEY | Ordinary tasks use UUIDs. The reserved `root-` namespace is allocated only by the ownership-safe Root allocator; ordinary task creation rejects every id with that prefix. |
+| `id` | TEXT PRIMARY KEY | Ordinary tasks use UUIDs. The exact literal `root` is reserved; ordinary creation, generic delete, tombstone reaping, and empty-task GC all refuse it. Prefix-shaped ids such as `root-forged` are ordinary tasks. |
 | `cwd` | TEXT NOT NULL | Working directory passed to the agent |
 | `title` | TEXT | Display/name title; defaults to the stable task id when creation supplies none. User/parent sets it via `+… ` or `/rename` |
 | `workflow_status` | TEXT NOT NULL DEFAULT `'idle'` | `running`, `idle`, `blocked`, or `done` |
@@ -76,7 +78,7 @@ one reserved Root Task row per configured backend. Its id is
 | `reasoning_effort` | TEXT | Last reasoning effort selection |
 | `source` | TEXT NOT NULL DEFAULT `'auto'` | How the task was created (`auto`, `inbox`, …) |
 | `deleted_at` | INTEGER | Unix-millis tombstone marker; `NULL` = live, set = soft-deleted (kept alive only because shares still reference the row) |
-| `parent_id` | TEXT REFERENCES `tasks(id)` | Optional parent WebAgent Task; `NULL` for every backend Root. Deletion preserves survivors under their single unambiguous owner's Root, or detaches them with `NULL` when ownership is unknown, the Root conflicts, or a live sibling-title collision exists. |
+| `parent_id` | TEXT REFERENCES `tasks(id)` | Parent WebAgent Task. Ordinary tasks always have one (omitted/null attaches to the Root); `NULL` is reserved for the Root itself. Deletion preserves survivors under the global Root, or detaches them with `NULL` when the Root is missing or a live sibling-title collision exists. |
 | `pending_compact_summary` | TEXT | One-shot agent-generated handoff waiting for the next real prompt; `NULL` when consumed |
 
 ### `agent_sessions`
@@ -87,18 +89,17 @@ configured agent.
 
 | Column | Type | Notes |
 |---|---|---|
-| `agent_key` | TEXT NOT NULL | Resolved `agent_cmd` executable path; identifies one stable agent/profile |
+| `agent_key` | TEXT NOT NULL | Configured agent id from `[agents.<id>]` (not derived from the command), identifying the launch context |
 | `agent_session_id` | TEXT NOT NULL | Opaque ACP session ID |
-| `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal tasks such as title generation. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support |
+| `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal sessions. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support. A DB-only Root reset keeps the binding with an empty `agent_session_id` so the task stays visible and the execution can be materialized lazily |
 | `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
 PK: `(agent_key, agent_session_id)`. A partial unique index on
 `(agent_key, task_id)` ensures a WebAgent task holds at most one current
-binding per agent. Ordinary tasks may have one binding per configured backend,
-but a reserved `root-*` id has exactly one backend owner: its derived id must
-match that backend's key, and bind/rotate/reset paths fail closed if any other
-`agent_key` is bound to it. Distinct derived Roots keep each backend's history,
-resources, and reset lifecycle isolated.
+binding per agent. P1 keeps the per-agent store scope for task visibility; the
+single Root is shared, has no per-agent ownership check, and must keep
+`parent_id = NULL`. A single authoritative owner per task across agents is P2
+work.
 
 ### `events`
 
@@ -316,15 +317,14 @@ Events and shares use `NO ACTION`; mappings and attachments cascade from their
 task. The parent/child hierarchy is a hard ownership link: deleting a
 task deletes every descendant recursively (immediate, no confirmation
 until a tree UI exists), each following its own share rules, and a
-share-tombstoned descendant is handled by its own binding: one distinct owner
-gets its Root, while zero/multiple owners, a Root ownership conflict, or a live
-title collision detaches it instead of assigning it to the deleting backend.
-Every `root-*` id is reserved and cannot be generically deleted, garbage
-collected, or tombstone-reaped; a backend may reset only its exact derived Root.
-Reset clears that Root's own events, attachments, client operations, compact
-summary, and previews, then deletes its owned live descendants while preserving
-the Root anchor. The older literal id `root` is not a Root alias. Three rules
-govern any code that deletes or resets a task:
+share-tombstoned descendant is re-parented under the global Root unless the
+Root is missing or a live title collision forces detachment. The literal `root`
+cannot be generically deleted, garbage collected, or tombstone-reaped. Root
+reset and `/exit` are DB-only: they clear Root's own events, attachments,
+client operations, compact summary, and previews, delete its live descendants,
+preserve the anchor, and leave ownership with an empty execution id so the next
+prompt materializes a new ACP session. Three rules govern any code that deletes
+or resets a task:
 
 1. **Hard delete** (`deleteTask()` → `"hard"`): drop preview shares + client
    ops, then `DELETE FROM events` then `DELETE FROM tasks`. The final delete
@@ -454,13 +454,15 @@ an existing database on the current schema instead of requiring a reset:
   milliseconds (see [Timestamp normalization](#timestamp-normalization));
 - replacing the task-only `agent_sessions` unique index with one on
   `(agent_key, task_id)`, preserving the existing same-agent rebind semantics.
-  This permits ordinary task bindings to be backend-scoped; application code
-  separately enforces that each reserved Root id belongs to one backend.
+  This permits ordinary task bindings to be backend-scoped.
 
-The one-time purge/rename/rehearsal required to convert a pre-change shared
-literal `root` row to the pi-derived Root is a separate operational task. It is
-not startup compatibility code or an additional schema exception; old literal
-`root` links are not aliased by the product.
+The single-Root data shape is a hard break. Startup refuses a pre-multi-agent
+database read-only, before any write: tasks without a literal `root` task, or
+`agent_sessions.agent_key` values that cannot be a configured agent id
+(command paths). The only upgrade path is an explicit reset: back up the data
+directory, remove the old database (or the whole data directory), and restart
+to create the single-Root schema. There is no in-place conversion, and startup
+never edits an old database.
 
 ---
 

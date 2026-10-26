@@ -14,17 +14,11 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
 - Execution retirement reads `agentCapabilities.sessionCapabilities` and
   best-effort prefers advertised `session/delete`, then `session/close`.
 - WebAgent exposes its own stable task id in REST/SSE and stores the agent's
-  opaque ACP session ID in an internal mapping keyed by the `agent_cmd`
-  executable token (normally an absolute path). `agentKeyFromCommand()` takes
-  the first whitespace-delimited token of the resolved command; flags and later
-  arguments do not change the key. Each backend has a separate Root id:
-  `root-` + the first 32 lowercase hex characters of SHA-256 over that key.
-  Ordinary tasks use UUIDs and cannot use the reserved `root-` prefix.
-  Concrete deployment examples are Pi `root-c1f4fd9d2e6e6605388eaeeb95418119`
-  and DSH `root-41581a0c53fd362cccce411cd98ea6f7`. Switching backends
-  hides tasks belonging to other agents; switching back restores that backend's
-  original Root, task URLs, history, and resources. A reserved Root id cannot
-  bind to a different backend, and the obsolete literal `root` is not aliased.
+  opaque ACP session ID in an internal mapping. The binding's `agent_key` is
+  the configured agent id from `[agents.<id>]`; it is no longer derived from
+  the command's executable token. The workspace has exactly one Root task with
+  the literal id `root` and `parent_id = NULL`. Ordinary tasks use UUIDs;
+  ordinary creation/deletion/reaping/GC refuse the literal `root`.
 - ACP cancel is a notification rather than an acknowledgement. WebAgent keeps
   the prompt active until its prompt response supplies the terminal stop reason;
   timeout only marks the request unconfirmed.
@@ -50,7 +44,7 @@ ACP allows the client to inject extra capabilities into the agent on top of its 
 - Inbound ACP stdio messages are capped at 128 MiB (`MAX_ACP_MESSAGE_BYTES` in `src/bridge.ts`). SDK 1.7.0 defaults to 32 MiB, but WebAgent's default 50 MiB file-upload limit makes a larger read/tool result reachable: a measured 50 MiB text payload with 79-character lines plus newlines serializes as a 53,084,381-byte ACP update. The 128 MiB limit leaves room for ordinary JSON escaping and protocol fields while keeping a finite per-message bound. Larger local files or a user-configured upload limit above the 50 MiB default can still exceed it. An over-limit line aborts the ACP connection; the bridge then marks the agent disconnected rather than leaving a session that looks alive while every later prompt repeats the same raw error, so recovery is a restart.
 - The web UI does not expose native CLI command surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, or `/skills`
 - Autopilot mode is supported: permissions are auto-approved server-side using `allow_once`
-- Event handling is intentionally narrower than a native CLI client; only selected ACP updates are rendered/persisted, and the silent title-generation session suppresses normal UI events
+- Event handling is intentionally narrower than a native CLI client; only selected ACP updates are rendered/persisted. The silent-session mechanism serves compact summarization.
 - Model switching depends on the agent's ACP implementation and uses session config options: `configOptions` on the session response, `session/set_config_option`, and `config_option_update`. ACP defines grouped select choices and treats choice values as opaque strings. The application flattens grouped choices and uses group labels only to qualify display names. It defines a canonical model identity on top of ACP: it interprets a value as `provider/model-id` only when the value is a JSON-encoded two-string pair. Other opaque values remain their own identity; ACP does not supply a provider/model split for them.
 - ACP does not expose context window usage, token counts, or remaining capacity
 - No method to compact or clear session context; only option is to create a new session
@@ -203,7 +197,7 @@ SDKs offer deeper integration but come with their own costs:
 |                            | Vendor SDK                         | WebAgent (ACP)                  |
 | -------------------------- | ---------------------------------- | ------------------------------- |
 | Agent support              | Single vendor only                 | Any ACP-compatible agent        |
-| Multi-agent in one app     | Requires multiple SDK integrations | One protocol, swap `agent_cmd`  |
+| Multi-agent in one app     | Requires multiple SDK integrations | One protocol, add `[agents.<id>]` |
 | Setup effort               | Low (SDK manages CLI)              | Medium (manual CLI + config)    |
 | Context visibility/compact | Available (vendor-dependent)       | Not available (protocol gap)    |
 | Cost / token tracking      | Available                          | Not available                   |

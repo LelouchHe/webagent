@@ -279,7 +279,10 @@ describe("daemon", () => {
       // Write a minimal config so the daemon's pidfile resolves to
       // <tmpDir>/webagent.pid (data_dir = "." → resolved to tmpDir).
       cfgPath = join(tmpDir, "config.toml");
-      writeFileSync(cfgPath, 'data_dir = "."\n');
+      writeFileSync(
+        cfgPath,
+        'data_dir = "."\ndefault_agent = "node"\n[agents.node]\ncmd = "node"\n',
+      );
     });
 
     afterEach(async () => {

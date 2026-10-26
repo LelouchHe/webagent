@@ -919,9 +919,11 @@ export class TaskManager {
   /** Bind an ACP execution to the reserved Root record after bridge startup. */
   async ensureRootTask(bridge: SessionBridge): Promise<void> {
     const rootTaskId = this.store.rootTaskId;
-    this.store.assertRootTaskOwnership();
     const root = this.store.getTaskIncludingDeleted(rootTaskId);
-    if (!root || this.store.getAgentSessionId(rootTaskId)) return;
+    // Gate on the binding row, not its session id: a DB-only Root reset keeps
+    // an intentionally empty id as the lazy-materialization marker. Binding
+    // here would conflict with that row and discard the new ACP session.
+    if (!root || this.store.getAgentSessionBinding(rootTaskId)) return;
 
     const execution = this.buildMcpServerForExecution(rootTaskId, false);
     const created = await this.createAgentSession(
@@ -1099,9 +1101,51 @@ export class TaskManager {
       };
     }
 
-    // Restore via ACP
+    // Restore via ACP. A DB-only Root reset leaves an empty execution id:
+    // materialize a fresh ACP session instead of trying to load one the
+    // agent has never seen.
+    const existingSessionId = this.store.getAgentSessionId(taskId);
     this.restoringTasks.add(taskId);
     try {
+      if (!existingSessionId) {
+        const execution = this.buildMcpServerForExecution(taskId, false);
+        const created = await this.createAgentSession(
+          bridge,
+          taskId,
+          task.cwd,
+          this.buildNewTaskOptions(undefined, execution?.servers),
+          execution?.token,
+        );
+        try {
+          this.store.rotateAgentSession(taskId, created.sessionId, task.cwd);
+        } catch (error) {
+          bridge.discardUnboundSession?.(created.sessionId);
+          this.creatingTasks.delete(taskId);
+          if (execution?.token) this.capabilities?.revoke(execution.token);
+          throw error;
+        }
+        this.liveTasks.add(taskId);
+        this.creatingTasks.delete(taskId);
+        if (execution?.token) {
+          this.capabilities?.revokeOtherTokens(taskId, execution.token);
+        }
+        bridge.sessionMapped?.(created.sessionId);
+        const configOptions = await this.restoreTaskConfig(
+          bridge,
+          taskId,
+          created.configOptions,
+          task,
+        );
+        return {
+          type: "task_created",
+          rootTaskId: this.store.rootTaskId,
+          taskId,
+          cwd: task.cwd,
+          cwdDisplay: abbreviateHomePath(task.cwd),
+          title: task.title,
+          configOptions: this.applyStoredConfig(configOptions, task),
+        };
+      }
       // Mint a fresh capability for the restored task: any token from
       // before a restart is gone with the old process, and the task is
       // still live, so it gets an MCP server entry like a new task does.
@@ -1334,13 +1378,16 @@ export class TaskManager {
     return cleared;
   }
 
-  /** Reset Root's execution and delete its entire descendant tree. Root's
-   * stable row remains as the task-tree anchor; its own history and
-   * attachments are cleared. */
+  /**
+   * Reset Root's history and delete its entire descendant tree. Root's
+   * stable row remains as the task-tree anchor, and the reset is DB-only:
+   * the old execution is retired best-effort and a fresh ACP session is
+   * materialized lazily by the next prompt, so an offline reset succeeds
+   * without a bridge.
+   */
   async resetRootTask(
-    bridge: SessionBridge,
+    bridge?: SessionBridge,
   ): Promise<{ affected: TaskDelete[] }> {
-    this.store.assertRootTaskOwnership();
     const rootTaskId = this.store.rootTaskId;
     if (this.resettingTasks.has(rootTaskId)) {
       throw new Error("Root task is already being reset");
@@ -1394,19 +1441,23 @@ export class TaskManager {
         protectedIds.push(id);
         this.resettingTasks.add(id);
       }
-      await this.clearTask(bridge, rootTaskId);
       const result = this.store.resetRootTask();
+      if (result.retiredAgentSessionId) {
+        void bridge?.retireExecution?.(result.retiredAgentSessionId);
+      }
       for (const entry of result.affected) {
         if (entry.agentSessionId)
-          void bridge.retireExecution?.(entry.agentSessionId);
+          void bridge?.retireExecution?.(entry.agentSessionId);
         this.releaseTaskRuntime(entry.id, entry.mode);
       }
+      this.liveTasks.delete(rootTaskId);
+      this.resetTaskRuntime(rootTaskId);
       this.attachmentLabelCache.delete(rootTaskId);
       await rm(join(this.dataDir, "tasks", rootTaskId), {
         recursive: true,
         force: true,
       }).catch(() => {});
-      return result;
+      return { affected: result.affected };
     } finally {
       for (const id of protectedIds) this.resettingTasks.delete(id);
       release?.();

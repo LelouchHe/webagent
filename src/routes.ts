@@ -973,6 +973,8 @@ export function createRequestHandler(
       }
 
       // --- POST /api/v1/bridge/reload ---
+      // Targets the agent of `taskId` when supplied; otherwise every agent
+      // (one bridge today). The scope is "my side is stuck for this task".
       if (url === "/api/v1/bridge/reload" && req.method === "POST") {
         const bridge = getBridge?.();
         if (!bridge) {
@@ -980,6 +982,33 @@ export function createRequestHandler(
             error: "Agent not ready yet",
           });
           return;
+        }
+        let body: { taskId?: string } = {};
+        try {
+          const raw = await readBody(req);
+          if (raw) body = JSON.parse(raw) as { taskId?: string };
+        } catch {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+          return;
+        }
+        if (body.taskId !== undefined && typeof body.taskId !== "string") {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid taskId" });
+          return;
+        }
+        if (body.taskId) {
+          const owner = store.getTaskOwnerAgentKey(body.taskId);
+          if (!owner) {
+            json(res, HTTP_STATUS.CONFLICT, {
+              error: "Task has no agent to reload",
+            });
+            return;
+          }
+          if (owner !== (bridge as { agentId?: string }).agentId) {
+            json(res, HTTP_STATUS.CONFLICT, {
+              error: `Agent ${owner} is not available`,
+            });
+            return;
+          }
         }
         if (bridge.reloading) {
           json(res, HTTP_STATUS.CONFLICT, { error: "Already reloading" });
@@ -2437,14 +2466,16 @@ export function createRequestHandler(
           }
           try {
             if (taskId === store.rootTaskId) {
-              const bridge = getBridge?.();
-              if (!tasks || !bridge) {
+              if (!tasks) {
                 json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-                  error: "Agent not ready yet",
+                  error: "Task manager not available",
                 });
                 return;
               }
-              const result = await tasks.resetRootTask(bridge);
+              // DB-only: an unavailable agent must not block Root reset.
+              const result = await tasks.resetRootTask(
+                getBridge?.() ?? undefined,
+              );
               for (const entry of result.affected) {
                 sseManager.broadcast({
                   type: "task_deleted",

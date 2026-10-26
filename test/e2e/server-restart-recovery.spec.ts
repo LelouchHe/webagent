@@ -114,7 +114,9 @@ test("server restart restores the same task without duplicating history", async 
         `port = ${RESTART_PORT}`,
         `data_dir = "${dataDir}"`,
         `public_dir = "dist-dev"`,
-        `agent_cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"`,
+        `default_agent = "mock"`,
+        `[agents.mock]`,
+        `cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"`,
         "",
         "[limits]",
         "bash_output = 1_048_576",
@@ -188,7 +190,9 @@ test("server restart restores through ACP session/resume for a resume-only agent
         // Resume-only profile: advertises `session.resume`, does not advertise
         // `loadSession`, and rejects session/load so a load-preferring client
         // fails loudly rather than passing through the unadvertised method.
-        `agent_cmd = "node --experimental-strip-types test/e2e/mock-agent.ts resume-only ${callsPath}"`,
+        `default_agent = "mock"`,
+        `[agents.mock]`,
+        `cmd = "node --experimental-strip-types test/e2e/mock-agent.ts resume-only ${callsPath}"`,
         "",
         "[limits]",
         "bash_output = 1_048_576",

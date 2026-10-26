@@ -889,6 +889,7 @@ describe("POST /api/v1/bridge/reload", () => {
     store = new Store(tmpDir, "test-agent");
     broadcastEvents = [];
     mockBridge = {
+      agentId: "test-agent",
       reloading: false,
       restart: async () => {},
       newSession: async () => ({ sessionId: "s1", configOptions: [] }),
@@ -949,6 +950,60 @@ describe("POST /api/v1/bridge/reload", () => {
     assert.equal(res.status, 500);
     const body = JSON.parse(res.body);
     assert.ok(body.error.includes("agent crashed"));
+  });
+
+  it("reloads the agent of the requested task", async () => {
+    store.createTask("task-a", tmpDir, "auto", "session-a");
+    let restartCalled = false;
+    mockBridge.restart = async () => {
+      restartCalled = true;
+    };
+
+    const res = await makeRequest(
+      port,
+      "POST",
+      "/api/v1/bridge/reload",
+      JSON.stringify({ taskId: "task-a" }),
+    );
+    assert.equal(res.status, 200);
+    assert.ok(restartCalled);
+  });
+
+  it("refuses to reload another agent's task", async () => {
+    const other = new Store(tmpDir, "retired-agent");
+    other.createTask("retired-task", tmpDir, "auto", "session-retired");
+    other.close();
+    let restartCalled = false;
+    mockBridge.restart = async () => {
+      restartCalled = true;
+    };
+
+    const res = await makeRequest(
+      port,
+      "POST",
+      "/api/v1/bridge/reload",
+      JSON.stringify({ taskId: "retired-task" }),
+    );
+    assert.equal(res.status, 409);
+    assert.match(JSON.parse(res.body).error, /retired-agent.*not available/);
+    assert.equal(restartCalled, false);
+  });
+
+  it("refuses to reload a task with no agent", async () => {
+    store["db"]
+      .prepare(
+        "INSERT INTO tasks (id, cwd, source, created_at, last_active_at) VALUES (?, ?, 'auto', ?, ?)",
+      )
+      .run("unbound-task", tmpDir, Date.now(), Date.now());
+
+    const res = await makeRequest(
+      port,
+      "POST",
+      "/api/v1/bridge/reload",
+      JSON.stringify({ taskId: "unbound-task" }),
+    );
+    assert.equal(res.status, 409);
+    assert.match(JSON.parse(res.body).error, /no agent/);
   });
 
   it("returns 409 when already reloading", async () => {

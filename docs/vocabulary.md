@@ -30,9 +30,8 @@ session (execution layer, internal)
 ```
 
 - `task` never disappears because of `clear`, execution rotation, or server
-  restart. Each configured backend has its own reserved Root task, with id
-  `root-` + the first 32 lowercase hex characters of SHA-256 over its
-  `agent_key`. Only the current backend's exact Root id is hashless.
+  restart. The workspace has exactly one reserved Root task, with the literal
+  id `root` and `parent_id = NULL`. That id is hashless in the URL.
 - `session` is an implementation detail. It is never user-visible and never
   leaks into product vocabulary, UI copy, or the public API naming.
 
@@ -49,14 +48,14 @@ The historical term "WebAgent Session" is **obsolete**; it means `task`.
 | DB | attachment lineage | `attachments.session_id` | `attachments.task_id` |
 | DB | share tokens | `shares.session_id` | `shares.task_id` |
 | DB | compact handoff | `sessions.pending_compact_summary` (column on `sessions`) | column stays on `tasks` |
-| DB | execution binding | `agent_sessions.web_session_id` | `agent_sessions.task_id` (still references `tasks(id)`; `NULL` = no product entity, e.g. title generation) |
+| DB | execution binding | `agent_sessions.web_session_id` | `agent_sessions.task_id` (still references `tasks(id)`; `NULL` = no product entity) |
 | REST | API | `/api/v1/sessions` family | `/api/v1/tasks` family |
 | SSE | product events | `session_created`, `session_deleted`, `session_busy`, `session_expired`, `session_title_updated`, `session_not_found`, `session_manager_unavailable` | `task_*` equivalents |
 | SSE | payload field | payload `session_id` identifying the product entity | `task_id` |
 | Frontend | URL hash | `#<task-id>` (current backend Root: no hash) | unchanged — the hash carries only the id, so bookmarks and deep links survive |
 | Frontend | modules | `session-actions.ts`, `session-navigation.ts`, `session-state.ts`, `sessions-anchor.ts` | `task-actions.ts`, `task-navigation.ts`, `task-state.ts`, `tasks-anchor.ts` |
 | Backend | module | `src/session-manager.ts` | `src/task-manager.ts` (class `SessionManager` → `TaskManager`) |
-| Backend | identifiers | `clearSession`, `loadSession`, `deleteEmptySessions`, `session title generation` | `clearTask`, `loadTask`, `deleteEmptyTasks`, `task title generation` |
+| Backend | identifiers | `clearSession`, `loadSession`, `deleteEmptySessions`, `session title generation` | `clearTask`, `loadTask`, `deleteEmptyTasks`, `silent compact summary` |
 | Commands | slash menu | `/new /switch /rename /exit /clear /compact` | unchanged (no `session` in the words); help copy says "task" |
 | MCP | control plane | `task_*` | `task_list`, `task_query`, `task_read`, `task_cancel`, `task_create`, `task_send`, `task_update` |
 | Docs | product prose | "session", "WebAgent Session", "conversation" | **task** |
@@ -140,21 +139,19 @@ or *settlement* for this mechanism.
 The rename is a mechanical-but-wide refactor (DB → backend → frontend →
 docs → tests). When executing it:
 
-- Per-backend Root identity is an intentional pre-1.0 incompatible change.
-  The required purge/rename/rehearsal for an existing shared literal `root`
-  row is a separate operational follow-up, not startup compatibility code. A
-  fresh database allocates a derived Root per backend; old literal `root`
-  links are not aliased.
+- The single literal `root` Root is an intentional pre-1.0 incompatible
+  change. A pre-multi-agent database is refused at startup. There is no
+  automatic or in-place conversion: back up the data directory, then
+  explicitly re-initialize it by removing the old database and restarting.
+  Startup never rewrites an old database in place.
 - The REST and SSE rename is a hard break with **no alias** (pre-1.0; the
   frontend and API move together). Route docs are validated by
   `test/doc-coverage.test.ts`, so `docs/api.md` must move in the same
   commit as `src/routes.ts`.
-- URL hashes stay `#<task-id>` / hashless current-backend Root. Root identity is
-  delivered by detail/create/clear/reset/bootstrap/SSE/config payloads; clients
-  compare against the exact canonical id, never a `root-` prefix. The task list
-  stays an agent-scoped array, so a visible reserved prefix identifies its
-  single Root only when current-connection authority is unavailable. Old `#root`
-  and foreign derived Root ids are not aliases.
+- URL hashes stay `#<task-id>` / hashless Root. Root identity is delivered by
+  detail/create/clear/reset/bootstrap/SSE/config payloads; clients compare
+  against the literal id `root`, never a prefix. `#root` is a normal deep link
+  to that task.
 - Sweep: `docs/schema.md`, `docs/api.md`, `docs/share.md`, `docs/features.md`,
   `docs/client-architecture.md`, `docs/performance.md`, `README.md`,
   `CLAUDE.md`, `TEST_SCENARIOS.md`, and the unit/e2e suites.

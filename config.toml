@@ -22,14 +22,21 @@ data_dir = "data"
 # Static assets directory (default: "dist")
 public_dir = "dist"
 
-# ACP agent command (binary + args, space-separated).
-# Default "auto" scans PATH for known ACP-ready agents (in priority order):
-#   copilot, gemini, opencode, claude-agent-acp, codex-acp, qwen
-# Set explicitly to override:
-#   agent_cmd = "claude-agent-acp"
-#   agent_cmd = "codex-acp"
-#   agent_cmd = "gemini --acp"
-agent_cmd = "auto"
+# Configured ACP agents. The table key is the agent id (also its display
+# name): lowercase letters, digits, and dashes, starting with a letter/digit.
+# `cmd` is split on whitespace (paths containing spaces are not supported).
+#
+# `default_agent` is required and must name one of the [agents.<id>] tables.
+# It decides the initial agent for a brand-new workspace and for Root rebuild;
+# it is not a "current agent" for existing tasks.
+default_agent = "copilot"
+
+[agents.copilot]
+cmd = "copilot --acp"
+
+# Add more agents by adding tables:
+# [agents.opencode]
+# cmd = "opencode acp"
 
 [limits]
 # Max bash output stored in DB per command (bytes, default 1 MB)

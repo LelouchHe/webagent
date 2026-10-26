@@ -10,7 +10,7 @@ The web UI is a thin wrapper: the browser client stays small because the substan
 ## Highlights
 
 - **Task-first, thin client** — the browser is a thin wrapper over a server that treats the Task as the durable unit of work: `+api-fix` creates a named child Task, `@api-fix` opens it or sends it a message, and each Task keeps its history, working directory, and place in the tree while its agent session can be resumed, rotated, or replaced.
-- **Zero-config first run** — `npx @lelouchhe/webagent` and you're online. Auto-detects the ACP agent on your `PATH`, mints an admin token on first start, persists everything in `./data/`.
+- **One file to configure** — `webagent config init` writes a TOML with one `[agents.<id>]` table and a `default_agent`; `webagent --config config.toml` then starts on port 6800, mints an admin token on first start, and persists everything in `./data/`.
 - **Task-oriented API** — everything the UI does is a documented REST + SSE API: `POST /api/v1/tasks` creates a Task with a parent, title, cwd, and inherited model/mode, and every Task exposes its own event stream. Script it from CI or a cron job, or build your own client. See [Server API](docs/api.md).
 - **Direct Task tools for agents (MCP)** — when the agent supports MCP, WebAgent injects a scoped `webagent` MCP server into its session, so the agent itself gets `task_create`, `task_send`, `task_update`, bounded history lookup, and child cancellation. It creates and coordinates child Tasks on its own instead of asking you to relay. See [Task MCP Control Plane](docs/task-mcp.md).
 - **Multi-device, real-time** — REST + SSE keeps Tasks, permissions, collaboration messages, and bash output synced. Approve a permission on your laptop, see it confirmed on your phone.
@@ -79,10 +79,14 @@ See [Features](docs/features.md) for the full tour.
 **Prerequisites:** Node.js 22.6+, an ACP-compatible agent installed and authenticated (Copilot CLI, Claude Code adapter, Gemini CLI, etc.).
 
 ```bash
-npx @lelouchhe/webagent      # zero-install, runs on port 6800
-# — or —
-npm install -g @lelouchhe/webagent && webagent
+npm install -g @lelouchhe/webagent
+webagent config init                  # writes ./config.toml with one [agents.<id>] table
+# edit it: set `cmd` to your ACP CLI, e.g. cmd = "copilot --acp"
+webagent --config config.toml         # runs on port 6800
 ```
+
+A config file is required: it names the agent (or agents) to launch and which
+one is the default. Every other setting has a default.
 
 On first run, the server prints a one-time admin token in the startup
 diagnostic. Open `http://localhost:6800`, paste the token into the
@@ -92,8 +96,7 @@ runs skip the prompt.
 Other ways to start:
 
 ```bash
-webagent start                               # background daemon (same first-run UX in your terminal)
-webagent --config /path/to/config.toml       # custom config (`webagent config init` to scaffold one)
+webagent start --config config.toml          # background daemon (same first-run UX in your terminal)
 webagent --create-token laptop               # mint extra tokens for other devices / CI
 ```
 

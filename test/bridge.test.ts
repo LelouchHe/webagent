@@ -986,8 +986,9 @@ describe("AgentBridge", () => {
 
       await bridge.restart(tasks as any);
 
-      // Should have emitted agent_reloading first
+      // Should have emitted agent_reloading first, scoped to this bridge.
       assert.equal(events[0].type, "agent_reloading");
+      assert.equal(events[0].agentId, "default");
 
       // State should be cleaned
       assert.equal(tasks.liveTasks.size, 0, "liveTasks should be cleared");
@@ -1154,6 +1155,7 @@ describe("AgentBridge", () => {
           (e: any) => e.type === "agent_reloading_failed",
         );
         assert.ok(failEvent, "should emit agent_reloading_failed");
+        assert.equal(failEvent.agentId, "default");
         assert.equal(failEvent.error, "broken");
         assert.equal(
           bridge.reloading,

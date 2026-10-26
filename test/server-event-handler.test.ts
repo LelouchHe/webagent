@@ -886,7 +886,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("keeps queued collaboration blocked by an active ACP prompt", async () => {
-    store.createTask("root", "/tmp", "root", "agent-root");
+    store.bindAgentSession(store.ensureRootTask("/tmp").id, "agent-root");
     store.createTask("source", "/tmp", "agent", "agent-source", "root");
     store.createTask("target", "/tmp", "agent", "agent-target", "root");
     tasks.liveTasks.add("target");
@@ -1252,7 +1252,7 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "agent_disconnected" } as any,
+      { type: "agent_disconnected", agentId: "test-agent" } as any,
       tasks,
       store,
       bridge,
@@ -1437,7 +1437,7 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "agent_disconnected" },
+      { type: "agent_disconnected", agentId: "test-agent" },
       tasks,
       store,
       bridge,
@@ -1454,7 +1454,7 @@ describe("handleAgentEvent", () => {
         revision: 2,
         commands: [],
       },
-      { type: "agent_disconnected" },
+      { type: "agent_disconnected", agentId: "test-agent" },
     ]);
   });
 

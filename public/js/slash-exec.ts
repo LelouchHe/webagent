@@ -364,7 +364,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     case "/reload": {
       addSystem("Reloading agent…");
       api
-        .reloadAgent()
+        .reloadAgent(state.taskId ?? undefined)
         .then(() => {
           // connected event from bridge will signal completion
         })

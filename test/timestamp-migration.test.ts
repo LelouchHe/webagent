@@ -271,6 +271,9 @@ function createHistoricalDatabase(dir: string): SchemaRow[] {
 function seedLegacyRows(db: Database.Database): void {
   db.prepare(
     "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
+  ).run("root", "/x", NO_MS, MS);
+  db.prepare(
+    "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
   ).run("t1", "/x", NO_MS, MS);
   db.prepare(
     "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
@@ -312,6 +315,9 @@ function seedLegacyRows(db: Database.Database): void {
 
 /** Multiple rows per converted table, so a dropped row cannot pass. */
 function seedManyLegacyRows(db: Database.Database): void {
+  db.prepare(
+    "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
+  ).run("root", "/x", NO_MS, MS);
   for (let i = 1; i <= 3; i += 1) {
     db.prepare(
       "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
@@ -361,6 +367,9 @@ function seedManyLegacyRows(db: Database.Database): void {
 }
 
 function dbPrepareTask(db: Database.Database, id: string): void {
+  db.prepare(
+    "INSERT OR IGNORE INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
+  ).run("root", "/x", NO_MS, MS);
   db.prepare(
     "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
   ).run(id, "/x", NO_MS, MS);
@@ -461,8 +470,8 @@ describe("timestamp millis migration", () => {
       assert.ok(count > 0, `${table} must be seeded (got ${count})`);
     }
     assert.equal(preCounts.events, 6);
-    assert.equal(preCounts.tasks, 3);
-    assert.equal(preSamples.length, 27);
+    assert.equal(preCounts.tasks, 4);
+    assert.equal(preSamples.length, 29);
     assert.ok(preSamples.every((sample) => typeof sample.value === "string"));
 
     const store = new Store(dir, AGENT);
@@ -552,6 +561,11 @@ describe("timestamp millis migration", () => {
       .prepare(
         "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
       )
+      .run("root", "/x", NO_MS, MS);
+    legacy
+      .prepare(
+        "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
+      )
       .run("legacy-task", "/legacy", NO_MS, MS);
     legacy
       .prepare(
@@ -586,7 +600,7 @@ describe("timestamp millis migration", () => {
     migrated.close();
 
     // Per-(agent_key, task_id) uniqueness remains in force for ordinary task
-    // ids; reserved Root ids have an additional ownership check in Store.
+    // ids; the single Root has no per-agent ownership check.
     const other = new Store(dir, "other-agent");
     other.bindAgentSession("legacy-task", "sess-other");
     assert.equal(other.getAgentSessionId("legacy-task"), "sess-other");
@@ -679,6 +693,11 @@ describe("timestamp millis migration", () => {
     const dir = tempDir();
     const freshSchema = createHistoricalDatabase(dir);
     const legacy = new Database(dbPath(dir));
+    legacy
+      .prepare(
+        "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",
+      )
+      .run("root", "/root", NO_MS, MS);
     legacy
       .prepare(
         "INSERT INTO tasks (id, cwd, created_at, last_active_at) VALUES (?, ?, ?, ?)",

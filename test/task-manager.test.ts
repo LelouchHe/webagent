@@ -274,7 +274,7 @@ describe("TaskManager", () => {
     });
 
     it("purges obligation records when a task is released", async () => {
-      store.createTask("root", tmpDir, "root", "agent-root");
+      store.bindAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
       store.createTask("source", tmpDir, "agent", "agent-source", "root");
       store.createTask("target", tmpDir, "agent", "agent-target", "source");
       store.createCollaborationMessage({
@@ -1098,28 +1098,17 @@ describe("TaskManager", () => {
         [store.rootTaskId],
       );
     });
-  });
 
-  describe("per-backend Root reset safety", () => {
-    it("rejects a SQL-injected foreign Root binding before mutation or bridge calls", async () => {
+    it("skips the lazy empty binding at startup and materializes on resume", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
-      store.saveEvent(
-        rootId,
-        "user_message",
-        { text: "must survive" },
-        { from_ref: "user" },
-      );
-      store["db"]
-        .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .run("foreign-agent", "foreign-root-session", rootId, Date.now());
-      let bridgeCalls = 0;
+      store.bindAgentSession(rootId, "agent-old");
+      store.resetRootTask();
+
+      let newSessionCalls = 0;
       const bridge = {
         async newSession() {
-          bridgeCalls++;
-          return { sessionId: "agent-root-new", configOptions: [] };
+          newSessionCalls++;
+          return { sessionId: "agent-materialized", configOptions: [] };
         },
         async setConfigOption() {
           return [];
@@ -1129,31 +1118,177 @@ describe("TaskManager", () => {
         },
       };
 
-      await assert.rejects(
-        () => sm.resetRootTask(bridge),
-        /ownership mismatch/,
+      // Startup sees the binding row (empty session id = "materialize
+      // lazily"). It must not create a session and then collide with that
+      // row; the first resume owns materialization.
+      await sm.ensureRootTask(bridge);
+      assert.equal(newSessionCalls, 0);
+      assert.ok(store.getAgentSessionBinding(rootId));
+      assert.equal(store.getAgentSessionId(rootId), "");
+
+      await sm.ensureResumed(bridge, rootId);
+      assert.equal(newSessionCalls, 1);
+      assert.equal(store.getAgentSessionId(rootId), "agent-materialized");
+      assert.ok(sm.liveTasks.has(rootId));
+    });
+
+    it("restores saved config when lazily materializing a DB-only reset", async () => {
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.bindAgentSession(rootId, "agent-old");
+      store.resetRootTask();
+      store.updateTaskConfig(rootId, "model", "saved-model");
+      store.updateTaskConfig(rootId, "mode", "saved-mode");
+      store.updateTaskConfig(rootId, "reasoning_effort", "high");
+
+      const setCalls: Array<{ taskId: string; id: string; value: string }> = [];
+      const freshConfig: ConfigOption[] = [
+        {
+          type: "select",
+          id: "model",
+          name: "Model",
+          currentValue: "default-model",
+          options: [
+            { value: "default-model", name: "Default" },
+            { value: "saved-model", name: "Saved" },
+          ],
+        },
+        {
+          type: "select",
+          id: "mode",
+          name: "Mode",
+          currentValue: "agent",
+          options: [
+            { value: "agent", name: "Agent" },
+            { value: "saved-mode", name: "Saved mode" },
+          ],
+        },
+        {
+          type: "select",
+          id: "reasoning_effort",
+          name: "Thinking",
+          currentValue: "low",
+          options: [
+            { value: "low", name: "Low" },
+            { value: "high", name: "High" },
+          ],
+        },
+      ];
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-fresh", configOptions: freshConfig };
+        },
+        async setConfigOption(taskId: string, id: string, value: string) {
+          setCalls.push({ taskId, id, value });
+          return freshConfig.map((option) =>
+            option.id === id ? { ...option, currentValue: value } : option,
+          ) as ConfigOption[];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      const result = (await sm.resumeTask(bridge, rootId)) as {
+        configOptions: ConfigOption[];
+      };
+
+      assert.deepEqual(setCalls, [
+        { taskId: rootId, id: "mode", value: "saved-mode" },
+        { taskId: rootId, id: "reasoning_effort", value: "high" },
+        { taskId: rootId, id: "model", value: "saved-model" },
+      ]);
+      const row = store.getTask(rootId)!;
+      assert.equal(row.model, "saved-model");
+      assert.equal(row.mode, "saved-mode");
+      assert.equal(row.reasoning_effort, "high");
+      assert.deepEqual(
+        result.configOptions.map((option) => ({
+          id: option.id,
+          currentValue: option.currentValue,
+        })),
+        [
+          { id: "model", currentValue: "saved-model" },
+          { id: "mode", currentValue: "saved-mode" },
+          { id: "reasoning_effort", currentValue: "high" },
+        ],
       );
-      assert.equal(bridgeCalls, 0);
-      assert.equal(store.getAgentSessionId(rootId), "agent-root");
-      assert.equal(store.getEvents(rootId).length, 1);
+    });
+  });
+
+  describe("Root reset without a live execution", () => {
+    it("resets DB-only, never creates a replacement execution, and retires the old one", async () => {
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.bindAgentSession(rootId, "agent-root");
+      store.saveEvent(
+        rootId,
+        "user_message",
+        { text: "clear me" },
+        { from_ref: "user" },
+      );
+      let newSessionCalls = 0;
+      const retired: string[] = [];
+      const bridge = {
+        async newSession() {
+          newSessionCalls++;
+          return { sessionId: "agent-root-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+        async retireExecution(sessionId: string) {
+          retired.push(sessionId);
+        },
+      };
+
+      await sm.resetRootTask(bridge);
+
+      assert.equal(newSessionCalls, 0);
+      assert.deepEqual(retired, ["agent-root"]);
+      assert.equal(store.getEvents(rootId).length, 0);
+      assert.equal(store.getAgentSessionId(rootId), "");
+      assert.equal(store.getTaskIncludingDeleted(rootId)?.parent_id, null);
       assert.equal(store.getTaskIncludingDeleted(rootId)?.cwd, tmpDir);
     });
 
-    it("keeps another backend's runtime, disk files, and attachment cache during reset", async () => {
-      const rootA = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootA, "agent-root-a");
+    it("succeeds offline with no bridge", async () => {
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.createTask("child", tmpDir, "auto", "agent-child", rootId);
+      store.saveEvent(
+        rootId,
+        "user_message",
+        { text: "clear me" },
+        { from_ref: "user" },
+      );
+
+      const result = await sm.resetRootTask();
+
+      assert.deepEqual(
+        result.affected.map((entry) => entry.id),
+        ["child"],
+      );
+      assert.equal(store.getEvents(rootId).length, 0);
+      assert.equal(store.getTaskIncludingDeleted("child"), undefined);
+      assert.equal(store.getAgentSessionId(rootId), "");
+    });
+
+    it("keeps another agent's descendant, disk files, and attachment cache", async () => {
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.bindAgentSession(rootId, "agent-root");
+      store.createTask("a-task", tmpDir, "auto", "agent-a", rootId);
       const b = new Store(tmpDir, "backend-b");
-      const rootB = b.ensureRootTask(tmpDir).id;
-      b.bindAgentSession(rootB, "agent-root-b");
+      b.createTask("b-child", tmpDir, "auto", "agent-b", rootId);
       b.saveEvent(
-        rootB,
+        "b-child",
         "user_message",
         { text: "B history" },
         { from_ref: "user" },
       );
       b.insertAttachment({
         id: "b-attachment",
-        taskId: rootB,
+        taskId: "b-child",
         kind: "file",
         name: "B.txt",
         mime: "text/plain",
@@ -1162,18 +1297,17 @@ describe("TaskManager", () => {
       });
       b.close();
 
-      const rootAPath = join(tmpDir, "tasks", rootA);
-      const rootBPath = join(tmpDir, "tasks", rootB);
-      mkdirSync(rootAPath, { recursive: true });
-      mkdirSync(rootBPath, { recursive: true });
-      writeFileSync(join(rootAPath, "a.txt"), "A");
-      writeFileSync(join(rootBPath, "b.txt"), "B");
-      const bLabels = sm.getLabelMap(rootB);
-      sm.liveTasks.add(rootA);
-      sm.liveTasks.add(rootB);
+      const rootPath = join(tmpDir, "tasks", rootId);
+      const childPath = join(tmpDir, "tasks", "b-child");
+      mkdirSync(rootPath, { recursive: true });
+      mkdirSync(childPath, { recursive: true });
+      writeFileSync(join(rootPath, "root.txt"), "root");
+      writeFileSync(join(childPath, "b.txt"), "B");
+      const childLabels = sm.getLabelMap("b-child");
+      sm.liveTasks.add("b-child");
       const bridge = {
         async newSession() {
-          return { sessionId: "agent-root-a-new", configOptions: [] };
+          throw new Error("reset must not create a replacement execution");
         },
         async setConfigOption() {
           return [];
@@ -1185,15 +1319,19 @@ describe("TaskManager", () => {
 
       await sm.resetRootTask(bridge);
 
-      assert.equal(existsSync(rootAPath), false);
-      assert.equal(existsSync(join(rootBPath, "b.txt")), true);
-      assert.equal(sm.liveTasks.has(rootB), true);
-      assert.equal(sm.getLabelMap(rootB), bLabels);
-      assert.equal(store.getEvents(rootB).length, 1);
+      assert.equal(existsSync(rootPath), false);
+      assert.equal(existsSync(join(childPath, "b.txt")), true);
+      assert.equal(sm.liveTasks.has("b-child"), true);
+      assert.equal(sm.getLabelMap("b-child"), childLabels);
+      assert.equal(store.getTaskIncludingDeleted("a-task"), undefined);
+      assert.equal(store.getEvents("b-child").length, 1);
       assert.equal(
-        store.getAttachment(rootB, "b-attachment")?.realpath,
+        store.getAttachment("b-child", "b-attachment")?.realpath,
         "/tmp/B.txt",
       );
+      const check = new Store(tmpDir, "backend-b");
+      assert.equal(check.getTask("b-child")?.parent_id, rootId);
+      check.close();
     });
   });
 
@@ -1385,22 +1523,14 @@ describe("TaskManager", () => {
       store.bindAgentSession(rootId, "agent-root");
       sm.liveTasks.add(rootId);
 
-      let releaseRotation!: () => void;
-      const rotationReleased = new Promise<void>((resolve) => {
-        releaseRotation = resolve;
-      });
-      let resetStarted!: () => void;
-      const resetStartedPromise = new Promise<void>((resolve) => {
-        resetStarted = resolve;
+      const releaseRoot = await sm["treeLock"].acquire({
+        shared: [],
+        exclusive: [rootId],
       });
       let newSessionCalls = 0;
       const bridge = {
         async newSession() {
           newSessionCalls++;
-          if (newSessionCalls === 1) {
-            resetStarted();
-            await rotationReleased;
-          }
           return {
             sessionId: `agent-${newSessionCalls}`,
             configOptions: [],
@@ -1415,20 +1545,23 @@ describe("TaskManager", () => {
       };
 
       const reset = sm.resetRootTask(bridge);
-      await resetStartedPromise;
       const create = sm.createTask(bridge, tmpDir, undefined, "auto", {
         parentId: rootId,
       });
       await new Promise<void>((resolve) => setImmediate(resolve));
       assert.equal(
         newSessionCalls,
-        1,
+        0,
         "creation must wait behind the exclusive Root reset lock",
       );
 
-      releaseRotation();
+      releaseRoot();
       await reset;
+      assert.equal(store.getAgentSessionId(rootId), "");
+      assert.equal(store.getTaskIncludingDeleted(rootId)?.parent_id, null);
+
       const created = await create;
+      assert.equal(newSessionCalls, 1);
       assert.equal(store.getTask(created.taskId)?.parent_id, rootId);
       assert.ok(store.getTask(created.taskId));
     });
@@ -1566,7 +1699,7 @@ describe("TaskManager", () => {
     });
 
     it("recovers a delivery after a pending prompt is cancelled", async () => {
-      store.createTask("root", tmpDir, "root", "agent-root");
+      store.bindAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
       store.createTask("source", tmpDir, "agent", "agent-source", "root");
       store.createTask("target", tmpDir, "agent", "agent-target", "root");
       sm.liveTasks.add("target");
@@ -1609,7 +1742,7 @@ describe("TaskManager", () => {
     });
 
     it("bounds the delivery drain to one per idle transition", async () => {
-      store.createTask("root", tmpDir, "root", "agent-root");
+      store.bindAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
       store.createTask("source", tmpDir, "agent", "agent-source", "root");
       store.createTask("child", tmpDir, "agent", "agent-child", "root");
       sm.liveTasks.add("child");

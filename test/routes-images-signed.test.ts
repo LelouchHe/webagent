@@ -186,14 +186,12 @@ describe("image signed URLs", () => {
     const eventData = JSON.parse(payload.events.at(-1)!.data) as {
       imageUrl: string;
     };
-    assert.match(
-      eventData.imageUrl,
-      new RegExp(
-        `/api/v1/tasks/${rootId}/attachments/history\\.png\\?exp=\\d+&sig=[a-f0-9]+`,
-      ),
-    );
-    assert.equal(eventData.imageUrl.includes("/api/v1/tasks/root/"), false);
     const parsed = new URL(eventData.imageUrl, "http://localhost");
+    assert.equal(
+      parsed.pathname,
+      `/api/v1/tasks/${rootId}/attachments/history.png`,
+    );
+    assert.match(parsed.search, /^\?exp=\d+&sig=[a-f0-9]+$/);
     assert.equal(
       verifyAttachmentSig(
         parsed.pathname,

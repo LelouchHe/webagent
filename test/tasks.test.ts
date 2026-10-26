@@ -490,7 +490,7 @@ describe("Task REST API", () => {
       const check = new Store(tmpDir, "other-agent");
       assert.equal(check.getEvents("foreign-parent").length, 0);
       const taskCount = check["db"]
-        .prepare("SELECT COUNT(*) AS n FROM tasks")
+        .prepare("SELECT COUNT(*) AS n FROM tasks WHERE id != 'root'")
         .get() as { n: number };
       assert.equal(taskCount.n, 1);
       check.close();
@@ -778,9 +778,10 @@ describe("Task REST API", () => {
     });
 
     it("recovers a delivery queued during successful compaction", async () => {
-      store.createTask("root", tmpDir, "root", "agent-root");
-      store.createTask("source", tmpDir, "agent", "agent-source", "root");
-      store.createTask("s1", tmpDir, "agent", "agent-old", "root");
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.bindAgentSession(rootId, "agent-root");
+      store.createTask("source", tmpDir, "agent", "agent-source", rootId);
+      store.createTask("s1", tmpDir, "agent", "agent-old", rootId);
       store.updateTaskConfig("s1", "mode", "agent");
       tasks.liveTasks.add("s1");
 
@@ -899,16 +900,23 @@ describe("Task REST API", () => {
       assert.ok(Array.isArray(body.configOptions));
     });
 
-    it("returns 404 for unknown, obsolete, and foreign reserved ids", async () => {
-      for (const id of ["nonexistent", "root", "root-foreign-derived-id"]) {
+    it("resolves the literal `root` and 404s unknown/legacy ids", async () => {
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.bindAgentSession(rootId, "agent-root");
+      const rootRes = await makeRequest(port, "GET", `/api/v1/tasks/${rootId}`);
+      assert.equal(rootRes.status, 200);
+      assert.equal(JSON.parse(rootRes.body).id, "root");
+
+      for (const id of ["nonexistent", "root-foreign-derived-id"]) {
         const res = await makeRequest(port, "GET", `/api/v1/tasks/${id}`);
-        assert.equal(res.status, 404, `${id} must not alias the current Root`);
+        assert.equal(res.status, 404, `${id} must not alias the Root`);
       }
     });
 
     it("returns a task's parent relationship", async () => {
-      store.createTask("root", tmpDir, "root", "agent-root");
-      store.createTask("child", tmpDir, "auto", "agent-child", "root");
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.bindAgentSession(rootId, "agent-root");
+      store.createTask("child", tmpDir, "auto", "agent-child", rootId);
 
       const res = await makeRequest(port, "GET", "/api/v1/tasks/child");
 
@@ -996,7 +1004,7 @@ describe("Task REST API", () => {
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), {
         taskId: id,
-        parentId: null,
+        parentId: "root",
         reset: false,
       });
 
@@ -1083,6 +1091,51 @@ describe("Task REST API", () => {
       assert.ok(mockBridge.retireCalls.includes("agent-child"));
     });
 
+    it("resets Root through the task route with no bridge (offline)", async () => {
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.bindAgentSession(rootId, "agent-root");
+      store.createTask("child", tmpDir, "auto", "agent-child", rootId);
+      store.saveEvent(
+        rootId,
+        "user_message",
+        { text: "old root" },
+        { from_ref: "user" },
+      );
+      const handler = createRequestHandler({
+        store,
+        tasks,
+        getBridge: () => null,
+        publicDir,
+        dataDir: tmpDir,
+        limits: { bash_output: 1024, image_upload: 1024 },
+        sseManager: { broadcast: () => {} } as any,
+      });
+      const offline = http.createServer(handler);
+      await new Promise<void>((resolve) =>
+        offline.listen(0, "127.0.0.1", resolve),
+      );
+      const offlinePort = (offline.address() as { port: number }).port;
+      try {
+        const res = await makeRequest(
+          offlinePort,
+          "DELETE",
+          `/api/v1/tasks/${rootId}`,
+        );
+        assert.equal(res.status, 200);
+        assert.equal(JSON.parse(res.body).reset, true);
+      } finally {
+        await new Promise<void>((resolve) =>
+          offline.close(() => {
+            resolve();
+          }),
+        );
+      }
+      assert.equal(store.getEvents(rootId).length, 0);
+      assert.equal(store.getTaskIncludingDeleted("child"), undefined);
+      assert.equal(store.getAgentSessionId(rootId), "");
+      assert.equal(store.getTask(rootId)?.parent_id, null);
+    });
+
     it("cascades to descendant tasks and broadcasts task_deleted per id", async () => {
       store.createTask("parent", tmpDir, "auto", "agent-parent");
       store.createTask("child", tmpDir, "auto", "agent-child", "parent");
@@ -1107,7 +1160,7 @@ describe("Task REST API", () => {
       ]);
       assert.deepEqual(JSON.parse(res.body), {
         taskId: "parent",
-        parentId: null,
+        parentId: "root",
         reset: false,
       });
       assert.ok(!tasks.liveTasks.has("child"));

@@ -12,18 +12,25 @@ import {
   writeFileSync,
   existsSync,
   readFileSync,
+  readdirSync,
+  chmodSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import Database from "better-sqlite3";
 
 import { runStartupChecks } from "../src/startup-checks.ts";
 import { AuthStore } from "../src/auth-store.ts";
+import {
+  checkAgentAvailability,
+  formatAvailabilityWarnings,
+} from "../src/agent-availability.ts";
+import { LegacyDatabaseError } from "../src/legacy-database.ts";
 
 interface TestConfig {
   port: number;
   host: string;
   data_dir: string;
-  agent_cmd: string;
   auth: { first_run_bootstrap: boolean };
 }
 
@@ -96,30 +103,103 @@ describe("startup-checks", () => {
       port: 0,
       host: "127.0.0.1",
       data_dir: dir,
-      agent_cmd: "node",
       auth: { first_run_bootstrap: true },
       ...overrides,
     };
   }
 
+  function makeLegacyDb(dir: string): void {
+    const db = new Database(join(dir, "webagent.db"));
+    try {
+      db.exec(`
+        CREATE TABLE tasks (
+          id TEXT PRIMARY KEY,
+          cwd TEXT NOT NULL,
+          title TEXT,
+          parent_id TEXT,
+          deleted_at INTEGER
+        );
+        CREATE TABLE agent_sessions (
+          agent_key TEXT NOT NULL,
+          agent_session_id TEXT NOT NULL,
+          task_id TEXT,
+          created_at INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (agent_key, agent_session_id)
+        );
+      `);
+      db.prepare(
+        "INSERT INTO tasks (id, cwd, title, parent_id, deleted_at) VALUES (?, ?, ?, NULL, NULL)",
+      ).run("root-0123456789abcdef0123456789abcdef", "/tmp/legacy", "root");
+    } finally {
+      db.close();
+    }
+  }
+
   describe("skip mode (WEBAGENT_STARTUP_CHECKED=1)", () => {
     it("returns immediately and prints nothing", async () => {
       process.env.WEBAGENT_STARTUP_CHECKED = "1";
-      // Use a deliberately impossible config — should still succeed
-      // because the entire check pipeline is skipped.
-      const cfg = makeConfig({ agent_cmd: "definitely-not-installed-xyzzy" });
-      const r = await runStartupChecks(cfg);
-      assert.equal(r.agentCmd, cfg.agent_cmd);
+      // A genuinely unstartable config: data_dir's parent is a regular file,
+      // so preflight's mkdir would fail. The skip must short-circuit first.
+      const cfg = makeConfig();
+      const blocker = join(cfg.data_dir, "blocker");
+      writeFileSync(blocker, "not a directory");
+      cfg.data_dir = join(blocker, "nested");
+      await runStartupChecks(cfg);
       assert.equal(stdout, "");
       assert.equal(stderr, "");
+      assert.equal(existsSync(cfg.data_dir), false);
     });
   });
 
-  describe("preflight failure", () => {
-    it("exits 78 when agent_cmd is bogus (preflight rejects before auth)", async () => {
-      const cfg = makeConfig({ agent_cmd: "definitely-not-installed-xyzzy" });
-      await assert.rejects(async () => runStartupChecks(cfg), /exit:78/);
-      assert.equal(exited, 78);
+  describe("agent availability is not a startup gate", () => {
+    it("passes preflight and auth while a configured agent binary is missing", async () => {
+      setTTY(true);
+      const cfg = makeConfig();
+      const origPath = process.env.PATH;
+      process.env.PATH = "/definitely-nonexistent-path-xyzzy";
+      try {
+        const warnings = formatAvailabilityWarnings(
+          checkAgentAvailability({
+            missing: { cmd: "definitely-missing-agent-xyzzy --acp" },
+          }),
+          "missing",
+        );
+        assert.ok(warnings.length > 0);
+        assert.match(
+          warnings.join("\n"),
+          /default agent "missing" is unavailable/,
+        );
+
+        await runStartupChecks(cfg);
+        assert.equal(exited, null);
+        assert.match(stdout, /\[check\] auth:/);
+      } finally {
+        process.env.PATH = origPath;
+      }
+    });
+  });
+
+  describe("legacy database refusal", () => {
+    it("refuses before preflight can create the data dir or auth can mint", async () => {
+      setTTY(true);
+      const cfg = makeConfig();
+      makeLegacyDb(cfg.data_dir);
+      const before = readdirSync(cfg.data_dir).sort();
+
+      await assert.rejects(
+        () => runStartupChecks(cfg),
+        (error: unknown) => {
+          assert.ok(error instanceof LegacyDatabaseError);
+          assert.match(error.message, /pre-multi-agent/);
+          return true;
+        },
+      );
+
+      assert.equal(exited, null);
+      assert.equal(existsSync(join(cfg.data_dir, "auth.json")), false);
+      assert.doesNotMatch(stdout, /\[check\] data_dir/);
+      assert.doesNotMatch(stdout, /\[check\] auth:/);
+      assert.deepEqual(readdirSync(cfg.data_dir).sort(), before);
     });
   });
 
@@ -156,8 +236,7 @@ describe("startup-checks", () => {
     it("mints first-run admin token when TTY + missing auth.json + enabled", async () => {
       setTTY(true);
       const cfg = makeConfig();
-      const r = await runStartupChecks(cfg);
-      assert.equal(r.agentCmd, "node");
+      await runStartupChecks(cfg);
       // Banner printed with the literal token
       assert.match(stdout, /first-run admin token/);
       // auth.json now exists with one token
@@ -175,39 +254,28 @@ describe("startup-checks", () => {
       await seed.load();
       await seed.addToken("seeded", "admin");
       await seed.close();
-      const r = await runStartupChecks(cfg);
-      assert.equal(r.agentCmd, "node");
+      await runStartupChecks(cfg);
       assert.match(stdout, /\[check\] auth: 1 token\(s\) loaded/);
       assert.equal(exited, null);
     });
   });
 
   describe("ordering", () => {
-    it("preflight runs before auth (auth issues don't surface until preflight passes)", async () => {
-      // Bogus agent + no auth.json + no TTY: both would fail; assert
-      // we see the preflight failure (agent), not the auth failure.
+    it("preflight runs before auth (data_dir issues surface first)", async () => {
+      // Unwritable data_dir + no auth.json + no TTY: both would fail;
+      // assert we see the preflight failure, not the auth failure.
       setTTY(false);
-      const cfg = makeConfig({ agent_cmd: "definitely-not-installed-xyzzy" });
-      await assert.rejects(async () => runStartupChecks(cfg), /exit:78/);
-      // Stderr should mention the agent, not "create-token".
-      assert.match(stderr, /agent/i);
-      assert.doesNotMatch(stderr, /--create-token/);
-    });
-  });
-
-  describe("agent_cmd resolution", () => {
-    it("resolves 'auto' through detectAgent and returns concrete cmd", async () => {
-      setTTY(true);
-      const cfg = makeConfig({ agent_cmd: "auto" });
-      // detectAgent looks in PATH; on test machines this may or may not
-      // find a real agent. We don't care about the specific binary, just
-      // that runStartupChecks either succeeds with a non-"auto" string
-      // or exits 78 cleanly. Skip this one if the env has nothing.
+      if (process.platform === "win32") return;
+      const parent = mkdtempSync(join(tmpdir(), "startup-"));
+      tmpDirs.push(parent);
+      chmodSync(parent, 0o500);
       try {
-        const r = await runStartupChecks(cfg);
-        assert.notEqual(r.agentCmd, "auto");
-      } catch (err) {
-        assert.match(String(err), /exit:78/);
+        const cfg = makeConfig({ data_dir: join(parent, "child") });
+        await assert.rejects(async () => runStartupChecks(cfg), /exit:78/);
+        assert.match(stderr, /data_dir/);
+        assert.doesNotMatch(stderr, /--create-token/);
+      } finally {
+        chmodSync(parent, 0o700);
       }
     });
   });

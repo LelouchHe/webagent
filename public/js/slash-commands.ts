@@ -624,7 +624,7 @@ export const ROOT: CmdNode = {
       desc: "Reload agent",
       onSelect: () => {
         addSystem("Reloading agent…");
-        api.reloadAgent().catch((err) => {
+        api.reloadAgent(state.taskId ?? undefined).catch((err) => {
           addSystem(
             `err: ${err instanceof Error ? err.message : "Failed to reload agent"}`,
           );

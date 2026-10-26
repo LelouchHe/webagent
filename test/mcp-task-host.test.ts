@@ -16,9 +16,7 @@ describe("MCP Task tool host", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "webagent-mcp-host-"));
     store = new Store(dir, "test-agent");
-    store.createTask("root", dir, "auto", "session-root", null, {
-      title: "Root",
-    });
+    store.bindAgentSession(store.ensureRootTask(dir).id, "session-root");
     store.createTask("alpha", dir, "auto", "session-alpha", "root", {
       title: "Alpha",
     });
@@ -318,9 +316,15 @@ describe("MCP Task tool host", () => {
       () => host.query("alpha", { taskId: "unrelated" }),
       /target_not_allowed/,
     );
-    store.createTask("unrelated", dir, "auto", "session-unrelated", null, {
-      title: "Unrelated",
-    });
+    store.createTask("other-parent", dir, "auto", "session-other-parent");
+    store.createTask(
+      "unrelated",
+      dir,
+      "auto",
+      "session-unrelated",
+      "other-parent",
+      { title: "Unrelated" },
+    );
     assert.throws(
       () => host.query("alpha", { taskId: "unrelated" }),
       /target_not_allowed/,

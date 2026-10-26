@@ -4,13 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { createHash } from "node:crypto";
-import { Store } from "../src/store.ts";
+import { isReservedRootTaskId, ROOT_TASK_ID, Store } from "../src/store.ts";
 import { generateShareToken } from "../src/tokens.ts";
-
-function rootIdForFixture(agentKey: string): string {
-  return `root-${createHash("sha256").update(agentKey).digest("hex").slice(0, 32)}`;
-}
 
 describe("Store", () => {
   let store: Store;
@@ -90,97 +85,56 @@ describe("Store", () => {
       assert.equal(store.getTask("web-b"), undefined);
     });
 
-    it("derives and persists one Root identity per agent key", () => {
-      const expected = `root-${createHash("sha256").update("test-agent").digest("hex").slice(0, 32)}`;
+    it("uses the literal `root` identity for every agent key", () => {
       const root = store.ensureRootTask("/tmp/root");
-      assert.equal(root.id, expected);
+      assert.equal(root.id, "root");
       assert.equal(root.parent_id, null);
-      assert.equal(store.rootTaskId, expected);
+      assert.equal(store.rootTaskId, "root");
       store.close();
 
       store = new Store(tmpDir, "test-agent");
-      assert.equal(store.ensureRootTask("/tmp/changed").id, expected);
-      assert.equal(store.getTaskIncludingDeleted(expected)?.cwd, "/tmp/root");
-    });
-
-    it("rejects binding the same reserved Root to a different agent without mutation", () => {
-      const rootA = store.ensureRootTask("/tmp/root");
-      store.bindAgentSession(rootA.id, "session-a");
-      const before = store.getTaskIncludingDeleted(rootA.id);
+      assert.equal(store.ensureRootTask("/tmp/changed").id, "root");
+      assert.equal(store.getTaskIncludingDeleted("root")?.cwd, "/tmp/root");
       store.close();
 
       const other = new Store(tmpDir, "other-agent");
-      assert.throws(
-        () => other.bindAgentSession(rootA.id, "session-b"),
-        /Reserved Root belongs to another agent/,
-      );
-      assert.deepEqual(other.getTaskIncludingDeleted(rootA.id), before);
-      assert.equal(other.getAgentSessionId(rootA.id), undefined);
+      assert.equal(other.rootTaskId, "root");
+      assert.equal(other.ensureRootTask("/tmp/other").id, "root");
+      other.close();
+      store = new Store(tmpDir, "test-agent");
+    });
+
+    it("shares the single Root across agent keys without ownership errors", () => {
+      const root = store.ensureRootTask("/tmp/root");
+      store.bindAgentSession(root.id, "session-a");
+      store.close();
+
+      const other = new Store(tmpDir, "other-agent");
+      other.bindAgentSession("root", "session-b");
+      assert.equal(other.getAgentSessionId("root"), "session-b");
       other.close();
 
       store = new Store(tmpDir, "test-agent");
-      assert.equal(store.getAgentSessionId(rootA.id), "session-a");
+      assert.equal(store.getAgentSessionId("root"), "session-a");
     });
 
-    it("validates Root ownership before ensure mutations or ACP cwd rotation", () => {
-      const rootId = store.ensureRootTask("/before").id;
-      store.bindAgentSession(rootId, "root-session");
+    it("keeps Root anchored and reparents a corrupted Root to NULL", () => {
       store.createTask("malformed-parent", "/parent");
+      const rootId = store.rootTaskId;
+      store.bindAgentSession(rootId, "root-session");
       store["db"]
-        .prepare(
-          "UPDATE tasks SET cwd = ?, parent_id = ?, title = NULL WHERE id = ?",
-        )
-        .run("/before", "malformed-parent", rootId);
-      store["db"]
-        .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .run("foreign-owner", "foreign-root-session", rootId, Date.now());
+        .prepare("UPDATE tasks SET parent_id = ?, title = NULL WHERE id = ?")
+        .run("malformed-parent", rootId);
 
-      assert.throws(
-        () => store.ensureRootTask("/must-not-write"),
-        /ownership mismatch/,
+      const root = store.ensureRootTask("/must-not-change-cwd");
+      assert.equal(root.parent_id, null);
+      assert.equal(root.title, "root");
+      assert.equal(root.cwd, "/parent");
+      assert.equal(
+        store.getTaskIncludingDeleted("malformed-parent")?.parent_id,
+        rootId,
       );
-      assert.throws(
-        () =>
-          store.rotateAgentSession(
-            rootId,
-            "rotated-session",
-            "/must-not-write",
-          ),
-        /ownership mismatch/,
-      );
-      const row = store.getTaskIncludingDeleted(rootId)!;
-      assert.equal(row.cwd, "/before");
-      assert.equal(row.parent_id, "malformed-parent");
-      assert.equal(row.title, null);
       assert.equal(store.getAgentSessionId(rootId), "root-session");
-    });
-
-    it("keeps the per-agent binding index without permitting shared Root binding", () => {
-      const rootA = store.ensureRootTask("/tmp/root");
-      store.bindAgentSession(rootA.id, "session-a");
-      store["db"].exec("DROP INDEX idx_agent_sessions_agent_task");
-      store["db"].exec(
-        "CREATE UNIQUE INDEX idx_agent_sessions_task ON agent_sessions(task_id) WHERE task_id IS NOT NULL",
-      );
-      store.close();
-
-      const other = new Store(tmpDir, "other-agent");
-      assert.throws(
-        () => other.bindAgentSession(rootA.id, "session-b"),
-        /Reserved Root belongs to another agent/,
-      );
-      const indexes = other["db"]
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'agent_sessions'",
-        )
-        .all() as Array<{ name: string }>;
-      assert.deepEqual(indexes.map((row) => row.name).sort(), [
-        "idx_agent_sessions_agent_task",
-        "sqlite_autoindex_agent_sessions_1",
-      ]);
-      other.close();
     });
 
     it("creates and retrieves a task", () => {
@@ -193,7 +147,10 @@ describe("Store", () => {
     });
 
     it("stores an optional parent WebAgent task", () => {
-      store.createTask("root", "/tmp/root", "root", "agent-root");
+      store.bindAgentSession(
+        store.ensureRootTask("/tmp/root").id,
+        "agent-root",
+      );
       const child = store.createTask(
         "child",
         "/tmp/child",
@@ -206,7 +163,7 @@ describe("Store", () => {
       assert.equal(store.getTask("child")?.parent_id, "root");
     });
 
-    it("creates a non-destructive Root and adopts existing top-level tasks", () => {
+    it("creates the Root from the first task write and keeps its cwd", () => {
       store.createTask("old-1", "/tmp/one", "auto", "agent-one");
       store.createTask("old-2", "/tmp/two", "auto", "agent-two");
 
@@ -215,8 +172,11 @@ describe("Store", () => {
       assert.equal(root.id, store.rootTaskId);
       assert.equal(root.parent_id, null);
       assert.equal(root.title, "root");
-      assert.equal(store.getTaskIncludingDeleted("old-1")?.parent_id, root.id);
-      assert.equal(store.getTaskIncludingDeleted("old-2")?.parent_id, root.id);
+      // The first createTask supplied the Root cwd; ensureRootTask does not
+      // overwrite the existing anchor.
+      assert.equal(root.cwd, "/tmp/one");
+      assert.equal(store.getTaskIncludingDeleted("old-1")?.parent_id, "root");
+      assert.equal(store.getTaskIncludingDeleted("old-2")?.parent_id, "root");
       assert.deepEqual(
         store
           .listTasks()
@@ -225,8 +185,31 @@ describe("Store", () => {
         ["old-1", "old-2"],
       );
 
-      assert.equal(store.ensureRootTask("/tmp/other").cwd, "/tmp/root");
+      assert.equal(store.ensureRootTask("/tmp/other").cwd, "/tmp/one");
       assert.equal(store.ensureRootTask("/tmp/other").title, "root");
+    });
+
+    it("creates the literal Root on the first direct task write", () => {
+      const task = store.createTask("t1", "/tmp/x");
+
+      const root = store.getTaskIncludingDeleted("root")!;
+      assert.equal(root.id, "root");
+      assert.equal(root.parent_id, null);
+      assert.equal(root.source, "root");
+      assert.equal(root.title, "root");
+      assert.equal(root.cwd, "/tmp/x");
+      assert.equal(task.parent_id, "root");
+
+      const parentless = store["db"]
+        .prepare("SELECT COUNT(*) AS n FROM tasks WHERE parent_id IS NULL")
+        .get() as { n: number };
+      assert.equal(parentless.n, 1);
+
+      // A Store-produced database reopens without legacy refusal.
+      store.close();
+      store = new Store(tmpDir, "test-agent");
+      assert.equal(store.getTaskIncludingDeleted("root")?.id, "root");
+      assert.equal(store.getTask("t1")?.parent_id, "root");
     });
 
     it("keeps a user-renamed Root title across restarts", () => {
@@ -260,11 +243,6 @@ describe("Store", () => {
       assert.equal(store.getTaskPath("path-child"), '@/Bench/"Review notes"');
       assert.equal(store.getTaskPath("path-parent"), "@/Bench");
       assert.equal(store.getTaskPath(store.rootTaskId), "@/");
-      const foreignRoot = store.ensureRootTaskForAgentKey(
-        "foreign-path-backend",
-        "/tmp/foreign-root",
-      );
-      assert.equal(store.getTaskPath(foreignRoot.id), "@/root");
       assert.equal(store.getTaskPath("missing-task"), undefined);
     });
 
@@ -426,154 +404,63 @@ describe("Store", () => {
   });
 
   describe("reserved Root namespace and ownership", () => {
-    it("rejects ordinary root-prefixed task creation and unbound foreign parents", () => {
-      assert.throws(
-        () => store.createTask("root-forged", "/tmp/forged"),
-        /Reserved Root id cannot be created/,
-      );
-      const foreign = new Store(tmpDir, "foreign-backend");
-      const foreignRoot = foreign.ensureRootTask("/foreign");
-      assert.equal(foreign.getAgentSessionId(foreignRoot.id), undefined);
-      assert.equal(store.getParentTask(foreignRoot.id), undefined);
-      foreign.close();
+    it("uses the literal id `root`", () => {
+      assert.equal(ROOT_TASK_ID, "root");
+      assert.equal(store.rootTaskId, "root");
     });
 
-    it("protects malformed reserved rows from delete, GC, reap, and descendant cascades", () => {
-      const now = Date.now();
-      const insert = store["db"].prepare(
-        `INSERT INTO tasks (id, cwd, source, parent_id, title, deleted_at, created_at, last_active_at)
-         VALUES (?, ?, 'auto', ?, ?, ?, ?, ?)`,
-      );
-      insert.run(
-        "root-unbound-tombstone",
-        "/tmp/unbound",
-        null,
-        "unbound",
-        now,
-        now,
-        now,
-      );
+    it("reserves only the exact literal id", () => {
+      assert.equal(isReservedRootTaskId("root"), true);
+      assert.equal(isReservedRootTaskId("root-2f3a"), false);
+      assert.equal(isReservedRootTaskId("root-forged"), false);
+      assert.equal(isReservedRootTaskId("Root"), false);
+    });
+
+    it("rejects only the exact literal Root as ordinary creation", () => {
       assert.throws(
-        () => store.deleteTask("root-unbound-tombstone"),
+        () => store.createTask("root", "/tmp/forged"),
+        /Reserved Root id cannot be created/,
+      );
+      // Prefix-shaped ids are ordinary tasks again; the reservation is exact.
+      store.createTask("root-forged", "/tmp/forged");
+      store.createTask("root-2f3a", "/tmp/hashy");
+      assert.equal(store.getTask("root-forged")?.id, "root-forged");
+      assert.equal(store.getTask("root-2f3a")?.id, "root-2f3a");
+    });
+
+    it("refuses generic delete, reap, and GC on the literal Root", () => {
+      const rootId = store.ensureRootTask("/root").id;
+      store.bindAgentSession(rootId, "root-session");
+
+      assert.throws(
+        () => store.deleteTask(rootId),
         /Root task cannot be deleted/,
       );
-      assert.equal(
-        store.reapTombstoneIfOrphaned("root-unbound-tombstone"),
-        false,
-      );
-      assert.ok(store.getTaskIncludingDeleted("root-unbound-tombstone"));
+      assert.equal(store.reapTombstoneIfOrphaned(rootId), false);
+      assert.deepEqual(store.deleteEmptyTasks(0), []);
+      assert.equal(store.getTask(rootId)?.id, "root");
 
-      const rootId = store.ensureRootTask("/root").id;
-      insert.run(
-        "junk-parent",
-        "/tmp/parent",
-        null,
-        "junk-parent",
-        null,
-        now,
-        now,
-      );
-      insert.run("root-empty-gc", "/tmp/gc", null, null, null, now, now);
+      // Even a corrupted tombstone flag must not let reap claim Root.
       store["db"]
-        .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .run(store.agentKey, "malformed-root-exec", "root-empty-gc", now);
-      insert.run(
-        "root-descendant-tombstone",
-        "/tmp/desc",
-        "junk-parent",
-        "reserved",
-        now,
-        now,
-        now,
-      );
-      store["db"]
-        .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .run(
-          store.agentKey,
-          "malformed-desc-exec",
-          "root-descendant-tombstone",
-          now,
-        );
-      store.saveEvent(
-        "root-descendant-tombstone",
-        "assistant_message",
-        { text: "keep" },
-        { from_ref: "agent" },
-      );
-
-      assert.equal(
-        store.deleteEmptyTasks(0).some((row) => row.id === "root-empty-gc"),
-        false,
-      );
-      assert.equal(
-        store.getTaskIncludingDeleted("root-empty-gc")?.id,
-        "root-empty-gc",
-      );
-      store.deleteTask("junk-parent");
-      const protectedDescendant = store.getTaskIncludingDeleted(
-        "root-descendant-tombstone",
-      )!;
-      assert.equal(protectedDescendant.parent_id, null);
-      assert.notEqual(protectedDescendant.deleted_at, null);
-      assert.equal(store.getEvents("root-descendant-tombstone").length, 1);
+        .prepare("UPDATE tasks SET deleted_at = ? WHERE id = ?")
+        .run(Date.now(), rootId);
+      assert.equal(store.reapTombstoneIfOrphaned(rootId), false);
       assert.ok(store.getTaskIncludingDeleted(rootId));
     });
 
-    it("adopts only live parentless tasks with exactly one current-agent owner", () => {
-      const a = new Store(tmpDir, "backend-a");
-      const b = new Store(tmpDir, "backend-b");
-      const c = new Store(tmpDir, "backend-c");
-      a.createTask("a-orphan", "/a", "auto", "a-exec");
-      b.createTask("b-orphan", "/b", "auto", "b-exec");
-      a.createTask("shared-orphan", "/shared", "auto", "shared-a");
-      b.bindAgentSession("shared-orphan", "shared-b");
-      const tombstone = a.createTask(
-        "unbound-tombstone",
-        "/tomb",
-        "auto",
-        "tomb-exec",
-      );
-      const token = generateShareToken();
-      a.insertSharePreview({ token, taskId: tombstone.id, snapshotSeq: 1 });
-      a.activateShare(token);
-      a.deleteTask(tombstone.id);
-
-      const rootA = a.ensureRootTask("/root-a");
-      assert.equal(a.getTaskIncludingDeleted("a-orphan")?.parent_id, rootA.id);
-      assert.equal(a.getTaskIncludingDeleted("b-orphan")?.parent_id, null);
-      assert.equal(a.getTaskIncludingDeleted("shared-orphan")?.parent_id, null);
-      assert.equal(
-        a.getTaskIncludingDeleted("unbound-tombstone")?.parent_id,
-        null,
-      );
-      const rootB = b.ensureRootTask("/root-b");
-      assert.equal(b.getTaskIncludingDeleted("b-orphan")?.parent_id, rootB.id);
-
-      const rootC = c.ensureRootTask("/root-c");
-      assert.equal(rootA.title, "root");
-      assert.equal(rootB.title, "root");
-      assert.equal(rootC.title, "root");
-      assert.deepEqual(
-        [rootA.parent_id, rootB.parent_id, rootC.parent_id],
-        [null, null, null],
-      );
-      assert.equal(a.getParentTask(rootB.id), undefined);
-      a.close();
-      b.close();
-      c.close();
-      store = new Store(tmpDir, "test-agent");
+    it("accepts the global Root as a parent for another agent's task", () => {
+      store.ensureRootTask("/root");
+      const other = new Store(tmpDir, "foreign-backend");
+      other.bindAgentSession("root", "foreign-root-session");
+      assert.equal(other.getParentTask("root")?.id, "root");
+      other.close();
     });
   });
 
   describe("survivor ownership fallback", () => {
-    it("creates an unbound owner Root lazily for a uniquely bound survivor", () => {
-      const rootA = store.ensureRootTask("/root-a").id;
-      store.bindAgentSession(rootA, "root-a-session");
-      store.createTask("a-parent", "/a", "auto", "a-parent-session", rootA);
+    it("reparents a uniquely bound survivor to the global Root", () => {
+      const rootId = store.ensureRootTask("/root").id;
+      store.createTask("a-parent", "/a", "auto", "a-parent-session", rootId);
       store.close();
 
       const b = new Store(tmpDir, "backend-b");
@@ -590,55 +477,15 @@ describe("Store", () => {
 
       store = new Store(tmpDir, "test-agent");
       store.deleteTask("a-parent");
-      const rootBId = rootIdForFixture("backend-b");
       const check = new Store(tmpDir, "backend-b");
-      assert.equal(check.getTaskIncludingDeleted(rootBId)?.parent_id, null);
-      assert.equal(check.getAgentSessionId(rootBId), undefined);
-      assert.equal(check.getTask("b-survivor")?.parent_id, rootBId);
+      assert.equal(check.getTask("b-survivor")?.parent_id, "root");
       assert.equal(check.getEvents("b-survivor").length, 1);
       assert.ok(check.getShareByToken(token));
       assert.equal(check.getAgentSessionId("b-survivor"), "b-child-session");
       check.close();
     });
 
-    it("detaches a survivor when its owner's reserved Root binding mismatches", () => {
-      const rootA = store.ensureRootTask("/root-a").id;
-      store.createTask("a-parent", "/a", "auto", "a-parent-session", rootA);
-      const rootBId = rootIdForFixture("backend-b");
-      const other = new Store(tmpDir, "backend-b");
-      other.createTask(
-        "b-survivor",
-        "/b",
-        "auto",
-        "b-child-session",
-        "a-parent",
-      );
-      other.saveEvent(
-        "b-survivor",
-        "user_message",
-        { text: "keep" },
-        { from_ref: "user" },
-      );
-      other.close();
-      store["db"]
-        .prepare(
-          "INSERT INTO tasks (id, cwd, source, parent_id, title, created_at, last_active_at) VALUES (?, ?, 'root', NULL, 'root', ?, ?)",
-        )
-        .run(rootBId, "/wrong", Date.now(), Date.now());
-      store["db"]
-        .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .run("foreign-owner", "wrong-root-binding", rootBId, Date.now());
-
-      store.deleteTask("a-parent");
-      const survivor = store.getTaskIncludingDeleted("b-survivor")!;
-      assert.equal(survivor.parent_id, null);
-      assert.equal(store.getEvents("b-survivor").length, 1);
-      assert.equal(store.getAgentSessionId(rootBId), undefined);
-    });
-
-    it("detaches a multiply-owned survivor instead of guessing its Root", () => {
+    it("reparents a multiply-owned survivor to the global Root", () => {
       const rootId = store.ensureRootTask("/root").id;
       store.createTask("a-parent", "/a", "auto", "parent-session", rootId);
       const b = new Store(tmpDir, "backend-b");
@@ -657,9 +504,8 @@ describe("Store", () => {
       store.deleteTask("a-parent");
 
       const survivor = store.getTaskIncludingDeleted("multiply-owned")!;
-      assert.equal(survivor.parent_id, null);
+      assert.equal(survivor.parent_id, "root");
       assert.equal(store.getEvents("multiply-owned").length, 1);
-      assert.equal(store.getAgentSessionId("multiply-owned"), undefined);
       const bCheck = new Store(tmpDir, "backend-b");
       const cCheck = new Store(tmpDir, "backend-c");
       assert.equal(bCheck.getAgentSessionId("multiply-owned"), "b-session");
@@ -668,7 +514,7 @@ describe("Store", () => {
       cCheck.close();
     });
 
-    it("detaches an unbound survivor without losing its history, share, or attachment", () => {
+    it("reparents an unbound survivor without losing its history, share, or attachment", () => {
       const rootId = store.ensureRootTask("/root").id;
       store.createTask("a-parent", "/a", "auto", "parent-session", rootId);
       store.createTask(
@@ -709,7 +555,7 @@ describe("Store", () => {
       store.deleteTask("a-parent");
 
       const survivor = store.getTaskIncludingDeleted("unbound-child")!;
-      assert.equal(survivor.parent_id, null);
+      assert.equal(survivor.parent_id, "root");
       assert.equal(survivor.deleted_at, null);
       assert.equal(store.getEvents("unbound-child").length, 1);
       assert.equal(
@@ -719,21 +565,29 @@ describe("Store", () => {
       assert.ok(store.getShareByToken(token));
     });
 
-    it("detaches a survivor when its destination has a live title collision", () => {
-      const rootA = store.ensureRootTask("/root-a").id;
-      store.createTask("a-parent", "/a", "auto", "parent-session", rootA);
+    it("detaches a foreign survivor when the global Root title namespace collides", () => {
+      const rootId = store.ensureRootTask("/root").id;
+      store.createTask("a-parent", "/a", "auto", "parent-session", rootId);
+      store.createTask(
+        "collision",
+        "/b/one",
+        "auto",
+        "collision-session",
+        rootId,
+        {
+          title: "duplicate",
+        },
+      );
       const b = new Store(tmpDir, "backend-b");
-      const rootB = b.ensureRootTask("/root-b").id;
-      b.createTask("collision", "/b/one", "auto", "collision-session", rootB, {
-        title: "duplicate",
-      });
       b.createTask(
         "survivor",
         "/b/two",
         "auto",
         "survivor-session",
         "a-parent",
-        { title: "duplicate" },
+        {
+          title: "duplicate",
+        },
       );
       b.saveEvent(
         "survivor",
@@ -744,11 +598,34 @@ describe("Store", () => {
       b.close();
 
       store.deleteTask("a-parent");
-      const check = new Store(tmpDir, "backend-b");
-      assert.equal(check.getTask("survivor")?.parent_id, null);
-      assert.equal(check.getEvents("survivor").length, 1);
-      assert.equal(check.getTask("collision")?.title, "duplicate");
-      check.close();
+      const survivor = store.getTaskIncludingDeleted("survivor")!;
+      assert.equal(survivor.parent_id, null);
+      assert.equal(store.getEvents("survivor").length, 1);
+      assert.equal(store.getTask("collision")?.title, "duplicate");
+    });
+
+    it("detaches a foreign survivor when the Root anchor was corrupted away", () => {
+      store.createTask("a-parent", "/a", "auto", "parent-session");
+      const b = new Store(tmpDir, "backend-b");
+      b.createTask("survivor", "/b", "auto", "survivor-session", "a-parent");
+      b.saveEvent(
+        "survivor",
+        "assistant_message",
+        { text: "keep" },
+        { from_ref: "agent" },
+      );
+      b.close();
+
+      // Simulate a hand-corrupted DB after the invariant was established.
+      store["db"]
+        .prepare("UPDATE tasks SET parent_id = NULL WHERE id = 'a-parent'")
+        .run();
+      store["db"].prepare("DELETE FROM tasks WHERE id = 'root'").run();
+
+      store.deleteTask("a-parent");
+      const survivor = store.getTaskIncludingDeleted("survivor")!;
+      assert.equal(survivor.parent_id, null);
+      assert.equal(store.getEvents("survivor").length, 1);
     });
   });
 
@@ -805,7 +682,7 @@ describe("Store", () => {
       assert.equal(result.mode, "hard");
       const child = store.getTaskIncludingDeleted("child")!;
       assert.notEqual(child.deleted_at, null); // kept for the share viewer
-      assert.equal(child.parent_id, null); // ownership was retired with the tombstone
+      assert.equal(child.parent_id, "root"); // preserved under the global anchor
       assert.equal(store.getTask("parent"), undefined);
       assert.equal(
         result.affected.find((entry) => entry.id === "child")?.agentSessionId,
@@ -860,9 +737,9 @@ describe("Store", () => {
       assert.equal(store.revokeShare(parentToken), true);
       assert.equal(store.reapTombstoneIfOrphaned("parent"), true);
 
-      // The child's tombstone survives and holds no dangling reference.
+      // The child's tombstone survives under the global Root anchor.
       const child = store.getTaskIncludingDeleted("child")!;
-      assert.equal(child.parent_id, null);
+      assert.equal(child.parent_id, "root");
       assert.notEqual(child.deleted_at, null);
       assert.equal(store.getEvents("child").length, 1);
       assert.equal(
@@ -908,142 +785,70 @@ describe("Store", () => {
     });
   });
 
-  describe("agent-scoped reset and deletion", () => {
-    it("resets only this backend's Root row, history, and resources", () => {
-      const rootA = store.ensureRootTask("/root-a");
-      store.bindAgentSession(rootA.id, "root-a-session");
+  describe("Root reset and deletion", () => {
+    it("clears Root history, resources, and descendants, leaving lazy ownership", () => {
+      const root = store.ensureRootTask("/root");
+      store.bindAgentSession(root.id, "root-session");
       store.saveEvent(
-        rootA.id,
+        root.id,
         "user_message",
-        { text: "A sentinel" },
+        { text: "sentinel" },
         { from_ref: "user" },
       );
-      store.saveCompactSummary(rootA.id, "A compact sentinel");
-      store.saveClientOp(rootA.id, "op-a", { status: 200, body: { a: true } });
+      store.saveCompactSummary(root.id, "compact sentinel");
+      store.saveClientOp(root.id, "op-a", { status: 200, body: { a: true } });
       store.insertAttachment({
         id: "attachment-a",
-        taskId: rootA.id,
+        taskId: root.id,
         kind: "file",
         name: "a.txt",
         mime: "text/plain",
         size: 1,
         realpath: "/tmp/a.txt",
       });
-      const previewA = generateShareToken();
+      const preview = generateShareToken();
       store.insertSharePreview({
-        token: previewA,
-        taskId: rootA.id,
+        token: preview,
+        taskId: root.id,
         snapshotSeq: 1,
       });
-      store.createTask("a-task", "/a", "auto", "agent-a", rootA.id);
+      store.createTask("a-task", "/a", "auto", "agent-a", root.id);
       store.saveEvent(
         "a-task",
         "user_message",
         { text: "a" },
         { from_ref: "user" },
       );
-      store.close();
 
-      const other = new Store(tmpDir, "other-agent");
-      const rootB = other.ensureRootTask("/root-b");
-      other.bindAgentSession(rootB.id, "root-b-session");
-      other.saveEvent(
-        rootB.id,
-        "user_message",
-        { text: "B sentinel" },
-        { from_ref: "user" },
-      );
-      other.saveCompactSummary(rootB.id, "B compact sentinel");
-      other.saveClientOp(rootB.id, "op-b", { status: 201, body: { b: true } });
-      other.insertAttachment({
-        id: "attachment-b",
-        taskId: rootB.id,
-        kind: "file",
-        name: "b.txt",
-        mime: "text/plain",
-        size: 1,
-        realpath: "/tmp/b.txt",
-      });
-      const previewB = generateShareToken();
-      other.insertSharePreview({
-        token: previewB,
-        taskId: rootB.id,
-        snapshotSeq: 1,
-      });
-      other.createTask("b-task", "/b", "auto", "agent-b", rootB.id);
-      other.saveEvent(
-        "b-task",
-        "user_message",
-        { text: "b" },
-        { from_ref: "user" },
-      );
-      other.close();
-
-      store = new Store(tmpDir, "test-agent");
       const result = store.resetRootTask();
       assert.deepEqual(
         result.affected.map((entry) => entry.id),
         ["a-task"],
       );
-      assert.equal(store.getEvents(rootA.id).length, 0);
-      assert.equal(store.getPendingCompactSummary(rootA.id), null);
-      assert.equal(store.getClientOp(rootA.id, "op-a"), null);
-      assert.deepEqual(store.listAttachmentRealpaths(rootA.id), []);
-      assert.equal(store.getShareByToken(previewA), undefined);
+      assert.equal(result.retiredAgentSessionId, "root-session");
+      assert.equal(store.getEvents(root.id).length, 0);
+      assert.equal(store.getPendingCompactSummary(root.id), null);
+      assert.equal(store.getClientOp(root.id, "op-a"), null);
+      assert.deepEqual(store.listAttachmentRealpaths(root.id), []);
+      assert.equal(store.getShareByToken(preview), undefined);
       assert.equal(store.getTaskIncludingDeleted("a-task"), undefined);
-
-      const check = new Store(tmpDir, "other-agent");
-      assert.equal(check.getTask(check.rootTaskId)?.id, rootB.id);
-      assert.equal(
-        check.getEvents(rootB.id).filter((e) => e.type === "user_message")
-          .length,
-        1,
-      );
-      assert.equal(
-        check.getPendingCompactSummary(rootB.id)?.summary,
-        "B compact sentinel",
-      );
-      assert.deepEqual(check.getClientOp(rootB.id, "op-b"), {
-        status: 201,
-        body: { b: true },
-      });
-      assert.deepEqual(check.listAttachmentRealpaths(rootB.id), ["/tmp/b.txt"]);
-      assert.ok(check.getShareByToken(previewB));
-      assert.equal(check.getTask("b-task")?.id, "b-task");
-      assert.equal(check.getEvents("b-task").length, 1);
-      check.close();
+      // DB-only reset keeps the anchor visible and owned, with an empty
+      // execution id as the lazy-materialization marker.
+      const after = store.getTask(root.id)!;
+      assert.equal(after.parent_id, null);
+      assert.equal(store.getAgentSessionId(root.id), "");
+      assert.equal(store.getTaskOwnerAgentKey(root.id), store.agentKey);
     });
 
-    it("blocks reset for this Root's active share but ignores another backend's share", () => {
-      const rootA = store.ensureRootTask("/root-a").id;
-      store.bindAgentSession(rootA, "root-a-session");
-      const tokenA = generateShareToken();
-      store.insertSharePreview({
-        token: tokenA,
-        taskId: rootA,
-        snapshotSeq: 1,
-      });
-      store.activateShare(tokenA);
-      store.close();
+    it("blocks reset while Root has an active share", () => {
+      const rootId = store.ensureRootTask("/root").id;
+      const token = generateShareToken();
+      store.insertSharePreview({ token, taskId: rootId, snapshotSeq: 1 });
+      store.activateShare(token);
 
-      const b = new Store(tmpDir, "backend-b");
-      const rootB = b.ensureRootTask("/root-b").id;
-      b.bindAgentSession(rootB, "root-b-session");
-      const tokenB = generateShareToken();
-      b.insertSharePreview({ token: tokenB, taskId: rootB, snapshotSeq: 1 });
-      b.activateShare(tokenB);
-      b.close();
-
-      store = new Store(tmpDir, "test-agent");
       assert.throws(() => store.resetRootTask(), /active share/);
-      assert.equal(store.revokeShare(tokenA), true);
+      assert.equal(store.revokeShare(token), true);
       assert.deepEqual(store.resetRootTask().affected, []);
-
-      const check = new Store(tmpDir, "backend-b");
-      assert.equal(check.hasActiveShare(rootB), true);
-      assert.ok(check.getShareByToken(tokenB));
-      assert.ok(check.getTaskIncludingDeleted(rootB));
-      check.close();
     });
 
     it("preserves an unbound shared tombstone when resetting Root", () => {
@@ -1067,15 +872,13 @@ describe("Store", () => {
       assert.notEqual(orphan.deleted_at, null);
     });
 
-    it("reparents a foreign survivor under its owning backend's Root", () => {
-      const rootA = store.ensureRootTask("/root-a").id;
-      store.bindAgentSession(rootA, "root-a-session");
-      store.createTask("a-parent", "/a", "auto", "agent-a", rootA);
+    it("reparents a foreign survivor under the global Root", () => {
+      const rootId = store.ensureRootTask("/root").id;
+      store.bindAgentSession(rootId, "root-session");
+      store.createTask("a-parent", "/a", "auto", "agent-a", rootId);
       store.close();
 
       const other = new Store(tmpDir, "other-agent");
-      const rootB = other.ensureRootTask("/root-b").id;
-      other.bindAgentSession(rootB, "root-b-session");
       other.createTask("b-child", "/b", "auto", "agent-b", "a-parent");
       other.saveEvent(
         "b-child",
@@ -1093,12 +896,11 @@ describe("Store", () => {
       );
       const survivor = store.getTaskIncludingDeleted("b-child")!;
       assert.equal(survivor.id, "b-child");
-      assert.equal(survivor.parent_id, rootB);
+      assert.equal(survivor.parent_id, "root");
 
       const check = new Store(tmpDir, "other-agent");
       assert.equal(check.getTask("b-child")?.id, "b-child");
       assert.equal(check.getEvents("b-child").length, 1);
-      assert.equal(check.getTaskIncludingDeleted(rootB)?.parent_id, null);
       check.close();
     });
   });

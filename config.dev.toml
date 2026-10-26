@@ -4,7 +4,10 @@ port = 6801
 host = "127.0.0.1"
 data_dir = "data-dev"
 public_dir = "dist-dev"
-agent_cmd = "copilot --acp"
+default_agent = "copilot"
+
+[agents.copilot]
+cmd = "copilot --acp"
 
 [limits]
 bash_output = 1_048_576

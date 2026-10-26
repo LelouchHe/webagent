@@ -310,10 +310,10 @@ export type AgentEvent =
       signal: string | null;
       error?: string;
     }
-  // Server lifecycle events (no taskId)
-  | { type: "agent_reloading" }
-  | { type: "agent_reloading_failed"; error: string }
-  | { type: "agent_disconnected" }
+  // Server lifecycle events (no taskId); agentId scopes them to one agent.
+  | { type: "agent_reloading"; agentId: string }
+  | { type: "agent_reloading_failed"; error: string; agentId: string }
+  | { type: "agent_disconnected"; agentId: string }
   // Per-task runtime state delta (broadcast to subscribed SSE clients)
   | {
       type: "state_patch";

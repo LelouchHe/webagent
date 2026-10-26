@@ -373,8 +373,8 @@ export function getStatus(taskId: string): Promise<Record<string, unknown>> {
 
 // --- Bridge ---
 
-export function reloadAgent(): Promise<void> {
-  return post("/api/v1/bridge/reload", {});
+export function reloadAgent(taskId?: string): Promise<void> {
+  return post("/api/v1/bridge/reload", taskId === undefined ? {} : { taskId });
 }
 
 // --- SSE ticket ---

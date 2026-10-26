@@ -176,10 +176,6 @@ async function fallbackToNextTaskImpl(
   rootAuthorityGeneration: number,
 ): Promise<void> {
   if (rootAuthorityGeneration !== state.rootTaskAuthorityGeneration) return;
-  if (expiredId === "root") {
-    addSystem(`err: Task not found (${expiredId})`);
-    return;
-  }
   state.taskSwitchGen++;
   const gen = state.taskSwitchGen;
   try {
@@ -192,7 +188,7 @@ async function fallbackToNextTaskImpl(
     }
     if (state.rootTaskId === null) {
       installRootTaskId(
-        tasks.find((task) => task.id.startsWith("root-"))?.id,
+        tasks.find((task) => task.id === "root")?.id,
         rootAuthorityGeneration,
       );
     }

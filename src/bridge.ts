@@ -96,13 +96,20 @@ export class AgentBridge extends EventEmitter {
   private stderrTail = "";
   private readonly closedProcesses = new WeakSet<ChildProcess>();
   readonly agentCmd: string;
+  /** Configured agent id this bridge serves (single bridge in P1). */
+  readonly agentId: string;
   private readonly sessionIds: AgentSessionIds;
   reloading = false;
   private attachmentDispatcher: AttachmentDispatcher | null = null;
 
-  constructor(agentCmd: string, sessionIds: AgentSessionIds) {
+  constructor(
+    agentCmd: string,
+    sessionIds: AgentSessionIds,
+    agentId: string = "default",
+  ) {
     super();
     this.agentCmd = agentCmd;
+    this.agentId = agentId;
     this.sessionIds = sessionIds;
   }
 
@@ -686,7 +693,10 @@ export class AgentBridge extends EventEmitter {
       } satisfies AgentEvent);
       abort(new Error(reason));
     }
-    this.emit("event", { type: "agent_disconnected" } satisfies AgentEvent);
+    this.emit("event", {
+      type: "agent_disconnected",
+      agentId: this.agentId,
+    } satisfies AgentEvent);
     this.conn = null;
   }
 
@@ -752,7 +762,10 @@ export class AgentBridge extends EventEmitter {
     if (this.reloading) throw new Error("Already reloading");
     this.reloading = true;
     const liveTaskIds = [...tasks.liveTasks];
-    this.emit("event", { type: "agent_reloading" } satisfies AgentEvent);
+    this.emit("event", {
+      type: "agent_reloading",
+      agentId: this.agentId,
+    } satisfies AgentEvent);
     blog.info("reloading agent...");
 
     try {
@@ -840,6 +853,7 @@ export class AgentBridge extends EventEmitter {
         this.emit("event", {
           type: "agent_reloading_failed",
           error: msg,
+          agentId: this.agentId,
         } satisfies AgentEvent);
         throw lastError;
       }

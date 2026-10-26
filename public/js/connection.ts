@@ -317,10 +317,6 @@ async function initializeTaskAndIntent(
   await processStartupMessageIntent();
 }
 
-function isSameBackendRoot(taskId: string): boolean {
-  return !taskId.startsWith("root-") || taskId === state.rootTaskId;
-}
-
 async function resumeFromTaskList(
   reconnectTaskId: string | null,
   gen: number,
@@ -333,7 +329,7 @@ async function resumeFromTaskList(
     if (!isCurrent()) return true;
     if (state.rootTaskId === null) {
       installRootTaskId(
-        tasks.find((task) => task.id.startsWith("root-"))?.id,
+        tasks.find((task) => task.id === "root")?.id,
         rootAuthorityGeneration,
       );
     }
@@ -404,12 +400,16 @@ async function initTask(
 
   // A hashless reconnect must keep the task already shown in the browser.
   // Root intentionally has no hash, so this guard must precede hashless
-  // recent-task selection.
+  // recent-task selection. When config failed, Root's authority is not yet
+  // installed: fall through to the task list so it can restore the literal
+  // Root instead of keeping a reconnect target with no Root authority.
+  const rootAuthorityMissing =
+    reconnectTaskId === "root" && state.rootTaskId === null;
   if (
     !existingId &&
     reconnectTaskId &&
     state.taskId === reconnectTaskId &&
-    isSameBackendRoot(reconnectTaskId)
+    !rootAuthorityMissing
   ) {
     await resumeAndLoad(
       reconnectTaskId,

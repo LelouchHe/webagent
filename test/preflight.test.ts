@@ -33,65 +33,39 @@ describe("preflight", () => {
       rmSync(tmpDirs.pop()!, { recursive: true, force: true });
   });
 
-  it("passes when data_dir is writable and agent resolves", async () => {
+  it("passes when data_dir is writable and the port is free", async () => {
     const dir = mkdtempSync(join(tmpdir(), "preflight-"));
     tmpDirs.push(dir);
-    // Use an explicit agent_cmd that is guaranteed to exist on any Unix
-    // system: `node` itself. That sidesteps depending on what ACP agent
-    // happens to be installed on the test machine.
-    const r = await runPreflight({
+    await runPreflight({
       data_dir: dir,
-      agent_cmd: "node --version",
       port: 0,
       host: "127.0.0.1",
     });
-    assert.equal(r.agentCmd, "node --version");
+    assert.equal(exited, null);
+  });
+
+  it("does not treat a missing agent binary as a startup failure", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "preflight-"));
+    tmpDirs.push(dir);
+    process.env.PATH = "/definitely-nonexistent-xyzzy";
+    await runPreflight({
+      data_dir: dir,
+      port: 0,
+      host: "127.0.0.1",
+    });
+    assert.equal(exited, null);
   });
 
   it("creates data_dir if missing", async () => {
     const parent = mkdtempSync(join(tmpdir(), "preflight-"));
     tmpDirs.push(parent);
     const child = join(parent, "nested", "data");
-    const r = await runPreflight({
+    await runPreflight({
       data_dir: child,
-      agent_cmd: "node",
       port: 0,
       host: "127.0.0.1",
     });
-    assert.equal(r.agentCmd, "node");
-  });
-
-  it("exits 78 when explicit agent_cmd binary is not in PATH", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "preflight-"));
-    tmpDirs.push(dir);
-    await assert.rejects(
-      async () =>
-        runPreflight({
-          data_dir: dir,
-          agent_cmd: "definitely-no-such-binary-xyzzy",
-          port: 0,
-          host: "127.0.0.1",
-        }),
-      /exit:78/,
-    );
-    assert.equal(exited, 78);
-  });
-
-  it("exits 78 when auto detection finds no agent", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "preflight-"));
-    tmpDirs.push(dir);
-    process.env.PATH = "/definitely-nonexistent-xyzzy";
-    await assert.rejects(
-      async () =>
-        runPreflight({
-          data_dir: dir,
-          agent_cmd: "auto",
-          port: 0,
-          host: "127.0.0.1",
-        }),
-      /exit:78/,
-    );
-    assert.equal(exited, 78);
+    assert.equal(exited, null);
   });
 
   it("exits 78 when data_dir cannot be created", async () => {
@@ -107,7 +81,6 @@ describe("preflight", () => {
         async () =>
           runPreflight({
             data_dir: join(parent, "child"),
-            agent_cmd: "node",
             port: 0,
             host: "127.0.0.1",
           }),
@@ -163,7 +136,6 @@ describe("preflight", () => {
         async () =>
           runPreflight({
             data_dir: dir,
-            agent_cmd: "node",
             port: blockedPort,
             host: "127.0.0.1",
           }),
@@ -211,7 +183,6 @@ describe("preflight", () => {
           async () =>
             runPreflight({
               data_dir: dir,
-              agent_cmd: "node",
               port: widePort,
               host: "0.0.0.0",
             }),
@@ -231,13 +202,12 @@ describe("preflight", () => {
     it("passes when port is free (port 0 = OS-assigned, always free)", async () => {
       const dir = mkdtempSync(join(tmpdir(), "preflight-"));
       tmpDirs.push(dir);
-      const r = await runPreflight({
+      await runPreflight({
         data_dir: dir,
-        agent_cmd: "node",
         port: 0,
         host: "127.0.0.1",
       });
-      assert.equal(r.agentCmd, "node");
+      assert.equal(exited, null);
     });
 
     it("exits 78 with EADDRNOTAVAIL hint when host is not a local interface", async () => {
@@ -253,7 +223,6 @@ describe("preflight", () => {
         async () =>
           runPreflight({
             data_dir: dir,
-            agent_cmd: "node",
             port: 0,
             host: "203.0.113.1",
           }),

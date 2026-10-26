@@ -2,11 +2,11 @@
 
 ## ACP-Compatible Agents
 
-WebAgent works with any agent that implements the [Agent Client Protocol](https://agentclientprotocol.com/). On startup, when `agent_cmd = "auto"` (the default), WebAgent scans `PATH` for known ACP-ready binaries in priority order and uses the first one it finds. To override, set `agent_cmd` explicitly in `config.toml`.
+WebAgent works with any agent that implements the [Agent Client Protocol](https://agentclientprotocol.com/). Agents are configured explicitly as `[agents.<id>]` tables; the table key is the agent id (also its display name) and `cmd` is the whitespace-split launch command. `default_agent` is required and decides the initial agent for a brand-new workspace and for Root rebuild. There is no implicit PATH detection: an agent whose binary is missing is simply unavailable at runtime, and the service still starts.
 
 ### Native ACP support
 
-These agents speak ACP directly — install one and `webagent` picks it up:
+These agents speak ACP directly:
 
 | Agent                                                     | Command          | Install                            |
 | --------------------------------------------------------- | ---------------- | ---------------------------------- |
@@ -25,10 +25,13 @@ These agents need a separate adapter package that wraps the underlying CLI into 
 | [Pi](https://github.com/earendil-works/pi)                           | `pi-acp`             | Fork from source — see the Pi caveat below         |
 | [Qwen Code](https://github.com/QwenLM/qwen-code)                     | `qwen --acp`         | `npm i -g @qwen-code/qwen-code`                    |
 
-To pin an agent explicitly:
+To configure an agent explicitly:
 
 ```toml
-agent_cmd = "claude-agent-acp"
+default_agent = "claude"
+
+[agents.claude]
+cmd = "claude-agent-acp"
 ```
 
 See the [ACP Registry](https://agentclientprotocol.com/get-started/registry) for the full list (30+ agents).
@@ -69,10 +72,13 @@ Pi reaches WebAgent through an adapter, and WebAgent's Pi support depends on a f
 - [`LelouchHe/pi-acp`](https://github.com/LelouchHe/pi-acp) keeps multiple ACP sessions alive on one connection instead of closing the previous `pi` subprocess, and hands the MCP server definitions from ACP `session/new` and `session/load` to Pi's built-in MCP support, mapping the per-server `_meta.directTools` hint to Pi's `direct` exposure. Upstream `pi-acp` replaces the previous session when another one is created — so switching Tasks kills the other Task's agent — and ignores session MCP servers entirely.
 - Pi 0.99 or later provides the built-in MCP support. With it, the injected `webagent` server's tools appear as native tools named `mcp__webagent__<tool>` (for example `mcp__webagent__task_send`). Remove extensions that replace the built-in MCP support, such as `pi-mcp-adapter`: while one is installed, Pi disables its built-in MCP support and the session servers do not attach. The task control plane is optional for the session itself either way (see [How the server reaches the agent](task-mcp.md#how-the-server-reaches-the-agent)).
 
-The fork is not published to npm, and `npm i -g pi-acp` installs the upstream release without the behavior above. The fork's README covers installing it from a checkout; once installed, point `agent_cmd` at the built entry point:
+The fork is not published to npm, and `npm i -g pi-acp` installs the upstream release without the behavior above. The fork's README covers installing it from a checkout; once installed, point an agent entry at the built entry point:
 
 ```toml
-agent_cmd = "/path/to/pi-acp/dist/index.js --approve --extension-commands"
+default_agent = "pi"
+
+[agents.pi]
+cmd = "/path/to/pi-acp/dist/index.js --approve --extension-commands"
 ```
 
 `--approve` trusts project-local Pi settings and resources for every subprocess the adapter starts, and `--extension-commands` exposes extension slash commands that support headless execution; both are optional and, for untrusted projects, should stay off.
@@ -85,7 +91,7 @@ Configuration is via TOML files, passed with `--config`:
 webagent --config config.toml
 ```
 
-If no `--config` is provided, all settings use built-in defaults. See `config.toml` for the checked-in default settings and `config.dev.toml` for development.
+An agent table and `default_agent` are required, so a config file must define both; every other setting has a built-in default. See `config.toml` for the checked-in reference settings and `config.dev.toml` for development.
 
 | Key                                  | Default                     | Description                                                                                                                                                                                                                                                                                                          |
 | ------------------------------------ | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -94,7 +100,8 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 | `data_dir`                           | `data`                      | SQLite + uploads directory                                                                                                                                                                                                                                                                                           |
 | `default_cwd`                        | `process.cwd()`             | Working directory for new tasks                                                                                                                                                                                                                                                                                   |
 | `public_dir`                         | `dist`                      | Static assets directory                                                                                                                                                                                                                                                                                              |
-| `agent_cmd`                          | `auto`                      | ACP agent command. `auto` scans PATH for known ACP-ready binaries; otherwise the literal command (binary + args, space-separated).                                                                                                                                                                                   |
+| `default_agent`                      | — (required)                | Id of the agent used for a brand-new workspace and Root rebuild. Must name one of the `[agents.<id>]` tables.                                                                                                                                                                                                        |
+| `agents.<id>.cmd`                    | — (required)                | ACP launch command for that agent, split on whitespace. `<id>` must match `[a-z0-9][a-z0-9-]*`. Paths containing spaces are not supported.                                                                                                                                                                          |
 | `limits.bash_output`                 | `1048576` (1 MB)            | Max bash output stored in DB per command                                                                                                                                                                                                                                                                             |
 | `limits.image_upload`                | `10485760` (10 MB)          | Max image upload size                                                                                                                                                                                                                                                                                                |
 | `limits.file_upload`                 | `52428800` (50 MB)          | Max non-image attachment upload size. Server picks the cap from sniffed MIME (`image/*` → `image_upload`, otherwise → `file_upload`).                                                                                                                                                                                |
@@ -111,10 +118,19 @@ If no `--config` is provided, all settings use built-in defaults. See `config.to
 | `share.viewer_origin`                | `""`                        | Override the base URL returned in `public_url` (e.g. `https://share.example.com`). Empty = same host as the API server.                                                                                                                                                                                              |
 | `share.internal_hosts`               | `[]`                        | Hostnames the sanitizer scrubs from outgoing event text (replaced with placeholders). Set to your private domains so internal URLs don't leak to viewers.                                                                                                                                                            |
 
-To use a different ACP-compatible agent backend:
+Unknown top-level keys and unknown keys inside the existing nested tables
+(`limits`/`push`/`debug`/`messages`/`share`/`auth`) are ignored, so a config
+shared with another build can carry its own sections. Agent entries are strict:
+a typo such as `cmdd` under `[agents.<id>]` fails startup.
+The legacy `agent_cmd` key is always rejected rather than ignored.
+
+To use a different ACP-compatible agent backend, change `default_agent` and add its table:
 
 ```toml
-agent_cmd = "claude-agent-acp"
+default_agent = "claude"
+
+[agents.claude]
+cmd = "claude-agent-acp"
 ```
 
 ## Pre-1.0 storage reset
@@ -127,7 +143,7 @@ want to keep.
 
 ## Generating a Config
 
-WebAgent runs zero-config by default — no `config.toml` is required. Generate one only when you want to override defaults (custom port, data directory, etc.):
+A config file is required. It must declare at least one `[agents.<id>]` table and set `default_agent`; every other setting falls back to a default. `webagent config init` scaffolds one:
 
 ```bash
 webagent config init                  # write ./config.toml (well-commented template)
