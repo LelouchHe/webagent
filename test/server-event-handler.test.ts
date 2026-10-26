@@ -131,7 +131,6 @@ describe("handleAgentEvent", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-server-test-"));
     store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     tasks = new TaskManager(store, tmpDir, tmpDir);
   });
 

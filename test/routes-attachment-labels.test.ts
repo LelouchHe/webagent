@@ -51,7 +51,6 @@ describe("HTTP /events attachment label egress", () => {
     writeFileSync(join(publicDir, "index.html"), "ok");
 
     store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     tasks = new TaskManager(store, tmpDir, tmpDir);
 
     store.createTask("s1", "/x");

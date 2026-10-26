@@ -57,7 +57,6 @@ describe("POST /api/v1/messages — ingress", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
     store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     sseManager = new SseManager();
 
     // Spy on broadcasts

@@ -13,7 +13,6 @@ describe("Store collaboration records", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-collaboration-test-"));
     store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     store.bindAgentSession(store.ensureRootTask("/tmp/root").id, "agent-root");
     store.createTask("parent", "/tmp/parent", "auto", "agent-parent", "root");
     store.createTask("a1", "/tmp/a1", "auto", "agent-a1", "parent");
@@ -136,7 +135,6 @@ describe("Store collaboration records", () => {
 
     store.close();
     store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
 
     const rows = store
       .getEvents("a1")
@@ -250,7 +248,6 @@ describe("Store collaboration records", () => {
     raw.close();
 
     store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     const database = (store as unknown as { db: Database.Database }).db;
     const columns = database.pragma("table_info(tasks)") as Array<{
       name: string;

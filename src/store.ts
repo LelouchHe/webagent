@@ -755,6 +755,16 @@ export class Store {
     })();
   }
 
+  /** Insert the one parentless Root row. Callers provide the transaction. */
+  private insertRootRow(cwd: string): void {
+    const now = Date.now();
+    this.db
+      .prepare(
+        "INSERT INTO tasks (id, cwd, source, parent_id, title, created_at, last_active_at) VALUES (?, ?, 'root', NULL, 'root', ?, ?)",
+      )
+      .run(this.rootTaskId, cwd, now, now);
+  }
+
   /**
    * Ensure the workspace's single literal Root anchor exists and stays an
    * anchor: id `root`, no parent, title `root` unless the user renamed it.
@@ -762,14 +772,8 @@ export class Store {
    */
   ensureRootTask(cwd: string): TaskRow {
     return this.db.transaction(() => {
-      const existing = this.getTaskIncludingDeleted(this.rootTaskId);
-      if (!existing) {
-        const now = Date.now();
-        this.db
-          .prepare(
-            "INSERT INTO tasks (id, cwd, source, parent_id, title, created_at, last_active_at) VALUES (?, ?, 'root', NULL, 'root', ?, ?)",
-          )
-          .run(this.rootTaskId, cwd, now, now);
+      if (!this.getTaskIncludingDeleted(this.rootTaskId)) {
+        this.insertRootRow(cwd);
       } else {
         this.db
           .prepare("UPDATE tasks SET parent_id = NULL WHERE id = ?")
@@ -800,15 +804,15 @@ export class Store {
         `Reserved Root id cannot be created as an ordinary task: ${id}`,
       );
     }
-    if (!this.getTaskIncludingDeleted(this.rootTaskId)) {
-      throw new Error(
-        `Root task is missing; call ensureRootTask() to create it before creating tasks`,
-      );
-    }
-    // Root is the only parentless row. Omitted/null means "attach to Root";
-    // ensureRootTask() is the only path that inserts a parentless task.
-    const resolvedParentId = parentId ?? this.rootTaskId;
     return this.db.transaction(() => {
+      // The invariant is enforced by the single write path: a database that
+      // has an ordinary task always has its Root, even for direct drivers that
+      // never called ensureRootTask().
+      if (!this.getTaskIncludingDeleted(this.rootTaskId)) {
+        this.insertRootRow(cwd);
+      }
+      // Root is the only parentless row. Omitted/null means "attach to Root".
+      const resolvedParentId = parentId ?? this.rootTaskId;
       const now = Date.now();
       this.db
         .prepare(

@@ -41,7 +41,6 @@ describe("GET /api/v1/messages — list + single", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
     store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     const handler = createRequestHandler({
       sseManager: new SseManager(),
       store,

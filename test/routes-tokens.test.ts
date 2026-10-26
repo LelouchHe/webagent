@@ -53,7 +53,6 @@ describe("tokens CRUD", () => {
     writeFileSync(join(publicDir, "index.html"), "");
 
     store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     authStore = new AuthStore(join(tmpDir, "auth.json"));
     await authStore.load();
     adminToken = (await authStore.addToken("admin1", "admin")).token;

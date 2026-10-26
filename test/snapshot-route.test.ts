@@ -42,7 +42,6 @@ describe("GET /api/v1/tasks/:id/snapshot", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-snapshot-"));
     mkdirSync(join(tmpDir, "public"));
     store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     tasks = new TaskManager(store, tmpDir, tmpDir);
     sse = new SseManager();
     const handler = createRequestHandler({

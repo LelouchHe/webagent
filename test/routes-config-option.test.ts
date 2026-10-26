@@ -43,7 +43,6 @@ describe("config option route authority", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "ok");
     const store = new Store(dir, "config-route-test");
-    store.ensureRootTask(dir);
     store.createTask("task-1", dir, "auto", "session-1");
     const events: AgentEvent[] = [];
     const canonicalOptions: ConfigOption[] = [

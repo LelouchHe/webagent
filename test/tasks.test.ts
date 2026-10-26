@@ -120,7 +120,6 @@ describe("Task REST API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     tasks = new TaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
     broadcastEvents = [];

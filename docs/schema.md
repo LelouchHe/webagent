@@ -60,7 +60,10 @@ deletion contract.
 WebAgent Tasks. Each row is a stable user-visible work thread created
 via `POST /api/v1/tasks`; its ACP execution can be rotated by clear. There is
 exactly one reserved Root Task row for the workspace. Its id is the literal
-`root`; it has `parent_id = NULL` and the default title `root`.
+`root`; it has `parent_id = NULL` and the default title `root`. The first
+`Store.createTask()` inserts that row in the same transaction when absent;
+`ensureRootTask()` remains the idempotent startup path that keeps the
+configured default cwd.
 
 | Column | Type | Notes |
 |---|---|---|

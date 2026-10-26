@@ -13,7 +13,6 @@ describe("message-cleanup — unprocessed TTL sweep", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-msg-cleanup-"));
     store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
   });
 
   afterEach(() => {

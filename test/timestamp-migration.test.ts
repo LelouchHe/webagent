@@ -951,7 +951,6 @@ describe("timestamp millis migration", () => {
   it("never relies on the 0 default", () => {
     const dir = tempDir();
     const store = new Store(dir, AGENT);
-    store.ensureRootTask(dir);
     store.createTask("t1", "/x");
     store.saveEvent("t1", "user_message", {}, { from_ref: "user" });
     store.saveClientOp("t1", "op", {});
@@ -993,7 +992,6 @@ describe("timestamp millis migration", () => {
   it("leaves an already-integer database untouched", () => {
     const dir = tempDir();
     const store = new Store(dir, AGENT);
-    store.ensureRootTask(dir);
     store.createTask("t1", "/x");
     const created = store.getTask("t1")!.created_at;
     store.close();

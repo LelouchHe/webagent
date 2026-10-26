@@ -125,7 +125,6 @@ describe("Prompt REST API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(join(tmpDir, "test.db"), "test-agent");
-    store.ensureRootTask(join(tmpDir, "test.db"));
     tasks = new TaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
     broadcastEvents = [];

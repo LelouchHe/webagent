@@ -106,7 +106,6 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
     store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     registry = new ClientRegistry();
     taskId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     store.createTask(taskId, "/tmp");

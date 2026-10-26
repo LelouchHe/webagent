@@ -17,7 +17,6 @@ describe("Store events.from_ref + FK", () => {
 
   it("saveEvent persists explicit from_ref values per category", () => {
     const store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     store.createTask("s1", "/tmp");
 
     const userMsg = store.saveEvent(
@@ -62,7 +61,6 @@ describe("Store events.from_ref + FK", () => {
 
   it("saveEvent accepts msg:<id> form for inbox-authored events", () => {
     const store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     store.createTask("s1", "/tmp");
 
     const ev = store.saveEvent(
@@ -80,7 +78,6 @@ describe("Store events.from_ref + FK", () => {
 
   it("saveEvent THROWS when from_ref is missing (guard active)", () => {
     const store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     store.createTask("s1", "/tmp");
     assert.throws(
       () => store.saveEvent("s1", "user_message", { text: "x" }),
@@ -91,7 +88,6 @@ describe("Store events.from_ref + FK", () => {
 
   it("foreign_keys pragma is on after construction (rejects orphan inserts)", () => {
     const store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     const fk = store["db"].pragma("foreign_keys", { simple: true });
     assert.equal(fk, 1, "foreign_keys pragma must be on");
 
@@ -112,7 +108,6 @@ describe("Store events.from_ref + FK", () => {
 
   it("idx_events_type exists in the current schema", () => {
     const store = new Store(tmpDir, "test-agent");
-    store.ensureRootTask(tmpDir);
     const idx = store["db"]
       .prepare(
         "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_events_type'",

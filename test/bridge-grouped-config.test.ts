@@ -15,7 +15,6 @@ async function startGroupedAgent(t: TestContext, profile = "grouped-model") {
   const callsPath = join(dir, "calls.jsonl");
   writeFileSync(callsPath, "");
   const store = new Store(dir, "grouped-config-test");
-  store.ensureRootTask(dir);
   const tasks = new TaskManager(
     store,
     dir,
