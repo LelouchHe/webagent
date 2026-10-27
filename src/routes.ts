@@ -2213,6 +2213,9 @@ export function createRequestHandler(
                 // This turn owns the task's busy state; the rotation is its
                 // own controlled internal path.
                 allowCompacting: true,
+                // Compaction is a rotation too: it leaves its own transcript
+                // line instead of being an unrecorded internal replacement.
+                reason: "compact",
               },
             );
             tasks.state.patch(taskId, {

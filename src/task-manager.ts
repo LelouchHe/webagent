@@ -111,6 +111,38 @@ function configOptionId(
   return selectable.find((option) => option.id === logicalId)?.id;
 }
 
+const ROTATION_TITLES: Record<RotationReason, string> = {
+  owner_removed: "Execution moved to a configured agent",
+  explicit_clear: "Execution replaced",
+  compact: "Context compacted",
+};
+
+function rotationBody(
+  reason: RotationReason,
+  fromAgent: string | null,
+  toAgent: string,
+): string {
+  switch (reason) {
+    case "owner_removed":
+      return (
+        `The agent that ran this task (${fromAgent ?? "unknown"}) is no longer ` +
+        `configured. Its execution was replaced with ${toAgent}; the task, its ` +
+        `history and its outstanding work are unchanged.`
+      );
+    case "compact":
+      return (
+        "The task's context was compacted: its ACP execution was replaced and a " +
+        "handoff summary was saved for the next prompt. The task id, history " +
+        "and outstanding work are unchanged."
+      );
+    case "explicit_clear":
+      return (
+        "The task's ACP execution was explicitly cleared. Its task id, history " +
+        "and outstanding work are unchanged."
+      );
+  }
+}
+
 /** Minimum age (seconds) before an empty task is eligible for cleanup. */
 const EMPTY_TASK_MIN_AGE_S = 60;
 
@@ -178,6 +210,12 @@ export class AgentNotReadyError extends Error {
     this.name = "AgentNotReadyError";
   }
 }
+
+/**
+ * Why a task's execution was replaced. Every rotation leaves a transcript line
+ * naming its trigger; only the trigger differs.
+ */
+export type RotationReason = "explicit_clear" | "owner_removed" | "compact";
 
 export type TaskCancelStatus =
   | "idle"
@@ -611,7 +649,7 @@ export class TaskManager implements ObligationHost {
   private applyOwnerRotation(
     taskId: string,
     from: { agentId: string; sessionId: string },
-    reason: "explicit_clear" | "owner_removed",
+    reason: RotationReason,
   ): void {
     const task = this.store.getTaskIncludingDeleted(taskId);
     this.store.replaceAgentSession(taskId, emptyExecutionSlot(taskId));
@@ -629,17 +667,8 @@ export class TaskManager implements ObligationHost {
       "system_message",
       {
         kind: "agent_rotation",
-        title:
-          reason === "owner_removed"
-            ? "Execution moved to a configured agent"
-            : "Execution replaced",
-        body:
-          reason === "owner_removed"
-            ? `The agent that ran this task (${fromLabel}) is no longer configured. ` +
-              `Its execution was replaced with ${toLabel}; the task, its history and ` +
-              `its outstanding work are unchanged.`
-            : "The task's ACP execution was explicitly cleared. Its task id, " +
-              "history and outstanding work are unchanged.",
+        title: ROTATION_TITLES[reason],
+        body: rotationBody(reason, fromLabel, toLabel),
         reason,
         fromAgent: fromLabel,
         toAgent: toLabel,
@@ -1096,7 +1125,7 @@ export class TaskManager implements ObligationHost {
        * Why the owner is changing. Rotations that name a reason leave a
        * transcript line; internal replacements (compaction) stay silent.
        */
-      reason?: "explicit_clear" | "owner_removed";
+      reason?: RotationReason;
     } = {},
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     this.attachExecutionBridge(bridge);
@@ -1145,7 +1174,7 @@ export class TaskManager implements ObligationHost {
     taskId: string,
     cwd?: string,
     preserveRuntimeState = false,
-    reason?: "explicit_clear" | "owner_removed",
+    reason?: RotationReason,
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const task = this.liveTask(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
@@ -1234,7 +1263,7 @@ export class TaskManager implements ObligationHost {
   private commitRotation(
     taskId: string,
     fromAgent: string | null,
-    reason?: "explicit_clear" | "owner_removed",
+    reason?: RotationReason,
   ): void {
     this.pendingDispatchRetries.delete(taskId);
     this.store.failOutstandingDeliveriesForTaskClear(taskId);
@@ -1247,17 +1276,8 @@ export class TaskManager implements ObligationHost {
       "system_message",
       {
         kind: "agent_rotation",
-        title:
-          reason === "owner_removed"
-            ? "Execution moved to a configured agent"
-            : "Execution replaced",
-        body:
-          reason === "owner_removed"
-            ? `The agent that ran this task (${fromAgent ?? "unknown"}) is no ` +
-              `longer configured. Its execution was replaced with ${toAgent}; ` +
-              `the task, its history and its outstanding work are unchanged.`
-            : "The task's ACP execution was explicitly cleared. Its task id, " +
-              "history and outstanding work are unchanged.",
+        title: ROTATION_TITLES[reason],
+        body: rotationBody(reason, fromAgent, toAgent),
         reason,
         fromAgent,
         toAgent,

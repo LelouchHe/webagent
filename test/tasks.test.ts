@@ -666,9 +666,9 @@ describe("Task REST API", () => {
           req.on("response", (res) => {
             let data = "";
             res.on("data", (chunk: Buffer) => (data += chunk.toString()));
-            res.on("end", () =>
-              { resolve({ status: res.statusCode!, body: data }); },
-            );
+            res.on("end", () => {
+              resolve({ status: res.statusCode!, body: data });
+            });
           });
           req.on("error", reject);
         },
@@ -743,6 +743,16 @@ describe("Task REST API", () => {
         ),
       );
       assert.equal(tasks.getBusyKind("s1"), null);
+      // Compaction is a rotation: it leaves its own transcript line naming the
+      // trigger, instead of being an unrecorded internal replacement.
+      const rotationLine = store
+        .getEvents("s1")
+        .filter((event) => event.type === "system_message")
+        .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+        .find((data) => data.kind === "agent_rotation");
+      assert.ok(rotationLine, "compaction records its rotation");
+      assert.equal(rotationLine.reason, "compact");
+      assert.equal(rotationLine.toAgent, "test-agent");
 
       const promptRes = await makeRequest(
         port,
