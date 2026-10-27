@@ -275,6 +275,14 @@ export class AgentBridge extends EventEmitter {
   }
 
   /**
+   * True when this agent can accept a prompt right now. A dead or
+   * disconnected agent is an unavailable transport, not a rejected handoff.
+   */
+  isAvailable(): boolean {
+    return !this.deadReason && this.conn !== null;
+  }
+
+  /**
    * Install the authority that decides whether an execution's lease is still
    * current. Until one is installed the bridge runs without lease gating
    * (unit drivers only); the server always installs one before events flow.

@@ -776,6 +776,18 @@ describe("TaskManager", () => {
           throw new Error("loadSession should not be called");
         },
       };
+      // A message queued after the failed dispatch never reached the old
+      // execution; the rotation must still finalize it instead of leaving it
+      // available to a later drain.
+      store.createCollaborationMessage({
+        id: "rotation-queued",
+        deliveryId: "rotation-queued-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "QUEUED BODY",
+      });
+
       await sm.clearTask(bridge, "child");
 
       // Mutation evidence: without abortTurn in resetTaskRuntime the watchdog
@@ -2331,6 +2343,154 @@ describe("TaskManager", () => {
 
     it("returns empty map for task with no attachments", () => {
       assert.equal(sm.getLabelMap("s1").size, 0);
+    });
+  });
+
+  // D6: rotation keeps the debt and truncates the transport.
+  describe("rotation transport truncation", () => {
+    const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+    function seedDispatch(target: Store) {
+      target.createTask("parent", tmpDir, "agent", "agent-parent");
+      target.createTask("child", tmpDir, "agent", "agent-child", "parent");
+      target.createCollaborationMessage({
+        id: "rotation-dispatch",
+        deliveryId: "rotation-dispatch-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "ORIGINAL DISPATCH BODY",
+      });
+    }
+
+    it("truncates the old transport and never redelivers the old body", async () => {
+      seedDispatch(store);
+      sm.liveTasks.add("child");
+      const prompts: string[] = [];
+      let deliveryAttempts = 0;
+      const bridge = {
+        async newSession() {
+          return { sessionId: "", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt(_taskId: string, text: string) {
+          prompts.push(text);
+          deliveryAttempts += 1;
+          // The first submission is the original dispatch and is rejected at
+          // the request level; later ones must be closing reminders only.
+          if (deliveryAttempts === 1) throw new Error("prompt rejected");
+        },
+      };
+
+      assert.equal(
+        await sm.drainCollaborationDeliveries(bridge, "child"),
+        true,
+      );
+      await flush();
+      const armed = sm.getObligation("parent", "child");
+      assert.ok(armed);
+      assert.equal(armed.state, "awaiting_delivery");
+      const retried = (sm as any).pendingDispatchRetries.get("child") as
+        | string[]
+        | undefined;
+      assert.ok(retried?.includes("rotation-dispatch-delivery"));
+
+      // A message queued after the failed dispatch never reached the old
+      // execution; the rotation must still finalize it instead of leaving it
+      // available to a later drain.
+      store.createCollaborationMessage({
+        id: "rotation-queued",
+        deliveryId: "rotation-queued-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "QUEUED BODY",
+      });
+
+      await sm.clearTask(bridge, "child");
+
+      // The retry ids are gone and the row is finalized, so a later drain
+      // cannot hand the old body to the replacement execution.
+      assert.equal((sm as any).pendingDispatchRetries.has("child"), false);
+      const rowOf = (id: string) =>
+        store["db"]
+          .prepare("SELECT status, failure_reason FROM deliveries WHERE id = ?")
+          .get(id) as { status: string; failure_reason: string };
+      // The rejected dispatch row is already terminal; the queued one is
+      // finalized by the rotation itself.
+      assert.equal(rowOf("rotation-dispatch-delivery").status, "failed");
+      assert.equal(
+        rowOf("rotation-queued-delivery").failure_reason,
+        "cleared_before_delivery",
+      );
+
+      // Same record, same endpoints, debt intact, nothing terminal.
+      const rotated = sm.getObligation("parent", "child");
+      assert.ok(rotated);
+      assert.equal(rotated.openingMessageId, armed.openingMessageId);
+      assert.equal(rotated.openingDeliveryId, armed.openingDeliveryId);
+      assert.equal(rotated.state, "reminder_due");
+      assert.equal(rotated.deliveredAttempts, 0);
+
+      // The replacement execution receives a closing reminder, never the old
+      // dispatch body.
+      const deadline = Date.now() + 2000;
+      while (prompts.length < 2 && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
+      assert.equal(prompts.length, 2);
+      assert.match(prompts[1], /Task Handoff Required/);
+      assert.equal(prompts[1].includes("ORIGINAL DISPATCH BODY"), false);
+      for (const text of prompts) {
+        assert.equal(
+          text.includes("ORIGINAL DISPATCH BODY") && prompts.indexOf(text) > 0,
+          false,
+        );
+      }
+      const after = sm.getObligation("parent", "child");
+      assert.ok(after);
+      assert.equal(after.deliveredAttempts, 1);
+      assert.equal(after.state, "reminder_due");
+    });
+
+    it("defers the closing reminder when no execution can accept it", async () => {
+      seedDispatch(store);
+      // No recovery bridge is installed: the transport does not exist.
+      (sm as any).obligations.markDelivered("parent", "child");
+      sm.onTargetTurnEnded("child", "prompt-1");
+
+      const deadline = Date.now() + 2000;
+      while (
+        (sm.getObligation("parent", "child")?.deferrals ?? 0) === 0 &&
+        Date.now() < deadline
+      ) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
+
+      const record = sm.getObligation("parent", "child");
+      assert.ok(record);
+      // Deferred: waiting again, with neither attempt nor failure consumed.
+      assert.equal(record.state, "reminder_due");
+      assert.equal(record.deferrals, 1);
+      assert.equal(record.deliveredAttempts, 0);
+      assert.equal(record.consecutiveSubmissionFailures, 0);
+      assert.equal(
+        store
+          .getEvents("child")
+          .some(
+            (event) =>
+              event.type === "system_message" &&
+              (JSON.parse(event.data) as { kind?: string }).kind ===
+                "handoff_reminder",
+          ),
+        false,
+        "no reminder was recorded, because none was delivered",
+      );
     });
   });
 

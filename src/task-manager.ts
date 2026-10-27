@@ -30,6 +30,7 @@ import { TaskStateManager } from "./task-state.ts";
 import {
   ObligationController,
   type ActiveAgentTurn,
+  type DeliveryOutcome,
   type DirectedObligation,
   type ObligationNotice,
   type SettlementDecision,
@@ -84,6 +85,8 @@ type SessionBridge = Pick<
   > & {
     /** Install the authority that gates execution-scoped events. */
     setExecutionLeaseSource?: AgentBridge["setExecutionLeaseSource"];
+    /** False while the agent process is dead or not connected. */
+    isAvailable?: AgentBridge["isAvailable"];
   };
 
 type DeliveryBridge = SessionBridge & Pick<AgentBridge, "prompt">;
@@ -213,10 +216,7 @@ export interface ObligationHost {
  * stale lease), so the debt keeps waiting without consuming its failure
  * budget and without pretending the agent rejected the work.
  */
-export type ObligationSubmissionOutcome =
-  | { status: "delivered" }
-  | { status: "deferred"; reason: string }
-  | { status: "failed"; reason: string };
+export type ObligationSubmissionOutcome = DeliveryOutcome;
 
 /** Build the process-local obligation controller for one task runtime. */
 export function createObligationController(
@@ -237,8 +237,7 @@ export function createObligationController(
     },
     isAgentBusy: (taskId) => host.getBusyKind(taskId) === "agent",
     isTurnRunning: (taskId, promptId) => host.isTurnRunning(taskId, promptId),
-    submitReminder: async (obligation) =>
-      (await host.submitObligationReminder(obligation)).status === "delivered",
+    submitReminder: (obligation) => host.submitObligationReminder(obligation),
     retryDispatch: (obligation) => {
       host.retryObligationDispatch(obligation);
     },
@@ -570,6 +569,11 @@ export class TaskManager implements ObligationHost {
     if (!lease) return this.authority.generationOf(event.taskId) === undefined;
     if (lease.taskId !== event.taskId) return false;
     return this.authority.accepts(lease);
+  }
+
+  /** True when the bridge can currently accept a prompt for this agent. */
+  private isExecutionAvailable(bridge: SessionBridge): boolean {
+    return bridge.isAvailable?.() ?? true;
   }
 
   /** The lease a replacement execution must initialize under, after commit. */
@@ -1068,7 +1072,14 @@ export class TaskManager implements ObligationHost {
     bridge.sessionMapped?.(created.sessionId, taskId);
     this.retireReplacedExecution(retiredBinding, created.sessionId, bridge);
     this.resetTaskRuntime(taskId, preserveRuntimeState);
+    // Truncate the old transport in the same synchronous block as the binding
+    // commit. `resetTaskRuntime` dropped the in-flight prompt state; the retry
+    // ids, the unfinished delivery rows and the obligation's dispatch phase all
+    // still point at the execution that no longer exists. The debt itself
+    // survives as a closing reminder aimed at the replacement.
+    this.pendingDispatchRetries.delete(taskId);
     this.store.failOutstandingDeliveriesForTaskClear(taskId);
+    this.obligations.noteExecutionRotated(taskId);
     this.store.updateTaskWorkflowStatus(taskId, "idle");
 
     if (!this.leaseCurrent(lease)) {
@@ -2277,11 +2288,21 @@ export class TaskManager implements ObligationHost {
   ): Promise<ObligationSubmissionOutcome> {
     const bridge = this.recoveryBridge;
     const task = this.store.getTask(obligation.targetTaskId);
-    if (!bridge || !task) {
-      return { status: "failed", reason: "no_execution" };
+    if (!task) {
+      // The target is gone; its debt is purged with the task lifecycle, which
+      // is not a delivery failure.
+      return { status: "deferred", reason: "task_gone" };
+    }
+    if (!bridge) {
+      // No execution to submit to. Nothing was attempted, so this must not
+      // consume the failure budget: the debt keeps waiting.
+      return { status: "deferred", reason: "no_execution" };
     }
     if (this.resettingTasks.has(task.id) || this.rotatingTasks.has(task.id)) {
-      return { status: "failed", reason: "rotating" };
+      return { status: "deferred", reason: "rotating" };
+    }
+    if (!this.isExecutionAvailable(bridge)) {
+      return { status: "deferred", reason: "agent_unavailable" };
     }
     const text = handoffReminderText();
     this.activePrompts.add(task.id);
@@ -2289,7 +2310,15 @@ export class TaskManager implements ObligationHost {
     const promptId =
       this.state.getState(task.id).runtime.busy?.promptId ?? undefined;
     try {
-      await this.ensureResumed(bridge, task.id);
+      try {
+        await this.ensureResumed(bridge, task.id);
+      } catch (error) {
+        slog.warn("handoff reminder could not resume the target", {
+          taskId: task.id.slice(0, 8),
+          error,
+        });
+        return { status: "deferred", reason: "resume_failed" };
+      }
       const lease = this.currentLease(task.id);
       await bridge.prompt(task.id, text, undefined, promptId);
       if (!this.leaseCurrent(lease)) {
@@ -2316,6 +2345,11 @@ export class TaskManager implements ObligationHost {
       );
       return { status: "delivered" };
     } catch (error) {
+      if (!this.isExecutionAvailable(bridge)) {
+        // The agent died or disconnected mid-submission; that is the
+        // transport's problem, not the target's debt.
+        return { status: "deferred", reason: "agent_unavailable" };
+      }
       slog.warn("handoff reminder failed", {
         taskId: task.id.slice(0, 8),
         sourceTaskId: obligation.sourceTaskId.slice(0, 8),
