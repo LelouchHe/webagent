@@ -17,6 +17,7 @@ import { TaskBusyError, createTaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
 import type { ConfigOption } from "../src/types.ts";
+import type { DirectedObligation } from "../src/obligation-controller.ts";
 
 async function startMcpTestServer(
   capabilities: CapabilityStore,
@@ -2490,6 +2491,176 @@ describe("TaskManager", () => {
         false,
         "no reminder was recorded, because none was delivered",
       );
+    });
+  });
+
+  // F1: a deferred reminder must not strand the task's turn.
+  describe("reminder turn ownership", () => {
+    function seedReminder(): DirectedObligation {
+      store.createTask("parent", tmpDir, "auto", "agent-parent");
+      store.createTask("child", tmpDir, "auto", "agent-child", "parent");
+      sm.liveTasks.add("child");
+      store.createCollaborationMessage({
+        id: "turn-ownership",
+        deliveryId: "turn-ownership-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      // Settle the delivery row so the idle edge does not start a delivery
+      // drain: this test is about the reminder turn's ownership.
+      const claimed = store.claimQueuedDeliveries("child");
+      store.markCollaborationDeliveriesDelivered(
+        claimed.map((delivery) => delivery.id),
+      );
+      const obligation = sm.getObligation("parent", "child");
+      assert.ok(obligation);
+      return obligation;
+    }
+
+    async function expectControllerCanSubmitAgain(
+      prompts: string[],
+    ): Promise<void> {
+      // The controller still owns the record and can drive another attempt once
+      // the transport is back: a turn-boundary reminder is due immediately.
+      (sm as any).obligations.markDelivered("parent", "child");
+      sm.onTargetTurnEnded("child");
+      const deadline = Date.now() + 2000;
+      while (prompts.length === 0 && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
+      assert.equal(prompts.length, 1, "the controller submitted again");
+      const record = sm.getObligation("parent", "child");
+      assert.ok(record);
+      assert.equal(record.deliveredAttempts, 1);
+      assert.equal(sm.getBusyKind("child"), null);
+    }
+
+    it("releases the turn when the reminder cannot resume the target", async () => {
+      const obligation = seedReminder();
+      const prompts: string[] = [];
+      let loads = 0;
+      const bridge = {
+        async newSession() {
+          throw new Error("not part of a restore");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          loads += 1;
+          throw new Error("load failed");
+        },
+        async prompt(_taskId: string, text: string) {
+          prompts.push(text);
+        },
+        isAvailable: () => true,
+      };
+      sm.liveTasks.delete("child");
+      sm.setRecoveryBridge(bridge);
+
+      const outcome = await sm.submitObligationReminder(obligation);
+
+      assert.deepEqual(outcome, {
+        status: "deferred",
+        reason: "resume_failed",
+      });
+      assert.equal(loads, 1);
+      assert.equal(prompts.length, 0);
+      // The leak would leave busy=agent with no running prompt.
+      assert.equal(sm.getBusyKind("child"), null);
+
+      sm.liveTasks.add("child");
+      await expectControllerCanSubmitAgain(prompts);
+    });
+
+    it("releases the turn when the execution is replaced mid-submission", async () => {
+      const obligation = seedReminder();
+      const prompts: string[] = [];
+      const bridge = {
+        async newSession() {
+          return { sessionId: "", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt(_taskId: string, text: string) {
+          prompts.push(text);
+          // The task is rotated while the reminder turn is in flight.
+          store.replaceAgentSession("child", "agent-new");
+        },
+        isAvailable: () => true,
+      };
+      sm.setRecoveryBridge(bridge);
+
+      const outcome = await sm.submitObligationReminder(obligation);
+
+      assert.deepEqual(outcome, {
+        status: "deferred",
+        reason: "execution_replaced",
+      });
+      assert.equal(sm.getBusyKind("child"), null);
+      // The reminder text reached the old execution only; nothing was recorded
+      // as a delivered attempt for the task's current debt.
+      assert.equal(
+        store
+          .getEvents("child")
+          .some(
+            (event) =>
+              event.type === "system_message" &&
+              (JSON.parse(event.data) as { kind?: string }).kind ===
+                "handoff_reminder",
+          ),
+        false,
+        "the reminder was not recorded as delivered",
+      );
+    });
+
+    it("releases the turn when the agent dies during submission", async () => {
+      const obligation = seedReminder();
+      const prompts: string[] = [];
+      let available = true;
+      const bridge = {
+        async newSession() {
+          return { sessionId: "", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt(_taskId: string, text: string) {
+          prompts.push(text);
+          available = false;
+          throw new Error("agent died");
+        },
+        isAvailable: () => available,
+      };
+      sm.setRecoveryBridge(bridge);
+
+      const outcome = await sm.submitObligationReminder(obligation);
+
+      assert.deepEqual(outcome, {
+        status: "deferred",
+        reason: "agent_unavailable",
+      });
+      assert.equal(sm.getBusyKind("child"), null);
+
+      // Transport recovers: the controller can still submit.
+      const healed: string[] = [];
+      sm.setRecoveryBridge({
+        ...bridge,
+        async prompt(_taskId: string, text: string) {
+          healed.push(text);
+        },
+        isAvailable: () => true,
+      });
+      await expectControllerCanSubmitAgain(healed);
     });
   });
 

@@ -2486,6 +2486,10 @@ export class TaskManager implements ObligationHost {
       return { status: "deferred", reason: "agent_unavailable" };
     }
     const text = handoffReminderText();
+    // Single ownership of the turn: one `add`, one guarded release in
+    // `finally`. Every outcome below — resume failure, replaced execution,
+    // unavailable agent, delivered, rejected — leaves the task idle, so a
+    // deferral can never strand `busy=agent` and block later submissions.
     this.activePrompts.add(task.id);
     this.syncBusy(task.id);
     const promptId =
@@ -2537,11 +2541,14 @@ export class TaskManager implements ObligationHost {
         targetTaskId: obligation.targetTaskId.slice(0, 8),
         error,
       });
+      return { status: "failed", reason: "prompt_rejected" };
+    } finally {
+      // Release only while this submission still owns the turn: a replacement
+      // prompt keeps its own busy marker.
       if (this.isCurrentPrompt(task.id, promptId)) {
         this.activePrompts.delete(task.id);
         this.syncBusy(task.id);
       }
-      return { status: "failed", reason: "prompt_rejected" };
     }
   }
 
