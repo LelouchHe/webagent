@@ -51,26 +51,39 @@ describe("runtime authority regressions", () => {
     };
   }
 
-  it("keeps one seq source across an A to B rotation", async () => {
+  it("keeps one seq source across a real A to B rotation", async () => {
+    // Two agents, two Stores: the second agent's binding write is what moves
+    // the task, so "owner changed" is real rather than a relabelled adapter.
     const state = new TaskStateManager();
     const authority = new ExecutionAuthority(new GenerationLedger());
-    const makeManager = (agentId: string) =>
-      new TaskManager({
-        store,
-        defaultCwd: dataDir,
-        dataDir,
-        state,
-        authority,
-        adapter: new ExecutionAdapter(agentId),
-        isAgentConfigured: () => true,
-      });
-    const managerA = makeManager("agent-a");
-    const managerB = makeManager("agent-b");
+    const storeA = store;
+    const storeB = new Store(dataDir, "agent-b");
+    const managerA = new TaskManager({
+      store: storeA,
+      defaultCwd: dataDir,
+      dataDir,
+      state,
+      authority,
+      adapter: new ExecutionAdapter("agent-a"),
+      isAgentConfigured: () => true,
+    });
+    const managerB = new TaskManager({
+      store: storeB,
+      defaultCwd: dataDir,
+      dataDir,
+      state,
+      authority,
+      adapter: new ExecutionAdapter("agent-b"),
+      isAgentConfigured: () => true,
+    });
     try {
       const { taskId } = await managerA.createTask(
         fakeBridge("session-a"),
         dataDir,
       );
+      const before = storeA.getCurrentExecutionBinding(taskId);
+      assert.ok(before);
+      assert.equal(before.agent_key, "agent-a");
 
       const patches: StatePatchEvent[] = [];
       state.onPatch((event) => patches.push(event));
@@ -82,9 +95,13 @@ describe("runtime authority regressions", () => {
       const seqBeforeRotation = state.getState(taskId).seq;
       assert.ok(seqBeforeRotation >= 3);
 
-      // The second adapter's runtime rotates the task. Both runtimes share the
-      // injected ledger, so the seq keeps counting instead of restarting.
       await managerB.clearTask(fakeBridge("session-b"), taskId);
+
+      // The owner really moved: a different agent and a different session.
+      const after = storeA.getCurrentExecutionBinding(taskId);
+      assert.ok(after);
+      assert.equal(after.agent_key, "agent-b");
+      assert.notEqual(after.agent_session_id, before.agent_session_id);
 
       const seqAfterRotation = state.getState(taskId).seq;
       assert.ok(seqAfterRotation > seqBeforeRotation);
@@ -108,6 +125,7 @@ describe("runtime authority regressions", () => {
     } finally {
       managerA.dispose();
       managerB.dispose();
+      storeB.close();
     }
   });
 
