@@ -131,6 +131,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a taken-over empty slot materializes through an ordinary resume
   - an implicit rotation truncates the transport and keeps the obligation
   - each rotated task gets its own empty execution slot: two ordinary tasks rotated under the same agent both succeed alongside the Root's empty slot, and each materializes later
+  - the empty slot is recognised by exact equality with the value generated for that task, never by the reserved prefix: a real session id that merely shares the prefix is restored (not materialized) and stays bound
+  - a reserved-shape session id that is not this task's own slot is refused at the binding write (create/attach/replace), so no task or binding is stored under a shape the reader would have to guess about
 
 - `test/tree-deletion.test.ts`
   - deleting a parent takes a foreign child with it, and each execution is retired through its own agent's adapter even when both report the same session id
@@ -193,7 +195,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - gzip compression for events endpoint
   - streaming buffer flush on events endpoint
   - auto-resume of non-live tasks
-  - a `/clear` whose request body window saw a restore start is rejected by the final gate with 409, not by the early check
+  - a `/clear` whose request body window saw a restore start is rejected by the final gate with 409, not by the early check; the test waits for the handler's body-read signal rather than a fixed sleep
   - `/compact` leaves its own rotation line (`kind: agent_rotation`, reason `compact`) before publishing the replacement execution
   - restoring an interrupted turn does not auto-continue it (recovery is user-driven)
   - input validation and bridge-not-ready errors
