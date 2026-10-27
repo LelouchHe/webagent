@@ -571,13 +571,15 @@ export class TaskManager implements ObligationHost {
    * wrong process.
    */
   private retireExecution(
+    taskId: string,
     agentId: string | null,
     agentSessionId: string | null,
     bridge?: SessionBridge | null,
   ): void {
     if (!agentId || !agentSessionId) return;
-    // A placeholder is not an execution; there is nothing to retire.
-    if (isEmptyExecutionSlot(agentSessionId)) return;
+    // This task's own empty slot is not an execution; there is nothing to
+    // retire. Exact equality: a real session id may share the namespace prefix.
+    if (isEmptyExecutionSlot(taskId, agentSessionId)) return;
     const adapter = this.adapters.get(agentId);
     if (!adapter) {
       slog.warn("no adapter for retired execution", {
@@ -658,7 +660,12 @@ export class TaskManager implements ObligationHost {
     this.pendingDispatchRetries.delete(taskId);
     this.store.failOutstandingDeliveriesForTaskClear(taskId);
     this.obligations.noteExecutionRotated(taskId);
-    this.retireExecution(from.agentId, from.sessionId, this.recoveryBridge);
+    this.retireExecution(
+      taskId,
+      from.agentId,
+      from.sessionId,
+      this.recoveryBridge,
+    );
     if (!task) return;
     const fromLabel = from.agentId;
     const toLabel = this.adapter.agentId;
@@ -729,6 +736,7 @@ export class TaskManager implements ObligationHost {
     for (const entry of cleaned) {
       if (entry.agentSessionId) {
         this.retireExecution(
+          entry.id,
           this.adapter.agentId,
           entry.agentSessionId,
           bridge,
@@ -1212,7 +1220,12 @@ export class TaskManager implements ObligationHost {
     }
     const lease = this.currentLease(taskId);
     bridge.sessionMapped?.(created.sessionId, taskId);
-    this.retireReplacedExecution(retiredBinding, created.sessionId, bridge);
+    this.retireReplacedExecution(
+      taskId,
+      retiredBinding,
+      created.sessionId,
+      bridge,
+    );
     this.resetTaskRuntime(taskId, preserveRuntimeState);
     this.commitRotation(taskId, retiredBinding?.agent_key ?? null, reason);
 
@@ -1293,17 +1306,23 @@ export class TaskManager implements ObligationHost {
    * still-authoritative execution.
    */
   private retireReplacedExecution(
+    taskId: string,
     retired: { agent_key: string; agent_session_id: string } | undefined,
     replacementSessionId: string,
     bridge: SessionBridge,
   ): void {
     if (!retired) return;
-    if (isEmptyExecutionSlot(retired.agent_session_id)) return;
+    if (isEmptyExecutionSlot(taskId, retired.agent_session_id)) return;
     const moved =
       retired.agent_key !== this.adapter.agentId ||
       retired.agent_session_id !== replacementSessionId;
     if (!moved) return;
-    this.retireExecution(retired.agent_key, retired.agent_session_id, bridge);
+    this.retireExecution(
+      taskId,
+      retired.agent_key,
+      retired.agent_session_id,
+      bridge,
+    );
   }
 
   /**
@@ -1575,7 +1594,10 @@ export class TaskManager implements ObligationHost {
     const startLease = this.authority.adopt(taskId);
     this.restoringTasks.add(taskId);
     try {
-      if (!existingSessionId || isEmptyExecutionSlot(existingSessionId)) {
+      if (
+        !existingSessionId ||
+        isEmptyExecutionSlot(taskId, existingSessionId)
+      ) {
         return await this.materializeRestoredTask(bridge, taskId, task);
       }
       // Mint a fresh capability for the restored task: any token from
@@ -1966,13 +1988,19 @@ export class TaskManager implements ObligationHost {
       const result = this.store.resetRootTask();
       if (result.retiredAgentSessionId) {
         this.retireExecution(
+          rootTaskId,
           this.adapter.agentId,
           result.retiredAgentSessionId,
           bridge,
         );
       }
       for (const entry of result.affected) {
-        this.retireExecution(entry.agentId, entry.agentSessionId, bridge);
+        this.retireExecution(
+          entry.id,
+          entry.agentId,
+          entry.agentSessionId,
+          bridge,
+        );
         this.releaseTaskRuntime(entry.id, entry.mode);
       }
       this.liveTasks.delete(rootTaskId);
@@ -2019,7 +2047,12 @@ export class TaskManager implements ObligationHost {
     try {
       const result = this.store.deleteTask(taskId);
       for (const entry of result.affected) {
-        this.retireExecution(entry.agentId, entry.agentSessionId, bridge);
+        this.retireExecution(
+          entry.id,
+          entry.agentId,
+          entry.agentSessionId,
+          bridge,
+        );
         this.releaseTaskRuntime(entry.id, entry.mode);
       }
       return result;

@@ -523,4 +523,63 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
       "the replaced execution's schema was not cached",
     );
   });
+
+  it("refuses an ACP session id inside the reserved empty-execution namespace", async (t) => {
+    const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
+    // The agent is free to return this: ACP session ids are opaque strings.
+    (
+      bridge as unknown as {
+        conn: {
+          newSession(): Promise<{
+            sessionId: string;
+            configOptions: unknown[];
+          }>;
+        };
+      }
+    ).conn.newSession = async () => ({
+      sessionId: "no-execution:real-agent-session",
+      configOptions: [],
+    });
+
+    await assert.rejects(
+      () => tasks.createTask(bridge, dir),
+      /reserved empty-execution namespace/,
+    );
+    // Rejected before storage: no task and no binding came into existence.
+    assert.deepEqual(store.listTasks(), []);
+    const stored = store["db"]
+      .prepare(
+        "SELECT COUNT(*) AS n FROM agent_sessions WHERE agent_session_id LIKE 'no-execution:%'",
+      )
+      .get() as { n: number };
+    assert.equal(stored.n, 0);
+  });
+
+  it("restores a real session id that merely shares the reserved prefix", async (t) => {
+    const { bridge, store, tasks, dir, calls } = await startAgent(
+      t,
+      "load-only",
+    );
+    store.createTask("web-1", dir, "auto", "agent-1");
+    // A database written before the write-boundary guard may hold such an id.
+    store["db"]
+      .prepare(
+        "UPDATE agent_sessions SET agent_session_id = ? WHERE task_id = ?",
+      )
+      .run("no-execution:real-agent-session", "web-1");
+
+    const event = await tasks.resumeTask(bridge, "web-1");
+
+    assert.equal(event.type, "task_created");
+    const methods = calls().map((call) => call.method);
+    assert.equal(
+      methods[0],
+      "load",
+      "a real session id is restored, never treated as lazy materialization",
+    );
+    assert.equal(
+      store.getCurrentExecutionBinding("web-1")?.agent_session_id,
+      "no-execution:real-agent-session",
+    );
+  });
 });

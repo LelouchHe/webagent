@@ -41,21 +41,50 @@ export function isReservedRootTaskId(taskId: string): boolean {
  */
 export const ROOT_EMPTY_EXECUTION_SLOT = "";
 
+/** Namespace WebAgent reserves for the per-task empty execution slot. */
+const EMPTY_EXECUTION_PREFIX = "no-execution:";
+
 export function emptyExecutionSlot(taskId: string): string {
   return isReservedRootTaskId(taskId)
     ? ROOT_EMPTY_EXECUTION_SLOT
-    : `no-execution:${taskId}`;
+    : `${EMPTY_EXECUTION_PREFIX}${taskId}`;
 }
 
-/** True for a binding value that stands for "no execution". */
+/**
+ * True when this task's binding holds *its own* empty execution slot.
+ *
+ * Exact equality, not a prefix test: ACP session ids are an opaque
+ * `z.string()`, so `no-execution:anything` may be a perfectly real session id.
+ * "No execution" is only a fact about this task's own reserved value.
+ */
 export function isEmptyExecutionSlot(
+  taskId: string,
   agentSessionId: string | null | undefined,
 ): boolean {
   if (agentSessionId === null || agentSessionId === undefined) return false;
-  return (
+  return agentSessionId === emptyExecutionSlot(taskId);
+}
+
+/**
+ * Reject an ACP session id that lands in the reserved namespace without being
+ * this task's own slot. Refusing at the write boundary is what makes the exact
+ * classification above sound: a real session can never be stored in a shape
+ * that the reader would have to guess about.
+ */
+function assertStorableExecutionId(
+  taskId: string,
+  agentSessionId: string,
+): void {
+  if (agentSessionId === emptyExecutionSlot(taskId)) return;
+  if (
     agentSessionId === ROOT_EMPTY_EXECUTION_SLOT ||
-    agentSessionId.startsWith("no-execution:")
-  );
+    agentSessionId.startsWith(EMPTY_EXECUTION_PREFIX)
+  ) {
+    throw new Error(
+      `Refused ACP session id "${agentSessionId}" for task ${taskId}: ` +
+        `it is in WebAgent's reserved empty-execution namespace`,
+    );
+  }
 }
 
 /** One task removed by a delete (the requested id or a cascaded descendant). */
@@ -1162,7 +1191,12 @@ export class Store {
     });
   }
 
+  /**
+   * The single place a task/execution binding is created. Rejecting reserved
+   * shapes here covers every write path (create, attach, replace, Root reset).
+   */
   private insertBindingRow(taskId: string, agentSessionId: string): void {
+    assertStorableExecutionId(taskId, agentSessionId);
     this.db
       .prepare(
         "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",

@@ -4,7 +4,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { isReservedRootTaskId, ROOT_TASK_ID, Store } from "../src/store.ts";
+import {
+  emptyExecutionSlot,
+  isEmptyExecutionSlot,
+  isReservedRootTaskId,
+  ROOT_TASK_ID,
+  Store,
+} from "../src/store.ts";
 import { generateShareToken } from "../src/tokens.ts";
 
 describe("Store", () => {
@@ -650,6 +656,46 @@ describe("Store", () => {
       store.deleteTask("a-parent");
       assert.equal(store.getTaskIncludingDeleted("survivor"), undefined);
       assert.equal(store.getEvents("survivor").length, 0);
+    });
+  });
+
+  describe("empty execution slot", () => {
+    it("classifies only this task's own reserved value as no execution", () => {
+      // ACP session ids are opaque strings, so the reserved prefix is not a
+      // namespace claim: classification is exact equality with the value
+      // generated for this task.
+      assert.equal(isEmptyExecutionSlot("a", emptyExecutionSlot("a")), true);
+      assert.equal(
+        isEmptyExecutionSlot("root", emptyExecutionSlot("root")),
+        true,
+      );
+      assert.equal(isEmptyExecutionSlot("a", emptyExecutionSlot("b")), false);
+      assert.equal(isEmptyExecutionSlot("a", "no-execution:real-agent"), false);
+      assert.equal(isEmptyExecutionSlot("a", ""), false);
+    });
+
+    it("refuses to store a reserved-shape session id for another task", () => {
+      assert.throws(
+        () => store.createTask("t1", "/a", "auto", "no-execution:t2"),
+        /reserved empty-execution namespace/,
+      );
+      assert.throws(
+        () => store.createTask("t2", "/a", "auto", ""),
+        /reserved empty-execution namespace/,
+      );
+      // Nothing was stored, not even the task row.
+      assert.equal(store.getTaskIncludingDeleted("t1"), undefined);
+      assert.equal(store.getTaskIncludingDeleted("t2"), undefined);
+
+      store.createTask("t3", "/a", "auto", "real-session");
+      assert.throws(
+        () => store.replaceAgentSession("t3", "no-execution:other"),
+        /reserved empty-execution namespace/,
+      );
+      assert.equal(store.getAgentSessionId("t3"), "real-session");
+      // A task's own slot is still writable (rotation and Root reset need it).
+      store.replaceAgentSession("t3", emptyExecutionSlot("t3"));
+      assert.equal(store.getAgentSessionId("t3"), emptyExecutionSlot("t3"));
     });
   });
 

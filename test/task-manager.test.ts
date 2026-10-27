@@ -2370,7 +2370,8 @@ describe("TaskManager", () => {
       let deliveryAttempts = 0;
       const bridge = {
         async newSession() {
-          return { sessionId: "", configOptions: [] };
+          // A real ACP session id: the empty string is Root's reserved slot.
+          return { sessionId: "replacement-session", configOptions: [] };
         },
         async setConfigOption() {
           return [];

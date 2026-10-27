@@ -2168,7 +2168,7 @@ export function createRequestHandler(
         }
         const agentSessionId = store.getAgentSessionId(taskId);
         // A placeholder slot is not an execution, even though it is a row.
-        if (!agentSessionId || isEmptyExecutionSlot(agentSessionId)) {
+        if (!agentSessionId || isEmptyExecutionSlot(taskId, agentSessionId)) {
           tasks.releasePromptSubmission(taskId, submissionId);
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task is not available for the current agent",
