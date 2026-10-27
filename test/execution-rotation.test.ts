@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Store } from "../src/store.ts";
+import { Store, emptyExecutionSlot } from "../src/store.ts";
 import { TaskManager } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { ExecutionAdapter } from "../src/execution-adapter.ts";
@@ -213,5 +213,54 @@ describe("implicit owner rotation", () => {
       .filter((event) => event.type === "system_message")
       .map((event) => JSON.parse(event.data) as Record<string, unknown>);
     assert.ok(events.some((data) => data.kind === "agent_rotation"));
+  });
+
+  it("gives each task its own empty execution slot", async () => {
+    // Root holds the empty slot after a takeover, exactly as it does after a
+    // Root reset. Ordinary tasks need their own placeholder: `agent_sessions`
+    // is keyed by (agent_key, agent_session_id), so a shared sentinel would
+    // collide with Root and with each other.
+    seedRootOwnedBy("agent-a", "session-a");
+    const store = openStore("agent-b");
+    const tasks = makeManager(store, "agent-b", ["agent-b"]);
+    const { bridge } = bridgeRecorder();
+    await tasks.ensureRootTask(bridge);
+    const rootSlot = store.getCurrentExecutionBinding(store.rootTaskId);
+    assert.ok(rootSlot);
+    assert.equal(rootSlot.agent_session_id, emptyExecutionSlot("root"));
+
+    // Both ordinary tasks are owned by the agent that just disappeared.
+    const owner = openStore("agent-a");
+    owner.createTask("t1", dataDir, "auto", "owner-session-1");
+    owner.createTask("t2", dataDir, "auto", "owner-session-2");
+
+    // Session creation fails, so each rotation keeps its empty slot: this is
+    // the sequence that hits the (agent_key, agent_session_id) key.
+    const failing = {
+      ...bridge,
+      async newSession(): Promise<{ sessionId: string; configOptions: [] }> {
+        throw new Error("no session");
+      },
+    };
+    await assert.rejects(() => tasks.resumeTask(failing, "t1"), /no session/);
+    await assert.rejects(() => tasks.resumeTask(failing, "t2"), /no session/);
+
+    const first = store.getCurrentExecutionBinding("t1");
+    const second = store.getCurrentExecutionBinding("t2");
+    assert.ok(first);
+    assert.ok(second);
+    assert.equal(first.agent_key, "agent-b");
+    assert.equal(second.agent_key, "agent-b");
+    assert.equal(first.agent_session_id, emptyExecutionSlot("t1"));
+    assert.equal(second.agent_session_id, emptyExecutionSlot("t2"));
+    assert.notEqual(first.agent_session_id, second.agent_session_id);
+
+    // Both rotations are real: each task was taken over and can materialize.
+    const event = await tasks.resumeTask(bridge, "t1");
+    assert.equal(event.type, "task_created");
+    assert.equal(
+      store.getCurrentExecutionBinding("t1")?.agent_session_id,
+      "session-1",
+    );
   });
 });

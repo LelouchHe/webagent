@@ -29,6 +29,35 @@ export function isReservedRootTaskId(taskId: string): boolean {
   return taskId === ROOT_TASK_ID;
 }
 
+/**
+ * Session id used for "this task keeps its owner but has no execution yet".
+ *
+ * The Root's empty string is its long-standing lazy-materialization marker.
+ * Ordinary tasks cannot share it: `agent_sessions` is keyed by
+ * `(agent_key, agent_session_id)`, so a common sentinel collides with the Root
+ * row and with every other task rotated by the same agent. Each ordinary task
+ * therefore gets its own token, which keeps `(agent_key, task_id)` the only
+ * uniqueness an ordinary task relies on.
+ */
+export const ROOT_EMPTY_EXECUTION_SLOT = "";
+
+export function emptyExecutionSlot(taskId: string): string {
+  return isReservedRootTaskId(taskId)
+    ? ROOT_EMPTY_EXECUTION_SLOT
+    : `no-execution:${taskId}`;
+}
+
+/** True for a binding value that stands for "no execution". */
+export function isEmptyExecutionSlot(
+  agentSessionId: string | null | undefined,
+): boolean {
+  if (agentSessionId === null || agentSessionId === undefined) return false;
+  return (
+    agentSessionId === ROOT_EMPTY_EXECUTION_SLOT ||
+    agentSessionId.startsWith("no-execution:")
+  );
+}
+
 /** One task removed by a delete (the requested id or a cascaded descendant). */
 export interface TaskDelete {
   id: string;
@@ -1348,7 +1377,10 @@ export class Store {
       // Root keeps its owner but loses its execution: the empty session id is
       // the "not materialized yet" marker, and the reset bumps the generation
       // instead of clearing it.
-      this.insertBindingRow(this.rootTaskId, "");
+      this.insertBindingRow(
+        this.rootTaskId,
+        emptyExecutionSlot(this.rootTaskId),
+      );
       this.db
         .prepare("UPDATE tasks SET parent_id = NULL WHERE id = ?")
         .run(this.rootTaskId);

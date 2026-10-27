@@ -6,6 +6,8 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   MessageNotFoundError,
+  emptyExecutionSlot,
+  isEmptyExecutionSlot,
   type CollaborationDeliveryRow,
   type CollaborationMessageRow,
   type TaskDelete,
@@ -536,6 +538,8 @@ export class TaskManager implements ObligationHost {
     bridge?: SessionBridge | null,
   ): void {
     if (!agentId || !agentSessionId) return;
+    // A placeholder is not an execution; there is nothing to retire.
+    if (isEmptyExecutionSlot(agentSessionId)) return;
     const adapter = this.adapters.get(agentId);
     if (!adapter) {
       slog.warn("no adapter for retired execution", {
@@ -610,7 +614,7 @@ export class TaskManager implements ObligationHost {
     reason: "explicit_clear" | "owner_removed",
   ): void {
     const task = this.store.getTaskIncludingDeleted(taskId);
-    this.store.replaceAgentSession(taskId, "");
+    this.store.replaceAgentSession(taskId, emptyExecutionSlot(taskId));
     this.liveTasks.delete(taskId);
     this.resetTaskRuntime(taskId);
     this.pendingDispatchRetries.delete(taskId);
@@ -1274,6 +1278,7 @@ export class TaskManager implements ObligationHost {
     bridge: SessionBridge,
   ): void {
     if (!retired) return;
+    if (isEmptyExecutionSlot(retired.agent_session_id)) return;
     const moved =
       retired.agent_key !== this.adapter.agentId ||
       retired.agent_session_id !== replacementSessionId;
@@ -1542,13 +1547,15 @@ export class TaskManager implements ObligationHost {
     this.assertRunnableOwner(taskId);
     const existingBinding = this.store.getCurrentExecutionBinding(taskId);
     const existingSessionId = existingBinding?.agent_session_id;
+    // An empty execution slot (Root after a reset, or any task after an
+    // implicit rotation) is a materialization marker, not a session to load.
     // The restore runs under the generation it started with. A rotation that
     // slips in while the ACP call is in flight invalidates every write this
     // continuation would make.
     const startLease = this.authority.adopt(taskId);
     this.restoringTasks.add(taskId);
     try {
-      if (!existingSessionId) {
+      if (!existingSessionId || isEmptyExecutionSlot(existingSessionId)) {
         return await this.materializeRestoredTask(bridge, taskId, task);
       }
       // Mint a fresh capability for the restored task: any token from
