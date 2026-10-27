@@ -43,6 +43,35 @@ export interface ExecutionLease {
   readonly generation: number;
 }
 
+/**
+ * What a bridge needs in order to gate execution-scoped events: the current
+ * lease for a task, and the verdict on a captured one.
+ */
+export interface ExecutionLeaseSource {
+  /** Current lease for a task, or null when the task has no ledger entry. */
+  leaseFor(taskId: string): ExecutionLease | null;
+  /** True only for a lease naming the task's current generation. */
+  accepts(lease: ExecutionLease): boolean;
+}
+
+/**
+ * Read the lease an agent event was stamped with. The stamp is read through a
+ * helper (rather than declared on every event variant) so the transport type
+ * stays untouched while the value is still validated at the boundary.
+ */
+export function leaseOf(event: object): ExecutionLease | undefined {
+  const raw = (event as { executionLease?: unknown }).executionLease;
+  if (!raw || typeof raw !== "object") return undefined;
+  const { taskId, generation } = raw as {
+    taskId?: unknown;
+    generation?: unknown;
+  };
+  if (typeof taskId !== "string" || typeof generation !== "number") {
+    return undefined;
+  }
+  return { taskId, generation };
+}
+
 export function bindingsEqual(
   a: ExecutionBinding | null,
   b: ExecutionBinding | null,
@@ -108,7 +137,7 @@ export class ExecutionAuthority {
    * Callers capture this at operation start; they must not re-read it later
    * and treat that as validation.
    */
-  lease(taskId: string): ExecutionLease | null {
+  leaseFor(taskId: string): ExecutionLease | null {
     const generation = this.ledger.generationOf(taskId);
     return generation === undefined ? null : { taskId, generation };
   }
@@ -124,7 +153,7 @@ export class ExecutionAuthority {
     if (!this.ledger.has(taskId)) {
       this.ledger.bump(taskId);
     }
-    return this.lease(taskId)!;
+    return this.leaseFor(taskId)!;
   }
 
   /**

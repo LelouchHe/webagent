@@ -16,6 +16,20 @@ import { isAutopilotMode } from "./mode-bucket.ts";
 const ailog = log.scope("attachment-interceptor");
 const plog = log.scope("push");
 const clog = log.scope("cancel");
+const elog = log.scope("task");
+
+/**
+ * Drop the internal lease stamp before an event leaves the server. The stamp
+ * exists so the entry boundary can refuse stale writers; the client surface is
+ * unchanged by it.
+ */
+function withoutLease<T extends object>(event: T): T {
+  if (!("executionLease" in event)) return event;
+  const { executionLease: _lease, ...rest } = event as T & {
+    executionLease?: unknown;
+  };
+  return rest as T;
+}
 
 export interface EventHandlerConfig {
   cancelTimeout: number;
@@ -161,7 +175,7 @@ function performAutoApprove(
     },
     { from_ref: "system" },
   );
-  if (broadcastRequest) sseManager.broadcast(event);
+  if (broadcastRequest) sseManager.broadcast(withoutLease(event));
   sseManager.broadcast({
     type: "permission_response" as const,
     taskId: event.taskId,
@@ -499,6 +513,16 @@ export function handleAgentEvent(
   _clientRegistry?: ClientRegistry,
 ): void {
   tasks.setRecoveryBridge(bridge);
+  // Execution write lease: the first of the two boundaries. An event stamped
+  // with a stale generation, or one that lost its stamp while the task already
+  // has a current execution, cannot reach any of this handler's writes.
+  if (!tasks.acceptsEventLease(event)) {
+    elog.debug("dropped event from a stale execution", {
+      type: event.type,
+      taskId: "taskId" in event ? event.taskId : undefined,
+    });
+    return;
+  }
   if (event.type === "connected" || event.type === "task_created") {
     event.rootTaskId = store.rootTaskId;
   }
@@ -512,7 +536,7 @@ export function handleAgentEvent(
   if (event.type === "available_commands_update") {
     const snapshot = tasks.updateAgentCommands(event.taskId, event.commands);
     if (tasks.restoringTasks.has(event.taskId)) return;
-    sseManager.broadcast({ ...event, ...snapshot });
+    sseManager.broadcast(withoutLease({ ...event, ...snapshot }));
     return;
   }
   if (event.type === "agent_reloading" || event.type === "agent_disconnected") {
@@ -544,6 +568,6 @@ export function handleAgentEvent(
     sseManager,
   );
   if (suppress) return;
-  sseManager.broadcast(event);
-  if (pushService) maybePushNotify(event, pushService);
+  sseManager.broadcast(withoutLease(event));
+  if (pushService) maybePushNotify(withoutLease(event), pushService);
 }

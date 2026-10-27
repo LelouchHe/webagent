@@ -48,8 +48,27 @@ describe("event writers populate from_ref correctly", () => {
   >[5];
   const config = { cancelTimeout: 10000, recentPathsLimit: 10 };
 
+  /**
+   * Stamp an event the way the bridge does: with the lease of the execution
+   * that produced it. The entry boundary refuses an unstamped event once the
+   * task has a current execution, so a fabricated event must name one.
+   */
+  function withLease<T extends object>(event: T): T {
+    const taskId = (event as { taskId?: unknown }).taskId;
+    if (typeof taskId !== "string") return event;
+    const lease = tasks.authority.leaseFor(taskId);
+    return lease ? Object.assign({}, event, { executionLease: lease }) : event;
+  }
+
   function emit(event: AgentEvent) {
-    handleAgentEvent(event, tasks, store, bridge, config, sseManager);
+    handleAgentEvent(
+      withLease(event),
+      tasks,
+      store,
+      bridge,
+      config,
+      sseManager,
+    );
   }
 
   it("assistant_message (flushed from buffer) is from_ref='agent'", () => {

@@ -76,7 +76,17 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
       store.updateTaskConfig("web-1", "mode", "#plan");
       const before = store.getTask("web-1");
       const events: AgentEvent[] = [];
-      bridge.on("event", (event: AgentEvent) => events.push(event));
+      const leases: Array<{ taskId: string; generation: number } | undefined> =
+        [];
+      bridge.on("event", (event: AgentEvent) => {
+        // The internal lease stamp is not part of the client surface; assert it
+        // separately instead of folding it into the payload comparison.
+        const { executionLease, ...rest } = event as AgentEvent & {
+          executionLease?: { taskId: string; generation: number };
+        };
+        leases.push(executionLease);
+        events.push(rest);
+      });
 
       const result = await tasks.resumeTask(bridge, "web-1");
 
@@ -128,6 +138,11 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
         },
       ];
       const storedOptions = [{ ...agentOptions[0], currentValue: "#plan" }];
+      assert.ok(leases.length > 0);
+      assert.ok(
+        leases.every((lease) => lease?.taskId === "web-1"),
+        "every execution-scoped event carries the generation it was written for",
+      );
       assert.deepEqual(events, [
         {
           type: "task_created",
@@ -234,5 +249,45 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
 
     assert.equal((bridge as any).sessionCapabilities, null);
     assert.equal((bridge as any).loadSessionSupported, false);
+  });
+
+  it("drops events from an execution whose generation was replaced", async (t) => {
+    const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
+    store.createTask("web-1", dir, "auto", "agent-1");
+    await tasks.resumeTask(bridge, "web-1");
+
+    const events: AgentEvent[] = [];
+    bridge.on("event", (event: AgentEvent) => events.push(event));
+    const emitForSession = (
+      bridge as unknown as {
+        emitForSession(sessionId: string, event: AgentEvent): void;
+      }
+    ).emitForSession.bind(bridge);
+
+    emitForSession("agent-1", {
+      type: "message_chunk",
+      taskId: "web-1",
+      text: "current",
+    });
+    assert.equal(events.length, 1, "the current execution may still write");
+
+    // Rotate the task outside the bridge: the old execution's lease dies with
+    // it. The terminal `prompt_done`/`error` path emits by task id without a
+    // session lookup, so the lease is the only fence it has.
+    store.replaceAgentSession("web-1", "agent-2");
+    emitForSession("agent-1", {
+      type: "message_chunk",
+      taskId: "web-1",
+      text: "late tail",
+    });
+    assert.equal(events.length, 1, "a replaced execution writes nothing");
+
+    // A session that never became current in this process is refused too.
+    emitForSession("agent-unknown", {
+      type: "message_chunk",
+      taskId: "web-1",
+      text: "unknown",
+    });
+    assert.equal(events.length, 1);
   });
 });

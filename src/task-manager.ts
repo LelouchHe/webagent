@@ -36,7 +36,12 @@ import {
 } from "./obligation-controller.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
 import { ExecutionAdapter } from "./execution-adapter.ts";
-import { ExecutionAuthority, GenerationLedger } from "./execution-authority.ts";
+import {
+  ExecutionAuthority,
+  GenerationLedger,
+  leaseOf,
+  type ExecutionLease,
+} from "./execution-authority.ts";
 import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { log } from "./log.ts";
@@ -76,7 +81,10 @@ type SessionBridge = Pick<
       AgentBridge,
       "sessionMapped" | "discardUnboundSession" | "retireExecution"
     >
-  >;
+  > & {
+    /** Install the authority that gates execution-scoped events. */
+    setExecutionLeaseSource?: AgentBridge["setExecutionLeaseSource"];
+  };
 
 type DeliveryBridge = SessionBridge & Pick<AgentBridge, "prompt">;
 
@@ -541,6 +549,40 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
+   * Make `bridge` the execution transport this runtime gates on. Idempotent;
+   * called from every entry point that receives a bridge, because a caller's
+   * bridge is the only handle the runtime has on the live execution.
+   */
+  attachExecutionBridge(bridge: SessionBridge): void {
+    this.adapter.bindBridge(bridge);
+    bridge.setExecutionLeaseSource?.(this.authority);
+  }
+
+  /**
+   * True when an agent event may still write. A stamped event must name the
+   * task's current generation. An unstamped event is only acceptable while the
+   * task has no execution in this process at all: the moment a generation
+   * exists, a missing lease means the writer never became current here.
+   */
+  acceptsEventLease(event: AgentEvent): boolean {
+    if (!("taskId" in event) || !event.taskId) return true;
+    const lease = leaseOf(event);
+    if (!lease) return this.authority.generationOf(event.taskId) === undefined;
+    if (lease.taskId !== event.taskId) return false;
+    return this.authority.accepts(lease);
+  }
+
+  /** The lease a replacement execution must initialize under, after commit. */
+  private currentLease(taskId: string): ExecutionLease | null {
+    return this.authority.leaseFor(taskId);
+  }
+
+  /** True when `lease` still names the task's current generation. */
+  private leaseCurrent(lease: ExecutionLease | null): boolean {
+    return this.authority.accepts(lease);
+  }
+
+  /**
    * Drop live state for tasks that the store cleaned as empty.
    */
   private cleanupEmptyTasks(bridge?: SessionBridge): void {
@@ -677,6 +719,7 @@ export class TaskManager implements ObligationHost {
       workflowStatus?: WorkflowStatus;
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+    this.attachExecutionBridge(bridge);
     const parentId = this.resolveParentId(opts?.parentId);
     if (parentId) {
       await this.waitForRootResetIfNeeded(parentId);
@@ -840,8 +883,9 @@ export class TaskManager implements ObligationHost {
     }
     try {
       this.liveTasks.add(taskId);
-      this.recordConfigOptions(taskId, createdConfigOptions);
-      bridge.sessionMapped?.(agentSessionId);
+      const lease = this.currentLease(taskId);
+      this.recordConfigOptions(taskId, createdConfigOptions, lease);
+      bridge.sessionMapped?.(agentSessionId, taskId);
 
       // Inherit config options from source task
       if (sourceTask) {
@@ -940,6 +984,7 @@ export class TaskManager implements ObligationHost {
       allowCompacting?: boolean;
     } = {},
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+    this.attachExecutionBridge(bridge);
     // One synchronous gate: the final busy recheck and the `rotating` claim
     // must happen in the same block with no await between them. A caller that
     // checked busy before awaiting a request body would otherwise rotate a
@@ -1019,17 +1064,22 @@ export class TaskManager implements ObligationHost {
     if (execution?.token) {
       this.capabilities?.revokeOtherTokens(taskId, execution.token);
     }
-    bridge.sessionMapped?.(created.sessionId);
+    const lease = this.currentLease(taskId);
+    bridge.sessionMapped?.(created.sessionId, taskId);
     this.retireReplacedExecution(retiredBinding, created.sessionId, bridge);
     this.resetTaskRuntime(taskId, preserveRuntimeState);
     this.store.failOutstandingDeliveriesForTaskClear(taskId);
     this.store.updateTaskWorkflowStatus(taskId, "idle");
 
+    if (!this.leaseCurrent(lease)) {
+      throw new Error(`Execution replaced while rotating ${taskId}`);
+    }
     const configOptions = await this.restoreTaskConfig(
       bridge,
       taskId,
       created.configOptions,
       task,
+      lease,
     );
     return {
       taskId,
@@ -1084,6 +1134,7 @@ export class TaskManager implements ObligationHost {
 
   /** Bind an ACP execution to the reserved Root record after bridge startup. */
   async ensureRootTask(bridge: SessionBridge): Promise<void> {
+    this.attachExecutionBridge(bridge);
     const rootTaskId = this.store.rootTaskId;
     const root = this.store.getTaskIncludingDeleted(rootTaskId);
     // Gate on the binding row, not its session id: a DB-only Root reset keeps
@@ -1109,8 +1160,12 @@ export class TaskManager implements ObligationHost {
     }
     this.liveTasks.add(rootTaskId);
     this.creatingTasks.delete(rootTaskId);
-    this.recordConfigOptions(rootTaskId, created.configOptions);
-    bridge.sessionMapped?.(created.sessionId);
+    this.recordConfigOptions(
+      rootTaskId,
+      created.configOptions,
+      this.currentLease(rootTaskId),
+    );
+    bridge.sessionMapped?.(created.sessionId, rootTaskId);
   }
 
   /** Reapply the stable Task config to a newly created ACP execution. */
@@ -1119,6 +1174,7 @@ export class TaskManager implements ObligationHost {
     taskId: string,
     configOptions: ConfigOption[],
     task: Pick<TaskRow, "mode" | "reasoning_effort" | "model">,
+    lease?: ExecutionLease | null,
   ): Promise<ConfigOption[]> {
     const values: Array<{
       id: string | undefined;
@@ -1134,6 +1190,12 @@ export class TaskManager implements ObligationHost {
     let updated = configOptions;
     for (const { id, value } of values) {
       if (!id || !value) continue;
+      if (lease !== undefined && !this.leaseCurrent(lease)) {
+        slog.warn("skipped config restore for a replaced execution", {
+          taskId: taskId.slice(0, 8),
+        });
+        break;
+      }
       try {
         const next = await bridge.setConfigOption(taskId, id, value);
         if (next.length > 0) {
@@ -1147,8 +1209,17 @@ export class TaskManager implements ObligationHost {
     return updated;
   }
 
-  /** Cache the ACP config schema and persist this task's current values. */
-  recordConfigOptions(taskId: string, configOptions: ConfigOption[]): void {
+  /**
+   * Cache the ACP config schema and persist this task's current values. An
+   * execution-scoped caller passes the lease it captured: a stale one writes
+   * neither the cache nor the task row.
+   */
+  recordConfigOptions(
+    taskId: string,
+    configOptions: ConfigOption[],
+    lease?: ExecutionLease | null,
+  ): void {
+    if (lease !== undefined && !this.leaseCurrent(lease)) return;
     if (configOptions.length === 0) return;
     this.cachedConfigOptions = configOptions;
     for (const option of configOptions) {
@@ -1250,6 +1321,7 @@ export class TaskManager implements ObligationHost {
 
   /** Resume a task — returns event to send to the requesting client. */
   async resumeTask(bridge: SessionBridge, taskId: string): Promise<AgentEvent> {
+    this.attachExecutionBridge(bridge);
     const task = this.store.getTask(taskId);
     if (!task) throw new Error("Task not found");
 
@@ -1272,52 +1344,23 @@ export class TaskManager implements ObligationHost {
     // agent has never seen.
     const existingBinding = this.store.getCurrentExecutionBinding(taskId);
     const existingSessionId = existingBinding?.agent_session_id;
+    // The restore runs under the generation it started with. A rotation that
+    // slips in while the ACP call is in flight invalidates every write this
+    // continuation would make.
+    const startLease = this.authority.adopt(taskId);
     this.restoringTasks.add(taskId);
     try {
       if (!existingSessionId) {
-        const execution = this.buildMcpServerForExecution(taskId, false);
-        const created = await this.createAgentSession(
-          bridge,
-          taskId,
-          task.cwd,
-          this.buildNewTaskOptions(undefined, execution?.servers),
-          execution?.token,
-        );
-        try {
-          this.store.replaceAgentSession(taskId, created.sessionId, task.cwd);
-        } catch (error) {
-          bridge.discardUnboundSession?.(created.sessionId);
-          this.creatingTasks.delete(taskId);
-          if (execution?.token) this.capabilities?.revoke(execution.token);
-          throw error;
-        }
-        this.liveTasks.add(taskId);
-        this.creatingTasks.delete(taskId);
-        if (execution?.token) {
-          this.capabilities?.revokeOtherTokens(taskId, execution.token);
-        }
-        bridge.sessionMapped?.(created.sessionId);
-        const configOptions = await this.restoreTaskConfig(
-          bridge,
-          taskId,
-          created.configOptions,
-          task,
-        );
-        return {
-          type: "task_created",
-          rootTaskId: this.store.rootTaskId,
-          taskId,
-          cwd: task.cwd,
-          cwdDisplay: abbreviateHomePath(task.cwd),
-          title: task.title,
-          configOptions: this.applyStoredConfig(configOptions, task),
-        };
+        return await this.materializeRestoredTask(bridge, taskId, task);
       }
       // Mint a fresh capability for the restored task: any token from
       // before a restart is gone with the old process, and the task is
       // still live, so it gets an MCP server entry like a new task does.
       const mcpServers = this.buildMcpServers(taskId);
       const loaded = await bridge.loadSession(taskId, task.cwd, mcpServers);
+      if (!this.leaseCurrent(startLease)) {
+        throw new Error(`Execution replaced while restoring ${taskId}`);
+      }
       this.liveTasks.add(taskId);
       // Piggyback a cache-warming setConfigOption on the user's own resume
       // when the global cache is empty (typical after bridge.restart). Uses
@@ -1348,6 +1391,61 @@ export class TaskManager implements ObligationHost {
     } finally {
       this.restoringTasks.delete(taskId);
     }
+  }
+
+  /**
+   * Materialize the empty execution slot left by a DB-only Root reset or a
+   * reset that never materialized. The replacement commits a new binding, so
+   * its initialization runs under the *new* lease, not the one the restore
+   * started with.
+   */
+  private async materializeRestoredTask(
+    bridge: SessionBridge,
+    taskId: string,
+    task: TaskRow,
+  ): Promise<AgentEvent> {
+    const execution = this.buildMcpServerForExecution(taskId, false);
+    const created = await this.createAgentSession(
+      bridge,
+      taskId,
+      task.cwd,
+      this.buildNewTaskOptions(undefined, execution?.servers),
+      execution?.token,
+    );
+    try {
+      this.store.replaceAgentSession(taskId, created.sessionId, task.cwd);
+    } catch (error) {
+      bridge.discardUnboundSession?.(created.sessionId);
+      this.creatingTasks.delete(taskId);
+      if (execution?.token) this.capabilities?.revoke(execution.token);
+      throw error;
+    }
+    this.liveTasks.add(taskId);
+    this.creatingTasks.delete(taskId);
+    if (execution?.token) {
+      this.capabilities?.revokeOtherTokens(taskId, execution.token);
+    }
+    const lease = this.currentLease(taskId);
+    bridge.sessionMapped?.(created.sessionId, taskId);
+    const configOptions = await this.restoreTaskConfig(
+      bridge,
+      taskId,
+      created.configOptions,
+      task,
+      lease,
+    );
+    if (!this.leaseCurrent(lease)) {
+      throw new Error(`Execution replaced while restoring ${taskId}`);
+    }
+    return {
+      type: "task_created",
+      rootTaskId: this.store.rootTaskId,
+      taskId,
+      cwd: task.cwd,
+      cwdDisplay: abbreviateHomePath(task.cwd),
+      title: task.title,
+      configOptions: this.applyStoredConfig(configOptions, task),
+    };
   }
 
   /**
@@ -1555,6 +1653,7 @@ export class TaskManager implements ObligationHost {
   async resetRootTask(
     bridge?: SessionBridge,
   ): Promise<{ affected: TaskDelete[] }> {
+    if (bridge) this.attachExecutionBridge(bridge);
     const rootTaskId = this.store.rootTaskId;
     if (this.resettingTasks.has(rootTaskId)) {
       throw new Error("Root task is already being reset");
@@ -1648,6 +1747,7 @@ export class TaskManager implements ObligationHost {
     bridge: SessionBridge | undefined,
     taskId: string,
   ): Promise<{ mode: "hard" | "soft"; affected: TaskDelete[] }> {
+    if (bridge) this.attachExecutionBridge(bridge);
     const release = await this.acquireTaskTreeMutationLock(taskId);
     const task = this.store.getTask(taskId);
     if (!task) {
@@ -1699,6 +1799,8 @@ export class TaskManager implements ObligationHost {
       if (perm.taskId === id) this.pendingPermissions.delete(reqId);
     }
     this.state.delete(id);
+    // Drop the generation entry with the task: a stale id must never revive.
+    this.authority.clear(id);
     if (mode === "hard") {
       // Tombstoned tasks keep their attachments alive for the share viewer
       // (shared files still resolve via /s/:token/attachments/...). The reap
@@ -1956,7 +2058,7 @@ export class TaskManager implements ObligationHost {
   /** Remember the bridge used by a caller that may later transition idle. */
   setRecoveryBridge(bridge: DeliveryBridge): void {
     this.recoveryBridge = bridge;
-    this.adapter.bindBridge(bridge);
+    this.attachExecutionBridge(bridge);
   }
 
   /**
@@ -2188,7 +2290,13 @@ export class TaskManager implements ObligationHost {
       this.state.getState(task.id).runtime.busy?.promptId ?? undefined;
     try {
       await this.ensureResumed(bridge, task.id);
+      const lease = this.currentLease(task.id);
       await bridge.prompt(task.id, text, undefined, promptId);
+      if (!this.leaseCurrent(lease)) {
+        // The prompt reached an execution that has already been replaced, so
+        // it is not a delivered attempt for the task's current debt.
+        return { status: "deferred", reason: "execution_replaced" };
+      }
       // Truthful: the reminder text reached the target, so record it now. A
       // request-level failure throws `PromptNotDeliveredError` and records
       // nothing; an in-turn agent error resolves and is a delivered attempt.
@@ -2433,6 +2541,7 @@ export class TaskManager implements ObligationHost {
       this.drainingCollaborationTasks.delete(taskId);
       this.activePrompts.add(taskId);
       this.syncBusy(taskId);
+      const lease = this.currentLease(taskId);
       const promptId =
         this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
       const promptPromise = bridge.prompt(
@@ -2449,6 +2558,12 @@ export class TaskManager implements ObligationHost {
         this.obligations.markDelivered(sourceTaskId, taskId, promptId);
       }
       const dispatchFailed = (error: unknown) => {
+        if (!this.leaseCurrent(lease)) {
+          slog.debug("ignored dispatch failure from a replaced execution", {
+            taskId: taskId.slice(0, 8),
+          });
+          return;
+        }
         slog.error("collaboration delivery failed", {
           taskId: taskId.slice(0, 8),
           error,
@@ -2472,6 +2587,9 @@ export class TaskManager implements ObligationHost {
         this.syncBusy(taskId);
       };
       void promptPromise.then(() => {
+        // A rotation truncated this transport; its late success must not
+        // settle rows that now belong to the replacement execution.
+        if (!this.leaseCurrent(lease)) return;
         this.store.markCollaborationDeliveriesDelivered(allDeliveryIds);
         for (const sourceTaskId of qualifyingSources) {
           this.obligations.markDispatchSucceeded(

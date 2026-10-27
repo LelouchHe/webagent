@@ -129,6 +129,18 @@ describe("handleAgentEvent", () => {
   let store: Store;
   let tasks: TaskManager;
 
+  /**
+   * Stamp an event the way the bridge does: with the lease of the execution
+   * that produced it. The entry boundary refuses an unstamped event once the
+   * task has a current execution, so a fabricated event must name one.
+   */
+  function withLease<T extends object>(event: T): T {
+    const taskId = (event as { taskId?: unknown }).taskId;
+    if (typeof taskId !== "string") return event;
+    const lease = tasks.authority.leaseFor(taskId);
+    return lease ? Object.assign({}, event, { executionLease: lease }) : event;
+  }
+
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-server-test-"));
     store = new Store(tmpDir, "test-agent");
@@ -151,7 +163,7 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "message_chunk", taskId: "s1", text: "hello" } as any,
+      withLease({ type: "message_chunk", taskId: "s1", text: "hello" }) as any,
       tasks,
       store,
       bridge,
@@ -176,7 +188,7 @@ describe("handleAgentEvent", () => {
 
     // Start thinking
     handleAgentEvent(
-      { type: "thought_chunk", taskId: "s1", text: "hmm" } as any,
+      withLease({ type: "thought_chunk", taskId: "s1", text: "hmm" }) as any,
       tasks,
       store,
       bridge,
@@ -187,7 +199,7 @@ describe("handleAgentEvent", () => {
 
     // Switch to message — should flush thinking
     handleAgentEvent(
-      { type: "message_chunk", taskId: "s1", text: "answer" } as any,
+      withLease({ type: "message_chunk", taskId: "s1", text: "answer" }) as any,
       tasks,
       store,
       bridge,
@@ -205,14 +217,14 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "tool_call",
         taskId: "s1",
         id: "tc1",
         title: "Read file",
         kind: "read",
         rawInput: "{}",
-      } as any,
+      }) as any,
       tasks,
       store,
       bridge,
@@ -236,7 +248,7 @@ describe("handleAgentEvent", () => {
     ];
 
     handleAgentEvent(
-      { type: "plan", taskId: "s1", entries },
+      withLease({ type: "plan", taskId: "s1", entries }),
       tasks,
       store,
       bridge,
@@ -260,11 +272,11 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "plan",
         taskId: "s1",
         entries: [{ content: "Old work", status: "completed" }],
-      },
+      }),
       tasks,
       store,
       bridge,
@@ -282,7 +294,11 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "prompt_done", taskId: "s1", stopReason: "end_turn" } as any,
+      withLease({
+        type: "prompt_done",
+        taskId: "s1",
+        stopReason: "end_turn",
+      }) as any,
       tasks,
       store,
       bridge,
@@ -312,7 +328,7 @@ describe("handleAgentEvent", () => {
   ) {
     const { sseManager } = createMockSseManager();
     handleAgentEvent(
-      { type: "prompt_done", taskId, promptId, stopReason } as any,
+      withLease({ type: "prompt_done", taskId, promptId, stopReason }) as any,
       tasks,
       store,
       bridge as any,
@@ -365,12 +381,12 @@ describe("handleAgentEvent", () => {
     // then resolves, so the drain must not treat it as a transport failure.
     const { sseManager } = createMockSseManager();
     handleAgentEvent(
-      {
+      withLease({
         type: "error",
         taskId: "child",
         promptId,
         message: "turn boom",
-      } as any,
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1085,12 +1101,12 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "prompt_done",
         taskId: "s1",
         stopReason: "end_turn",
         promptId: "prompt-7",
-      } as any,
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1120,12 +1136,12 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "prompt_done",
         taskId: "s1",
         stopReason: "end_turn",
         promptId: "prompt-superseded",
-      } as any,
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1153,12 +1169,12 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "error",
         taskId: "s1",
         message: "agent blew up",
         promptId: "prompt-superseded",
-      } as any,
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1186,12 +1202,12 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "error",
         taskId: "s1",
         message: "agent blew up",
         promptId: livePromptId,
-      } as any,
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1211,7 +1227,11 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "prompt_done", taskId: "s1", stopReason: "end_turn" } as any,
+      withLease({
+        type: "prompt_done",
+        taskId: "s1",
+        stopReason: "end_turn",
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1233,7 +1253,7 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "agent_disconnected", error: "agent exited" } as any,
+      withLease({ type: "agent_disconnected", error: "agent exited" }) as any,
       tasks,
       store,
       bridge,
@@ -1253,7 +1273,7 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "agent_disconnected", agentId: "test-agent" } as any,
+      withLease({ type: "agent_disconnected", agentId: "test-agent" }) as any,
       tasks,
       store,
       bridge,
@@ -1275,7 +1295,7 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "agent_disconnected", error: "agent exited" } as any,
+      withLease({ type: "agent_disconnected", error: "agent exited" }) as any,
       tasks,
       store,
       bridge,
@@ -1298,7 +1318,7 @@ describe("handleAgentEvent", () => {
     ];
 
     handleAgentEvent(
-      { type: "task_created", taskId: "s1", configOptions } as any,
+      withLease({ type: "task_created", taskId: "s1", configOptions }) as any,
       tasks,
       store,
       bridge,
@@ -1319,7 +1339,7 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "message_chunk", taskId: "s1", text: "hidden" } as any,
+      withLease({ type: "message_chunk", taskId: "s1", text: "hidden" }) as any,
       tasks,
       store,
       bridge,
@@ -1338,12 +1358,12 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "usage_update",
         taskId: "s1",
         used: 61_234,
         size: 272_000,
-      },
+      }),
       tasks,
       store,
       bridge,
@@ -1365,7 +1385,7 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "available_commands_update",
         taskId: "s1",
         commands: [
@@ -1375,7 +1395,7 @@ describe("handleAgentEvent", () => {
             input: { hint: "focus instructions" },
           },
         ],
-      },
+      }),
       tasks,
       store,
       bridge,
@@ -1404,11 +1424,11 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "available_commands_update",
         taskId: "s1",
         commands: [{ name: "context", description: "Show context usage" }],
-      },
+      }),
       tasks,
       store,
       bridge,
@@ -1438,7 +1458,7 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "agent_disconnected", agentId: "test-agent" },
+      withLease({ type: "agent_disconnected", agentId: "test-agent" }),
       tasks,
       store,
       bridge,
@@ -1466,12 +1486,12 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "error",
         taskId: "s1",
         message: "provider failed",
         promptId: "prompt-7",
-      } as any,
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1494,7 +1514,11 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "error", taskId: "s1", message: "something failed" } as any,
+      withLease({
+        type: "error",
+        taskId: "s1",
+        message: "something failed",
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1517,7 +1541,11 @@ describe("handleAgentEvent", () => {
     const { sseManager } = createMockSseManager();
 
     handleAgentEvent(
-      { type: "error", taskId: "s1", message: "something failed" } as any,
+      withLease({
+        type: "error",
+        taskId: "s1",
+        message: "something failed",
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1544,7 +1572,7 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "permission_request",
         taskId: "s1",
         requestId: "req1",
@@ -1553,7 +1581,7 @@ describe("handleAgentEvent", () => {
           { optionId: "allow_once", kind: "allow_once", label: "Allow once" },
           { optionId: "deny", kind: "deny", label: "Deny" },
         ],
-      } as any,
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1588,7 +1616,7 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "permission_request",
         taskId: "s1",
         requestId: "req1",
@@ -1597,7 +1625,7 @@ describe("handleAgentEvent", () => {
           { optionId: "allow_once", kind: "allow_once", label: "Allow once" },
           { optionId: "deny", kind: "deny", label: "Deny" },
         ],
-      } as any,
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1622,7 +1650,7 @@ describe("handleAgentEvent", () => {
       const { sseManager, broadcasted } = createMockSseManager();
 
       handleAgentEvent(
-        {
+        withLease({
           type: "permission_request",
           taskId: "s_" + mode,
           requestId: "req_" + mode,
@@ -1631,7 +1659,7 @@ describe("handleAgentEvent", () => {
             { optionId: "allow_once", kind: "allow_once", label: "Allow once" },
             { optionId: "deny", kind: "deny", label: "Deny" },
           ],
-        } as any,
+        }) as any,
         tasks,
         store,
         bridge,
@@ -1660,7 +1688,7 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "permission_request",
         taskId: "s1",
         requestId: "req1",
@@ -1669,7 +1697,7 @@ describe("handleAgentEvent", () => {
           { optionId: "allow_once", kind: "allow_once", label: "Allow once" },
           { optionId: "deny", kind: "deny", label: "Deny" },
         ],
-      } as any,
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1692,7 +1720,7 @@ describe("handleAgentEvent", () => {
     const { sseManager, broadcasted } = createMockSseManager();
 
     handleAgentEvent(
-      {
+      withLease({
         type: "permission_request",
         taskId: "s1",
         requestId: "req1",
@@ -1705,7 +1733,7 @@ describe("handleAgentEvent", () => {
           },
           { optionId: "deny", kind: "deny", label: "Deny" },
         ],
-      } as any,
+      }) as any,
       tasks,
       store,
       bridge,
@@ -1718,5 +1746,106 @@ describe("handleAgentEvent", () => {
 
     // Should broadcast permission_request for manual handling
     assert.equal(broadcasted[0].type, "permission_request");
+  });
+
+  // --- Execution write lease (D3 / A2) ---
+  describe("execution write lease", () => {
+    function leaseFor(taskId: string) {
+      const lease = tasks.authority.leaseFor(taskId);
+      assert.ok(lease, "the task must have a current generation");
+      return lease;
+    }
+
+    it("refuses an event stamped with a replaced generation", () => {
+      store.createTask("s1", "/tmp");
+      const stale = leaseFor("s1");
+      // A rotation advances the task's generation; the old execution's writes
+      // are no longer welcome.
+      store.replaceAgentSession("s1", "agent-2");
+      assert.equal(leaseFor("s1").generation, stale.generation + 1);
+
+      const { bridge } = createMockBridge();
+      const { sseManager, broadcasted } = createMockSseManager();
+      handleAgentEvent(
+        Object.assign(
+          { type: "message_chunk", taskId: "s1", text: "late tail" },
+          { executionLease: stale },
+        ) as any,
+        tasks,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+
+      assert.equal(broadcasted.length, 0);
+      assert.equal(tasks.assistantBuffers.has("s1"), false);
+      assert.equal(store.getEvents("s1").length, 0);
+      assert.equal(tasks.getLastAgentActivityAt("s1"), null);
+    });
+
+    it("refuses an event with no lease once the task has a current execution", () => {
+      store.createTask("s1", "/tmp");
+      leaseFor("s1");
+      const { bridge } = createMockBridge();
+      const { sseManager, broadcasted } = createMockSseManager();
+
+      handleAgentEvent(
+        { type: "message_chunk", taskId: "s1", text: "unstamped" } as any,
+        tasks,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+
+      assert.equal(broadcasted.length, 0);
+      assert.equal(tasks.assistantBuffers.has("s1"), false);
+    });
+
+    it("refuses an unknown generation, never falling back to the current one", () => {
+      store.createTask("s1", "/tmp");
+      leaseFor("s1");
+      const { bridge } = createMockBridge();
+      const { sseManager, broadcasted } = createMockSseManager();
+
+      handleAgentEvent(
+        Object.assign(
+          { type: "message_chunk", taskId: "s1", text: "unknown" },
+          { executionLease: { taskId: "s1", generation: 999 } },
+        ) as any,
+        tasks,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+
+      assert.equal(broadcasted.length, 0);
+      assert.equal(tasks.assistantBuffers.has("s1"), false);
+    });
+
+    it("refuses a lease that names another task", () => {
+      store.createTask("s1", "/tmp");
+      store.createTask("s2", "/tmp");
+      const other = leaseFor("s2");
+      const { bridge } = createMockBridge();
+      const { sseManager, broadcasted } = createMockSseManager();
+
+      handleAgentEvent(
+        Object.assign(
+          { type: "message_chunk", taskId: "s1", text: "crossed" },
+          { executionLease: other },
+        ) as any,
+        tasks,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+
+      assert.equal(broadcasted.length, 0);
+      assert.equal(tasks.assistantBuffers.has("s1"), false);
+    });
   });
 });

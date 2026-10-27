@@ -298,7 +298,7 @@ async function initBridge(agentId: string): Promise<AgentBridge> {
 
   await b.start();
   bridge = b;
-  executionAdapter.bindBridge(b);
+  tasks.attachExecutionBridge(b);
   return b;
 }
 

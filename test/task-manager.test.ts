@@ -2424,6 +2424,37 @@ describe("TaskManager", () => {
       assert.equal(sm.getBusyKind("web-1"), null);
     });
 
+    it("rejects a restore whose execution was replaced mid-flight", async () => {
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      const gate = deferred<void>();
+      const loadingBridge = {
+        async newSession() {
+          throw new Error("newSession is not part of a load restore");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          await gate.promise;
+          return { taskId, configOptions: [] };
+        },
+      };
+
+      const restore = sm.resumeTask(loadingBridge, "web-1");
+      // A different client rotates the task while the ACP load is in flight.
+      store.replaceAgentSession("web-1", "agent-new");
+      gate.resolve();
+
+      await assert.rejects(() => restore, /Execution replaced/);
+      // The stale continuation wrote nothing: the task is not live under the
+      // execution it was restoring.
+      assert.equal(sm.liveTasks.has("web-1"), false);
+      assert.equal(
+        store.getCurrentExecutionBinding("web-1")?.agent_session_id,
+        "agent-new",
+      );
+    });
+
     it("still rotates when the task's own compaction turn owns the busy state", async () => {
       store.createTask("web-1", tmpDir, "auto", "agent-old");
       sm.liveTasks.add("web-1");
