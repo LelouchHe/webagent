@@ -18,12 +18,13 @@ import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
 import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
-import type {
-  AgentCommand,
-  AgentCommandSnapshot,
-  AgentEvent,
-  ConfigOption,
-  PendingPermission,
+import {
+  isTaskExecutionEvent,
+  type AgentCommand,
+  type AgentCommandSnapshot,
+  type AgentEvent,
+  type ConfigOption,
+  type PendingPermission,
 } from "./types.ts";
 
 import { TaskStateManager } from "./task-state.ts";
@@ -558,15 +559,17 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
-   * True when an agent event may still write. A stamped event must name the
-   * task's current generation. An unstamped event is only acceptable while the
-   * task has no execution in this process at all: the moment a generation
-   * exists, a missing lease means the writer never became current here.
+   * True when an agent event may still write.
+   *
+   * Fail-closed: only agent-level lifecycle events pass without a lease. A
+   * task-addressing event must carry a captured lease naming *this* task's
+   * current generation; a missing stamp is never inferred as permission from
+   * a missing ledger entry, and an unknown or replaced generation is refused.
    */
   acceptsEventLease(event: AgentEvent): boolean {
-    if (!("taskId" in event) || !event.taskId) return true;
+    if (!isTaskExecutionEvent(event)) return true;
     const lease = leaseOf(event);
-    if (!lease) return this.authority.generationOf(event.taskId) === undefined;
+    if (!lease) return false;
     if (lease.taskId !== event.taskId) return false;
     return this.authority.accepts(lease);
   }

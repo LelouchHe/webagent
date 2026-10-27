@@ -12,6 +12,8 @@ import { createTaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { abbreviateHomePath } from "../src/home-path.ts";
 import type { AgentEvent } from "../src/types.ts";
+import { handleAgentEvent } from "../src/event-handler.ts";
+import { makeEventHandlerConfig } from "./fixtures.ts";
 
 async function startAgent(t: TestContext, profile: string) {
   const dir = mkdtempSync(join(tmpdir(), "webagent-session-restore-"));
@@ -289,5 +291,108 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
       text: "unknown",
     });
     assert.equal(events.length, 1);
+  });
+
+  it("does not resolve a death notice for an ACP session key as a task id", async (t) => {
+    // F3 reproduction: `/compact` prompts by ACP session id, so the bridge's
+    // pending-abort entry is keyed by a session id. Without a captured lease
+    // and a fail-closed entry, the death notice is emitted with that session id
+    // as `taskId`, the entry accepts it (no ledger entry for "agent-1"), and the
+    // downstream write hits a FOREIGN KEY that names no real task.
+    const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
+    store.createTask("web-1", dir, "auto", "agent-1");
+    await tasks.resumeTask(bridge, "web-1");
+    bridge.on("event", (event: AgentEvent) => {
+      handleAgentEvent(event, tasks, store, bridge, makeEventHandlerConfig(), {
+        broadcast: () => {},
+      } as unknown as Parameters<typeof handleAgentEvent>[5]);
+    });
+
+    const pending = bridge.promptForText("agent-1", "summarize the task");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    (
+      bridge as unknown as { markAgentDead(reason: string): void }
+    ).markAgentDead("boom");
+    await assert.rejects(() => pending);
+    // Nothing wrote an event for a task that does not exist.
+    assert.equal(store.getEvents("agent-1").length, 0);
+  });
+
+  it("attributes a death notice to the task whose prompt captured the lease", async (t) => {
+    const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
+    store.createTask("web-1", dir, "auto", "agent-1");
+    await tasks.resumeTask(bridge, "web-1");
+
+    const errors: AgentEvent[] = [];
+    bridge.on("event", (event: AgentEvent) => {
+      if (event.type === "error") errors.push(event);
+    });
+
+    // `prompt` registers its abort entry (with the captured lease) before its
+    // first await, so the death lands on a known prompt.
+    const prompted = bridge
+      .prompt("web-1", "hello", undefined, "prompt-1")
+      .catch(() => undefined);
+    (
+      bridge as unknown as { markAgentDead(reason: string): void }
+    ).markAgentDead("boom");
+    await prompted;
+
+    // The death notice plus the aborted prompt's own failure, both attributed
+    // to the task under the lease its prompt captured. Nothing is unattributed.
+    assert.ok(errors.length >= 1);
+    for (const error of errors) {
+      const attributed = error as AgentEvent & {
+        taskId?: string;
+        executionLease?: { taskId: string; generation: number };
+      };
+      assert.equal(attributed.taskId, "web-1");
+      assert.equal(attributed.executionLease?.taskId, "web-1");
+      assert.equal(tasks.acceptsEventLease(error), true);
+    }
+  });
+
+  it("never re-resolves the current generation for a death notice", async (t) => {
+    const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
+    store.createTask("web-1", dir, "auto", "agent-1");
+    await tasks.resumeTask(bridge, "web-1");
+    const promptLease = tasks.authority.leaseFor("web-1");
+    assert.ok(promptLease);
+
+    const errors: AgentEvent[] = [];
+    bridge.on("event", (event: AgentEvent) => {
+      if (event.type === "error") errors.push(event);
+    });
+    const prompted = bridge
+      .prompt("web-1", "hello", undefined, "prompt-1")
+      .catch(() => undefined);
+
+    // The execution is replaced while the prompt is in flight. A death notice
+    // must be attributed to the generation the prompt captured, not to whatever
+    // generation the task has by the time the agent dies.
+    store.replaceAgentSession("web-1", "session-2");
+    const current = tasks.authority.leaseFor("web-1");
+    assert.ok(current);
+    assert.equal(current.generation, promptLease.generation + 1);
+
+    (
+      bridge as unknown as { markAgentDead(reason: string): void }
+    ).markAgentDead("boom");
+    await prompted;
+
+    assert.ok(errors.length >= 1);
+    for (const error of errors) {
+      assert.equal(
+        tasks.acceptsEventLease(error),
+        false,
+        "a notice stamped with the replaced generation is refused",
+      );
+      const lease = (
+        error as AgentEvent & {
+          executionLease?: { generation: number };
+        }
+      ).executionLease;
+      assert.equal(lease?.generation, promptLease.generation);
+    }
   });
 });

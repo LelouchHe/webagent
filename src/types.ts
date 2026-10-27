@@ -441,6 +441,44 @@ export const MessageEventDataSchema = z.object({
 
 export type MessageEventData = z.infer<typeof MessageEventDataSchema>;
 
+/**
+ * Execution events that address a task. These are exactly the events whose
+ * downstream handling writes task state (transcript rows, runtime patches,
+ * broadcasts, activity timers), so each one must carry the lease of the
+ * execution that produced it.
+ *
+ * Deliberately excluded: `connected`, `agent_reloading`,
+ * `agent_reloading_failed`, and `agent_disconnected`, which describe the agent
+ * process rather than a task, plus an `error` without a `taskId`.
+ */
+export const TASK_EXECUTION_EVENT_TYPES: ReadonlySet<AgentEvent["type"]> =
+  new Set([
+    "task_created",
+    "config_option_update",
+    "available_commands_update",
+    "message_chunk",
+    "thought_chunk",
+    "tool_call",
+    "tool_call_update",
+    "plan",
+    "usage_update",
+    "permission_request",
+    "prompt_done",
+    "error",
+  ]);
+
+/**
+ * True when this event addresses a task and therefore needs an execution lease
+ * before it may be handled. An `error` with no task id is an agent-level
+ * failure notice and addresses nothing.
+ */
+export function isTaskExecutionEvent(
+  event: AgentEvent,
+): event is AgentEvent & { taskId: string } {
+  if (!TASK_EXECUTION_EVENT_TYPES.has(event.type)) return false;
+  return "taskId" in event && typeof event.taskId === "string";
+}
+
 // --- Utility ---
 
 export function errorMessage(err: unknown): string {

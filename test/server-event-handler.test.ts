@@ -1803,6 +1803,29 @@ describe("handleAgentEvent", () => {
       assert.equal(tasks.assistantBuffers.has("s1"), false);
     });
 
+    it("refuses an unstamped event even when the task has no ledger entry", () => {
+      store.createTask("s1", "/tmp");
+      // A missing ledger entry is not evidence of permission: an unstamped
+      // task-addressing event is refused either way.
+      tasks.authority.clear("s1");
+      assert.equal(tasks.authority.leaseFor("s1"), null);
+      const { bridge } = createMockBridge();
+      const { sseManager, broadcasted } = createMockSseManager();
+
+      handleAgentEvent(
+        { type: "message_chunk", taskId: "s1", text: "unstamped" } as any,
+        tasks,
+        store,
+        bridge,
+        makeEventHandlerConfig(),
+        sseManager as any,
+      );
+
+      assert.equal(broadcasted.length, 0);
+      assert.equal(tasks.assistantBuffers.has("s1"), false);
+      assert.equal(store.getEvents("s1").length, 0);
+    });
+
     it("refuses an unknown generation, never falling back to the current one", () => {
       store.createTask("s1", "/tmp");
       leaseFor("s1");

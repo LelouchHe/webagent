@@ -72,12 +72,44 @@ export class AgentBridge extends EventEmitter {
     string,
     acp.SessionNotification["update"][]
   >();
-  private readonly pendingAborts = new Map<string, (e: Error) => void>();
+  /**
+   * In-flight prompt aborts, keyed by the abort key the caller used. The entry
+   * also records *which task* the prompt belongs to and the execution lease
+   * captured at submission: a death notice may only be attributed to a task
+   * this prompt really wrote for, under the generation it started with.
+   * `promptForText` keys by ACP session id and names no task, so its death has
+   * no task to write to.
+   */
+  private readonly pendingAborts = new Map<
+    string,
+    {
+      reject: (error: Error) => void;
+      taskId: string | null;
+      lease: ExecutionLease | null;
+    }
+  >();
   private readonly modelOptionIdsBySession = new Map<string, Set<string>>();
   private readonly modelValuesBySession = new Map<
     string,
     Map<string, Map<string, string>>
   >();
+  /**
+   * Register the abort channel for one in-flight prompt, together with the task
+   * it writes for and the lease captured at submission.
+   */
+  private registerPromptAbort(
+    abortKey: string,
+    taskId: string | null,
+    agentSessionId: string,
+    reject: (error: Error) => void,
+  ): void {
+    this.pendingAborts.set(abortKey, {
+      reject,
+      taskId,
+      lease: this.executionLeases.get(agentSessionId) ?? null,
+    });
+  }
+
   /**
    * The lease each ACP execution was given when it became a task's current
    * binding, plus the authority that can tell whether it is still current.
@@ -642,7 +674,7 @@ export class AgentBridge extends EventEmitter {
     const abortPromise = new Promise<never>((_, rej) => {
       abortReject = rej;
     });
-    this.pendingAborts.set(taskId, abortReject);
+    this.registerPromptAbort(taskId, taskId, agentSessionId, abortReject);
     let handedOver = false;
     try {
       const promptParts: PromptBlock[] = [];
@@ -758,20 +790,23 @@ export class AgentBridge extends EventEmitter {
     this.deadReason = reason;
     this.clearSessionConfigCodecs();
     blog.error("agent subprocess dead", { reason });
-    const aborts = [...this.pendingAborts.entries()];
+    const aborts = [...this.pendingAborts.values()];
     this.pendingAborts.clear();
-    for (const [taskId, abort] of aborts) {
-      const lease = this.leaseSource?.leaseFor(taskId) ?? undefined;
-      this.emit(
-        "event",
-        lease
-          ? (Object.assign(
-              { type: "error", taskId, message: reason },
-              { executionLease: lease },
-            ) as AgentEvent)
-          : ({ type: "error", taskId, message: reason } as AgentEvent),
-      );
-      abort(new Error(reason));
+    for (const { taskId, lease, reject } of aborts) {
+      // The lease is the one captured when the prompt was submitted, never a
+      // freshly resolved current generation. No captured lease means this
+      // prompt never became an execution write, so nothing is attributed.
+      if (taskId !== null && lease !== null) {
+        const death: AgentEvent = {
+          type: "error",
+          taskId,
+          message: reason,
+        };
+        this.emit("event", Object.assign(death, { executionLease: lease }));
+      } else if (taskId !== null) {
+        blog.warn("agent death has no captured lease to attribute", { taskId });
+      }
+      reject(new Error(reason));
     }
     this.emit("event", {
       type: "agent_disconnected",
@@ -790,7 +825,9 @@ export class AgentBridge extends EventEmitter {
     const abortPromise = new Promise<never>((_, rej) => {
       abortReject = rej;
     });
-    this.pendingAborts.set(sessionId, abortReject);
+    // The silent prompt is addressed by ACP session id, not by task, so this
+    // entry has no task to write a death notice to.
+    this.registerPromptAbort(sessionId, null, sessionId, abortReject);
     try {
       await Promise.race([
         this.conn.prompt({ sessionId, prompt: [{ type: "text", text }] }),
