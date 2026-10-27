@@ -571,6 +571,105 @@ export class TaskManager implements ObligationHost {
     return this.authority.accepts(lease);
   }
 
+  /**
+   * The current owner of a task when it is no longer in configuration, i.e.
+   * when an *implicit* rotation is allowed.
+   *
+   * A configured agent that simply is not running (binary missing, start
+   * failure, temporary disconnect) is still the configured owner and must not
+   * be displaced; only its removal from configuration grants the takeover.
+   */
+  private removedOwnerBinding(
+    taskId: string,
+  ): { agentId: string; sessionId: string } | null {
+    const binding = this.store.getCurrentExecutionBinding(taskId);
+    if (!binding) return null;
+    if (binding.agent_key === this.adapter.agentId) return null;
+    if (this.isAgentConfigured(binding.agent_key)) return null;
+    return {
+      agentId: binding.agent_key,
+      sessionId: binding.agent_session_id,
+    };
+  }
+
+  /**
+   * The one owner-change transition: bump the generation, truncate the old
+   * transport, keep the debt, and leave a transcript line naming the reason.
+   * Both triggers (explicit clear, removed owner) run through here; only the
+   * whatever-policy check differs, and that lives with the caller.
+   *
+   * The replacement execution is materialized lazily (empty session id), so
+   * this works while the previous agent process is gone.
+   */
+  private applyOwnerRotation(
+    taskId: string,
+    from: { agentId: string; sessionId: string },
+    reason: "explicit_clear" | "owner_removed",
+  ): void {
+    const task = this.store.getTaskIncludingDeleted(taskId);
+    this.store.replaceAgentSession(taskId, "");
+    this.liveTasks.delete(taskId);
+    this.resetTaskRuntime(taskId);
+    this.pendingDispatchRetries.delete(taskId);
+    this.store.failOutstandingDeliveriesForTaskClear(taskId);
+    this.obligations.noteExecutionRotated(taskId);
+    this.retireExecution(from.agentId, from.sessionId, this.recoveryBridge);
+    if (!task) return;
+    const fromLabel = from.agentId;
+    const toLabel = this.adapter.agentId;
+    this.store.saveEvent(
+      taskId,
+      "system_message",
+      {
+        kind: "agent_rotation",
+        title:
+          reason === "owner_removed"
+            ? "Execution moved to a configured agent"
+            : "Execution replaced",
+        body:
+          reason === "owner_removed"
+            ? `The agent that ran this task (${fromLabel}) is no longer configured. ` +
+              `Its execution was replaced with ${toLabel}; the task, its history and ` +
+              `its outstanding work are unchanged.`
+            : "The task's ACP execution was explicitly cleared. Its task id, " +
+              "history and outstanding work are unchanged.",
+        reason,
+        fromAgent: fromLabel,
+        toAgent: toLabel,
+      },
+      { from_ref: "system" },
+    );
+  }
+
+  /**
+   * A live task read **regardless of which agent owns it**. Internal lifecycle
+   * paths work on the task, not on this Store's ownership scope: after an
+   * implicit rotation the task is owned by an agent this Store no longer maps,
+   * and it must still be resumable, rotatable and deletable. Public reads keep
+   * using the agent-scoped Store methods.
+   */
+  private liveTask(taskId: string): TaskRow | undefined {
+    const task = this.store.getTaskIncludingDeleted(taskId);
+    if (task?.deleted_at !== null) return undefined;
+    return task;
+  }
+
+  /**
+   * A task owned by another *configured* agent belongs to that agent's
+   * runtime. P0 has one adapter, so it must refuse rather than execute the
+   * foreign execution under the wrong agent. A removed owner is not covered
+   * here: the implicit-rotation path takes it over first.
+   */
+  private assertRunnableOwner(taskId: string): void {
+    const binding = this.store.getCurrentExecutionBinding(taskId);
+    if (!binding) return;
+    if (binding.agent_key === this.adapter.agentId) return;
+    if (!this.isAgentConfigured(binding.agent_key)) return;
+    throw new Error(
+      `Task ${taskId.slice(0, 8)} belongs to agent ${binding.agent_key}, which is still configured`,
+    );
+  }
+
   /** True when the bridge can currently accept a prompt for this agent. */
   private isExecutionAvailable(bridge: SessionBridge): boolean {
     return bridge.isAvailable?.() ?? true;
@@ -986,6 +1085,11 @@ export class TaskManager implements ObligationHost {
       preserveRuntimeState?: boolean;
       /** The compaction path owns its own busy source and may rotate inside it. */
       allowCompacting?: boolean;
+      /**
+       * Why the owner is changing. Rotations that name a reason leave a
+       * transcript line; internal replacements (compaction) stay silent.
+       */
+      reason?: "explicit_clear" | "owner_removed";
     } = {},
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     this.attachExecutionBridge(bridge);
@@ -1012,6 +1116,7 @@ export class TaskManager implements ObligationHost {
         taskId,
         cwd,
         opts.preserveRuntimeState,
+        opts.reason,
       );
       if (!opts.preservePendingCompactSummary) {
         this.store.clearPendingCompactSummary(taskId);
@@ -1033,8 +1138,9 @@ export class TaskManager implements ObligationHost {
     taskId: string,
     cwd?: string,
     preserveRuntimeState = false,
+    reason?: "explicit_clear" | "owner_removed",
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
-    const task = this.store.getTask(taskId);
+    const task = this.liveTask(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
     const taskCwd = expandHomePath(cwd ?? task.cwd);
     try {
@@ -1072,15 +1178,7 @@ export class TaskManager implements ObligationHost {
     bridge.sessionMapped?.(created.sessionId, taskId);
     this.retireReplacedExecution(retiredBinding, created.sessionId, bridge);
     this.resetTaskRuntime(taskId, preserveRuntimeState);
-    // Truncate the old transport in the same synchronous block as the binding
-    // commit. `resetTaskRuntime` dropped the in-flight prompt state; the retry
-    // ids, the unfinished delivery rows and the obligation's dispatch phase all
-    // still point at the execution that no longer exists. The debt itself
-    // survives as a closing reminder aimed at the replacement.
-    this.pendingDispatchRetries.delete(taskId);
-    this.store.failOutstandingDeliveriesForTaskClear(taskId);
-    this.obligations.noteExecutionRotated(taskId);
-    this.store.updateTaskWorkflowStatus(taskId, "idle");
+    this.commitRotation(taskId, retiredBinding?.agent_key ?? null, reason);
 
     if (!this.leaseCurrent(lease)) {
       throw new Error(`Execution replaced while rotating ${taskId}`);
@@ -1096,6 +1194,50 @@ export class TaskManager implements ObligationHost {
       taskId,
       configOptions: this.applyStoredConfig(configOptions, task),
     };
+  }
+
+  /**
+   * The synchronous tail of every binding replacement: truncate the old
+   * transport, keep the debt, and (when the trigger is named) leave a
+   * transcript line. `resetTaskRuntime` has already dropped the in-flight
+   * prompt state; the retry ids, the unfinished delivery rows and the
+   * obligation's dispatch phase still point at the execution that no longer
+   * exists, and the debt survives as a closing reminder aimed at the
+   * replacement.
+   */
+  private commitRotation(
+    taskId: string,
+    fromAgent: string | null,
+    reason?: "explicit_clear" | "owner_removed",
+  ): void {
+    this.pendingDispatchRetries.delete(taskId);
+    this.store.failOutstandingDeliveriesForTaskClear(taskId);
+    this.obligations.noteExecutionRotated(taskId);
+    this.store.updateTaskWorkflowStatus(taskId, "idle");
+    if (!reason) return;
+    const toAgent = this.adapter.agentId;
+    this.store.saveEvent(
+      taskId,
+      "system_message",
+      {
+        kind: "agent_rotation",
+        title:
+          reason === "owner_removed"
+            ? "Execution moved to a configured agent"
+            : "Execution replaced",
+        body:
+          reason === "owner_removed"
+            ? `The agent that ran this task (${fromAgent ?? "unknown"}) is no ` +
+              `longer configured. Its execution was replaced with ${toAgent}; ` +
+              `the task, its history and its outstanding work are unchanged.`
+            : "The task's ACP execution was explicitly cleared. Its task id, " +
+              "history and outstanding work are unchanged.",
+        reason,
+        fromAgent,
+        toAgent,
+      },
+      { from_ref: "system" },
+    );
   }
 
   /**
@@ -1148,6 +1290,13 @@ export class TaskManager implements ObligationHost {
     this.attachExecutionBridge(bridge);
     const rootTaskId = this.store.rootTaskId;
     const root = this.store.getTaskIncludingDeleted(rootTaskId);
+    const removedOwner = this.removedOwnerBinding(rootTaskId);
+    if (removedOwner) {
+      // The Root is bound to an agent that is no longer configured: take it
+      // over implicitly. A configured owner is never displaced here.
+      this.applyOwnerRotation(rootTaskId, removedOwner, "owner_removed");
+      return;
+    }
     // Gate on the binding row, not its session id: a DB-only Root reset keeps
     // an intentionally empty id as the lazy-materialization marker. Binding
     // here would conflict with that row and discard the new ACP session.
@@ -1333,7 +1482,7 @@ export class TaskManager implements ObligationHost {
   /** Resume a task — returns event to send to the requesting client. */
   async resumeTask(bridge: SessionBridge, taskId: string): Promise<AgentEvent> {
     this.attachExecutionBridge(bridge);
-    const task = this.store.getTask(taskId);
+    const task = this.liveTask(taskId);
     if (!task) throw new Error("Task not found");
 
     if (this.liveTasks.has(taskId)) {
@@ -1353,6 +1502,11 @@ export class TaskManager implements ObligationHost {
     // Restore via ACP. A DB-only Root reset leaves an empty execution id:
     // materialize a fresh ACP session instead of trying to load one the
     // agent has never seen.
+    const removedOwner = this.removedOwnerBinding(taskId);
+    if (removedOwner) {
+      this.applyOwnerRotation(taskId, removedOwner, "owner_removed");
+    }
+    this.assertRunnableOwner(taskId);
     const existingBinding = this.store.getCurrentExecutionBinding(taskId);
     const existingSessionId = existingBinding?.agent_session_id;
     // The restore runs under the generation it started with. A rotation that
@@ -1760,7 +1914,7 @@ export class TaskManager implements ObligationHost {
   ): Promise<{ mode: "hard" | "soft"; affected: TaskDelete[] }> {
     if (bridge) this.attachExecutionBridge(bridge);
     const release = await this.acquireTaskTreeMutationLock(taskId);
-    const task = this.store.getTask(taskId);
+    const task = this.liveTask(taskId);
     if (!task) {
       release();
       throw new TaskNotFoundError(taskId);
@@ -2287,7 +2441,7 @@ export class TaskManager implements ObligationHost {
     obligation: DirectedObligation,
   ): Promise<ObligationSubmissionOutcome> {
     const bridge = this.recoveryBridge;
-    const task = this.store.getTask(obligation.targetTaskId);
+    const task = this.liveTask(obligation.targetTaskId);
     if (!task) {
       // The target is gone; its debt is purged with the task lifecycle, which
       // is not a delivery failure.
@@ -2529,7 +2683,7 @@ export class TaskManager implements ObligationHost {
       }
       const deliveries = this.store.claimQueuedDeliveries(taskId);
       if (deliveries.length === 0) return false;
-      const task = this.store.getTask(taskId);
+      const task = this.liveTask(taskId);
       // Only a direct parent dispatch participates in the directed obligation;
       // unrelated messages are ordinary collaboration and carry no obligation
       // state or settlement role.

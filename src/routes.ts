@@ -2310,7 +2310,11 @@ export function createRequestHandler(
           return;
         }
         try {
-          const result = await tasks.clearTask(bridge, taskId, body.cwd);
+          const result = await tasks.clearTask(bridge, taskId, body.cwd, {
+            // Explicit rotation: same transition as an implicit takeover, with
+            // the trigger recorded in the transcript.
+            reason: "explicit_clear",
+          });
           const fresh = store.getTask(taskId)!;
           const event = {
             type: "task_created",
