@@ -1372,21 +1372,32 @@ export class TaskManager implements ObligationHost {
     let updated = configOptions;
     for (const { id, value } of values) {
       if (!id || !value) continue;
+      // Every request is re-authorized: the lease was captured when the
+      // rotation started, and this loop outlives several awaits.
       if (lease !== undefined && !this.leaseCurrent(lease)) {
         slog.warn("skipped config restore for a replaced execution", {
           taskId: taskId.slice(0, 8),
         });
         break;
       }
+      let next: ConfigOption[];
       try {
-        const next = await bridge.setConfigOption(taskId, id, value);
-        if (next.length > 0) {
-          updated = next;
-          this.cachedConfigOptions = next;
-        }
+        next = await bridge.setConfigOption(taskId, id, value);
       } catch {
         // An option may no longer be supported by the current agent.
+        continue;
       }
+      if (next.length === 0) continue;
+      updated = next;
+      // The response may have arrived after the execution was replaced; it
+      // describes that execution, not the task's current one.
+      if (lease !== undefined && !this.leaseCurrent(lease)) {
+        slog.warn("discarded a replaced execution's config response", {
+          taskId: taskId.slice(0, 8),
+        });
+        break;
+      }
+      this.cachedConfigOptions = next;
     }
     return updated;
   }
@@ -1554,13 +1565,22 @@ export class TaskManager implements ObligationHost {
       // the task's own stored value — idempotent, no side effect. Failure
       // is swallowed: the resume still succeeds and the frontend falls back
       // to snapshot-based mode/model display (see public/js/state.ts).
-      await this.tryWarmCache(bridge, taskId, task, loaded.configOptions);
+      await this.tryWarmCache(
+        bridge,
+        taskId,
+        task,
+        loaded.configOptions,
+        startLease,
+      );
       const configOptions = this.applyStoredConfig(
         loaded.configOptions.length > 0
           ? loaded.configOptions
           : this.cachedConfigOptions,
         task,
       );
+      if (!this.leaseCurrent(startLease)) {
+        throw new Error(`Execution replaced while restoring ${taskId}`);
+      }
       slog.info("restored", { taskId: taskId.slice(0, 8) + "…" });
       return {
         type: "task_created",
@@ -1662,6 +1682,7 @@ export class TaskManager implements ObligationHost {
       reasoning_effort: string | null;
     },
     configOptions: ConfigOption[],
+    lease: ExecutionLease | null,
   ): Promise<void> {
     if (this.cachedConfigOptions.length > 0) return;
     const candidates: Array<{ id: string; value: string }> = [];
@@ -1678,6 +1699,14 @@ export class TaskManager implements ObligationHost {
 
     let lastError: unknown = null;
     for (const candidate of candidates) {
+      // A candidate request is only sent while the restore still owns the
+      // execution it was started for.
+      if (!this.leaseCurrent(lease)) {
+        slog.warn("stopped cache warming for a replaced execution", {
+          taskId: taskId.slice(0, 8),
+        });
+        return;
+      }
       try {
         const opts = await bridge.setConfigOption(
           taskId,
@@ -1685,6 +1714,14 @@ export class TaskManager implements ObligationHost {
           candidate.value,
         );
         if (opts.length > 0) {
+          // Never cache a response that outlived its execution: it describes
+          // the replaced session, not the task's current one.
+          if (!this.leaseCurrent(lease)) {
+            slog.warn("discarded a replaced execution's cache response", {
+              taskId: taskId.slice(0, 8),
+            });
+            return;
+          }
           this.cachedConfigOptions = opts;
           slog.info("warmed cache on resume", { options: opts.length });
           return;

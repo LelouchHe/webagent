@@ -395,4 +395,132 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
       assert.equal(lease?.generation, promptLease.generation);
     }
   });
+
+  it("never lets a warm-cache response from a replaced execution reach the cache", async (t) => {
+    const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
+    store.createTask("web-1", dir, "auto", "agent-1");
+    store.updateTaskConfig("web-1", "mode", "#plan");
+
+    const modeOptions = [
+      {
+        type: "select" as const,
+        id: "mode",
+        name: "Mode",
+        currentValue: "#plan",
+        options: [
+          { value: "agent", name: "Agent" },
+          { value: "#plan", name: "Plan" },
+        ],
+      },
+    ];
+    // Only the underlying ACP response is replaced: the real bridge, its codec,
+    // and its config path all stay in play.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const sessions: string[] = [];
+    (
+      bridge as unknown as {
+        conn: {
+          setSessionConfigOption(params: { sessionId: string }): Promise<{
+            configOptions: unknown[];
+          }>;
+        };
+      }
+    ).conn.setSessionConfigOption = async (params) => {
+      sessions.push(params.sessionId);
+      await gate;
+      return { configOptions: modeOptions };
+    };
+
+    const restoring = tasks.resumeTask(bridge, "web-1");
+    const deadline = Date.now() + 5000;
+    while (sessions.length === 0 && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    }
+    assert.deepEqual(
+      sessions,
+      ["agent-1"],
+      "the warm-up started on the old execution",
+    );
+
+    // The task is rotated while the config request is in flight.
+    store.replaceAgentSession("web-1", "session-2");
+    release();
+
+    await assert.rejects(() => restoring, /Execution replaced/);
+    assert.deepEqual(
+      sessions,
+      ["agent-1"],
+      "no request was sent to a later execution",
+    );
+    assert.deepEqual(
+      tasks.cachedConfigOptions,
+      [],
+      "the replaced execution's schema was not cached",
+    );
+  });
+
+  it("never finishes a config restore for a replaced execution", async (t) => {
+    const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
+    store.createTask("web-1", dir, "agent-1");
+    store.updateTaskConfig("web-1", "mode", "#plan");
+
+    const modeOptions = [
+      {
+        type: "select" as const,
+        id: "mode",
+        name: "Mode",
+        currentValue: "#plan",
+        options: [
+          { value: "agent", name: "Agent" },
+          { value: "#plan", name: "Plan" },
+        ],
+      },
+    ];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const sessions: string[] = [];
+    (
+      bridge as unknown as {
+        conn: {
+          setSessionConfigOption(params: { sessionId: string }): Promise<{
+            configOptions: unknown[];
+          }>;
+        };
+      }
+    ).conn.setSessionConfigOption = async (params) => {
+      sessions.push(params.sessionId);
+      await gate;
+      return { configOptions: modeOptions };
+    };
+
+    // `clearTask` replaces the execution and then replays the stored config.
+    const rotating = tasks.clearTask(bridge, "web-1");
+    const deadline = Date.now() + 5000;
+    while (sessions.length === 0 && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    }
+    assert.ok(sessions.length > 0, "the config replay started");
+    const requestsBeforeRotation = sessions.length;
+
+    // A second rotation lands while the replay's request is in flight.
+    store.replaceAgentSession("web-1", "session-3");
+    release();
+
+    await assert.rejects(() => rotating, /Execution replaced/);
+    assert.equal(
+      sessions.length,
+      requestsBeforeRotation,
+      "the replay sent nothing after the execution was replaced",
+    );
+    assert.deepEqual(
+      tasks.cachedConfigOptions,
+      [],
+      "the replaced execution's schema was not cached",
+    );
+  });
 });
