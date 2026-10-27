@@ -1253,37 +1253,35 @@ export class Store {
   }
 
   /**
-   * Direct child ids of a task that the current agent owns. Deletion and
-   * Root reset walk this instead of every child so a foreign agent's
-   * subtree is never touched; surviving non-owned children are re-parented
-   * to Root by the ordinary hard-delete path.
+   * Direct child ids of a task, regardless of which agent owns them (or
+   * whether any binding exists at all).
+   *
+   * Deletion cascades follow the **task tree**, not an agent. Filtering by
+   * owner here used to leave another agent's children behind, which is not a
+   * behaviour worth preserving: it let a deleted parent keep live descendants
+   * that the user can no longer reach.
    */
-  private listOwnedChildren(parentId: string): string[] {
+  private listChildren(parentId: string): string[] {
     return (
       this.db
         .prepare(
           `SELECT s.id FROM tasks s
-           JOIN agent_sessions a ON a.task_id = s.id
-           WHERE s.parent_id = ? AND s.id != ? AND s.id != ?
-             AND a.agent_key = ?`,
+           WHERE s.parent_id = ? AND s.id != ? AND s.id != ?`,
         )
-        .all(parentId, parentId, this.rootTaskId, this.agentKey) as Array<{
-        id: string;
-      }>
+        .all(parentId, parentId, this.rootTaskId) as Array<{ id: string }>
     ).map((row) => row.id);
   }
 
   /**
-   * Every descendant of a task that the current agent owns, transitively
-   * (used to gate destructive operations such as the DELETE busy check
-   * against in-flight children). Foreign and unbound descendants are not
-   * part of the agent's subtree and are left out.
+   * Every descendant of a task, transitively, regardless of owner. Used to
+   * gate destructive operations (the DELETE/Root-reset busy check must see an
+   * in-flight child owned by any agent) and to cascade deletion.
    */
   getDescendantTaskIds(rootId: string): string[] {
     const out: string[] = [];
     const queue = [rootId];
     while (queue.length > 0) {
-      for (const child of this.listOwnedChildren(queue.pop()!)) {
+      for (const child of this.listChildren(queue.pop()!)) {
         queue.push(child);
         out.push(child);
       }
@@ -1320,7 +1318,7 @@ export class Store {
     const reset = this.writeBindings(() => {
       const affected: TaskDelete[] = [];
       const rootBindingBefore = this.currentBinding(this.rootTaskId);
-      for (const childId of this.listOwnedChildren(this.rootTaskId)) {
+      for (const childId of this.listChildren(this.rootTaskId)) {
         affected.push(...this.deleteTask(childId).affected);
       }
       this.db
@@ -1396,7 +1394,7 @@ export class Store {
     const affected: TaskDelete[] = [];
     // Delete descendants first (children before parents) so the FK on
     // parent_id can never block the parent's own row removal.
-    const children = this.listOwnedChildren(id);
+    const children = this.listChildren(id);
     for (const childId of children) {
       affected.push(...this.deleteTask(childId).affected);
     }

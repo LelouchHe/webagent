@@ -468,7 +468,10 @@ describe("Store", () => {
   });
 
   describe("survivor ownership fallback", () => {
-    it("reparents a uniquely bound survivor to the global Root", () => {
+    // Rewritten for tree-cascade deletion: deleting a parent takes its whole
+    // subtree, whatever agent owns each descendant. A survivor is not
+    // re-parented under Root; only zero-event GC and share tombstones reparent.
+    it("deletes a foreign survivor with the parent's subtree", () => {
       const rootId = store.ensureRootTask("/root").id;
       store.createTask("a-parent", "/a", "auto", "a-parent-session", rootId);
       store.close();
@@ -486,12 +489,15 @@ describe("Store", () => {
       b.close();
 
       store = new Store(tmpDir, "test-agent");
-      store.deleteTask("a-parent");
+      const result = store.deleteTask("a-parent");
+      assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
+        "a-parent",
+        "b-survivor",
+      ]);
       const check = new Store(tmpDir, "backend-b");
-      assert.equal(check.getTask("b-survivor")?.parent_id, "root");
-      assert.equal(check.getEvents("b-survivor").length, 1);
-      assert.ok(check.getShareByToken(token));
-      assert.equal(check.getAgentSessionId("b-survivor"), "b-child-session");
+      assert.equal(check.getTask("b-survivor"), undefined);
+      assert.equal(check.getEvents("b-survivor").length, 0);
+      assert.equal(check.getAgentSessionId("b-survivor"), undefined);
       check.close();
     });
 
@@ -532,7 +538,7 @@ describe("Store", () => {
       cCheck.close();
     });
 
-    it("reparents an unbound survivor without losing its history, share, or attachment", () => {
+    it("tombstones a share-backed survivor with the parent's subtree", () => {
       const rootId = store.ensureRootTask("/root").id;
       store.createTask("a-parent", "/a", "auto", "parent-session", rootId);
       store.createTask(
@@ -573,8 +579,10 @@ describe("Store", () => {
       store.deleteTask("a-parent");
 
       const survivor = store.getTaskIncludingDeleted("unbound-child")!;
+      // An active share keeps the row alive as a tombstone, now anchored at
+      // Root because its parent is gone.
       assert.equal(survivor.parent_id, "root");
-      assert.equal(survivor.deleted_at, null);
+      assert.notEqual(survivor.deleted_at, null);
       assert.equal(store.getEvents("unbound-child").length, 1);
       assert.equal(
         store.getAttachment("unbound-child", "unbound-attachment")?.realpath,
@@ -583,7 +591,7 @@ describe("Store", () => {
       assert.ok(store.getShareByToken(token));
     });
 
-    it("detaches a foreign survivor when the global Root title namespace collides", () => {
+    it("deletes a foreign survivor despite a Root title collision", () => {
       const rootId = store.ensureRootTask("/root").id;
       store.createTask("a-parent", "/a", "auto", "parent-session", rootId);
       store.createTask(
@@ -616,13 +624,12 @@ describe("Store", () => {
       b.close();
 
       store.deleteTask("a-parent");
-      const survivor = store.getTaskIncludingDeleted("survivor")!;
-      assert.equal(survivor.parent_id, null);
-      assert.equal(store.getEvents("survivor").length, 1);
+      assert.equal(store.getTaskIncludingDeleted("survivor"), undefined);
+      assert.equal(store.getEvents("survivor").length, 0);
       assert.equal(store.getTask("collision")?.title, "duplicate");
     });
 
-    it("detaches a foreign survivor when the Root anchor was corrupted away", () => {
+    it("deletes a foreign survivor even when the Root anchor was corrupted away", () => {
       store.createTask("a-parent", "/a", "auto", "parent-session");
       const b = new Store(tmpDir, "backend-b");
       b.createTask("survivor", "/b", "auto", "survivor-session", "a-parent");
@@ -641,9 +648,8 @@ describe("Store", () => {
       store["db"].prepare("DELETE FROM tasks WHERE id = 'root'").run();
 
       store.deleteTask("a-parent");
-      const survivor = store.getTaskIncludingDeleted("survivor")!;
-      assert.equal(survivor.parent_id, null);
-      assert.equal(store.getEvents("survivor").length, 1);
+      assert.equal(store.getTaskIncludingDeleted("survivor"), undefined);
+      assert.equal(store.getEvents("survivor").length, 0);
     });
   });
 
@@ -975,7 +981,7 @@ describe("Store", () => {
       assert.deepEqual(store.resetRootTask().affected, []);
     });
 
-    it("preserves an unbound shared tombstone when resetting Root", () => {
+    it("keeps an unbound shared tombstone alive through a Root reset", () => {
       const rootId = store.ensureRootTask("/root").id;
       store.attachAgentSession(rootId, "root-session");
       store.createTask("a-task", "/a", "auto", "agent-a", rootId);
@@ -988,15 +994,18 @@ describe("Store", () => {
       assert.equal(store.deleteTask("orphan").mode, "soft");
 
       const result = store.resetRootTask();
+      // The reset walks every child of Root, owned or not; the tombstone is
+      // re-processed as a tombstone and still survives for its share.
       assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
         "a-task",
+        "orphan",
       ]);
       const orphan = store.getTaskIncludingDeleted("orphan")!;
       assert.equal(orphan.id, "orphan");
       assert.notEqual(orphan.deleted_at, null);
     });
 
-    it("reparents a foreign survivor under the global Root", () => {
+    it("deletes a foreign survivor under the global Root", () => {
       const rootId = store.ensureRootTask("/root").id;
       store.attachAgentSession(rootId, "root-session");
       store.createTask("a-parent", "/a", "auto", "agent-a", rootId);
@@ -1014,17 +1023,15 @@ describe("Store", () => {
 
       store = new Store(tmpDir, "test-agent");
       const result = store.deleteTask("a-parent");
-      assert.deepEqual(
-        result.affected.map((entry) => entry.id),
-        ["a-parent"],
-      );
-      const survivor = store.getTaskIncludingDeleted("b-child")!;
-      assert.equal(survivor.id, "b-child");
-      assert.equal(survivor.parent_id, "root");
+      assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
+        "a-parent",
+        "b-child",
+      ]);
+      assert.equal(store.getTaskIncludingDeleted("b-child"), undefined);
 
       const check = new Store(tmpDir, "other-agent");
-      assert.equal(check.getTask("b-child")?.id, "b-child");
-      assert.equal(check.getEvents("b-child").length, 1);
+      assert.equal(check.getTask("b-child"), undefined);
+      assert.equal(check.getEvents("b-child").length, 0);
       check.close();
     });
   });

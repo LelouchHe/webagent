@@ -1298,7 +1298,7 @@ describe("TaskManager", () => {
       assert.equal(store.getAgentSessionId(rootId), "");
     });
 
-    it("keeps another agent's descendant, disk files, and attachment cache", async () => {
+    it("deletes another agent's descendant, its disk files, and its label cache", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(rootId, "agent-root");
       store.createTask("a-task", tmpDir, "auto", "agent-a", rootId);
@@ -1344,17 +1344,16 @@ describe("TaskManager", () => {
       await sm.resetRootTask(bridge);
 
       assert.equal(existsSync(rootPath), false);
-      assert.equal(existsSync(join(childPath, "b.txt")), true);
-      assert.equal(sm.liveTasks.has("b-child"), true);
-      assert.equal(sm.getLabelMap("b-child"), childLabels);
+      // Tree cascade: the foreign child goes with the Root, so its disk files
+      // and label cache go too.
+      assert.equal(existsSync(join(childPath, "b.txt")), false);
+      assert.equal(sm.liveTasks.has("b-child"), false);
+      assert.notEqual(sm.getLabelMap("b-child"), childLabels);
       assert.equal(store.getTaskIncludingDeleted("a-task"), undefined);
-      assert.equal(store.getEvents("b-child").length, 1);
-      assert.equal(
-        store.getAttachment("b-child", "b-attachment")?.realpath,
-        "/tmp/B.txt",
-      );
+      assert.equal(store.getEvents("b-child").length, 0);
+      assert.equal(store.getAttachment("b-child", "b-attachment"), undefined);
       const check = new Store(tmpDir, "backend-b");
-      assert.equal(check.getTask("b-child")?.parent_id, rootId);
+      assert.equal(check.getTask("b-child"), undefined);
       check.close();
     });
   });
