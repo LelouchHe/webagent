@@ -640,7 +640,7 @@ describe("Task REST API", () => {
       assert.equal(store.getTask("s1")?.cwd, publicDir);
     });
 
-    it("rejects the request when a restore starts while the body is read", async () => {
+    it("rejects a rotation whose request body window saw a restore start", async () => {
       store.createTask("s1", tmpDir, "auto", "agent-old");
       let release!: () => void;
       const gate = new Promise<void>((resolve) => {
@@ -651,17 +651,39 @@ describe("Task REST API", () => {
         return { taskId, configOptions: [] };
       };
 
-      // Simulates the route's pre-check passing and then the request-body
-      // window opening: the restore starts *after* the route looked at busy.
+      // Open the request and send only part of the body, so the route's early
+      // busy check runs and then it waits inside `readBody`.
+      const req = http.request({
+        hostname: "127.0.0.1",
+        port,
+        path: "/api/v1/tasks/s1/clear",
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      req.write("{");
+      const response = new Promise<{ status: number; body: string }>(
+        (resolve, reject) => {
+          req.on("response", (res) => {
+            let data = "";
+            res.on("data", (chunk: Buffer) => (data += chunk.toString()));
+            res.on("end", () =>
+              { resolve({ status: res.statusCode!, body: data }); },
+            );
+          });
+          req.on("error", reject);
+        },
+      );
+      // The handler is synchronous up to `readBody`; give it the turn it needs
+      // to pass the early check and block on the unfinished body.
+      await new Promise<void>((resolve) => setTimeout(resolve, 30));
+
+      // Only now does the restore start: it is inside the window the early
+      // check could not see.
       const restore = tasks.resumeTask(mockBridge, "s1");
       assert.equal(tasks.getBusyKind("s1"), "agent");
 
-      const res = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/tasks/s1/clear",
-        "{}",
-      );
+      req.end("}");
+      const res = await response;
 
       assert.equal(res.status, 409);
       assert.equal(store.getAgentSessionId("s1"), "agent-old");
