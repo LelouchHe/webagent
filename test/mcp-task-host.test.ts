@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
 import { projectTaskHistoryRow } from "../src/mcp/task-history.ts";
 
@@ -31,7 +32,7 @@ describe("MCP Task tool host", () => {
       "alpha",
       { title: "Alpha child" },
     );
-    tasks = new TaskManager(store, dir, dir);
+    tasks = createTaskManager(store, dir, dir);
   });
 
   afterEach(() => {

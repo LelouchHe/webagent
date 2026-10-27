@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
 import { getLogLevel, setLogLevel, setLogSink } from "../src/log.ts";
@@ -131,7 +132,7 @@ describe("handleAgentEvent", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-server-test-"));
     store = new Store(tmpDir, "test-agent");
-    tasks = new TaskManager(store, tmpDir, tmpDir);
+    tasks = createTaskManager(store, tmpDir, tmpDir);
   });
 
   afterEach(() => {

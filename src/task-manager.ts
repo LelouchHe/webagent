@@ -35,6 +35,8 @@ import {
   type SettlementDecision,
 } from "./obligation-controller.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
+import { ExecutionAdapter } from "./execution-adapter.ts";
+import { ExecutionAuthority, GenerationLedger } from "./execution-authority.ts";
 import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { log } from "./log.ts";
@@ -180,10 +182,128 @@ export interface ConsumeMessageResult {
 }
 
 /**
+ * The services `ObligationController` needs from the task runtime. It is a
+ * narrow host interface, not the manager itself, so the controller can be
+ * constructed by the server before (or independently of) the manager.
+ */
+export interface ObligationHost {
+  getBusyKind(taskId: string): "agent" | "bash" | null;
+  isTurnRunning(taskId: string, promptId: string): boolean;
+  submitObligationReminder(
+    obligation: DirectedObligation,
+  ): Promise<ObligationSubmissionOutcome>;
+  retryObligationDispatch(obligation: DirectedObligation): void;
+  emitObligationNotice(
+    notice: ObligationNotice,
+    obligation: DirectedObligation,
+  ): void;
+}
+
+/**
+ * How one reminder/dispatch submission ended. `deferred` is not a failure: the
+ * transport was unavailable (no live execution, a rotation in progress, a
+ * stale lease), so the debt keeps waiting without consuming its failure
+ * budget and without pretending the agent rejected the work.
+ */
+export type ObligationSubmissionOutcome =
+  | { status: "delivered" }
+  | { status: "deferred"; reason: string }
+  | { status: "failed"; reason: string };
+
+/** Build the process-local obligation controller for one task runtime. */
+export function createObligationController(
+  host: ObligationHost,
+): ObligationController {
+  return new ObligationController({
+    now: () => Date.now(),
+    setTimer: (fn, ms) => {
+      const handle = setTimeout(fn, ms);
+      // Reminder/watchdog timers must never hold the process open; the server
+      // is long-lived and a stalled timer is recoverable on the next turn
+      // boundary anyway.
+      handle.unref();
+      return handle;
+    },
+    clearTimer: (handle) => {
+      clearTimeout(handle);
+    },
+    isAgentBusy: (taskId) => host.getBusyKind(taskId) === "agent",
+    isTurnRunning: (taskId, promptId) => host.isTurnRunning(taskId, promptId),
+    submitReminder: async (obligation) =>
+      (await host.submitObligationReminder(obligation)).status === "delivered",
+    retryDispatch: (obligation) => {
+      host.retryObligationDispatch(obligation);
+    },
+    emitNotice: (notice, obligation) => {
+      host.emitObligationNotice(notice, obligation);
+    },
+    log: (event, fields) => {
+      slog.debug(event, fields);
+    },
+  });
+}
+
+/**
+ * Collaborators injected into one `TaskManager`. The signature is the
+ * "shared vs private" boundary: everything here is server-scoped, everything
+ * the manager creates itself is task-scoped.
+ */
+export interface TaskManagerOptions {
+  store: Store;
+  defaultCwd: string;
+  dataDir: string;
+  /**
+   * Optional MCP capability store. When provided together with `mcpBaseUrl`,
+   * every created/restored task is given a uniquely named MCP server entry
+   * whose Authorization header carries a freshly minted capability — the MCP
+   * control plane for ACP tasks. Lifecycle here is the single source of truth:
+   * mint happens next to `liveTasks.add`, revoke next to `liveTasks.delete`.
+   */
+  capabilities?: CapabilityStore;
+  mcpBaseUrl?: string;
+  /** Shared per-task runtime state ledger (owner of the monotonic `seq`). */
+  state: TaskStateManager;
+  /** Shared execution write authority (binding facts + generation ledger). */
+  authority: ExecutionAuthority;
+  /** The execution environment for this agent. P0 creates exactly one. */
+  adapter: ExecutionAdapter;
+  /** Additional adapters, for retiring executions owned by other agents. */
+  adapters?: Iterable<ExecutionAdapter>;
+  /** Injected obligation state machine; defaults to one bound to this manager. */
+  obligations?: ObligationController;
+  /** True while the agent is still present in configuration. */
+  isAgentConfigured?: (agentId: string) => boolean;
+}
+
+/**
+ * Convenience wiring for the single-agent runtime: everything the server
+ * normally injects is created here. Used by tests and by any embedder that has
+ * exactly one agent and no need to share the collaborators.
+ */
+export function createTaskManager(
+  store: Store,
+  defaultCwd: string,
+  dataDir: string,
+  capabilities?: CapabilityStore,
+  mcpBaseUrl?: string,
+): TaskManager {
+  return new TaskManager({
+    store,
+    defaultCwd,
+    dataDir,
+    capabilities,
+    mcpBaseUrl,
+    state: new TaskStateManager(),
+    authority: new ExecutionAuthority(new GenerationLedger()),
+    adapter: new ExecutionAdapter(store.agentKey),
+  });
+}
+
+/**
  * Centralizes all task-related state that was previously scattered
  * across module-level variables in server.ts.
  */
-export class TaskManager {
+export class TaskManager implements ObligationHost {
   readonly liveTasks = new Set<string>();
   /** Tasks with a minted MCP capability awaiting ACP task/new. */
   readonly creatingTasks = new Set<string>();
@@ -211,6 +331,18 @@ export class TaskManager {
     | null = null;
   /** Process-local directed-dispatch obligation state machine. */
   private readonly obligations: ObligationController;
+  /**
+   * Task-scoped collaborators. Injected, not owned: a second `TaskManager`
+   * (P2) must observe the same runtime state ledger, the same obligation
+   * records, and the same generation ledger as the first.
+   */
+  readonly state: TaskStateManager;
+  readonly authority: ExecutionAuthority;
+  /** The execution environment driving this agent. */
+  readonly adapter: ExecutionAdapter;
+  /** Every adapter this process can retire executions through (P0: one). */
+  private readonly adapters: Map<string, ExecutionAdapter>;
+  private readonly isAgentConfigured: (agentId: string) => boolean;
   /** Delivery rows currently being claimed/resolved for one target task. */
   readonly drainingCollaborationTasks = new Set<string>();
   /** Tasks undergoing compact summary generation or ACP rotation. */
@@ -225,8 +357,6 @@ export class TaskManager {
   readonly interruptedBashProcs = new WeakSet<ChildProcess>();
   /** Pending permission requests keyed by requestId. */
   readonly pendingPermissions = new Map<string, PendingPermission>();
-  /** Per-task runtime state (busy/streaming/permissions snapshots + patches). */
-  readonly state = new TaskStateManager();
   /** Deduplicates concurrent resume calls for the same task. */
   private readonly pendingResumes = new Map<string, Promise<void>>();
   /** Hierarchical lock for task-tree structure mutations. */
@@ -247,14 +377,6 @@ export class TaskManager {
    * DELETE. Lookup is cheap (Map.get); rebuild is one SQLite query.
    */
   private readonly attachmentLabelCache = new Map<string, LabelMap>();
-  private readonly agentCommandSnapshots = new Map<
-    string,
-    AgentCommandSnapshot
-  >();
-  private readonly agentCommandEpoch = randomUUID();
-
-  cachedConfigOptions: ConfigOption[] = [];
-  agentInfo: { name: string; version: string } | null = null;
 
   private readonly store: Store;
   private readonly defaultCwd: string;
@@ -262,68 +384,49 @@ export class TaskManager {
   private readonly capabilities?: CapabilityStore;
   private readonly mcpBaseUrl?: string;
 
-  constructor(
-    store: Store,
-    defaultCwd: string,
-    dataDir: string,
-    /**
-     * Optional MCP capability store. When provided together with
-     * `mcpBaseUrl`, every created/restored task is given a uniquely
-     * named MCP server entry whose Authorization header carries a freshly
-     * minted capability — the MCP control plane for ACP tasks. Lifecycle
-     * here is the single source of truth: mint happens next to
-     * `liveTasks.add`, revoke next to `liveTasks.delete`.
-     */
-    capabilities?: CapabilityStore,
-    mcpBaseUrl?: string,
-  ) {
-    this.store = store;
-    this.defaultCwd = defaultCwd;
-    this.dataDir = dataDir;
-    this.capabilities = capabilities;
-    this.mcpBaseUrl = mcpBaseUrl;
-    this.obligations = new ObligationController({
-      now: () => Date.now(),
-      setTimer: (fn, ms) => {
-        const handle = setTimeout(fn, ms);
-        // Reminder/watchdog timers must never hold the process open; the
-        // server is long-lived and a stalled timer is recoverable on the next
-        // turn boundary anyway.
-        handle.unref();
-        return handle;
-      },
-      clearTimer: (handle) => {
-        clearTimeout(handle);
-      },
-      isAgentBusy: (taskId) => this.getBusyKind(taskId) === "agent",
-      isTurnRunning: (taskId, promptId) => this.isTurnRunning(taskId, promptId),
-      submitReminder: (obligation) => this.submitObligationReminder(obligation),
-      retryDispatch: (obligation) => {
-        const bridge = this.recoveryBridge;
-        // A target has one record, so its pending retry is keyed by target.
-        const deliveryIds = this.pendingDispatchRetries.get(
-          obligation.targetTaskId,
-        );
-        if (!bridge) return;
-        if (deliveryIds?.length) {
-          this.pendingDispatchRetries.delete(obligation.targetTaskId);
-          this.store.requeueCollaborationDeliveries(deliveryIds);
-        }
-        void this.drainCollaborationDeliveries(bridge, obligation.targetTaskId);
-      },
-      emitNotice: (notice, obligation) => {
-        this.emitObligationNotice(notice, obligation);
-      },
-      log: (event, fields) => {
-        slog.debug(event, fields);
-      },
-    });
+  constructor(options: TaskManagerOptions) {
+    this.store = options.store;
+    this.defaultCwd = options.defaultCwd;
+    this.dataDir = options.dataDir;
+    this.capabilities = options.capabilities;
+    this.mcpBaseUrl = options.mcpBaseUrl;
+    this.state = options.state;
+    this.authority = options.authority;
+    this.adapter = options.adapter;
+    this.adapters = new Map<string, ExecutionAdapter>([
+      [options.adapter.agentId, options.adapter],
+    ]);
+    for (const adapter of options.adapters ?? []) {
+      this.adapters.set(adapter.agentId, adapter);
+    }
+    this.isAgentConfigured =
+      options.isAgentConfigured ??
+      ((agentId) => agentId === this.adapter.agentId);
+    this.obligations = options.obligations ?? createObligationController(this);
     // One structural choke point: the Store emits exactly one fact per created
     // message and this observer decides the arming policy, so no creation path
     // can silently bypass it.
-    store.onCollaborationMessageCreated(({ message, delivery }) => {
+    this.store.onCollaborationMessageCreated(({ message, delivery }) => {
       this.onCollaborationMessageCreated(message, delivery);
     });
+  }
+
+  /** Config schema reported by the live execution of this agent. */
+  get cachedConfigOptions(): ConfigOption[] {
+    return this.adapter.cachedConfigOptions;
+  }
+
+  set cachedConfigOptions(options: ConfigOption[]) {
+    this.adapter.cachedConfigOptions = options;
+  }
+
+  /** Identity reported by this agent at ACP initialize. */
+  get agentInfo(): { name: string; version: string } | null {
+    return this.adapter.agentInfo;
+  }
+
+  set agentInfo(info: { name: string; version: string } | null) {
+    this.adapter.agentInfo = info;
   }
 
   /**
@@ -418,7 +521,7 @@ export class TaskManager {
       }
       this.liveTasks.delete(entry.id);
       this.capabilities?.revokeByTask(entry.id);
-      this.agentCommandSnapshots.delete(entry.id);
+      this.adapter.agentCommandSnapshots.delete(entry.id);
     }
     if (cleaned.length > 0)
       slog.info("cleaned empty task(s)", { count: cleaned.length });
@@ -924,7 +1027,7 @@ export class TaskManager {
       this.cancelledPromptSubmissions.delete(pendingSubmission);
     }
     this.runningBashProcs.delete(taskId);
-    this.agentCommandSnapshots.delete(taskId);
+    this.adapter.agentCommandSnapshots.delete(taskId);
     for (const [requestId, permission] of this.pendingPermissions) {
       if (permission.taskId === taskId) {
         this.pendingPermissions.delete(requestId);
@@ -1355,23 +1458,23 @@ export class TaskManager {
     taskId: string,
     commands: AgentCommand[],
   ): AgentCommandSnapshot {
-    const current = this.agentCommandSnapshots.get(taskId);
+    const current = this.adapter.agentCommandSnapshots.get(taskId);
     const snapshot = {
-      epoch: this.agentCommandEpoch,
+      epoch: this.adapter.agentCommandEpoch,
       revision: (current?.revision ?? 0) + 1,
       commands: commands.map((command) => ({
         ...command,
         ...(command.input ? { input: { ...command.input } } : {}),
       })),
     };
-    this.agentCommandSnapshots.set(taskId, snapshot);
+    this.adapter.agentCommandSnapshots.set(taskId, snapshot);
     return snapshot;
   }
 
   getAgentCommands(taskId: string): AgentCommandSnapshot {
     return (
-      this.agentCommandSnapshots.get(taskId) ?? {
-        epoch: this.agentCommandEpoch,
+      this.adapter.agentCommandSnapshots.get(taskId) ?? {
+        epoch: this.adapter.agentCommandEpoch,
         revision: 0,
         commands: [],
       }
@@ -1380,13 +1483,13 @@ export class TaskManager {
 
   clearAgentCommands(): Array<AgentCommandSnapshot & { taskId: string }> {
     const cleared: Array<AgentCommandSnapshot & { taskId: string }> = [];
-    for (const [taskId, current] of this.agentCommandSnapshots) {
+    for (const [taskId, current] of this.adapter.agentCommandSnapshots) {
       const snapshot: AgentCommandSnapshot = {
-        epoch: this.agentCommandEpoch,
+        epoch: this.adapter.agentCommandEpoch,
         revision: current.revision + 1,
         commands: [],
       };
-      this.agentCommandSnapshots.set(taskId, snapshot);
+      this.adapter.agentCommandSnapshots.set(taskId, snapshot);
       cleared.push({
         taskId,
         ...snapshot,
@@ -1541,7 +1644,7 @@ export class TaskManager {
     }
     this.runningBashProcs.delete(id);
     this.attachmentLabelCache.delete(id);
-    this.agentCommandSnapshots.delete(id);
+    this.adapter.agentCommandSnapshots.delete(id);
     // Clean pending permissions for this task
     for (const [reqId, perm] of this.pendingPermissions) {
       if (perm.taskId === id) this.pendingPermissions.delete(reqId);
@@ -1804,6 +1907,7 @@ export class TaskManager {
   /** Remember the bridge used by a caller that may later transition idle. */
   setRecoveryBridge(bridge: DeliveryBridge): void {
     this.recoveryBridge = bridge;
+    this.adapter.bindBridge(bridge);
   }
 
   /**
@@ -1993,19 +2097,40 @@ export class TaskManager {
   }
 
   /**
+   * Retry the original dispatch at an idle boundary. The claimed rows are
+   * requeued only when a bridge exists; without one the debt keeps waiting and
+   * the bounded retry simply does not start.
+   */
+  retryObligationDispatch(obligation: DirectedObligation): void {
+    const bridge = this.recoveryBridge;
+    // A target has one record, so its pending retry is keyed by target.
+    const deliveryIds = this.pendingDispatchRetries.get(
+      obligation.targetTaskId,
+    );
+    if (!bridge) return;
+    if (deliveryIds?.length) {
+      this.pendingDispatchRetries.delete(obligation.targetTaskId);
+      this.store.requeueCollaborationDeliveries(deliveryIds);
+    }
+    void this.drainCollaborationDeliveries(bridge, obligation.targetTaskId);
+  }
+
+  /**
    * Submit one closing accounting prompt and record a truthful accepted
    * reminder event. Returns false when the bridge rejects the submission; a
    * rejection never records a successful reminder and never consumes an
    * attempt.
    */
-  private async submitObligationReminder(
+  async submitObligationReminder(
     obligation: DirectedObligation,
-  ): Promise<boolean> {
+  ): Promise<ObligationSubmissionOutcome> {
     const bridge = this.recoveryBridge;
     const task = this.store.getTask(obligation.targetTaskId);
-    if (!bridge || !task) return false;
+    if (!bridge || !task) {
+      return { status: "failed", reason: "no_execution" };
+    }
     if (this.resettingTasks.has(task.id) || this.rotatingTasks.has(task.id)) {
-      return false;
+      return { status: "failed", reason: "rotating" };
     }
     const text = handoffReminderText();
     this.activePrompts.add(task.id);
@@ -2032,7 +2157,7 @@ export class TaskManager {
         },
         { from_ref: "system" },
       );
-      return true;
+      return { status: "delivered" };
     } catch (error) {
       slog.warn("handoff reminder failed", {
         taskId: task.id.slice(0, 8),
@@ -2044,12 +2169,12 @@ export class TaskManager {
         this.activePrompts.delete(task.id);
         this.syncBusy(task.id);
       }
-      return false;
+      return { status: "failed", reason: "prompt_rejected" };
     }
   }
 
   /** Emit a runtime outcome notice; implemented with the notice dispatcher. */
-  private emitObligationNotice(
+  emitObligationNotice(
     notice: ObligationNotice,
     obligation: DirectedObligation,
   ): void {

@@ -12,7 +12,8 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { TaskBusyError, TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { TaskBusyError, createTaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
 import type { ConfigOption } from "../src/types.ts";
@@ -97,7 +98,7 @@ describe("TaskManager", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-test-"));
     store = new Store(tmpDir, "test-agent");
-    sm = new TaskManager(store, tmpDir, tmpDir);
+    sm = createTaskManager(store, tmpDir, tmpDir);
   });
 
   afterEach(() => {
@@ -113,7 +114,7 @@ describe("TaskManager", () => {
       const mcpServer = await startMcpTestServer(capabilities, (taskId) =>
         mcpTaskManagerRef.current!.isMcpSessionActive(taskId),
       );
-      const mcpTaskManager = new TaskManager(
+      const mcpTaskManager = createTaskManager(
         store,
         tmpDir,
         tmpDir,
@@ -165,7 +166,7 @@ describe("TaskManager", () => {
       const mcpServer = await startMcpTestServer(capabilities, (activeTaskId) =>
         mcpTaskManagerRef.current!.isMcpSessionActive(activeTaskId),
       );
-      const mcpTaskManager = new TaskManager(
+      const mcpTaskManager = createTaskManager(
         store,
         tmpDir,
         tmpDir,
@@ -212,7 +213,7 @@ describe("TaskManager", () => {
       const capabilities = new CapabilityStore();
       let mintedTaskId: string | null = null;
       let mintedToken: string | null = null;
-      const mcpTaskManager = new TaskManager(
+      const mcpTaskManager = createTaskManager(
         store,
         tmpDir,
         tmpDir,
@@ -990,7 +991,7 @@ describe("TaskManager", () => {
       const capabilities = new CapabilityStore();
       const oldToken = capabilities.mint("web-1");
       let newToken: string | undefined;
-      const manager = new TaskManager(
+      const manager = createTaskManager(
         store,
         tmpDir,
         tmpDir,
@@ -1053,7 +1054,7 @@ describe("TaskManager", () => {
       sm.liveTasks.add("web-1");
       const capabilities = new CapabilityStore();
       const oldToken = capabilities.mint("web-1");
-      const manager = new TaskManager(
+      const manager = createTaskManager(
         store,
         tmpDir,
         tmpDir,

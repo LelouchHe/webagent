@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AgentBridge } from "../src/bridge.ts";
 import { Store } from "../src/store.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { abbreviateHomePath } from "../src/home-path.ts";
 import type { AgentEvent } from "../src/types.ts";
@@ -36,7 +37,7 @@ async function startAgent(t: TestContext, profile: string) {
   const store = new Store(dir, "session-fixture");
   resources.store = store;
   const capabilities = new CapabilityStore();
-  const tasks = new TaskManager(
+  const tasks = createTaskManager(
     store,
     dir,
     dir,

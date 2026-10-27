@@ -5,7 +5,8 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
@@ -120,7 +121,7 @@ describe("Task REST API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir, "test-agent");
-    tasks = new TaskManager(store, tmpDir, tmpDir);
+    tasks = createTaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
     broadcastEvents = [];
 

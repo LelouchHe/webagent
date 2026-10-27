@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 import { Store } from "../src/store.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type { ConfigOption } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
@@ -103,7 +104,7 @@ describe("Operations REST API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(join(tmpDir, "test.db"), "test-agent");
-    tasks = new TaskManager(store, tmpDir, tmpDir);
+    tasks = createTaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
 
     const handler = createRequestHandler({

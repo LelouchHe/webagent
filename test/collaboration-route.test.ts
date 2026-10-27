@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { SseManager } from "../src/sse-manager.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
 import {
   buildTaskCreatedBroadcast,
@@ -68,7 +69,7 @@ describe("S3 collaboration write routes", () => {
     broadcasts.length = 0;
     promptCalls.length = 0;
     store = new Store(tmpDir, "test-agent");
-    tasks = new TaskManager(store, tmpDir, tmpDir);
+    tasks = createTaskManager(store, tmpDir, tmpDir);
     let sequence = 0;
     bridge = {
       ...mockBridgeStubs(),

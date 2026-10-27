@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { Store } from "../src/store.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import {
   enrichStoredEventsForDisplay,
   enrichEventForDisplay,
@@ -28,7 +29,7 @@ describe("attachment-labels integration (replay egress)", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-att-int-"));
     store = new Store(tmpDir, "test-agent");
-    sm = new TaskManager(store, tmpDir, tmpDir);
+    sm = createTaskManager(store, tmpDir, tmpDir);
     store.createTask("s1", "/x");
     store.insertAttachment({
       id: "abcd1234",
