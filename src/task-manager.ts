@@ -1180,9 +1180,6 @@ export class TaskManager implements ObligationHost {
     this.resetTaskRuntime(taskId, preserveRuntimeState);
     this.commitRotation(taskId, retiredBinding?.agent_key ?? null, reason);
 
-    if (!this.leaseCurrent(lease)) {
-      throw new Error(`Execution replaced while rotating ${taskId}`);
-    }
     const configOptions = await this.restoreTaskConfig(
       bridge,
       taskId,
@@ -1192,8 +1189,30 @@ export class TaskManager implements ObligationHost {
     );
     return {
       taskId,
-      configOptions: this.applyStoredConfig(configOptions, task),
+      configOptions: this.applyStoredConfigUnderLease(
+        taskId,
+        configOptions,
+        task,
+        lease,
+      ),
     };
+  }
+
+  /**
+   * The last write boundary of a rotation: the stored-config overlay may
+   * persist a canonical model value, so a generation that moved during the
+   * config replay must not produce it.
+   */
+  private applyStoredConfigUnderLease(
+    taskId: string,
+    configOptions: ConfigOption[],
+    task: Pick<TaskRow, "id" | "model" | "mode" | "reasoning_effort">,
+    lease: ExecutionLease | null,
+  ): ConfigOption[] {
+    if (!this.leaseCurrent(lease)) {
+      throw new Error(`Execution replaced while rotating ${taskId}`);
+    }
+    return this.applyStoredConfig(configOptions, task);
   }
 
   /**
@@ -1550,7 +1569,12 @@ export class TaskManager implements ObligationHost {
         configOptions,
       };
     } catch (err) {
-      this.capabilities?.revokeByTask(taskId);
+      // Revoking by task kills the *current* execution's capability. After a
+      // rotation that is the replacement's token, which is not this failed
+      // restore's to revoke.
+      if (this.leaseCurrent(startLease)) {
+        this.capabilities?.revokeByTask(taskId);
+      }
       slog.error("restore failed", { error: err });
       throw err;
     } finally {
