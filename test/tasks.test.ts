@@ -113,6 +113,9 @@ describe("Task REST API", () => {
   let port: number;
   let mockBridge: ReturnType<typeof createMockBridge>;
   let broadcastEvents: AgentEvent[];
+  /** Resolves when a route in this server starts reading a request body. */
+  let bodyReadStarted: Promise<string>;
+  let markBodyReadStarted: (url: string) => void;
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-rest-"));
@@ -124,11 +127,17 @@ describe("Task REST API", () => {
     tasks = createTaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
     broadcastEvents = [];
+    bodyReadStarted = new Promise<string>((resolve) => {
+      markBodyReadStarted = resolve;
+    });
 
     const handler = createRequestHandler({
       store,
       tasks,
       getBridge: () => mockBridge,
+      onRequestBodyReadStart: (url) => {
+        markBodyReadStarted(url);
+      },
       publicDir,
       dataDir: tmpDir,
       limits: {
@@ -673,9 +682,14 @@ describe("Task REST API", () => {
           req.on("error", reject);
         },
       );
-      // The handler is synchronous up to `readBody`; give it the turn it needs
-      // to pass the early check and block on the unfinished body.
-      await new Promise<void>((resolve) => setTimeout(resolve, 30));
+      // Deterministic: the signal fires when the route starts reading the body,
+      // which is after its early busy check, so the handler is provably parked
+      // on the unfinished body rather than raced by a sleep.
+      assert.equal(
+        await bodyReadStarted,
+        "/api/v1/tasks/s1/clear",
+        "the clear route reached its body read",
+      );
 
       // Only now does the restore start: it is inside the window the early
       // check could not see.

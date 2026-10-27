@@ -271,6 +271,13 @@ export interface RequestHandlerDeps {
   /** Optional SSE ticket store. Required alongside authStore for the
    *  /api/v1/sse-ticket route and ticket-based SSE auth. */
   ticketStore?: TicketStore;
+  /**
+   * Support seam: called synchronously when a route starts reading the request
+   * body — by definition *after* that route's pre-body checks have passed. It
+   * lets an ordering-sensitive test prove the handler is blocked in the body
+   * read instead of racing it with a sleep.
+   */
+  onRequestBodyReadStart?: (url: string) => void;
   /** Optional secret for HMAC-signed image URLs. When present, image GET
    *  requires `?sig=&exp=`; image upload returns a signed URL. When absent
    *  (legacy/tests), images are served unauthenticated. */
@@ -284,7 +291,7 @@ export interface RequestHandlerDeps {
 }
 
 /** Read the full request body as a string. */
-function readBody(req: IncomingMessage): Promise<string> {
+function readBodyRaw(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -676,6 +683,11 @@ export function createRequestHandler(
   deps: RequestHandlerDeps,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const { store, tasks, getBridge, sseManager } = deps;
+  /** Every body read in this handler reports that it started. */
+  const readBody = (req: IncomingMessage): Promise<string> => {
+    deps.onRequestBodyReadStart?.(req.url ?? "/");
+    return readBodyRaw(req);
+  };
   let bootstrapTaskPromise: Promise<{
     id: string;
     cwd: string;
