@@ -481,6 +481,11 @@ export class TaskManager {
    */
   private getActiveTaskWorkKind(taskId: string): "agent" | "bash" | null {
     if (this.creatingTasks.has(taskId)) return "agent";
+    // Restoring is work too: `resumeTask` awaits ACP `loadSession` while the
+    // task's stored binding is still the one being loaded. Leaving it out of
+    // the busy gate let a `/clear` replace the execution the restore was
+    // about to make live.
+    if (this.restoringTasks.has(taskId)) return "agent";
     if (this.pendingPromptSubmissions.has(taskId)) return "agent";
     if (this.drainingCollaborationTasks.has(taskId)) return "agent";
     if (this.activePrompts.has(taskId)) return "agent";
@@ -794,10 +799,22 @@ export class TaskManager {
     opts: {
       preservePendingCompactSummary?: boolean;
       preserveRuntimeState?: boolean;
+      /** The compaction path owns its own busy source and may rotate inside it. */
+      allowCompacting?: boolean;
     } = {},
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+    // One synchronous gate: the final busy recheck and the `rotating` claim
+    // must happen in the same block with no await between them. A caller that
+    // checked busy before awaiting a request body would otherwise rotate a
+    // task that started restoring in that window.
     if (this.rotatingTasks.has(taskId)) {
       throw new Error(`Task is already being rotated: ${taskId}`);
+    }
+    const busyForRotation = opts.allowCompacting
+      ? this.getBusyKindForOwnRotation(taskId)
+      : this.getBusyKind(taskId);
+    if (busyForRotation !== null) {
+      throw new TaskBusyError(taskId, this.store.getTaskPath(taskId));
     }
     this.rotatingTasks.add(taskId);
     // Other clients watching this task see busy for the whole rotation
@@ -1599,6 +1616,23 @@ export class TaskManager {
     if (this.compactingTasks.has(taskId)) return "agent";
     if (this.resettingTasks.has(taskId)) return "agent";
     return this.getActiveTaskWorkKind(taskId);
+  }
+
+  /**
+   * Busy sources that still block a rotation *started by this task's own
+   * compaction turn*. The compaction path holds `compactingTasks` and an
+   * active prompt on the task by design, so those two are the only excluded
+   * sources; everything else (a restore, a queued submission, a drain) still
+   * refuses the rotation.
+   */
+  private getBusyKindForOwnRotation(taskId: string): "agent" | "bash" | null {
+    if (this.creatingTasks.has(taskId)) return "agent";
+    if (this.restoringTasks.has(taskId)) return "agent";
+    if (this.pendingPromptSubmissions.has(taskId)) return "agent";
+    if (this.drainingCollaborationTasks.has(taskId)) return "agent";
+    if (this.rotatingTasks.has(taskId)) return "agent";
+    if (this.runningBashProcs.has(taskId)) return "bash";
+    return null;
   }
 
   /**

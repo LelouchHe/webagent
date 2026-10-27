@@ -2205,6 +2205,9 @@ export function createRequestHandler(
               {
                 preservePendingCompactSummary: true,
                 preserveRuntimeState: true,
+                // This turn owns the task's busy state; the rotation is its
+                // own controlled internal path.
+                allowCompacting: true,
               },
             );
             tasks.state.patch(taskId, {
@@ -2331,6 +2334,14 @@ export function createRequestHandler(
             agentCommands: tasks.getAgentCommands(taskId),
           });
         } catch (err) {
+          if (err instanceof TaskBusyError) {
+            json(res, HTTP_STATUS.CONFLICT, { error: err.message });
+            return;
+          }
+          if (err instanceof TaskNotFoundError) {
+            json(res, HTTP_STATUS.NOT_FOUND, { error: err.message });
+            return;
+          }
           json(res, HTTP_STATUS.BAD_REQUEST, {
             error: err instanceof Error ? err.message : String(err),
           });

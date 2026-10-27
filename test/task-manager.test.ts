@@ -756,6 +756,12 @@ describe("TaskManager", () => {
       });
       sm.activePrompts.add("child");
       sm.syncBusy("child");
+      // The rotation gate now refuses a task with an active prompt, which is
+      // the point of D8; the watchdog is the state under test here, so enter
+      // the turn directly instead of going through the blocked busy source.
+      sm.activePrompts.delete("child");
+      sm.syncBusy("child");
+      (sm as any).obligations.beginTurn("child", "prompt-1");
       assert.equal((sm as any).obligations.watchdog.size, 1);
 
       const bridge = {
@@ -900,7 +906,12 @@ describe("TaskManager", () => {
       sm.liveTasks.add("web-1");
       sm.assistantBuffers.set("web-1", "partial answer");
       sm.thinkingBuffers.set("web-1", "partial thought");
-      sm.activePrompts.add("web-1");
+      sm.pendingPermissions.set("request-1", {
+        requestId: "request-1",
+        taskId: "web-1",
+        title: "Read file",
+        options: [{ optionId: "allow", label: "Allow" }],
+      });
       sm.updateAgentCommands("web-1", [
         { name: "old-command", description: "old" },
       ]);
@@ -921,7 +932,7 @@ describe("TaskManager", () => {
 
       assert.equal(sm.assistantBuffers.has("web-1"), false);
       assert.equal(sm.thinkingBuffers.has("web-1"), false);
-      assert.equal(sm.activePrompts.has("web-1"), false);
+      assert.equal(sm.pendingPermissions.has("request-1"), false);
       assert.deepEqual(sm.getAgentCommands("web-1").commands, []);
       assert.equal(sm.state.getState("web-1").runtime.busy, null);
     });
@@ -2319,6 +2330,123 @@ describe("TaskManager", () => {
 
     it("returns empty map for task with no attachments", () => {
       assert.equal(sm.getLabelMap("s1").size, 0);
+    });
+  });
+
+  // D8: the restore window must be busy, and the rotation claim must happen in
+  // the same synchronous block as the final busy recheck.
+  describe("rotation busy gate", () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    }
+
+    it("treats a restoring task as agent-busy", () => {
+      sm.restoringTasks.add("s1");
+
+      assert.equal(sm.getBusyKind("s1"), "agent");
+    });
+
+    it("rejects a Root reset while a descendant is restoring", async () => {
+      const rootTaskId = store.ensureRootTask(tmpDir).id;
+      store.createTask("child", tmpDir, "auto", "child-session", rootTaskId);
+      const gate = deferred<void>();
+      const loadingBridge = {
+        async newSession() {
+          throw new Error("newSession is not part of a load restore");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          await gate.promise;
+          return { taskId, configOptions: [] };
+        },
+      };
+
+      const restore = sm.resumeTask(loadingBridge, "child");
+      await assert.rejects(() => sm.resetRootTask(), TaskBusyError);
+
+      gate.resolve();
+      await restore;
+    });
+
+    it("rejects a rotation that arrives during the restore window", async () => {
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      const gate = deferred<void>();
+      let loadEntered = false;
+      const loadingBridge = {
+        async newSession() {
+          throw new Error("newSession is not part of a load restore");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          loadEntered = true;
+          await gate.promise;
+          return { taskId, configOptions: [] };
+        },
+      };
+
+      const restore = sm.resumeTask(loadingBridge, "web-1");
+      // resumeTask marks the task restoring before its first await, so an
+      // interleaved request observes it without racing the scheduler.
+      assert.equal(loadEntered, true);
+      assert.equal(sm.getBusyKind("web-1"), "agent");
+
+      const rotatingBridge = {
+        async newSession() {
+          return { sessionId: "agent-rotated", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await assert.rejects(
+        () => sm.clearTask(rotatingBridge, "web-1"),
+        TaskBusyError,
+      );
+      // The refused rotation changed nothing.
+      assert.equal(store.getAgentSessionId("web-1"), "agent-old");
+
+      gate.resolve();
+      await restore;
+      assert.equal(sm.liveTasks.has("web-1"), true);
+      assert.equal(sm.getBusyKind("web-1"), null);
+    });
+
+    it("still rotates when the task's own compaction turn owns the busy state", async () => {
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      sm.liveTasks.add("web-1");
+      sm.compactingTasks.add("web-1");
+      sm.activePrompts.add("web-1");
+      sm.syncBusy("web-1");
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      // Without the controlled internal path the compaction rotation is
+      // refused by its own busy source.
+      await assert.rejects(() => sm.clearTask(bridge, "web-1"), TaskBusyError);
+      await sm.clearTask(bridge, "web-1", undefined, { allowCompacting: true });
+
+      assert.equal(store.getAgentSessionId("web-1"), "agent-new");
     });
   });
 });

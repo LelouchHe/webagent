@@ -639,6 +639,36 @@ describe("Task REST API", () => {
       assert.equal(store.getTask("s1")?.cwd, publicDir);
     });
 
+    it("rejects the request when a restore starts while the body is read", async () => {
+      store.createTask("s1", tmpDir, "auto", "agent-old");
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      mockBridge.loadSession = async (taskId: string) => {
+        await gate;
+        return { taskId, configOptions: [] };
+      };
+
+      // Simulates the route's pre-check passing and then the request-body
+      // window opening: the restore starts *after* the route looked at busy.
+      const restore = tasks.resumeTask(mockBridge, "s1");
+      assert.equal(tasks.getBusyKind("s1"), "agent");
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks/s1/clear",
+        "{}",
+      );
+
+      assert.equal(res.status, 409);
+      assert.equal(store.getAgentSessionId("s1"), "agent-old");
+
+      release();
+      await restore;
+    });
+
     it("compacts into a fresh ACP execution and defers the summary to the next prompt", async () => {
       store.createTask("s1", tmpDir, "auto", "agent-old");
       tasks.liveTasks.add("s1");
