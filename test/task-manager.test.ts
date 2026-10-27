@@ -275,7 +275,7 @@ describe("TaskManager", () => {
     });
 
     it("purges obligation records when a task is released", async () => {
-      store.bindAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
+      store.attachAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
       store.createTask("source", tmpDir, "agent", "agent-source", "root");
       store.createTask("target", tmpDir, "agent", "agent-target", "source");
       store.createCollaborationMessage({
@@ -1113,7 +1113,7 @@ describe("TaskManager", () => {
 
     it("skips the lazy empty binding at startup and materializes on resume", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-old");
+      store.attachAgentSession(rootId, "agent-old");
       store.resetRootTask();
 
       let newSessionCalls = 0;
@@ -1146,7 +1146,7 @@ describe("TaskManager", () => {
 
     it("restores saved config when lazily materializing a DB-only reset", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-old");
+      store.attachAgentSession(rootId, "agent-old");
       store.resetRootTask();
       store.updateTaskConfig(rootId, "model", "saved-model");
       store.updateTaskConfig(rootId, "mode", "saved-mode");
@@ -1230,7 +1230,7 @@ describe("TaskManager", () => {
   describe("Root reset without a live execution", () => {
     it("resets DB-only, never creates a replacement execution, and retires the old one", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.saveEvent(
         rootId,
         "user_message",
@@ -1288,7 +1288,7 @@ describe("TaskManager", () => {
 
     it("keeps another agent's descendant, disk files, and attachment cache", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("a-task", tmpDir, "auto", "agent-a", rootId);
       const b = new Store(tmpDir, "backend-b");
       b.createTask("b-child", tmpDir, "auto", "agent-b", rootId);
@@ -1449,7 +1449,7 @@ describe("TaskManager", () => {
     it("rejects Root reset when a just-created descendant is still initializing", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("a", tmpDir, "auto", "agent-a", rootId);
       store.updateTaskConfig("a", "model", "model-old");
       sm.liveTasks.add(rootId);
@@ -1532,7 +1532,7 @@ describe("TaskManager", () => {
     it("creates a task after a concurrent Root reset, never during it", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       sm.liveTasks.add(rootId);
 
       const releaseRoot = await sm["treeLock"].acquire({
@@ -1711,7 +1711,7 @@ describe("TaskManager", () => {
     });
 
     it("recovers a delivery after a pending prompt is cancelled", async () => {
-      store.bindAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
+      store.attachAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
       store.createTask("source", tmpDir, "agent", "agent-source", "root");
       store.createTask("target", tmpDir, "agent", "agent-target", "root");
       sm.liveTasks.add("target");
@@ -1754,7 +1754,7 @@ describe("TaskManager", () => {
     });
 
     it("bounds the delivery drain to one per idle transition", async () => {
-      store.bindAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
+      store.attachAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
       store.createTask("source", tmpDir, "agent", "agent-source", "root");
       store.createTask("child", tmpDir, "agent", "agent-child", "root");
       sm.liveTasks.add("child");

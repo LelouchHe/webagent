@@ -171,7 +171,7 @@ describe("legacy database refusal", () => {
     try {
       const store = new Store(dir, "pi");
       store.ensureRootTask("/tmp/root");
-      store.bindAgentSession("root", "root-session");
+      store.attachAgentSession("root", "root-session");
       store.createTask("root-forged", "/tmp/forged");
       store.createTask("root-2f3a9c", "/tmp/short");
       store.close();

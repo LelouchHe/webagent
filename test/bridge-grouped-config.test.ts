@@ -121,7 +121,7 @@ describe("grouped config option boundary", { timeout: 20_000 }, () => {
     assert.equal(calls().length, beforeUnresolvedWrite);
 
     const replacement = await bridge.newSession(dir);
-    store.rotateAgentSession("task-1", replacement.sessionId, dir);
+    store.replaceAgentSession("task-1", replacement.sessionId, dir);
     bridge.sessionMapped(replacement.sessionId);
     const replacementResult = await bridge.setConfigOption(
       "task-1",

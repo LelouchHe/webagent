@@ -167,7 +167,7 @@ describe("image signed URLs", () => {
 
   it("re-signs owner Root history against the derived task attachment path", async () => {
     const rootId = store.ensureRootTask(tmpDir).id;
-    store.bindAgentSession(rootId, "root-agent-session");
+    store.attachAgentSession(rootId, "root-agent-session");
     const oldPath = `/api/v1/tasks/${rootId}/attachments/history.png`;
     store.saveEvent(
       rootId,

@@ -13,6 +13,11 @@ import {
 import { migrateTimestampsToMillis } from "./timestamp-migration.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { assertNotLegacyDatabase } from "./legacy-database.ts";
+import {
+  bindingsEqual,
+  type BindingChange,
+  type ExecutionBinding,
+} from "./execution-authority.ts";
 
 /**
  * The workspace has exactly one Root, identified by this literal task id.
@@ -31,6 +36,12 @@ export interface TaskDelete {
   mode: "hard" | "soft";
   /** The ACP execution bound at deletion time, for explicit retirement. */
   agentSessionId: string | null;
+  /**
+   * The agent that owned that execution. Retirement must land in the matching
+   * adapter: `(agentId, sessionId)` is the execution identity, so two agents
+   * returning the same session id are still two different executions.
+   */
+  agentId: string | null;
 }
 
 export type WorkflowStatus = "running" | "idle" | "blocked" | "done";
@@ -288,6 +299,17 @@ export class Store {
   readonly agentKey: string;
   readonly rootTaskId: string;
   private readonly collaborationEmitter: CollaborationMessageEmitter;
+  /**
+   * Binding facts belong to the outermost successful commit, not to any one
+   * recursive Store method. Every binding write registers its before/after
+   * here; the batch flushes once the outermost scope commits and is discarded
+   * (or rewound to the failing scope's checkpoint) when it rolls back.
+   */
+  private bindingWriteDepth = 0;
+  private pendingBindingChanges: BindingChange[] = [];
+  private readonly bindingObservers: Array<
+    (changes: readonly BindingChange[]) => void
+  > = [];
 
   constructor(dataDir: string, agentKey: string) {
     if (!agentKey) throw new Error("agentKey is required");
@@ -317,6 +339,56 @@ export class Store {
       this.db.close();
       throw error;
     }
+  }
+
+  /**
+   * Subscribe to the binding facts of an outermost committed write. One
+   * observer applies the whole batch to the generation ledger before any other
+   * post-commit side effect runs.
+   */
+  onBindingsCommitted(
+    observer: (changes: readonly BindingChange[]) => void,
+  ): void {
+    this.bindingObservers.push(observer);
+  }
+
+  /**
+   * Run `fn` as one binding-write scope. Nested scopes join the outer one, and
+   * a failing scope rewinds the pending batch to the checkpoint it started at
+   * so a rolled-back savepoint can never leak a fact into a later commit.
+   */
+  private writeBindings<T>(fn: () => T): T {
+    const checkpoint = this.pendingBindingChanges.length;
+    this.bindingWriteDepth += 1;
+    let result: T;
+    try {
+      result = this.db.transaction(fn)();
+    } catch (error) {
+      this.pendingBindingChanges.length = checkpoint;
+      this.bindingWriteDepth -= 1;
+      if (this.bindingWriteDepth === 0) this.pendingBindingChanges = [];
+      throw error;
+    }
+    this.bindingWriteDepth -= 1;
+    if (this.bindingWriteDepth === 0) this.flushBindingChanges();
+    return result;
+  }
+
+  /** Record one task's binding before/after; unchanged pairs are dropped. */
+  private collectBindingChange(
+    taskId: string,
+    before: ExecutionBinding | null,
+  ): void {
+    const after = this.currentBinding(taskId);
+    if (bindingsEqual(before, after)) return;
+    this.pendingBindingChanges.push({ taskId, before, after });
+  }
+
+  private flushBindingChanges(): void {
+    const batch = this.pendingBindingChanges;
+    this.pendingBindingChanges = [];
+    if (batch.length === 0) return;
+    for (const observer of this.bindingObservers) observer(batch);
   }
 
   private canonicalizeStoredModelValues(): void {
@@ -804,7 +876,7 @@ export class Store {
         `Reserved Root id cannot be created as an ordinary task: ${id}`,
       );
     }
-    return this.db.transaction(() => {
+    return this.writeBindings(() => {
       // The invariant is enforced by the single write path: a database that
       // has an ordinary task always has its Root, even for direct drivers that
       // never called ensureRootTask().
@@ -832,15 +904,12 @@ export class Store {
           now,
           now,
         );
-      this.db
-        .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .run(this.agentKey, agentSessionId, id, now);
+      this.insertBindingRow(id, agentSessionId);
+      this.collectBindingChange(id, null);
       return this.db
         .prepare("SELECT * FROM tasks WHERE id = ?")
         .get(id) as TaskRow;
-    })();
+    });
   }
 
   listTasks(opts?: { source?: string }): TaskRow[] {
@@ -957,61 +1026,119 @@ export class Store {
   }
 
   /**
-   * Replace the current ACP execution for a stable WebAgent task.
-   * The previous binding row is removed: its execution is explicitly
-   * retired by the caller and must never accept WebAgent events again.
+   * Current execution binding for a task, **independent of this Store's agent
+   * scope**. The binding is a task fact, not an agent fact: there is at most
+   * one, globally, so every internal read goes through here rather than
+   * through the agent-scoped lookup that external reads use.
    */
-  rotateAgentSession(
+  getCurrentExecutionBinding(taskId: string): AgentSessionRow | undefined {
+    return this.db
+      .prepare(
+        "SELECT * FROM agent_sessions WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(taskId) as AgentSessionRow | undefined;
+  }
+
+  /** The current binding as an agent-agnostic value, or null. */
+  private currentBinding(taskId: string): ExecutionBinding | null {
+    const row = this.getCurrentExecutionBinding(taskId);
+    if (!row) return null;
+    return { agentId: row.agent_key, sessionId: row.agent_session_id };
+  }
+
+  /**
+   * Attach the first execution to a task. A task has at most one current
+   * execution: an existing binding for a different execution is refused, which
+   * is what makes "adopt" impossible and forces an owner change to go through
+   * the replace path with its guards.
+   */
+  attachAgentSession(taskId: string, agentSessionId: string): AgentSessionRow {
+    return this.writeBindings(() => {
+      if (!this.getTaskIncludingDeleted(taskId)) {
+        throw new Error(`Task not found: ${taskId}`);
+      }
+      const before = this.currentBinding(taskId);
+      if (before) {
+        if (
+          before.agentId === this.agentKey &&
+          before.sessionId === agentSessionId
+        ) {
+          return this.getAgentSessionBinding(taskId)!;
+        }
+        throw new Error(
+          `Task already has an execution binding: ${taskId} (${before.agentId})`,
+        );
+      }
+      this.insertBindingRow(taskId, agentSessionId);
+      this.collectBindingChange(taskId, before);
+      return this.getAgentSessionBinding(taskId)!;
+    });
+  }
+
+  /**
+   * Replace the current execution for a stable WebAgent task. This is the one
+   * write used by both classes of replacement:
+   *
+   * - **owner change** — allowed only by the rotation triggers, guarded by the
+   *   caller against stealing an owner that is still configured;
+   * - **same-owner rebuild** — Root slot materialization, explicit `/clear`,
+   *   `/compact`.
+   *
+   * Both bump the task's generation; the difference is policy, not storage.
+   * A replacement whose `(agentId, sessionId)` is unchanged is a no-op (the
+   * requested cwd still lands, so a re-run of `/clear` can move the task).
+   */
+  replaceAgentSession(
     taskId: string,
     agentSessionId: string,
     cwd?: string,
   ): AgentSessionRow {
-    return this.db.transaction(() => {
-      const current = this.getAgentSessionBinding(taskId);
-      if (!current) throw new Error(`Task not found: ${taskId}`);
-      // Persist a requested cwd even when the agent returns the same
-      // execution id (no-op rotation); the caller decides whether to retire
-      // based on whether the binding actually moved.
+    return this.writeBindings(() => {
+      const before = this.currentBinding(taskId);
+      if (!before) throw new Error(`Task not found: ${taskId}`);
       if (cwd !== undefined) {
         this.db
           .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
           .run(cwd, taskId);
       }
-      if (current.agent_session_id === agentSessionId) return current;
-
+      if (
+        before.agentId === this.agentKey &&
+        before.sessionId === agentSessionId
+      ) {
+        return this.getAgentSessionBinding(taskId)!;
+      }
       this.db
-        .prepare(
-          "DELETE FROM agent_sessions WHERE agent_key = ? AND task_id = ?",
-        )
-        .run(this.agentKey, taskId);
-      this.db
-        .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .run(this.agentKey, agentSessionId, taskId, Date.now());
-
+        .prepare("DELETE FROM agent_sessions WHERE task_id = ?")
+        .run(taskId);
+      this.insertBindingRow(taskId, agentSessionId);
+      this.collectBindingChange(taskId, before);
       return this.getAgentSessionBinding(taskId)!;
-    })();
+    });
   }
 
-  /** Bind an ACP execution to an existing WebAgent task without creating a row. */
-  bindAgentSession(taskId: string, agentSessionId: string): AgentSessionRow {
-    return this.db.transaction(() => {
-      if (!this.getTaskIncludingDeleted(taskId)) {
-        throw new Error(`Task not found: ${taskId}`);
-      }
-      const current = this.getAgentSessionBinding(taskId);
-      if (current) {
-        if (current.agent_session_id === agentSessionId) return current;
-        throw new Error(`Task already has an ACP binding: ${taskId}`);
-      }
+  /**
+   * Remove the current binding, leaving the task unowned (tombstone) or as an
+   * empty owner slot (Root reset materializes its own empty slot instead).
+   */
+  detachAgentSession(taskId: string): AgentSessionRow | undefined {
+    return this.writeBindings(() => {
+      const before = this.currentBinding(taskId);
+      const row = this.getCurrentExecutionBinding(taskId);
+      if (!before) return undefined;
       this.db
-        .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .run(this.agentKey, agentSessionId, taskId, Date.now());
-      return this.getAgentSessionBinding(taskId)!;
-    })();
+        .prepare("DELETE FROM agent_sessions WHERE task_id = ?")
+        .run(taskId);
+      this.collectBindingChange(taskId, before);
+      return row;
+    });
+  }
+
+  private insertBindingRow(taskId: string, agentSessionId: string): void {
+    this.db
+      .prepare(
+        "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+      )
+      .run(this.agentKey, agentSessionId, taskId, Date.now());
   }
 
   ownsTask(taskId: string): boolean {
@@ -1190,8 +1317,9 @@ export class Store {
       throw new Error("Root task has an active share");
     }
 
-    const reset = this.db.transaction(() => {
+    const reset = this.writeBindings(() => {
       const affected: TaskDelete[] = [];
+      const rootBindingBefore = this.currentBinding(this.rootTaskId);
       for (const childId of this.listOwnedChildren(this.rootTaskId)) {
         affected.push(...this.deleteTask(childId).affected);
       }
@@ -1215,22 +1343,23 @@ export class Store {
       // session id is an intentional "not materialized yet" marker: Root
       // stays visible/owned, and the next prompt creates a fresh ACP
       // session without needing the old agent process.
-      const retiredAgentSessionId = this.getAgentSessionId(this.rootTaskId);
+      const retiredBinding = this.currentBinding(this.rootTaskId);
       this.db
-        .prepare(
-          "DELETE FROM agent_sessions WHERE agent_key = ? AND task_id = ?",
-        )
-        .run(this.agentKey, this.rootTaskId);
-      this.db
-        .prepare(
-          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .run(this.agentKey, "", this.rootTaskId, Date.now());
+        .prepare("DELETE FROM agent_sessions WHERE task_id = ?")
+        .run(this.rootTaskId);
+      // Root keeps its owner but loses its execution: the empty session id is
+      // the "not materialized yet" marker, and the reset bumps the generation
+      // instead of clearing it.
+      this.insertBindingRow(this.rootTaskId, "");
       this.db
         .prepare("UPDATE tasks SET parent_id = NULL WHERE id = ?")
         .run(this.rootTaskId);
-      return { affected, retiredAgentSessionId: retiredAgentSessionId ?? null };
-    })();
+      this.collectBindingChange(this.rootTaskId, rootBindingBefore);
+      return {
+        affected,
+        retiredAgentSessionId: retiredBinding?.sessionId ?? null,
+      };
+    });
     return reset;
   }
 
@@ -1254,6 +1383,16 @@ export class Store {
     if (isReservedRootTaskId(id)) {
       throw new Error("Root task cannot be deleted");
     }
+    return this.writeBindings(() => this.deleteTaskInScope(id));
+  }
+
+  private deleteTaskInScope(id: string): {
+    mode: "hard" | "soft";
+    affected: TaskDelete[];
+  } {
+    if (isReservedRootTaskId(id)) {
+      throw new Error("Root task cannot be deleted");
+    }
     const affected: TaskDelete[] = [];
     // Delete descendants first (children before parents) so the FK on
     // parent_id can never block the parent's own row removal.
@@ -1261,7 +1400,12 @@ export class Store {
     for (const childId of children) {
       affected.push(...this.deleteTask(childId).affected);
     }
-    const binding = this.getAgentSessionBinding(id);
+    // The binding is a task fact: never resolve it through this Store's agent
+    // scope, or a cascaded foreign execution would escape retirement.
+    const binding = this.getCurrentExecutionBinding(id);
+    const beforeBinding: ExecutionBinding | null = binding
+      ? { agentId: binding.agent_key, sessionId: binding.agent_session_id }
+      : null;
     // Drop preview shares regardless — they are owner-only drafts and
     // share the task's lifecycle by design.
     this.db
@@ -1283,17 +1427,13 @@ export class Store {
       this.db
         .prepare("UPDATE tasks SET deleted_at = ? WHERE id = ?")
         .run(Date.now(), id);
-      if (binding) {
-        this.db
-          .prepare(
-            "DELETE FROM agent_sessions WHERE agent_key = ? AND agent_session_id = ?",
-          )
-          .run(this.agentKey, binding.agent_session_id);
-      }
+      this.db.prepare("DELETE FROM agent_sessions WHERE task_id = ?").run(id);
+      this.collectBindingChange(id, beforeBinding);
       affected.unshift({
         id,
         mode: "soft",
         agentSessionId: binding?.agent_session_id ?? null,
+        agentId: binding?.agent_key ?? null,
       });
       return { mode: "soft", affected };
     }
@@ -1303,10 +1443,12 @@ export class Store {
     this.failOutstandingDeliveriesForDeletedTask(id);
     this.db.prepare("DELETE FROM events WHERE task_id = ?").run(id);
     this.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+    this.collectBindingChange(id, beforeBinding);
     affected.unshift({
       id,
       mode: "hard",
       agentSessionId: binding?.agent_session_id ?? null,
+      agentId: binding?.agent_key ?? null,
     });
     return { mode: "hard", affected };
   }
@@ -1347,7 +1489,7 @@ export class Store {
     const empties = this.db
       .prepare(
         `
-      SELECT s.id, a.agent_session_id FROM tasks s
+      SELECT s.id, a.agent_session_id, a.agent_key FROM tasks s
       JOIN agent_sessions a ON a.task_id = s.id
       LEFT JOIN events e ON e.task_id = s.id
       WHERE e.id IS NULL
@@ -1364,19 +1506,27 @@ export class Store {
       ) as Array<{
       id: string;
       agent_session_id: string;
+      agent_key: string;
     }>;
     if (empties.length === 0) return [];
-    const del = this.db.prepare("DELETE FROM tasks WHERE id = ?");
-    const removed: Array<{ id: string; agentSessionId: string | null }> = [];
-    for (const r of empties) {
-      // A junk task may still be someone's parent; keep the children by
-      // re-parenting them under Root instead of deleting them.
-      this.reparentChildrenToRoot(r.id);
-      this.failOutstandingDeliveriesForDeletedTask(r.id);
-      del.run(r.id);
-      removed.push({ id: r.id, agentSessionId: r.agent_session_id });
-    }
-    return removed;
+    return this.writeBindings(() => {
+      const del = this.db.prepare("DELETE FROM tasks WHERE id = ?");
+      const removed: Array<{ id: string; agentSessionId: string | null }> = [];
+      for (const r of empties) {
+        const beforeBinding: ExecutionBinding = {
+          agentId: r.agent_key,
+          sessionId: r.agent_session_id,
+        };
+        // A junk task may still be someone's parent; keep the children by
+        // re-parenting them under Root instead of deleting them.
+        this.reparentChildrenToRoot(r.id);
+        this.failOutstandingDeliveriesForDeletedTask(r.id);
+        del.run(r.id);
+        this.collectBindingChange(r.id, beforeBinding);
+        removed.push({ id: r.id, agentSessionId: r.agent_session_id });
+      }
+      return removed;
+    });
   }
 
   updateTaskTitle(id: string, title: string): void {

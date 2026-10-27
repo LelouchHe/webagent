@@ -409,6 +409,12 @@ export class TaskManager implements ObligationHost {
     this.store.onCollaborationMessageCreated(({ message, delivery }) => {
       this.onCollaborationMessageCreated(message, delivery);
     });
+    // Binding facts are applied before any other post-commit side effect: the
+    // generation ledger must already name the new generation when the
+    // replacement's own initialization starts writing.
+    this.store.onBindingsCommitted((changes) => {
+      this.authority.applyBindingChanges(changes);
+    });
   }
 
   /** Config schema reported by the live execution of this agent. */
@@ -511,13 +517,41 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
+   * Retire one execution through the adapter that owns it. `(agentId,
+   * sessionId)` is the identity, so an execution belonging to an agent this
+   * process has no adapter for is left alone rather than retired through the
+   * wrong process.
+   */
+  private retireExecution(
+    agentId: string | null,
+    agentSessionId: string | null,
+    bridge?: SessionBridge | null,
+  ): void {
+    if (!agentId || !agentSessionId) return;
+    const adapter = this.adapters.get(agentId);
+    if (!adapter) {
+      slog.warn("no adapter for retired execution", {
+        agentId,
+        agentSessionId,
+      });
+      return;
+    }
+    const retired = adapter.retire(agentSessionId, bridge ?? null);
+    if (retired) void retired;
+  }
+
+  /**
    * Drop live state for tasks that the store cleaned as empty.
    */
   private cleanupEmptyTasks(bridge?: SessionBridge): void {
     const cleaned = this.store.deleteEmptyTasks(EMPTY_TASK_MIN_AGE_S);
     for (const entry of cleaned) {
       if (entry.agentSessionId) {
-        void bridge?.retireExecution?.(entry.agentSessionId);
+        this.retireExecution(
+          this.adapter.agentId,
+          entry.agentSessionId,
+          bridge,
+        );
       }
       this.liveTasks.delete(entry.id);
       this.capabilities?.revokeByTask(entry.id);
@@ -970,9 +1004,9 @@ export class TaskManager implements ObligationHost {
       execution?.token,
     );
 
-    const retiredAgentSessionId = this.store.getAgentSessionId(taskId);
+    const retiredBinding = this.store.getCurrentExecutionBinding(taskId);
     try {
-      this.store.rotateAgentSession(taskId, created.sessionId, taskCwd);
+      this.store.replaceAgentSession(taskId, created.sessionId, taskCwd);
     } catch (error) {
       bridge.discardUnboundSession?.(created.sessionId);
       this.creatingTasks.delete(taskId);
@@ -986,14 +1020,7 @@ export class TaskManager implements ObligationHost {
       this.capabilities?.revokeOtherTokens(taskId, execution.token);
     }
     bridge.sessionMapped?.(created.sessionId);
-    // The old ACP execution is explicitly retired now that the new binding
-    // is authoritative; best-effort, never rolls back the rotation. Only
-    // retire when the binding actually moved: an agent that returns the
-    // current execution id makes rotate a no-op, and retiring it would kill
-    // the still-live execution.
-    if (retiredAgentSessionId && retiredAgentSessionId !== created.sessionId) {
-      void bridge.retireExecution?.(retiredAgentSessionId);
-    }
+    this.retireReplacedExecution(retiredBinding, created.sessionId, bridge);
     this.resetTaskRuntime(taskId, preserveRuntimeState);
     this.store.failOutstandingDeliveriesForTaskClear(taskId);
     this.store.updateTaskWorkflowStatus(taskId, "idle");
@@ -1008,6 +1035,25 @@ export class TaskManager implements ObligationHost {
       taskId,
       configOptions: this.applyStoredConfig(configOptions, task),
     };
+  }
+
+  /**
+   * Retire the execution a replacement displaced. Best-effort: it never rolls
+   * back the rotation. Identity is the `(agentId, sessionId)` pair, so a
+   * same-session replacement is a storage no-op and must not retire the
+   * still-authoritative execution.
+   */
+  private retireReplacedExecution(
+    retired: { agent_key: string; agent_session_id: string } | undefined,
+    replacementSessionId: string,
+    bridge: SessionBridge,
+  ): void {
+    if (!retired) return;
+    const moved =
+      retired.agent_key !== this.adapter.agentId ||
+      retired.agent_session_id !== replacementSessionId;
+    if (!moved) return;
+    this.retireExecution(retired.agent_key, retired.agent_session_id, bridge);
   }
 
   /**
@@ -1043,7 +1089,7 @@ export class TaskManager implements ObligationHost {
     // Gate on the binding row, not its session id: a DB-only Root reset keeps
     // an intentionally empty id as the lazy-materialization marker. Binding
     // here would conflict with that row and discard the new ACP session.
-    if (!root || this.store.getAgentSessionBinding(rootTaskId)) return;
+    if (!root || this.store.getCurrentExecutionBinding(rootTaskId)) return;
 
     const execution = this.buildMcpServerForExecution(rootTaskId, false);
     const created = await this.createAgentSession(
@@ -1054,7 +1100,7 @@ export class TaskManager implements ObligationHost {
       execution?.token,
     );
     try {
-      this.store.bindAgentSession(rootTaskId, created.sessionId);
+      this.store.attachAgentSession(rootTaskId, created.sessionId);
     } catch (error) {
       bridge.discardUnboundSession?.(created.sessionId);
       this.creatingTasks.delete(rootTaskId);
@@ -1224,7 +1270,8 @@ export class TaskManager implements ObligationHost {
     // Restore via ACP. A DB-only Root reset leaves an empty execution id:
     // materialize a fresh ACP session instead of trying to load one the
     // agent has never seen.
-    const existingSessionId = this.store.getAgentSessionId(taskId);
+    const existingBinding = this.store.getCurrentExecutionBinding(taskId);
+    const existingSessionId = existingBinding?.agent_session_id;
     this.restoringTasks.add(taskId);
     try {
       if (!existingSessionId) {
@@ -1237,7 +1284,7 @@ export class TaskManager implements ObligationHost {
           execution?.token,
         );
         try {
-          this.store.rotateAgentSession(taskId, created.sessionId, task.cwd);
+          this.store.replaceAgentSession(taskId, created.sessionId, task.cwd);
         } catch (error) {
           bridge.discardUnboundSession?.(created.sessionId);
           this.creatingTasks.delete(taskId);
@@ -1563,11 +1610,14 @@ export class TaskManager implements ObligationHost {
       }
       const result = this.store.resetRootTask();
       if (result.retiredAgentSessionId) {
-        void bridge?.retireExecution?.(result.retiredAgentSessionId);
+        this.retireExecution(
+          this.adapter.agentId,
+          result.retiredAgentSessionId,
+          bridge,
+        );
       }
       for (const entry of result.affected) {
-        if (entry.agentSessionId)
-          void bridge?.retireExecution?.(entry.agentSessionId);
+        this.retireExecution(entry.agentId, entry.agentSessionId, bridge);
         this.releaseTaskRuntime(entry.id, entry.mode);
       }
       this.liveTasks.delete(rootTaskId);
@@ -1613,8 +1663,7 @@ export class TaskManager implements ObligationHost {
     try {
       const result = this.store.deleteTask(taskId);
       for (const entry of result.affected) {
-        if (entry.agentSessionId)
-          void bridge?.retireExecution?.(entry.agentSessionId);
+        this.retireExecution(entry.agentId, entry.agentSessionId, bridge);
         this.releaseTaskRuntime(entry.id, entry.mode);
       }
       return result;

@@ -13,7 +13,10 @@ describe("Store collaboration records", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-collaboration-test-"));
     store = new Store(tmpDir, "test-agent");
-    store.bindAgentSession(store.ensureRootTask("/tmp/root").id, "agent-root");
+    store.attachAgentSession(
+      store.ensureRootTask("/tmp/root").id,
+      "agent-root",
+    );
     store.createTask("parent", "/tmp/parent", "auto", "agent-parent", "root");
     store.createTask("a1", "/tmp/a1", "auto", "agent-a1", "parent");
     store.createTask("a2", "/tmp/a2", "auto", "agent-a2", "parent");

@@ -887,7 +887,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("keeps queued collaboration blocked by an active ACP prompt", async () => {
-    store.bindAgentSession(store.ensureRootTask("/tmp").id, "agent-root");
+    store.attachAgentSession(store.ensureRootTask("/tmp").id, "agent-root");
     store.createTask("source", "/tmp", "agent", "agent-source", "root");
     store.createTask("target", "/tmp", "agent", "agent-target", "root");
     tasks.liveTasks.add("target");

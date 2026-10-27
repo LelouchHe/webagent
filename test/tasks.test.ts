@@ -810,7 +810,7 @@ describe("Task REST API", () => {
 
     it("recovers a delivery queued during successful compaction", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("source", tmpDir, "agent", "agent-source", rootId);
       store.createTask("s1", tmpDir, "agent", "agent-old", rootId);
       store.updateTaskConfig("s1", "mode", "agent");
@@ -933,7 +933,7 @@ describe("Task REST API", () => {
 
     it("resolves the literal `root` and 404s unknown/legacy ids", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       const rootRes = await makeRequest(port, "GET", `/api/v1/tasks/${rootId}`);
       assert.equal(rootRes.status, 200);
       assert.equal(JSON.parse(rootRes.body).id, "root");
@@ -946,7 +946,7 @@ describe("Task REST API", () => {
 
     it("returns a task's parent relationship", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("child", tmpDir, "auto", "agent-child", rootId);
 
       const res = await makeRequest(port, "GET", "/api/v1/tasks/child");
@@ -1045,7 +1045,7 @@ describe("Task REST API", () => {
 
     it("broadcasts task_deleted with the requested task parent", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("parent", tmpDir, "auto", "agent-parent", rootId);
       broadcastEvents.length = 0;
 
@@ -1077,7 +1077,7 @@ describe("Task REST API", () => {
 
     it("resets Root, deletes its descendants, and keeps Root as the anchor", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("child", tmpDir, "auto", "agent-child", rootId);
       store.saveEvent(
         rootId,
@@ -1124,7 +1124,7 @@ describe("Task REST API", () => {
 
     it("resets Root through the task route with no bridge (offline)", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("child", tmpDir, "auto", "agent-child", rootId);
       store.saveEvent(
         rootId,
