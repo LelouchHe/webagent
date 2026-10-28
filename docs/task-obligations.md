@@ -20,8 +20,9 @@ source stops waiting when either
   outcome is unknown — after which a late account still settles the edge.
 
 The runtime supervises and keeps the books. It records that a dispatch was
-handed over, that a turn ended, that a submission was rejected, that a deadline
-passed, or that delivery failed, and it reports those facts with their evidence.
+handed over, that a turn ended, that a submission was rejected or deferred, that
+a deadline passed, or that delivery failed, and it reports those facts with their
+evidence.
 It never turns a fact into a conclusion about the work — not complete, not
 failed, not abandoned, not worth continuing — and it never starts, continues, or
 stops work on the accountable party's behalf. The accountable party is the
@@ -142,7 +143,8 @@ vocabulary:
 | `attempt_begun` | `attemptId` | Install dispatch hand-off ownership. |
 | `handed_over` | `attemptId` | `awaiting_delivery`/`open` → `open`; cancel the queued advisory. |
 | `dispatch_succeeded` | `attemptId` | Clear the transport failure streak. |
-| `dispatch_failed` | `attemptId` | Return to `awaiting_delivery`; count a transport failure and retry, or end in `unresolved`. |
+| `dispatch_failed` | `attemptId` | A submission of the original dispatch was actually attempted and rejected (a request-level prompt failure, including a dead bridge). Return to `awaiting_delivery`, count one submission failure, and retry under the transport bound, or end in `unresolved`. A transport that is not available is not this fact: the retry is simply not started. |
+| `execution_rotated` | — (target-addressed by the sole record) | The target's execution was replaced. Cancel the watchdog and hand-off ownership, bump the recovery generation (invalidating any in-flight submission), keep the record and its attempts, and return to `reminder_due` so the next attempt addresses the replacement. |
 | `turn_begun` | `turnId` | Observe the target turn and start the watchdog. |
 | `turn_ended` | `turnId` (optional) | A boundary: clear the watchdog, observe the end, and schedule recovery. |
 | `turn_aborted` | — (cleanup-scoped) | Cancel the watchdog; the only emitter is the reset/restart path. |
@@ -163,7 +165,7 @@ switch is exhaustiveness-checked, so the transition table cannot fall behind the
 fact list.
 No timer's expiry decides an outcome — timers emit `timer_due`, and terminal
 transitions come only from a real account or from bounded accounting of real
-submission failures. The transition diagram:
+submission failures. A deferral is never terminal and never counts as one. The transition diagram:
 
 ```mermaid
 stateDiagram-v2
@@ -177,7 +179,10 @@ stateDiagram-v2
     open --> reminder_due: current target turn ends without an account
     reminder_due --> reminder_submitting: target idle, closing prompt submitted
     reminder_submitting --> reminder_due: submission rejected (no delivered attempt)
+    reminder_submitting --> reminder_due: submission deferred (nothing attempted)
     reminder_submitting --> reminder_due: delivered attempt 1 or 2, schedule +2m / +5m
+    awaiting_delivery --> reminder_due: execution replaced, debt kept, old body never re-sent
+    open --> reminder_due: execution replaced, debt kept, old body never re-sent
     reminder_submitting --> unresolved: 3 delivered attempts finished
     reminder_submitting --> unresolved: 3 consecutive submission failures
     open --> settled: task_update from an active current turn
@@ -198,10 +203,44 @@ turn, after it emits `prompt_done`, so a resolution-time open would leave the
 dispatch turn itself `awaiting_delivery` and refuse the account that turn
 produces (`src/task-manager.ts`).
 
+**Delivery outcomes.** Every submission ends in exactly one of three outcomes,
+and the bookkeeping differs per outcome:
+
+| Outcome | Means | Accounting |
+| --- | --- | --- |
+| `delivered` | The prompt was handed to the target's execution. | Counts one delivered attempt; clears the submission-failure streak and the deferral backoff. |
+| `deferred` | The target could not be submitted to at all: it is rotating or resetting, the bridge is unavailable, the lease was replaced, or no execution is bound. Nothing was attempted. | Changes neither the attempt count nor the failure count. The record stays waitable and retries on a capped deferral backoff. |
+| `failed` | A submission was attempted and the agent rejected it at the request level. | Increments `consecutiveSubmissionFailures`, bounded by `MAX_REMINDER_SUBMISSION_FAILURES`. |
+
+`deferred` is not a verdict about the work and must never be reported as one:
+the record keeps waiting and the age advisory keeps reporting how long it has
+waited. It is also not a licence to spin: a deferral retries on a geometric
+backoff derived from the number of consecutive deferrals, sharing the
+`REMINDER_RETRY_BASE_MS` / `REMINDER_RETRY_MAX_MS` base and ceiling with a
+rejected submission. A permanently unavailable execution therefore neither fakes
+three transport failures nor hammers the scheduler.
+
 **No timestamp guard.** Deliberately, settlement does not compare the current
 turn's start against the hand-off time. The delivery turn is stamped before the
 prompt is handed to the bridge, so any such comparison would reject the
 legitimate dispatch account. Do not reintroduce one.
+
+**Rotation does not end the debt.** Replacing a task's execution — an explicit
+`/clear`, `/compact`, or an implicit takeover when the owner left configuration —
+is a change of environment, not a settlement. The binding commit truncates the
+old transport in one synchronous step: claimed dispatch retry ids are dropped,
+unfinished delivery rows are finalized, and the same obligation record moves to
+`reminder_due` aimed at the replacement execution.
+
+- The record keeps its identity, its opening audit references, and its
+  `deliveredAttempts`. A rotation never makes it terminal.
+- The silence watchdog is cancelled, because the turn it observed died with the
+  old execution; the attempt and age deadlines keep advancing on the same
+  reminder ladder.
+- The original dispatch body is **never** re-sent to the new execution. The debt
+  is recovered with a closing reminder, never with a replay.
+- Any submission still in flight from the old execution is invalidated: the
+  recovery generation moved, so its late result is a no-op.
 
 **Accepted boundaries.** Settlement is judged from the *current* turn, not from
 the turn that produced the content. A call delayed from an earlier turn that
@@ -230,7 +269,9 @@ request never reached the agent session — is a `PromptNotDeliveredError`, thro
 after the error event. It consumes the transport-failure budget and returns the
 record to `awaiting_delivery` for a bounded retry under the attempt's identity.
 An agent error *inside a delivered turn* emits an error event but resolves, so it
-is not a transport failure. A resume failure consumes the same budget.
+is not a transport failure. A resume failure while submitting the original
+dispatch consumes the same budget; a resume failure while submitting a closing
+reminder is a deferral instead, because nothing was handed over.
 
 **Delivered reminders.** When a dispatch turn ends without an account, the
 controller submits up to `MAX_REMINDER_ATTEMPTS` closing prompts: one at the turn
@@ -258,8 +299,8 @@ still be live.
 | --- | --- | --- |
 | `MAX_REMINDER_ATTEMPTS` | 3 | Delivered closing reminders before `unresolved`. |
 | `REMINDER_DELAYS_MS` | 0, 2 min, 5 min | Delay before reminder *n* from the preceding delivered reminder. |
-| `MAX_REMINDER_SUBMISSION_FAILURES` | 3 | Consecutive rejected submissions before `delivery_failed`. |
-| `REMINDER_RETRY_BASE_MS` / `REMINDER_RETRY_MAX_MS` | 1 s / 60 s | Exponential backoff for a rejected or busy submission. |
+| `MAX_REMINDER_SUBMISSION_FAILURES` | 3 | Consecutive **failed** submissions before `delivery_failed`. A `deferred` submission does not count; only an attempted-and-rejected one does. |
+| `REMINDER_RETRY_BASE_MS` / `REMINDER_RETRY_MAX_MS` | 1 s / 60 s | Exponential backoff for a rejected or busy submission, and the floor/ceiling for the deferral backoff. |
 | `DISPATCH_ADVISORY_MS` | 60 min | Still queued (not handed over) → `still_waiting`. |
 | `AGE_ADVISORY_MS` | 4 h | No typed account → `still_waiting`. |
 | `SILENCE_THRESHOLD_S` | 900 s | No qualifying agent activity → `no_activity`. |

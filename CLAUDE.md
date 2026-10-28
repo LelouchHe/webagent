@@ -55,6 +55,9 @@ schema and operations guide.
 - Frontend runtime code uses `public/js/log.ts`; backend runtime code uses
   `src/log.ts`. Keep the documented bootstrap/operator exemptions only.
 - New tasks may inherit the saved model but always start in agent mode.
+- Each task has at most one current execution binding, globally; writable
+  execution facts must hold that task's current generation, and a missing or
+  unknown generation is refused.
 - Keep repository instructions and documentation self-contained. Do not depend
   on untracked personal configuration or machine-specific paths.
 

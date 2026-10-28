@@ -31,6 +31,51 @@ and nothing more.
   fact, enforce a mechanical or safety invariant, or require an accountable
   party's decision?
 
+### Execution is replaceable; the task is not
+
+A task is the durable core. The agent, its ACP session, and the process that
+drives it are a replaceable environment, so every runtime transformation —
+startup, reload, rotation, crash, rebuild, adding or removing an agent — must
+leave a task's identity, tree position, history, books, and visibility
+unchanged. The operational form of that sentence:
+
+- **At most one current execution binding per live task, globally** — not one
+  per agent. `agent_sessions` still carries a per-`(agent_key, task_id)` unique
+  index, so the constraint is enforced at the application write boundary
+  (`attach` / `replace` / `detach` in `src/store.ts`), not by the schema. A
+  rotation replaces the binding; it never adds another one. *Why:* two bindings
+  for one task means two executions writing one transcript and two answers to
+  "who owns this task". Tombstones kept for a share and an unmaterialized Root
+  are owner slots rather than executions, which is why the rule is "at most
+  one" and not "exactly one".
+- **A writable execution fact must hold a lease for the task's current
+  generation.** The lease is `{taskId, generation}`, captured when the
+  operation starts, and validated at the event entry and before each
+  synchronous commit (transcript rows, runtime patches, broadcasts, config
+  writes, activity timers). *Why:* a comparison done ad hoc by each writer is
+  opt-in and fails open; a lease makes "an old execution cannot write" the
+  default. A missing or unknown generation is refused — never re-read as "the
+  current one" — because that fallback is exactly what lets a late continuation
+  revive a replaced execution.
+- **A task's runtime `seq` has exactly one source.** It lives in the injected
+  process-wide state ledger, and a rotation resets the runtime state without
+  restarting `seq`. *Why:* clients validate incremental `state_patch` events
+  against their own last `seq`; a restart makes every post-rotation snapshot
+  look superseded, and the client drops them and desyncs (typically stuck
+  busy).
+- **Explicit task deletion and Root reset cascade over the task tree, whatever
+  agent owns each descendant.** `reparentChildrenToRoot` is the deliberate
+  exception and must not be narrowed: a share-backed tombstone and an
+  empty-task GC's surviving children rely on it to stay reachable. *Why:*
+  filtering the cascade by owner left another agent's descendants alive under a
+  parent the user had deleted — unreachable rows, not a protected subtree.
+- **A rotation does not end the task's debt.** It truncates the old transport
+  (claimed retry ids, unfinished delivery rows), keeps the same obligation
+  record with its attempts and age, cancels only the silence watchdog (its turn
+  died), and re-aims the next reminder at the new execution. The old dispatch
+  body is never re-sent. *Why:* the debt belongs to the task, while the
+  dispatch belongs to an execution that no longer exists.
+
 ## Architecture Notes
 
 - **Single bridge**: One bridge instance per server, multiple tasks multiplexed over it.

@@ -90,16 +90,38 @@ configured agent.
 | Column | Type | Notes |
 |---|---|---|
 | `agent_key` | TEXT NOT NULL | Configured agent id from `[agents.<id>]` (not derived from the command), identifying the launch context |
-| `agent_session_id` | TEXT NOT NULL | Opaque ACP session ID |
+| `agent_session_id` | TEXT NOT NULL | Opaque ACP session ID, or a reserved empty execution slot (see below) |
 | `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal sessions. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support. A DB-only Root reset keeps the binding with an empty `agent_session_id` so the task stays visible and the execution can be materialized lazily |
 | `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
 PK: `(agent_key, agent_session_id)`. A partial unique index on
 `(agent_key, task_id)` ensures a WebAgent task holds at most one current
-binding per agent. P1 keeps the per-agent store scope for task visibility; the
-single Root is shared, has no per-agent ownership check, and must keep
-`parent_id = NULL`. A single authoritative owner per task across agents is P2
-work.
+binding **per agent**. That is a storage guard, not the authority: the
+authoritative rule — one current binding per task **globally** — is enforced by
+the application write boundary in `src/store.ts` (`attachAgentSession` refuses a
+foreign attach, `replaceAgentSession` is the only way ownership moves,
+`detachAgentSession` removes it). Never read the per-agent index as permission
+for two agents to own one task at the same time. Store reads are still
+agent-scoped for task visibility; the single Root is shared, has no per-agent
+ownership check, and must keep `parent_id = NULL`. Per-agent routing of task
+operations is later work.
+
+**Empty execution slot.** `agent_session_id` also carries a reserved
+placeholder meaning "this task has an owner but no execution yet, materialize
+lazily":
+
+| Task | Placeholder | Why |
+| --- | --- | --- |
+| Root | the empty string | its long-standing lazy-materialization marker |
+| any ordinary task | `no-execution:<taskId>` | must be unique per task: the PK is `(agent_key, agent_session_id)`, so a shared sentinel would collide with Root and with every other task rotated by the same agent |
+
+A binding holding it reads as "no execution", by **exact equality** with the
+value generated for that task — never by prefix. ACP session ids are opaque
+strings, so the prefix is not a reserved namespace the agent must respect:
+`assertStorableExecutionId` therefore refuses, inside the write transaction, any
+session id in that shape that is not the task's own slot. A real session can
+never be stored in a form the reader would have to guess about, and a real
+session id that merely looks like a placeholder is restored like any other.
 
 ### `events`
 
@@ -306,7 +328,7 @@ selection, etc.). Single-user model = single owner scope.
 | `idx_shares_task` | `shares` | `(task_id, created_at DESC)` | Owner share-list view |
 | `shares_one_active_preview` | `shares` | `(task_id) WHERE shared_at IS NULL` | At most one preview per task (partial UNIQUE) |
 | `idx_attachments_task` | `attachments` | `(task_id)` | Per-task listing + GC sweep |
-| `idx_agent_sessions_agent_task` | `agent_sessions` | `(agent_key, task_id) WHERE task_id IS NOT NULL` | At most one current ACP binding per (agent, visible WebAgent Task) (partial UNIQUE) |
+| `idx_agent_sessions_agent_task` | `agent_sessions` | `(agent_key, task_id) WHERE task_id IS NOT NULL` | Storage guard: at most one binding per (agent, visible WebAgent Task) (partial UNIQUE). The global one-binding-per-task rule is enforced in the application, not here |
 | `idx_tasks_parent` | `tasks` | `(parent_id)` | Root/child Task relationship and future family queries |
 
 ---
@@ -322,8 +344,9 @@ Root is missing or a live title collision forces detachment. The literal `root`
 cannot be generically deleted, garbage collected, or tombstone-reaped. Root
 reset and `/exit` are DB-only: they clear Root's own events, attachments,
 client operations, compact summary, and previews, delete its live descendants,
-preserve the anchor, and leave ownership with an empty execution id so the next
-prompt materializes a new ACP session. Three rules govern any code that deletes
+preserve the anchor, and leave ownership with Root's empty execution slot so the
+next prompt materializes a new ACP session. Deletion cascades follow the **task
+tree**, whatever agent owns each descendant. Three rules govern any code that deletes
 or resets a task:
 
 1. **Hard delete** (`deleteTask()` → `"hard"`): drop preview shares + client
