@@ -422,13 +422,13 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
     const sessions: string[] = [];
     (
       bridge as unknown as {
-        conn: {
+        connection: {
           setSessionConfigOption(params: { sessionId: string }): Promise<{
             configOptions: unknown[];
           }>;
         };
       }
-    ).conn.setSessionConfigOption = async (params) => {
+    ).connection.setSessionConfigOption = async (params) => {
       sessions.push(params.sessionId);
       await gate;
       return { configOptions: modeOptions };
@@ -486,13 +486,13 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
     const sessions: string[] = [];
     (
       bridge as unknown as {
-        conn: {
+        connection: {
           setSessionConfigOption(params: { sessionId: string }): Promise<{
             configOptions: unknown[];
           }>;
         };
       }
-    ).conn.setSessionConfigOption = async (params) => {
+    ).connection.setSessionConfigOption = async (params) => {
       sessions.push(params.sessionId);
       await gate;
       return { configOptions: modeOptions };
@@ -529,14 +529,14 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
     // The agent is free to return this: ACP session ids are opaque strings.
     (
       bridge as unknown as {
-        conn: {
+        connection: {
           newSession(): Promise<{
             sessionId: string;
             configOptions: unknown[];
           }>;
         };
       }
-    ).conn.newSession = async () => ({
+    ).connection.newSession = async () => ({
       sessionId: "no-execution:real-agent-session",
       configOptions: [],
     });

@@ -759,7 +759,7 @@ describe("TaskManager", () => {
       sm.activePrompts.add("child");
       sm.syncBusy("child");
       // The rotation gate now refuses a task with an active prompt, which is
-      // the point of D8; the watchdog is the state under test here, so enter
+      // the rotation gate; the watchdog is the state under test here, so enter
       // the turn directly instead of going through the blocked busy source.
       sm.activePrompts.delete("child");
       sm.syncBusy("child");
@@ -2346,7 +2346,7 @@ describe("TaskManager", () => {
     });
   });
 
-  // D6: rotation keeps the debt and truncates the transport.
+  // Rotation keeps the debt and truncates the transport.
   describe("rotation transport truncation", () => {
     const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -2665,7 +2665,7 @@ describe("TaskManager", () => {
     });
   });
 
-  // D8: the restore window must be busy, and the rotation claim must happen in
+  // The restore window must be busy, and the rotation claim must happen in
   // the same synchronous block as the final busy recheck.
   describe("rotation busy gate", () => {
     function deferred<T>() {

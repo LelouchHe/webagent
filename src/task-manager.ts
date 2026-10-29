@@ -313,7 +313,7 @@ export interface TaskManagerOptions {
   state: TaskStateManager;
   /** Shared execution write authority (binding facts + generation ledger). */
   authority: ExecutionAuthority;
-  /** The execution environment for this agent. P0 creates exactly one. */
+  /** The execution environment for this agent. This process creates one. */
   adapter: ExecutionAdapter;
   /** Additional adapters, for retiring executions owned by other agents. */
   adapters?: Iterable<ExecutionAdapter>;
@@ -381,14 +381,15 @@ export class TaskManager implements ObligationHost {
   private readonly obligations: ObligationController;
   /**
    * Task-scoped collaborators. Injected, not owned: a second `TaskManager`
-   * (P2) must observe the same runtime state ledger, the same obligation
-   * records, and the same generation ledger as the first.
+   * (when the runtime drives more than one agent) must observe the same
+   * runtime state ledger, the same obligation records, and the same generation
+   * ledger as the first.
    */
   readonly state: TaskStateManager;
   readonly authority: ExecutionAuthority;
   /** The execution environment driving this agent. */
   readonly adapter: ExecutionAdapter;
-  /** Every adapter this process can retire executions through (P0: one). */
+  /** Every adapter this process can retire executions through (one today). */
   private readonly adapters: Map<string, ExecutionAdapter>;
   private readonly isAgentConfigured: (agentId: string) => boolean;
   /** Delivery rows currently being claimed/resolved for one target task. */
@@ -699,8 +700,8 @@ export class TaskManager implements ObligationHost {
 
   /**
    * A task owned by another *configured* agent belongs to that agent's
-   * runtime. P0 has one adapter, so it must refuse rather than execute the
-   * foreign execution under the wrong agent. A removed owner is not covered
+   * runtime. This process has one adapter, so it must refuse rather than
+   * execute the foreign execution under the wrong agent. A removed owner is not covered
    * here: the implicit-rotation path takes it over first.
    */
   private assertRunnableOwner(taskId: string): void {

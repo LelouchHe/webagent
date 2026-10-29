@@ -13,7 +13,7 @@ import {
 } from "../src/execution-authority.ts";
 
 /**
- * D5: deletion cascades follow the task tree, not an agent, and every retired
+ * Deletion cascades follow the task tree, not an agent, and every retired
  * execution is routed to the adapter of the agent that owned it. `(agentId,
  * sessionId)` is the identity, so two agents returning the same session id are
  * still two different executions.

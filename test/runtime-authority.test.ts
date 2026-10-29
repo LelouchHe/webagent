@@ -13,14 +13,13 @@ import {
 } from "../src/execution-authority.ts";
 
 /**
- * A1 / A8: the two properties that only exist because the runtime is no longer
- * built around "there is exactly one execution container".
+ * The two properties that only exist because the runtime is no longer built
+ * around "there is exactly one execution container".
  *
- * - A1: one task has exactly one `seq` source. Rotating the owner must not
- *   restart the ledger, or every client that validates `state_patch` against
- *   its own last seq drops the post-rotation snapshots and desyncs (stuck
- *   busy).
- * - A8: public reads stay filtered by the caller's agent, even though internal
+ * - One task has exactly one `seq` source. Rotating the owner must not restart
+ *   the ledger, or every client that validates `state_patch` against its own
+ *   last seq drops the post-rotation snapshots and desyncs (stuck busy).
+ * - Public reads stay filtered by the caller's agent, even though internal
  *   lifecycle work is now global.
  */
 describe("runtime authority regressions", () => {

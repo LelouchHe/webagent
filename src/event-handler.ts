@@ -16,7 +16,7 @@ import { isAutopilotMode } from "./mode-bucket.ts";
 const ailog = log.scope("attachment-interceptor");
 const plog = log.scope("push");
 const clog = log.scope("cancel");
-const elog = log.scope("task");
+const tlog = log.scope("task");
 
 /**
  * Drop the internal lease stamp before an event leaves the server. The stamp
@@ -517,7 +517,7 @@ export function handleAgentEvent(
   // with a stale generation, or one that lost its stamp while the task already
   // has a current execution, cannot reach any of this handler's writes.
   if (!tasks.acceptsEventLease(event)) {
-    elog.debug("dropped event from a stale execution", {
+    tlog.debug("dropped event from a stale execution", {
       type: event.type,
       taskId: "taskId" in event ? event.taskId : undefined,
     });

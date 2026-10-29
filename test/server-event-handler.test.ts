@@ -1748,7 +1748,7 @@ describe("handleAgentEvent", () => {
     assert.equal(broadcasted[0].type, "permission_request");
   });
 
-  // --- Execution write lease (D3 / A2) ---
+  // --- Execution write lease ---
   describe("execution write lease", () => {
     function leaseFor(taskId: string) {
       const lease = tasks.authority.leaseFor(taskId);

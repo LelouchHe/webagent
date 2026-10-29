@@ -1211,7 +1211,7 @@ export class Store {
   /**
    * Agent id currently bound to a task, independent of the current Store's
    * agent scope. Used to route whole-agent operations such as /reload to the
-   * task's owner; P2 adds multi-bridge routing on top.
+   * task's owner; a future multi-bridge router builds on it.
    */
   getTaskOwnerAgentKey(taskId: string): string | undefined {
     return (

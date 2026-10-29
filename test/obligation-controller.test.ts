@@ -342,8 +342,8 @@ describe("ObligationController", () => {
   });
 
   it("treats a deferred submission as waiting, not as a failure", async () => {
-    // A4: the transport is unavailable (no bridge, a rotation, a replaced
-    // lease), so nothing was submitted. The record must leave
+    // The transport is unavailable (no bridge, a rotation, a replaced lease),
+    // so nothing was submitted. The record must leave
     // `reminder_submitting` without spending its failure or attempt budget.
     const h = makeController();
     h.setSubmitMode("defer");
@@ -385,8 +385,7 @@ describe("ObligationController", () => {
   });
 
   it("moves the same record to the replacement execution without redelivering", async () => {
-    // A3 at controller level: rotation is a fact about the transport, not about
-    // the debt. Same record, attempts intact, no terminal state.
+    // Rotation is a fact about the transport, not about the debt. Same record, attempts intact, no terminal state.
     const h = makeController();
     const obligation = armOpen(h);
     await tick(h);

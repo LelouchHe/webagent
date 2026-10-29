@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentCommandSnapshot, ConfigOption } from "./types.ts";
 import { log } from "./log.ts";
 
-const elog = log.scope("execution");
+const exlog = log.scope("execution");
 
 /** The one capability the runtime needs to drop a stale execution. */
 export interface ExecutionRetirer {
@@ -13,8 +13,8 @@ export interface ExecutionRetirer {
  * One agent-scoped execution environment: the facts that belong to *the
  * process driving ACP sessions for one configured agent*, not to any task.
  *
- * P0 instantiates exactly one of these because only `default_agent` has a
- * live bridge. The point of the class is the boundary, not a per-agent
+ * This process currently instantiates exactly one of these because only
+ * `default_agent` has a live bridge. The point of the class is the boundary, not a per-agent
  * `TaskManager`: everything task-scoped stays on `TaskManager`, and everything
  * that would have to be re-created when an agent process is replaced lives
  * here.
@@ -50,7 +50,7 @@ export class ExecutionAdapter {
   ): Promise<void> | null {
     const bridge = this.bridge ?? fallback ?? null;
     if (typeof bridge?.retireExecution !== "function") {
-      elog.warn("no bridge available to retire execution", {
+      exlog.warn("no bridge available to retire execution", {
         agentId: this.agentId,
         agentSessionId,
       });

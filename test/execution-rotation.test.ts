@@ -13,8 +13,8 @@ import {
 } from "../src/execution-authority.ts";
 
 /**
- * D1: replacing the owner is an *implicit* rotation only when the current
- * owner has been removed from configuration. A configured agent that is merely
+ * Replacing the owner is an *implicit* rotation only when the current owner has
+ * been removed from configuration. A configured agent that is merely
  * not running is still the configured owner and must not be displaced.
  */
 describe("implicit owner rotation", () => {

@@ -118,18 +118,18 @@ function createConfigOptions(groupedModel = false): SessionConfigOption[] {
 class MockAgent implements Agent {
   private sessions = new Map<string, SessionState>();
   private mcpServersBySession = new Map<string, McpServer[]>();
-  private conn: AgentSideConnection;
+  private connection: AgentSideConnection;
   private toolCallCounter = 0;
   private pendingPrompts = new Map<string, PendingPrompt>();
   private retryCancelAttempts = new Map<string, number>();
 
-  constructor(conn: AgentSideConnection) {
-    this.conn = conn;
+  constructor(connection: AgentSideConnection) {
+    this.connection = connection;
   }
 
   /** Emit a plan update and park the prompt (assert-from-far e2e fixture). */
   private runSlowPlanPrompt(sessionId: string): Promise<PromptResponse> {
-    void this.conn.sessionUpdate({
+    void this.connection.sessionUpdate({
       sessionId,
       update: {
         sessionUpdate: "plan",
@@ -161,7 +161,7 @@ class MockAgent implements Agent {
     mcpServers: McpServer[],
   ): Promise<PromptResponse> {
     const result = await this.runMcpTaskListRoundTrip(mcpServers);
-    await this.conn.sessionUpdate({
+    await this.connection.sessionUpdate({
       sessionId,
       update: {
         sessionUpdate: "agent_message_chunk",
@@ -244,7 +244,7 @@ class MockAgent implements Agent {
       const childTaskId =
         await this.runMcpTaskCreateAndSendRoundTrip(mcpServers);
       if (!childTaskId) throw new Error("task_create returned no task id");
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
@@ -255,7 +255,7 @@ class MockAgent implements Agent {
         },
       });
     } catch {
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
@@ -394,7 +394,7 @@ class MockAgent implements Agent {
   }
 
   private async advertiseCommands(sessionId: string): Promise<void> {
-    await this.conn.sessionUpdate({
+    await this.connection.sessionUpdate({
       sessionId,
       update: {
         sessionUpdate: "available_commands_update",
@@ -528,7 +528,7 @@ class MockAgent implements Agent {
       const session = this.sessions.get(params.sessionId);
       if (!session) throw new Error(`Unknown session: ${params.sessionId}`);
       session.configOptions = createConfigOptions(true);
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "config_option_update",
@@ -584,7 +584,7 @@ class MockAgent implements Agent {
   ): Promise<PromptResponse> {
     if (text.startsWith("E2E_SLOW_TOOL")) {
       const toolCallId = `tool-${++this.toolCallCounter}`;
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "tool_call",
@@ -619,7 +619,7 @@ class MockAgent implements Agent {
           ? decodeURIComponent(uri.slice(7))
           : uri;
         const toolCallId = `tool-${++this.toolCallCounter}`;
-        await this.conn.sessionUpdate({
+        await this.connection.sessionUpdate({
           sessionId: params.sessionId,
           update: {
             sessionUpdate: "tool_call",
@@ -629,7 +629,7 @@ class MockAgent implements Agent {
             rawInput: { path },
           },
         });
-        await this.conn.sessionUpdate({
+        await this.connection.sessionUpdate({
           sessionId: params.sessionId,
           update: {
             sessionUpdate: "tool_call_update",
@@ -656,7 +656,7 @@ class MockAgent implements Agent {
         const granted =
           first.outcome.outcome === "selected" &&
           second.outcome.outcome === "selected";
-        await this.conn.sessionUpdate({
+        await this.connection.sessionUpdate({
           sessionId: params.sessionId,
           update: {
             sessionUpdate: "agent_message_chunk",
@@ -676,7 +676,7 @@ class MockAgent implements Agent {
         "Sensitive command",
         "echo sensitive",
       );
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
@@ -697,7 +697,7 @@ class MockAgent implements Agent {
 
     if (text.startsWith("E2E_TOOL_EDIT")) {
       const toolCallId = `tool-${++this.toolCallCounter}`;
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "tool_call",
@@ -712,7 +712,7 @@ class MockAgent implements Agent {
           },
         },
       });
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "tool_call_update",
@@ -720,7 +720,7 @@ class MockAgent implements Agent {
           status: "completed",
         },
       });
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
@@ -735,7 +735,7 @@ class MockAgent implements Agent {
 
     if (text.startsWith("E2E_TOOL_CREATE")) {
       const toolCallId = `tool-${++this.toolCallCounter}`;
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "tool_call",
@@ -749,7 +749,7 @@ class MockAgent implements Agent {
           },
         },
       });
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "tool_call_update",
@@ -757,7 +757,7 @@ class MockAgent implements Agent {
           status: "completed",
         },
       });
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
@@ -774,7 +774,7 @@ class MockAgent implements Agent {
       return await this.runFinalAnswerStream(params.sessionId, text);
     }
 
-    await this.conn.sessionUpdate({
+    await this.connection.sessionUpdate({
       sessionId: params.sessionId,
       update: {
         sessionUpdate: "agent_message_chunk",
@@ -794,7 +794,7 @@ class MockAgent implements Agent {
     const continuation = scenario.includes("EXACT")
       ? ""
       : "Parent narration remains visible.";
-    await this.conn.sessionUpdate({
+    await this.connection.sessionUpdate({
       sessionId,
       update: {
         sessionUpdate: "tool_call",
@@ -805,7 +805,7 @@ class MockAgent implements Agent {
     });
     if (scenario.includes("NESTED")) {
       const nestedId = `tool-${++this.toolCallCounter}`;
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId,
         update: {
           sessionUpdate: "tool_call",
@@ -814,7 +814,7 @@ class MockAgent implements Agent {
           kind: "execute",
         },
       });
-      await this.conn.sessionUpdate({
+      await this.connection.sessionUpdate({
         sessionId,
         update: {
           sessionUpdate: "tool_call_update",
@@ -833,7 +833,7 @@ class MockAgent implements Agent {
     if (scenario.includes("WRAPPER_FIRST")) {
       await this.sendFinalAnswerCompletion(sessionId, toolCallId, toolText);
     }
-    await this.conn.sessionUpdate({
+    await this.connection.sessionUpdate({
       sessionId,
       update: {
         sessionUpdate: "agent_message_chunk",
@@ -844,7 +844,7 @@ class MockAgent implements Agent {
     if (!scenario.includes("WRAPPER_FIRST")) {
       await this.sendFinalAnswerCompletion(sessionId, toolCallId, toolText);
     }
-    await this.conn.sessionUpdate({
+    await this.connection.sessionUpdate({
       sessionId,
       update: {
         sessionUpdate: "agent_message_chunk",
@@ -862,7 +862,7 @@ class MockAgent implements Agent {
     toolCallId: string,
     text: string,
   ): Promise<void> {
-    await this.conn.sessionUpdate({
+    await this.connection.sessionUpdate({
       sessionId,
       update: {
         sessionUpdate: "tool_call_update",
@@ -884,7 +884,7 @@ class MockAgent implements Agent {
     command: string,
   ) {
     const toolCallId = `tool-${++this.toolCallCounter}`;
-    await this.conn.sessionUpdate({
+    await this.connection.sessionUpdate({
       sessionId,
       update: {
         sessionUpdate: "tool_call",
@@ -894,7 +894,7 @@ class MockAgent implements Agent {
         rawInput: { command },
       },
     });
-    const permission = await this.conn.requestPermission({
+    const permission = await this.connection.requestPermission({
       sessionId,
       toolCall: {
         toolCallId,
@@ -908,7 +908,7 @@ class MockAgent implements Agent {
         { optionId: "deny", kind: "reject_once", name: "Deny" },
       ],
     });
-    await this.conn.sessionUpdate({
+    await this.connection.sessionUpdate({
       sessionId,
       update: {
         sessionUpdate: "tool_call_update",
@@ -941,4 +941,4 @@ const stream = ndJsonStream(
   Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>,
 );
 
-new AgentSideConnection((conn) => new MockAgent(conn), stream);
+new AgentSideConnection((connection) => new MockAgent(connection), stream);

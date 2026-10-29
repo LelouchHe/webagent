@@ -25,7 +25,7 @@ describe("model identity wire selection", () => {
       getAgentSessionId: () => "session-1",
       getTaskId: () => "task-1",
     });
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       newSession: async () => ({
         sessionId: "session-1",
         configOptions: options,
