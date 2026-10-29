@@ -37,7 +37,9 @@ A task is the durable core. The agent, its ACP session, and the process that
 drives it are a replaceable environment, so every runtime transformation —
 startup, reload, rotation, crash, rebuild, adding or removing an agent — must
 leave a task's identity, tree position, history, books, and visibility
-unchanged. The operational form of that sentence:
+unchanged. Which state a task is in and what each transition keeps is the
+[Task Lifecycle](task-lifecycle.md) page; these are the rules that make it hold.
+The operational form of that sentence:
 
 - **At most one current execution binding per live task, globally** — not one
   per agent. `agent_sessions` still carries a per-`(agent_key, task_id)` unique

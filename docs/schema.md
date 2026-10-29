@@ -78,7 +78,7 @@ configured default cwd.
 | `reasoning_effort` | TEXT | Last reasoning effort selection |
 | `source` | TEXT NOT NULL DEFAULT `'auto'` | How the task was created (`auto`, `inbox`, …) |
 | `deleted_at` | INTEGER | Unix-millis tombstone marker; `NULL` = live, set = soft-deleted (kept alive only because shares still reference the row) |
-| `parent_id` | TEXT REFERENCES `tasks(id)` | Parent WebAgent Task. Ordinary tasks always have one (omitted/null attaches to the Root); `NULL` is reserved for the Root itself. Deletion preserves survivors under the global Root, or detaches them with `NULL` when the Root is missing or a live sibling-title collision exists. |
+| `parent_id` | TEXT REFERENCES `tasks(id)` | Parent WebAgent Task. Ordinary tasks always have one (omitted/null attaches to the Root); `NULL` is reserved for the Root itself. Only a survivor of a delete survives: a share-tombstoned descendant (re-parented under the global Root, or detached with `NULL` when the Root is missing or a live sibling-title collision exists) and, for the empty-task GC only, the GC'd task's children. Live descendants are deleted, not re-parented. |
 | `pending_compact_summary` | TEXT | One-shot agent-generated handoff waiting for the next real prompt; `NULL` when consumed |
 
 ### `agent_sessions`
@@ -336,11 +336,14 @@ selection, etc.). Single-user model = single owner scope.
 ## Cascade & Lifecycle
 
 Events and shares use `NO ACTION`; mappings and attachments cascade from their
-task. The parent/child hierarchy is a hard ownership link: deleting a
-task deletes every descendant recursively (immediate, no confirmation
-until a tree UI exists), each following its own share rules, and a
-share-tombstoned descendant is re-parented under the global Root unless the
-Root is missing or a live title collision forces detachment. The literal `root`
+task. Which state a task is in and what each transition keeps is the
+[Task Lifecycle](task-lifecycle.md) page; this section is the storage mechanics
+behind it. The parent/child hierarchy is a hard ownership link: deleting a task
+deletes every descendant recursively, whatever agent owns it (immediate, no
+confirmation until a tree UI exists), each descendant following its own share
+rules. Only a share-tombstoned descendant survives, and it is re-parented under
+the global Root unless the Root is missing or a live title collision forces
+detachment. The literal `root`
 cannot be generically deleted, garbage collected, or tombstone-reaped. Root
 reset and `/exit` are DB-only: they clear Root's own events, attachments,
 client operations, compact summary, and previews, delete its live descendants,
@@ -477,7 +480,9 @@ an existing database on the current schema instead of requiring a reset:
   milliseconds (see [Timestamp normalization](#timestamp-normalization));
 - replacing the task-only `agent_sessions` unique index with one on
   `(agent_key, task_id)`, preserving the existing same-agent rebind semantics.
-  This permits ordinary task bindings to be backend-scoped.
+  The index keeps bindings separable per backend; the global
+  one-binding-per-task rule is enforced by the application (see
+  [`agent_sessions`](#agent_sessions)).
 
 The single-Root data shape is a hard break. Startup refuses a pre-multi-agent
 database read-only, before any write: tasks without a literal `root` task, or

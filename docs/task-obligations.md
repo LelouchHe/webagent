@@ -225,9 +225,13 @@ turn's start against the hand-off time. The delivery turn is stamped before the
 prompt is handed to the bridge, so any such comparison would reject the
 legitimate dispatch account. Do not reintroduce one.
 
-**Rotation does not end the debt.** Replacing a task's execution — an explicit
+### Rotation does not end the debt
+
+Replacing a task's execution — an explicit
 `/clear`, `/compact`, or an implicit takeover when the owner left configuration —
-is a change of environment, not a settlement. The binding commit truncates the
+is a change of environment, not a settlement. What the task itself keeps across
+that transition is the [Task Lifecycle](task-lifecycle.md#transitions) page; what
+the *debt* keeps is this section. The binding commit truncates the
 old transport in one synchronous step: claimed dispatch retry ids are dropped,
 unfinished delivery rows are finalized, and the same obligation record moves to
 `reminder_due` aimed at the replacement execution.

@@ -376,14 +376,15 @@ Get task details. **Auto-resumes** the task in the ACP agent if it's not already
 #### `DELETE /api/v1/tasks/:id`
 
 Delete a task and all its events, attachments, and in-memory state. The
-parent/child hierarchy is a hard ownership link, so every descendant task
-is deleted too — immediately, with no confirmation step (a confirmation for
-child deletion is deferred until the tree UI exists). Tasks kept alive only
-for active public shares are tombstoned instead. A surviving row is re-parented
-under the workspace Root, whichever agent owns it. If the Root is missing or a
-live sibling-title collision exists at the destination, it is detached
-(`parentId = null`) instead; its row, events, shares, and attachments are
-preserved and no parent FK dangles.
+parent/child hierarchy is a hard ownership link, so every descendant task is
+deleted too — immediately, with no confirmation step (a confirmation for child
+deletion is deferred until the tree UI exists), whatever agent owns it. A
+descendant kept alive only for an active public share is tombstoned instead,
+and that survivor is re-parented under the workspace Root. If the Root is
+missing or a live sibling-title collision exists at the destination, it is
+detached (`parentId = null`) instead; its row, events, shares, and attachments
+are preserved and no parent FK dangles. [Task Lifecycle](task-lifecycle.md#transitions)
+is the authority for the whole transition set.
 
 For a non-Root task, the response is `200`:
 
@@ -399,9 +400,9 @@ requested task carries the same `parentId`, allowing clients to return to the
 authoritative parent without reconstructing the task tree locally.
 
 For the literal `root` id, the operation is DB-only: it clears Root's own
-history/resources and deletes its owned live descendant tree, retires the old
-ACP execution best-effort, and leaves the Root row plus an ownership binding
-with an empty execution id. The next prompt materializes a fresh ACP session,
+history/resources and deletes its descendant tree, retires the old ACP execution
+best-effort, and leaves the Root row plus an ownership binding with Root's empty
+execution slot. The next prompt materializes a fresh ACP session,
 so the reset succeeds even when the agent is offline. The Root row remains as
 the permanent tree anchor and keeps `parentId = null`. Prefix-shaped ids such
 as `root-forged` are ordinary tasks.
