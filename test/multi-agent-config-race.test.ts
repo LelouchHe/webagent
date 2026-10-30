@@ -249,11 +249,13 @@ describe("config request across a rotation", () => {
     release();
     const response = await responsePromise;
 
-    assert.equal(response.status, 409);
+    // The side effect is asserted first: this is the claim that matters, and a
+    // failing status alone could come from any layer.
     assert.equal(
       calls(callsA).filter((call) => call.method === "config").length,
       configCallsAfterClear,
       "no configuration request reached the replacement execution",
     );
+    assert.equal(response.status, 409);
   });
 });
