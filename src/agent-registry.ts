@@ -35,6 +35,15 @@ export interface AgentEnvironment {
   adapterFor(agentId: string): ExecutionAdapter;
   /** An adapter with a live transport, starting the agent when needed. */
   resolve(agentId: string): Promise<ExecutionAdapter>;
+  /**
+   * Run one exclusive process operation (a restart) for an agent. It shares
+   * the same single-flight slot as `resolve`, so a start and a reload can
+   * never produce two live processes for one agent.
+   */
+  reload(
+    agentId: string,
+    run: (adapter: ExecutionAdapter) => Promise<void>,
+  ): Promise<void>;
 }
 
 /** Raised when an operation needs an agent that cannot be started. */
@@ -73,6 +82,12 @@ export class AgentRegistry implements AgentEnvironment {
     string,
     { adapter: ExecutionAdapter; flight: Promise<ExecutionAdapter> | null }
   >();
+  /**
+   * Every transport this registry ever created. `shutdownAll` uses this rather
+   * than the current adapter bindings, so a transport that was unbound (or
+   * whose adapter entry was dropped) is still closed.
+   */
+  private readonly transports = new Set<RegistryTransport>();
 
   constructor(options: AgentRegistryOptions) {
     this.agents = options.agents;
@@ -112,14 +127,63 @@ export class AgentRegistry implements AgentEnvironment {
       );
     }
     const adapter = this.adapterFor(agentId);
-    if (adapter.isAvailable()) return adapter;
     const entry = this.entries.get(agentId)!;
+    // One flight per agent owns the process: a start or a reload that is in
+    // progress is the answer for every concurrent caller, and `isAvailable`
+    // stays false until that flight's process has finished initializing.
     if (entry.flight) return entry.flight;
-    const flight = this.startAgent(adapter).finally(() => {
-      entry.flight = null;
+    if (adapter.isAvailable()) return adapter;
+    return this.startFlight(agentId, entry);
+  }
+
+  private startFlight(
+    agentId: string,
+    entry: {
+      adapter: ExecutionAdapter;
+      flight: Promise<ExecutionAdapter> | null;
+    },
+  ): Promise<ExecutionAdapter> {
+    const flight = this.startAgent(entry.adapter).finally(() => {
+      if (entry.flight === flight) entry.flight = null;
     });
     entry.flight = flight;
+    void agentId;
     return flight;
+  }
+
+  async reload(
+    agentId: string,
+    run: (adapter: ExecutionAdapter) => Promise<void>,
+  ): Promise<void> {
+    if (!this.isConfigured(agentId)) {
+      throw new AgentUnavailableError(
+        agentId,
+        `Agent ${agentId} is not configured`,
+      );
+    }
+    const entry = this.entries.get(agentId);
+    if (!entry) {
+      throw new AgentUnavailableError(
+        agentId,
+        `Agent ${agentId} is not running`,
+      );
+    }
+    if (entry.flight) throw new Error("Already reloading");
+    const flight = (async () => {
+      await run(entry.adapter);
+      return entry.adapter;
+    })().finally(() => {
+      if (entry.flight === flight) entry.flight = null;
+    });
+    entry.flight = flight;
+    // A reload is a flight like any other: `resolve` waits for it instead of
+    // starting a second process beside it.
+    await flight.then(
+      () => {},
+      (err: unknown) => {
+        throw err;
+      },
+    );
   }
 
   private async startAgent(
@@ -134,6 +198,7 @@ export class AgentRegistry implements AgentEnvironment {
     }
     adapter.resetProcessState();
     const transport = this.createTransport(adapter.agentId);
+    this.transports.add(transport);
     adapter.bindBridge(transport);
     try {
       await transport.start();
@@ -153,16 +218,15 @@ export class AgentRegistry implements AgentEnvironment {
     }
   }
 
-  /** Close every transport this process started. */
+  /** Close every transport this process ever started. */
   async shutdownAll(): Promise<void> {
     const adapters = [...this.entries.values()].map((entry) => entry.adapter);
+    const transports = [...this.transports];
     this.entries.clear();
+    this.transports.clear();
+    for (const adapter of adapters) adapter.bindBridge(null);
     await Promise.all(
-      adapters.map(async (adapter) => {
-        const bridge = adapter.bridge;
-        adapter.bindBridge(null);
-        await bridge?.shutdown?.().catch(() => {});
-      }),
+      transports.map((transport) => transport.shutdown().catch(() => {})),
     );
   }
 }
@@ -211,6 +275,15 @@ export class StaticAgentEnvironment implements AgentEnvironment {
     const adapter = new ExecutionAdapter(agentId);
     this.adapters.set(agentId, adapter);
     return adapter;
+  }
+
+  async reload(
+    agentId: string,
+    run: (adapter: ExecutionAdapter) => Promise<void>,
+  ): Promise<void> {
+    const adapter = this.adapters.get(agentId);
+    if (!adapter) throw new AgentUnavailableError(agentId);
+    await run(adapter);
   }
 
   async resolve(agentId: string): Promise<ExecutionAdapter> {

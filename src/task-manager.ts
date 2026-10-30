@@ -39,10 +39,7 @@ import {
   type SettlementDecision,
 } from "./obligation-controller.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
-import {
-  ExecutionAdapter,
-  type ExecutionRetirer,
-} from "./execution-adapter.ts";
+import { ExecutionAdapter } from "./execution-adapter.ts";
 import {
   AgentUnavailableError,
   type AgentEnvironment,
@@ -383,6 +380,16 @@ export class SingleAgentEnvironment implements AgentEnvironment {
       throw new AgentUnavailableError(agentId);
     }
     return this.adapter;
+  }
+
+  async reload(
+    agentId: string,
+    run: (adapter: ExecutionAdapter) => Promise<void>,
+  ): Promise<void> {
+    if (agentId !== this.defaultAgentId) {
+      throw new AgentUnavailableError(agentId);
+    }
+    await run(this.adapter);
   }
 }
 
@@ -1696,26 +1703,36 @@ export class TaskManager implements ObligationHost {
    */
   async reloadAgent(taskId?: string): Promise<void> {
     if (taskId) {
-      const { bridge } = await this.resolveTaskExecution(taskId);
-      await this.restartBridge(bridge);
+      // Resolving starts the agent when it is not running; reloading a
+      // just-started process is a no-op restart, which keeps `/reload` "make
+      // this agent healthy" rather than "start it twice".
+      const { agentId } = await this.resolveTaskExecution(taskId);
+      await this.reloadStartedAgent(agentId);
       return;
     }
     const started = this.agents
       .listExisting()
-      .map((adapter) => adapter.bridge)
-      .filter((bridge): bridge is ExecutionRetirer => bridge !== null);
+      .filter((adapter) => adapter.bridge !== null);
     if (started.length === 0) {
       throw new AgentNotReadyError(this.store.rootTaskId);
     }
-    for (const bridge of started) {
-      await this.restartBridge(bridge as DeliveryBridge);
+    for (const adapter of started) {
+      await this.reloadStartedAgent(adapter.agentId);
     }
   }
 
-  private async restartBridge(bridge: SessionBridge): Promise<void> {
-    if (!bridge.restart) throw new AgentNotReadyError(this.store.rootTaskId);
-    if (bridge.reloading) throw new Error("Already reloading");
-    await bridge.restart.call(bridge, this);
+  /**
+   * Restart one agent's process through the environment's flight, so a
+   * concurrent `resolve` waits for the reload instead of starting a second
+   * process beside it.
+   */
+  private reloadStartedAgent(agentId: string): Promise<void> {
+    return this.agents.reload(agentId, async (adapter) => {
+      const bridge = adapter.bridge as SessionBridge | null;
+      if (!bridge?.restart) throw new AgentNotReadyError(this.store.rootTaskId);
+      if (bridge.reloading) throw new Error("Already reloading");
+      await bridge.restart.call(bridge, this);
+    });
   }
 
   /**

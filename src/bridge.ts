@@ -140,6 +140,13 @@ export class AgentBridge extends EventEmitter {
   private readonly codecEpochBySession = new Map<string, number>();
   private codecProcessEpoch = 0;
   private deadReason: string | null = null;
+  /**
+   * True only after the current process completed `initialize`. `connection`
+   * alone is set before the handshake finishes, so it cannot answer "is this
+   * process usable"; a half-started bridge handed to a second caller would run
+   * requests against an uninitialized agent.
+   */
+  private ready = false;
   /** Capabilities advertised by the agent at initialize; gates restore/retire calls. */
   private sessionCapabilities: acp.SessionCapabilities | null = null;
   private loadSessionSupported = false;
@@ -180,6 +187,7 @@ export class AgentBridge extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    this.ready = false;
     this.clearSessionConfigCodecs();
     // Capability state belongs to the process this call is about to start.
     // Clearing it first means a start that fails before initialize cannot
@@ -260,6 +268,8 @@ export class AgentBridge extends EventEmitter {
       this.sessionCapabilities =
         init.agentCapabilities?.sessionCapabilities ?? null;
       this.loadSessionSupported = init.agentCapabilities?.loadSession ?? false;
+      // Usable from here on: every later caller may be handed this bridge.
+      this.ready = true;
       this.emit("event", {
         type: "connected",
         agent: {
@@ -329,7 +339,7 @@ export class AgentBridge extends EventEmitter {
    * disconnected agent is an unavailable transport, not a rejected handoff.
    */
   isAvailable(): boolean {
-    return !this.deadReason && this.connection !== null;
+    return this.ready && !this.deadReason && this.connection !== null;
   }
 
   /**
@@ -807,6 +817,7 @@ export class AgentBridge extends EventEmitter {
   private markAgentDead(reason: string): void {
     if (this.deadReason) return;
     this.deadReason = reason;
+    this.ready = false;
     this.clearSessionConfigCodecs();
     blog.error("agent subprocess dead", { reason });
     const aborts = [...this.pendingAborts.values()];
@@ -987,6 +998,7 @@ export class AgentBridge extends EventEmitter {
   }
 
   async shutdown(): Promise<void> {
+    this.ready = false;
     // Reject all pending permissions
     for (const [_id, resolve] of this.permissionResolvers) {
       resolve({ outcome: { outcome: "cancelled" } });

@@ -13,8 +13,12 @@ import * as acp from "@agentclientprotocol/sdk";
  *
  * Prompts are answered immediately, so a test never waits on a real model.
  */
-const [sessionIdPrefix, callsPath] = process.argv.slice(2);
+const [sessionIdPrefix, callsPath, initDelayMs, initializeMode] =
+  process.argv.slice(2);
 let sessionCount = 0;
+
+// Recorded so a test can prove the child is really gone after a failed start.
+appendFileSync(`${callsPath}.pid`, `${process.pid}\n`);
 
 function record(method: string, params: unknown): void {
   appendFileSync(callsPath, `${JSON.stringify({ method, params })}\n`);
@@ -23,6 +27,14 @@ function record(method: string, params: unknown): void {
 const agent: acp.Agent = {
   async initialize() {
     record("initialize", {});
+    if (initDelayMs) {
+      await new Promise((done) => setTimeout(done, Number(initDelayMs)));
+    }
+    if (initializeMode === "fail") {
+      // A live process that refuses the handshake. It must be cleaned up by
+      // the start path, not left running with a half-open connection.
+      throw new Error("initialize refused by the fixture");
+    }
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentInfo: { name: "multi-agent-fixture", version: "1" },
