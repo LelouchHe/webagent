@@ -105,6 +105,22 @@ The operational form of that sentence:
   entry point (such as calling `ensureRootTask` directly, which has no
   deduplication) could materialize two sessions for one task. A never-bound
   task must not manufacture a generation before its attach commits.
+- **A write that outlives its authorization is refused at the submission
+  boundary.** An operation that acts on some task's behalf captures the
+  caller's identity once (task, binding agent, generation) and re-validates it
+  immediately before each write, with no await between the check and the write.
+  This includes the last step of `task_create`: the child is committed under
+  the authority that created it and stays, but the row written into the
+  *source* transcript is refused if the source rotated during the child's
+  config inheritance. *Why:* an await is a window, and an authorization checked
+  once at the entrance is stale by the time a later side effect lands.
+- **Stopping a local process is bounded and collectable.** A stop request sends
+  the polite signal and escalates to a kill after a grace period; the handle
+  stays tracked until the process reports `close`, and release is
+  identity-checked so a replaced run's late close cannot drop the current one.
+  *Why:* dropping the only handle after a polite signal leaves a command that
+  ignores it running unmanaged, and an unconditional delete by task id lets a
+  stale process take the replacement's handle with it.
 - **A rotation does not end the task's debt.** It truncates the old transport
   (claimed retry ids, unfinished delivery rows), keeps the same obligation
   record with its attempts and age, cancels only the silence watchdog (its turn

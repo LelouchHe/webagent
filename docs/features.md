@@ -45,7 +45,7 @@
 - Cancel running processes
 - Cancel is task-scoped inside WebAgent: it requests cancellation of the current ACP turn and stops WebAgent-owned task work (like local `!` bash), but it cannot stop host-level tasks started outside the WebAgent server/runtime
 - Agent cancellation remains visibly pending until the agent acknowledges it. If acknowledgement times out, the cancel button stays retryable instead of reporting a false success.
-- An unconfirmed agent cancel can also be recovered with `/reload`, which restarts the shared agent bridge and interrupts in-flight work in every task. On POSIX, repeating cancel for a still-running local bash process escalates from `SIGINT` to `SIGKILL`; Windows uses forced `taskkill` immediately.
+- An unconfirmed agent cancel can also be recovered with `/reload`, which reloads that agent's process and interrupts its in-flight work. A local bash run is app-local: the first cancel sends `SIGINT`, and if the same process is still alive after a short grace period it is killed (`SIGKILL`; Windows uses forced `taskkill`). The run stays tracked until it actually closes, so a repeated cancel, a reload, or a teardown can always reach it, and a replaced run's late close never drops the task's current one.
 
 ## Task Management
 

@@ -37,7 +37,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a reload of one agent leaves another agent's streaming, plan, usage, and busy state untouched
   - GC and Root reset retire through the agent recorded on the binding, never a default adapter (same session id on both agents)
 
-- `test/multi-agent-mcp.test.ts` (production host + endpoint + real store/ledger)
+- `test/multi-agent-mcp.test.ts` (production host + endpoint + real store/ledger; business calls go through real HTTP `tools/call`)
+  - a caller that rotates while a `task_create` waits for the tree lock is refused before the task row is written
+  - a caller that rotates while a `task_cancel` awaits the transport gets a refused tool result and no cancellation record
+  - a caller that rotates during a child's config inheritance is refused before the source transcript row is written; the already-committed child stays
   - an `initializing` capability completes the MCP handshake but every business tool returns `initializing`; after promotion the same token works
   - a request authenticated before a real rotation cannot write after it (the task-persist boundary re-checks after `newSession`), while a fresh token against the current generation succeeds; the rotated-away token is revoked
   - a token whose task moved to another agent is refused; a Root reset revokes the Root token
@@ -56,7 +59,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a configuration request parked in `readBody` while the task is cleared onto another agent is refused with `409`, and no configuration request reaches the new execution
 
 - `test/multi-agent-reads.test.ts` (HTTP + real processes)
-  - three unavailable shapes — missing binary, removed configuration, dead-but-still-bound transport — leave task detail, snapshot, events, and the list readable without moving the binding
+  - three genuinely different unavailable shapes, each produced its own way: a real spawn of a missing binary, a configured agent whose transport was shut down, and a binding whose agent left the configuration
+  - reads cover task detail, snapshot, events, the list, attachment bytes, the owner share list, and deletion, in every state, without moving the binding
   - a snapshot returns while a restore is still hanging (bounded warm-up)
 
 - `test/multi-agent-clear.test.ts` (HTTP)
@@ -154,6 +158,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the collaboration-message emitter reports exactly one post-commit fact for both the normal and in-transaction creation entry points
 
 - `test/task-manager.test.ts`
+  - a bash run that ignores `SIGINT` is escalated to `SIGKILL` and the stop waits for close; the handle stays tracked until then; a replaced run's late close is ignored; an agent teardown stops bash-only tasks
   - task title hydration
   - task deletion cleanup
   - inherited config application for new tasks
