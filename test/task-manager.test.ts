@@ -553,7 +553,9 @@ describe("TaskManager", () => {
         const closedInTime = await Promise.race([
           closed.then(() => true),
           new Promise<boolean>((resolve) =>
-            setTimeout(() => { resolve(false); }, 2000),
+            setTimeout(() => {
+              resolve(false);
+            }, 2000),
           ),
         ]);
         assert.equal(
