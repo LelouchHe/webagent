@@ -519,8 +519,16 @@ describe("TaskManager", () => {
       // outlive the stop request with no handle able to reach it.
       const child = spawn(process.execPath, [
         "-e",
-        "process.on('SIGINT', () => {}); setInterval(() => {}, 1000);",
+        "process.on('SIGINT', () => {}); console.log('ready'); setInterval(() => {}, 1000);",
       ]);
+      // Wait until the handler is installed: a SIGINT that arrives before it
+      // would kill the process for the default reason, not because the stop
+      // worked.
+      await new Promise<void>((resolve) =>
+        child.stdout.once("data", () => {
+          resolve();
+        }),
+      );
       const closed = new Promise<void>((resolve) =>
         child.once("close", () => {
           resolve();
@@ -539,7 +547,20 @@ describe("TaskManager", () => {
       });
       try {
         await sm.stopBashProc("ignores-int");
-        await closed;
+        // The stop is bounded, so the close must follow it; an unbounded wait
+        // here would turn "it never stopped" into a hung test instead of a
+        // failure.
+        const closedInTime = await Promise.race([
+          closed.then(() => true),
+          new Promise<boolean>((resolve) =>
+            setTimeout(() => { resolve(false); }, 2000),
+          ),
+        ]);
+        assert.equal(
+          closedInTime,
+          true,
+          "the run closed within the stop bound",
+        );
         await new Promise((resolve) => setTimeout(resolve, 50));
         assert.throws(
           () => process.kill(child.pid!, 0),
