@@ -85,6 +85,8 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     >;
     syncPendingPermissions: () => void;
     flushBuffers: () => void;
+    permissionTransport: () => unknown;
+    acceptsPendingPermission: () => boolean;
   };
   let sseManager: SseManager;
   let bridgeCalls: { requestId: string; optionId?: string; denied?: boolean }[];
@@ -105,10 +107,10 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     const publicDir = join(tmpDir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     registry = new ClientRegistry();
     taskId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-    store.createTask(taskId, "/tmp");
+    store.createTask(taskId, "/tmp", "auto", "test-agent");
     push = new SpyPushService(store, tmpDir, "mailto:test@example.com", {
       clientRegistry: registry,
     });
@@ -118,6 +120,17 @@ describe("acp-push-close: handled signals fire sendClose", () => {
       pendingPermissions: new Map(),
       syncPendingPermissions: () => {},
       flushBuffers: () => {},
+      // The request's provenance is exercised elsewhere; this fixture stands in
+      // for a live execution that still owns its pending request.
+      permissionTransport: () => ({
+        resolvePermission: (requestId: string, optionId: string) => {
+          bridgeCalls.push({ requestId, optionId });
+        },
+        denyPermission: (requestId: string) => {
+          bridgeCalls.push({ requestId, denied: true });
+        },
+      }),
+      acceptsPendingPermission: () => true,
     };
 
     sseManager = new SseManager();
@@ -132,17 +145,6 @@ describe("acp-push-close: handled signals fire sendClose", () => {
       tasks: taskManager as unknown as Parameters<
         typeof createRequestHandler
       >[0]["tasks"],
-      getBridge: () =>
-        ({
-          resolvePermission: (requestId: string, optionId: string) =>
-            bridgeCalls.push({ requestId, optionId }),
-          denyPermission: (requestId: string) =>
-            bridgeCalls.push({ requestId, denied: true }),
-        }) as unknown as Parameters<
-          typeof createRequestHandler
-        >[0]["getBridge"] extends () => infer R
-          ? R
-          : never,
     });
     server = http.createServer(handler);
     await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));

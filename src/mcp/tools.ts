@@ -85,8 +85,28 @@ export interface McpTaskCreateResult {
   taskId: string;
 }
 
+/**
+ * The caller identity of one MCP request, captured once at the endpoint and
+ * never mutated.
+ *
+ * `taskId` is the agent's own task, `agentId` the agent that capability was
+ * minted for, and `generation` the execution generation the task had when the
+ * request arrived. The generation is the authorization: a request that
+ * outlives a rotation must not write even though its token authenticated.
+ * `initializing` marks the pending window of a session creation, where only
+ * the protocol handshake is allowed.
+ */
+export interface McpCallerPrincipal {
+  readonly taskId: string;
+  readonly agentId: string;
+  readonly generation: number | null;
+  readonly initializing: boolean;
+}
+
 /** Operations supplied by the WebAgent runtime behind the MCP tool surface. */
 export interface McpTaskToolHost {
+  /** Re-check the caller's authority, before acting and after every await. */
+  validateCaller?(principal: McpCallerPrincipal): string | null;
   list(sourceTaskId: string): McpTaskListItem[];
   query(sourceTaskId: string, input: McpTaskQueryInput): McpTaskQueryResult;
   read(sourceTaskId: string, input: McpTaskReadInput): McpTaskReadResult;
@@ -134,9 +154,22 @@ function unavailable(): never {
 /** Register the Agent-facing Task control-plane tools. */
 export function registerMcpTools(
   server: McpServer,
-  taskId: string,
+  principal: McpCallerPrincipal,
   host?: McpTaskToolHost,
 ): void {
+  const taskId = principal.taskId;
+  /**
+   * Business tools never run in the pending window, and every call re-checks
+   * the caller's authority. The error text is explicit so an agent can tell
+   * "not yet" from "not allowed".
+   */
+  const guard = (): void => {
+    if (!host) unavailable();
+    if (principal.initializing) throw new Error("initializing");
+    const rejection = host.validateCaller?.(principal);
+    if (rejection) throw new Error(rejection);
+  };
+
   server.registerTool(
     "task_list",
     {
@@ -154,7 +187,10 @@ export function registerMcpTools(
         "running turn. This is a cheap inspection, not a polling loop.",
       inputSchema: {},
     },
-    async () => jsonContent({ tasks: host?.list(taskId) ?? unavailable() }),
+    async () => {
+      guard();
+      return jsonContent({ tasks: host!.list(taskId) });
+    },
   );
 
   server.registerTool(
@@ -204,14 +240,16 @@ export function registerMcpTools(
           .describe("Inclusive seq range; negative values index from max_seq"),
       },
     },
-    async ({ task_id, text, range }) =>
-      jsonContent(
-        host?.query(taskId, {
+    async ({ task_id, text, range }) => {
+      guard();
+      return jsonContent(
+        host!.query(taskId, {
           taskId: task_id ?? undefined,
           text: text ?? undefined,
           range: range ?? undefined,
-        }) ?? unavailable(),
-      ),
+        }),
+      );
+    },
   );
 
   server.registerTool(
@@ -233,11 +271,12 @@ export function registerMcpTools(
           .describe("Task-local event sequences to read"),
       },
     },
-    async ({ task_id, seqs }) =>
-      jsonContent(
-        host?.read(taskId, { taskId: task_id ?? undefined, seqs }) ??
-          unavailable(),
-      ),
+    async ({ task_id, seqs }) => {
+      guard();
+      return jsonContent(
+        host!.read(taskId, { taskId: task_id ?? undefined, seqs }),
+      );
+    },
   );
 
   server.registerTool(
@@ -287,9 +326,9 @@ export function registerMcpTools(
       },
     },
     async ({ title, cwd, model, thinking }) => {
-      if (!host) return unavailable();
+      guard();
       return jsonContent(
-        await host.create(taskId, {
+        await host!.create(taskId, {
           title,
           cwd: cwd ?? undefined,
           model: model ?? undefined,
@@ -311,8 +350,8 @@ export function registerMcpTools(
       },
     },
     async ({ target, reason }) => {
-      if (!host) return unavailable();
-      return jsonContent(await host.cancel(taskId, target, reason));
+      guard();
+      return jsonContent(await host!.cancel(taskId, target, reason));
     },
   );
 
@@ -330,8 +369,12 @@ export function registerMcpTools(
       },
     },
     async ({ target, body }) => {
-      if (!host) return unavailable();
-      await host.send(taskId, target, body);
+      guard();
+      await host!.send(taskId, target, body);
+      // The caller's authority is re-checked after the write path's awaits: a
+      // rotation during dispatch must not turn this request into a new one.
+      const rejection = host!.validateCaller?.(principal);
+      if (rejection) throw new Error(rejection);
       return accepted();
     },
   );
@@ -352,8 +395,10 @@ export function registerMcpTools(
       },
     },
     async ({ status, body }) => {
-      if (!host) return unavailable();
-      await host.update(taskId, status, body);
+      guard();
+      await host!.update(taskId, status, body);
+      const rejection = host!.validateCaller?.(principal);
+      if (rejection) throw new Error(rejection);
       return accepted();
     },
   );

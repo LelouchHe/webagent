@@ -7,6 +7,7 @@ import { Store } from "../src/store.ts";
 import { TaskBusyError, TaskManager } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { ExecutionAdapter } from "../src/execution-adapter.ts";
+import { StaticAgentEnvironment } from "../src/agent-registry.ts";
 import {
   ExecutionAuthority,
   GenerationLedger,
@@ -27,7 +28,7 @@ describe("task-tree deletion across agents", () => {
 
   beforeEach(() => {
     dataDir = mkdtempSync(join(tmpdir(), "webagent-tree-"));
-    store = new Store(dataDir, "agent-a");
+    store = new Store(dataDir);
     retiredA = [];
     retiredB = [];
     // The primary adapter has no bridge of its own until the runtime attaches
@@ -46,9 +47,11 @@ describe("task-tree deletion across agents", () => {
       dataDir,
       state: new TaskStateManager(),
       authority: new ExecutionAuthority(new GenerationLedger()),
-      adapter: adapterA,
-      adapters: [adapterB],
-      isAgentConfigured: () => true,
+      agents: new StaticAgentEnvironment(
+        adapterA.agentId,
+        [adapterA, adapterB],
+        { isConfigured: () => true },
+      ),
     });
   });
 
@@ -64,9 +67,17 @@ describe("task-tree deletion across agents", () => {
 
   /** One parent owned by agent-a with a child owned by agent-b. */
   function seedCrossAgentTree(): void {
-    store.createTask("parent", dataDir, "auto", "same-sid", rootId());
-    const b = new Store(dataDir, "agent-b");
-    b.createTask("child", dataDir, "auto", "same-sid", "parent");
+    store.attachAgentSession(rootId(), "agent-a", "root-session");
+    store.createTask(
+      "parent",
+      dataDir,
+      "auto",
+      "agent-a",
+      "same-sid",
+      rootId(),
+    );
+    const b = new Store(dataDir);
+    b.createTask("child", dataDir, "auto", "agent-b", "same-sid", "parent");
     b.saveEvent(
       "child",
       "user_message",
@@ -147,7 +158,9 @@ describe("task-tree deletion across agents", () => {
       "child",
       "parent",
     ]);
-    assert.deepEqual(retiredA, ["same-sid"]);
+    // Root's own execution is retired through its recorded agent, then the
+    // descendants'.
+    assert.deepEqual(retiredA.sort(), ["root-session", "same-sid"]);
     assert.deepEqual(retiredB, ["same-sid"]);
     const root = store.getCurrentExecutionBinding("root");
     assert.ok(root, "the Root keeps an empty owner slot");

@@ -56,7 +56,7 @@ describe("POST /api/v1/messages — ingress", () => {
     const publicDir = join(tmpDir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     sseManager = new SseManager();
 
     // Spy on broadcasts
@@ -194,7 +194,7 @@ describe("POST /api/v1/messages — ingress", () => {
 
   it("bound to=task:<existing> appends a message event to that task", async () => {
     const sid = "sess-target";
-    store.createTask(sid, "/tmp", "test");
+    store.createTask(sid, "/tmp", "test", "test-agent");
     const r = await post(
       port,
       "/api/v1/messages",

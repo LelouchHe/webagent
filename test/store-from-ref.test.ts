@@ -16,8 +16,8 @@ describe("Store events.from_ref + FK", () => {
   });
 
   it("saveEvent persists explicit from_ref values per category", () => {
-    const store = new Store(tmpDir, "test-agent");
-    store.createTask("s1", "/tmp");
+    const store = new Store(tmpDir);
+    store.createTask("s1", "/tmp", "auto", "test-agent");
 
     const userMsg = store.saveEvent(
       "s1",
@@ -60,8 +60,8 @@ describe("Store events.from_ref + FK", () => {
   });
 
   it("saveEvent accepts msg:<id> form for inbox-authored events", () => {
-    const store = new Store(tmpDir, "test-agent");
-    store.createTask("s1", "/tmp");
+    const store = new Store(tmpDir);
+    store.createTask("s1", "/tmp", "auto", "test-agent");
 
     const ev = store.saveEvent(
       "s1",
@@ -77,8 +77,8 @@ describe("Store events.from_ref + FK", () => {
   });
 
   it("saveEvent THROWS when from_ref is missing (guard active)", () => {
-    const store = new Store(tmpDir, "test-agent");
-    store.createTask("s1", "/tmp");
+    const store = new Store(tmpDir);
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     assert.throws(
       () => store.saveEvent("s1", "user_message", { text: "x" }),
       /from_ref/,
@@ -87,11 +87,11 @@ describe("Store events.from_ref + FK", () => {
   });
 
   it("foreign_keys pragma is on after construction (rejects orphan inserts)", () => {
-    const store = new Store(tmpDir, "test-agent");
+    const store = new Store(tmpDir);
     const fk = store["db"].pragma("foreign_keys", { simple: true });
     assert.equal(fk, 1, "foreign_keys pragma must be on");
 
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     // Insert into a real task works
     assert.doesNotThrow(() =>
       store.saveEvent("s1", "user_message", {}, { from_ref: "user" }),
@@ -107,7 +107,7 @@ describe("Store events.from_ref + FK", () => {
   });
 
   it("idx_events_type exists in the current schema", () => {
-    const store = new Store(tmpDir, "test-agent");
+    const store = new Store(tmpDir);
     const idx = store["db"]
       .prepare(
         "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_events_type'",

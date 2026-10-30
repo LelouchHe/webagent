@@ -19,7 +19,7 @@ describe("Store — messages table", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "msg-schema-"));
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
   });
 
   afterEach(() => {
@@ -237,7 +237,7 @@ describe("Store — messages table", () => {
         cwd: "/b",
         created_at: 1,
       });
-      store.createTask("sess-new", "/b", "message");
+      store.createTask("sess-new", "/b", "message", "test-agent");
       const { taskId } = store.consumeMessageTx("m1", "sess-new");
       assert.equal(taskId, "sess-new");
       // Row deleted
@@ -286,10 +286,10 @@ describe("Store — messages table", () => {
         cwd: null,
         created_at: 1,
       });
-      store.createTask("sess-a", "/x", "message");
+      store.createTask("sess-a", "/x", "message", "test-agent");
       const first = store.consumeMessageTx("m1", "sess-a");
       // Second attempt — row is gone, but we want idempotent resolution.
-      store.createTask("sess-b", "/x", "message");
+      store.createTask("sess-b", "/x", "message", "test-agent");
       const second = store.consumeMessageTx("m1", "sess-b");
       assert.equal(second.taskId, first.taskId);
       assert.equal(second.alreadyConsumed, true);

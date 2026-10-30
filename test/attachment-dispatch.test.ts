@@ -21,15 +21,15 @@ const HEIC_HEAD = Buffer.from(
 
 before(() => {
   dataDir = mkdtempSync(join(tmpdir(), "dispatch-"));
-  store = new Store(dataDir, "test-agent");
+  store = new Store(dataDir);
   anchor = resolveTasksAnchor(dataDir);
   dispatcher = new AttachmentDispatcher(store, anchor, {
     warn: (msg) => warnings.push(msg),
   });
 
   // Two real tasks with one attachment each on disk.
-  store.createTask("s1", dataDir);
-  store.createTask("s2", dataDir);
+  store.createTask("s1", dataDir, "auto", "test-agent");
+  store.createTask("s2", dataDir, "auto", "test-agent");
 
   for (const sid of ["s1", "s2"]) {
     const dir = join(anchor, sid, "attachments");

@@ -14,20 +14,21 @@ async function startGroupedAgent(t: TestContext, profile = "grouped-model") {
   const dir = mkdtempSync(join(tmpdir(), "grouped-config-"));
   const callsPath = join(dir, "calls.jsonl");
   writeFileSync(callsPath, "");
-  const store = new Store(dir, "grouped-config-test");
+  const store = new Store(dir);
   const tasks = createTaskManager(
     store,
     dir,
     dir,
     new CapabilityStore(),
     "http://127.0.0.1:6800",
+    "grouped-config-test",
   );
   const fixture = fileURLToPath(
     new URL("./fixtures/acp-session-agent.ts", import.meta.url),
   );
   const bridge = new AgentBridge(
     `${process.execPath} --experimental-strip-types ${fixture} ${profile} ${callsPath}`,
-    store,
+    store.sessionView("grouped-config-test"),
   );
   t.after(async () => {
     try {
@@ -67,10 +68,22 @@ describe("grouped config option boundary", { timeout: 20_000 }, () => {
   it("flattens and normalizes schemas, then translates canonical model writes per session", async (t) => {
     const { bridge, store, calls, dir } = await startGroupedAgent(t);
     const first = await bridge.newSession(dir);
-    store.createTask("task-1", dir, "auto", first.sessionId);
+    store.createTask(
+      "task-1",
+      dir,
+      "auto",
+      "grouped-config-test",
+      first.sessionId,
+    );
     bridge.sessionMapped(first.sessionId);
     const second = await bridge.newSession(dir);
-    store.createTask("task-2", dir, "auto", second.sessionId);
+    store.createTask(
+      "task-2",
+      dir,
+      "auto",
+      "grouped-config-test",
+      second.sessionId,
+    );
     bridge.sessionMapped(second.sessionId);
 
     const firstOption = modelOption(first.configOptions);
@@ -121,7 +134,12 @@ describe("grouped config option boundary", { timeout: 20_000 }, () => {
     assert.equal(calls().length, beforeUnresolvedWrite);
 
     const replacement = await bridge.newSession(dir);
-    store.replaceAgentSession("task-1", replacement.sessionId, dir);
+    store.replaceAgentSession(
+      "task-1",
+      "grouped-config-test",
+      replacement.sessionId,
+      dir,
+    );
     bridge.sessionMapped(replacement.sessionId);
     const replacementResult = await bridge.setConfigOption(
       "task-1",
@@ -143,14 +161,26 @@ describe("grouped config option boundary", { timeout: 20_000 }, () => {
   it("keeps a same-process creation update when a session id is reused", async (t) => {
     const { bridge, store, dir } = await startGroupedAgent(t, "grouped-reuse");
     const first = await bridge.newSession(dir);
-    store.createTask("task-1", dir, "auto", first.sessionId);
+    store.createTask(
+      "task-1",
+      dir,
+      "auto",
+      "grouped-config-test",
+      first.sessionId,
+    );
     bridge.sessionMapped(first.sessionId);
     await bridge.retireExecution(first.sessionId);
     store.deleteTask("task-1");
 
     const second = await bridge.newSession(dir);
     assert.equal(second.sessionId, first.sessionId);
-    store.createTask("task-2", dir, "auto", second.sessionId);
+    store.createTask(
+      "task-2",
+      dir,
+      "auto",
+      "grouped-config-test",
+      second.sessionId,
+    );
     bridge.sessionMapped(second.sessionId);
 
     const selected = await bridge.setConfigOption(
@@ -188,7 +218,13 @@ describe("grouped config option boundary", { timeout: 20_000 }, () => {
   it("drops process-scoped mappings and rebuilds them from a replacement session schema", async (t) => {
     const { bridge, store, tasks, calls, dir } = await startGroupedAgent(t);
     const created = await bridge.newSession(dir);
-    store.createTask("task-1", dir, "auto", created.sessionId);
+    store.createTask(
+      "task-1",
+      dir,
+      "auto",
+      "grouped-config-test",
+      created.sessionId,
+    );
     bridge.sessionMapped(created.sessionId);
     tasks.liveTasks.add("task-1");
 
@@ -225,7 +261,13 @@ describe("grouped config option boundary", { timeout: 20_000 }, () => {
       "grouped-empty-resume",
     );
     const created = await bridge.newSession(dir);
-    store.createTask("task-1", dir, "auto", created.sessionId);
+    store.createTask(
+      "task-1",
+      dir,
+      "auto",
+      "grouped-config-test",
+      created.sessionId,
+    );
     bridge.sessionMapped(created.sessionId);
 
     const loaded = await bridge.loadSession("task-1", dir);
@@ -251,7 +293,13 @@ describe("grouped config option boundary", { timeout: 20_000 }, () => {
       "grouped-silent",
     );
     const created = await bridge.newSession(dir, { silent: true });
-    store.createTask("task-1", dir, "auto", created.sessionId);
+    store.createTask(
+      "task-1",
+      dir,
+      "auto",
+      "grouped-config-test",
+      created.sessionId,
+    );
     bridge.sessionMapped(created.sessionId);
     const events: AgentEvent[] = [];
     bridge.on("event", (event: AgentEvent) => events.push(event));
@@ -282,7 +330,13 @@ describe("grouped config option boundary", { timeout: 20_000 }, () => {
       "grouped-alias",
     );
     const created = await bridge.newSession(dir);
-    store.createTask("task-1", dir, "auto", created.sessionId);
+    store.createTask(
+      "task-1",
+      dir,
+      "auto",
+      "grouped-config-test",
+      created.sessionId,
+    );
     bridge.sessionMapped(created.sessionId);
 
     await bridge.prompt("task-1", "remove model alias");
@@ -308,7 +362,7 @@ describe("grouped config option boundary", { timeout: 20_000 }, () => {
 
   it("normalizes schemas returned by session restore", async (t) => {
     const { bridge, store, calls, dir } = await startGroupedAgent(t);
-    store.createTask("task-1", dir, "auto", "grouped-1");
+    store.createTask("task-1", dir, "auto", "grouped-config-test", "grouped-1");
     const events: AgentEvent[] = [];
     bridge.on("event", (event: AgentEvent) => events.push(event));
 

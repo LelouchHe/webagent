@@ -84,13 +84,13 @@ describe("image signed URLs", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "");
 
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     authStore = new AuthStore(join(tmpDir, "auth.json"));
     await authStore.load();
     token = (await authStore.addToken("ui", "api")).token;
 
     // Create a task so we have a valid taskId for image upload
-    store.createTask("sess1", tmpDir);
+    store.createTask("sess1", tmpDir, "auto", "test-agent");
 
     const handler = createRequestHandler({
       store,
@@ -167,7 +167,7 @@ describe("image signed URLs", () => {
 
   it("re-signs owner Root history against the derived task attachment path", async () => {
     const rootId = store.ensureRootTask(tmpDir).id;
-    store.attachAgentSession(rootId, "root-agent-session");
+    store.attachAgentSession(rootId, "test-agent", "root-agent-session");
     const oldPath = `/api/v1/tasks/${rootId}/attachments/history.png`;
     store.saveEvent(
       rootId,

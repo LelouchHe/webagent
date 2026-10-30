@@ -88,7 +88,7 @@ describe("legacy database refusal", () => {
       const beforeFiles = readdirSync(dir).sort();
 
       assert.throws(
-        () => new Store(dir, "pi"),
+        () => new Store(dir),
         (error: unknown) => {
           assert.ok(error instanceof LegacyDatabaseError);
           assert.match(error.message, /pre-multi-agent/);
@@ -130,7 +130,7 @@ describe("legacy database refusal", () => {
         db.close();
       }
       const beforeHash = sha256(dbPath);
-      assert.throws(() => new Store(dir, "pi"), /pre-multi-agent/);
+      assert.throws(() => new Store(dir), /pre-multi-agent/);
       assert.equal(sha256(dbPath), beforeHash);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -140,24 +140,32 @@ describe("legacy database refusal", () => {
   it("accepts a migrated DB, including tasks owned by a removed agent", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-accept-"));
     try {
-      const store = new Store(dir, "copilot");
+      const store = new Store(dir);
       store.ensureRootTask("/tmp/root");
-      store.createTask("live-task", "/tmp/live", "auto", "session-live");
+      store.createTask("live-task", "/tmp/live", "auto", "pi", "session-live");
       store.close();
 
       // A task legitimately owned by an agent no longer in config must not
       // look like the pre-multi-agent shape.
-      const retired = new Store(dir, "retired-agent");
-      retired.createTask("retired-task", "/tmp/retired", "auto", "session-old");
+      const retired = new Store(dir);
+      retired.createTask(
+        "retired-task",
+        "/tmp/retired",
+        "auto",
+        "retired-agent",
+        "session-old",
+      );
       retired.close();
 
-      const reopened = new Store(dir, "copilot");
+      const reopened = new Store(dir);
+      // Reads are global: a task whose agent left the configuration stays
+      // visible, and so does the unbound Root.
       assert.deepEqual(
         reopened
           .listTasks()
           .map((task) => task.id)
           .sort(),
-        ["live-task"],
+        ["live-task", "retired-task", "root"].sort(),
       );
       assert.equal(reopened.rootTaskId, "root");
       reopened.close();
@@ -169,14 +177,14 @@ describe("legacy database refusal", () => {
   it("accepts ordinary root-prefixed task ids", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-prefix-"));
     try {
-      const store = new Store(dir, "pi");
+      const store = new Store(dir);
       store.ensureRootTask("/tmp/root");
-      store.attachAgentSession("root", "root-session");
-      store.createTask("root-forged", "/tmp/forged");
-      store.createTask("root-2f3a9c", "/tmp/short");
+      store.attachAgentSession("root", "test-agent", "root-session");
+      store.createTask("root-forged", "/tmp/forged", "auto", "pi");
+      store.createTask("root-2f3a9c", "/tmp/short", "auto", "pi");
       store.close();
 
-      const reopened = new Store(dir, "pi");
+      const reopened = new Store(dir);
       assert.equal(reopened.getTask("root-forged")?.id, "root-forged");
       assert.equal(reopened.getTask("root-2f3a9c")?.id, "root-2f3a9c");
       assert.equal(reopened.getTask("root")?.id, "root");
@@ -189,7 +197,7 @@ describe("legacy database refusal", () => {
   it("accepts a fresh database directory", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-fresh-"));
     try {
-      const store = new Store(dir, "pi");
+      const store = new Store(dir);
       assert.equal(store.ensureRootTask("/tmp/root").id, "root");
       store.close();
     } finally {

@@ -93,6 +93,8 @@ export interface TaskSummary {
   workflow_status?: "running" | "idle" | "blocked" | "done";
   /** True when a user-originated prompt or collaboration input exists. */
   hasUserInput?: boolean;
+  /** Agent that carries this task's current execution; null when unbound. */
+  agentId?: string | null;
 }
 
 /** Detailed task record returned by GET /api/v1/tasks/:id. */
@@ -106,6 +108,8 @@ export interface TaskDetail {
   model: string | null;
   mode: string | null;
   parentId: string | null;
+  /** Agent that carries this task's current execution; null when unbound. */
+  agentId?: string | null;
   configOptions: ConfigOption[];
 }
 
@@ -120,12 +124,26 @@ export interface StoredEvent {
   created_at: string;
 }
 
-/** Pending permission request tracked in memory. */
+/**
+ * Pending permission request tracked in memory.
+ *
+ * `execution` is the internal provenance of the request: the agent whose event
+ * produced it and the lease the event was stamped with. An approval is only
+ * valid while both still name the task's current execution, so a request that
+ * arrives after a rotation is refused instead of being written to the
+ * replacement. It is never exposed in API responses.
+ */
 export interface PendingPermission {
   requestId: string;
   taskId: string;
   title: string;
   options: Array<{ optionId: string; label: string }>;
+  execution?: PendingPermissionExecution;
+}
+
+export interface PendingPermissionExecution {
+  agentId: string;
+  lease: { taskId: string; generation: number };
 }
 
 export interface AgentCommand {
@@ -146,6 +164,8 @@ export type AgentEvent =
   | {
       type: "connected";
       rootTaskId?: string;
+      /** The agent whose process connected; scopes the event to its tasks. */
+      agentId: string;
       agent: { name: string; version: string };
       configOptions: ConfigOption[];
       cancelTimeout?: number;
@@ -156,6 +176,8 @@ export type AgentEvent =
       type: "task_created";
       rootTaskId?: string;
       taskId: string;
+      /** The agent that now executes this task, once it has a binding. */
+      agentId?: string | null;
       cwd?: string;
       cwdDisplay?: string;
       title?: string | null;

@@ -167,7 +167,12 @@ export const state = {
   replayInProgress: false,
   replayTarget: null as DocumentFragment | null,
   replayQueue: [] as AgentEvent[],
+  // Reload state is per agent: an agent's restart only marks busy when it is
+  // the agent currently carrying this client's task.
   agentReloading: false,
+  agentReloadingAgentId: null as string | null,
+  /** Agent that carries the current task's execution (null = unbound). */
+  taskAgentId: null as string | null,
   recentPathsLimit: 10,
   // /share preview mode: when non-null, the input area switches to
   // preview UI (textarea disabled, ^P publish / ^C cancel buttons).
@@ -920,6 +925,18 @@ export function clearRootTaskAuthority(): number {
   state.rootTaskId = null;
   state.rootTaskAuthorityGeneration++;
   return state.rootTaskAuthorityGeneration;
+}
+
+/** Install the current task's binding agent and drop foreign reload state. */
+export function installTaskAgentId(agentId: string | null | undefined): void {
+  state.taskAgentId = typeof agentId === "string" ? agentId : null;
+  if (
+    state.agentReloadingAgentId !== null &&
+    state.agentReloadingAgentId !== state.taskAgentId
+  ) {
+    state.agentReloading = false;
+    state.agentReloadingAgentId = null;
+  }
 }
 
 export function installRootTaskId(

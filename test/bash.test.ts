@@ -88,9 +88,10 @@ describe("Bash REST API", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(join(tmpDir, "test.db"), "test-agent");
+    store = new Store(join(tmpDir, "test.db"));
     tasks = createTaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
+    tasks.attachExecutionBridge(mockBridge);
     broadcastEvents = [];
     mockSseManager = {
       broadcast: (event: AgentEvent) => broadcastEvents.push(event),
@@ -100,7 +101,6 @@ describe("Bash REST API", () => {
       store,
       tasks,
       sseManager: mockSseManager as any,
-      getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024 },

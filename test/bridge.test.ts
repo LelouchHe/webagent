@@ -948,6 +948,32 @@ describe("AgentBridge", () => {
             streamingClearCount++;
           },
         },
+        // The transport drives an agent-scoped teardown through these; the
+        // mock reports "every task belongs to this agent" and folds the whole
+        // cleanup into one observable step.
+        taskIdsForAgent() {
+          return [...this.liveTasks];
+        },
+        clearAgentRuntime() {
+          for (const id of [
+            ...this.activePrompts,
+            ...this.pendingPromptSubmissions.keys(),
+            ...this.drainingCollaborationTasks,
+          ]) {
+            this.abortObligationTurn(id);
+          }
+          for (const submissionId of this.pendingPromptSubmissions.values()) {
+            this.cancelledPromptSubmissions.add(submissionId);
+          }
+          this.activePrompts.clear();
+          this.pendingPromptSubmissions.clear();
+          this.pendingPermissions.clear();
+          this.liveTasks.clear();
+          plansCleared = true;
+        },
+        clearAgentStreaming() {
+          streamingClearCount++;
+        },
         get plansCleared() {
           return plansCleared;
         },

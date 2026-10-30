@@ -14,7 +14,6 @@ import {
   buildTaskCreatedBroadcast,
   buildTaskCreatedSystemMessage,
 } from "../src/task-created-message.ts";
-import type { AgentBridge } from "../src/bridge.ts";
 import { mockBridgeStubs, waitFor } from "./fixtures.ts";
 
 function request(
@@ -68,7 +67,7 @@ describe("S3 collaboration write routes", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>test</h1>");
     broadcasts.length = 0;
     promptCalls.length = 0;
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     tasks = createTaskManager(store, tmpDir, tmpDir);
     let sequence = 0;
     bridge = {
@@ -81,6 +80,7 @@ describe("S3 collaboration write routes", () => {
         promptCalls.push({ taskId, text });
       },
     };
+    tasks.attachExecutionBridge(bridge);
     const handler = createRequestHandler({
       sseManager: Object.assign(new SseManager(), {
         broadcast(event: { type: string; taskId?: string }) {
@@ -89,7 +89,6 @@ describe("S3 collaboration write routes", () => {
       }),
       store,
       tasks,
-      getBridge: () => bridge,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
@@ -100,9 +99,27 @@ describe("S3 collaboration write routes", () => {
     );
     port = (server.address() as { port: number }).port;
 
-    store.attachAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
-    store.createTask("parent", tmpDir, "auto", "agent-parent", "root");
-    store.createTask("sibling", tmpDir, "auto", "agent-sibling", "parent");
+    store.attachAgentSession(
+      store.ensureRootTask(tmpDir).id,
+      "test-agent",
+      "agent-root",
+    );
+    store.createTask(
+      "parent",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-parent",
+      "root",
+    );
+    store.createTask(
+      "sibling",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-sibling",
+      "parent",
+    );
     store.updateTaskTitle("parent", "parent");
     store.updateTaskTitle("sibling", "sibling");
     tasks.liveTasks.add("sibling");
@@ -175,7 +192,6 @@ describe("S3 collaboration write routes", () => {
     const host = createMcpTaskToolHost({
       store,
       tasks,
-      getBridge: () => bridge as unknown as AgentBridge,
       broadcastTaskCreated: (event) =>
         broadcasts.push({ ...buildTaskCreatedBroadcast(event) }),
     });
@@ -347,7 +363,14 @@ describe("S3 collaboration write routes", () => {
   });
 
   it("rejects renaming a task to a live sibling title", async () => {
-    store.createTask("sibling2", tmpDir, "auto", "agent-sibling2", "parent");
+    store.createTask(
+      "sibling2",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-sibling2",
+      "parent",
+    );
     store.updateTaskTitle("sibling2", "二号");
     const response = await request(
       port,
@@ -402,7 +425,6 @@ describe("S3 collaboration write routes", () => {
       }),
       store: flakyStore,
       tasks,
-      getBridge: () => bridge,
       publicDir: join(tmpDir, "public"),
       dataDir: tmpDir,
       limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
@@ -444,10 +466,18 @@ describe("S3 collaboration write routes", () => {
       "other-parent",
       tmpDir,
       "auto",
+      "test-agent",
       "agent-other-parent",
       "root",
     );
-    store.createTask("other", tmpDir, "auto", "agent-other", "other-parent");
+    store.createTask(
+      "other",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-other",
+      "other-parent",
+    );
     store.updateTaskTitle("other-parent", "other parent");
     store.updateTaskTitle("other", "other");
 

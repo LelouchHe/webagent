@@ -19,7 +19,7 @@ describe("Store", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-test-"));
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
   });
 
   afterEach(() => {
@@ -29,22 +29,22 @@ describe("Store", () => {
 
   describe("tasks", () => {
     it("stores WebAgent and ACP task identities separately", () => {
-      store.createTask("web-1", "/tmp/cwd", "auto", "agent-1");
+      store.createTask("web-1", "/tmp/cwd", "auto", "test-agent", "agent-1");
 
       assert.equal(store.getAgentSessionId("web-1"), "agent-1");
-      assert.equal(store.getTaskId("agent-1"), "web-1");
+      assert.equal(store.getTaskId("test-agent", "agent-1"), "web-1");
     });
 
     it("rotates the ACP binding without changing the WebAgent task", () => {
-      store.createTask("web-1", "/tmp/cwd", "auto", "agent-1");
+      store.createTask("web-1", "/tmp/cwd", "auto", "test-agent", "agent-1");
 
-      store.replaceAgentSession("web-1", "agent-2");
+      store.replaceAgentSession("web-1", "test-agent", "agent-2");
 
       assert.equal(store.getAgentSessionId("web-1"), "agent-2");
       // The retired binding row is removed; its execution is explicitly
       // retired by the caller and never accepts WebAgent events again.
-      assert.equal(store.getTaskId("agent-1"), undefined);
-      assert.equal(store.getTaskId("agent-2"), "web-1");
+      assert.equal(store.getTaskId("test-agent", "agent-1"), undefined);
+      assert.equal(store.getTaskId("test-agent", "agent-2"), "web-1");
       assert.equal(store.getTask("web-1")?.id, "web-1");
       const row = store["db"]
         .prepare(
@@ -55,40 +55,58 @@ describe("Store", () => {
     });
 
     it("persists a requested cwd even when rotation is a no-op (same agent id)", () => {
-      store.createTask("web-1", "/a", "auto", "agent-1");
+      store.createTask("web-1", "/a", "auto", "test-agent", "agent-1");
 
-      store.replaceAgentSession("web-1", "agent-1", "/b");
+      store.replaceAgentSession("web-1", "test-agent", "agent-1", "/b");
 
       assert.equal(store.getTask("web-1")?.cwd, "/b");
       assert.equal(store.getAgentSessionId("web-1"), "agent-1");
     });
 
     it("keeps internal ACP tasks out of the user task list", () => {
-      store.registerInternalAgentSession("agent-title");
+      store.registerInternalAgentSession("test-agent", "agent-title");
 
-      assert.equal(store.getTaskId("agent-title"), undefined);
+      assert.equal(store.getTaskId("test-agent", "agent-title"), undefined);
       assert.deepEqual(store.listTasks(), []);
     });
 
-    it("only exposes tasks owned by the current agent", () => {
-      store.createTask("web-a", "/a", "auto", "agent-a");
+    it("reads tasks globally while execution identity stays agent-scoped", () => {
+      store.createTask("web-a", "/a", "auto", "test-agent", "agent-a");
       store.close();
 
-      const other = new Store(tmpDir, "other-agent");
-      other.createTask("web-b", "/b", "auto", "agent-b");
+      const other = new Store(tmpDir);
+      other.createTask("web-b", "/b", "auto", "other-agent", "agent-b");
 
+      // Reads are global: every live task is visible to any handle.
       assert.deepEqual(
-        other.listTasks().map((task) => task.id),
+        other
+          .listTasks()
+          .map((task) => task.id)
+          .sort(),
+        ["root", "web-a", "web-b"],
+      );
+      assert.equal(other.getTask("web-a")?.id, "web-a");
+      // Narrowing is an explicit read option, not a gate.
+      assert.deepEqual(
+        other.listTasks({ agentId: "other-agent" }).map((task) => task.id),
         ["web-b"],
       );
-      assert.equal(other.getTask("web-a"), undefined);
-      assert.equal(other.getTaskIncludingDeleted("web-a")?.id, "web-a");
       other.close();
 
-      store = new Store(tmpDir, "test-agent");
+      store = new Store(tmpDir);
       assert.equal(store.getTask("web-a")?.id, "web-a");
       assert.equal(store.getAgentSessionId("web-a"), "agent-a");
-      assert.equal(store.getTask("web-b"), undefined);
+      assert.equal(store.getBindingAgent("web-a"), "test-agent");
+      // The sid → task direction is the one that needs the agent: the same id
+      // under a different agent is a different (absent) execution.
+      assert.equal(
+        store.sessionView("test-agent").getTaskId("agent-a"),
+        "web-a",
+      );
+      assert.equal(
+        store.sessionView("other-agent").getTaskId("agent-a"),
+        undefined,
+      );
     });
 
     it("uses the literal `root` identity for every agent key", () => {
@@ -98,16 +116,16 @@ describe("Store", () => {
       assert.equal(store.rootTaskId, "root");
       store.close();
 
-      store = new Store(tmpDir, "test-agent");
+      store = new Store(tmpDir);
       assert.equal(store.ensureRootTask("/tmp/changed").id, "root");
       assert.equal(store.getTaskIncludingDeleted("root")?.cwd, "/tmp/root");
       store.close();
 
-      const other = new Store(tmpDir, "other-agent");
+      const other = new Store(tmpDir);
       assert.equal(other.rootTaskId, "root");
       assert.equal(other.ensureRootTask("/tmp/other").id, "root");
       other.close();
-      store = new Store(tmpDir, "test-agent");
+      store = new Store(tmpDir);
     });
 
     it("refuses a second agent's attach to the shared Root", () => {
@@ -115,29 +133,31 @@ describe("Store", () => {
       // agent may not append a binding of its own; the ownership change has to
       // go through the replace path with its guards.
       const root = store.ensureRootTask("/tmp/root");
-      store.attachAgentSession(root.id, "session-a");
+      store.attachAgentSession(root.id, "test-agent", "session-a");
       store.close();
 
-      const other = new Store(tmpDir, "other-agent");
+      const other = new Store(tmpDir);
       assert.throws(
-        () => other.attachAgentSession("root", "session-b"),
+        () => other.attachAgentSession("root", "other-agent", "session-b"),
         /already has an execution binding/,
       );
-      assert.equal(other.getAgentSessionId("root"), undefined);
+      // The refused attach changed nothing: one global binding, still the
+      // first agent's execution.
       assert.equal(
         other.getCurrentExecutionBinding("root")?.agent_session_id,
         "session-a",
       );
+      assert.equal(other.getBindingAgent("root"), "test-agent");
       other.close();
 
-      store = new Store(tmpDir, "test-agent");
+      store = new Store(tmpDir);
       assert.equal(store.getAgentSessionId("root"), "session-a");
     });
 
     it("keeps Root anchored and reparents a corrupted Root to NULL", () => {
-      store.createTask("malformed-parent", "/parent");
+      store.createTask("malformed-parent", "/parent", "auto", "test-agent");
       const rootId = store.rootTaskId;
-      store.attachAgentSession(rootId, "root-session");
+      store.attachAgentSession(rootId, "test-agent", "root-session");
       store["db"]
         .prepare("UPDATE tasks SET parent_id = ?, title = NULL WHERE id = ?")
         .run("malformed-parent", rootId);
@@ -154,7 +174,7 @@ describe("Store", () => {
     });
 
     it("creates and retrieves a task", () => {
-      const task = store.createTask("sess-1", "/tmp/cwd");
+      const task = store.createTask("sess-1", "/tmp/cwd", "auto", "test-agent");
       assert.equal(task.id, "sess-1");
       assert.equal(task.cwd, "/tmp/cwd");
       // Without an explicit title, the stable task id is the default title
@@ -165,12 +185,14 @@ describe("Store", () => {
     it("stores an optional parent WebAgent task", () => {
       store.attachAgentSession(
         store.ensureRootTask("/tmp/root").id,
+        "test-agent",
         "agent-root",
       );
       const child = store.createTask(
         "child",
         "/tmp/child",
         "auto",
+        "test-agent",
         "agent-child",
         "root",
       );
@@ -180,8 +202,8 @@ describe("Store", () => {
     });
 
     it("creates the Root from the first task write and keeps its cwd", () => {
-      store.createTask("old-1", "/tmp/one", "auto", "agent-one");
-      store.createTask("old-2", "/tmp/two", "auto", "agent-two");
+      store.createTask("old-1", "/tmp/one", "auto", "test-agent", "agent-one");
+      store.createTask("old-2", "/tmp/two", "auto", "test-agent", "agent-two");
 
       const root = store.ensureRootTask("/tmp/root");
 
@@ -193,12 +215,14 @@ describe("Store", () => {
       assert.equal(root.cwd, "/tmp/one");
       assert.equal(store.getTaskIncludingDeleted("old-1")?.parent_id, "root");
       assert.equal(store.getTaskIncludingDeleted("old-2")?.parent_id, "root");
+      // The Root is a live task even before it has an execution: the read面
+      // must not depend on a binding row existing.
       assert.deepEqual(
         store
           .listTasks()
           .map((task) => task.id)
           .sort(),
-        ["old-1", "old-2"],
+        ["old-1", "old-2", store.rootTaskId].sort(),
       );
 
       assert.equal(store.ensureRootTask("/tmp/other").cwd, "/tmp/one");
@@ -206,7 +230,7 @@ describe("Store", () => {
     });
 
     it("creates the literal Root on the first direct task write", () => {
-      const task = store.createTask("t1", "/tmp/x");
+      const task = store.createTask("t1", "/tmp/x", "auto", "test-agent");
 
       const root = store.getTaskIncludingDeleted("root")!;
       assert.equal(root.id, "root");
@@ -223,7 +247,7 @@ describe("Store", () => {
 
       // A Store-produced database reopens without legacy refusal.
       store.close();
-      store = new Store(tmpDir, "test-agent");
+      store = new Store(tmpDir);
       assert.equal(store.getTaskIncludingDeleted("root")?.id, "root");
       assert.equal(store.getTask("t1")?.parent_id, "root");
     });
@@ -241,6 +265,7 @@ describe("Store", () => {
         "path-parent",
         "/tmp/root",
         "auto",
+        "test-agent",
         "agent-p",
         store.rootTaskId,
       );
@@ -248,6 +273,7 @@ describe("Store", () => {
         "path-child",
         "/tmp/root",
         "auto",
+        "test-agent",
         "agent-c",
         "path-parent",
       );
@@ -263,7 +289,7 @@ describe("Store", () => {
     });
 
     it("persists and clears one pending compact summary with its assistant event", () => {
-      store.createTask("web-1", "/tmp/root", "auto", "agent-1");
+      store.createTask("web-1", "/tmp/root", "auto", "test-agent", "agent-1");
 
       store.saveCompactSummary("web-1", "Current goal and next action");
 
@@ -316,7 +342,7 @@ describe("Store", () => {
     });
 
     it("links compact summaries to the preceding compact event", () => {
-      store.createTask("web-1", "/tmp/root");
+      store.createTask("web-1", "/tmp/root", "auto", "test-agent");
       const first = store.saveCompactSummary("web-1", "first");
       const second = store.saveCompactSummary("web-1", "second");
       assert.deepEqual(JSON.parse(first.data).compact, { prev: null });
@@ -327,7 +353,7 @@ describe("Store", () => {
     it("binds an ACP execution to an existing Root record", () => {
       store.ensureRootTask("/tmp/root");
 
-      store.attachAgentSession(store.rootTaskId, "agent-root");
+      store.attachAgentSession(store.rootTaskId, "test-agent", "agent-root");
 
       assert.equal(store.getAgentSessionId(store.rootTaskId), "agent-root");
       assert.equal(store.getTask(store.rootTaskId)?.id, store.rootTaskId);
@@ -344,25 +370,28 @@ describe("Store", () => {
 
     it("does not garbage-collect the Root task when it is empty", () => {
       store.ensureRootTask("/tmp/root");
-      store.attachAgentSession(store.rootTaskId, "agent-root");
+      store.attachAgentSession(store.rootTaskId, "test-agent", "agent-root");
 
       assert.deepEqual(store.deleteEmptyTasks(0), []);
       assert.equal(store.getTask(store.rootTaskId)?.id, store.rootTaskId);
     });
 
     it("lists tasks ordered by last_active_at desc", () => {
-      store.createTask("old", "/a");
-      store.createTask("new", "/b");
+      store.createTask("old", "/a", "auto", "test-agent");
+      store.createTask("new", "/b", "auto", "test-agent");
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
       store.updateTaskLastActive("old"); // touch "old" to make it most recent
 
-      const list = store.listTasks();
-      assert.equal(list[0].id, "old");
-      assert.equal(list[1].id, "new");
+      // The unbound Root also lists; the two created tasks keep their order.
+      const ids = store.listTasks().map((task) => task.id);
+      assert.deepEqual(
+        ids.filter((id) => id !== store.rootTaskId),
+        ["old", "new"],
+      );
     });
 
     it("stores last_active_at as unix milliseconds", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       const before = Date.now();
       store.updateTaskLastActive("s1");
 
@@ -377,13 +406,13 @@ describe("Store", () => {
     });
 
     it("updates title", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.updateTaskTitle("s1", "My Title");
       assert.equal(store.getTask("s1")!.title, "My Title");
     });
 
     it("updates config options (model, mode, reasoning_effort)", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.updateTaskConfig("s1", "model", "claude-sonnet");
       store.updateTaskConfig("s1", "mode", "plan");
       store.updateTaskConfig("s1", "reasoning_effort", "high");
@@ -397,14 +426,14 @@ describe("Store", () => {
     });
 
     it("ignores unknown config option ids", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.updateTaskConfig("s1", "unknown_thing", "value");
       // Should not throw, just no-op
       assert.equal(store.getTask("s1")!.model, null);
     });
 
     it("deletes task and its events", () => {
-      store.createTask("s1", "/x", "auto", "agent-s1");
+      store.createTask("s1", "/x", "auto", "test-agent", "agent-s1");
       store.saveEvent(
         "s1",
         "user_message",
@@ -415,7 +444,7 @@ describe("Store", () => {
 
       assert.equal(store.getTask("s1"), undefined);
       assert.deepEqual(store.getEvents("s1"), []);
-      assert.equal(store.getTaskId("agent-s1"), undefined);
+      assert.equal(store.getTaskId("test-agent", "agent-s1"), undefined);
     });
   });
 
@@ -434,19 +463,19 @@ describe("Store", () => {
 
     it("rejects only the exact literal Root as ordinary creation", () => {
       assert.throws(
-        () => store.createTask("root", "/tmp/forged"),
+        () => store.createTask("root", "/tmp/forged", "auto", "test-agent"),
         /Reserved Root id cannot be created/,
       );
       // Prefix-shaped ids are ordinary tasks again; the reservation is exact.
-      store.createTask("root-forged", "/tmp/forged");
-      store.createTask("root-2f3a", "/tmp/hashy");
+      store.createTask("root-forged", "/tmp/forged", "auto", "test-agent");
+      store.createTask("root-2f3a", "/tmp/hashy", "auto", "test-agent");
       assert.equal(store.getTask("root-forged")?.id, "root-forged");
       assert.equal(store.getTask("root-2f3a")?.id, "root-2f3a");
     });
 
     it("refuses generic delete, reap, and GC on the literal Root", () => {
       const rootId = store.ensureRootTask("/root").id;
-      store.attachAgentSession(rootId, "root-session");
+      store.attachAgentSession(rootId, "test-agent", "root-session");
 
       assert.throws(
         () => store.deleteTask(rootId),
@@ -466,8 +495,8 @@ describe("Store", () => {
 
     it("accepts the global Root as a parent for another agent's task", () => {
       store.ensureRootTask("/root");
-      const other = new Store(tmpDir, "foreign-backend");
-      other.attachAgentSession("root", "foreign-root-session");
+      const other = new Store(tmpDir);
+      other.attachAgentSession("root", "test-agent", "foreign-root-session");
       assert.equal(other.getParentTask("root")?.id, "root");
       other.close();
     });
@@ -479,11 +508,25 @@ describe("Store", () => {
     // re-parented under Root; only zero-event GC and share tombstones reparent.
     it("deletes a foreign survivor with the parent's subtree", () => {
       const rootId = store.ensureRootTask("/root").id;
-      store.createTask("a-parent", "/a", "auto", "a-parent-session", rootId);
+      store.createTask(
+        "a-parent",
+        "/a",
+        "auto",
+        "test-agent",
+        "a-parent-session",
+        rootId,
+      );
       store.close();
 
-      const b = new Store(tmpDir, "backend-b");
-      b.createTask("b-survivor", "/b", "auto", "b-child-session", "a-parent");
+      const b = new Store(tmpDir);
+      b.createTask(
+        "b-survivor",
+        "/b",
+        "auto",
+        "backend-b",
+        "b-child-session",
+        "a-parent",
+      );
       b.saveEvent(
         "b-survivor",
         "user_message",
@@ -494,13 +537,13 @@ describe("Store", () => {
       b.insertSharePreview({ token, taskId: "b-survivor", snapshotSeq: 1 });
       b.close();
 
-      store = new Store(tmpDir, "test-agent");
+      store = new Store(tmpDir);
       const result = store.deleteTask("a-parent");
       assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
         "a-parent",
         "b-survivor",
       ]);
-      const check = new Store(tmpDir, "backend-b");
+      const check = new Store(tmpDir);
       assert.equal(check.getTask("b-survivor"), undefined);
       assert.equal(check.getEvents("b-survivor").length, 0);
       assert.equal(check.getAgentSessionId("b-survivor"), undefined);
@@ -512,9 +555,23 @@ describe("Store", () => {
       // one task can never be bound by two agents at once, so the replacement
       // is the only way ownership moves, and the old owner stops resolving.
       const rootId = store.ensureRootTask("/root").id;
-      store.createTask("a-parent", "/a", "auto", "parent-session", rootId);
-      const b = new Store(tmpDir, "backend-b");
-      b.createTask("single-owner", "/b", "auto", "b-session", "a-parent");
+      store.createTask(
+        "a-parent",
+        "/a",
+        "auto",
+        "test-agent",
+        "parent-session",
+        rootId,
+      );
+      const b = new Store(tmpDir);
+      b.createTask(
+        "single-owner",
+        "/b",
+        "auto",
+        "backend-b",
+        "b-session",
+        "a-parent",
+      );
       b.saveEvent(
         "single-owner",
         "assistant_message",
@@ -523,19 +580,25 @@ describe("Store", () => {
       );
       b.close();
 
-      const c = new Store(tmpDir, "backend-c");
+      const c = new Store(tmpDir);
       assert.throws(
-        () => c.attachAgentSession("single-owner", "c-session"),
+        () => c.attachAgentSession("single-owner", "test-agent", "c-session"),
         /already has an execution binding/,
       );
       // The sanctioned move is an explicit replacement.
-      c.replaceAgentSession("single-owner", "c-session");
+      c.replaceAgentSession("single-owner", "test-agent", "c-session");
       c.close();
 
-      const bCheck = new Store(tmpDir, "backend-b");
-      const cCheck = new Store(tmpDir, "backend-c");
-      assert.equal(bCheck.getAgentSessionId("single-owner"), undefined);
-      assert.equal(cCheck.getAgentSessionId("single-owner"), "c-session");
+      const bCheck = new Store(tmpDir);
+      const cCheck = new Store(tmpDir);
+      assert.equal(
+        bCheck.sessionView("backend-b").getAgentSessionId("single-owner"),
+        undefined,
+      );
+      assert.equal(
+        cCheck.sessionView("test-agent").getAgentSessionId("single-owner"),
+        "c-session",
+      );
       const rows = store["db"]
         .prepare("SELECT COUNT(*) AS n FROM agent_sessions WHERE task_id = ?")
         .get("single-owner") as { n: number };
@@ -546,11 +609,19 @@ describe("Store", () => {
 
     it("tombstones a share-backed survivor with the parent's subtree", () => {
       const rootId = store.ensureRootTask("/root").id;
-      store.createTask("a-parent", "/a", "auto", "parent-session", rootId);
+      store.createTask(
+        "a-parent",
+        "/a",
+        "auto",
+        "test-agent",
+        "parent-session",
+        rootId,
+      );
       store.createTask(
         "unbound-child",
         "/child",
         "auto",
+        "test-agent",
         "child-session",
         "a-parent",
       );
@@ -558,7 +629,7 @@ describe("Store", () => {
         .prepare(
           "DELETE FROM agent_sessions WHERE agent_key = ? AND task_id = ?",
         )
-        .run(store.agentKey, "unbound-child");
+        .run("test-agent", "unbound-child");
       store.saveEvent(
         "unbound-child",
         "assistant_message",
@@ -599,22 +670,31 @@ describe("Store", () => {
 
     it("deletes a foreign survivor despite a Root title collision", () => {
       const rootId = store.ensureRootTask("/root").id;
-      store.createTask("a-parent", "/a", "auto", "parent-session", rootId);
+      store.createTask(
+        "a-parent",
+        "/a",
+        "auto",
+        "test-agent",
+        "parent-session",
+        rootId,
+      );
       store.createTask(
         "collision",
         "/b/one",
         "auto",
+        "test-agent",
         "collision-session",
         rootId,
         {
           title: "duplicate",
         },
       );
-      const b = new Store(tmpDir, "backend-b");
+      const b = new Store(tmpDir);
       b.createTask(
         "survivor",
         "/b/two",
         "auto",
+        "backend-b",
         "survivor-session",
         "a-parent",
         {
@@ -636,9 +716,22 @@ describe("Store", () => {
     });
 
     it("deletes a foreign survivor even when the Root anchor was corrupted away", () => {
-      store.createTask("a-parent", "/a", "auto", "parent-session");
-      const b = new Store(tmpDir, "backend-b");
-      b.createTask("survivor", "/b", "auto", "survivor-session", "a-parent");
+      store.createTask(
+        "a-parent",
+        "/a",
+        "auto",
+        "test-agent",
+        "parent-session",
+      );
+      const b = new Store(tmpDir);
+      b.createTask(
+        "survivor",
+        "/b",
+        "auto",
+        "backend-b",
+        "survivor-session",
+        "a-parent",
+      );
       b.saveEvent(
         "survivor",
         "assistant_message",
@@ -676,38 +769,40 @@ describe("Store", () => {
 
     it("refuses to store a reserved-shape session id for another task", () => {
       assert.throws(
-        () => store.createTask("t1", "/a", "auto", "no-execution:t2"),
+        () =>
+          store.createTask("t1", "/a", "auto", "test-agent", "no-execution:t2"),
         /reserved empty-execution namespace/,
       );
       assert.throws(
-        () => store.createTask("t2", "/a", "auto", ""),
+        () => store.createTask("t2", "/a", "auto", "test-agent", ""),
         /reserved empty-execution namespace/,
       );
       // Nothing was stored, not even the task row.
       assert.equal(store.getTaskIncludingDeleted("t1"), undefined);
       assert.equal(store.getTaskIncludingDeleted("t2"), undefined);
 
-      store.createTask("t3", "/a", "auto", "real-session");
+      store.createTask("t3", "/a", "auto", "test-agent", "real-session");
       assert.throws(
-        () => store.replaceAgentSession("t3", "no-execution:other"),
+        () =>
+          store.replaceAgentSession("t3", "test-agent", "no-execution:other"),
         /reserved empty-execution namespace/,
       );
       assert.equal(store.getAgentSessionId("t3"), "real-session");
       // A task's own slot is still writable (rotation and Root reset need it).
-      store.replaceAgentSession("t3", emptyExecutionSlot("t3"));
+      store.replaceAgentSession("t3", "test-agent", emptyExecutionSlot("t3"));
       assert.equal(store.getAgentSessionId("t3"), emptyExecutionSlot("t3"));
     });
   });
 
   describe("binding write authority", () => {
     it("refuses a foreign attach and records no fact for it", () => {
-      store.createTask("t1", "/a", "auto", "session-a");
+      store.createTask("t1", "/a", "auto", "test-agent", "session-a");
       const batches: unknown[][] = [];
       store.onBindingsCommitted((changes) => batches.push([...changes]));
 
-      const other = new Store(tmpDir, "other-agent");
+      const other = new Store(tmpDir);
       assert.throws(
-        () => other.attachAgentSession("t1", "session-b"),
+        () => other.attachAgentSession("t1", "test-agent", "session-b"),
         /already has an execution binding/,
       );
       other.close();
@@ -720,16 +815,16 @@ describe("Store", () => {
     });
 
     it("treats the same session id from another agent as a different execution", () => {
-      store.createTask("t1", "/a", "auto", "shared-id");
+      store.createTask("t1", "/a", "auto", "test-agent", "shared-id");
       store.close();
-      store = new Store(tmpDir, "test-agent");
+      store = new Store(tmpDir);
 
-      const other = new Store(tmpDir, "other-agent");
+      const other = new Store(tmpDir);
       const batches: Array<Array<{ before: unknown; after: unknown }>> = [];
       other.onBindingsCommitted((changes) => {
         batches.push(changes.map((change) => ({ ...change })));
       });
-      other.replaceAgentSession("t1", "shared-id");
+      other.replaceAgentSession("t1", "other-agent", "shared-id");
       other.close();
 
       // Same session string, different ownership: the binding really moved.
@@ -745,7 +840,7 @@ describe("Store", () => {
     });
 
     it("detaches the current binding and reports the removal", () => {
-      store.createTask("t1", "/a", "auto", "session-a");
+      store.createTask("t1", "/a", "auto", "test-agent", "session-a");
 
       const removed = store.detachAgentSession("t1");
 
@@ -759,8 +854,15 @@ describe("Store", () => {
         batches.push(changes.map((change) => change.taskId));
       });
       store.ensureRootTask("/root");
-      store.attachAgentSession("root", "root-session");
-      store.createTask("child", "/c", "auto", "child-session", "root");
+      store.attachAgentSession("root", "test-agent", "root-session");
+      store.createTask(
+        "child",
+        "/c",
+        "auto",
+        "test-agent",
+        "child-session",
+        "root",
+      );
 
       // Root reset replaces Root's execution and deletes the child in one
       // outermost transaction: one batch, one fact per task.
@@ -777,7 +879,7 @@ describe("Store", () => {
 
     it("discards a rolled-back batch instead of leaking it into the next commit", () => {
       const batches: unknown[] = [];
-      store.createTask("t1", "/a", "auto", "session-a");
+      store.createTask("t1", "/a", "auto", "test-agent", "session-a");
       store.onBindingsCommitted((changes) => batches.push([...changes]));
 
       // A nested scope replaces the binding and then the outermost scope
@@ -785,7 +887,7 @@ describe("Store", () => {
       // into the next successful commit.
       assert.throws(() =>
         store["writeBindings"](() => {
-          store.replaceAgentSession("t1", "session-b");
+          store.replaceAgentSession("t1", "test-agent", "session-b");
           throw new Error("outer failure");
         }),
       );
@@ -795,7 +897,7 @@ describe("Store", () => {
         "session-a",
       );
 
-      store.replaceAgentSession("t1", "session-c");
+      store.replaceAgentSession("t1", "test-agent", "session-c");
       assert.equal(batches.length, 1);
       assert.equal(
         (batches[0] as Array<{ before: { sessionId: string } }>)[0].before
@@ -807,10 +909,31 @@ describe("Store", () => {
 
   describe("cascade deletion", () => {
     it("lists all transitive descendants", () => {
-      store.createTask("parent", "/a", "auto", "agent-parent");
-      store.createTask("child", "/b", "auto", "agent-child", "parent");
-      store.createTask("grandchild", "/c", "auto", "agent-grandchild", "child");
-      store.createTask("sibling", "/d", "auto", "agent-sibling", "parent");
+      store.createTask("parent", "/a", "auto", "test-agent", "agent-parent");
+      store.createTask(
+        "child",
+        "/b",
+        "auto",
+        "test-agent",
+        "agent-child",
+        "parent",
+      );
+      store.createTask(
+        "grandchild",
+        "/c",
+        "auto",
+        "test-agent",
+        "agent-grandchild",
+        "child",
+      );
+      store.createTask(
+        "sibling",
+        "/d",
+        "auto",
+        "test-agent",
+        "agent-sibling",
+        "parent",
+      );
 
       assert.deepEqual(store.getDescendantTaskIds("parent").sort(), [
         "child",
@@ -822,9 +945,23 @@ describe("Store", () => {
     });
 
     it("hard-deletes a parent together with its live descendants", () => {
-      store.createTask("parent", "/a", "auto", "agent-parent");
-      store.createTask("child", "/b", "auto", "agent-child", "parent");
-      store.createTask("grandchild", "/c", "auto", "agent-grandchild", "child");
+      store.createTask("parent", "/a", "auto", "test-agent", "agent-parent");
+      store.createTask(
+        "child",
+        "/b",
+        "auto",
+        "test-agent",
+        "agent-child",
+        "parent",
+      );
+      store.createTask(
+        "grandchild",
+        "/c",
+        "auto",
+        "test-agent",
+        "agent-grandchild",
+        "child",
+      );
 
       const result = store.deleteTask("parent");
 
@@ -846,9 +983,16 @@ describe("Store", () => {
 
     it("tombstones a share-backed child and re-parents it under Root", () => {
       store.ensureRootTask("/root");
-      store.attachAgentSession(store.rootTaskId, "agent-root");
-      store.createTask("parent", "/a", "auto", "agent-parent");
-      store.createTask("child", "/b", "auto", "agent-child", "parent");
+      store.attachAgentSession(store.rootTaskId, "test-agent", "agent-root");
+      store.createTask("parent", "/a", "auto", "test-agent", "agent-parent");
+      store.createTask(
+        "child",
+        "/b",
+        "auto",
+        "test-agent",
+        "agent-child",
+        "parent",
+      );
       const token = generateShareToken();
       store.insertSharePreview({ token, taskId: "child", snapshotSeq: 1 });
       store.activateShare(token);
@@ -868,9 +1012,16 @@ describe("Store", () => {
 
     it("re-parents tombstoned descendants under Root when reaping a tombstone", () => {
       store.ensureRootTask("/root");
-      store.attachAgentSession(store.rootTaskId, "agent-root");
-      store.createTask("parent", "/a", "auto", "agent-parent");
-      store.createTask("child", "/b", "auto", "agent-child", "parent");
+      store.attachAgentSession(store.rootTaskId, "test-agent", "agent-root");
+      store.createTask("parent", "/a", "auto", "test-agent", "agent-parent");
+      store.createTask(
+        "child",
+        "/b",
+        "auto",
+        "test-agent",
+        "agent-child",
+        "parent",
+      );
       const parentToken = generateShareToken();
       store.insertSharePreview({
         token: parentToken,
@@ -927,7 +1078,7 @@ describe("Store", () => {
     });
 
     it("unbinds the ACP binding when a task is tombstoned", () => {
-      store.createTask("s1", "/a", "auto", "agent-s1");
+      store.createTask("s1", "/a", "auto", "test-agent", "agent-s1");
       const token = generateShareToken();
       store.insertSharePreview({ token, taskId: "s1", snapshotSeq: 1 });
       store.activateShare(token);
@@ -937,14 +1088,27 @@ describe("Store", () => {
       assert.equal(result.affected[0].mode, "soft");
       assert.equal(result.affected[0].agentSessionId, "agent-s1");
       assert.equal(store.getAgentSessionId("s1"), undefined);
-      assert.equal(store.getTaskId("agent-s1"), undefined);
+      assert.equal(store.getTaskId("test-agent", "agent-s1"), undefined);
     });
 
     it("re-parents an empty GC'd task's children under Root", () => {
       store.ensureRootTask("/root");
-      store.attachAgentSession(store.rootTaskId, "agent-root");
-      store.createTask("junk-parent", "/a", "auto", "agent-parent");
-      store.createTask("child", "/b", "auto", "agent-child", "junk-parent");
+      store.attachAgentSession(store.rootTaskId, "test-agent", "agent-root");
+      store.createTask(
+        "junk-parent",
+        "/a",
+        "auto",
+        "test-agent",
+        "agent-parent",
+      );
+      store.createTask(
+        "child",
+        "/b",
+        "auto",
+        "test-agent",
+        "agent-child",
+        "junk-parent",
+      );
       // Child has events, so it is not itself GC'd.
       store.saveEvent(
         "child",
@@ -964,7 +1128,7 @@ describe("Store", () => {
   describe("Root reset and deletion", () => {
     it("clears Root history, resources, and descendants, leaving lazy ownership", () => {
       const root = store.ensureRootTask("/root");
-      store.attachAgentSession(root.id, "root-session");
+      store.attachAgentSession(root.id, "test-agent", "root-session");
       store.saveEvent(
         root.id,
         "user_message",
@@ -988,7 +1152,14 @@ describe("Store", () => {
         taskId: root.id,
         snapshotSeq: 1,
       });
-      store.createTask("a-task", "/a", "auto", "agent-a", root.id);
+      store.createTask(
+        "a-task",
+        "/a",
+        "auto",
+        "test-agent",
+        "agent-a",
+        root.id,
+      );
       store.saveEvent(
         "a-task",
         "user_message",
@@ -1001,7 +1172,7 @@ describe("Store", () => {
         result.affected.map((entry) => entry.id),
         ["a-task"],
       );
-      assert.equal(result.retiredAgentSessionId, "root-session");
+      assert.equal(result.retired?.sessionId, "root-session");
       assert.equal(store.getEvents(root.id).length, 0);
       assert.equal(store.getPendingCompactSummary(root.id), null);
       assert.equal(store.getClientOp(root.id, "op-a"), null);
@@ -1013,7 +1184,7 @@ describe("Store", () => {
       const after = store.getTask(root.id)!;
       assert.equal(after.parent_id, null);
       assert.equal(store.getAgentSessionId(root.id), "");
-      assert.equal(store.getTaskOwnerAgentKey(root.id), store.agentKey);
+      assert.equal(store.getBindingAgent(root.id), "test-agent");
     });
 
     it("blocks reset while Root has an active share", () => {
@@ -1029,11 +1200,18 @@ describe("Store", () => {
 
     it("keeps an unbound shared tombstone alive through a Root reset", () => {
       const rootId = store.ensureRootTask("/root").id;
-      store.attachAgentSession(rootId, "root-session");
-      store.createTask("a-task", "/a", "auto", "agent-a", rootId);
+      store.attachAgentSession(rootId, "test-agent", "root-session");
+      store.createTask("a-task", "/a", "auto", "test-agent", "agent-a", rootId);
       // A share tombstone under Root: the row survives, its binding is gone,
       // so no agent owns it.
-      store.createTask("orphan", "/o", "auto", "agent-orphan", rootId);
+      store.createTask(
+        "orphan",
+        "/o",
+        "auto",
+        "test-agent",
+        "agent-orphan",
+        rootId,
+      );
       const token = generateShareToken();
       store.insertSharePreview({ token, taskId: "orphan", snapshotSeq: 1 });
       store.activateShare(token);
@@ -1053,12 +1231,26 @@ describe("Store", () => {
 
     it("deletes a foreign survivor under the global Root", () => {
       const rootId = store.ensureRootTask("/root").id;
-      store.attachAgentSession(rootId, "root-session");
-      store.createTask("a-parent", "/a", "auto", "agent-a", rootId);
+      store.attachAgentSession(rootId, "test-agent", "root-session");
+      store.createTask(
+        "a-parent",
+        "/a",
+        "auto",
+        "test-agent",
+        "agent-a",
+        rootId,
+      );
       store.close();
 
-      const other = new Store(tmpDir, "other-agent");
-      other.createTask("b-child", "/b", "auto", "agent-b", "a-parent");
+      const other = new Store(tmpDir);
+      other.createTask(
+        "b-child",
+        "/b",
+        "auto",
+        "other-agent",
+        "agent-b",
+        "a-parent",
+      );
       other.saveEvent(
         "b-child",
         "user_message",
@@ -1067,7 +1259,7 @@ describe("Store", () => {
       );
       other.close();
 
-      store = new Store(tmpDir, "test-agent");
+      store = new Store(tmpDir);
       const result = store.deleteTask("a-parent");
       assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
         "a-parent",
@@ -1075,7 +1267,7 @@ describe("Store", () => {
       ]);
       assert.equal(store.getTaskIncludingDeleted("b-child"), undefined);
 
-      const check = new Store(tmpDir, "other-agent");
+      const check = new Store(tmpDir);
       assert.equal(check.getTask("b-child"), undefined);
       assert.equal(check.getEvents("b-child").length, 0);
       check.close();
@@ -1084,7 +1276,7 @@ describe("Store", () => {
 
   describe("events", () => {
     it("saves and retrieves events with auto-incrementing seq", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1110,8 +1302,8 @@ describe("Store", () => {
       const duplicateDir = mkdtempSync(
         join(tmpdir(), "webagent-duplicate-events-"),
       );
-      const duplicateStore = new Store(duplicateDir, "test-agent");
-      duplicateStore.createTask("duplicate-task", "/x");
+      const duplicateStore = new Store(duplicateDir);
+      duplicateStore.createTask("duplicate-task", "/x", "auto", "test-agent");
       duplicateStore.saveEvent(
         "duplicate-task",
         "user_message",
@@ -1134,14 +1326,14 @@ describe("Store", () => {
       duplicateStore.close();
 
       assert.throws(
-        () => new Store(duplicateDir, "test-agent"),
+        () => new Store(duplicateDir),
         /task_id=duplicate-task.*seq=1.*duplicate_rows=2.*Resolve duplicate events before upgrading/,
       );
       rmSync(duplicateDir, { recursive: true, force: true });
     });
 
     it("excludes thinking events when requested", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1170,14 +1362,14 @@ describe("Store", () => {
     });
 
     it("returns empty array for task with no events", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       assert.deepEqual(store.getEvents("s1"), []);
     });
 
     it("returns the latest event time per requested task", () => {
-      store.createTask("s1", "/x");
-      store.createTask("s2", "/x");
-      store.createTask("empty", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
+      store.createTask("s2", "/x", "auto", "test-agent");
+      store.createTask("empty", "/x", "auto", "test-agent");
       store.saveEvent("s1", "user_message", {}, { from_ref: "user" });
       store.saveEvent("s1", "assistant_message", {}, { from_ref: "agent" });
       store.saveEvent("s2", "user_message", {}, { from_ref: "user" });
@@ -1204,7 +1396,7 @@ describe("Store", () => {
     });
 
     it("filters events by afterSeq", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1234,7 +1426,7 @@ describe("Store", () => {
     });
 
     it("combines afterSeq with excludeThinking", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1260,8 +1452,8 @@ describe("Store", () => {
 
   describe("deleteEmptyTasks", () => {
     it("deletes old empty tasks and returns their IDs", () => {
-      store.createTask("empty-old", "/a");
-      store.createTask("has-events", "/b");
+      store.createTask("empty-old", "/a", "auto", "test-agent");
+      store.createTask("has-events", "/b", "auto", "test-agent");
       store.saveEvent(
         "has-events",
         "user_message",
@@ -1272,14 +1464,14 @@ describe("Store", () => {
       // With minAgeS=0, all empty tasks are eligible
       const deleted = store.deleteEmptyTasks(0);
       assert.deepEqual(deleted, [
-        { id: "empty-old", agentSessionId: "empty-old" },
+        { id: "empty-old", agentSessionId: "empty-old", agentId: "test-agent" },
       ]);
       assert.equal(store.getTask("empty-old"), undefined);
       assert.ok(store.getTask("has-events")); // preserved
     });
 
     it("skips empty tasks younger than minAgeS", () => {
-      store.createTask("fresh-empty", "/a");
+      store.createTask("fresh-empty", "/a", "auto", "test-agent");
 
       // With a large minAgeS, the just-created task is too young
       const deleted = store.deleteEmptyTasks(3600);
@@ -1287,25 +1479,25 @@ describe("Store", () => {
       assert.ok(store.getTask("fresh-empty")); // still there
     });
 
-    it("does not delete empty tasks owned by another agent", () => {
-      store.createTask("other-empty", "/a");
-      store.close();
+    it("reports the agent of each removed task so retirement routes correctly", () => {
+      // GC is global (it is not an execution read), and the agent that owned
+      // the removed execution must travel with the result: retiring through a
+      // default adapter would send the drop to the wrong process.
+      store.createTask("a-empty", "/a", "auto", "agent-a");
+      store.createTask("b-empty", "/b", "auto", "agent-b");
 
-      const other = new Store(tmpDir, "other-agent");
-      assert.deepEqual(other.deleteEmptyTasks(0), []);
-      assert.equal(
-        other.getTaskIncludingDeleted("other-empty")?.id,
-        "other-empty",
-      );
-      other.close();
-
-      store = new Store(tmpDir, "test-agent");
+      const deleted = store.deleteEmptyTasks(0);
+      const byId = new Map(deleted.map((entry) => [entry.id, entry.agentId]));
+      assert.equal(byId.get("a-empty"), "agent-a");
+      assert.equal(byId.get("b-empty"), "agent-b");
+      assert.equal(store.getTaskIncludingDeleted("a-empty"), undefined);
+      assert.equal(store.getTaskIncludingDeleted("b-empty"), undefined);
     });
 
     it("deletes multiple old empty tasks", () => {
-      store.createTask("e1", "/a");
-      store.createTask("e2", "/b");
-      store.createTask("e3", "/c");
+      store.createTask("e1", "/a", "auto", "test-agent");
+      store.createTask("e2", "/b", "auto", "test-agent");
+      store.createTask("e3", "/c", "auto", "test-agent");
       store.saveEvent(
         "e2",
         "user_message",
@@ -1323,7 +1515,7 @@ describe("Store", () => {
     });
 
     it("returns empty array when no empty tasks exist", () => {
-      store.createTask("s1", "/a");
+      store.createTask("s1", "/a", "auto", "test-agent");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1350,38 +1542,35 @@ describe("Store", () => {
       `);
       legacy.close();
 
-      assert.throws(
-        () => new Store(tmpDir, "test-agent"),
-        /pre-1\.0.*delete.*data/i,
-      );
+      assert.throws(() => new Store(tmpDir), /pre-1\.0.*delete.*data/i);
 
       rmSync(join(tmpDir, "webagent.db"), { force: true });
-      store = new Store(tmpDir, "test-agent");
+      store = new Store(tmpDir);
     });
 
     it("is idempotent — opening the current DB twice works", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.close();
 
       // Re-open same current-format DB
-      const store2 = new Store(tmpDir, "test-agent");
+      const store2 = new Store(tmpDir);
       const task = store2.getTask("s1");
       assert.equal(task!.id, "s1");
       store2.close();
 
       // Replace store so afterEach doesn't double-close
-      store = new Store(tmpDir, "test-agent");
+      store = new Store(tmpDir);
     });
   });
 
   describe("hasInterruptedTurn", () => {
     it("returns false for task with no events", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       assert.equal(store.hasInterruptedTurn("s1"), false);
     });
 
     it("returns true when user_message has no following prompt_done", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1398,7 +1587,7 @@ describe("Store", () => {
     });
 
     it("returns false when prompt_done follows user_message", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1421,7 +1610,7 @@ describe("Store", () => {
     });
 
     it("returns false when an error follows user_message", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1438,7 +1627,7 @@ describe("Store", () => {
     });
 
     it("detects interrupted turn after a completed turn", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       // First turn — completed
       store.saveEvent(
         "s1",
@@ -1475,7 +1664,7 @@ describe("Store", () => {
     });
 
     it("returns false when only non-prompt events follow prompt_done", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.saveEvent(
         "s1",
         "user_message",
@@ -1591,7 +1780,7 @@ describe("Store", () => {
 
   describe("client_ops (idempotency)", () => {
     beforeEach(() => {
-      store.createTask("s1", "/tmp");
+      store.createTask("s1", "/tmp", "auto", "test-agent");
     });
 
     it("getClientOp returns null for unseen op", () => {
@@ -1614,7 +1803,7 @@ describe("Store", () => {
     });
 
     it("scopes op ids per task", () => {
-      store.createTask("s2", "/tmp");
+      store.createTask("s2", "/tmp", "auto", "test-agent");
       store.saveClientOp("s1", "op-shared", { status: 200, body: "a" });
       store.saveClientOp("s2", "op-shared", { status: 200, body: "b" });
       assert.equal(

@@ -75,7 +75,16 @@ function registeredTools(): Record<string, RegisteredTool> {
     send: async () => {},
     update: async () => {},
   };
-  registerMcpTools(server, "current", host);
+  registerMcpTools(
+    server,
+    {
+      taskId: "current",
+      agentId: "agent-a",
+      generation: 1,
+      initializing: false,
+    },
+    host,
+  );
   return (server as unknown as RegisteredServer)._registeredTools;
 }
 

@@ -108,8 +108,8 @@ describe("share preview routes — POST /api/v1/tasks/:id/share", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-routes-"));
-    store = new Store(tmpDir, "test-agent");
-    store.createTask(taskId, "/tmp/project");
+    store = new Store(tmpDir);
+    store.createTask(taskId, "/tmp/project", "auto", "test-agent");
     deps = {
       store,
       tasks: makeTasksMock() as TaskManager,
@@ -321,8 +321,8 @@ describe("share preview routes — GET /api/v1/tasks/:id/share/preview", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-preview-"));
-    store = new Store(tmpDir, "test-agent");
-    store.createTask(taskId, "/tmp/project");
+    store = new Store(tmpDir);
+    store.createTask(taskId, "/tmp/project", "auto", "test-agent");
     store.updateTaskTitle(taskId, "Test task");
     deps = {
       store,

@@ -563,7 +563,7 @@ async function handlePublish(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
-  if (!deps.store.ownsTask(taskId)) {
+  if (!deps.store.hasBinding(taskId)) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
@@ -1037,7 +1037,7 @@ async function handleRevoke(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
-  if (!deps.store.ownsTask(taskId)) {
+  if (!deps.store.hasBinding(taskId)) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
@@ -1109,7 +1109,7 @@ async function handlePatchLabel(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
-  if (!deps.store.ownsTask(taskId)) {
+  if (!deps.store.hasBinding(taskId)) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }

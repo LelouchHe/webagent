@@ -351,10 +351,28 @@ function migrateSystemMessageData(raw: string): string | null {
   return JSON.stringify(migrated);
 }
 
+/**
+ * One agent's read-only view of execution identity.
+ *
+ * `agent_sessions` is keyed by `(agent_key, agent_session_id)`, so a session
+ * id only identifies a task together with the agent that owns it. A bridge is
+ * injected with a view pinned to its own agent: projecting a task's binding
+ * into a session id for that bridge therefore verifies
+ * `binding.agentId === agentId` instead of trusting the caller, which is what
+ * keeps a request that outlived a `/clear` from reaching another agent's
+ * session that happens to share the id.
+ */
+export interface AgentSessionView {
+  readonly agentId: string;
+  registerInternalAgentSession(agentSessionId: string): AgentSessionRow;
+  getTaskId(agentSessionId: string): string | undefined;
+  getAgentSessionId(taskId: string): string | undefined;
+  getBinding(taskId: string): AgentSessionRow | undefined;
+}
+
 export class Store {
   private readonly db: Database.Database;
   private readonly dataDir: string;
-  readonly agentKey: string;
   readonly rootTaskId: string;
   private readonly collaborationEmitter: CollaborationMessageEmitter;
   /**
@@ -369,9 +387,7 @@ export class Store {
     (changes: readonly BindingChange[]) => void
   > = [];
 
-  constructor(dataDir: string, agentKey: string) {
-    if (!agentKey) throw new Error("agentKey is required");
-    this.agentKey = agentKey;
+  constructor(dataDir: string) {
     this.rootTaskId = ROOT_TASK_ID;
     this.dataDir = dataDir;
     // Refuse the pre-multi-agent shape read-only, before mkdir/SQLite open
@@ -922,6 +938,7 @@ export class Store {
     id: string,
     cwd: string,
     source: string = "auto",
+    agentId: string,
     agentSessionId: string = id,
     parentId: string | null = null,
     opts: {
@@ -962,7 +979,7 @@ export class Store {
           now,
           now,
         );
-      this.insertBindingRow(id, agentSessionId);
+      this.insertBindingRow(id, agentId, agentSessionId);
       this.collectBindingChange(id, null);
       return this.db
         .prepare("SELECT * FROM tasks WHERE id = ?")
@@ -970,25 +987,26 @@ export class Store {
     });
   }
 
-  listTasks(opts?: { source?: string }): TaskRow[] {
+  /**
+   * Live tasks, globally visible by default.
+   *
+   * An unbound live Root is part of the result: it is a real task whose next
+   * use materializes an execution, so the read must not depend on a binding
+   * row existing. `agentId` narrows the result to tasks whose current binding
+   * names that agent.
+   */
+  listTasks(opts?: { source?: string; agentId?: string }): TaskRow[] {
+    const conditions = ["s.deleted_at IS NULL"];
+    const params: unknown[] = [];
     if (opts?.source) {
-      return this.db
-        .prepare(
-          `SELECT s.*,
-             EXISTS (
-               SELECT 1 FROM events e
-               WHERE e.task_id = s.id AND e.type = 'user_message'
-             ) OR EXISTS (
-               SELECT 1 FROM messages m
-               WHERE m.source_actor = 'user'
-                 AND (m.source_task_id = s.id OR m.direct_target_task_id = s.id)
-             ) AS has_user_input
-           FROM tasks s
-           JOIN agent_sessions a ON a.task_id = s.id
-           WHERE a.agent_key = ? AND s.source = ? AND s.deleted_at IS NULL
-           ORDER BY COALESCE(s.last_active_at, s.created_at) DESC`,
-        )
-        .all(this.agentKey, opts.source) as TaskRow[];
+      conditions.push("s.source = ?");
+      params.push(opts.source);
+    }
+    if (opts?.agentId !== undefined) {
+      conditions.push(
+        "EXISTS (SELECT 1 FROM agent_sessions a WHERE a.task_id = s.id AND a.agent_key = ?)",
+      );
+      params.push(opts.agentId);
     }
     return this.db
       .prepare(
@@ -1002,85 +1020,111 @@ export class Store {
                AND (m.source_task_id = s.id OR m.direct_target_task_id = s.id)
            ) AS has_user_input
          FROM tasks s
-         JOIN agent_sessions a ON a.task_id = s.id
-         WHERE a.agent_key = ? AND s.deleted_at IS NULL
+         WHERE ${conditions.join(" AND ")}
          ORDER BY COALESCE(s.last_active_at, s.created_at) DESC`,
       )
-      .all(this.agentKey) as TaskRow[];
+      .all(...params) as TaskRow[];
   }
 
   /** Returns live tasks only. Soft-deleted (tombstone) rows are hidden. */
   getTask(id: string): TaskRow | undefined {
     return this.db
       .prepare(
-        `SELECT s.* FROM tasks s
-         JOIN agent_sessions a ON a.task_id = s.id
-         WHERE s.id = ? AND a.agent_key = ? AND s.deleted_at IS NULL`,
+        "SELECT s.* FROM tasks s WHERE s.id = ? AND s.deleted_at IS NULL",
       )
-      .get(id, this.agentKey) as TaskRow | undefined;
+      .get(id) as TaskRow | undefined;
   }
 
   /**
-   * A live task the current agent may attach a child to. A parent bound only
-   * to another agent is rejected; the shared Root anchor is accepted even
-   * before SessionManager binds it (a live row is enough, as the create route
-   * already relied on). Tombstoned rows are rejected.
+   * A live task another task may attach a child to. The shared Root anchor is
+   * accepted even before it is bound (a live row is enough). Tombstoned rows
+   * are rejected. Whether the child may run under the parent's binding agent
+   * is a routing decision, made by the caller that knows the target agent.
    */
   getParentTask(id: string): TaskRow | undefined {
     const task = this.getTaskIncludingDeleted(id);
     if (task?.deleted_at !== null) return undefined;
-    if (this.ownsTask(id) || id === this.rootTaskId) return task;
-    const foreign = this.db
-      .prepare(
-        "SELECT 1 AS present FROM agent_sessions WHERE task_id = ? AND agent_key != ? LIMIT 1",
-      )
-      .get(id, this.agentKey) as { present: number } | undefined;
-    return foreign ? undefined : task;
+    return task;
   }
 
-  registerInternalAgentSession(agentSessionId: string): AgentSessionRow {
+  /**
+   * The read-only session view a single bridge is allowed to use. Everything
+   * it reports is filtered by, or validated against, that bridge's agent.
+   */
+  sessionView(agentId: string): AgentSessionView {
+    return {
+      agentId,
+      registerInternalAgentSession: (agentSessionId) =>
+        this.registerInternalAgentSession(agentId, agentSessionId),
+      getTaskId: (agentSessionId) => this.getTaskId(agentId, agentSessionId),
+      getAgentSessionId: (taskId) =>
+        this.getAgentSessionBindingFor(taskId, agentId)?.agent_session_id,
+      getBinding: (taskId) => this.getAgentSessionBindingFor(taskId, agentId),
+    };
+  }
+
+  registerInternalAgentSession(
+    agentId: string,
+    agentSessionId: string,
+  ): AgentSessionRow {
     this.db
       .prepare(
         "INSERT OR IGNORE INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, NULL, ?)",
       )
-      .run(this.agentKey, agentSessionId, Date.now());
+      .run(agentId, agentSessionId, Date.now());
     const row = this.db
       .prepare(
         "SELECT * FROM agent_sessions WHERE agent_key = ? AND agent_session_id = ?",
       )
-      .get(this.agentKey, agentSessionId) as AgentSessionRow;
+      .get(agentId, agentSessionId) as AgentSessionRow;
     if (row.task_id) {
       throw new Error("Agent reused a user-visible task ID internally");
     }
     return row;
   }
 
+  /**
+   * The current execution's session id. The task → binding direction is
+   * globally unique, so no agent dimension is needed here; a caller that
+   * projects it for one bridge must use that bridge's session view instead.
+   */
   getAgentSessionId(taskId: string): string | undefined {
-    return (
-      this.db
-        .prepare(
-          "SELECT agent_session_id FROM agent_sessions WHERE agent_key = ? AND task_id = ?",
-        )
-        .get(this.agentKey, taskId) as { agent_session_id: string } | undefined
-    )?.agent_session_id;
+    return this.getCurrentExecutionBinding(taskId)?.agent_session_id;
   }
 
-  getTaskId(agentSessionId: string): string | undefined {
+  /**
+   * The session id to project for one agent, or undefined when that agent is
+   * not the task's binding agent. This is the safe projection every execution
+   * path uses; `getAgentSessionId` is the global read for non-executing
+   * consumers.
+   */
+  getAgentSessionIdAt(taskId: string, agentId: string): string | undefined {
+    return this.getAgentSessionBindingFor(taskId, agentId)?.agent_session_id;
+  }
+
+  /** Only the sid → task direction needs the agent: `(agent, sid)` is unique. */
+  getTaskId(agentId: string, agentSessionId: string): string | undefined {
     return (
       this.db
         .prepare(
           "SELECT task_id FROM agent_sessions WHERE agent_key = ? AND agent_session_id = ? AND task_id IS NOT NULL",
         )
-        .get(this.agentKey, agentSessionId) as { task_id: string } | undefined
+        .get(agentId, agentSessionId) as { task_id: string } | undefined
     )?.task_id;
   }
 
   getAgentSessionBinding(taskId: string): AgentSessionRow | undefined {
-    return this.db
-      .prepare(
-        "SELECT * FROM agent_sessions WHERE agent_key = ? AND task_id = ?",
-      )
-      .get(this.agentKey, taskId) as AgentSessionRow | undefined;
+    return this.getCurrentExecutionBinding(taskId);
+  }
+
+  /** The binding row, but only when the named agent owns it. */
+  getAgentSessionBindingFor(
+    taskId: string,
+    agentId: string,
+  ): AgentSessionRow | undefined {
+    const row = this.getCurrentExecutionBinding(taskId);
+    if (row?.agent_key !== agentId) return undefined;
+    return row;
   }
 
   /**
@@ -1110,26 +1154,27 @@ export class Store {
    * is what makes "adopt" impossible and forces an owner change to go through
    * the replace path with its guards.
    */
-  attachAgentSession(taskId: string, agentSessionId: string): AgentSessionRow {
+  attachAgentSession(
+    taskId: string,
+    agentId: string,
+    agentSessionId: string,
+  ): AgentSessionRow {
     return this.writeBindings(() => {
       if (!this.getTaskIncludingDeleted(taskId)) {
         throw new Error(`Task not found: ${taskId}`);
       }
       const before = this.currentBinding(taskId);
       if (before) {
-        if (
-          before.agentId === this.agentKey &&
-          before.sessionId === agentSessionId
-        ) {
-          return this.getAgentSessionBinding(taskId)!;
+        if (before.agentId === agentId && before.sessionId === agentSessionId) {
+          return this.getAgentSessionBindingFor(taskId, agentId)!;
         }
         throw new Error(
           `Task already has an execution binding: ${taskId} (${before.agentId})`,
         );
       }
-      this.insertBindingRow(taskId, agentSessionId);
+      this.insertBindingRow(taskId, agentId, agentSessionId);
       this.collectBindingChange(taskId, before);
-      return this.getAgentSessionBinding(taskId)!;
+      return this.getAgentSessionBindingFor(taskId, agentId)!;
     });
   }
 
@@ -1148,6 +1193,7 @@ export class Store {
    */
   replaceAgentSession(
     taskId: string,
+    agentId: string,
     agentSessionId: string,
     cwd?: string,
   ): AgentSessionRow {
@@ -1159,18 +1205,15 @@ export class Store {
           .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
           .run(cwd, taskId);
       }
-      if (
-        before.agentId === this.agentKey &&
-        before.sessionId === agentSessionId
-      ) {
-        return this.getAgentSessionBinding(taskId)!;
+      if (before.agentId === agentId && before.sessionId === agentSessionId) {
+        return this.getAgentSessionBindingFor(taskId, agentId)!;
       }
       this.db
         .prepare("DELETE FROM agent_sessions WHERE task_id = ?")
         .run(taskId);
-      this.insertBindingRow(taskId, agentSessionId);
+      this.insertBindingRow(taskId, agentId, agentSessionId);
       this.collectBindingChange(taskId, before);
-      return this.getAgentSessionBinding(taskId)!;
+      return this.getAgentSessionBindingFor(taskId, agentId)!;
     });
   }
 
@@ -1195,32 +1238,29 @@ export class Store {
    * The single place a task/execution binding is created. Rejecting reserved
    * shapes here covers every write path (create, attach, replace, Root reset).
    */
-  private insertBindingRow(taskId: string, agentSessionId: string): void {
+  private insertBindingRow(
+    taskId: string,
+    agentId: string,
+    agentSessionId: string,
+  ): void {
     assertStorableExecutionId(taskId, agentSessionId);
     this.db
       .prepare(
         "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
       )
-      .run(this.agentKey, agentSessionId, taskId, Date.now());
+      .run(agentId, agentSessionId, taskId, Date.now());
   }
 
-  ownsTask(taskId: string): boolean {
-    return this.getAgentSessionBinding(taskId) !== undefined;
+  hasBinding(taskId: string): boolean {
+    return this.getCurrentExecutionBinding(taskId) !== undefined;
   }
 
   /**
-   * Agent id currently bound to a task, independent of the current Store's
-   * agent scope. Used to route whole-agent operations such as /reload to the
-   * task's owner; a future multi-bridge router builds on it.
+   * The agent currently bound to a task, if any. Whole-agent operations
+   * (reload, retirement, lifecycle scoping) route through this.
    */
-  getTaskOwnerAgentKey(taskId: string): string | undefined {
-    return (
-      this.db
-        .prepare(
-          "SELECT agent_key FROM agent_sessions WHERE task_id = ? ORDER BY created_at DESC LIMIT 1",
-        )
-        .get(taskId) as { agent_key: string } | undefined
-    )?.agent_key;
+  getBindingAgent(taskId: string): string | undefined {
+    return this.getCurrentExecutionBinding(taskId)?.agent_key;
   }
 
   /**
@@ -1370,7 +1410,7 @@ export class Store {
    */
   resetRootTask(): {
     affected: TaskDelete[];
-    retiredAgentSessionId: string | null;
+    retired: ExecutionBinding | null;
   } {
     const root = this.getTaskIncludingDeleted(this.rootTaskId);
     if (!root) throw new Error("Root task not found");
@@ -1408,20 +1448,23 @@ export class Store {
       this.db
         .prepare("DELETE FROM agent_sessions WHERE task_id = ?")
         .run(this.rootTaskId);
-      // Root keeps its owner but loses its execution: the empty session id is
-      // the "not materialized yet" marker, and the reset bumps the generation
-      // instead of clearing it.
-      this.insertBindingRow(
-        this.rootTaskId,
-        emptyExecutionSlot(this.rootTaskId),
-      );
+      // Root keeps its binding agent but loses its execution: the empty session
+      // id is the "not materialized yet" marker, and the reset bumps the
+      // generation instead of clearing it. An unbound Root stays unbound.
+      if (retiredBinding) {
+        this.insertBindingRow(
+          this.rootTaskId,
+          retiredBinding.agentId,
+          emptyExecutionSlot(this.rootTaskId),
+        );
+      }
       this.db
         .prepare("UPDATE tasks SET parent_id = NULL WHERE id = ?")
         .run(this.rootTaskId);
       this.collectBindingChange(this.rootTaskId, rootBindingBefore);
       return {
         affected,
-        retiredAgentSessionId: retiredBinding?.sessionId ?? null,
+        retired: retiredBinding,
       };
     });
     return reset;
@@ -1549,6 +1592,7 @@ export class Store {
   deleteEmptyTasks(minAgeS: number): Array<{
     id: string;
     agentSessionId: string | null;
+    agentId: string | null;
   }> {
     const empties = this.db
       .prepare(
@@ -1558,16 +1602,11 @@ export class Store {
       LEFT JOIN events e ON e.task_id = s.id
       WHERE e.id IS NULL
         AND s.id != ?
-        AND a.agent_key = ?
         AND s.deleted_at IS NULL
         AND s.created_at <= ?
     `,
       )
-      .all(
-        this.rootTaskId,
-        this.agentKey,
-        Date.now() - minAgeS * 1000,
-      ) as Array<{
+      .all(this.rootTaskId, Date.now() - minAgeS * 1000) as Array<{
       id: string;
       agent_session_id: string;
       agent_key: string;
@@ -1575,7 +1614,11 @@ export class Store {
     if (empties.length === 0) return [];
     return this.writeBindings(() => {
       const del = this.db.prepare("DELETE FROM tasks WHERE id = ?");
-      const removed: Array<{ id: string; agentSessionId: string | null }> = [];
+      const removed: Array<{
+        id: string;
+        agentSessionId: string | null;
+        agentId: string | null;
+      }> = [];
       for (const r of empties) {
         const beforeBinding: ExecutionBinding = {
           agentId: r.agent_key,
@@ -1587,7 +1630,11 @@ export class Store {
         this.failOutstandingDeliveriesForDeletedTask(r.id);
         del.run(r.id);
         this.collectBindingChange(r.id, beforeBinding);
-        removed.push({ id: r.id, agentSessionId: r.agent_session_id });
+        removed.push({
+          id: r.id,
+          agentSessionId: r.agent_session_id,
+          agentId: r.agent_key,
+        });
       }
       return removed;
     });
@@ -2635,7 +2682,7 @@ export class Store {
     return info.changes > 0;
   }
 
-  /** Owner list — every share row (preview + active). */
+  /** All share rows, globally visible (execution binding is not a read gate). */
   listOwnerShares(): ShareSummaryRow[] {
     return this.db
       .prepare(
@@ -2651,12 +2698,10 @@ export class Store {
          s.ttl_hours AS ttl_hours,
          s.last_accessed_at AS last_accessed_at
        FROM shares s
-       JOIN agent_sessions a ON a.task_id = s.task_id
        LEFT JOIN tasks t ON t.id = s.task_id
-       WHERE a.agent_key = ?
        ORDER BY s.created_at DESC`,
       )
-      .all(this.agentKey) as ShareSummaryRow[];
+      .all() as ShareSummaryRow[];
   }
 
   /**

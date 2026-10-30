@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
-import type { AgentBridge } from "../bridge.ts";
 import type { Store, TaskRow } from "../store.ts";
 import {
   isLocalCollaborationTarget,
@@ -55,18 +54,11 @@ function relationOrder(relation: McpTaskListItem["relation"]): number {
 export function createMcpTaskToolHost(deps: {
   store: Store;
   tasks: TaskManager;
-  getBridge: () => AgentBridge | null;
   cancelTimeoutMs?: number;
   broadcastCollaboration?: (event: McpTaskCollaborationEvent) => void;
   broadcastTaskCreated?: (event: McpTaskCreatedEvent) => void;
 }): McpTaskToolHost {
-  const {
-    store,
-    tasks,
-    getBridge,
-    broadcastCollaboration,
-    broadcastTaskCreated,
-  } = deps;
+  const { store, tasks, broadcastCollaboration, broadcastTaskCreated } = deps;
 
   function requireTask(taskId: string) {
     const task = store.getTask(taskId);
@@ -238,19 +230,26 @@ export function createMcpTaskToolHost(deps: {
       sourceTaskId: string,
       input: McpTaskCreateInput,
     ): Promise<McpTaskCreateResult> {
-      const bridge = getBridge();
-      if (!bridge) throw new Error("agent_not_ready");
+      // The child runs in the source task's execution environment: a caller
+      // never chooses an agent, its own binding does.
+      const execution = await tasks.resolveTaskExecution(sourceTaskId);
       const source = requireTask(sourceTaskId);
       const requestedCwd = input.cwd ? expandHomePath(input.cwd) : source.cwd;
       const cwd = isAbsolute(requestedCwd)
         ? requestedCwd
         : resolve(source.cwd, requestedCwd);
-      const created = await tasks.createTask(bridge, cwd, source.id, "agent", {
-        parentId: source.id,
-        title: input.title,
-        model: input.model,
-        thinking: input.thinking,
-      });
+      const created = await tasks.createTask(
+        execution.bridge,
+        cwd,
+        source.id,
+        "agent",
+        {
+          parentId: source.id,
+          title: input.title,
+          model: input.model,
+          thinking: input.thinking,
+        },
+      );
       const taskCreatedMessageId = randomUUID();
       const taskCreated = buildTaskCreatedSystemMessage({
         taskId: created.taskId,
@@ -273,8 +272,8 @@ export function createMcpTaskToolHost(deps: {
     },
 
     async cancel(sourceTaskId, targetTaskId, reason) {
-      const bridge = getBridge();
       const { target } = requireChildTarget(sourceTaskId, targetTaskId);
+      const bridge = tasks.existingTaskExecution(target.id)?.bridge ?? null;
       const result = await tasks.cancelTaskExecution(
         target.id,
         bridge,
@@ -290,7 +289,6 @@ export function createMcpTaskToolHost(deps: {
     },
 
     async send(sourceTaskId, targetTaskId, body) {
-      const bridge = getBridge();
       const { source, target } = requireLocalTarget(sourceTaskId, targetTaskId);
       const created = store.createCollaborationMessage({
         id: randomUUID(),
@@ -309,13 +307,10 @@ export function createMcpTaskToolHost(deps: {
         title: `${formatTaskReference(sourceLabel)} sent ${formatTaskReference(targetLabel)}`,
         body: created.message.body,
       });
-      if (bridge) {
-        void tasks.drainCollaborationDeliveries(bridge, target.id);
-      }
+      void tasks.drainCollaborationDeliveries(target.id);
     },
 
     async update(sourceTaskId, status, body) {
-      const bridge = getBridge();
       // The controller decides whether this update settles the target's sole
       // record (eligible current turn) or is only routed: to the stored source
       // when a record exists, or to the current parent when none does.
@@ -337,9 +332,7 @@ export function createMcpTaskToolHost(deps: {
           title: `${formatTaskReference(source.title ?? source.id.slice(0, 8))} sent ${formatTaskReference(target.title ?? target.id.slice(0, 8))}`,
           body: `Task status: ${status}\n${body}`,
         });
-        if (bridge) {
-          void tasks.drainCollaborationDeliveries(bridge, accountTargetTaskId);
-        }
+        void tasks.drainCollaborationDeliveries(accountTargetTaskId);
       }
     },
   };

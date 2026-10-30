@@ -6908,6 +6908,7 @@ describe("events", () => {
   describe("agent reload events", () => {
     it("agent_reloading sets busy and shows system message", () => {
       state.taskId = "s1";
+      state.taskAgentId = "test-agent";
       events.handleEvent({ type: "agent_reloading", agentId: "test-agent" });
 
       assert.equal(state.busy, true);
@@ -6918,11 +6919,14 @@ describe("events", () => {
 
     it("connected after agent_reloading shows reloaded message and clears busy", () => {
       state.taskId = "s1";
+      state.taskAgentId = "test-agent";
       state.agentReloading = true;
+      state.agentReloadingAgentId = "test-agent";
       state.busy = true;
 
       events.handleEvent({
         type: "connected",
+        agentId: "test-agent",
         agent: { name: "mock-agent", version: "2.0" },
         configOptions: [],
       });
@@ -6936,6 +6940,7 @@ describe("events", () => {
     it("agent_reloading_failed shows error and clears busy", () => {
       state.taskId = "s1";
       state.agentReloading = true;
+      state.agentReloadingAgentId = "test-agent";
       state.busy = true;
 
       events.handleEvent({

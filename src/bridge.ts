@@ -37,6 +37,12 @@ const blog = log.scope("bridge");
 export const MAX_ACP_MESSAGE_BYTES = 128 * 1024 * 1024;
 
 export interface AgentSessionIds {
+  /**
+   * The agent this view is pinned to. When present it also identifies the
+   * bridge, so a transport and the projections it is allowed to make can never
+   * disagree about which agent they belong to.
+   */
+  readonly agentId?: string;
   getAgentSessionId(taskId: string): string | undefined;
   getTaskId(agentSessionId: string): string | undefined;
 }
@@ -149,7 +155,7 @@ export class AgentBridge extends EventEmitter {
   constructor(
     agentCmd: string,
     sessionIds: AgentSessionIds,
-    agentId: string = "default",
+    agentId: string = sessionIds.agentId ?? "default",
   ) {
     super();
     this.agentCmd = agentCmd;
@@ -236,28 +242,40 @@ export class AgentBridge extends EventEmitter {
         this.handleSessionUpdate(params),
     };
 
-    this.connection = new acp.ClientSideConnection((_agent) => client, stream);
+    try {
+      this.connection = new acp.ClientSideConnection(
+        (_agent) => client,
+        stream,
+      );
 
-    const init = await this.connection.initialize({
-      protocolVersion: acp.PROTOCOL_VERSION,
-      clientCapabilities: {
-        fs: { readTextFile: false, writeTextFile: false },
-        terminal: true,
-      },
-    });
+      const init = await this.connection.initialize({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: {
+          fs: { readTextFile: false, writeTextFile: false },
+          terminal: true,
+        },
+      });
 
-    const agentInfo = init.agentInfo;
-    this.sessionCapabilities =
-      init.agentCapabilities?.sessionCapabilities ?? null;
-    this.loadSessionSupported = init.agentCapabilities?.loadSession ?? false;
-    this.emit("event", {
-      type: "connected",
-      agent: {
-        name: agentInfo?.name ?? "unknown",
-        version: agentInfo?.version ?? "?",
-      },
-      configOptions: [],
-    } satisfies AgentEvent);
+      const agentInfo = init.agentInfo;
+      this.sessionCapabilities =
+        init.agentCapabilities?.sessionCapabilities ?? null;
+      this.loadSessionSupported = init.agentCapabilities?.loadSession ?? false;
+      this.emit("event", {
+        type: "connected",
+        agent: {
+          name: agentInfo?.name ?? "unknown",
+          version: agentInfo?.version ?? "?",
+        },
+        agentId: this.agentId,
+        configOptions: [],
+      } satisfies AgentEvent);
+    } catch (err) {
+      // A failed start must not leave the child process behind: the next
+      // attempt spawns a fresh one, and a leaked process would keep the pipe
+      // and the agent's session store half-alive with no runtime owning it.
+      await this.shutdown().catch(() => {});
+      throw err;
+    }
   }
 
   async newSession(
@@ -451,6 +469,7 @@ export class AgentBridge extends EventEmitter {
     this.emitForSession(agentSessionId, {
       type: "task_created",
       taskId,
+      agentId: this.agentId,
       cwd,
       cwdDisplay: abbreviateHomePath(cwd),
       configOptions,
@@ -878,16 +897,20 @@ export class AgentBridge extends EventEmitter {
   async restart(tasks: TaskManager): Promise<void> {
     if (this.reloading) throw new Error("Already reloading");
     this.reloading = true;
-    const liveTaskIds = [...tasks.liveTasks];
-    this.emit("event", {
-      type: "agent_reloading",
-      agentId: this.agentId,
-    } satisfies AgentEvent);
+    // Agent-scoped teardown: another agent's tasks keep their streaming, plans,
+    // usage and pending permissions.
+    const agentTaskIds = new Set(tasks.taskIdsForAgent(this.agentId));
+    const liveTaskIds = tasks
+      .taskIdsForAgent(this.agentId)
+      .filter((taskId) => tasks.liveTasks.has(taskId));
     blog.info("reloading agent...");
 
     try {
-      // 1. Cancel all active prompts + kill bash procs
+      // 1. Cancel all active prompts + kill bash procs. This runs before the
+      // `agent_reloading` broadcast, because the event-handler cleanup drops
+      // this agent's busy claims and would leave nothing to cancel.
       for (const taskId of [...tasks.activePrompts]) {
+        if (!agentTaskIds.has(taskId)) continue;
         const proc = tasks.runningBashProcs.get(taskId);
         if (proc) {
           interruptBashProc(proc);
@@ -899,32 +922,21 @@ export class AgentBridge extends EventEmitter {
           /* best-effort */
         }
       }
+      this.emit("event", {
+        type: "agent_reloading",
+        agentId: this.agentId,
+      } satisfies AgentEvent);
 
       // 2. Flush buffers to persist partial content
       for (const taskId of liveTaskIds) {
         tasks.flushBuffers(taskId);
       }
 
-      // 3. Clean up TaskManager state
-      tasks.pendingPermissions.clear();
-      tasks.state.clearPlans();
-      const busyTaskIds = new Set([
-        ...tasks.activePrompts,
-        ...tasks.pendingPromptSubmissions.keys(),
-        // A drain that has started a turn but not yet issued its prompt keeps
-        // the target busy; abort its watchdog too or a stale no_activity can
-        // fire after the restart.
-        ...tasks.drainingCollaborationTasks,
-      ]);
-      for (const id of busyTaskIds) {
-        tasks.abortObligationTurn(id);
-        tasks.state.patch(id, { runtime: { busy: null } });
-      }
-      for (const submissionId of tasks.pendingPromptSubmissions.values()) {
-        tasks.cancelledPromptSubmissions.add(submissionId);
-      }
-      tasks.activePrompts.clear();
-      tasks.pendingPromptSubmissions.clear();
+      // 3. Clean up this agent's TaskManager state. The adapter's cached
+      // config schema goes with the process: a restarted agent may speak a
+      // different one (e.g. an upgrade removed a model), and the next resume
+      // warms it from the task's own stored config.
+      tasks.clearAgentRuntime(this.agentId);
 
       // 4. Clean up bridge-side silent session state
       this.silentSessions.clear();
@@ -933,14 +945,7 @@ export class AgentBridge extends EventEmitter {
       this.pendingSessionUpdates.clear();
       this.clearSessionConfigCodecs();
 
-      // 5. Clear liveTasks so ensureResumed() will re-register on next access
-      tasks.liveTasks.clear();
-      // Also clear the global configOptions cache — a restarted agent may
-      // speak a different schema (e.g. agent upgrade removed a model). The
-      // next resumeTask will warm it from the user's stored config.
-      tasks.cachedConfigOptions = [];
-
-      // 6. Shutdown old process
+      // 5. Shutdown old process
       await this.shutdown();
       // Cancellation is asynchronous: the old agent may emit final chunks
       // before shutdown completes. Persist that tail and make the terminal
@@ -948,7 +953,7 @@ export class AgentBridge extends EventEmitter {
       for (const taskId of liveTaskIds) {
         tasks.flushBuffers(taskId);
       }
-      tasks.state.clearStreaming();
+      tasks.clearAgentStreaming(this.agentId);
 
       // 7. Start new process with retry (exponential backoff, max 3 attempts)
       let lastError: unknown;

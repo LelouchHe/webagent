@@ -10,8 +10,8 @@ import {
   type Store,
 } from "./store.ts";
 import type { TaskManager } from "./task-manager.ts";
+import { AgentUnavailableError } from "./agent-registry.ts";
 import type { SseManager } from "./sse-manager.ts";
-import type { AgentBridge } from "./bridge.ts";
 import type { Config } from "./config.ts";
 import type { PushService } from "./push-service.ts";
 import type { ClientRegistry } from "./client-registry.ts";
@@ -231,22 +231,6 @@ export interface RequestHandlerDeps {
   tasks?: TaskManager;
   sseManager: SseManager;
   clientRegistry?: ClientRegistry;
-  getBridge?: () =>
-    | (Pick<
-        AgentBridge,
-        | "newSession"
-        | "setConfigOption"
-        | "loadSession"
-        | "cancel"
-        | "prompt"
-        | "resolvePermission"
-        | "denyPermission"
-        | "restart"
-        | "reloading"
-      > &
-        Partial<Pick<AgentBridge, "promptForText">>)
-    | null;
-
   publicDir: string;
   dataDir: string;
   limits: Pick<Config["limits"], "bash_output" | "image_upload"> &
@@ -682,7 +666,7 @@ async function handleAttachmentUpload(
 export function createRequestHandler(
   deps: RequestHandlerDeps,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const { store, tasks, getBridge, sseManager } = deps;
+  const { store, tasks, sseManager } = deps;
   /** Every body read in this handler reports that it started. */
   const readBody = (req: IncomingMessage): Promise<string> => {
     deps.onRequestBodyReadStart?.(req.url ?? "/");
@@ -785,8 +769,14 @@ export function createRequestHandler(
       ) {
         const params = new URLSearchParams(url.split("?")[1] ?? "");
         const source = params.get("source") ?? undefined;
+        // Global by default; `?agent=` narrows to tasks whose current binding
+        // names that agent. Filtering is a read concern, never a gate.
+        const agentFilter = params.get("agent") ?? undefined;
         const publicTasks = store
-          .listTasks(source ? { source } : undefined)
+          .listTasks({
+            ...(source ? { source } : {}),
+            ...(agentFilter !== undefined ? { agentId: agentFilter } : {}),
+          })
           .map((task) => {
             const {
               pending_compact_summary: _pendingCompactSummary,
@@ -798,6 +788,7 @@ export function createRequestHandler(
             // rendered ISO-8601 at egress (DB rows hold integer millis).
             return {
               ...publicTask,
+              agentId: store.getBindingAgent(task.id) ?? null,
               created_at: isoFromMillis(task.created_at),
               last_active_at: isoFromMillis(task.last_active_at),
               deleted_at: isoFromMillisOrNull(task.deleted_at),
@@ -810,10 +801,12 @@ export function createRequestHandler(
       }
 
       // --- GET /api/v1/config ---
+      // Cold start: reporting the default agent's schema never starts it. An
+      // agent that has not run yet simply has no schema to report.
       if (url === "/api/v1/config" && req.method === "GET") {
         json(res, HTTP_STATUS.OK, {
           rootTaskId: store.rootTaskId,
-          configOptions: tasks?.cachedConfigOptions ?? [],
+          configOptions: tasks?.configOptionsFor(tasks.defaultAgentId) ?? [],
           cancelTimeout: deps.limits.cancel_timeout ?? 0,
           recentPathsLimit: deps.limits.recent_paths ?? 10,
         });
@@ -845,9 +838,10 @@ export function createRequestHandler(
 
       // GET /api/v1/version
       if (url === "/api/v1/version" && req.method === "GET") {
+        // Same rule as /config: metadata reads never start a process.
         json(res, HTTP_STATUS.OK, {
           server: deps.serverVersion ?? "unknown",
-          agent: tasks?.agentInfo ?? null,
+          agent: tasks?.agentInfoFor(tasks.defaultAgentId) ?? null,
         });
         return;
       }
@@ -989,13 +983,12 @@ export function createRequestHandler(
       }
 
       // --- POST /api/v1/bridge/reload ---
-      // Targets the agent of `taskId` when supplied; otherwise every agent
-      // (one bridge today). The scope is "my side is stuck for this task".
+      // Targets the binding agent of `taskId` when supplied; otherwise every
+      // agent that already has a process. A reload never starts an agent.
       if (url === "/api/v1/bridge/reload" && req.method === "POST") {
-        const bridge = getBridge?.();
-        if (!bridge) {
+        if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Agent not ready yet",
+            error: "Task manager not available",
           });
           return;
         }
@@ -1011,29 +1004,33 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid taskId" });
           return;
         }
-        if (body.taskId) {
-          const owner = store.getTaskOwnerAgentKey(body.taskId);
-          if (!owner) {
-            json(res, HTTP_STATUS.CONFLICT, {
-              error: "Task has no agent to reload",
-            });
-            return;
-          }
-          if (owner !== (bridge as { agentId?: string }).agentId) {
-            json(res, HTTP_STATUS.CONFLICT, {
-              error: `Agent ${owner} is not available`,
-            });
-            return;
-          }
-        }
-        if (bridge.reloading) {
-          json(res, HTTP_STATUS.CONFLICT, { error: "Already reloading" });
+        if (body.taskId && !store.hasBinding(body.taskId)) {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Task has no agent to reload",
+          });
           return;
         }
         try {
-          await bridge.restart(tasks!);
+          await tasks.reloadAgent(body.taskId);
           json(res, HTTP_STATUS.OK, { ok: true });
         } catch (err: unknown) {
+          if (err instanceof TaskNotFoundError) {
+            json(res, HTTP_STATUS.NOT_FOUND, { error: err.message });
+            return;
+          }
+          if (
+            err instanceof AgentUnavailableError ||
+            err instanceof AgentNotReadyError
+          ) {
+            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+              error: "Agent not ready yet",
+            });
+            return;
+          }
+          if (err instanceof Error && err.message === "Already reloading") {
+            json(res, HTTP_STATUS.CONFLICT, { error: err.message });
+            return;
+          }
           json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
             error: errorMessage(err),
           });
@@ -1072,8 +1069,8 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Task ID mismatch" });
           return;
         }
-        const bridge = getBridge?.();
-        if (!bridge) {
+        const pendingTransport = tasks?.permissionTransport(perm) ?? null;
+        if (!pendingTransport) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Agent not ready yet",
           });
@@ -1097,15 +1094,32 @@ export function createRequestHandler(
           return;
         }
 
+        // The approval is authorised at the execution boundary, after the body
+        // await: the same pending row must still be there, its captured lease
+        // must still name the task's current generation, and the task must
+        // still be bound to the agent that produced the request. Nothing below
+        // this check awaits, so the decision and the write cannot be split.
+        const stillPending = tasks!.pendingPermissions.get(requestId);
+        if (
+          stillPending !== perm ||
+          !tasks!.acceptsPendingPermission(perm) ||
+          !(pendingTransport.isAvailable?.() ?? true)
+        ) {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Permission belongs to a replaced execution",
+          });
+          return;
+        }
+
         const denied = Boolean(body.denied);
         const optionId = body.optionId ?? "deny";
         const optionName =
           perm.options.find((o) => o.optionId === optionId)?.label ?? optionId;
 
         if (denied) {
-          bridge.denyPermission(requestId);
+          pendingTransport.denyPermission(requestId);
         } else {
-          bridge.resolvePermission(requestId, optionId);
+          pendingTransport.resolvePermission(requestId, optionId);
         }
 
         tasks!.pendingPermissions.delete(requestId);
@@ -1158,8 +1172,10 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.OK, idleBody);
           return;
         }
+        // Cancellation addresses the task's own execution: the transport that
+        // is driving its prompt, never a caller-selected process.
         const bridge = tasks.activePrompts.has(taskId)
-          ? (getBridge?.() ?? null)
+          ? (tasks.existingTaskExecution(taskId)?.bridge ?? null)
           : null;
         let result;
         try {
@@ -1227,18 +1243,17 @@ export function createRequestHandler(
           });
           return;
         }
-        const bridge = getBridge?.();
-        if (bridge && !tasks.liveTasks.has(taskId)) {
+        // A snapshot is a read: an unavailable, rotated, or not-yet-started
+        // agent must not block it. A task that has a live transport joins any
+        // in-flight restore so command discovery is included when possible,
+        // but a failed restore only degrades the payload.
+        const existing = tasks.existingTaskExecution(taskId);
+        if (existing && !tasks.liveTasks.has(taskId)) {
           try {
-            // Command discovery happens during task/load. Snapshot is the
-            // authoritative hydration boundary, so it must join any in-flight
-            // restore before reading the per-task command state.
-            await tasks.ensureResumed(bridge, taskId);
+            await tasks.ensureResumed(existing.bridge, taskId);
           } catch {
-            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-              error: "Failed to restore task",
-            });
-            return;
+            // Command discovery is optional here; metadata and runtime state
+            // below are what the client cannot reconstruct.
           }
         }
         // Make sure runtime reflects the current activePrompts/bash state even
@@ -1260,6 +1275,7 @@ export function createRequestHandler(
               cwdDisplay: abbreviateHomePath(task.cwd),
               model: task.model,
               mode: task.mode,
+              agentId: store.getBindingAgent(task.id) ?? null,
               createdAt: isoFromMillis(task.created_at),
               lastEventSeq,
             },
@@ -1282,10 +1298,9 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Source task not found" });
           return;
         }
-        const bridge = getBridge?.();
-        if (!bridge || !tasks) {
+        if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Agent not ready yet",
+            error: "Task manager not available",
           });
           return;
         }
@@ -1381,7 +1396,8 @@ export function createRequestHandler(
           result,
         );
         json(res, HTTP_STATUS.ACCEPTED, result, req);
-        void tasks.drainCollaborationDeliveries(bridge, targetTask.id);
+        // Delivery targets the recipient's own execution, resolved there.
+        void tasks.drainCollaborationDeliveries(targetTask.id);
         return;
       }
 
@@ -1403,19 +1419,6 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
-        const bridge = getBridge?.();
-        if (!bridge) {
-          logPromptRejectBeforeSave({
-            taskId,
-            status: HTTP_STATUS.SERVICE_UNAVAILABLE,
-            reason: "agent_not_ready",
-            opId: requestOpId,
-          });
-          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Agent not ready yet",
-          });
-          return;
-        }
         if (!tasks) {
           logPromptRejectBeforeSave({
             taskId,
@@ -1428,7 +1431,29 @@ export function createRequestHandler(
           });
           return;
         }
-        tasks.setRecoveryBridge(bridge);
+        // The prompt goes to this task's current binding: resolving starts the
+        // agent when needed, and an unavailable agent is refused with the
+        // rescue path instead of being silently redirected.
+        let execution;
+        try {
+          execution = await tasks.resolveTaskExecution(taskId);
+        } catch (err) {
+          const unavailable = err instanceof AgentUnavailableError;
+          logPromptRejectBeforeSave({
+            taskId,
+            status: HTTP_STATUS.SERVICE_UNAVAILABLE,
+            reason: unavailable ? "agent_unavailable" : "execution_unresolved",
+            opId: requestOpId,
+            error: errorMessage(err),
+          });
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: unavailable
+              ? "Agent is not available for this task. Restart it or clear the task onto another agent."
+              : "Failed to resolve the task's agent",
+          });
+          return;
+        }
+        const bridge = execution.bridge;
 
         const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
         if (replayed) return;
@@ -1916,13 +1941,30 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
-        const bridge = getBridge?.();
-        if (!bridge) {
+        if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Agent not ready yet",
+            error: "Task manager not available",
           });
           return;
         }
+        // C1: the execution is captured before the body read. The request may
+        // sit here while a `/clear` rotates the task, so the projection into
+        // the agent's session is re-authorised below — the bridge would
+        // otherwise resolve the *new* binding and send a config request for
+        // this task into an execution that never asked for it.
+        let execution;
+        try {
+          execution = await tasks.resolveTaskExecution(taskId);
+        } catch (err) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error:
+              err instanceof AgentUnavailableError
+                ? "Agent is not available for this task"
+                : errorMessage(err),
+          });
+          return;
+        }
+        const capturedLease = tasks.authority.leaseFor(taskId);
         let body: { value?: string | boolean };
         try {
           body = JSON.parse(await readBody(req)) as {
@@ -1938,8 +1980,17 @@ export function createRequestHandler(
           });
           return;
         }
+        if (
+          !tasks.authority.accepts(capturedLease) ||
+          store.getBindingAgent(taskId) !== execution.agentId
+        ) {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Task execution was replaced; retry the request",
+          });
+          return;
+        }
         try {
-          const configOptions = await bridge.setConfigOption(
+          const configOptions = await execution.bridge.setConfigOption(
             taskId,
             configId,
             body.value,
@@ -2037,13 +2088,6 @@ export function createRequestHandler(
       // POST /api/v1/tasks/bootstrap — atomically return the current
       // agent's latest task, creating one only when none exists.
       if (url === "/api/v1/tasks/bootstrap" && req.method === "POST") {
-        const bridge = getBridge?.();
-        if (!bridge) {
-          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Agent not ready yet",
-          });
-          return;
-        }
         if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task manager not available",
@@ -2051,9 +2095,17 @@ export function createRequestHandler(
           return;
         }
         const taskManager = tasks;
+        // A task is a persisted entity; only creating one needs an agent.
+        // Resolving happens inside the (deduplicated) creation branch so
+        // returning an existing task never starts a process.
 
         bootstrapTaskPromise ??= (async () => {
-          const existing = store.listTasks().at(0);
+          // "Resume my task" is scoped to the default agent: the list is
+          // global, so asking it globally could resume a task another agent
+          // carries.
+          const existing = store
+            .listTasks({ agentId: taskManager.defaultAgentId })
+            .at(0);
           if (existing) {
             return {
               id: existing.id,
@@ -2061,6 +2113,7 @@ export function createRequestHandler(
               cwdDisplay: abbreviateHomePath(existing.cwd),
               title: existing.title,
               source: existing.source,
+              agentId: store.getBindingAgent(existing.id) ?? null,
               rootTaskId: store.rootTaskId,
               configOptions: [],
               agentCommands: taskManager.getAgentCommands(existing.id),
@@ -2068,6 +2121,7 @@ export function createRequestHandler(
             };
           }
 
+          const bridge = await taskManager.resolveDefaultTransport();
           const { taskId, configOptions } =
             await taskManager.createTask(bridge);
           const task = store.getTask(taskId);
@@ -2077,6 +2131,7 @@ export function createRequestHandler(
             cwdDisplay: abbreviateHomePath(task?.cwd ?? deps.dataDir),
             title: task?.title ?? null,
             source: task?.source ?? "auto",
+            agentId: store.getBindingAgent(taskId) ?? null,
             rootTaskId: store.rootTaskId,
             configOptions,
             agentCommands: taskManager.getAgentCommands(taskId),
@@ -2089,6 +2144,7 @@ export function createRequestHandler(
             cwd: result.cwd,
             cwdDisplay: result.cwdDisplay,
             title: result.title,
+            agentId: result.agentId,
             configOptions,
             agentCommands: result.agentCommands,
           });
@@ -2140,14 +2196,33 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
-        const bridge = getBridge?.();
-        if (!bridge || !tasks || !bridge.promptForText) {
+        if (!tasks) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Task manager not available",
+          });
+          return;
+        }
+        // `/compact` runs on the task's current execution with its current
+        // session id; it never creates a second session of its own.
+        let execution;
+        try {
+          execution = await tasks.resolveTaskExecution(taskId);
+        } catch (err) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error:
+              err instanceof AgentUnavailableError
+                ? "Agent is not available for this task"
+                : errorMessage(err),
+          });
+          return;
+        }
+        const bridge = execution.bridge;
+        if (!bridge.promptForText) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Agent not ready yet",
           });
           return;
         }
-        tasks.setRecoveryBridge(bridge);
         if (tasks.getBusyKind(taskId) !== null) {
           json(res, HTTP_STATUS.CONFLICT, {
             error: "Cancel active work before compacting the task",
@@ -2178,7 +2253,10 @@ export function createRequestHandler(
           });
           return;
         }
-        const agentSessionId = store.getAgentSessionId(taskId);
+        const agentSessionId = store.getAgentSessionIdAt(
+          taskId,
+          execution.agentId,
+        );
         // A placeholder slot is not an execution, even though it is a row.
         if (!agentSessionId || isEmptyExecutionSlot(taskId, agentSessionId)) {
           tasks.releasePromptSubmission(taskId, submissionId);
@@ -2252,6 +2330,7 @@ export function createRequestHandler(
               cwd: fresh.cwd,
               cwdDisplay: abbreviateHomePath(fresh.cwd),
               title: fresh.title,
+              agentId: store.getBindingAgent(taskId) ?? null,
               configOptions: clearResult.configOptions,
               agentCommands: tasks.getAgentCommands(taskId),
             } satisfies AgentEvent);
@@ -2308,10 +2387,9 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
-        const bridge = getBridge?.();
-        if (!bridge || !tasks) {
+        if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Agent not ready yet",
+            error: "Task manager not available",
           });
           return;
         }
@@ -2321,12 +2399,42 @@ export function createRequestHandler(
           });
           return;
         }
-        let body: { cwd?: string } = {};
+        let body: { cwd?: string; agentId?: unknown } = {};
         try {
           const raw = await readBody(req);
-          if (raw) body = JSON.parse(raw) as { cwd?: string };
+          if (raw) body = JSON.parse(raw) as typeof body;
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+          return;
+        }
+        if (body.agentId !== undefined && typeof body.agentId !== "string") {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "agentId must be a string",
+          });
+          return;
+        }
+        // Rescue target: an explicitly named configured agent, otherwise the
+        // task's own binding agent, otherwise the default. A binding agent
+        // that left the configuration is replaced by the default.
+        const boundAgent = store.getBindingAgent(taskId);
+        const targetAgentId =
+          body.agentId ??
+          (boundAgent && tasks.isAgentConfigured(boundAgent)
+            ? boundAgent
+            : tasks.defaultAgentId);
+        if (!tasks.isAgentConfigured(targetAgentId)) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: `Agent ${targetAgentId} is not configured`,
+          });
+          return;
+        }
+        let bridge;
+        try {
+          bridge = await tasks.resolveAgentTransport(targetAgentId);
+        } catch (err) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: `Agent ${targetAgentId} is not available: ${errorMessage(err)}`,
+          });
           return;
         }
         try {
@@ -2343,6 +2451,7 @@ export function createRequestHandler(
             cwd: fresh.cwd,
             cwdDisplay: abbreviateHomePath(fresh.cwd),
             title: fresh.title,
+            agentId: store.getBindingAgent(taskId) ?? null,
             configOptions: result.configOptions,
             agentCommands: tasks.getAgentCommands(taskId),
           } satisfies AgentEvent;
@@ -2393,43 +2502,45 @@ export function createRequestHandler(
           // configOptions returns inline. This eliminates the race where the
           // post-resume `config_option_update` broadcast can arrive before the
           // client's SSE is fully wired up — a flake observed on slow CI runners.
+          // Reading a task never requires a started agent. When the task
+          // already has a transport, a background resume warms the config
+          // schema; a failure only costs that optional payload.
           const wasLive = tasks?.liveTasks.has(taskId) ?? true;
+          const existingExecution = tasks?.existingTaskExecution(taskId);
           let resumePromise: Promise<void> | null = null;
-          if (tasks && getBridge && !wasLive) {
-            const bridge = getBridge();
-            if (bridge) {
-              resumePromise = tasks.ensureResumed(bridge, taskId);
-              // Broadcast config_option_update too, so any OTHER client viewing
-              // the same task (whose own GET may have raced and returned cold)
-              // also picks up the warm values.
-              resumePromise
-                .then(() => {
-                  const cur = store.getTask(taskId);
-                  if (!cur || !tasks.cachedConfigOptions.length) return;
-                  const opts = tasks.applyStoredConfig(
-                    tasks.cachedConfigOptions,
-                    cur,
-                  );
-                  sseManager.broadcast({
-                    type: "config_option_update",
-                    taskId,
-                    configOptions: opts,
-                  });
-                })
-                .catch(() => {});
-              resumePromise.catch((err) => {
-                slog.error("background resume failed", {
-                  taskId: taskId.slice(0, 8) + "…",
-                  error: err,
+          if (tasks && existingExecution && !wasLive) {
+            resumePromise = tasks.ensureResumed(
+              existingExecution.bridge,
+              taskId,
+            );
+            // Broadcast config_option_update too, so any OTHER client viewing
+            // the same task (whose own GET may have raced and returned cold)
+            // also picks up the warm values.
+            resumePromise
+              .then(() => {
+                const cur = store.getTask(taskId);
+                const warmed = tasks.configOptionsForTask(taskId);
+                if (!cur || !warmed.length) return;
+                const opts = tasks.applyStoredConfig(warmed, cur);
+                sseManager.broadcast({
+                  type: "config_option_update",
+                  taskId,
+                  configOptions: opts,
                 });
+              })
+              .catch(() => {});
+            resumePromise.catch((err) => {
+              slog.error("background resume failed", {
+                taskId: taskId.slice(0, 8) + "…",
+                error: err,
               });
-            }
+            });
           }
           // If cache is cold and we kicked off a resume, wait briefly so the
           // GET response includes warm configOptions. Bounded to 8s — past that
           // we fall back to returning empty configOptions and rely on the
           // broadcast above. The frontend retries (re-fetches) on broadcast.
-          if (resumePromise && !tasks?.cachedConfigOptions.length) {
+          if (resumePromise && !tasks?.configOptionsForTask(taskId).length) {
             let timer: NodeJS.Timeout | null = null;
             const timeoutPromise = new Promise<void>((resolve) => {
               timer = setTimeout(resolve, 8000);
@@ -2444,7 +2555,10 @@ export function createRequestHandler(
           // Re-read task in case resume mutated stored config
           const freshTask = store.getTask(taskId) ?? task;
           const configOptions = tasks
-            ? tasks.applyStoredConfig(tasks.cachedConfigOptions, freshTask)
+            ? tasks.applyStoredConfig(
+                tasks.configOptionsForTask(freshTask.id),
+                freshTask,
+              )
             : [];
           json(
             res,
@@ -2459,6 +2573,7 @@ export function createRequestHandler(
               model: freshTask.model,
               mode: freshTask.mode,
               parentId: freshTask.parent_id,
+              agentId: store.getBindingAgent(freshTask.id) ?? null,
               configOptions,
             },
             req,
@@ -2508,9 +2623,9 @@ export function createRequestHandler(
                 return;
               }
               // DB-only: an unavailable agent must not block Root reset.
-              const result = await tasks.resetRootTask(
-                getBridge?.() ?? undefined,
-              );
+              // DB-only: an unavailable agent must not block Root reset, and
+              // retirement uses each recorded binding's own agent.
+              const result = await tasks.resetRootTask();
               for (const entry of result.affected) {
                 sseManager.broadcast({
                   type: "task_deleted",
@@ -2535,7 +2650,7 @@ export function createRequestHandler(
             }
 
             const affectedStore = tasks
-              ? await tasks.deleteTask(getBridge?.() ?? undefined, taskId)
+              ? await tasks.deleteTask(undefined, taskId)
               : store.deleteTask(taskId);
             for (const entry of affectedStore.affected) {
               sseManager.broadcast({
@@ -2569,13 +2684,6 @@ export function createRequestHandler(
       // POST /api/v1/tasks (create new task)
       if (url === "/api/v1/tasks" && req.method === "POST") {
         const clientOpId = getClientOpId(req);
-        const bridge = getBridge?.();
-        if (!bridge) {
-          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Agent not ready yet",
-          });
-          return;
-        }
         if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task manager not available",
@@ -2614,11 +2722,9 @@ export function createRequestHandler(
           });
           return;
         }
-        // The parent must be a live task the current agent owns; the FK would
-        // reject a dangling reference with a raw database error otherwise. A
-        // live row is enough — it need not have an ACP binding yet (Root is
-        // created before SessionManager binds it), but a task bound only to
-        // another agent is rejected so no write can target a foreign parent.
+        // The parent must be a live task; the FK would reject a dangling
+        // reference with a raw database error otherwise. A live row is enough
+        // — it need not have an execution yet (an unbound Root is real).
         if (body.parentId) {
           if (!store.getParentTask(body.parentId)) {
             json(res, HTTP_STATUS.BAD_REQUEST, {
@@ -2626,6 +2732,29 @@ export function createRequestHandler(
             });
             return;
           }
+        }
+        // The new task runs where its parent runs, unless that agent is no
+        // longer available: then the child is created for the default agent.
+        // Either way the *parent's* binding is untouched — creating a child is
+        // not a reason to rotate an existing execution.
+        const parentAgent = body.parentId
+          ? store.getBindingAgent(body.parentId)
+          : undefined;
+        const targetAgentId =
+          parentAgent && tasks.isAgentConfigured(parentAgent)
+            ? parentAgent
+            : tasks.defaultAgentId;
+        let bridge;
+        try {
+          bridge = await tasks.resolveAgentTransport(targetAgentId);
+        } catch (err) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error:
+              err instanceof AgentUnavailableError
+                ? "Agent is not available for this task"
+                : errorMessage(err),
+          });
+          return;
         }
         try {
           const { taskId, configOptions } = await tasks.createTask(
@@ -2647,6 +2776,7 @@ export function createRequestHandler(
             cwd: task?.cwd,
             cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
             title: task?.title,
+            agentId: store.getBindingAgent(taskId) ?? null,
             configOptions,
             agentCommands: tasks.getAgentCommands(taskId),
             clientOpId: clientOpId ?? undefined,
@@ -3234,10 +3364,20 @@ export function createRequestHandler(
             json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
             return;
           }
-          const bridge = getBridge?.();
-          if (!tasks || !bridge) {
+          if (!tasks) {
             json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-              error: "Agent not available",
+              error: "Task manager not available",
+            });
+            return;
+          }
+          // Materializing an inbox message creates a task, so it targets the
+          // configured default agent; an unavailable one is an explicit error.
+          let bridge;
+          try {
+            bridge = await tasks.resolveDefaultTransport();
+          } catch (err) {
+            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+              error: `Agent not available: ${errorMessage(err)}`,
             });
             return;
           }
@@ -3329,14 +3469,7 @@ export function createRequestHandler(
 
       // POST /api/beta/prompt — quick one-shot prompt (create temp task + send)
       if (url === "/api/beta/prompt" && req.method === "POST") {
-        if (!tasks || !getBridge) {
-          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Agent not available",
-          });
-          return;
-        }
-        const bridge = getBridge();
-        if (!bridge) {
+        if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Agent not available",
           });
@@ -3360,6 +3493,15 @@ export function createRequestHandler(
         }
 
         const cwd = typeof body.cwd === "string" ? body.cwd : undefined;
+        let bridge;
+        try {
+          bridge = await tasks.resolveDefaultTransport();
+        } catch (err) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: `Agent not available: ${errorMessage(err)}`,
+          });
+          return;
+        }
         const { taskId, configOptions } = await tasks.createTask(
           bridge,
           cwd,
@@ -3376,6 +3518,7 @@ export function createRequestHandler(
           cwd: task?.cwd,
           cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
           title: task?.title,
+          agentId: store.getBindingAgent(taskId) ?? null,
           configOptions,
           agentCommands: tasks.getAgentCommands(taskId),
         });
