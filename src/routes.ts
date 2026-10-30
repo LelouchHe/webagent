@@ -1947,7 +1947,7 @@ export function createRequestHandler(
           });
           return;
         }
-        // C1: the execution is captured before the body read. The request may
+        // The execution is captured before the body read. The request may
         // sit here while a `/clear` rotates the task, so the projection into
         // the agent's session is re-authorised below — the bridge would
         // otherwise resolve the *new* binding and send a config request for
