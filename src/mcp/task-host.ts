@@ -300,6 +300,13 @@ export function createMcpTaskToolHost(deps: {
           },
         },
       );
+      // The child is committed and stays: it was created while the caller
+      // still owned its execution. This last step writes into the *source*
+      // transcript and broadcasts, and `createTask` may have awaited source
+      // config inheritance since the persist boundary — so the caller is
+      // validated again immediately before the source-side commit, with no
+      // await in between.
+      authorize(principal, sourceTaskId);
       const taskCreatedMessageId = randomUUID();
       const taskCreated = buildTaskCreatedSystemMessage({
         taskId: created.taskId,

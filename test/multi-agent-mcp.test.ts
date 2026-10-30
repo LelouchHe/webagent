@@ -358,6 +358,71 @@ describe("mcp authority over the production host", () => {
     void principal;
   });
 
+  it("re-checks the caller before writing the source after a child create", async () => {
+    const source = await tasks.createTask(bridge, dir, undefined, "agent");
+    // A stored model makes the child inherit configuration from the source,
+    // which is an await *after* the child has been persisted.
+    store.updateTaskConfig(source.taskId, "model", "chosen-model");
+    const lease = authority.leaseFor(source.taskId);
+    assert.ok(lease);
+    const token = capabilities.mint(source.taskId, "agent-a", lease.generation);
+
+    const modelOption = {
+      type: "select" as const,
+      id: "model",
+      name: "Model",
+      currentValue: "base-model",
+      options: [
+        { value: "base-model", name: "Base" },
+        { value: "chosen-model", name: "Chosen" },
+      ],
+    };
+    let sessions = 10;
+    bridge.newSession = async () => ({
+      sessionId: `child-session-${sessions++}`,
+      configOptions: [modelOption],
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const inInherit = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    bridge.setConfigOption = async (taskId: string) => {
+      // The child's inheritance is the await this test parks in; the source's
+      // own config replay during the clear must not block.
+      if (taskId !== source.taskId) {
+        reached();
+        await gate;
+      }
+      return [modelOption];
+    };
+
+    const pending = host.create(principalFor(token), { title: "kept child" });
+    await inInherit;
+    // The source rotates while the child's inheritance is still in flight.
+    await tasks.clearTask(bridge, source.taskId);
+    release();
+
+    await assert.rejects(() => pending, /execution_replaced/);
+    // The child was committed before the rotation and stays: the missing step
+    // is only the source-side commit.
+    const children = store.getDescendantTaskIds(source.taskId);
+    assert.equal(children.length, 1, "the child task is kept");
+    assert.ok(store.getTask(children[0]));
+    // No source transcript row and no broadcast for a request that lost its
+    // authority before that write.
+    assert.equal(
+      store
+        .getEvents(source.taskId)
+        .filter((event) => event.data.includes("kept child")).length,
+      0,
+      "the source transcript was not written",
+    );
+  });
+
   it("refuses a token whose task moved to another agent", async () => {
     const source = await tasks.createTask(bridge, dir, undefined, "agent");
     const lease = authority.leaseFor(source.taskId);
