@@ -210,11 +210,18 @@ describe("config request across a rotation", () => {
     await readStarted;
     assert.ok(bodyReadAt, "the request started reading its body");
 
+    const sidOnA = store.getAgentSessionId(created.taskId);
     // Rotate onto agent-b while the request is parked.
     const bTransport = await tasks.resolveAgentTransport("agent-b");
     await tasks.clearTask(bTransport, created.taskId);
     assert.equal(store.getBindingAgent(created.taskId), "agent-b");
+    // Both agents hand out the same session id, so only the binding agent tells
+    // the two executions apart — the case a projection mistake would hit.
+    assert.equal(store.getAgentSessionId(created.taskId), sidOnA);
     const configCallsB = calls(callsB).filter(
+      (call) => call.method === "config",
+    ).length;
+    const configCallsA = calls(callsA).filter(
       (call) => call.method === "config",
     ).length;
 
@@ -231,6 +238,18 @@ describe("config request across a rotation", () => {
       calls(callsB).filter((call) => call.method === "config").length,
       configCallsB,
       "no configuration request reached the new execution",
+    );
+    // And the stale bridge did not send one either: the write was refused, not
+    // re-routed to the agent that used to own the task.
+    assert.equal(
+      calls(callsA).filter((call) => call.method === "config").length,
+      configCallsA,
+      "no configuration request reached the retired execution",
+    );
+    // The new execution really is a different one under the same session id.
+    assert.equal(
+      store.getCurrentExecutionBinding(created.taskId)?.agent_key,
+      "agent-b",
     );
   });
 

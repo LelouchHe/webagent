@@ -187,17 +187,50 @@ describe("agent registry single-flight", () => {
     const reachedReload = new Promise<void>((resolve) => {
       inReload = resolve;
     });
-    const reload = registry.reload("agent-a", async () => {
+    // A real restart: the transport goes down first, so the adapter is
+    // genuinely unavailable while the reload holds the flight. That is what
+    // makes a missing flight observable as a second process.
+    const firstPid = fx.pids()[0];
+    let restarted!: () => void;
+    const reload = registry.reload("agent-a", async (adapter) => {
+      const bridge = adapter.bridge as unknown as {
+        shutdown: () => Promise<void>;
+        start: () => Promise<void>;
+      };
+      await bridge.shutdown();
       inReload();
       await gate;
+      await bridge.start();
+      restarted = () => {};
     });
     await reachedReload;
+    assert.equal(
+      registry.adapterFor("agent-a").isAvailable(),
+      false,
+      "the adapter is down while the reload is in flight",
+    );
+    assert.equal(isAlive(firstPid), false, "the old process is gone");
+
     const duringReload = registry.resolve("agent-a");
     release();
     await reload;
+    assert.ok(restarted);
     const adapter = await duringReload;
     assert.equal(adapter, registry.existing("agent-a"));
-    assert.equal(fx.pids().length, 1, "no second process was spawned");
+    // The restart itself spawns one replacement, so two processes were ever
+    // created; only one may be alive, and a resolve that started its own would
+    // have made it three.
+    assert.equal(
+      fx.pids().length,
+      2,
+      "the concurrent resolve joined the reload instead of starting a process",
+    );
+    assert.equal(
+      fx.pids().filter((pid) => isAlive(pid)).length,
+      1,
+      "exactly one process is alive after the reload",
+    );
+    assert.equal(adapter.isAvailable(), true, "the reload brought it back");
   });
 
   it("shuts down every transport it created, bound or not", async () => {

@@ -161,10 +161,33 @@ describe("pending capability over a real ACP session", () => {
       });
       assert.equal(response.status, 200);
       const body = (await response.json()) as {
-        result?: { content?: Array<{ text?: string }> };
+        result?: {
+          content?: Array<{ type: string; text?: string }>;
+          isError?: boolean;
+        };
         error?: unknown;
       };
+      // The effective result matters: a business error is carried inside
+      // `result.isError`/content, not at the JSON-RPC top level.
       assert.equal(body.error, undefined);
+      assert.notEqual(
+        body.result?.isError,
+        true,
+        `task_list must succeed, got ${JSON.stringify(body.result)}`,
+      );
+      const text = body.result?.content?.[0]?.text ?? "";
+      const listed = JSON.parse(text) as {
+        tasks?: Array<{ id: string }>;
+      };
+      const listedIds = listed.tasks?.map((task) => task.id) ?? [];
+      assert.ok(
+        listedIds.includes(created.taskId),
+        "the promoted token lists its own task",
+      );
+      assert.ok(
+        listedIds.includes(store.rootTaskId),
+        "the promoted token also reaches its parent",
+      );
       assert.equal(
         capabilities.resolve(token)?.state,
         "active",
