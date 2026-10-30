@@ -349,57 +349,106 @@ describe("multi-agent reads and rescue", () => {
 });
 
 describe("root first-use states", () => {
-  it("attaches, replaces and loads in three independent states", async () => {
-    // --- state 1: a never-bound Root attaches an execution ---
-    const dir = mkdtempSync(join(tmpdir(), "webagent-multi-root-"));
+  it("attaches an execution on a never-bound Root (fresh database)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "webagent-root-fresh-"));
     const fixture = agentFixture(dir, "root");
     const local = createHarness(dir, { "agent-a": fixture }, "agent-a");
     try {
       const rootId = local.store.rootTaskId;
       const generationBefore = local.authority.generationOf(rootId);
       assert.equal(local.store.hasBinding(rootId), false);
+
       await local.tasks.ensureTaskLive(rootId);
+
       assert.ok(local.store.hasBinding(rootId));
       assert.equal(
-        fixture.calls().filter((c) => c.method === "new").length,
+        fixture.calls().filter((call) => call.method === "new").length,
         1,
         "an unbound Root attaches a new session",
       );
-      const afterAttach = local.authority.generationOf(rootId);
+      assert.equal(
+        fixture.calls().filter((call) => call.method === "load").length,
+        0,
+        "there was no session to load",
+      );
       assert.ok(
-        (afterAttach ?? 0) > (generationBefore ?? 0),
+        (local.authority.generationOf(rootId) ?? 0) > (generationBefore ?? 0),
         "attach commits a generation",
       );
+    } finally {
+      await disposeHarness(local);
+    }
+  });
 
-      // --- state 2: an empty slot (reset) replaces its execution ---
+  it("materializes the empty slot left by a reset (separate database)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "webagent-root-slot-"));
+    const fixture = agentFixture(dir, "root");
+    const local = createHarness(dir, { "agent-a": fixture }, "agent-a");
+    try {
+      const rootId = local.store.rootTaskId;
+      // Build the empty-slot state first: one real execution, then a reset.
+      await local.tasks.ensureTaskLive(rootId);
       local.store.resetRootTask();
       assert.equal(
         local.store.getAgentSessionId(rootId),
         emptyExecutionSlot(rootId),
       );
       local.tasks.liveTasks.delete(rootId);
+      const afterReset = local.authority.generationOf(rootId);
+
       await local.tasks.ensureTaskLive(rootId);
+
       assert.equal(
-        fixture.calls().filter((c) => c.method === "new").length,
+        fixture.calls().filter((call) => call.method === "new").length,
         2,
         "an empty slot materializes a new session instead of loading",
       );
-      const afterReplace = local.authority.generationOf(rootId);
-      assert.ok((afterReplace ?? 0) > (afterAttach ?? 0));
-
-      // --- state 3: a real binding loads the existing session ---
-      local.tasks.liveTasks.delete(rootId);
-      await local.tasks.ensureTaskLive(rootId);
       assert.equal(
-        fixture.calls().filter((c) => c.method === "new").length,
-        2,
-        "a real binding never creates a second session",
+        fixture.calls().filter((call) => call.method === "load").length,
+        0,
+        "the agent never saw the slot's value as a session",
       );
       assert.ok(
-        fixture
-          .calls()
-          .some((c) => c.method === "load" || c.method === "resume"),
-        "a real binding restores the session",
+        (local.authority.generationOf(rootId) ?? 0) > (afterReset ?? 0),
+        "the replace commits a new generation",
+      );
+    } finally {
+      await disposeHarness(local);
+    }
+  });
+
+  it("loads a Root bound to another agent, whatever default_agent says", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "webagent-root-foreign-"));
+    const alpha = agentFixture(dir, "alpha", "shared");
+    const beta = agentFixture(dir, "beta", "shared");
+    const local = createHarness(
+      dir,
+      { "agent-a": alpha, "agent-b": beta },
+      // The configured default changed after the Root was bound.
+      "agent-a",
+    );
+    try {
+      const rootId = local.store.rootTaskId;
+      local.store.attachAgentSession(rootId, "agent-b", "shared-1");
+
+      await local.tasks.ensureRootLive();
+
+      assert.equal(local.store.getBindingAgent(rootId), "agent-b");
+      assert.equal(local.store.getAgentSessionId(rootId), "shared-1");
+      assert.equal(
+        beta.calls().filter((call) => call.method === "load").length,
+        1,
+        "the Root's own agent restored it",
+      );
+      assert.deepEqual(
+        alpha.calls().filter((call) => call.method === "load"),
+        [],
+        "the configured default was not consulted",
+      );
+      assert.equal(
+        alpha.calls().filter((call) => call.method === "new").length,
+        0,
+        "no new session was created for the default agent",
       );
     } finally {
       await disposeHarness(local);

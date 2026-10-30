@@ -185,6 +185,43 @@ describe("clear onto another agent", () => {
     );
   });
 
+  it("returns a Root carried by another agent without resolving it", async () => {
+    const callsBefore = calls().length;
+    // Bootstrap resumes the default agent's latest task, so start from a state
+    // where that agent carries nothing.
+    for (const task of store.listTasks({ agentId: "agent-a" })) {
+      if (task.id === store.rootTaskId) continue;
+      await tasks.deleteTask(undefined, task.id);
+    }
+    // The workspace Root is real and has a real execution, but on an agent this
+    // process no longer configures. Bootstrap must return its metadata instead
+    // of materializing anything on the default agent.
+    store.attachAgentSession(store.rootTaskId, "agent-b", "b-root-session");
+
+    const boot = await request(port, "POST", "/api/v1/tasks/bootstrap");
+    assert.equal(boot.status, 200);
+    const body = boot.json as { id: string; agentId: string };
+    assert.equal(body.id, store.rootTaskId);
+    assert.equal(body.agentId, "agent-b");
+    // Nothing was started for the default agent by a read.
+    assert.equal(calls().length, callsBefore);
+    // The binding was not moved.
+    assert.equal(store.getBindingAgent(store.rootTaskId), "agent-b");
+    assert.equal(store.getAgentSessionId(store.rootTaskId), "b-root-session");
+
+    // A reset leaves an empty slot, which *is* a materialization request.
+    store.resetRootTask();
+    const afterReset = await request(port, "POST", "/api/v1/tasks/bootstrap");
+    assert.equal(afterReset.status, 200);
+    assert.equal(store.getBindingAgent(store.rootTaskId), "agent-a");
+    assert.equal(
+      calls()
+        .slice(callsBefore)
+        .filter((call) => call.method === "new").length,
+      1,
+    );
+  });
+
   it("serves snapshot and detail for a task with no live transport", async () => {
     // Bound to a removed agent, and no process has been started for anyone:
     // these are reads, and they must not resolve an execution first.

@@ -47,6 +47,25 @@ const plog = rlog.scope("prompt");
 const slog = rlog.scope("task");
 const mlog = rlog.scope("msg");
 
+/**
+ * Upper bound on an optional read-path warm-up. A snapshot is served either
+ * way; this only prevents one slow agent from holding the response.
+ */
+const SNAPSHOT_WARMUP_TIMEOUT_MS = 5000;
+
+/** Resolve `work`, or after `ms` — never reject. */
+async function withTimeout(work: Promise<void>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | null = null;
+  await Promise.race([
+    work.finally(() => {
+      if (timer) clearTimeout(timer);
+    }),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]).catch(() => {});
+}
+
 const COMPACT_SUMMARY_PROMPT = [
   "Prepare a concise context handoff for a fresh execution of this WebAgent task.",
   "Summarize the user's current goal, completed work, current state, key decisions,",
@@ -1244,17 +1263,13 @@ export function createRequestHandler(
           return;
         }
         // A snapshot is a read: an unavailable, rotated, or not-yet-started
-        // agent must not block it. A task that has a live transport joins any
-        // in-flight restore so command discovery is included when possible,
-        // but a failed restore only degrades the payload.
-        const existing = tasks.existingTaskExecution(taskId);
-        if (existing && !tasks.liveTasks.has(taskId)) {
-          try {
-            await tasks.ensureResumed(existing.bridge, taskId);
-          } catch {
-            // Command discovery is optional here; metadata and runtime state
-            // below are what the client cannot reconstruct.
-          }
+        // agent must not block it, so the optional warm-up is bounded and a
+        // failure only costs command discovery.
+        if (!tasks.liveTasks.has(taskId)) {
+          await withTimeout(
+            tasks.warmTaskExecution(taskId).catch(() => {}),
+            SNAPSHOT_WARMUP_TIMEOUT_MS,
+          );
         }
         // Make sure runtime reflects the current activePrompts/bash state even
         // if no patch has been emitted yet for this task.
@@ -2121,9 +2136,40 @@ export function createRequestHandler(
             };
           }
 
-          // No task for the default agent: the workspace's first task is the
-          // Root anchor. Its first use either attaches an execution (never
-          // bound) or materializes the empty slot left by a reset.
+          // A Root that already has a real execution is a readable task even
+          // when another agent (or an unavailable one) carries it. Returning
+          // its metadata must not resolve anything: reading is not a reason to
+          // start a process or to move the binding.
+          const rootBinding = store.getCurrentExecutionBinding(
+            store.rootTaskId,
+          );
+          const rootMaterialized =
+            rootBinding !== undefined &&
+            !isEmptyExecutionSlot(
+              store.rootTaskId,
+              rootBinding.agent_session_id,
+            );
+          if (rootMaterialized) {
+            const root = store.getTask(store.rootTaskId);
+            if (root) {
+              return {
+                id: root.id,
+                cwd: root.cwd,
+                cwdDisplay: abbreviateHomePath(root.cwd),
+                title: root.title,
+                source: root.source,
+                agentId: rootBinding.agent_key,
+                rootTaskId: store.rootTaskId,
+                configOptions: [],
+                agentCommands: taskManager.getAgentCommands(root.id),
+                created: false,
+              };
+            }
+          }
+
+          // No task for the default agent, and the Root has no execution yet:
+          // the workspace's first task is the Root anchor. Its first use
+          // attaches one (never bound) or materializes a reset's empty slot.
           const root = await taskManager.ensureRootLive();
           const rootTaskId = store.rootTaskId;
           const result = {
