@@ -6937,6 +6937,57 @@ describe("events", () => {
       assert.ok(msgs.some((m) => m.includes("reloaded")));
     });
 
+    it("ignores another agent's reload while watching B", () => {
+      // The client is looking at a task carried by B; A restarting is not this
+      // task's busy state, and A coming back must not unlock it either.
+      state.taskId = "s-b";
+      state.taskAgentId = "agent-b";
+      state.busy = false;
+      state.agentReloading = false;
+      state.agentReloadingAgentId = null;
+
+      events.handleEvent({ type: "agent_reloading", agentId: "agent-a" });
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+
+      // A's `connected` is equally irrelevant.
+      events.handleEvent({
+        type: "connected",
+        agentId: "agent-a",
+        agent: { name: "agent-a", version: "2.0" },
+        configOptions: [],
+      });
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+
+      // B's own reload still works.
+      events.handleEvent({ type: "agent_reloading", agentId: "agent-b" });
+      assert.equal(state.agentReloading, true);
+      assert.equal(state.busy, true);
+      events.handleEvent({
+        type: "connected",
+        agentId: "agent-b",
+        agent: { name: "agent-b", version: "3.0" },
+        configOptions: [],
+      });
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+    });
+
+    it("does not guess a default agent when the task has no binding", () => {
+      state.taskId = "s-unbound";
+      state.taskAgentId = null;
+      state.busy = false;
+      state.agentReloading = false;
+      state.agentReloadingAgentId = null;
+
+      // No binding means no agent to attribute the reload to: do not unlock
+      // anything on a guess.
+      events.handleEvent({ type: "agent_reloading", agentId: "agent-a" });
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+    });
+
     it("agent_reloading_failed shows error and clears busy", () => {
       state.taskId = "s1";
       state.agentReloading = true;
