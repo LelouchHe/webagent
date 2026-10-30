@@ -1167,6 +1167,8 @@ describe("Task REST API", () => {
       /* eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- narrowing after assert.ok */
       if (deleted?.type === "task_deleted") {
         assert.equal(deleted.parentId, rootId);
+        // The broadcast names the agent that carried the removed execution.
+        assert.equal(deleted.agentId, "test-agent");
       }
       assert.deepEqual(JSON.parse(res.body), {
         taskId: "parent",

@@ -2624,7 +2624,6 @@ export function createRequestHandler(
                 });
                 return;
               }
-              // DB-only: an unavailable agent must not block Root reset.
               // DB-only: an unavailable agent must not block Root reset, and
               // retirement uses each recorded binding's own agent.
               const result = await tasks.resetRootTask();
@@ -2632,6 +2631,7 @@ export function createRequestHandler(
                 sseManager.broadcast({
                   type: "task_deleted",
                   taskId: entry.id,
+                  agentId: entry.agentId,
                   parentId: store.rootTaskId,
                   ...(clientOpId ? { clientOpId } : {}),
                 });
@@ -2658,6 +2658,7 @@ export function createRequestHandler(
               sseManager.broadcast({
                 type: "task_deleted",
                 taskId: entry.id,
+                agentId: entry.agentId,
                 ...(entry.id === taskId ? { parentId: task.parent_id } : {}),
                 ...(entry.id === taskId && clientOpId ? { clientOpId } : {}),
               });

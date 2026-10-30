@@ -247,6 +247,8 @@ export type AgentEvent =
   | {
       type: "task_deleted";
       taskId: string;
+      /** Agent that carried the removed task's execution, when it had one. */
+      agentId?: string | null;
       /** Parent of the requested task, when the server can provide it. */
       parentId?: string | null;
       /** Correlates the initiating HTTP action with its SSE echo. */
