@@ -204,6 +204,22 @@ describe("Permissions REST API", () => {
       assert.equal(perms.length, 2);
       assert.equal(perms[0].requestId, "perm-1");
       assert.equal(perms[1].requestId, "perm-2");
+      // The server's execution provenance is internal: neither the list nor the
+      // status payload may expose it.
+      assert.deepEqual(Object.keys(perms[0]).sort(), [
+        "options",
+        "requestId",
+        "title",
+        "toolName",
+      ]);
+      const status = await makeRequest(
+        port,
+        "GET",
+        `/api/v1/tasks/${taskId}/status`,
+      );
+      const statusBody = JSON.parse(status.body);
+      assert.equal(statusBody.pendingPermissions.length, 2);
+      assert.equal("execution" in statusBody.pendingPermissions[0], false);
     });
 
     it("returns only permissions for the requested task", async () => {

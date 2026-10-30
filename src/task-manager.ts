@@ -309,6 +309,14 @@ export function createObligationController(
  * the manager creates itself is task-scoped.
  */
 /** A task's current execution environment, resolved from its binding. */
+/** A pending permission as an API client sees it (no internal provenance). */
+export interface PublicPendingPermission {
+  requestId: string;
+  toolName: string;
+  title: string;
+  options: Array<{ optionId: string; label: string }>;
+}
+
 export interface TaskExecution {
   agentId: string;
   adapter: ExecutionAdapter;
@@ -3414,10 +3422,25 @@ export class TaskManager implements ObligationHost {
     }
   }
 
-  /** Get pending permission requests for a task (or all tasks if no id). */
-  getPendingPermissions(taskId?: string): PendingPermission[] {
+  /**
+   * Public projection of pending permission requests for one task (or all
+   * tasks). The internal `execution` provenance — the source agent and the
+   * lease the request arrived under — is deliberately dropped: it is the
+   * server's own authorization fact, never a client-facing one.
+   */
+  getPendingPermissions(taskId?: string): PublicPendingPermission[] {
     const perms = [...this.pendingPermissions.values()];
-    return taskId ? perms.filter((p) => p.taskId === taskId) : perms;
+    return (taskId ? perms.filter((p) => p.taskId === taskId) : perms).map(
+      (p) => ({
+        requestId: p.requestId,
+        toolName: "",
+        title: p.title,
+        options: p.options.map((option) => ({
+          optionId: option.optionId,
+          label: option.label,
+        })),
+      }),
+    );
   }
 
   /**
