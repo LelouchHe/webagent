@@ -383,6 +383,115 @@ describe("mcp authority over the production host", () => {
     );
   });
 
+  it("re-checks the caller after waiting for the tree lock", async () => {
+    const source = await tasks.createTask(bridge, dir, undefined, "agent");
+    const lease = authority.leaseFor(source.taskId);
+    assert.ok(lease);
+    const token = capabilities.mint(source.taskId, "agent-a", lease.generation);
+
+    // Hold the tree lock the child's persistence needs, so the request parks
+    // *between* the two caller checks: the first one already passed, and only
+    // the post-lock re-check can see the rotation.
+    const lock = tasks["treeLock"] as unknown as {
+      acquire: (spec: { exclusive: string[] }) => Promise<() => void>;
+    };
+    const releaseLock = await lock.acquire({ exclusive: [source.taskId] });
+
+    let newSessions = 0;
+    const innerNewSession = bridge.newSession.bind(bridge);
+    bridge.newSession = async (cwd: string, options?: never) => {
+      newSessions++;
+      return innerNewSession(cwd, options);
+    };
+
+    const pending = callTool(endpoint.baseUrl, token, "task_create", {
+      title: "waits for the lock",
+    });
+    const deadline = Date.now() + 5000;
+    while (newSessions === 0 && Date.now() < deadline) {
+      await new Promise((done) => setTimeout(done, 5));
+    }
+    assert.equal(newSessions, 1, "the ACP session was created");
+    assert.equal(
+      store.listTasks().filter((task) => task.id !== store.rootTaskId).length,
+      1,
+      "the task is not persisted while the lock is held",
+    );
+
+    // Rotate the source while the request is parked on the lock.
+    await tasks.clearTask(bridge, source.taskId);
+    releaseLock();
+
+    const refused = await pending;
+    const result = refused.json.result as
+      | { isError?: boolean; content?: Array<{ text?: string }> }
+      | undefined;
+    assert.ok(result);
+    assert.equal(result.isError, true);
+    assert.match(
+      result.content?.[0]?.text ?? "",
+      /execution_replaced/,
+      "the post-lock check refuses the stale create",
+    );
+    assert.equal(
+      store.listTasks().filter((task) => task.id !== store.rootTaskId).length,
+      1,
+      "no task was persisted after the rotation",
+    );
+  });
+
+  it("re-checks the caller after the cancel request returns", async () => {
+    const source = await tasks.createTask(bridge, dir, undefined, "agent");
+    const child = await tasks.createTask(bridge, dir, source.taskId, "agent", {
+      parentId: source.taskId,
+    });
+    const lease = authority.leaseFor(source.taskId);
+    assert.ok(lease);
+    const token = capabilities.mint(source.taskId, "agent-a", lease.generation);
+    // The child has to be busy for the cancel to await the transport.
+    tasks.activePrompts.add(child.taskId);
+    tasks.syncBusy(child.taskId);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const inCancel = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    bridge.cancel = async () => {
+      reached();
+      await gate;
+    };
+
+    const pending = callTool(endpoint.baseUrl, token, "task_cancel", {
+      target: child.taskId,
+      reason: "no longer needed",
+    });
+    await inCancel;
+    // Rotate the caller's own task while the cancel is in flight.
+    await tasks.clearTask(bridge, source.taskId);
+    release();
+
+    const refused = await pending;
+    const result = refused.json.result as
+      | { isError?: boolean; content?: Array<{ text?: string }> }
+      | undefined;
+    assert.ok(result);
+    assert.equal(result.isError, true);
+    assert.match(result.content?.[0]?.text ?? "", /execution_replaced/);
+    // The cancel reached the transport, but its record was not written under
+    // the replaced authority.
+    assert.equal(
+      store.getEvents(child.taskId).filter((e) => e.type === "task_cancel")
+        .length,
+      0,
+      "no cancellation record was written for a replaced caller",
+    );
+    tasks.activePrompts.delete(child.taskId);
+  });
+
   it("re-checks the caller before writing the source after a child create", async () => {
     const source = await tasks.createTask(bridge, dir, undefined, "agent");
     // A stored model makes the child inherit configuration from the source,
