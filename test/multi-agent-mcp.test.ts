@@ -304,11 +304,13 @@ describe("mcp authority over the production host", () => {
       await gate;
     };
 
-    const principal = principalFor(token);
-    // The real host drives the create: its own authorization is what the
-    // persist boundary re-runs, so this proves the production chain rather
-    // than a copy of it.
-    const pending = host.create(principal, { title: "child in flight" });
+    assert.equal(await initialize(endpoint.baseUrl, token), 200);
+    // A real HTTP `tools/call`: it goes through the endpoint's principal
+    // construction, the MCP request parsing, and the host's dispatch, and it
+    // parks inside `newSession`.
+    const pending = callTool(endpoint.baseUrl, token, "task_create", {
+      title: "child in flight",
+    });
 
     await reachedInsideSession;
     // A real rotation: same owner, new execution, higher generation.
@@ -316,7 +318,17 @@ describe("mcp authority over the production host", () => {
     await tasks.clearTask(bridge, source.taskId);
     release();
 
-    await assert.rejects(() => pending, /execution_replaced/);
+    const refused = await pending;
+    const refusedResult = refused.json.result as
+      | { isError?: boolean; content?: Array<{ text?: string }> }
+      | undefined;
+    assert.equal(refused.status, 200, "the tool call itself is answered");
+    assert.equal(refusedResult?.isError, true, "the tool reports an error");
+    assert.match(
+      refusedResult.content?.[0]?.text ?? "",
+      /execution_replaced/,
+      "the stale dispatch is refused at the submission boundary",
+    );
     // No child row survived the refusal, and the source recorded nothing.
     assert.equal(
       store.listTasks().filter((task) => task.id !== store.rootTaskId).length,
@@ -344,7 +356,21 @@ describe("mcp authority over the production host", () => {
       title: "after rotation",
     });
     assert.equal(allowed.status, 200);
-    assert.equal(allowed.json.error, undefined);
+    // The control asserts the effective result: a created child, not just a
+    // 200 envelope.
+    const allowedResult = allowed.json.result as
+      | { isError?: boolean; content?: Array<{ text?: string }> }
+      | undefined;
+    assert.notEqual(allowedResult?.isError, true);
+    const created = JSON.parse(allowedResult?.content?.[0]?.text ?? "{}") as {
+      taskId?: string;
+    };
+    assert.ok(created.taskId, "the fresh token created a child");
+    assert.equal(
+      store.listTasks().filter((task) => task.id !== store.rootTaskId).length,
+      2,
+      "the source and the new child exist",
+    );
 
     // The rotation revoked the old token, so even authentication fails.
     const stale = await callTool(endpoint.baseUrl, token, "task_create", {
@@ -355,7 +381,6 @@ describe("mcp authority over the production host", () => {
       (stale.json.error as { message?: string } | undefined)?.message,
       "Unauthorized",
     );
-    void principal;
   });
 
   it("re-checks the caller before writing the source after a child create", async () => {
