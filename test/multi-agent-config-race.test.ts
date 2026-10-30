@@ -97,7 +97,9 @@ describe("config request across a rotation", () => {
       // the body back, so the request is parked inside `readBody` — the exact
       // window where a real `/clear` can land.
       onRequestBodyReadStart: (url) => {
-        if (!url.includes("/model")) return;
+        // Any configuration write: the legacy `/model` path and the generic
+        // `/config/<id>` path both read a body.
+        if (!/\/(model|config\/)/.test(url)) return;
         bodyReadAt = url;
         const waiters = bodyReadWaiters;
         bodyReadWaiters = [];
@@ -143,11 +145,15 @@ describe("config request across a rotation", () => {
    * Send a model update whose body is withheld by one byte, so the route parks
    * inside `readBody` after capturing its execution. `release` finishes it.
    */
-  function pausedModelPut(taskId: string): {
+  function pausedModelPut(
+    taskId: string,
+    configPath = "model",
+    value = "probe-model",
+  ): {
     response: Promise<{ status: number; json: unknown }>;
     release: () => void;
   } {
-    const payload = JSON.stringify({ value: "probe-model" });
+    const payload = JSON.stringify({ value });
     let release!: () => void;
     const response = new Promise<{ status: number; json: unknown }>(
       (resolve, reject) => {
@@ -155,7 +161,7 @@ describe("config request across a rotation", () => {
           {
             hostname: "127.0.0.1",
             port,
-            path: `/api/v1/tasks/${taskId}/model`,
+            path: `/api/v1/tasks/${taskId}/${configPath}`,
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
@@ -235,8 +241,13 @@ describe("config request across a rotation", () => {
     const created = await tasks.createTask(transport, dir, undefined, "agent");
 
     const readStarted = nextBodyRead();
+    // A plain string option: "model" needs the replacement session's schema to
+    // resolve a wire value, which would fail before any request was sent and
+    // hide the side effect this test is about.
     const { response: responsePromise, release } = pausedModelPut(
       created.taskId,
+      "config/mode",
+      "#plan",
     );
     await readStarted;
 
