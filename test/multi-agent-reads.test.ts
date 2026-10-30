@@ -21,9 +21,18 @@ import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 
 /**
- * Read paths under three kinds of unavailability, plus the read-path time
- * bound. An unavailable execution is a runtime condition: the task stays a
- * task, and no read may fail, hang, or move the binding because of it.
+ * Read paths under three genuinely different kinds of unavailability, plus the
+ * read-path time bound.
+ *
+ * The three states must be produced differently, because they take different
+ * code paths:
+ *   1. the configured agent's binary does not exist — starting really fails;
+ *   2. the agent is configured and its transport is dead but still bound —
+ *      resolution restarts it;
+ *   3. the binding's agent is no longer configured — nothing is resolved and the
+ *      binding is not taken over.
+ *
+ * Every read below must return in all three; only warming differs.
  */
 
 const FIXTURE = fileURLToPath(
@@ -34,7 +43,7 @@ function request(
   port: number,
   method: string,
   path: string,
-): Promise<{ status: number; json: unknown }> {
+): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
       { hostname: "127.0.0.1", port, path, method },
@@ -44,10 +53,7 @@ function request(
           text += chunk.toString();
         });
         res.on("end", () => {
-          resolve({
-            status: res.statusCode!,
-            json: text ? JSON.parse(text) : null,
-          });
+          resolve({ status: res.statusCode!, body: text });
         });
       },
     );
@@ -64,25 +70,36 @@ describe("reads with an unavailable execution", () => {
   let registry: AgentRegistry;
   let server: http.Server;
   let port: number;
-  let callsPath: string;
 
   before(async () => {
     dir = mkdtempSync(join(tmpdir(), "webagent-reads-"));
-    callsPath = join(dir, "agent.calls.jsonl");
-    writeFileSync(callsPath, "");
+    const deadCalls = join(dir, "dead.calls.jsonl");
+    writeFileSync(deadCalls, "");
     store = new Store(dir);
     store.ensureRootTask(dir);
     authority = new ExecutionAuthority(new GenerationLedger());
-    const agents: Record<string, { cmd: string }> = {
-      // Present in configuration, but its binary does not exist.
-      "agent-missing": { cmd: join(dir, "no-such-binary") },
+    // Each agent's command is the one its transport really launches: the
+    // missing-binary state must fail in `spawn`, not in a stub.
+    const commands: Record<string, string> = {
+      "agent-missing": join(dir, "no-such-binary"),
+      "agent-dead": [
+        process.execPath,
+        "--experimental-strip-types",
+        FIXTURE,
+        "shared",
+        deadCalls,
+      ].join(" "),
     };
     registry = new AgentRegistry({
-      agents,
-      defaultAgentId: "agent-missing",
-      createTransport: () => {
-        throw new Error("no transport for this agent");
+      agents: {
+        // 1. Configured, but its binary does not exist.
+        "agent-missing": { cmd: commands["agent-missing"] },
+        // 2. Configured and working; the test kills its transport later.
+        "agent-dead": { cmd: commands["agent-dead"] },
       },
+      defaultAgentId: "agent-dead",
+      createTransport: (agentId) =>
+        new AgentBridge(commands[agentId], store.sessionView(agentId), agentId),
     });
     tasks = new TaskManager({
       store,
@@ -99,6 +116,13 @@ describe("reads with an unavailable execution", () => {
       publicDir: join(dir, "public"),
       dataDir: dir,
       limits: { bash_output: 1024, image_upload: 1024 },
+      shareConfig: {
+        enabled: true,
+        ttl_hours: 0,
+        csp_enforce: true,
+        viewer_origin: "",
+        internal_hosts: [],
+      },
     });
     server = http.createServer(handler);
     await new Promise<void>((resolve) =>
@@ -119,7 +143,27 @@ describe("reads with an unavailable execution", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  async function expectReadable(taskId: string): Promise<void> {
+  /** Seed attachment + share rows so the read assertions have something to read. */
+  function seedFiles(taskId: string): string {
+    const attachmentDir = join(dir, "tasks", taskId, "attachments");
+    mkdirSync(attachmentDir, { recursive: true });
+    writeFileSync(join(attachmentDir, "note.txt"), "attachment body");
+    store.insertAttachment({
+      id: `att-${taskId}`,
+      taskId,
+      kind: "file",
+      name: "note.txt",
+      mime: "text/plain",
+      size: 15,
+      realpath: join(attachmentDir, "note.txt"),
+    });
+    const token = `share_${taskId.replace(/[^a-z0-9]/gi, "").padEnd(18, "x")}`;
+    store.insertSharePreview({ token, taskId, snapshotSeq: 0 });
+    store.activateShare(token);
+    return token;
+  }
+
+  async function expectReadable(taskId: string, shareToken: string) {
     const detail = await request(port, "GET", `/api/v1/tasks/${taskId}`);
     assert.equal(detail.status, 200);
     const snapshot = await request(
@@ -132,58 +176,92 @@ describe("reads with an unavailable execution", () => {
     assert.equal(events.status, 200);
     const list = await request(port, "GET", "/api/v1/tasks");
     assert.ok(
-      (list.json as Array<{ id: string }>).some((task) => task.id === taskId),
+      (JSON.parse(list.body) as Array<{ id: string }>).some(
+        (task) => task.id === taskId,
+      ),
+    );
+    // Attachment bytes are served from disk by task id.
+    const attachment = await request(
+      port,
+      "GET",
+      `/api/v1/tasks/${taskId}/attachments/note.txt`,
+    );
+    assert.equal(attachment.status, 200);
+    assert.equal(attachment.body, "attachment body");
+    // The owner share list is an operator read, not an execution read.
+    const shares = await request(port, "GET", "/api/v1/shares");
+    assert.equal(shares.status, 200);
+    assert.ok(
+      (JSON.parse(shares.body) as { shares: Array<{ token: string }> }).shares
+        .map((entry) => entry.token)
+        .includes(shareToken),
     );
   }
 
-  it("1. binary missing: still readable, and the binding is untouched", async () => {
-    store.createTask("missing", dir, "auto", "agent-missing", "session-1");
-    await expectReadable("missing");
-    assert.equal(store.getBindingAgent("missing"), "agent-missing");
-    // A warm-up attempt fails closed but is not a read failure.
+  it("1. configured agent with a missing binary", async () => {
+    store.createTask("missing", dir, "auto", "agent-missing", "missing-sid");
+    const token = seedFiles("missing");
+
+    await expectReadable("missing", token);
+    // Starting really is what fails: the warm-up resolves this agent's binary.
     await assert.rejects(() => tasks.warmTaskExecution("missing"));
-    await expectReadable("missing");
-  });
+    assert.equal(store.getBindingAgent("missing"), "agent-missing");
+    assert.equal(store.getAgentSessionId("missing"), "missing-sid");
+    await expectReadable("missing", token);
 
-  it("2. agent removed from configuration: readable, and warming does not rotate", async () => {
-    store.createTask("removed", dir, "auto", "agent-gone", "session-2");
-    await expectReadable("removed");
-    await tasks.warmTaskExecution("removed");
     assert.equal(
-      store.getBindingAgent("removed"),
-      "agent-gone",
-      "a read never takes the task over",
+      (await request(port, "DELETE", "/api/v1/tasks/missing")).status,
+      200,
     );
-    assert.equal(store.getAgentSessionId("removed"), "session-2");
+    assert.equal(
+      (await request(port, "GET", "/api/v1/tasks/missing")).status,
+      404,
+    );
   });
 
-  it("3. dead but still bound: readable, and resolution can restart it", async () => {
+  it("2. configured agent whose transport is dead but still bound", async () => {
     // A real process that has been shut down: the adapter still holds its
-    // bridge, but the execution is gone.
-    const fixtureDir = join(dir, "dead");
-    store.createTask("dead", dir, "auto", "agent-dead", "session-3");
-    const bridge = new AgentBridge(
-      [
-        process.execPath,
-        "--experimental-strip-types",
-        FIXTURE,
-        "shared",
-        join(fixtureDir, "dead.calls.jsonl"),
-      ].join(" "),
-      store.sessionView("agent-dead"),
-      "agent-dead",
-    );
-    mkdirSync(fixtureDir, { recursive: true });
-    writeFileSync(join(fixtureDir, "dead.calls.jsonl"), "");
-    await bridge.start();
-    assert.equal(bridge.isAvailable(), true);
-    await bridge.shutdown();
-    tasks.attachExecutionBridge(bridge);
+    // transport and the agent is still in the configuration.
+    const transport = await tasks.resolveAgentTransport("agent-dead");
+    store.createTask("dead", dir, "auto", "agent-dead", "dead-sid");
+    const token = seedFiles("dead");
+    await (transport as unknown as AgentBridge).shutdown();
     assert.equal(registry.adapterFor("agent-dead").isAvailable(), false);
+    assert.equal(registry.isConfigured("agent-dead"), true);
 
-    await expectReadable("dead");
+    await expectReadable("dead", token);
+    // Warming restarts this configured agent; the binding is unchanged.
+    await tasks.warmTaskExecution("dead");
+    assert.equal(registry.adapterFor("agent-dead").isAvailable(), true);
     assert.equal(store.getBindingAgent("dead"), "agent-dead");
-    assert.equal(store.getAgentSessionId("dead"), "session-3");
+    assert.equal(store.getAgentSessionId("dead"), "dead-sid");
+    await expectReadable("dead", token);
+
+    assert.equal(
+      (await request(port, "DELETE", "/api/v1/tasks/dead")).status,
+      200,
+    );
+  });
+
+  it("3. binding agent removed from the configuration", async () => {
+    store.createTask("gone", dir, "auto", "agent-gone", "gone-sid");
+    const token = seedFiles("gone");
+    assert.equal(registry.isConfigured("agent-gone"), false);
+
+    await expectReadable("gone", token);
+    // Warming returns without resolving and without taking the task over.
+    await tasks.warmTaskExecution("gone");
+    assert.equal(store.getBindingAgent("gone"), "agent-gone");
+    assert.equal(store.getAgentSessionId("gone"), "gone-sid");
+    // Resolving an operation *does* take it over, which is why it is not a read.
+    const execution = await tasks.resolveTaskExecution("gone");
+    assert.equal(execution.agentId, registry.defaultAgentId);
+    assert.equal(store.getBindingAgent("gone"), registry.defaultAgentId);
+
+    assert.equal(
+      (await request(port, "DELETE", "/api/v1/tasks/gone")).status,
+      200,
+    );
   });
 });
 
