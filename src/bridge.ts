@@ -933,6 +933,16 @@ export class AgentBridge extends EventEmitter {
           /* best-effort */
         }
       }
+      // Bash runs are app-local, so they are not covered by the prompt
+      // cancellation above. Stop every one this agent's tasks own, including
+      // tasks that are running *only* bash, before the teardown drops their
+      // handles.
+      for (const taskId of agentTaskIds) {
+        const proc = tasks.runningBashProcs.get(taskId);
+        if (!proc) continue;
+        interruptBashProc(proc);
+        tasks.runningBashProcs.delete(taskId);
+      }
       this.emit("event", {
         type: "agent_reloading",
         agentId: this.agentId,

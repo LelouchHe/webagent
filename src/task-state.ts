@@ -190,6 +190,11 @@ export class TaskStateManager {
     return s;
   }
 
+  /** True when this task has runtime state in this process (never creates it). */
+  hasState(taskId: string): boolean {
+    return this.states.has(taskId);
+  }
+
   /** Read streaming state without creating runtime state for an unseen task. */
   peekStreaming(taskId: string): StreamingState {
     const streaming = this.states.get(taskId)?.runtime.streaming;

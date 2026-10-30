@@ -779,6 +779,7 @@ export class TaskManager implements ObligationHost {
     this.pendingDispatchRetries.delete(taskId);
     this.store.failOutstandingDeliveriesForTaskClear(taskId);
     this.obligations.noteExecutionRotated(taskId);
+    this.agents.existing(from.agentId)?.agentCommandSnapshots.delete(taskId);
     this.retireExecution(taskId, from.agentId, from.sessionId);
     if (!task) return;
     const fromLabel = from.agentId;
@@ -869,7 +870,14 @@ export class TaskManager implements ObligationHost {
     for (const id of idSet) {
       this.activePrompts.delete(id);
       this.pendingPromptSubmissions.delete(id);
-      this.runningBashProcs.delete(id);
+      // A bash run is app-local but the task is losing its runtime here. Stop
+      // it before dropping the only handle that can still reach it, or the
+      // child keeps running untracked and unkillable.
+      const bash = this.runningBashProcs.get(id);
+      if (bash) {
+        interruptBashProc(bash);
+        this.runningBashProcs.delete(id);
+      }
       this.liveTasks.delete(id);
       this.syncPendingPermissions(id);
     }
@@ -909,12 +917,10 @@ export class TaskManager implements ObligationHost {
       if (entry.agentSessionId) {
         this.retireExecution(entry.id, entry.agentId, entry.agentSessionId);
       }
-      this.liveTasks.delete(entry.id);
-      this.capabilities?.revokeByTask(entry.id);
-      const adapter = entry.agentId
-        ? this.agents.existing(entry.agentId)
-        : undefined;
-      adapter?.agentCommandSnapshots.delete(entry.id);
+      // The row is gone: release everything the task accumulated, not just the
+      // live-task flag. A task that was read once has a runtime state row and a
+      // generation entry that would otherwise outlive it.
+      this.releaseTaskRuntime(entry.id, "hard");
     }
     if (cleaned.length > 0)
       slog.info("cleaned empty task(s)", { count: cleaned.length });
@@ -1536,6 +1542,12 @@ export class TaskManager implements ObligationHost {
       retired.agent_key !== replacementAgentId ||
       retired.agent_session_id !== replacementSessionId;
     if (!moved) return;
+    // The snapshot belongs to the process that produced it. Leaving it on the
+    // old agent's adapter would let that agent's later reload broadcast an
+    // empty command list for a task it no longer carries.
+    this.agents
+      .existing(retired.agent_key)
+      ?.agentCommandSnapshots.delete(taskId);
     this.retireExecution(taskId, retired.agent_key, retired.agent_session_id);
   }
 
@@ -2338,6 +2350,14 @@ export class TaskManager implements ObligationHost {
     const cleared: Array<AgentCommandSnapshot & { taskId: string }> = [];
     for (const adapter of adapters) {
       for (const [taskId, current] of adapter.agentCommandSnapshots) {
+        // A snapshot left over from before a rotation belongs to the old
+        // agent; announcing it now would tell a client watching the new agent
+        // that its commands vanished.
+        const bound = this.store.getBindingAgent(taskId);
+        if (bound !== undefined && bound !== adapter.agentId) {
+          adapter.agentCommandSnapshots.delete(taskId);
+          continue;
+        }
         const snapshot: AgentCommandSnapshot = {
           epoch: adapter.agentCommandEpoch,
           revision: current.revision + 1,

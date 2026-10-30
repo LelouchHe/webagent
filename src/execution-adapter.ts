@@ -30,7 +30,16 @@ export class ExecutionAdapter {
   agentInfo: { name: string; version: string } | null = null;
   /** Available-command snapshots are agent process state, not task state. */
   readonly agentCommandSnapshots = new Map<string, AgentCommandSnapshot>();
-  readonly agentCommandEpoch = randomUUID();
+  /**
+   * Identifies the revision space of `agentCommandSnapshots`. A new agent
+   * process restarts each task's revision at 1, so the epoch must move with it:
+   * clients accept a lower revision only when the epoch changed.
+   */
+  private commandEpoch = randomUUID();
+
+  get agentCommandEpoch(): string {
+    return this.commandEpoch;
+  }
   /** The transport currently driving this agent, once one is started. */
   bridge: ExecutionRetirer | null = null;
 
@@ -57,6 +66,9 @@ export class ExecutionAdapter {
     this.cachedConfigOptions = [];
     this.agentInfo = null;
     this.agentCommandSnapshots.clear();
+    // A fresh process renumbers commands from 1; advance the epoch so clients
+    // never compare the new revisions with the old ones.
+    this.commandEpoch = randomUUID();
   }
 
   /**

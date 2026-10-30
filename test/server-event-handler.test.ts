@@ -100,6 +100,18 @@ function createControllableBridge() {
   };
 }
 
+/** A principal for a task the manager currently owns, with its generation. */
+function principalFor(manager: TaskManager, taskId: string) {
+  const lease = manager.authority.leaseFor(taskId);
+  assert.ok(lease, `task ${taskId} must have a generation`);
+  return {
+    taskId,
+    agentId: "test-agent",
+    generation: lease.generation,
+    initializing: false,
+  };
+}
+
 /** Arm a directed obligation the way a direct parent dispatch does. */
 async function armDirectDispatch(
   store: Store,
@@ -113,16 +125,7 @@ async function armDirectDispatch(
   // must be the binding agent's transport.
   tasks.attachExecutionBridge(bridge);
   const host = createMcpTaskToolHost({ store, tasks });
-  await host.send(
-    {
-      taskId: sourceTaskId,
-      agentId: "test-agent",
-      generation: null,
-      initializing: false,
-    },
-    targetTaskId,
-    body,
-  );
+  await host.send(principalFor(tasks, sourceTaskId), targetTaskId, body);
   const obligation = tasks.getObligation(sourceTaskId, targetTaskId);
   assert.ok(obligation, "a direct parent dispatch must arm an obligation");
   return obligation;
@@ -405,16 +408,7 @@ describe("handleAgentEvent", () => {
       store,
       tasks,
     });
-    await host.send(
-      {
-        taskId: "sibling",
-        agentId: "test-agent",
-        generation: null,
-        initializing: false,
-      },
-      "child",
-      "A sibling note.",
-    );
+    await host.send(principalFor(tasks, "sibling"), "child", "A sibling note.");
     // Mutation evidence: arming on any local relation puts a record here.
     assert.equal(tasks.getObligation("sibling", "child"), undefined);
     calls.prompts[0].resolve();
@@ -755,12 +749,7 @@ describe("handleAgentEvent", () => {
       tasks,
     });
     await host.update(
-      {
-        taskId: "child",
-        agentId: "test-agent",
-        generation: null,
-        initializing: false,
-      },
+      principalFor(tasks, "child"),
       "done",
       "Everything is verified.",
     );
@@ -809,12 +798,7 @@ describe("handleAgentEvent", () => {
       tasks,
     });
     await host.update(
-      {
-        taskId: "child",
-        agentId: "test-agent",
-        generation: null,
-        initializing: false,
-      },
+      principalFor(tasks, "child"),
       "done",
       "Settled from the dispatch turn.",
     );
@@ -863,16 +847,7 @@ describe("handleAgentEvent", () => {
       store,
       tasks,
     });
-    await host.update(
-      {
-        taskId: "child",
-        agentId: "test-agent",
-        generation: null,
-        initializing: false,
-      },
-      "done",
-      "Early report.",
-    );
+    await host.update(principalFor(tasks, "child"), "done", "Early report.");
 
     // Mutation evidence: dropping the awaiting_delivery state gate settles here.
     assert.equal(
@@ -919,12 +894,7 @@ describe("handleAgentEvent", () => {
       tasks,
     });
     await host.update(
-      {
-        taskId: "child",
-        agentId: "test-agent",
-        generation: null,
-        initializing: false,
-      },
+      principalFor(tasks, "child"),
       "done",
       "Stored-source account.",
     );
@@ -965,12 +935,7 @@ describe("handleAgentEvent", () => {
     });
     // The sibling delivery queues behind the live dispatch turn.
     await host.send(
-      {
-        taskId: "sibling",
-        agentId: "test-agent",
-        generation: null,
-        initializing: false,
-      },
+      principalFor(tasks, "sibling"),
       "child",
       "A sibling note that settles nothing.",
     );
@@ -1166,16 +1131,7 @@ describe("handleAgentEvent", () => {
       store,
       tasks,
     });
-    await host.update(
-      {
-        taskId: "child",
-        agentId: "test-agent",
-        generation: null,
-        initializing: false,
-      },
-      "done",
-      "done",
-    );
+    await host.update(principalFor(tasks, "child"), "done", "done");
     await flushTimers();
     calls.prompts.at(-1)?.resolve();
     await flushTimers();
@@ -1574,6 +1530,10 @@ describe("handleAgentEvent", () => {
     ]);
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
+    // The broadcast is emitted before the teardown resets process state, so it
+    // carries the outgoing epoch; a fresh epoch is what lets the client accept
+    // the next snapshot's lower revision.
+    const epochBefore = tasks.getAgentCommands("s1").epoch;
 
     handleAgentEvent(
       withLease({ type: "agent_disconnected", agentId: "test-agent" }),
@@ -1584,17 +1544,18 @@ describe("handleAgentEvent", () => {
       sseManager as any,
     );
 
-    const epoch = tasks.getAgentCommands("s1").epoch;
     assert.deepEqual(broadcasted, [
       {
         type: "available_commands_update",
         taskId: "s1",
-        epoch,
+        epoch: epochBefore,
         revision: 2,
         commands: [],
       },
       { type: "agent_disconnected", agentId: "test-agent" },
     ]);
+    // After the teardown a new epoch starts a fresh revision space.
+    assert.notEqual(tasks.getAgentCommands("s1").epoch, epochBefore);
   });
 
   it("persists error events with their turn identity", () => {

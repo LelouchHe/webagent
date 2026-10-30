@@ -439,6 +439,58 @@ describe("TaskManager", () => {
         commands: [],
       });
     });
+
+    it("moves the epoch when the process is replaced, so revisions may restart", () => {
+      sm.updateAgentCommands("s1", [
+        { name: "context", description: "Show context usage" },
+      ]);
+      const before = sm.getAgentCommands("s1");
+      // A restarted agent renumbers its commands from 1; without a new epoch a
+      // client would keep the older, higher revision and never update.
+      sm.clearAgentRuntime("test-agent");
+      const after = sm.getAgentCommands("s1");
+      assert.notEqual(after.epoch, before.epoch);
+      assert.equal(after.revision, 0);
+    });
+
+    it("does not announce a snapshot for a task another agent now carries", () => {
+      store.createTask("s1", "/x", "auto", "test-agent", "s1-session");
+      // A stale snapshot on A after the task moved to B must be dropped, not
+      // broadcast: the client watching B would read it as "commands vanished".
+      sm.updateAgentCommands("s1", [
+        { name: "context", description: "Show context usage" },
+      ]);
+      const adapterA = sm["agents"].adapterFor("test-agent");
+      assert.equal(adapterA.agentCommandSnapshots.has("s1"), true);
+
+      // Move the task to another agent's binding (the store is the authority).
+      store.replaceAgentSession("s1", "other-agent", "s1-session");
+      const cleared = sm.clearAgentCommands("test-agent");
+      assert.deepEqual(cleared, []);
+      assert.equal(adapterA.agentCommandSnapshots.has("s1"), false);
+    });
+
+    it("stops a bash run before dropping its handle during an agent teardown", () => {
+      store.createTask("bash-only", tmpDir, "auto", "test-agent", "agent-bash");
+      let killed = 0;
+      const proc = {
+        pid: 424242,
+        kill: () => {
+          killed++;
+          return true;
+        },
+        stdout: { on() {} },
+        stderr: { on() {} },
+      } as never;
+      sm.runningBashProcs.set("bash-only", proc);
+      // No active prompt: a bash-only task is still this agent's work.
+      assert.equal(sm.activePrompts.has("bash-only"), false);
+
+      sm.clearAgentRuntime("test-agent");
+
+      assert.equal(killed, 1, "the child was stopped, not just forgotten");
+      assert.equal(sm.runningBashProcs.has("bash-only"), false);
+    });
   });
 
   describe("createTask", () => {
