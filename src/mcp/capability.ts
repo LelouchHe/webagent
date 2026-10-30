@@ -17,12 +17,21 @@ export interface CapabilityGrant {
   readonly taskId: string;
   readonly agentId: string;
   readonly state: "initializing" | "active";
+  /**
+   * The execution generation this token was minted for, or null while the
+   * session that will own it has not committed a binding yet. Authorization
+   * compares *this* generation with the task's current one; reading the task's
+   * current generation at request time would let an old token ride a newer
+   * execution.
+   */
+  readonly generation: number | null;
 }
 
 interface CapabilityRow {
   taskId: string;
   agentId: string;
   state: CapabilityGrant["state"];
+  generation: number | null;
 }
 
 /**
@@ -46,9 +55,10 @@ export class CapabilityStore {
     taskId: string,
     agentId: string,
     state: CapabilityGrant["state"],
+    generation: number | null,
   ): string {
     const token = `${CAPABILITY_PREFIX}${randomBytes(32).toString("base64url")}`;
-    this.byToken.set(token, { taskId, agentId, state });
+    this.byToken.set(token, { taskId, agentId, state, generation });
     const tokens = this.byTask.get(taskId) ?? new Set<string>();
     tokens.add(token);
     this.byTask.set(taskId, tokens);
@@ -56,9 +66,9 @@ export class CapabilityStore {
   }
 
   /** Mint an active capability (the execution is already the task's binding). */
-  mint(taskId: string, agentId: string): string {
+  mint(taskId: string, agentId: string, generation: number | null): string {
     this.revokeByTask(taskId);
-    return this.mintToken(taskId, agentId, "active");
+    return this.mintToken(taskId, agentId, "active", generation);
   }
 
   /**
@@ -66,19 +76,42 @@ export class CapabilityStore {
    * It only becomes usable once the binding commit has happened.
    */
   mintInitializing(taskId: string, agentId: string): string {
-    return this.mintToken(taskId, agentId, "initializing");
+    return this.mintToken(taskId, agentId, "initializing", null);
   }
 
   /** Mint a replacement while keeping the current execution capability valid. */
-  mintAdditional(taskId: string, agentId: string): string {
-    return this.mintToken(taskId, agentId, "active");
+  mintAdditional(
+    taskId: string,
+    agentId: string,
+    generation: number | null,
+  ): string {
+    return this.mintToken(taskId, agentId, "active", generation);
   }
 
-  /** Promote one token after its execution became the task's binding. */
-  promote(token: string): void {
+  /**
+   * Promote one token after its execution became the task's binding. The
+   * generation is the one that commit produced: a token never inherits a later
+   * generation just because its task has moved on.
+   */
+  promote(token: string, generation: number): void {
     const row = this.byToken.get(token);
     if (!row) return;
     row.state = "active";
+    row.generation = generation;
+  }
+
+  /**
+   * True when the grant is still the authority for its task: the same agent and
+   * the exact generation the token was minted for.
+   */
+  accepts(
+    token: string,
+    taskId: string,
+    isCurrent: (taskId: string, generation: number) => boolean,
+  ): boolean {
+    const row = this.byToken.get(token);
+    if (row?.taskId !== taskId || row.generation === null) return false;
+    return isCurrent(taskId, row.generation);
   }
 
   /** Revoke one capability token (no-op when it is unknown). */
@@ -119,6 +152,7 @@ export class CapabilityStore {
       taskId: row.taskId,
       agentId: row.agentId,
       state: row.state,
+      generation: row.generation,
     };
   }
 

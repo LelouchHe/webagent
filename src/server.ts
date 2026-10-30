@@ -263,11 +263,6 @@ const requestHandler = createRequestHandler({
   mcpEndpoint: createMcpEndpoint({
     capabilities,
     isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
-    taskAgent: (taskId) => store.getBindingAgent(taskId),
-    generationFor: (taskId) =>
-      tasks.authority.leaseFor(taskId)?.generation ?? null,
-    acceptsGeneration: (taskId, generation) =>
-      tasks.authority.accepts({ taskId, generation }),
     taskTools: mcpTaskTools,
   }),
 });

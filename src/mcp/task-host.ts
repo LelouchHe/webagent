@@ -58,28 +58,39 @@ export function createMcpTaskToolHost(deps: {
   cancelTimeoutMs?: number;
   broadcastCollaboration?: (event: McpTaskCollaborationEvent) => void;
   broadcastTaskCreated?: (event: McpTaskCreatedEvent) => void;
-  /**
-   * Re-check the caller's authority at the submission boundary. The MCP
-   * endpoint supplies it; the host calls it immediately before the first side
-   * effect of every write, so an in-flight request cannot outlive a rotation.
-   */
-  validateCaller?: (principal: McpCallerPrincipal) => string | null;
 }): McpTaskToolHost {
-  const {
-    store,
-    tasks,
-    broadcastCollaboration,
-    broadcastTaskCreated,
-    validateCaller,
-  } = deps;
+  const { store, tasks, broadcastCollaboration, broadcastTaskCreated } = deps;
 
-  /** Fail closed: a caller that lost its execution writes nothing. */
+  /**
+   * The single authority check for one MCP operation. It lives here because
+   * the host is the only layer that has both the store (binding) and the
+   * execution authority (generation), so there is exactly one implementation
+   * of "may this caller still write?" and no wiring can silently drop it.
+   *
+   * Fail closed: a principal without a generation, a changed task, a moved
+   * binding, or a replaced generation is refused.
+   */
+  function rejectionOf(principal: McpCallerPrincipal): string | null {
+    if (principal.generation === null) return "execution_replaced";
+    const bindingAgent = store.getBindingAgent(principal.taskId);
+    if (bindingAgent !== principal.agentId) return "execution_replaced";
+    if (
+      !tasks.authority.accepts({
+        taskId: principal.taskId,
+        generation: principal.generation,
+      })
+    ) {
+      return "execution_replaced";
+    }
+    return null;
+  }
+
   function authorize(
     principal: McpCallerPrincipal,
     sourceTaskId: string,
   ): void {
     if (principal.taskId !== sourceTaskId) throw new Error("caller_changed");
-    const rejection = validateCaller?.(principal) ?? null;
+    const rejection = rejectionOf(principal);
     if (rejection) throw new Error(rejection);
   }
 
@@ -281,6 +292,12 @@ export function createMcpTaskToolHost(deps: {
           title: input.title,
           model: input.model,
           thinking: input.thinking,
+          // Third boundary: the task is persisted only while the caller still
+          // owns its execution. `newSession` and the tree lock are awaits, and
+          // a rotation can land inside either of them.
+          assertCaller: () => {
+            authorize(principal, sourceTaskId);
+          },
         },
       );
       const taskCreatedMessageId = randomUUID();
@@ -314,6 +331,9 @@ export function createMcpTaskToolHost(deps: {
         bridge,
         deps.cancelTimeoutMs ?? 0,
       );
+      // The cancel awaited a transport round trip; the record of what happened
+      // is only written while the caller still owns its execution.
+      authorize(principal, sourceTaskId);
       store.saveEvent(
         target.id,
         "task_cancel",

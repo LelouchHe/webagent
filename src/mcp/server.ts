@@ -77,15 +77,6 @@ export interface McpEndpointOptions {
    * carries the token is still in flight, and the handshake must succeed.
    */
   isTaskActive?: (taskId: string) => boolean;
-  /** The agent currently bound to a task, or undefined when it has none. */
-  taskAgent?: (taskId: string) => string | undefined;
-  /**
-   * The execution generation a task's caller principal is authorised for.
-   * `null` means the task has no ledger entry in this process.
-   */
-  generationFor?: (taskId: string) => number | null;
-  /** Re-checks that the captured generation still names the current execution. */
-  acceptsGeneration?: (taskId: string, generation: number) => boolean;
   /** Task control-plane operations used by the four direct tools. */
   taskTools?: McpTaskToolHost;
   /** Mount path; the response `true` claims that path. */
@@ -172,40 +163,22 @@ export function createMcpEndpoint(
     }
 
     // --- MCP protocol (stateless, one server+transport per request) ---
-    // The caller principal is captured once, here, and never mutated: every
-    // tool call in this request authorizes against this snapshot, and the
-    // generation is re-validated after each business await.
-    // Frozen so no layer can mutate the identity a request was authorized
-    // for; a shared mutable slot would let one request authorize another.
+    // The caller principal is captured once, here, and frozen: every tool call
+    // in this request authorizes against this snapshot. Its generation is the
+    // one the *token* was minted for, never the task's current value — an old
+    // token must not ride a newer execution. The host owns the validation
+    // (it has the store and the authority); this layer only builds the value.
     const principal: McpCallerPrincipal = Object.freeze({
       taskId: grant.taskId,
       agentId: grant.agentId,
-      generation: options.generationFor?.(grant.taskId) ?? null,
+      generation: grant.generation,
       initializing,
     });
-    const validateCaller = (caller: McpCallerPrincipal): string | null => {
-      if (caller.taskId !== grant.taskId) return "caller_changed";
-      const bindingAgent = options.taskAgent?.(caller.taskId);
-      if (bindingAgent && bindingAgent !== caller.agentId) {
-        return "execution_replaced";
-      }
-      if (
-        caller.generation !== null &&
-        options.acceptsGeneration &&
-        !options.acceptsGeneration(caller.taskId, caller.generation)
-      ) {
-        return "execution_replaced";
-      }
-      return null;
-    };
-    const taskTools = options.taskTools
-      ? { ...options.taskTools, validateCaller }
-      : undefined;
     const server = new McpServer(
       { name: MCP_SERVER_NAME, version: "0.1.0" },
       { instructions: MCP_SERVER_INSTRUCTIONS },
     );
-    registerMcpTools(server, principal, taskTools);
+    registerMcpTools(server, principal, options.taskTools);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       // JSON responses for POST round trips (no SSE streaming needed for the

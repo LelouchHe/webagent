@@ -1050,7 +1050,7 @@ describe("TaskManager", () => {
       store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       sm.liveTasks.add("web-1");
       const capabilities = new CapabilityStore();
-      const oldToken = capabilities.mint("web-1", "test-agent");
+      const oldToken = capabilities.mint("web-1", "test-agent", 1);
       let newToken: string | undefined;
       const manager = createTaskManager(
         store,
@@ -1114,7 +1114,7 @@ describe("TaskManager", () => {
       store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       sm.liveTasks.add("web-1");
       const capabilities = new CapabilityStore();
-      const oldToken = capabilities.mint("web-1", "test-agent");
+      const oldToken = capabilities.mint("web-1", "test-agent", 1);
       const manager = createTaskManager(
         store,
         tmpDir,

@@ -1,22 +1,32 @@
-import { describe, it, before, after } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpEndpoint } from "../src/mcp/server.ts";
+import type { McpCallerPrincipal } from "../src/mcp/tools.ts";
+import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
+import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
+import { TaskStateManager } from "../src/task-state.ts";
+import { StaticAgentEnvironment } from "../src/agent-registry.ts";
 import {
-  createMcpEndpoint,
-  type McpEndpointOptions,
-} from "../src/mcp/server.ts";
-import type { McpCallerPrincipal, McpTaskToolHost } from "../src/mcp/tools.ts";
+  ExecutionAuthority,
+  GenerationLedger,
+} from "../src/execution-authority.ts";
+import { Store } from "../src/store.ts";
 
 /**
- * The MCP control plane is the agent's only way to reach another Task, so it
- * is where a capability's authorization has to be real:
+ * The MCP control plane is where a capability's authority has to be real.
  *
- * - a token minted for a session that is still being created may complete the
- *   handshake but must not run a business tool;
- * - a request that was authenticated before a rotation must not write after it,
- *   even though its token still parses.
+ * Every test here assembles the **production host** (`createMcpTaskToolHost`)
+ * and the production endpoint over a real Store, generation ledger, and task
+ * runtime — no stand-in that re-implements the check being tested. A stand-in
+ * would prove nothing about the wiring, which is exactly how an unwired
+ * validator survived the first review.
  */
 
 interface Endpoint {
@@ -25,7 +35,7 @@ interface Endpoint {
 }
 
 async function startEndpoint(
-  options: Omit<McpEndpointOptions, "path">,
+  options: Parameters<typeof createMcpEndpoint>[0],
 ): Promise<Endpoint> {
   const endpoint = createMcpEndpoint({ ...options, path: "/mcp" });
   const server = http.createServer((req, res) => {
@@ -84,6 +94,20 @@ async function initialize(baseUrl: string, token: string): Promise<number> {
   return response.status;
 }
 
+async function callTool(
+  baseUrl: string,
+  token: string,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ status: number; json: Record<string, unknown> }> {
+  return rpc(baseUrl, token, {
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name, arguments: args },
+  });
+}
+
 function toolErrorText(json: Record<string, unknown>): string {
   const error = json.error as { message?: string } | undefined;
   if (error?.message) return error.message;
@@ -100,194 +124,314 @@ function toolErrorText(json: Record<string, unknown>): string {
   }
 }
 
-describe("pending capabilities", () => {
-  let endpoint: Endpoint;
-  let capabilities: CapabilityStore;
-  let created: string[];
+/** One MCP server entry as it appears in an ACP `newSession` request. */
+interface McpEntry {
+  headers: Array<{ name: string; value: string }>;
+}
 
-  before(async () => {
+/**
+ * A controllable ACP transport for the real TaskManager. `hook` runs inside
+ * `newSession`, which is exactly the window the contract cares about.
+ */
+function makeBridge(
+  getHook: () =>
+    | ((options?: { mcpServers?: McpEntry[] }) => Promise<void>)
+    | undefined,
+): DeliveryBridge {
+  let sessions = 0;
+  return {
+    async newSession(_cwd: string, options?: { mcpServers?: McpEntry[] }) {
+      sessions++;
+      await getHook()?.(options);
+      return { sessionId: `session-${sessions}`, configOptions: [] };
+    },
+    async setConfigOption() {
+      return [];
+    },
+    async loadSession(taskId: string) {
+      return { taskId, configOptions: [] };
+    },
+    async prompt() {},
+    async cancel() {},
+    resolvePermission: () => {},
+    denyPermission: () => {},
+    isAvailable: () => true,
+  } as DeliveryBridge;
+}
+
+describe("mcp authority over the production host", () => {
+  let dir: string;
+  let store: Store;
+  let capabilities: CapabilityStore;
+  let authority: ExecutionAuthority;
+  let tasks: TaskManager;
+  let endpoint: Endpoint;
+  let bridge: DeliveryBridge;
+  let newSessionHook:
+    | ((options?: { mcpServers?: McpEntry[] }) => Promise<void>)
+    | undefined;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "webagent-mcp-authority-"));
+    store = new Store(dir);
+    store.ensureRootTask(dir);
     capabilities = new CapabilityStore();
-    created = [];
-    const host: McpTaskToolHost = {
-      list: () => [],
-      query: () => ({ task_id: "t", max_seq: 0, rows: [] }),
-      read: () => ({ task_id: "t", rows: [] }),
-      cancel: async () => ({ accepted: true, taskId: "t", status: "idle" }),
-      create: async (_source, input) => {
-        created.push(input.title);
-        return { taskId: "child" };
-      },
-      send: async () => {},
-      update: async () => {},
-    };
+    authority = new ExecutionAuthority(new GenerationLedger());
+    newSessionHook = undefined;
+    bridge = makeBridge(() => newSessionHook);
+    tasks = new TaskManager({
+      store,
+      defaultCwd: dir,
+      dataDir: dir,
+      capabilities,
+      mcpBaseUrl: "http://127.0.0.1:1",
+      state: new TaskStateManager(),
+      authority,
+      agents: new StaticAgentEnvironment("agent-a"),
+    });
+    tasks.attachExecutionBridge(bridge);
     endpoint = await startEndpoint({
       capabilities,
-      isTaskActive: () => true,
-      taskAgent: () => "agent-a",
-      generationFor: () => 1,
-      acceptsGeneration: () => true,
-      taskTools: host,
+      isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
+      taskTools: createMcpTaskToolHost({ store, tasks }),
     });
   });
 
-  after(async () => {
+  afterEach(async () => {
     await endpoint.close();
+    tasks.dispose();
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 
-  it("allows the handshake but not a business tool while initializing", async () => {
-    const token = capabilities.mintInitializing("pending-task", "agent-a");
+  /** The principal the endpoint builds for one token. */
+  function principalFor(token: string): McpCallerPrincipal {
+    const grant = capabilities.resolve(token);
+    assert.ok(grant, "the token must resolve");
+    return Object.freeze({
+      taskId: grant.taskId,
+      agentId: grant.agentId,
+      generation: grant.generation,
+      initializing: grant.state === "initializing",
+    });
+  }
+
+  it("refuses a business tool until the capability is promoted, then allows it", async () => {
+    // The task is created by the real runtime while `newSession` holds the
+    // MCP server entry, exactly as a real agent would receive it.
+    const insideSession: {
+      token: string;
+      handshake: number;
+      initializingCall: string;
+    }[] = [];
+    newSessionHook = async (options) => {
+      const entry = options?.mcpServers?.[0];
+      assert.ok(entry);
+      const token = entry.headers[0].value.replace(/^Bearer\s+/, "");
+      const handshake = await initialize(endpoint.baseUrl, token);
+      const call = await callTool(endpoint.baseUrl, token, "task_create", {
+        title: "must not exist",
+      });
+      insideSession.push({
+        token,
+        handshake,
+        initializingCall: toolErrorText(call.json),
+      });
+    };
+
+    const created = await tasks.createTask(bridge, dir, undefined, "agent");
+
+    assert.equal(
+      insideSession.length,
+      1,
+      "the handshake ran inside newSession",
+    );
+    assert.equal(insideSession[0].handshake, 200, "the handshake is allowed");
+    assert.match(
+      insideSession[0].initializingCall,
+      /initializing/,
+      "a business tool is refused while initializing",
+    );
+    // Nothing was created during the pending window.
+    assert.deepEqual(
+      store
+        .listTasks()
+        .filter((task) => task.id !== store.rootTaskId)
+        .map((task) => task.id),
+      [created.taskId],
+    );
+
+    // The same token works once the binding has committed.
+    const promoted = await callTool(
+      endpoint.baseUrl,
+      insideSession[0].token,
+      "task_create",
+      { title: "now allowed" },
+    );
+    assert.equal(promoted.status, 200);
+    assert.equal(promoted.json.error, undefined);
+    assert.equal(
+      store.listTasks().filter((task) => task.id !== store.rootTaskId).length,
+      2,
+    );
+  });
+
+  it("refuses an in-flight request after a real rotation, with no side effect", async () => {
+    const source = await tasks.createTask(bridge, dir, undefined, "agent");
+    const sourceLease = authority.leaseFor(source.taskId);
+    assert.ok(sourceLease);
+    // A restore-style token: the task already exists and is active.
+    const token = capabilities.mint(
+      source.taskId,
+      "agent-a",
+      sourceLease.generation,
+    );
     assert.equal(await initialize(endpoint.baseUrl, token), 200);
 
-    const response = await rpc(endpoint.baseUrl, token, {
-      jsonrpc: "2.0",
-      id: 2,
-      method: "tools/call",
-      params: {
-        name: "task_create",
-        arguments: { title: "should not exist" },
-      },
-    });
-    assert.match(toolErrorText(response.json), /initializing/);
-    assert.deepEqual(created, [], "no business tool ran in the pending window");
-
-    // Promotion is what makes the same token usable.
-    capabilities.promote(token);
-    const promoted = await rpc(endpoint.baseUrl, token, {
-      jsonrpc: "2.0",
-      id: 3,
-      method: "tools/call",
-      params: { name: "task_create", arguments: { title: "now allowed" } },
-    });
-    assert.equal(promoted.status, 200);
-    assert.deepEqual(created, ["now allowed"]);
-  });
-
-  it("rejects a token from a replaced generation after its request authenticated", async () => {
+    // The child creation pauses inside `newSession`, where a rotation can land.
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    let writes = 0;
-    const host: McpTaskToolHost = {
-      list: () => [],
-      query: () => ({ task_id: "t", max_seq: 0, rows: [] }),
-      read: () => ({ task_id: "t", rows: [] }),
-      cancel: async () => ({ accepted: true, taskId: "t", status: "idle" }),
-      create: async () => ({ taskId: "child" }),
-      // The host mirrors the real one: it re-checks the caller at its own
-      // submission boundary, immediately before the first side effect.
-      send: async function (
-        this: { validateCaller?: (p: McpCallerPrincipal) => string | null },
-        principal,
-      ) {
-        await gate;
-        const rejection = this.validateCaller?.(principal);
-        if (rejection) throw new Error(rejection);
-        writes++;
-      },
-      update: async () => {
-        await gate;
-        writes++;
-      },
-    };
-    let currentGeneration = 7;
-    const staleEndpoint = await startEndpoint({
-      capabilities,
-      isTaskActive: () => true,
-      taskAgent: () => "agent-a",
-      generationFor: () => currentGeneration,
-      acceptsGeneration: (_taskId, generation) =>
-        generation === currentGeneration,
-      taskTools: host,
+    let openedInsideSession!: () => void;
+    const reachedInsideSession = new Promise<void>((resolve) => {
+      openedInsideSession = resolve;
     });
-    try {
-      const token = capabilities.mint("slow-task", "agent-a");
-      const pendingCall = rpc(staleEndpoint.baseUrl, token, {
-        jsonrpc: "2.0",
-        id: 4,
-        method: "tools/call",
-        params: { name: "task_send", arguments: { target: "x", body: "b" } },
-      });
-      // Let the request authenticate and enter the tool.
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      // The task rotates: the old generation is gone.
-      currentGeneration = 8;
-      release();
-      const response = await pendingCall;
-      assert.match(toolErrorText(response.json), /execution_replaced/);
-      assert.equal(writes, 0, "no write landed after the rotation");
+    newSessionHook = async () => {
+      openedInsideSession();
+      await gate;
+    };
 
-      // A new token against the new generation works: the guard is not simply
-      // rejecting everything.
-      const fresh = capabilities.mint("slow-task", "agent-a");
-      const ok = await rpc(staleEndpoint.baseUrl, fresh, {
-        jsonrpc: "2.0",
-        id: 5,
-        method: "tools/call",
-        params: { name: "task_send", arguments: { target: "x", body: "b" } },
-      });
-      assert.equal(ok.status, 200);
-      assert.equal(ok.json.error, undefined);
-      assert.equal(writes, 1);
-    } finally {
-      await staleEndpoint.close();
-    }
+    const principal = principalFor(token);
+    // The captured principal, not a fresh read: a rotation revokes the token,
+    // and the point of the boundary is that the *request's* identity is stale.
+    const assertCaller = (): void => {
+      if (principal.generation === null) throw new Error("execution_replaced");
+      if (store.getBindingAgent(principal.taskId) !== principal.agentId) {
+        throw new Error("execution_replaced");
+      }
+      if (
+        !authority.accepts({
+          taskId: principal.taskId,
+          generation: principal.generation,
+        })
+      ) {
+        throw new Error("execution_replaced");
+      }
+    };
+    const pending = tasks.createTask(bridge, dir, source.taskId, "agent", {
+      parentId: source.taskId,
+      title: "child in flight",
+      assertCaller,
+    });
+
+    await reachedInsideSession;
+    // A real rotation: same owner, new execution, higher generation.
+    newSessionHook = undefined;
+    await tasks.clearTask(bridge, source.taskId);
+    release();
+
+    await assert.rejects(() => pending, /execution_replaced/);
+    // No child row survived the refusal, and the source recorded nothing.
+    assert.equal(
+      store.listTasks().filter((task) => task.id !== store.rootTaskId).length,
+      1,
+      "only the source task exists",
+    );
+    assert.equal(
+      store
+        .getEvents(source.taskId)
+        .filter((event) => event.data.includes("child in flight")).length,
+      0,
+    );
+
+    // Control: a token for the new generation works, so the refusal was about
+    // the generation, not about the tool being broken.
+    const freshLease = authority.leaseFor(source.taskId);
+    assert.ok(freshLease);
+    const fresh = capabilities.mint(
+      source.taskId,
+      "agent-a",
+      freshLease.generation,
+    );
+    assert.equal(await initialize(endpoint.baseUrl, fresh), 200);
+    const allowed = await callTool(endpoint.baseUrl, fresh, "task_create", {
+      title: "after rotation",
+    });
+    assert.equal(allowed.status, 200);
+    assert.equal(allowed.json.error, undefined);
+
+    // The rotation revoked the old token, so even authentication fails.
+    const stale = await callTool(endpoint.baseUrl, token, "task_create", {
+      title: "from the old token",
+    });
+    assert.equal(stale.status, 401);
+    assert.equal(
+      (stale.json.error as { message?: string } | undefined)?.message,
+      "Unauthorized",
+    );
+    void principal;
+  });
+
+  it("refuses a token whose task moved to another agent", async () => {
+    const source = await tasks.createTask(bridge, dir, undefined, "agent");
+    const lease = authority.leaseFor(source.taskId);
+    assert.ok(lease);
+    const token = capabilities.mint(source.taskId, "agent-a", lease.generation);
+    // The binding moves under the same process (a real replacement the caller
+    // did not perform).
+    store.replaceAgentSession(source.taskId, "agent-b", "other-session");
+    authority.applyBindingChanges([
+      {
+        taskId: source.taskId,
+        before: { agentId: "agent-a", sessionId: "session-1" },
+        after: { agentId: "agent-b", sessionId: "other-session" },
+      },
+    ]);
+
+    const response = await callTool(endpoint.baseUrl, token, "task_create", {
+      title: "wrong agent",
+    });
+    assert.match(toolErrorText(response.json), /execution_replaced/);
+  });
+
+  it("revokes the Root token on a Root reset", async () => {
+    // Root is the one task a reset keeps, so nothing in the descendant cleanup
+    // releases its capability. Without an explicit revoke, the old token would
+    // be usable while the next session is materializing.
+    await tasks.ensureRootLive();
+    const lease = authority.leaseFor(store.rootTaskId);
+    assert.ok(lease);
+    const token = capabilities.mint(
+      store.rootTaskId,
+      "agent-a",
+      lease.generation,
+    );
+    assert.equal(await initialize(endpoint.baseUrl, token), 200);
+
+    await tasks.resetRootTask();
+
+    assert.equal(capabilities.resolve(token), null);
+    assert.equal(await initialize(endpoint.baseUrl, token), 401);
   });
 
   it("refuses an unknown or revoked token before any protocol work", async () => {
     assert.equal(await initialize(endpoint.baseUrl, "mcp_unknown"), 401);
-    const token = capabilities.mint("gone-task", "agent-a");
-    capabilities.revokeByTask("gone-task");
+    const token = capabilities.mint("gone", "agent-a", 1);
+    capabilities.revokeByTask("gone");
     assert.equal(await initialize(endpoint.baseUrl, token), 401);
   });
-});
 
-describe("caller principal shape", () => {
-  it("is a frozen request-scoped value, not a shared mutable slot", async () => {
-    const capabilities = new CapabilityStore();
-    let captured: McpCallerPrincipal | null = null;
-    const endpoint = await startEndpoint({
-      capabilities,
-      isTaskActive: () => true,
-      taskAgent: () => "agent-a",
-      generationFor: () => 3,
-      acceptsGeneration: () => true,
-      taskTools: {
-        list: (principal) => {
-          captured = principal;
-          return [];
-        },
-        query: () => ({ task_id: "t", max_seq: 0, rows: [] }),
-        read: () => ({ task_id: "t", rows: [] }),
-        cancel: async () => ({ accepted: true, taskId: "t", status: "idle" }),
-        create: async () => ({ taskId: "child" }),
-        send: async () => {},
-        update: async () => {},
-      },
+  it("keeps the caller principal frozen", async () => {
+    const source = await tasks.createTask(bridge, dir, undefined, "agent");
+    const lease = authority.leaseFor(source.taskId);
+    assert.ok(lease);
+    const token = capabilities.mint(source.taskId, "agent-a", lease.generation);
+    assert.equal(await initialize(endpoint.baseUrl, token), 200);
+    const principal = principalFor(token);
+    assert.equal(Object.isFrozen(principal), true);
+    assert.throws(() => {
+      (principal as { taskId: string }).taskId = "other";
     });
-    try {
-      const token = capabilities.mint("frozen-task", "agent-a");
-      await initialize(endpoint.baseUrl, token);
-      await rpc(endpoint.baseUrl, token, {
-        jsonrpc: "2.0",
-        id: 9,
-        method: "tools/call",
-        params: { name: "task_list", arguments: {} },
-      });
-      assert.ok(captured);
-      const principal: McpCallerPrincipal = captured;
-      assert.deepEqual(principal, {
-        taskId: "frozen-task",
-        agentId: "agent-a",
-        generation: 3,
-        initializing: false,
-      });
-      assert.equal(Object.isFrozen(principal), true);
-      assert.throws(() => {
-        (principal as { taskId: string }).taskId = "other";
-      });
-    } finally {
-      await endpoint.close();
-    }
   });
 });

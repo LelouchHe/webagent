@@ -622,7 +622,11 @@ export class TaskManager implements ObligationHost {
     // of an existing binding is already authorized, so it starts active.
     const token =
       mode === "restore"
-        ? this.capabilities.mint(taskId, agentId)
+        ? this.capabilities.mint(
+            taskId,
+            agentId,
+            this.authority.leaseFor(taskId)?.generation ?? null,
+          )
         : this.capabilities.mintInitializing(taskId, agentId);
     return {
       token,
@@ -638,9 +642,15 @@ export class TaskManager implements ObligationHost {
     return this.buildMcpServerForExecution(taskId, agentId, mode)?.servers;
   }
 
-  /** Promote a replacement execution's token after its binding committed. */
-  private promoteCapability(token: string | undefined): void {
-    if (token) this.capabilities?.promote(token);
+  /**
+   * Promote a replacement execution's token after its binding committed. The
+   * token is pinned to that commit's generation, so it cannot ride a later one.
+   */
+  private promoteCapability(token: string | undefined, taskId: string): void {
+    if (!token) return;
+    const generation = this.authority.leaseFor(taskId)?.generation;
+    if (generation === undefined) return;
+    this.capabilities?.promote(token, generation);
   }
 
   /**
@@ -1017,6 +1027,12 @@ export class TaskManager implements ObligationHost {
       model?: string;
       thinking?: string;
       workflowStatus?: WorkflowStatus;
+      /**
+       * Re-validates the caller right before the task is persisted. An MCP
+       * request can sit inside `newSession` for a long time; a rotation during
+       * that window must leave no task behind.
+       */
+      assertCaller?: () => void;
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const agentId = this.attachExecutionBridge(bridge);
@@ -1055,6 +1071,7 @@ export class TaskManager implements ObligationHost {
     metadata: {
       title?: string;
       workflowStatus?: WorkflowStatus;
+      assertCaller?: () => void;
     },
   ): Promise<void> {
     for (;;) {
@@ -1071,6 +1088,9 @@ export class TaskManager implements ObligationHost {
         if (parentId && !this.store.getParentTask(parentId)) {
           throw new TaskNotFoundError(parentId);
         }
+        // Second boundary: acquiring the tree lock is an await, so the caller
+        // is validated again immediately before the row is written.
+        metadata.assertCaller?.();
         this.store.createTask(
           taskId,
           taskCwd,
@@ -1137,6 +1157,7 @@ export class TaskManager implements ObligationHost {
       model?: string;
       thinking?: string;
       workflowStatus?: WorkflowStatus;
+      assertCaller?: () => void;
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const taskCwd = expandHomePath(cwd ?? this.defaultCwd);
@@ -1172,6 +1193,9 @@ export class TaskManager implements ObligationHost {
     let configOptions = createdConfigOptions;
     const parentId = opts?.parentId ?? null;
     try {
+      // The caller's authority is re-checked after the ACP await: a rotation
+      // that landed meanwhile must not produce a persisted task.
+      opts?.assertCaller?.();
       await this.persistCreatedTask(
         taskId,
         taskCwd,
@@ -1182,6 +1206,7 @@ export class TaskManager implements ObligationHost {
         {
           title: opts?.title,
           workflowStatus: opts?.workflowStatus,
+          assertCaller: opts?.assertCaller,
         },
       );
     } catch (err) {
@@ -1201,7 +1226,7 @@ export class TaskManager implements ObligationHost {
       bridge.sessionMapped?.(agentSessionId, taskId);
       // The binding committed, so the token this session was created with may
       // now reach business tools.
-      this.promoteCapability(execution?.token);
+      this.promoteCapability(execution?.token, taskId);
 
       // Inherit config options from source task
       if (sourceTask) {
@@ -1401,7 +1426,7 @@ export class TaskManager implements ObligationHost {
     }
     const lease = this.currentLease(taskId);
     bridge.sessionMapped?.(created.sessionId, taskId);
-    this.promoteCapability(execution?.token);
+    this.promoteCapability(execution?.token, taskId);
     this.retireReplacedExecution(
       taskId,
       retiredBinding,
@@ -2047,7 +2072,7 @@ export class TaskManager implements ObligationHost {
     }
     const lease = this.currentLease(taskId);
     bridge.sessionMapped?.(created.sessionId, taskId);
-    this.promoteCapability(execution?.token);
+    this.promoteCapability(execution?.token, taskId);
     const configOptions = await this.restoreTaskConfig(
       bridge,
       taskId,
@@ -2376,6 +2401,10 @@ export class TaskManager implements ObligationHost {
         this.resettingTasks.add(id);
       }
       const result = this.store.resetRootTask();
+      // Root survives its reset, so its capability is not released by the
+      // descendant cleanup above. Revoke it here: an old token must not be
+      // usable during the window where the next session is materializing.
+      this.capabilities?.revokeByTask(rootTaskId);
       // Retirement follows the recorded binding, never a default adapter: the
       // Root's old execution may belong to any configured agent.
       if (result.retired) {

@@ -90,11 +90,12 @@ export interface McpTaskCreateResult {
  * never mutated.
  *
  * `taskId` is the agent's own task, `agentId` the agent that capability was
- * minted for, and `generation` the execution generation the task had when the
- * request arrived. The generation is the authorization: a request that
- * outlives a rotation must not write even though its token authenticated.
- * `initializing` marks the pending window of a session creation, where only
- * the protocol handshake is allowed.
+ * minted for, and `generation` the execution generation the *token* was
+ * promoted for. That generation is the authorization: a request that outlives
+ * a rotation must not write even though its token authenticated, and an old
+ * token must not inherit the task's newer generation. `initializing` marks the
+ * pending window of a session creation, where only the protocol handshake is
+ * allowed.
  */
 export interface McpCallerPrincipal {
   readonly taskId: string;
