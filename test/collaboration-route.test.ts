@@ -195,11 +195,13 @@ describe("S3 collaboration write routes", () => {
       broadcastTaskCreated: (event) =>
         broadcasts.push({ ...buildTaskCreatedBroadcast(event) }),
     });
+    const parentLease = tasks.authority.leaseFor("parent");
+    assert.ok(parentLease, "the parent task must have a generation");
     await host.create(
       {
         taskId: "parent",
         agentId: "test-agent",
-        generation: null,
+        generation: parentLease.generation,
         initializing: false,
       },
       { title: "agent-child" },

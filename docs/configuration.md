@@ -7,7 +7,7 @@ WebAgent works with any agent that implements the [Agent Client Protocol](https:
 ### Startup, laziness, and availability
 
 - Configuration declares agents; it does not start them. Server boot starts **zero** agent processes, and so does any read: listing tasks, reading a task or its snapshot, `/config`, `/version`, shares, and deletion all work without an agent.
-- An agent's process starts the first time a task bound to it has to execute — a prompt, a restore, a replacement, or an explicit `POST /clear`. Concurrent demand shares one start attempt; a failed start leaves no process behind and the next demand retries.
+- An agent's process starts the first time a task bound to it has to execute — a prompt, a restore, a replacement, or an explicit `POST /clear`. Exactly one flight owns an agent's process: concurrent demand shares the same start attempt, a reload runs inside that same flight (a start and a reload can never produce two live processes), and demand that arrives during a reload waits for it. A failed start leaves no process behind and the next demand retries.
 - A missing or broken binary is a **runtime** condition. The service starts, the task stays readable, and the unavailable agent is reported when an operation actually needs it. It is not a startup gate and does not trip the daemon supervisor.
 - A task whose binding agent has left the configuration keeps its binding until an explicit `POST /clear` or its next use, which rotates it to `default_agent`. Creating a child under such a task does not rotate the parent.
 

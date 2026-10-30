@@ -11,8 +11,19 @@ examples, see the [Task Manual](task-manual.md) and [Task Examples](task-example
 
 The server is a Streamable HTTP endpoint at `/mcp`. Each ACP session receives a
 fresh capability token; WebAgent sends it as an `Authorization: Bearer` header.
-A capability is scoped to one task, is checked before MCP protocol handling, and
-can access only that task plus its parent, direct children, and siblings.
+A capability names one task **and** the agent whose execution it belongs to, and
+is checked before MCP protocol handling. It can access only that task plus its
+parent, direct children, and siblings — the family check is the cross-agent read
+boundary, so a capability never widens into another agent's tasks.
+
+A token starts **initializing** while the session that carries it is still being
+created: the MCP handshake and tool discovery work (a real agent connects from
+inside `session/new`), but every business tool answers `initializing`. It is
+promoted only after the task's binding commits, and it is pinned to that
+commit's execution generation. An authenticated request therefore still fails
+once its task has rotated, because the token names the generation it was minted
+for rather than whatever the task is running now. Rotation, deletion, and a Root
+reset revoke the token.
 
 The server is additive. It does not replace an agent's own MCP configuration or
 native tools.

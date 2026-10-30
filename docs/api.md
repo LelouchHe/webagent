@@ -505,7 +505,9 @@ holds that title), `404` (unknown task)
 
 #### `GET /api/v1/tasks/:id/status`
 
-Get the busy state and pending permissions for a task.
+Get the busy state and pending permissions for a task. The pending entries
+carry only what a client can act on: the request's own execution provenance
+(source agent and lease) stays internal.
 
 **Response** `200`:
 
@@ -516,7 +518,6 @@ Get the busy state and pending permissions for a task.
   "pendingPermissions": [
     {
       "requestId": "perm-123",
-      "taskId": "abc-123",
       "title": "Run command: rm -rf /tmp/cache",
       "options": [
         { "optionId": "allow_once", "label": "Allow" },
@@ -532,6 +533,12 @@ Get the busy state and pending permissions for a task.
 #### `GET /api/v1/tasks/:id/snapshot`
 
 **Single source of truth** for a task's current runtime state. The frontend calls this on cold-load / reconnect / after long backgrounding, then applies incremental `state_patch` SSE events. This replaces the old "replay history + reconcile" pattern for runtime fields like `busy`.
+
+The response never depends on the task's execution being available. When the
+task is not live, the server makes one bounded warm-up attempt (so command
+discovery is included when an agent is reachable) and serves the snapshot
+either way; a missing, dead, or no longer configured agent only costs the
+optional fields.
 
 Use `GET /events` for message history (rendering only) and `GET /snapshot` for runtime state (`busy`, `pendingPermissions`, `streaming`). The two are decoupled — `/events` never mutates runtime state in the frontend.
 

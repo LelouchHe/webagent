@@ -81,13 +81,17 @@ The operational form of that sentence:
   at its start). *Why:* "resolve the current binding" at each site looks
   uniform and silently mis-retires, mis-authorizes, or sends a foreign
   operation into the default process.
-- **Reads never depend on an execution being resolvable.** Listing, reading a
-  task, its snapshot, attachments, shares, and deletion must work while the
-  binding agent is missing, dead, or no longer configured; only operations
-  that need a process (prompt, create, approve, reload) resolve one, and they
-  fail with the rescue path (`POST /clear { agentId }`) instead of falling
-  back to another agent's process. *Why:* otherwise an unavailable binary
-  takes the user's history with it, and a fallback hides which process acted.
+- **A read never depends on an execution being resolvable.** Listing, reading a
+  task, its snapshot, attachments, shares, and deletion must return while the
+  binding agent is missing, dead, or no longer configured. A read *may* warm an
+  execution — an opened task starts its agent so config and commands can be
+  reported — but the warm-up is optional and bounded: it never decides the
+  response, its failure only costs that payload, and it never rotates a binding
+  or takes a task over from its agent. Operations that genuinely need a process
+  (prompt, create, approve, reload, explicit `/clear`) resolve one, and they
+  fail with the rescue path (`POST /clear { agentId }`) instead of falling back
+  to another agent's process. *Why:* otherwise an unavailable binary takes the
+  user's history with it, and a fallback hides which process acted.
 - **An agent's lifecycle events touch only the tasks it carries.** Reload,
   disconnect, and restart clear that agent's streaming, plans, usage, pending
   permissions, busy claims, and live-task membership; the `connected` event

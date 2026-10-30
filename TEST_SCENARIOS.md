@@ -37,10 +37,27 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a reload of one agent leaves another agent's streaming, plan, usage, and busy state untouched
   - GC and Root reset retire through the agent recorded on the binding, never a default adapter (same session id on both agents)
 
-- `test/multi-agent-mcp.test.ts`
+- `test/multi-agent-mcp.test.ts` (production host + endpoint + real store/ledger)
   - an `initializing` capability completes the MCP handshake but every business tool returns `initializing`; after promotion the same token works
-  - a request authenticated before a rotation cannot write after it, while a fresh token against the current generation succeeds
+  - a request authenticated before a real rotation cannot write after it (the task-persist boundary re-checks after `newSession`), while a fresh token against the current generation succeeds; the rotated-away token is revoked
+  - a token whose task moved to another agent is refused; a Root reset revokes the Root token
   - unknown/revoked tokens are refused before any protocol work; the caller principal is frozen and carries `(task, agent, generation)`
+
+- `test/multi-agent-pending.test.ts` (real ACP child process)
+  - the agent connects to `/mcp` from inside `session/new`: the handshake succeeds, `task_list` answers `initializing`, nothing is created, and the same token works after the binding commits
+
+- `test/agent-registry.test.ts` (real child processes with delayed / refused initialize)
+  - a half-initialized bridge is not available and concurrent demand shares one process
+  - a live process that refuses `initialize` is cleaned up (its pid is gone) and the same agent retries successfully
+  - a reload beside a start is refused, a resolve during a reload waits, and one process exists throughout
+  - `shutdownAll` reaches a transport whose adapter was already unbound
+
+- `test/multi-agent-config-race.test.ts` (HTTP)
+  - a configuration request parked in `readBody` while the task is cleared onto another agent is refused with `409`, and no configuration request reaches the new execution
+
+- `test/multi-agent-reads.test.ts` (HTTP + real processes)
+  - three unavailable shapes — missing binary, removed configuration, dead-but-still-bound transport — leave task detail, snapshot, events, and the list readable without moving the binding
+  - a snapshot returns while a restore is still hanging (bounded warm-up)
 
 - `test/multi-agent-clear.test.ts` (HTTP)
   - `/clear { agentId }` moves a task off a removed agent, records `explicit_clear`, preserves history, and creates exactly one session on the configured agent
@@ -51,6 +68,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - global list, `?agent=` narrowing, and `agentId` on every payload
   - `/clear { agentId }` moves a task onto the second agent without starting the first
   - reads, snapshots, and deletion keep working with agents idle
+  - a Root carried by another configured agent is returned by bootstrap as metadata without resolving or rebinding
 
 ### ACP bridge and backend orchestration
 
