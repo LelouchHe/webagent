@@ -2735,9 +2735,10 @@ export class TaskManager implements ObligationHost {
 
     const proc = this.runningBashProcs.get(taskId);
     if (proc) {
-      const force = this.interruptedBashProcs.has(proc);
-      interruptBashProc(proc, force);
-      if (!force) requestBashStop(proc);
+      // First cancel: one polite signal plus the bounded escalation. A repeat
+      // skips the grace period and kills.
+      if (this.interruptedBashProcs.has(proc)) interruptBashProc(proc, true);
+      else requestBashStop(proc);
       this.interruptedBashProcs.add(proc);
     }
     if (hadAgentPrompt && !bridge) throw new AgentNotReadyError(taskId);

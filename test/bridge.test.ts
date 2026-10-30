@@ -974,6 +974,12 @@ describe("AgentBridge", () => {
         clearAgentStreaming() {
           streamingClearCount++;
         },
+        async stopBashForAgent() {
+          for (const [taskId, proc] of this.runningBashProcs) {
+            proc.kill();
+            this.runningBashProcs.delete(taskId);
+          }
+        },
         get plansCleared() {
           return plansCleared;
         },
@@ -1097,14 +1103,23 @@ describe("AgentBridge", () => {
         });
       };
 
-      // Start first restart but make it slow
-      let resolveStart: () => void;
+      // Start the first restart and park it inside start(). The teardown
+      // before start() is an await of its own (it stops the agent's bash
+      // runs), so the test waits for start() to be reached instead of assuming
+      // it already was.
+      let resolveStart!: () => void;
+      let reachedStart!: () => void;
+      const startReached = new Promise<void>((resolve) => {
+        reachedStart = resolve;
+      });
       (bridge as any).start = () =>
         new Promise<void>((r) => {
           resolveStart = r;
+          reachedStart();
         });
 
       const p1 = bridge.restart(tasks as any);
+      await startReached;
 
       await assert.rejects(
         () => bridge.restart(tasks as any),
@@ -1113,7 +1128,7 @@ describe("AgentBridge", () => {
 
       // Clean up: resolve the pending start
       (bridge as any).connection = {};
-      resolveStart!();
+      resolveStart();
       await p1;
     });
 
