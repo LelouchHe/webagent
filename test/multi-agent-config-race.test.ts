@@ -43,16 +43,13 @@ describe("config request across a rotation", () => {
   let callsA: string;
   let callsB: string;
   let bodyReadAt: string | null;
-  let bodyReadStarted: Promise<void>;
-  let markBodyRead: () => void;
-  let releaseRequest: () => void;
+  /** Resolvers waiting for the next `/model` body read to start. */
+  let bodyReadWaiters: Array<() => void>;
 
   before(async () => {
     dir = mkdtempSync(join(tmpdir(), "webagent-config-race-"));
     bodyReadAt = null;
-    bodyReadStarted = new Promise<void>((resolve) => {
-      markBodyRead = resolve;
-    });
+    bodyReadWaiters = [];
     callsA = join(dir, "a.calls.jsonl");
     callsB = join(dir, "b.calls.jsonl");
     writeFileSync(callsA, "");
@@ -102,7 +99,9 @@ describe("config request across a rotation", () => {
       onRequestBodyReadStart: (url) => {
         if (!url.includes("/model")) return;
         bodyReadAt = url;
-        markBodyRead();
+        const waiters = bodyReadWaiters;
+        bodyReadWaiters = [];
+        for (const waiter of waiters) waiter();
       },
     });
     server = http.createServer((req, res) => {
@@ -133,26 +132,30 @@ describe("config request across a rotation", () => {
       .map((line) => JSON.parse(line) as { method: string; params: unknown });
   }
 
-  it("refuses the stale write and never reaches the new execution", async () => {
-    const created = await tasks.createTask(
-      await tasks.resolveAgentTransport("agent-a"),
-      dir,
-      undefined,
-      "agent",
-    );
-    assert.equal(store.getBindingAgent(created.taskId), "agent-a");
+  /** Resolves when the next `/model` request starts reading its body. */
+  function nextBodyRead(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      bodyReadWaiters.push(resolve);
+    });
+  }
 
-    // The body is sent in two halves: everything arrives except the final
-    // bytes, so the route parks inside `readBody` after capturing its
-    // execution.
+  /**
+   * Send a model update whose body is withheld by one byte, so the route parks
+   * inside `readBody` after capturing its execution. `release` finishes it.
+   */
+  function pausedModelPut(taskId: string): {
+    response: Promise<{ status: number; json: unknown }>;
+    release: () => void;
+  } {
     const payload = JSON.stringify({ value: "probe-model" });
-    const responsePromise = new Promise<{ status: number; json: unknown }>(
+    let release!: () => void;
+    const response = new Promise<{ status: number; json: unknown }>(
       (resolve, reject) => {
         const req = http.request(
           {
             hostname: "127.0.0.1",
             port,
-            path: `/api/v1/tasks/${created.taskId}/model`,
+            path: `/api/v1/tasks/${taskId}/model`,
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
@@ -174,13 +177,31 @@ describe("config request across a rotation", () => {
         );
         req.on("error", reject);
         req.write(payload.slice(0, -1));
-        // Released once the rotation has committed.
-        releaseRequest = () => {
+        release = () => {
           req.end(payload.slice(-1));
         };
       },
     );
-    await bodyReadStarted;
+    return { response, release };
+  }
+
+  it("refuses the stale write and never reaches the new execution", async () => {
+    const created = await tasks.createTask(
+      await tasks.resolveAgentTransport("agent-a"),
+      dir,
+      undefined,
+      "agent",
+    );
+    assert.equal(store.getBindingAgent(created.taskId), "agent-a");
+
+    // The body is sent in two halves: everything arrives except the final
+    // bytes, so the route parks inside `readBody` after capturing its
+    // execution.
+    const readStarted = nextBodyRead();
+    const { response: responsePromise, release } = pausedModelPut(
+      created.taskId,
+    );
+    await readStarted;
     assert.ok(bodyReadAt, "the request started reading its body");
 
     // Rotate onto agent-b while the request is parked.
@@ -192,7 +213,7 @@ describe("config request across a rotation", () => {
     ).length;
 
     // Release the body: the captured execution is stale now.
-    releaseRequest();
+    release();
     const response = await responsePromise;
 
     assert.equal(response.status, 409);
@@ -204,6 +225,35 @@ describe("config request across a rotation", () => {
       calls(callsB).filter((call) => call.method === "config").length,
       configCallsB,
       "no configuration request reached the new execution",
+    );
+  });
+
+  it("refuses the stale write onto the same agent's replacement execution", async () => {
+    // The same owner, a new ACP session: the bridge's session view would
+    // happily project the replacement, so only the captured lease stops this.
+    const transport = await tasks.resolveAgentTransport("agent-a");
+    const created = await tasks.createTask(transport, dir, undefined, "agent");
+
+    const readStarted = nextBodyRead();
+    const { response: responsePromise, release } = pausedModelPut(
+      created.taskId,
+    );
+    await readStarted;
+
+    await tasks.clearTask(transport, created.taskId);
+    assert.equal(store.getBindingAgent(created.taskId), "agent-a");
+    const configCallsAfterClear = calls(callsA).filter(
+      (call) => call.method === "config",
+    ).length;
+
+    release();
+    const response = await responsePromise;
+
+    assert.equal(response.status, 409);
+    assert.equal(
+      calls(callsA).filter((call) => call.method === "config").length,
+      configCallsAfterClear,
+      "no configuration request reached the replacement execution",
     );
   });
 });
