@@ -7,6 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { spawn } from "node:child_process";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -479,6 +480,8 @@ describe("TaskManager", () => {
           killed++;
           return true;
         },
+        exitCode: null,
+        signalCode: null,
         stdout: { on() {} },
         stderr: { on() {} },
       } as never;
@@ -489,7 +492,66 @@ describe("TaskManager", () => {
       sm.clearAgentRuntime("test-agent");
 
       assert.equal(killed, 1, "the child was stopped, not just forgotten");
+      // The handle stays until the process reports close: dropping it here
+      // would leave a running child that nothing can reach. The route's
+      // identity-checked close handler is what releases it.
+      assert.equal(sm.runningBashProcs.get("bash-only"), proc);
+      assert.equal(sm.releaseBashProc("bash-only", proc), true);
       assert.equal(sm.runningBashProcs.has("bash-only"), false);
+    });
+
+    it("does not let a replaced run's late close drop the current handle", () => {
+      store.createTask("swap", tmpDir, "auto", "test-agent", "agent-swap");
+      const oldProc = { pid: 111, exitCode: 0, signalCode: null } as never;
+      const newProc = { pid: 222, exitCode: null, signalCode: null } as never;
+      sm.runningBashProcs.set("swap", newProc);
+
+      assert.equal(
+        sm.releaseBashProc("swap", oldProc),
+        false,
+        "an earlier run's close must be ignored",
+      );
+      assert.equal(sm.runningBashProcs.get("swap"), newProc);
+    });
+
+    it("kills a bash run that ignores SIGINT, and waits for it to close", async () => {
+      // A real process that ignores SIGINT: without the escalation it would
+      // outlive the stop request with no handle able to reach it.
+      const child = spawn(process.execPath, [
+        "-e",
+        "process.on('SIGINT', () => {}); setInterval(() => {}, 1000);",
+      ]);
+      const closed = new Promise<void>((resolve) =>
+        child.once("close", () => {
+          resolve();
+        }),
+      );
+      store.createTask(
+        "ignores-int",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-bash",
+      );
+      sm.runningBashProcs.set("ignores-int", child);
+      child.once("close", () => {
+        sm.releaseBashProc("ignores-int", child);
+      });
+      try {
+        await sm.stopBashProc("ignores-int");
+        await closed;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        assert.throws(
+          () => process.kill(child.pid!, 0),
+          /ESRCH/,
+          "the process is really gone, not merely signalled",
+        );
+        assert.equal(sm.runningBashProcs.has("ignores-int"), false);
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }
     });
   });
 

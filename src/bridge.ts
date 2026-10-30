@@ -11,7 +11,7 @@ import type {
   ToolContentItem,
 } from "./types.ts";
 import type { TaskManager } from "./task-manager.ts";
-import { interruptBashProc } from "./task-manager.ts";
+
 import type {
   AttachmentDispatcher,
   AttachmentRef,
@@ -917,31 +917,22 @@ export class AgentBridge extends EventEmitter {
     blog.info("reloading agent...");
 
     try {
-      // 1. Cancel all active prompts + kill bash procs. This runs before the
-      // `agent_reloading` broadcast, because the event-handler cleanup drops
-      // this agent's busy claims and would leave nothing to cancel.
+      // 1. Stop this agent's bash runs first. They are app-local, so the
+      // prompt cancellation below does not cover them, and a task may be
+      // running only bash. The stop is bounded and waits for the process to
+      // close (SIGKILL after the grace period), so the teardown never leaves a
+      // child running with no handle that can reach it.
+      await tasks.stopBashForAgent(this.agentId);
+      // 2. Cancel all active prompts. This runs before the `agent_reloading`
+      // broadcast, because the event-handler cleanup drops this agent's busy
+      // claims and would leave nothing to cancel.
       for (const taskId of [...tasks.activePrompts]) {
         if (!agentTaskIds.has(taskId)) continue;
-        const proc = tasks.runningBashProcs.get(taskId);
-        if (proc) {
-          interruptBashProc(proc);
-          tasks.runningBashProcs.delete(taskId);
-        }
         try {
           await this.cancel(taskId);
         } catch {
           /* best-effort */
         }
-      }
-      // Bash runs are app-local, so they are not covered by the prompt
-      // cancellation above. Stop every one this agent's tasks own, including
-      // tasks that are running *only* bash, before the teardown drops their
-      // handles.
-      for (const taskId of agentTaskIds) {
-        const proc = tasks.runningBashProcs.get(taskId);
-        if (!proc) continue;
-        interruptBashProc(proc);
-        tasks.runningBashProcs.delete(taskId);
       }
       this.emit("event", {
         type: "agent_reloading",

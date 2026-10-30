@@ -59,6 +59,11 @@ const slog = log.scope("task");
 
 const IS_WIN = process.platform === "win32";
 
+/** How long a bash run gets to exit after SIGINT before it is killed. */
+export const BASH_STOP_GRACE_MS = 3000;
+/** Hard bound on waiting for a bash run to report `close`. */
+export const BASH_STOP_LIMIT_MS = 8000;
+
 export function interruptBashProc(
   proc: ReturnType<TaskManager["runningBashProcs"]["get"]>,
   force = false,
@@ -78,6 +83,52 @@ export function interruptBashProc(
     }
   }
   proc.kill(force ? "SIGKILL" : "SIGINT");
+}
+
+/**
+ * Ask one bash run to stop, and make the request bounded: if the same process
+ * is still alive after the grace period it is killed outright. The handle stays
+ * registered until the run reports `close`, so a cancel, reload, or shutdown can
+ * always reach it in the meantime.
+ */
+export function requestBashStop(
+  proc: ReturnType<TaskManager["runningBashProcs"]["get"]>,
+): void {
+  if (!proc) return;
+  interruptBashProc(proc);
+  const escalate = setTimeout(() => {
+    if (proc.exitCode !== null || proc.signalCode !== null) return;
+    interruptBashProc(proc, true);
+  }, BASH_STOP_GRACE_MS);
+  (escalate as { unref?: () => void }).unref?.();
+}
+
+/** Wait (bounded) for one bash run to close; escalates to SIGKILL. */
+function collectBashProc(
+  proc: ReturnType<TaskManager["runningBashProcs"]["get"]>,
+): Promise<void> {
+  if (!proc) return Promise.resolve();
+  if (proc.exitCode !== null || proc.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(grace);
+      clearTimeout(limit);
+      proc.off("close", finish);
+      resolve();
+    };
+    const grace = setTimeout(() => {
+      if (!settled) interruptBashProc(proc, true);
+    }, BASH_STOP_GRACE_MS);
+    const limit = setTimeout(finish, BASH_STOP_LIMIT_MS);
+    (grace as { unref?: () => void }).unref?.();
+    (limit as { unref?: () => void }).unref?.();
+    proc.once("close", finish);
+  });
 }
 
 type SessionBridge = Pick<
@@ -878,14 +929,11 @@ export class TaskManager implements ObligationHost {
     for (const id of idSet) {
       this.activePrompts.delete(id);
       this.pendingPromptSubmissions.delete(id);
-      // A bash run is app-local but the task is losing its runtime here. Stop
-      // it before dropping the only handle that can still reach it, or the
-      // child keeps running untracked and unkillable.
-      const bash = this.runningBashProcs.get(id);
-      if (bash) {
-        interruptBashProc(bash);
-        this.runningBashProcs.delete(id);
-      }
+      // A bash run is app-local but the task is losing its runtime here. Ask
+      // it to stop (with a bounded escalation) and keep the handle registered:
+      // the process still owns stdout/stderr and its `close` is what clears the
+      // task's busy state.
+      this.requestBashStop(id);
       this.liveTasks.delete(id);
       this.syncPendingPermissions(id);
     }
@@ -1575,7 +1623,7 @@ export class TaskManager implements ObligationHost {
     if (pendingSubmission !== undefined) {
       this.cancelledPromptSubmissions.delete(pendingSubmission);
     }
-    this.runningBashProcs.delete(taskId);
+    this.requestBashStop(taskId);
     const adapter = this.agents.existing(this.agentsForTask(taskId) ?? "");
     adapter?.agentCommandSnapshots.delete(taskId);
     for (const [requestId, permission] of this.pendingPermissions) {
@@ -2535,7 +2583,12 @@ export class TaskManager implements ObligationHost {
     if (pendingSubmission !== undefined) {
       this.cancelledPromptSubmissions.delete(pendingSubmission);
     }
-    this.runningBashProcs.delete(id);
+    if (this.runningBashProcs.has(id)) {
+      // The task row is gone, so its map entry goes with it; the escalation
+      // armed by the stop still holds the process itself.
+      this.requestBashStop(id);
+      this.runningBashProcs.delete(id);
+    }
     this.attachmentLabelCache.delete(id);
     for (const adapter of this.agents.listExisting()) {
       adapter.agentCommandSnapshots.delete(id);
@@ -2684,6 +2737,7 @@ export class TaskManager implements ObligationHost {
     if (proc) {
       const force = this.interruptedBashProcs.has(proc);
       interruptBashProc(proc, force);
+      if (!force) requestBashStop(proc);
       this.interruptedBashProcs.add(proc);
     }
     if (hadAgentPrompt && !bridge) throw new AgentNotReadyError(taskId);
@@ -3463,6 +3517,43 @@ export class TaskManager implements ObligationHost {
     this.state.patch(taskId, {
       runtime: { pendingPermissions: forTask },
     });
+  }
+
+  /**
+   * Ask this task's bash run to stop. The handle stays registered until the
+   * process closes, so a repeated cancel or a later teardown can still reach it.
+   */
+  requestBashStop(taskId: string): void {
+    requestBashStop(this.runningBashProcs.get(taskId));
+  }
+
+  /** Stop this task's bash run and wait (bounded) until it has closed. */
+  async stopBashProc(taskId: string): Promise<void> {
+    const proc = this.runningBashProcs.get(taskId);
+    if (!proc) return;
+    requestBashStop(proc);
+    await collectBashProc(proc);
+  }
+
+  /** Stop every bash run this agent's tasks own, bounded and collected. */
+  async stopBashForAgent(agentId: string): Promise<void> {
+    const ids = this.taskIdsForAgent(agentId).filter((id) =>
+      this.runningBashProcs.has(id),
+    );
+    await Promise.all(ids.map((id) => this.stopBashProc(id)));
+  }
+
+  /**
+   * Release a bash handle when its process closes. Identity-checked: a late
+   * `close` from a replaced run must never drop the task's current one.
+   */
+  releaseBashProc(
+    taskId: string,
+    proc: ReturnType<TaskManager["runningBashProcs"]["get"]>,
+  ): boolean {
+    if (this.runningBashProcs.get(taskId) !== proc) return false;
+    this.runningBashProcs.delete(taskId);
+    return true;
   }
 
   /** Kill all running bash processes (for shutdown). */

@@ -18,7 +18,6 @@ import type { ClientRegistry } from "./client-registry.ts";
 import { errorMessage, MessageIngressSchema } from "./types.ts";
 import type { AgentEvent, ConfigOption } from "./types.ts";
 import {
-  interruptBashProc,
   AgentNotReadyError,
   InvalidTaskDirectoryError,
   TaskBusyError,
@@ -1880,7 +1879,7 @@ export function createRequestHandler(
         child.stderr.on("data", onData("stderr"));
 
         child.on("close", (code, signal) => {
-          tasks.runningBashProcs.delete(taskId);
+          tasks.releaseBashProc(taskId, child);
           tasks.syncBusy(taskId);
           const stored = outputTruncated ? "[truncated]\n" + output : output;
           store.saveEvent(
@@ -1899,7 +1898,7 @@ export function createRequestHandler(
         });
 
         child.on("error", (err) => {
-          tasks.runningBashProcs.delete(taskId);
+          tasks.releaseBashProc(taskId, child);
           tasks.syncBusy(taskId);
           const errMsg = errorMessage(err);
           store.saveEvent(
@@ -1933,7 +1932,9 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
-        interruptBashProc(tasks?.runningBashProcs.get(taskId));
+        // Ask the run to stop with a bounded escalation; the handle stays
+        // registered until the process actually closes.
+        tasks?.requestBashStop(taskId);
         json(res, HTTP_STATUS.OK, { ok: true });
         return;
       }
