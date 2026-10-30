@@ -218,6 +218,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - creating a child of a task carried by another configured agent targets that agent without rotating the parent; when the parent's agent is gone the child is created for `default_agent`
   - `POST /clear { agentId }` rescues a task onto another configured agent, leaves the `agent_rotation` record, and refuses an unconfigured / non-string `agentId`
   - REST and MCP callers cannot choose reserved task ids; bootstrap, clear, compact, and actual/synthetic task_created envelopes preserve Root identity
+  - bootstrap materializes the Root as the workspace's first task (attach on a never-bound Root, materialize on a reset slot) instead of creating an unrelated task
   - config update (model, mode) and broadcast
   - source filter on task list
   - parent validation: an unknown parent is 400; a parent carried by another agent keeps its own binding

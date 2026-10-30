@@ -245,7 +245,11 @@ describe("multi-agent server", () => {
     // An explicit task, not whatever bootstrap would resume: Root reset has
     // its own lifecycle.
     const created = await call("POST", "/api/v1/tasks", {});
-    assert.equal(created.status, 201);
+    assert.equal(
+      created.status,
+      201,
+      `create failed: ${JSON.stringify(created.json)}`,
+    );
     const task = created.json as { id: string };
     // Reading never resolves an execution, so it is safe to hammer.
     for (let i = 0; i < 3; i++) {

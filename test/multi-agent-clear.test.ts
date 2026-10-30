@@ -185,6 +185,23 @@ describe("clear onto another agent", () => {
     );
   });
 
+  it("serves snapshot and detail for a task with no live transport", async () => {
+    // Bound to a removed agent, and no process has been started for anyone:
+    // these are reads, and they must not resolve an execution first.
+    store.createTask("offline", dir, "auto", "agent-b", "b-session");
+    const snapshot = await request(
+      port,
+      "GET",
+      "/api/v1/tasks/offline/snapshot",
+    );
+    assert.equal(snapshot.status, 200);
+    const detail = await request(port, "GET", "/api/v1/tasks/offline");
+    assert.equal(detail.status, 200);
+    assert.equal(detail.json.agentId, "agent-b");
+    const events = await request(port, "GET", "/api/v1/tasks/offline/events");
+    assert.equal(events.status, 200);
+  });
+
   it("refuses an agent that is not configured", async () => {
     store.createTask("still-bound", dir, "auto", "agent-a", "a-session");
     const cleared = await request(

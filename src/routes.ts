@@ -2121,31 +2121,35 @@ export function createRequestHandler(
             };
           }
 
-          const bridge = await taskManager.resolveDefaultTransport();
-          const { taskId, configOptions } =
-            await taskManager.createTask(bridge);
-          const task = store.getTask(taskId);
+          // No task for the default agent: the workspace's first task is the
+          // Root anchor. Its first use either attaches an execution (never
+          // bound) or materializes the empty slot left by a reset.
+          const root = await taskManager.ensureRootLive();
+          const rootTaskId = store.rootTaskId;
           const result = {
-            id: taskId,
-            cwd: task?.cwd ?? deps.dataDir,
-            cwdDisplay: abbreviateHomePath(task?.cwd ?? deps.dataDir),
-            title: task?.title ?? null,
-            source: task?.source ?? "auto",
-            agentId: store.getBindingAgent(taskId) ?? null,
-            rootTaskId: store.rootTaskId,
-            configOptions,
-            agentCommands: taskManager.getAgentCommands(taskId),
+            id: root.id,
+            cwd: root.cwd,
+            cwdDisplay: abbreviateHomePath(root.cwd),
+            title: root.title,
+            source: root.source,
+            agentId: store.getBindingAgent(root.id) ?? null,
+            rootTaskId,
+            configOptions: taskManager.applyStoredConfig(
+              taskManager.configOptionsForTask(root.id),
+              root,
+            ),
+            agentCommands: taskManager.getAgentCommands(root.id),
             created: true,
           };
           sseManager.broadcast({
             type: "task_created",
-            rootTaskId: store.rootTaskId,
-            taskId,
+            rootTaskId,
+            taskId: root.id,
             cwd: result.cwd,
             cwdDisplay: result.cwdDisplay,
             title: result.title,
             agentId: result.agentId,
-            configOptions,
+            configOptions: result.configOptions,
             agentCommands: result.agentCommands,
           });
           return result;
@@ -2503,17 +2507,14 @@ export function createRequestHandler(
           // configOptions returns inline. This eliminates the race where the
           // post-resume `config_option_update` broadcast can arrive before the
           // client's SSE is fully wired up — a flake observed on slow CI runners.
-          // Reading a task never requires a started agent. When the task
-          // already has a transport, a background resume warms the config
-          // schema; a failure only costs that optional payload.
+          // Reading a task never requires a started agent: the response below
+          // is served either way. When the task is not live yet, a background
+          // resume warms the config schema; a failure only costs that optional
+          // payload.
           const wasLive = tasks?.liveTasks.has(taskId) ?? true;
-          const existingExecution = tasks?.existingTaskExecution(taskId);
           let resumePromise: Promise<void> | null = null;
-          if (tasks && existingExecution && !wasLive) {
-            resumePromise = tasks.ensureResumed(
-              existingExecution.bridge,
-              taskId,
-            );
+          if (tasks && !wasLive) {
+            resumePromise = tasks.warmTaskExecution(taskId).catch(() => {});
             // Broadcast config_option_update too, so any OTHER client viewing
             // the same task (whose own GET may have raced and returned cold)
             // also picks up the warm values.
@@ -2738,8 +2739,15 @@ export function createRequestHandler(
         // longer available: then the child is created for the default agent.
         // Either way the *parent's* binding is untouched — creating a child is
         // not a reason to rotate an existing execution.
-        const parentAgent = body.parentId
-          ? store.getBindingAgent(body.parentId)
+        // An unnamed task attaches to Root, so the effective parent decides
+        // the target agent too — not just an explicit `parentId`.
+        const effectiveParentId =
+          body.parentId ??
+          (store.getTaskIncludingDeleted(store.rootTaskId)
+            ? store.rootTaskId
+            : undefined);
+        const parentAgent = effectiveParentId
+          ? store.getBindingAgent(effectiveParentId)
           : undefined;
         const targetAgentId =
           parentAgent && tasks.isAgentConfigured(parentAgent)

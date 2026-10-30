@@ -259,10 +259,12 @@ Message, source/target/LCA projections, and a queued Delivery.
 
 #### `POST /api/v1/tasks/bootstrap`
 
-Return the most recent task for the current agent, creating one only when
-none exists. The request has no body. Concurrent bootstrap requests are
-coalesced, so multiple clients starting after an agent switch receive the same
-WebAgent task ID.
+Return the most recent task carried by the default agent, materializing the
+workspace Root as the first task when there is none. The Root's first use is
+also its first execution: an unbound Root attaches one, and a Root left as an
+empty slot by a reset materializes it. The request has no body. Concurrent
+bootstrap requests are coalesced, so multiple clients starting together receive
+the same WebAgent task ID.
 
 **Response** `200`:
 

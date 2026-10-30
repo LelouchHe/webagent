@@ -1577,6 +1577,23 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
+   * Warm a task's execution without deciding anything about its binding.
+   *
+   * A read may pay for a restore so the client gets config and commands, but
+   * it must not rotate: a task whose binding agent left the configuration
+   * keeps that binding until an operation that actually executes asks for it.
+   */
+  async warmTaskExecution(taskId: string): Promise<void> {
+    const binding = this.store.getCurrentExecutionBinding(taskId);
+    const agentId = binding?.agent_key;
+    if (!agentId || !this.agents.isConfigured(agentId)) return;
+    const adapter = await this.agents.resolve(agentId);
+    const bridge = adapter.bridge as DeliveryBridge | null;
+    if (!bridge) return;
+    await this.ensureResumed(bridge, taskId);
+  }
+
+  /**
    * The single first-materialization path: resolve the binding agent, then let
    * `ensureResumed` (which shares one promise per task) do the work. Root must
    * never be materialized by a second, undeduplicated entry point.
@@ -1595,6 +1612,17 @@ export class TaskManager implements ObligationHost {
    */
   async ensureRootTask(): Promise<void> {
     await this.ensureTaskLive(this.store.rootTaskId);
+  }
+
+  /**
+   * Materialize the workspace's first task: the Root anchor. The row is
+   * created if this database never had one, and the task's first use either
+   * attaches an execution (never bound) or materializes a reset's empty slot.
+   */
+  async ensureRootLive(): Promise<TaskRow> {
+    const root = this.store.ensureRootTask(this.defaultCwd);
+    await this.ensureTaskLive(root.id);
+    return this.store.getTask(root.id) ?? root;
   }
 
   /** Agent that unbound tasks and caller-less operations target. */

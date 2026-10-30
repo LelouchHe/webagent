@@ -217,9 +217,11 @@ describe("Task REST API", () => {
       const bodies = responses.map((response) => JSON.parse(response.body));
       assert.equal(new Set(bodies.map((body) => body.id)).size, 1);
       assert.ok(bodies.every((body) => body.rootTaskId === store.rootTaskId));
-      assert.equal(
-        store.listTasks().filter((task) => task.id !== store.rootTaskId).length,
-        1,
+      // Bootstrap materialized the Root as the workspace's first task: no
+      // extra task exists beside it.
+      assert.deepEqual(
+        store.listTasks().map((task) => task.id),
+        [store.rootTaskId],
       );
       assert.equal(
         broadcastEvents.filter((event) => event.type === "task_created").length,
@@ -246,7 +248,7 @@ describe("Task REST API", () => {
       assert.notEqual(JSON.parse(explicit.body).id, bootstrapId);
       assert.equal(
         store.listTasks().filter((task) => task.id !== store.rootTaskId).length,
-        2,
+        1,
       );
     });
 
