@@ -2459,6 +2459,7 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.OK, {
             id: taskId,
             rootTaskId: store.rootTaskId,
+            agentId: store.getBindingAgent(taskId) ?? null,
             cwd: fresh.cwd,
             cwdDisplay: abbreviateHomePath(fresh.cwd),
             title: fresh.title,

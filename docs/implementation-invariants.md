@@ -71,6 +71,36 @@ The operational form of that sentence:
   empty-task GC's surviving children rely on it to stay reachable. *Why:*
   filtering the cascade by owner left another agent's descendants alive under a
   parent the user had deleted — unreachable rows, not a protected subtree.
+- **Execution environment comes from the binding, never from the caller.** A
+  request names a task; the runtime resolves which agent executes it. Five
+  contexts are the deliberate exceptions and each names its own source: the
+  first execution of a task (the verified target), a replacement (the new
+  execution), retirement/deletion/GC/Root reset (the old binding recorded at
+  commit), agent events and permission responses (the source execution that
+  produced them), and continuations inside one operation (the context captured
+  at its start). *Why:* "resolve the current binding" at each site looks
+  uniform and silently mis-retires, mis-authorizes, or sends a foreign
+  operation into the default process.
+- **Reads never depend on an execution being resolvable.** Listing, reading a
+  task, its snapshot, attachments, shares, and deletion must work while the
+  binding agent is missing, dead, or no longer configured; only operations
+  that need a process (prompt, create, approve, reload) resolve one, and they
+  fail with the rescue path (`POST /clear { agentId }`) instead of falling
+  back to another agent's process. *Why:* otherwise an unavailable binary
+  takes the user's history with it, and a fallback hides which process acted.
+- **An agent's lifecycle events touch only the tasks it carries.** Reload,
+  disconnect, and restart clear that agent's streaming, plans, usage, pending
+  permissions, busy claims, and live-task membership; the `connected` event
+  names its agent, and the client only lets the agent carrying its current
+  task complete a reload. *Why:* an unrelated agent coming up must not unlock
+  another client's stuck turn.
+- **Root has three first-use states, and one materialization path.** A task
+  with no binding *attaches* an execution, a binding holding its own empty slot
+  *replaces* it, and a real binding *loads* it. All three run through
+  `ensureResumed`/`pendingResumes`, the one per-task single-flight; a second
+  entry point (such as calling `ensureRootTask` directly, which has no
+  deduplication) could materialize two sessions for one task. A never-bound
+  task must not manufacture a generation before its attach commits.
 - **A rotation does not end the task's debt.** It truncates the old transport
   (claimed retry ids, unfinished delivery rows), keeps the same obligation
   record with its attempts and age, cancels only the silence watchdog (its turn

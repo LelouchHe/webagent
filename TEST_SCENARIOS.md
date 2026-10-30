@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-10-26
+Last updated: 2026-11-02
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -24,6 +24,33 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - Local file viewer (arbitrary paths, signed bytes, slash picker, responsive viewer)
 
 ## Unit / Integration Scenarios
+
+### Multi-agent runtime
+
+- `test/multi-agent-runtime.test.ts` (real ACP child processes, one per agent)
+  - no agent exists before the first demand; unrelated agents stay unstarted
+  - each task executes on its binding agent: B really receives the prompt, A receives nothing, and two agents sharing one session id stay two executions
+  - a task bound to one agent cannot be projected onto another agent's identical session id (`setConfigOption` refuses)
+  - concurrent demand starts one process; a failed `initialize` leaves no process and the next start succeeds
+  - reads (task, list, events, session view, commands, permissions) work with the agent's transport gone, and no read rotates the binding
+  - Root's three first-use states: unbound attaches, empty slot replaces, real binding loads; concurrent first use materializes once; each commit advances the generation
+  - a reload of one agent leaves another agent's streaming, plan, usage, and busy state untouched
+  - GC and Root reset retire through the agent recorded on the binding, never a default adapter (same session id on both agents)
+
+- `test/multi-agent-mcp.test.ts`
+  - an `initializing` capability completes the MCP handshake but every business tool returns `initializing`; after promotion the same token works
+  - a request authenticated before a rotation cannot write after it, while a fresh token against the current generation succeeds
+  - unknown/revoked tokens are refused before any protocol work; the caller principal is frozen and carries `(task, agent, generation)`
+
+- `test/multi-agent-clear.test.ts` (HTTP)
+  - `/clear { agentId }` moves a task off a removed agent, records `explicit_clear`, preserves history, and creates exactly one session on the configured agent
+  - an unconfigured `agentId`, a non-string `agentId`, and the default-to-binding path
+
+- `test/multi-agent-server.test.ts` (black-box: real server process + two mock agents)
+  - boot starts zero agents; the first task starts only the default agent
+  - global list, `?agent=` narrowing, and `agentId` on every payload
+  - `/clear { agentId }` moves a task onto the second agent without starting the first
+  - reads, snapshots, and deletion keep working with agents idle
 
 ### ACP bridge and backend orchestration
 
@@ -187,11 +214,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/tasks.test.ts`
   - task CRUD (create / get / delete / list), with server-only id assignment; the literal `root` resolves like a task and unknown/legacy ids return 404
-  - task list remains an agent-scoped array; detail, bootstrap/create/clear/reset, config, task_created, and connected payloads carry backend Root authority additively
+  - task list is global (`?agent=` narrows); every list entry, task detail, snapshot, bootstrap/create/clear payload, and `task_created` broadcast carries `agentId` alongside backend Root authority
+  - creating a child of a task carried by another configured agent targets that agent without rotating the parent; when the parent's agent is gone the child is created for `default_agent`
+  - `POST /clear { agentId }` rescues a task onto another configured agent, leaves the `agent_rotation` record, and refuses an unconfigured / non-string `agentId`
   - REST and MCP callers cannot choose reserved task ids; bootstrap, clear, compact, and actual/synthetic task_created envelopes preserve Root identity
   - config update (model, mode) and broadcast
   - source filter on task list
-  - agent-scoped parent validation: a parent owned by another agent is rejected and no child or system_message is written into it
+  - parent validation: an unknown parent is 400; a parent carried by another agent keeps its own binding
   - gzip compression for events endpoint
   - streaming buffer flush on events endpoint
   - auto-resume of non-live tasks

@@ -136,13 +136,26 @@ API discovery endpoint. Returns the API version and top-level endpoint paths.
 
 #### `GET /api/v1/tasks`
 
-List tasks owned by the current backend, ordered by `last_active_at` descending. The response is an array scoped to this backend, so it contains at most this backend's one Root and needs no identity envelope. On hashless startup, the frontend selects the first task with `hasUserInput: true`, then the canonical Root, then the first listed task. SSE reconnects preserve the task already active in the browser.
+List every live task, ordered by `last_active_at` descending. Visibility is
+global: a task whose current execution belongs to another configured agent —
+or to an agent that is no longer configured — is still listed, because reading
+never depends on an execution being resolvable. An unbound Root is listed
+too; it is a real task whose first use materializes an execution. On hashless
+startup the frontend selects the first task with `hasUserInput: true`, then the
+canonical Root, then the first listed task. SSE reconnects preserve the task
+already active in the browser.
 
-| Parameter | In    | Type   | Description                                         |
-| --------- | ----- | ------ | --------------------------------------------------- |
-| `source`  | query | string | Optional. Filter by task source (e.g., `"auto"`) |
+| Parameter | In    | Type   | Description                                                   |
+| --------- | ----- | ------ | ------------------------------------------------------------- |
+| `source`  | query | string | Optional. Filter by task source (e.g., `"auto"`)              |
+| `agent`   | query | string | Optional. Narrow to tasks whose current binding names this agent |
 
-**Response** `200`: Array of `TaskSummary` (defined in `src/types.ts`). `created_at` and `last_active_at` are rendered ISO-8601 UTC with `Z` (see [Timestamps](#timestamps)). Root identity is supplied additively by `/api/v1/config`, task detail/bootstrap/create/clear/reset responses, and SSE authority fields.
+**Response** `200`: Array of `TaskSummary` (defined in `src/types.ts`). Each
+entry carries `agentId`: the agent of the task's current execution binding, or
+`null` when the task is unbound. `created_at` and `last_active_at` are rendered
+ISO-8601 UTC with `Z` (see [Timestamps](#timestamps)). Root identity is
+supplied additively by `/api/v1/config`, task detail/bootstrap/create/clear/reset
+responses, and SSE authority fields.
 
 ```json
 [
@@ -311,10 +324,17 @@ optional `cwd` changes the working directory for the replacement execution.
 The request is rejected with `409` while the task has active prompt or bash
 work; cancel it first.
 
+This is also the rescue path for a task whose binding agent is unavailable or
+has been removed from the configuration: `agentId` names the configured agent
+that should take the task over. It defaults to the task's own binding agent
+when that agent is still configured, otherwise to the configured default
+agent. An explicit `agentId` must be configured; the task's binding is never
+changed by any other read or write path while its agent is unavailable.
+
 **Request body (optional):**
 
 ```json
-{ "cwd": "/path/to/project" }
+{ "cwd": "/path/to/project", "agentId": "beta" }
 ```
 
 **Response** `200`:
@@ -323,6 +343,7 @@ work; cancel it first.
 {
   "id": "abc-123",
   "rootTaskId": "root",
+  "agentId": "beta",
   "cwd": "/path/to/project",
   "title": null,
   "source": "auto",
@@ -334,8 +355,9 @@ The old ACP binding is no longer used for incoming events. The existing
 `task_created` SSE shape is broadcast so connected clients refresh the
 task's runtime metadata.
 
-**Errors:** `400` (invalid cwd or replacement failure), `404` (task not
-found), `409` (task is busy), `503` (agent not ready)
+**Errors:** `400` (invalid cwd, an `agentId` that is not configured, or a
+replacement failure), `404` (task not found), `409` (task is busy), `503` (the
+target agent could not be started)
 
 ---
 
@@ -805,7 +827,7 @@ Get server and agent version information.
 | Field           | Type           | Description                                               |
 | --------------- | -------------- | --------------------------------------------------------- |
 | `server`        | string         | WebAgent server version (from `package.json`)             |
-| `agent`         | object \| null | Agent backend info. `null` if bridge hasn't connected yet |
+| `agent`         | object \| null | Default agent's ACP identity; `null` until it has started (reading metadata never starts it) |
 | `agent.name`    | string         | Agent name reported via ACP                               |
 | `agent.version` | string         | Agent version reported via ACP                            |
 
@@ -1021,9 +1043,14 @@ When no work remains, the endpoint is idempotent:
 
 #### `POST /api/v1/bridge/reload`
 
-Restart the agent subprocess without restarting the server. Cancels all active prompts, flushes buffers, and re-spawns the agent process. Tasks are restored lazily on next user interaction.
+Restart one agent's subprocess without restarting the server. Cancels that
+agent's active prompts, flushes their buffers, and re-spawns the process. Only
+tasks carried by that agent are affected: another agent's tasks keep their
+streaming, plans, usage, and pending permissions. Its tasks are restored
+lazily on next user interaction.
 
-Use this after upgrading the CLI binary to pick up new features, skills, and MCP configurations.
+Use this after upgrading a CLI binary to pick up new features, skills, and MCP
+configurations.
 
 **Request body (optional):**
 
@@ -1031,9 +1058,16 @@ Use this after upgrading the CLI binary to pick up new features, skills, and MCP
 { "taskId": "<task id>" }
 ```
 
-When `taskId` is supplied, the server resolves the task's owning agent and refuses with `409` unless that agent is the one currently running (`Agent <id> is not available`, or `Task has no agent to reload` when the task has no binding). With no body, the endpoint reloads the running agent.
+When `taskId` is supplied, the server reloads that task's binding agent,
+starting it if necessary. A binding whose agent left the configuration is
+replaced implicitly first, so the reload targets the agent that now carries
+the task. With no body, every agent that already has a running process is
+reloaded — a reload never starts an agent that is not running. A task with no
+binding is refused with `409` (`Task has no agent to reload`).
 
-Broadcasts `agent_reloading` SSE event on start, then a `connected` event on success (with updated agent info), or `agent_reloading_failed` on failure.
+Broadcasts `agent_reloading` / `agent_reloading_failed` / `agent_disconnected`
+SSE events scoped by `agentId`, then a `connected` event carrying `agentId` on
+success.
 
 **Response** `200`:
 
@@ -1672,7 +1706,8 @@ These events are streamed in real-time via SSE as the agent works.
 | Type                    | Key Fields                                                                               | Description                                                                                                         |
 | ----------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `connected`             | `rootTaskId`, `clientId`, `pendingCount`                                                               | SSE connection established with the workspace Root identity and authoritative pending inbox count. Not an agent event — generated by the server. |
-| `task_created`       | `rootTaskId`, `taskId`, `cwd`, `title`, `configOptions`, `busyKind?`                                | Task created or resumed                                                                                          |
+| `connected` (agent)     | `agentId`, `agent`, `configOptions`                                                                   | One agent's process connected. Same event name as the handshake, distinguished by `agentId` + `agent`; clients only let it complete a reload of the agent carrying their current task. |
+| `task_created`       | `rootTaskId`, `taskId`, `agentId`, `cwd`, `title`, `configOptions`, `busyKind?`                                | Task created or resumed                                                                                          |
 | `task_deleted`       | `taskId`, `parentId?`, `clientOpId?`                                                    | Task was deleted                                                                                                 |
 | `task_reset`         | `rootTaskId`, `taskId`, `clientOpId?`                                                                | Root task was reset; the task row remains                                                                         |
 | `task_title_updated` | `taskId`, `title`                                                                     | Task title set (explicit or id-default)                                                                            |

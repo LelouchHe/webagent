@@ -363,22 +363,13 @@ server.listen(config.port, config.host, () => {
       sharePreviewCleanup = startSharePreviewCleanup(store);
       console.log(`[share] preview gc armed (24h interval)`);
     }
-    // Task runtime metadata is ready before any agent process exists: reads,
-    // deletion, and rescue never depend on a bridge.
+    // Startup owns no execution: task metadata is ready, and every agent
+    // process (including the default one and the Root's) starts on first
+    // demand. A missing or broken agent binary is therefore a runtime
+    // condition, never a boot gate or a daemon restart.
     tasks.hydrate();
-    const agentId = config.default_agent;
     console.log(
-      `[bridge] starting ${agentId}: ${config.agents[agentId].cmd}...`,
+      `[agents] ${Object.keys(config.agents).join(", ")} start on demand`,
     );
-    try {
-      // The Root is materialized lazily like everything else, but the default
-      // agent is still warmed at boot so the first user interaction does not
-      // pay the process start.
-      await tasks.ensureRootTask();
-      console.log(`[bridge] ready`);
-    } catch (err) {
-      // A per-agent start failure is a runtime condition, not a boot gate.
-      console.error(`[bridge] failed to start:`, err);
-    }
   })();
 });

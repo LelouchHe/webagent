@@ -58,6 +58,8 @@ schema and operations guide.
 - Each task has at most one current execution binding, globally; writable
   execution facts must hold that task's current generation, and a missing or
   unknown generation is refused.
+- A task's execution environment comes from its binding, never from the caller;
+  agent processes start on demand (none at boot), and reads never require one.
 - Keep repository instructions and documentation self-contained. Do not depend
   on untracked personal configuration or machine-specific paths.
 
