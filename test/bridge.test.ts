@@ -23,7 +23,7 @@ describe("AgentBridge", () => {
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
 
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       prompt: async (payload: any) => {
         promptCalls.push(payload);
         return { stopReason: "end_turn" };
@@ -74,7 +74,7 @@ describe("AgentBridge", () => {
     const calls: unknown[] = [];
     const events: unknown[] = [];
     bridge.on("event", (event) => events.push(event));
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       prompt: async (payload: unknown) => {
         calls.push(payload);
         return { stopReason: "end_turn" };
@@ -125,7 +125,7 @@ describe("AgentBridge", () => {
     });
     const events: unknown[] = [];
     bridge.on("event", (event) => events.push(event));
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       newSession: async () => {
         await (bridge as any).handleSessionUpdate({
           sessionId: "agent-new",
@@ -185,7 +185,7 @@ describe("AgentBridge", () => {
     it("prefers task/delete when the agent advertises it", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
       const calls: string[] = [];
-      (bridge as any).conn = {
+      (bridge as any).connection = {
         deleteSession: async (p: { sessionId: string }) => {
           calls.push(`delete:${p.sessionId}`);
         },
@@ -206,7 +206,7 @@ describe("AgentBridge", () => {
     it("falls back to task/close when delete is not advertised", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
       const calls: string[] = [];
-      (bridge as any).conn = {
+      (bridge as any).connection = {
         closeSession: async (p: { sessionId: string }) => {
           calls.push(`close:${p.sessionId}`);
         },
@@ -221,7 +221,7 @@ describe("AgentBridge", () => {
     it("skips silently when the agent advertises neither capability", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
       let called = false;
-      (bridge as any).conn = {
+      (bridge as any).connection = {
         deleteSession: async () => {
           called = true;
         },
@@ -238,7 +238,7 @@ describe("AgentBridge", () => {
 
     it("swallows agent failures so rotation is never rolled back", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
-      (bridge as any).conn = {
+      (bridge as any).connection = {
         deleteSession: async () => {
           throw new Error("agent disagrees");
         },
@@ -264,7 +264,7 @@ describe("AgentBridge", () => {
         options: [{ value: "model-1", name: "Model One" }],
       },
     ];
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       loadSession: async (payload: unknown) => {
         calls.push({ method: "load", payload });
         return { configOptions: modelOptions };
@@ -307,7 +307,7 @@ describe("AgentBridge", () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
     (bridge as any).loadSessionSupported = true;
     const calls: Array<{ method: string; payload: unknown }> = [];
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       newSession: async (payload: unknown) => {
         calls.push({ method: "new", payload });
         return { sessionId: "agent-2", configOptions: [] };
@@ -354,7 +354,7 @@ describe("AgentBridge", () => {
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
 
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       prompt: async () => {
         throw new Error("Request cancelled by user");
       },
@@ -376,7 +376,7 @@ describe("AgentBridge", () => {
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
 
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       prompt: async () => {
         throw new Error("boom");
       },
@@ -419,7 +419,7 @@ describe("AgentBridge", () => {
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
 
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       prompt: async ({ sessionId }: any) => {
         await (bridge as any).handleSessionUpdate({
           sessionId,
@@ -497,7 +497,7 @@ describe("AgentBridge", () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
     const cancelCalls: any[] = [];
 
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       cancel: async (payload: any) => {
         cancelCalls.push(payload);
       },
@@ -695,7 +695,7 @@ describe("AgentBridge", () => {
       },
     ];
 
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       loadSession: async () => ({ configOptions: modelOptions }),
       setSessionConfigOption: async () => ({
         configOptions: [
@@ -722,7 +722,7 @@ describe("AgentBridge", () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
     let sent: unknown = null;
 
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       setSessionConfigOption: async (params: unknown) => {
         sent = params;
         return {
@@ -764,7 +764,7 @@ describe("AgentBridge", () => {
 
       let resolveConnPrompt: ((v: { stopReason: string }) => void) | null =
         null;
-      (bridge as any).conn = {
+      (bridge as any).connection = {
         prompt: () =>
           new Promise<{ stopReason: string }>((resolve) => {
             resolveConnPrompt = resolve;
@@ -791,7 +791,7 @@ describe("AgentBridge", () => {
         "should NOT emit prompt_done when subprocess dies",
       );
 
-      // Cleanup pending conn.prompt promise
+      // Cleanup pending connection.prompt promise
       (resolveConnPrompt as ((v: { stopReason: string }) => void) | null)?.({
         stopReason: "end_turn",
       });
@@ -822,7 +822,7 @@ describe("AgentBridge", () => {
 
       // Simulate start() success path
       (bridge as any).deadReason = null;
-      (bridge as any).conn = {
+      (bridge as any).connection = {
         prompt: async () => ({ stopReason: "end_turn" }),
       };
 
@@ -842,7 +842,7 @@ describe("AgentBridge", () => {
           this.name = "RequestError";
         }
       }
-      (bridge as any).conn = {
+      (bridge as any).connection = {
         loadSession: async () => {
           throw new FakeReqErr("abc-123");
         },
@@ -962,9 +962,9 @@ describe("AgentBridge", () => {
       const events: any[] = [];
       bridge.on("event", (e: any) => events.push(e));
 
-      // Stub conn for cancel
+      // Stub connection for cancel
       let cancelCalled = false;
-      (bridge as any).conn = {
+      (bridge as any).connection = {
         cancel: async () => {
           cancelCalled = true;
         },
@@ -976,7 +976,7 @@ describe("AgentBridge", () => {
       let startCalls = 0;
       (bridge as any).start = async () => {
         startCalls++;
-        (bridge as any).conn = {}; // simulate connected
+        (bridge as any).connection = {}; // simulate connected
         bridge.emit("event", {
           type: "connected",
           agent: { name: "mock", version: "2.0" },
@@ -1040,14 +1040,14 @@ describe("AgentBridge", () => {
 
     it("flushes late chunks after the old process shuts down", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
-      (bridge as any).conn = { cancel: async () => {} };
+      (bridge as any).connection = { cancel: async () => {} };
       const tasks = createMockTasks();
 
       (bridge as any).shutdown = async () => {
         tasks.assistantBuffers.set("s1", "late chunk");
       };
       (bridge as any).start = async () => {
-        (bridge as any).conn = {};
+        (bridge as any).connection = {};
       };
 
       await bridge.restart(tasks as any);
@@ -1058,12 +1058,12 @@ describe("AgentBridge", () => {
 
     it("rejects concurrent restart calls", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
-      (bridge as any).conn = { cancel: async () => {} };
+      (bridge as any).connection = { cancel: async () => {} };
 
       const tasks = createMockTasks();
 
       (bridge as any).start = async () => {
-        (bridge as any).conn = {};
+        (bridge as any).connection = {};
         bridge.emit("event", {
           type: "connected",
           agent: { name: "mock", version: "1.0" },
@@ -1086,7 +1086,7 @@ describe("AgentBridge", () => {
       );
 
       // Clean up: resolve the pending start
-      (bridge as any).conn = {};
+      (bridge as any).connection = {};
       resolveStart!();
       await p1;
     });
@@ -1098,7 +1098,7 @@ describe("AgentBridge", () => {
         const events: any[] = [];
         bridge.on("event", (e: any) => events.push(e));
 
-        (bridge as any).conn = { cancel: async () => {} };
+        (bridge as any).connection = { cancel: async () => {} };
 
         const tasks = createMockTasks();
 
@@ -1106,7 +1106,7 @@ describe("AgentBridge", () => {
         (bridge as any).start = async () => {
           attempt++;
           if (attempt < 3) throw new Error(`fail-${attempt}`);
-          (bridge as any).conn = {};
+          (bridge as any).connection = {};
           bridge.emit("event", {
             type: "connected",
             agent: { name: "mock", version: "1.0" },
@@ -1135,7 +1135,7 @@ describe("AgentBridge", () => {
         const events: any[] = [];
         bridge.on("event", (e: any) => events.push(e));
 
-        (bridge as any).conn = { cancel: async () => {} };
+        (bridge as any).connection = { cancel: async () => {} };
 
         const tasks = createMockTasks();
 

@@ -64,6 +64,20 @@ export const DISPATCH_ADVISORY_MS = 60 * 60_000;
  */
 export const AGE_ADVISORY_MS = 4 * 60 * 60_000;
 
+/**
+ * How one closing-reminder submission ended.
+ *
+ * `deferred` means the transport was not available at all (no execution bound,
+ * the execution is being replaced, the bridge is starting or reconnecting, or
+ * the lease moved). It is deliberately **not** a failure: no submission was
+ * attempted, so it must not consume the failure budget, and it must not
+ * conclude anything about the debt. `age advisory` keeps reporting the wait.
+ */
+export type DeliveryOutcome =
+  | { status: "delivered" }
+  | { status: "deferred"; reason: string }
+  | { status: "failed"; reason: string };
+
 export type ObligationState =
   | "awaiting_delivery"
   | "open"
@@ -103,6 +117,8 @@ export interface ObligationView {
   readonly state: ObligationState;
   readonly deliveredAttempts: number;
   readonly consecutiveSubmissionFailures: number;
+  /** Consecutive deferred submissions; drives the bounded deferral backoff. */
+  readonly deferrals: number;
   readonly lastDeliveredAttemptAt?: number;
   readonly waitingSince?: number;
   /** True when the current wait is a busy/failure retry, not a reminder delay. */
@@ -134,6 +150,7 @@ interface ObligationRecord {
   state: ObligationState;
   deliveredAttempts: number;
   consecutiveSubmissionFailures: number;
+  deferrals: number;
   lastDeliveredAttemptAt?: number;
   waitingSince?: number;
   /** True when the current wait is a busy/failure retry, not the reminder schedule. */
@@ -219,7 +236,14 @@ export type ObligationFact =
       sourceTaskId: string;
       targetTaskId: string;
       recoveryGeneration: number;
-      accepted: boolean;
+      outcome: DeliveryOutcome;
+    }
+  | {
+      // The target's execution was replaced: the transport that carried the
+      // original dispatch is gone, but the debt is not. The record survives as
+      // a reminder aimed at the new execution.
+      type: "execution_rotated";
+      targetTaskId: string;
     }
   | {
       type: "timer_due";
@@ -287,7 +311,7 @@ export interface ObligationControllerOptions {
    * when the bridge accepts (and the turn completes); a rejected submission
    * must resolve `false`.
    */
-  submitReminder: (obligation: ObligationView) => Promise<boolean>;
+  submitReminder: (obligation: ObligationView) => Promise<DeliveryOutcome>;
   /**
    * Retry the original dispatch at an idle boundary after its prompt was
    * rejected. A successful retry re-enters through a hand-off fact; a failure
@@ -426,6 +450,9 @@ export class ObligationController {
       case "reminder_started":
         this.transitionReminderStarted(fact);
         break;
+      case "execution_rotated":
+        this.transitionExecutionRotated(fact);
+        break;
       case "reminder_resolved":
         this.transitionReminderResolved(fact);
         break;
@@ -532,6 +559,15 @@ export class ObligationController {
       targetTaskId,
       attemptId: promptId,
     });
+  }
+
+  /**
+   * The target's execution was replaced. The old transport (and everything it
+   * was retrying) is gone; the same record now waits for a reminder aimed at
+   * the replacement, with its attempts and age intact.
+   */
+  noteExecutionRotated(targetTaskId: string): void {
+    this.apply({ type: "execution_rotated", targetTaskId });
   }
 
   onTargetTurnEnded(targetTaskId: string, turnId?: string): void {
@@ -733,6 +769,7 @@ export class ObligationController {
       state: "awaiting_delivery",
       deliveredAttempts: 0,
       consecutiveSubmissionFailures: 0,
+      deferrals: 0,
       retrying: false,
       dispatchAdvised: false,
       ageAdvised: false,
@@ -902,6 +939,33 @@ export class ObligationController {
     }
   }
 
+  private transitionExecutionRotated(
+    fact: Extract<ObligationFact, { type: "execution_rotated" }>,
+  ): void {
+    const obligation = this.findForTarget(fact.targetTaskId);
+    if (!obligation || isTerminal(obligation.state)) return;
+    const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
+    this.watchdog.delete(key);
+    obligation.observedTurnId = undefined;
+    // The dispatch attempt belonged to the replaced execution. This also
+    // invalidates any in-flight reminder submission still holding the old
+    // recovery generation, so its late result cannot move the record.
+    obligation.attemptId = undefined;
+    obligation.recoveryGeneration += 1;
+    obligation.deferrals = 0;
+    obligation.retrying = false;
+    // `awaiting_delivery` can never complete now: nothing will deliver the old
+    // body to the new execution, and re-sending it is exactly what must not
+    // happen. Convert the debt to a closing reminder instead.
+    obligation.state = "reminder_due";
+    // Keep the attempt ledger: rotation does not end the debt and does not
+    // reset how long it has waited.
+    obligation.waitingSince = this.now();
+    this.log("obligation moved to the replacement execution", {
+      ...logFields(obligation),
+    });
+  }
+
   private transitionReminderStarted(
     fact: Extract<ObligationFact, { type: "reminder_started" }>,
   ): void {
@@ -923,7 +987,21 @@ export class ObligationController {
       return;
     }
     if (obligation.recoveryGeneration !== fact.recoveryGeneration) return;
-    if (!fact.accepted) {
+    if (fact.outcome.status === "deferred") {
+      // Nothing was submitted, so nothing failed: keep both counters, leave
+      // the debt waiting, and retry on a bounded deferral backoff.
+      obligation.deferrals += 1;
+      obligation.state = "reminder_due";
+      this.retrySchedule(obligation);
+      this.log("obligation reminder deferred", {
+        ...logFields(obligation),
+        reason: fact.outcome.reason,
+        deferrals: obligation.deferrals,
+      });
+      return;
+    }
+    if (fact.outcome.status === "failed") {
+      obligation.deferrals = 0;
       obligation.consecutiveSubmissionFailures += 1;
       if (
         obligation.consecutiveSubmissionFailures >=
@@ -941,6 +1019,7 @@ export class ObligationController {
     obligation.deliveredAttempts += 1;
     obligation.lastDeliveredAttemptAt = this.now();
     obligation.consecutiveSubmissionFailures = 0;
+    obligation.deferrals = 0;
     this.log("obligation reminder delivered", {
       ...logFields(obligation),
       deliveredAttempts: obligation.deliveredAttempts,
@@ -1092,8 +1171,13 @@ export class ObligationController {
 
   private backoffFor(obligation: ObligationRecord): number {
     const failures = obligation.consecutiveSubmissionFailures;
+    const deferrals = obligation.deferrals;
+    // A deferral retries at a bounded, growing rate: the transport may come
+    // back at any time, but a permanently unavailable execution must not be
+    // hammered on every scheduler tick.
+    const exponent = Math.max(failures - 1, deferrals, 0);
     return Math.min(
-      REMINDER_RETRY_BASE_MS * 2 ** Math.max(0, failures - 1),
+      REMINDER_RETRY_BASE_MS * 2 ** exponent,
       REMINDER_RETRY_MAX_MS,
     );
   }
@@ -1138,13 +1222,13 @@ export class ObligationController {
       targetTaskId: obligation.targetTaskId,
       recoveryGeneration: generation,
     });
-    const accepted = await this.opts.submitReminder(obligation);
+    const outcome = await this.opts.submitReminder(obligation);
     this.apply({
       type: "reminder_resolved",
       sourceTaskId: obligation.sourceTaskId,
       targetTaskId: obligation.targetTaskId,
       recoveryGeneration: generation,
-      accepted,
+      outcome,
     });
   }
 

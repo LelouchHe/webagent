@@ -5,7 +5,8 @@ import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 
@@ -42,7 +43,7 @@ describe("GET /api/v1/tasks/:id/snapshot", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-snapshot-"));
     mkdirSync(join(tmpDir, "public"));
     store = new Store(tmpDir, "test-agent");
-    tasks = new TaskManager(store, tmpDir, tmpDir);
+    tasks = createTaskManager(store, tmpDir, tmpDir);
     sse = new SseManager();
     const handler = createRequestHandler({
       store,

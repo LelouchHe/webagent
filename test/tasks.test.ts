@@ -5,7 +5,8 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
@@ -112,6 +113,9 @@ describe("Task REST API", () => {
   let port: number;
   let mockBridge: ReturnType<typeof createMockBridge>;
   let broadcastEvents: AgentEvent[];
+  /** Resolves when a route in this server starts reading a request body. */
+  let bodyReadStarted: Promise<string>;
+  let markBodyReadStarted: (url: string) => void;
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-rest-"));
@@ -120,14 +124,20 @@ describe("Task REST API", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
     store = new Store(tmpDir, "test-agent");
-    tasks = new TaskManager(store, tmpDir, tmpDir);
+    tasks = createTaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
     broadcastEvents = [];
+    bodyReadStarted = new Promise<string>((resolve) => {
+      markBodyReadStarted = resolve;
+    });
 
     const handler = createRequestHandler({
       store,
       tasks,
       getBridge: () => mockBridge,
+      onRequestBodyReadStart: (url) => {
+        markBodyReadStarted(url);
+      },
       publicDir,
       dataDir: tmpDir,
       limits: {
@@ -639,6 +649,63 @@ describe("Task REST API", () => {
       assert.equal(store.getTask("s1")?.cwd, publicDir);
     });
 
+    it("rejects a rotation whose request body window saw a restore start", async () => {
+      store.createTask("s1", tmpDir, "auto", "agent-old");
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      mockBridge.loadSession = async (taskId: string) => {
+        await gate;
+        return { taskId, configOptions: [] };
+      };
+
+      // Open the request and send only part of the body, so the route's early
+      // busy check runs and then it waits inside `readBody`.
+      const req = http.request({
+        hostname: "127.0.0.1",
+        port,
+        path: "/api/v1/tasks/s1/clear",
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      req.write("{");
+      const response = new Promise<{ status: number; body: string }>(
+        (resolve, reject) => {
+          req.on("response", (res) => {
+            let data = "";
+            res.on("data", (chunk: Buffer) => (data += chunk.toString()));
+            res.on("end", () => {
+              resolve({ status: res.statusCode!, body: data });
+            });
+          });
+          req.on("error", reject);
+        },
+      );
+      // Deterministic: the signal fires when the route starts reading the body,
+      // which is after its early busy check, so the handler is provably parked
+      // on the unfinished body rather than raced by a sleep.
+      assert.equal(
+        await bodyReadStarted,
+        "/api/v1/tasks/s1/clear",
+        "the clear route reached its body read",
+      );
+
+      // Only now does the restore start: it is inside the window the early
+      // check could not see.
+      const restore = tasks.resumeTask(mockBridge, "s1");
+      assert.equal(tasks.getBusyKind("s1"), "agent");
+
+      req.end("}");
+      const res = await response;
+
+      assert.equal(res.status, 409);
+      assert.equal(store.getAgentSessionId("s1"), "agent-old");
+
+      release();
+      await restore;
+    });
+
     it("compacts into a fresh ACP execution and defers the summary to the next prompt", async () => {
       store.createTask("s1", tmpDir, "auto", "agent-old");
       tasks.liveTasks.add("s1");
@@ -690,6 +757,16 @@ describe("Task REST API", () => {
         ),
       );
       assert.equal(tasks.getBusyKind("s1"), null);
+      // Compaction is a rotation: it leaves its own transcript line naming the
+      // trigger, instead of being an unrecorded internal replacement.
+      const rotationLine = store
+        .getEvents("s1")
+        .filter((event) => event.type === "system_message")
+        .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+        .find((data) => data.kind === "agent_rotation");
+      assert.ok(rotationLine, "compaction records its rotation");
+      assert.equal(rotationLine.reason, "compact");
+      assert.equal(rotationLine.toAgent, "test-agent");
 
       const promptRes = await makeRequest(
         port,
@@ -779,7 +856,7 @@ describe("Task REST API", () => {
 
     it("recovers a delivery queued during successful compaction", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("source", tmpDir, "agent", "agent-source", rootId);
       store.createTask("s1", tmpDir, "agent", "agent-old", rootId);
       store.updateTaskConfig("s1", "mode", "agent");
@@ -902,7 +979,7 @@ describe("Task REST API", () => {
 
     it("resolves the literal `root` and 404s unknown/legacy ids", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       const rootRes = await makeRequest(port, "GET", `/api/v1/tasks/${rootId}`);
       assert.equal(rootRes.status, 200);
       assert.equal(JSON.parse(rootRes.body).id, "root");
@@ -915,7 +992,7 @@ describe("Task REST API", () => {
 
     it("returns a task's parent relationship", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("child", tmpDir, "auto", "agent-child", rootId);
 
       const res = await makeRequest(port, "GET", "/api/v1/tasks/child");
@@ -1014,7 +1091,7 @@ describe("Task REST API", () => {
 
     it("broadcasts task_deleted with the requested task parent", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("parent", tmpDir, "auto", "agent-parent", rootId);
       broadcastEvents.length = 0;
 
@@ -1046,7 +1123,7 @@ describe("Task REST API", () => {
 
     it("resets Root, deletes its descendants, and keeps Root as the anchor", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("child", tmpDir, "auto", "agent-child", rootId);
       store.saveEvent(
         rootId,
@@ -1093,7 +1170,7 @@ describe("Task REST API", () => {
 
     it("resets Root through the task route with no bridge (offline)", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("child", tmpDir, "auto", "agent-child", rootId);
       store.saveEvent(
         rootId,

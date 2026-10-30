@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 
 describe("persisted model identity", () => {
@@ -74,7 +74,7 @@ describe("persisted model identity", () => {
     const dir = mkdtempSync(join(tmpdir(), "model-snapshot-"));
     const encoded = JSON.stringify(["vendor-a", "model-one"]);
     const store = new Store(dir, "model-snapshot-test");
-    const tasks = new TaskManager(
+    const tasks = createTaskManager(
       store,
       dir,
       dir,

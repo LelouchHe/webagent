@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-10-04
+Last updated: 2026-10-26
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -38,6 +38,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - ACP text file read/write callbacks
 
 - `test/bridge-session-restore.test.ts`
+  - execution-lifetime restore (resume-only, load-only, both), config reapplication, cache warming
+  - a session update from an execution whose generation was replaced emits nothing; a session that never became current in this process emits nothing either
+  - a warm-cache or stored-config response that arrives after its execution was replaced is discarded and never cached; a restore refuses to publish its result under a replaced lease
+  - a death notice is attributed to the task whose prompt captured the lease, never re-resolved to the current generation, and a `/compact` silent prompt (keyed by ACP session id) writes no task event at all
   - real ACP initialization and restore matrix: resume-only, load-only, both (resume wins), neither (actionable failure with no unadvertised call or fresh session)
   - both restore methods preserve opaque ACP IDs, cwd/MCP injection, task_created payloads, stored config, and cache warming
   - advertised close/delete retirement gates read initialize.agentCapabilities, with delete preferred when both exist
@@ -91,9 +95,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a rejected initial dispatch is retried under the transport bound (backoff, no immediate idle re-drain) and ends in one factual `delivery_failed` notice with `delivery_unavailable` evidence; a resume that keeps failing exhausts the same budget, and a still-queued dispatch produces a non-terminal `still_waiting` advisory rather than a terminal deadline
   - a late callback from a superseded dispatch prompt identity is ignored, including a failing resume and a stale hand-off; the still-waiting and age advisories are non-terminal and cleared on terminal states; an in-flight reminder from a previous epoch is ignored after a coalescing follow-up; a runtime rotation (and bridge restart, including a draining turn) aborts the watchdog and a silence notice requires a live current turn
   - the closing reminder scopes its prohibition to the runtime-injected closing turn, resumes a non-live session before reminding, records no successful reminder on rejection, persists a bounded audit copy of the drained prompt, and logs obligation lifecycle decisions
+  - execution write lease, fail closed: an event stamped with a replaced generation, an unknown generation, another task's lease, no lease at all, or no lease for a task with no ledger entry writes nothing — no buffer, no stored event, no broadcast, no activity timestamp
 
 - `test/obligation-controller.test.ts`
   - awaiting_delivery → open timing, coalescing without a fresh record, +2m/+5m delivered-reminder schedule, transport-bound exhaustion, idle wait, the two-condition settlement predicate and its guards (awaiting_delivery, no active turn, terminal records), stored-source/current-parent routing, the accepted boundary, superseded-dispatch identity, abort and advisory backstops, live-turn requirement, process-local loss on reconstruction, terminal records never watched, and independent watchdog/no-account epochs
+  - tri-state submission: a `deferred` outcome leaves `reminder_submitting`, keeps both counters, and retries on a growing bounded backoff; a permanently deferring transport never exhausts the record and emits no notice
+  - `execution_rotated` keeps the same record (endpoints, attempts) in a waitable state and never requests a re-dispatch
 
 - `test/task-collaboration.test.ts`
   - pure `shouldArm` policy: agent parent→child only; user, system, and non-parent relations never arm
@@ -113,6 +120,28 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - deduplicated resume (ensureResumed)
   - revisioned Agent command snapshot lifecycle and cleanup
   - authoritative snapshot waits for command discovery during warm-cache restore
+  - rotation busy gate: a restoring task is agent-busy, a `/clear` or Root reset that arrives during the restore window is refused, and a store replacement restores nothing under a lease that moved; the compaction turn keeps its controlled internal rotation path
+  - rotation transport truncation: dispatch retry ids and unfinished delivery rows are finalized, the obligation record survives as a reminder, and the old dispatch body is never re-sent to the replacement execution
+  - a closing reminder with no execution to accept it is deferred: waiting again with neither attempt nor failure consumed and no reminder event recorded
+  - reminder turn ownership: a resume failure, a replaced execution and a dead agent each return the task to idle (one `activePrompts` add, one guarded release), and the controller can still submit afterwards
+  - a config replay re-authorizes before every request and discards a response that outlived its execution
+
+- `test/execution-rotation.test.ts`
+  - implicit owner rotation: Root is taken over only when its owner left configuration, never from an owner that is still configured, and the takeover leaves a transcript line naming both agents
+  - a taken-over empty slot materializes through an ordinary resume
+  - an implicit rotation truncates the transport and keeps the obligation
+  - each rotated task gets its own empty execution slot: two ordinary tasks rotated under the same agent both succeed alongside the Root's empty slot, and each materializes later
+  - the empty slot is recognised by exact equality with the value generated for that task, never by the reserved prefix: a real session id that merely shares the prefix is restored (not materialized) and stays bound
+  - a reserved-shape session id that is not this task's own slot is refused at the binding write (create/attach/replace), so no task or binding is stored under a shape the reader would have to guess about
+
+- `test/tree-deletion.test.ts`
+  - deleting a parent takes a foreign child with it, and each execution is retired through its own agent's adapter even when both report the same session id
+  - a delete or Root reset is refused while a foreign descendant is busy, retiring nothing
+  - a Root reset spans every agent and leaves one empty owner slot
+
+- `test/runtime-authority.test.ts`
+  - one `seq` source across a real A→B rotation (two Stores): the binding's agent and session both move, two client cursors accept every patch, and the post-rotation snapshot is never superseded
+  - public reads stay filtered by the caller's agent while the internal read stays global
 
 - `test/store.test.ts`
   - task creation / deletion / updates
@@ -121,14 +150,16 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - unix-millisecond `last_active_at` for stable ordering
   - the single literal `root` anchor persists across reopen and agent keys, keeps `parent_id = NULL`, preserves a renamed title, and is never adopted into a parent
   - `createTask` creates the literal Root on the first direct write when absent; omitted/null `parentId` attaches to `root`, and creation only ever produces the Root parentless (a delete may detach a collision survivor to `NULL`)
-  - Root ownership is not per-agent: the same literal Root can be bound by a different agent key without an ownership error, and `ensureRootTask` is idempotent
+  - a second agent cannot attach another binding to the shared Root; ownership moves only through the replace path, and `ensureRootTask` is idempotent
   - ensure and rotate leave the Root anchor and cwd stable without ownership assertions
   - ordinary creation of the exact literal `root` is rejected; prefix-shaped ids are ordinary tasks
   - delete, tombstone reap, and empty-task GC refuse the literal `root` even when its tombstone flag is corrupted
   - `getParentTask` accepts the global Root for another agent's task
   - reset sentinels cover events, client_ops, attachments, compact summaries, previews, and descendants; Root keeps an ownership binding with an empty execution id and reports the retired execution
   - an active Root share blocks reset; after revoke, reset succeeds
-  - survivor matrix: survivors reparent under the global Root; a missing Root or live title collision detaches with `NULL` while preserving data
+  - binding write authority: a foreign attach is refused with no fact emitted, detach removes the binding, the same session id from two agents is two different executions, one outermost commit emits one fact per task, and a rolled-back batch is discarded rather than leaked into the next commit
+  - deletion follows the task tree: a foreign survivor is deleted with its parent's subtree, a share-backed survivor is tombstoned and re-parented under Root with its history/share/attachment intact, and a Root reset keeps an unbound shared tombstone alive
+  - the empty-task GC still re-parents a surviving child under Root instead of deleting it
   - deleteEmptyTasks age gating
   - hasInterruptedTurn detection
   - migration idempotency
@@ -143,7 +174,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a malformed legacy value (`'0'`, empty, `'now'`, `T` separator, out-of-range, or calendar-invalid such as `2026-02-29` / `24:00:00` / `23:59:60`) aborts the migration with the offending row and rolls back with nothing changed
   - an INTEGER column whose default is still the legacy expression is rebuilt and its values copied through untouched, including `shares.created_at` / `owner_prefs.updated_at` converging from the seconds-aligned default
   - migration is idempotent and leaves an already-INTEGER database untouched
-  - the legacy task-only `agent_sessions` index is dropped during a timestamp table rebuild while per-agent/task uniqueness remains; the single Root no longer has a per-agent ownership check
+  - the legacy task-only `agent_sessions` index is dropped during a timestamp table rebuild; per-(agent, task) uniqueness remains, while a second agent can no longer attach another binding to an already-bound task
   - `foreign_key_check` / `integrity_check` pass after the rebuild
 
 - `test/daemon.test.ts`
@@ -164,6 +195,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - gzip compression for events endpoint
   - streaming buffer flush on events endpoint
   - auto-resume of non-live tasks
+  - a `/clear` whose request body window saw a restore start is rejected by the final gate with 409, not by the early check; the test waits for the handler's body-read signal rather than a fixed sleep
+  - `/compact` leaves its own rotation line (`kind: agent_rotation`, reason `compact`) before publishing the replacement execution
   - restoring an interrupted turn does not auto-continue it (recovery is user-driven)
   - input validation and bridge-not-ready errors
 
@@ -608,9 +641,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - `/exit` deletes current task and switches to previous
 
 - REST delete (`test/tasks.test.ts`, `test/store.test.ts`)
-  - deleting a task cascades to every descendant, retires each affected
-    ACP execution, and broadcasts one `task_deleted` per removed task
-  - survivors reparent under the global Root; a missing Root or title collision falls back to `parent_id = NULL` without data loss
+  - deleting a task cascades to every descendant regardless of owner, retires each affected
+    ACP execution through that agent's adapter, and broadcasts one `task_deleted` per removed task
+  - a share-backed survivor is tombstoned and re-parented under Root; the empty-task GC keeps a surviving child under Root
   - `getTaskPath` strips the literal Root anchor; other ids render as path segments
   - creating a task under an unknown parent is rejected with `400`
   - generic deletion rejects the literal `root`; deleting it through the task endpoint performs a DB-only Root reset

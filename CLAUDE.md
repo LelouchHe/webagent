@@ -55,6 +55,9 @@ schema and operations guide.
 - Frontend runtime code uses `public/js/log.ts`; backend runtime code uses
   `src/log.ts`. Keep the documented bootstrap/operator exemptions only.
 - New tasks may inherit the saved model but always start in agent mode.
+- Each task has at most one current execution binding, globally; writable
+  execution facts must hold that task's current generation, and a missing or
+  unknown generation is refused.
 - Keep repository instructions and documentation self-contained. Do not depend
   on untracked personal configuration or machine-specific paths.
 
@@ -70,6 +73,7 @@ Locate and read only the sections relevant to the task.
 | ACP surface and agent compatibility | [`docs/acp.md`](./docs/acp.md) |
 | Upload, attachment, and signed-URL lifecycle | [`docs/uploads.md`](./docs/uploads.md) |
 | Directed-dispatch obligation mechanism | [`docs/task-obligations.md`](./docs/task-obligations.md) |
+| Task states, transitions, and what each keeps or drops | [`docs/task-lifecycle.md`](./docs/task-lifecycle.md) |
 | Vocabulary and naming contract | [`docs/vocabulary.md`](./docs/vocabulary.md) |
 | Security model and CSP invariants | [`docs/security.md`](./docs/security.md) |
 | Streaming render performance | [`docs/performance.md`](./docs/performance.md) |

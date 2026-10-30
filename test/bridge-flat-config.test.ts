@@ -34,7 +34,7 @@ describe("flat model option ingress", () => {
         mapped && sessionId === "session-1" ? "task-1" : undefined,
     });
     (bridge as any).loadSessionSupported = true;
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       newSession: async () => ({
         sessionId: "session-1",
         configOptions: flatOptions,

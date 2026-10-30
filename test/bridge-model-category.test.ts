@@ -36,7 +36,7 @@ function makeBridge() {
           ? "task-b"
           : undefined,
   });
-  (bridge as any).conn = {
+  (bridge as any).connection = {
     setSessionConfigOption: async (params: {
       sessionId: string;
       configId: string;

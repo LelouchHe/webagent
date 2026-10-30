@@ -6,7 +6,10 @@ import { loadConfig } from "./config.ts";
 import { setLogLevel, log } from "./log.ts";
 import { AgentBridge } from "./bridge.ts";
 import { Store } from "./store.ts";
-import { TaskManager } from "./task-manager.ts";
+import { TaskManager, createObligationController } from "./task-manager.ts";
+import { TaskStateManager } from "./task-state.ts";
+import { ExecutionAdapter } from "./execution-adapter.ts";
+import { ExecutionAuthority, GenerationLedger } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
 import { createMcpTaskToolHost } from "./mcp/task-host.ts";
@@ -116,13 +119,39 @@ const capabilities = new CapabilityStore();
 // Agent subprocesses run on the same host as WebAgent, so the MCP server
 // URL is always loopback even when the HTTP listener binds elsewhere.
 const mcpBaseUrl = `http://127.0.0.1:${config.port}`;
-const tasks = new TaskManager(
+// Server-scoped collaborators. They are constructed once and injected, so the
+// task runtime carries no implicit "there is only one execution container"
+// assumption of its own.
+const taskState = new TaskStateManager();
+const executionAuthority = new ExecutionAuthority(new GenerationLedger());
+const executionAdapter = new ExecutionAdapter(config.default_agent);
+const taskManagerRef: { current?: TaskManager } = {};
+const obligationController = createObligationController({
+  getBusyKind: (taskId) => taskManagerRef.current!.getBusyKind(taskId),
+  isTurnRunning: (taskId, promptId) =>
+    taskManagerRef.current!.isTurnRunning(taskId, promptId),
+  submitObligationReminder: (obligation) =>
+    taskManagerRef.current!.submitObligationReminder(obligation),
+  retryObligationDispatch: (obligation) => {
+    taskManagerRef.current!.retryObligationDispatch(obligation);
+  },
+  emitObligationNotice: (notice, obligation) => {
+    taskManagerRef.current!.emitObligationNotice(notice, obligation);
+  },
+});
+const tasks = new TaskManager({
   store,
-  config.default_cwd,
-  config.data_dir,
+  defaultCwd: config.default_cwd,
+  dataDir: config.data_dir,
   capabilities,
   mcpBaseUrl,
-);
+  state: taskState,
+  authority: executionAuthority,
+  adapter: executionAdapter,
+  obligations: obligationController,
+  isAgentConfigured: (agentId) => Object.hasOwn(config.agents, agentId),
+});
+taskManagerRef.current = tasks;
 const sseManager = new SseManager();
 const clientRegistry = new ClientRegistry();
 const pushService = new PushService(
@@ -269,6 +298,7 @@ async function initBridge(agentId: string): Promise<AgentBridge> {
 
   await b.start();
   bridge = b;
+  tasks.attachExecutionBridge(b);
   return b;
 }
 

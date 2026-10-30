@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { SseManager } from "../src/sse-manager.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import type { AgentEvent, ConfigOption } from "../src/types.ts";
 import { mockBridgeStubs, waitFor } from "./fixtures.ts";
 
@@ -64,7 +65,7 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
     store = new Store(tmpDir, "test-agent");
-    tasks = new TaskManager(store, tmpDir, tmpDir);
+    tasks = createTaskManager(store, tmpDir, tmpDir);
     newTaskCalls = [];
     newTaskOptions = [];
     loadTaskCalls = [];

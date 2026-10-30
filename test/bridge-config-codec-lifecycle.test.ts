@@ -26,7 +26,7 @@ describe("session model codec lifecycle", () => {
       getAgentSessionId: () => "session-1",
       getTaskId: () => "task-1",
     });
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       newSession: async () => ({
         sessionId: "session-1",
         configOptions: modelOptions,
@@ -63,7 +63,7 @@ describe("session model codec lifecycle", () => {
       getAgentSessionId: () => "session-1",
       getTaskId: () => "task-1",
     });
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       newSession: async () => ({
         sessionId: "session-1",
         configOptions: modelOptions,
@@ -90,7 +90,7 @@ describe("session model codec lifecycle", () => {
       getAgentSessionId: () => undefined,
       getTaskId: () => undefined,
     });
-    (bridge as any).conn = {};
+    (bridge as any).connection = {};
     (bridge as any).silentSessions.add("session-1");
     (bridge as any).normalizeSessionConfigOptions("session-1", modelOptions);
 

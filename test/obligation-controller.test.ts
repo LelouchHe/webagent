@@ -7,6 +7,7 @@ import {
   MAX_REMINDER_SUBMISSION_FAILURES,
   ObligationController,
   SILENCE_THRESHOLD_S,
+  type DeliveryOutcome,
   type DirectedObligation,
   type ObligationNotice,
   type SettlementDecision,
@@ -59,6 +60,16 @@ class FakeClock {
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+function acceptedOutcome(
+  accepted: boolean,
+  mode: "accept" | "reject" | "defer",
+): DeliveryOutcome {
+  if (accepted) return { status: "delivered" };
+  return mode === "defer"
+    ? { status: "deferred", reason: "no_execution" }
+    : { status: "failed", reason: "prompt_rejected" };
+}
+
 interface Harness {
   controller: ObligationController;
   clock: FakeClock;
@@ -66,9 +77,10 @@ interface Harness {
   submissions: DirectedObligation[];
   dispatchRetries: DirectedObligation[];
   busy: Set<string>;
-  setSubmitMode: (mode: "accept" | "reject" | "manual") => void;
+  setSubmitMode: (mode: "accept" | "reject" | "defer" | "manual") => void;
   setTurnRunning: (running: boolean) => void;
   resolveSubmission: (index: number, accepted: boolean) => void;
+  resolveDeferral: (index: number, reason?: string) => void;
 }
 
 function makeController(options: { reentrantNotice?: boolean } = {}): Harness {
@@ -76,9 +88,9 @@ function makeController(options: { reentrantNotice?: boolean } = {}): Harness {
   const notices: ObligationNotice[] = [];
   const submissions: DirectedObligation[] = [];
   const dispatchRetries: DirectedObligation[] = [];
-  const pendingSubmissions: Array<(accepted: boolean) => void> = [];
+  const pendingSubmissions: Array<(outcome: DeliveryOutcome) => void> = [];
   const busy = new Set<string>();
-  let submitMode: "accept" | "reject" | "manual" = "accept";
+  let submitMode: "accept" | "reject" | "defer" | "manual" = "accept";
   let turnRunning = true;
   const controller = new ObligationController({
     now: () => clock.now,
@@ -91,11 +103,13 @@ function makeController(options: { reentrantNotice?: boolean } = {}): Harness {
     submitReminder: (obligation) => {
       submissions.push(obligation);
       if (submitMode === "manual") {
-        return new Promise<boolean>((resolve) =>
+        return new Promise<DeliveryOutcome>((resolve) =>
           pendingSubmissions.push(resolve),
         );
       }
-      return Promise.resolve(submitMode === "accept");
+      return Promise.resolve(
+        acceptedOutcome(submitMode === "accept", submitMode),
+      );
     },
     emitNotice: (notice, obligation) => {
       notices.push(notice);
@@ -125,7 +139,16 @@ function makeController(options: { reentrantNotice?: boolean } = {}): Harness {
     resolveSubmission: (index, accepted) => {
       const resolve = pendingSubmissions[index];
       assert.ok(resolve, `no pending submission at ${index}`);
-      resolve(accepted);
+      resolve(
+        accepted
+          ? { status: "delivered" }
+          : { status: "failed", reason: "prompt_rejected" },
+      );
+    },
+    resolveDeferral: (index, reason = "no_execution") => {
+      const resolve = pendingSubmissions[index];
+      assert.ok(resolve, `no pending submission at ${index}`);
+      resolve({ status: "deferred", reason });
     },
   };
 }
@@ -316,6 +339,71 @@ describe("ObligationController", () => {
     assert.equal(h.notices[0].reason, "delivery_failed");
     assert.equal(h.notices[0].evidence.deliveryUnavailable, true);
     assert.match(h.notices[0].message, /could not deliver/);
+  });
+
+  it("treats a deferred submission as waiting, not as a failure", async () => {
+    // The transport is unavailable (no bridge, a rotation, a replaced lease),
+    // so nothing was submitted. The record must leave
+    // `reminder_submitting` without spending its failure or attempt budget.
+    const h = makeController();
+    h.setSubmitMode("defer");
+    const obligation = armOpen(h);
+    await tick(h);
+    assert.equal(h.submissions.length, 1);
+    assert.equal(obligation.state, "reminder_due");
+    assert.equal(obligation.deliveredAttempts, 0);
+    assert.equal(obligation.consecutiveSubmissionFailures, 0);
+    assert.equal(obligation.deferrals, 1);
+    assert.equal(h.notices.length, 0);
+
+    // The retry is delayed, not immediate: the next deadline is > 0ms away.
+    const next = h.clock.pendingDeadlineTimes()[0];
+    assert.ok(next > h.clock.now);
+  });
+
+  it("keeps a permanently deferring transport alive at a bounded rate", async () => {
+    const h = makeController();
+    h.setSubmitMode("defer");
+    const obligation = armOpen(h);
+    await tick(h);
+    assert.equal(h.submissions.length, 1);
+
+    // No retry storm inside the deferral backoff (2s after the first defer).
+    await tick(h, 1_000);
+    assert.equal(h.submissions.length, 1);
+    await tick(h, 2_000);
+    assert.equal(h.submissions.length, 2);
+
+    // Many deferrals never exhaust the record and never count as failures.
+    for (let i = 0; i < 10; i++) await tick(h, 60_000);
+    assert.equal(obligation.state, "reminder_due");
+    assert.equal(obligation.deliveredAttempts, 0);
+    assert.equal(obligation.consecutiveSubmissionFailures, 0);
+    assert.equal(h.notices.length, 0);
+    // Bounded: one submission per capped backoff, far fewer than the ticks.
+    assert.ok(h.submissions.length >= 3);
+  });
+
+  it("moves the same record to the replacement execution without redelivering", async () => {
+    // Rotation is a fact about the transport, not about the debt. Same record, attempts intact, no terminal state.
+    const h = makeController();
+    const obligation = armOpen(h);
+    await tick(h);
+    assert.equal(obligation.deliveredAttempts, 1);
+
+    h.controller.noteExecutionRotated("child");
+
+    const record = h.controller.getActive("parent", "child");
+    assert.ok(record);
+    assert.equal(record.openingMessageId, obligation.openingMessageId);
+    assert.equal(record.openingDeliveryId, obligation.openingDeliveryId);
+    assert.equal(record.deliveredAttempts, 1);
+    assert.equal(record.state, "reminder_due");
+    assert.equal(
+      h.dispatchRetries.length,
+      0,
+      "the old body is not re-dispatched",
+    );
   });
 
   it("waits for the target to be idle before submitting", async () => {

@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { Store } from "../src/store.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 
 function makeRequest(
@@ -51,7 +52,7 @@ describe("HTTP /events attachment label egress", () => {
     writeFileSync(join(publicDir, "index.html"), "ok");
 
     store = new Store(tmpDir, "test-agent");
-    tasks = new TaskManager(store, tmpDir, tmpDir);
+    tasks = createTaskManager(store, tmpDir, tmpDir);
 
     store.createTask("s1", "/x");
     store.insertAttachment({

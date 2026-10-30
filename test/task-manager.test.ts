@@ -12,10 +12,12 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { TaskBusyError, TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { TaskBusyError, createTaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
 import type { ConfigOption } from "../src/types.ts";
+import type { DirectedObligation } from "../src/obligation-controller.ts";
 
 async function startMcpTestServer(
   capabilities: CapabilityStore,
@@ -97,7 +99,7 @@ describe("TaskManager", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-test-"));
     store = new Store(tmpDir, "test-agent");
-    sm = new TaskManager(store, tmpDir, tmpDir);
+    sm = createTaskManager(store, tmpDir, tmpDir);
   });
 
   afterEach(() => {
@@ -113,7 +115,7 @@ describe("TaskManager", () => {
       const mcpServer = await startMcpTestServer(capabilities, (taskId) =>
         mcpTaskManagerRef.current!.isMcpSessionActive(taskId),
       );
-      const mcpTaskManager = new TaskManager(
+      const mcpTaskManager = createTaskManager(
         store,
         tmpDir,
         tmpDir,
@@ -165,7 +167,7 @@ describe("TaskManager", () => {
       const mcpServer = await startMcpTestServer(capabilities, (activeTaskId) =>
         mcpTaskManagerRef.current!.isMcpSessionActive(activeTaskId),
       );
-      const mcpTaskManager = new TaskManager(
+      const mcpTaskManager = createTaskManager(
         store,
         tmpDir,
         tmpDir,
@@ -212,7 +214,7 @@ describe("TaskManager", () => {
       const capabilities = new CapabilityStore();
       let mintedTaskId: string | null = null;
       let mintedToken: string | null = null;
-      const mcpTaskManager = new TaskManager(
+      const mcpTaskManager = createTaskManager(
         store,
         tmpDir,
         tmpDir,
@@ -274,7 +276,7 @@ describe("TaskManager", () => {
     });
 
     it("purges obligation records when a task is released", async () => {
-      store.bindAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
+      store.attachAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
       store.createTask("source", tmpDir, "agent", "agent-source", "root");
       store.createTask("target", tmpDir, "agent", "agent-target", "source");
       store.createCollaborationMessage({
@@ -756,6 +758,12 @@ describe("TaskManager", () => {
       });
       sm.activePrompts.add("child");
       sm.syncBusy("child");
+      // The rotation gate now refuses a task with an active prompt, which is
+      // the rotation gate; the watchdog is the state under test here, so enter
+      // the turn directly instead of going through the blocked busy source.
+      sm.activePrompts.delete("child");
+      sm.syncBusy("child");
+      (sm as any).obligations.beginTurn("child", "prompt-1");
       assert.equal((sm as any).obligations.watchdog.size, 1);
 
       const bridge = {
@@ -769,6 +777,18 @@ describe("TaskManager", () => {
           throw new Error("loadSession should not be called");
         },
       };
+      // A message queued after the failed dispatch never reached the old
+      // execution; the rotation must still finalize it instead of leaving it
+      // available to a later drain.
+      store.createCollaborationMessage({
+        id: "rotation-queued",
+        deliveryId: "rotation-queued-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "QUEUED BODY",
+      });
+
       await sm.clearTask(bridge, "child");
 
       // Mutation evidence: without abortTurn in resetTaskRuntime the watchdog
@@ -900,7 +920,12 @@ describe("TaskManager", () => {
       sm.liveTasks.add("web-1");
       sm.assistantBuffers.set("web-1", "partial answer");
       sm.thinkingBuffers.set("web-1", "partial thought");
-      sm.activePrompts.add("web-1");
+      sm.pendingPermissions.set("request-1", {
+        requestId: "request-1",
+        taskId: "web-1",
+        title: "Read file",
+        options: [{ optionId: "allow", label: "Allow" }],
+      });
       sm.updateAgentCommands("web-1", [
         { name: "old-command", description: "old" },
       ]);
@@ -921,7 +946,7 @@ describe("TaskManager", () => {
 
       assert.equal(sm.assistantBuffers.has("web-1"), false);
       assert.equal(sm.thinkingBuffers.has("web-1"), false);
-      assert.equal(sm.activePrompts.has("web-1"), false);
+      assert.equal(sm.pendingPermissions.has("request-1"), false);
       assert.deepEqual(sm.getAgentCommands("web-1").commands, []);
       assert.equal(sm.state.getState("web-1").runtime.busy, null);
     });
@@ -979,7 +1004,7 @@ describe("TaskManager", () => {
       const capabilities = new CapabilityStore();
       const oldToken = capabilities.mint("web-1");
       let newToken: string | undefined;
-      const manager = new TaskManager(
+      const manager = createTaskManager(
         store,
         tmpDir,
         tmpDir,
@@ -1042,7 +1067,7 @@ describe("TaskManager", () => {
       sm.liveTasks.add("web-1");
       const capabilities = new CapabilityStore();
       const oldToken = capabilities.mint("web-1");
-      const manager = new TaskManager(
+      const manager = createTaskManager(
         store,
         tmpDir,
         tmpDir,
@@ -1101,7 +1126,7 @@ describe("TaskManager", () => {
 
     it("skips the lazy empty binding at startup and materializes on resume", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-old");
+      store.attachAgentSession(rootId, "agent-old");
       store.resetRootTask();
 
       let newSessionCalls = 0;
@@ -1134,7 +1159,7 @@ describe("TaskManager", () => {
 
     it("restores saved config when lazily materializing a DB-only reset", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-old");
+      store.attachAgentSession(rootId, "agent-old");
       store.resetRootTask();
       store.updateTaskConfig(rootId, "model", "saved-model");
       store.updateTaskConfig(rootId, "mode", "saved-mode");
@@ -1218,7 +1243,7 @@ describe("TaskManager", () => {
   describe("Root reset without a live execution", () => {
     it("resets DB-only, never creates a replacement execution, and retires the old one", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.saveEvent(
         rootId,
         "user_message",
@@ -1274,9 +1299,9 @@ describe("TaskManager", () => {
       assert.equal(store.getAgentSessionId(rootId), "");
     });
 
-    it("keeps another agent's descendant, disk files, and attachment cache", async () => {
+    it("deletes another agent's descendant, its disk files, and its label cache", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("a-task", tmpDir, "auto", "agent-a", rootId);
       const b = new Store(tmpDir, "backend-b");
       b.createTask("b-child", tmpDir, "auto", "agent-b", rootId);
@@ -1320,17 +1345,16 @@ describe("TaskManager", () => {
       await sm.resetRootTask(bridge);
 
       assert.equal(existsSync(rootPath), false);
-      assert.equal(existsSync(join(childPath, "b.txt")), true);
-      assert.equal(sm.liveTasks.has("b-child"), true);
-      assert.equal(sm.getLabelMap("b-child"), childLabels);
+      // Tree cascade: the foreign child goes with the Root, so its disk files
+      // and label cache go too.
+      assert.equal(existsSync(join(childPath, "b.txt")), false);
+      assert.equal(sm.liveTasks.has("b-child"), false);
+      assert.notEqual(sm.getLabelMap("b-child"), childLabels);
       assert.equal(store.getTaskIncludingDeleted("a-task"), undefined);
-      assert.equal(store.getEvents("b-child").length, 1);
-      assert.equal(
-        store.getAttachment("b-child", "b-attachment")?.realpath,
-        "/tmp/B.txt",
-      );
+      assert.equal(store.getEvents("b-child").length, 0);
+      assert.equal(store.getAttachment("b-child", "b-attachment"), undefined);
       const check = new Store(tmpDir, "backend-b");
-      assert.equal(check.getTask("b-child")?.parent_id, rootId);
+      assert.equal(check.getTask("b-child"), undefined);
       check.close();
     });
   });
@@ -1437,7 +1461,7 @@ describe("TaskManager", () => {
     it("rejects Root reset when a just-created descendant is still initializing", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       store.createTask("a", tmpDir, "auto", "agent-a", rootId);
       store.updateTaskConfig("a", "model", "model-old");
       sm.liveTasks.add(rootId);
@@ -1520,7 +1544,7 @@ describe("TaskManager", () => {
     it("creates a task after a concurrent Root reset, never during it", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
-      store.bindAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "agent-root");
       sm.liveTasks.add(rootId);
 
       const releaseRoot = await sm["treeLock"].acquire({
@@ -1699,7 +1723,7 @@ describe("TaskManager", () => {
     });
 
     it("recovers a delivery after a pending prompt is cancelled", async () => {
-      store.bindAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
+      store.attachAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
       store.createTask("source", tmpDir, "agent", "agent-source", "root");
       store.createTask("target", tmpDir, "agent", "agent-target", "root");
       sm.liveTasks.add("target");
@@ -1742,7 +1766,7 @@ describe("TaskManager", () => {
     });
 
     it("bounds the delivery drain to one per idle transition", async () => {
-      store.bindAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
+      store.attachAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
       store.createTask("source", tmpDir, "agent", "agent-source", "root");
       store.createTask("child", tmpDir, "agent", "agent-child", "root");
       sm.liveTasks.add("child");
@@ -2319,6 +2343,473 @@ describe("TaskManager", () => {
 
     it("returns empty map for task with no attachments", () => {
       assert.equal(sm.getLabelMap("s1").size, 0);
+    });
+  });
+
+  // Rotation keeps the debt and truncates the transport.
+  describe("rotation transport truncation", () => {
+    const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+    function seedDispatch(target: Store) {
+      target.createTask("parent", tmpDir, "agent", "agent-parent");
+      target.createTask("child", tmpDir, "agent", "agent-child", "parent");
+      target.createCollaborationMessage({
+        id: "rotation-dispatch",
+        deliveryId: "rotation-dispatch-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "ORIGINAL DISPATCH BODY",
+      });
+    }
+
+    it("truncates the old transport and never redelivers the old body", async () => {
+      seedDispatch(store);
+      sm.liveTasks.add("child");
+      const prompts: string[] = [];
+      let deliveryAttempts = 0;
+      const bridge = {
+        async newSession() {
+          // A real ACP session id: the empty string is Root's reserved slot.
+          return { sessionId: "replacement-session", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt(_taskId: string, text: string) {
+          prompts.push(text);
+          deliveryAttempts += 1;
+          // The first submission is the original dispatch and is rejected at
+          // the request level; later ones must be closing reminders only.
+          if (deliveryAttempts === 1) throw new Error("prompt rejected");
+        },
+      };
+
+      assert.equal(
+        await sm.drainCollaborationDeliveries(bridge, "child"),
+        true,
+      );
+      await flush();
+      const armed = sm.getObligation("parent", "child");
+      assert.ok(armed);
+      assert.equal(armed.state, "awaiting_delivery");
+      const retried = (sm as any).pendingDispatchRetries.get("child") as
+        | string[]
+        | undefined;
+      assert.ok(retried?.includes("rotation-dispatch-delivery"));
+
+      // A message queued after the failed dispatch never reached the old
+      // execution; the rotation must still finalize it instead of leaving it
+      // available to a later drain.
+      store.createCollaborationMessage({
+        id: "rotation-queued",
+        deliveryId: "rotation-queued-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "QUEUED BODY",
+      });
+
+      await sm.clearTask(bridge, "child");
+
+      // The retry ids are gone and the row is finalized, so a later drain
+      // cannot hand the old body to the replacement execution.
+      assert.equal((sm as any).pendingDispatchRetries.has("child"), false);
+      const rowOf = (id: string) =>
+        store["db"]
+          .prepare("SELECT status, failure_reason FROM deliveries WHERE id = ?")
+          .get(id) as { status: string; failure_reason: string };
+      // The rejected dispatch row is already terminal; the queued one is
+      // finalized by the rotation itself.
+      assert.equal(rowOf("rotation-dispatch-delivery").status, "failed");
+      assert.equal(
+        rowOf("rotation-queued-delivery").failure_reason,
+        "cleared_before_delivery",
+      );
+
+      // Same record, same endpoints, debt intact, nothing terminal.
+      const rotated = sm.getObligation("parent", "child");
+      assert.ok(rotated);
+      assert.equal(rotated.openingMessageId, armed.openingMessageId);
+      assert.equal(rotated.openingDeliveryId, armed.openingDeliveryId);
+      assert.equal(rotated.state, "reminder_due");
+      assert.equal(rotated.deliveredAttempts, 0);
+
+      // The replacement execution receives a closing reminder, never the old
+      // dispatch body.
+      const deadline = Date.now() + 2000;
+      while (prompts.length < 2 && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
+      assert.equal(prompts.length, 2);
+      assert.match(prompts[1], /Task Handoff Required/);
+      assert.equal(prompts[1].includes("ORIGINAL DISPATCH BODY"), false);
+      for (const text of prompts) {
+        assert.equal(
+          text.includes("ORIGINAL DISPATCH BODY") && prompts.indexOf(text) > 0,
+          false,
+        );
+      }
+      const after = sm.getObligation("parent", "child");
+      assert.ok(after);
+      assert.equal(after.deliveredAttempts, 1);
+      assert.equal(after.state, "reminder_due");
+    });
+
+    it("defers the closing reminder when no execution can accept it", async () => {
+      seedDispatch(store);
+      // No recovery bridge is installed: the transport does not exist.
+      (sm as any).obligations.markDelivered("parent", "child");
+      sm.onTargetTurnEnded("child", "prompt-1");
+
+      const deadline = Date.now() + 2000;
+      while (
+        (sm.getObligation("parent", "child")?.deferrals ?? 0) === 0 &&
+        Date.now() < deadline
+      ) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
+
+      const record = sm.getObligation("parent", "child");
+      assert.ok(record);
+      // Deferred: waiting again, with neither attempt nor failure consumed.
+      assert.equal(record.state, "reminder_due");
+      assert.equal(record.deferrals, 1);
+      assert.equal(record.deliveredAttempts, 0);
+      assert.equal(record.consecutiveSubmissionFailures, 0);
+      assert.equal(
+        store
+          .getEvents("child")
+          .some(
+            (event) =>
+              event.type === "system_message" &&
+              (JSON.parse(event.data) as { kind?: string }).kind ===
+                "handoff_reminder",
+          ),
+        false,
+        "no reminder was recorded, because none was delivered",
+      );
+    });
+  });
+
+  // F1: a deferred reminder must not strand the task's turn.
+  describe("reminder turn ownership", () => {
+    function seedReminder(): DirectedObligation {
+      store.createTask("parent", tmpDir, "auto", "agent-parent");
+      store.createTask("child", tmpDir, "auto", "agent-child", "parent");
+      sm.liveTasks.add("child");
+      store.createCollaborationMessage({
+        id: "turn-ownership",
+        deliveryId: "turn-ownership-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      // Settle the delivery row so the idle edge does not start a delivery
+      // drain: this test is about the reminder turn's ownership.
+      const claimed = store.claimQueuedDeliveries("child");
+      store.markCollaborationDeliveriesDelivered(
+        claimed.map((delivery) => delivery.id),
+      );
+      const obligation = sm.getObligation("parent", "child");
+      assert.ok(obligation);
+      return obligation;
+    }
+
+    async function expectControllerCanSubmitAgain(
+      prompts: string[],
+    ): Promise<void> {
+      // The controller still owns the record and can drive another attempt once
+      // the transport is back: a turn-boundary reminder is due immediately.
+      (sm as any).obligations.markDelivered("parent", "child");
+      sm.onTargetTurnEnded("child");
+      const deadline = Date.now() + 2000;
+      while (prompts.length === 0 && Date.now() < deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
+      assert.equal(prompts.length, 1, "the controller submitted again");
+      const record = sm.getObligation("parent", "child");
+      assert.ok(record);
+      assert.equal(record.deliveredAttempts, 1);
+      assert.equal(sm.getBusyKind("child"), null);
+    }
+
+    it("releases the turn when the reminder cannot resume the target", async () => {
+      const obligation = seedReminder();
+      const prompts: string[] = [];
+      let loads = 0;
+      const bridge = {
+        async newSession() {
+          throw new Error("not part of a restore");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          loads += 1;
+          throw new Error("load failed");
+        },
+        async prompt(_taskId: string, text: string) {
+          prompts.push(text);
+        },
+        isAvailable: () => true,
+      };
+      sm.liveTasks.delete("child");
+      sm.setRecoveryBridge(bridge);
+
+      const outcome = await sm.submitObligationReminder(obligation);
+
+      assert.deepEqual(outcome, {
+        status: "deferred",
+        reason: "resume_failed",
+      });
+      assert.equal(loads, 1);
+      assert.equal(prompts.length, 0);
+      // The leak would leave busy=agent with no running prompt.
+      assert.equal(sm.getBusyKind("child"), null);
+
+      sm.liveTasks.add("child");
+      await expectControllerCanSubmitAgain(prompts);
+    });
+
+    it("releases the turn when the execution is replaced mid-submission", async () => {
+      const obligation = seedReminder();
+      const prompts: string[] = [];
+      const bridge = {
+        async newSession() {
+          return { sessionId: "", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt(_taskId: string, text: string) {
+          prompts.push(text);
+          // The task is rotated while the reminder turn is in flight.
+          store.replaceAgentSession("child", "agent-new");
+        },
+        isAvailable: () => true,
+      };
+      sm.setRecoveryBridge(bridge);
+
+      const outcome = await sm.submitObligationReminder(obligation);
+
+      assert.deepEqual(outcome, {
+        status: "deferred",
+        reason: "execution_replaced",
+      });
+      assert.equal(sm.getBusyKind("child"), null);
+      // The reminder text reached the old execution only; nothing was recorded
+      // as a delivered attempt for the task's current debt.
+      assert.equal(
+        store
+          .getEvents("child")
+          .some(
+            (event) =>
+              event.type === "system_message" &&
+              (JSON.parse(event.data) as { kind?: string }).kind ===
+                "handoff_reminder",
+          ),
+        false,
+        "the reminder was not recorded as delivered",
+      );
+    });
+
+    it("releases the turn when the agent dies during submission", async () => {
+      const obligation = seedReminder();
+      const prompts: string[] = [];
+      let available = true;
+      const bridge = {
+        async newSession() {
+          return { sessionId: "", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt(_taskId: string, text: string) {
+          prompts.push(text);
+          available = false;
+          throw new Error("agent died");
+        },
+        isAvailable: () => available,
+      };
+      sm.setRecoveryBridge(bridge);
+
+      const outcome = await sm.submitObligationReminder(obligation);
+
+      assert.deepEqual(outcome, {
+        status: "deferred",
+        reason: "agent_unavailable",
+      });
+      assert.equal(sm.getBusyKind("child"), null);
+
+      // Transport recovers: the controller can still submit.
+      const healed: string[] = [];
+      sm.setRecoveryBridge({
+        ...bridge,
+        async prompt(_taskId: string, text: string) {
+          healed.push(text);
+        },
+        isAvailable: () => true,
+      });
+      await expectControllerCanSubmitAgain(healed);
+    });
+  });
+
+  // The restore window must be busy, and the rotation claim must happen in
+  // the same synchronous block as the final busy recheck.
+  describe("rotation busy gate", () => {
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    }
+
+    it("treats a restoring task as agent-busy", () => {
+      sm.restoringTasks.add("s1");
+
+      assert.equal(sm.getBusyKind("s1"), "agent");
+    });
+
+    it("rejects a Root reset while a descendant is restoring", async () => {
+      const rootTaskId = store.ensureRootTask(tmpDir).id;
+      store.createTask("child", tmpDir, "auto", "child-session", rootTaskId);
+      const gate = deferred<void>();
+      const loadingBridge = {
+        async newSession() {
+          throw new Error("newSession is not part of a load restore");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          await gate.promise;
+          return { taskId, configOptions: [] };
+        },
+      };
+
+      const restore = sm.resumeTask(loadingBridge, "child");
+      await assert.rejects(() => sm.resetRootTask(), TaskBusyError);
+
+      gate.resolve();
+      await restore;
+    });
+
+    it("rejects a rotation that arrives during the restore window", async () => {
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      const gate = deferred<void>();
+      let loadEntered = false;
+      const loadingBridge = {
+        async newSession() {
+          throw new Error("newSession is not part of a load restore");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          loadEntered = true;
+          await gate.promise;
+          return { taskId, configOptions: [] };
+        },
+      };
+
+      const restore = sm.resumeTask(loadingBridge, "web-1");
+      // resumeTask marks the task restoring before its first await, so an
+      // interleaved request observes it without racing the scheduler.
+      assert.equal(loadEntered, true);
+      assert.equal(sm.getBusyKind("web-1"), "agent");
+
+      const rotatingBridge = {
+        async newSession() {
+          return { sessionId: "agent-rotated", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      await assert.rejects(
+        () => sm.clearTask(rotatingBridge, "web-1"),
+        TaskBusyError,
+      );
+      // The refused rotation changed nothing.
+      assert.equal(store.getAgentSessionId("web-1"), "agent-old");
+
+      gate.resolve();
+      await restore;
+      assert.equal(sm.liveTasks.has("web-1"), true);
+      assert.equal(sm.getBusyKind("web-1"), null);
+    });
+
+    it("rejects a restore whose execution was replaced mid-flight", async () => {
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      const gate = deferred<void>();
+      const loadingBridge = {
+        async newSession() {
+          throw new Error("newSession is not part of a load restore");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          await gate.promise;
+          return { taskId, configOptions: [] };
+        },
+      };
+
+      const restore = sm.resumeTask(loadingBridge, "web-1");
+      // A different client rotates the task while the ACP load is in flight.
+      store.replaceAgentSession("web-1", "agent-new");
+      gate.resolve();
+
+      await assert.rejects(() => restore, /Execution replaced/);
+      // The stale continuation wrote nothing: the task is not live under the
+      // execution it was restoring.
+      assert.equal(sm.liveTasks.has("web-1"), false);
+      assert.equal(
+        store.getCurrentExecutionBinding("web-1")?.agent_session_id,
+        "agent-new",
+      );
+    });
+
+    it("still rotates when the task's own compaction turn owns the busy state", async () => {
+      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      sm.liveTasks.add("web-1");
+      sm.compactingTasks.add("web-1");
+      sm.activePrompts.add("web-1");
+      sm.syncBusy("web-1");
+      const bridge = {
+        async newSession() {
+          return { sessionId: "agent-new", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+
+      // Without the controlled internal path the compaction rotation is
+      // refused by its own busy source.
+      await assert.rejects(() => sm.clearTask(bridge, "web-1"), TaskBusyError);
+      await sm.clearTask(bridge, "web-1", undefined, { allowCompacting: true });
+
+      assert.equal(store.getAgentSessionId("web-1"), "agent-new");
     });
   });
 });

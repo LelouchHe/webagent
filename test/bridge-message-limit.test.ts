@@ -60,7 +60,7 @@ describe("ACP stdio message limit", { timeout: 30_000 }, () => {
     const bridge = new AgentBridge("unused", sessionIds);
     const events: AgentEvent[] = [];
     bridge.on("event", (event: AgentEvent) => events.push(event));
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       // Rejects after hand-off: the prompt resolves, the agent must still die.
       prompt: async () => {
         throw new acp.MessageTooLargeError(MAX_ACP_MESSAGE_BYTES);
@@ -73,7 +73,7 @@ describe("ACP stdio message limit", { timeout: 30_000 }, () => {
         String((bridge as any).deadReason),
         /exceeded the \d+-byte limit/,
       );
-      assert.equal((bridge as any).conn, null);
+      assert.equal((bridge as any).connection, null);
       await assert.rejects(
         () => bridge.prompt("web-1", "again"),
         /exceeded the \d+-byte limit/,
@@ -83,7 +83,7 @@ describe("ACP stdio message limit", { timeout: 30_000 }, () => {
 
   it("reports the un-delivered turn when the limit trips before hand-off", async () => {
     const bridge = new AgentBridge("unused", sessionIds);
-    (bridge as any).conn = {
+    (bridge as any).connection = {
       // Throws synchronously: the agent never received the prompt.
       prompt: () => {
         throw new acp.MessageTooLargeError(MAX_ACP_MESSAGE_BYTES);

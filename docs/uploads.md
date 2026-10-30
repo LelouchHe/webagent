@@ -130,9 +130,11 @@ shows in the meantime — the agent is never silently denied.
 
 When `:id` is the literal Root id `root`, that Root row remains as the tree
 anchor. Its events and attachment rows are cleared, its attachment directory is
-removed, and the same descendant delete/survivor-reparenting rules apply to the
-rest of its tree. The literal `root` is protected from generic deletion and GC;
-prefix-shaped ids are ordinary tasks.
+removed, and its descendant tree is deleted with the same rules as any other
+delete (a share-tombstoned descendant survives and is re-parented). See
+[Task Lifecycle](task-lifecycle.md#transitions) for the transition set. The
+literal `root` is protected from generic deletion and GC; prefix-shaped ids are
+ordinary tasks.
 
 ### Orphaned `.tmp` files
 

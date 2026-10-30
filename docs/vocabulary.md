@@ -100,6 +100,18 @@ and the session-compaction handoff (for example `pending_compact_summary`); it i
 not another name for the obligation, its account, or settlement. Prefer *account*
 or *settlement* for this mechanism.
 
+## Execution authority vocabulary
+
+The bookkeeping that keeps a task stable while its execution is replaced
+([Implementation Invariants](./implementation-invariants.md#execution-is-replaceable-the-task-is-not)).
+All three are internal: none of them is product copy, UI wording, or API naming.
+
+| Term | Means |
+|---|---|
+| **generation** | The integer a task records for "which generation of writes I currently accept". Advanced by exactly one per committed binding change and never persisted — a restart kills every execution, so there is no earlier generation whose late writes could arrive. |
+| **lease** | `{taskId, generation}`, captured when an operation starts and validated at the write boundaries (event entry, and before each synchronous commit). A missing or unknown generation is refused rather than filled in with the current one. |
+| **empty execution slot** | A reserved placeholder session id meaning "the owner is decided, the execution is still to be materialized": the empty string for Root, `no-execution:<taskId>` for an ordinary task. See [`schema.md`](./schema.md#agent_sessions). |
+
 ## Prose and UI rules
 
 - User-facing copy, slash-help text, README, and `docs/*.md` describe the

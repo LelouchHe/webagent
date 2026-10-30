@@ -4,7 +4,11 @@ import { join, extname, basename } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import busboy from "busboy";
-import { type PendingCompactSummary, type Store } from "./store.ts";
+import {
+  isEmptyExecutionSlot,
+  type PendingCompactSummary,
+  type Store,
+} from "./store.ts";
 import type { TaskManager } from "./task-manager.ts";
 import type { SseManager } from "./sse-manager.ts";
 import type { AgentBridge } from "./bridge.ts";
@@ -267,6 +271,13 @@ export interface RequestHandlerDeps {
   /** Optional SSE ticket store. Required alongside authStore for the
    *  /api/v1/sse-ticket route and ticket-based SSE auth. */
   ticketStore?: TicketStore;
+  /**
+   * Support seam: called synchronously when a route starts reading the request
+   * body — by definition *after* that route's pre-body checks have passed. It
+   * lets an ordering-sensitive test prove the handler is blocked in the body
+   * read instead of racing it with a sleep.
+   */
+  onRequestBodyReadStart?: (url: string) => void;
   /** Optional secret for HMAC-signed image URLs. When present, image GET
    *  requires `?sig=&exp=`; image upload returns a signed URL. When absent
    *  (legacy/tests), images are served unauthenticated. */
@@ -280,7 +291,7 @@ export interface RequestHandlerDeps {
 }
 
 /** Read the full request body as a string. */
-function readBody(req: IncomingMessage): Promise<string> {
+function readBodyRaw(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -672,6 +683,11 @@ export function createRequestHandler(
   deps: RequestHandlerDeps,
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const { store, tasks, getBridge, sseManager } = deps;
+  /** Every body read in this handler reports that it started. */
+  const readBody = (req: IncomingMessage): Promise<string> => {
+    deps.onRequestBodyReadStart?.(req.url ?? "/");
+    return readBodyRaw(req);
+  };
   let bootstrapTaskPromise: Promise<{
     id: string;
     cwd: string;
@@ -2163,7 +2179,8 @@ export function createRequestHandler(
           return;
         }
         const agentSessionId = store.getAgentSessionId(taskId);
-        if (!agentSessionId) {
+        // A placeholder slot is not an execution, even though it is a row.
+        if (!agentSessionId || isEmptyExecutionSlot(taskId, agentSessionId)) {
           tasks.releasePromptSubmission(taskId, submissionId);
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task is not available for the current agent",
@@ -2205,6 +2222,12 @@ export function createRequestHandler(
               {
                 preservePendingCompactSummary: true,
                 preserveRuntimeState: true,
+                // This turn owns the task's busy state; the rotation is its
+                // own controlled internal path.
+                allowCompacting: true,
+                // Compaction is a rotation too: it leaves its own transcript
+                // line instead of being an unrecorded internal replacement.
+                reason: "compact",
               },
             );
             tasks.state.patch(taskId, {
@@ -2307,7 +2330,11 @@ export function createRequestHandler(
           return;
         }
         try {
-          const result = await tasks.clearTask(bridge, taskId, body.cwd);
+          const result = await tasks.clearTask(bridge, taskId, body.cwd, {
+            // Explicit rotation: same transition as an implicit takeover, with
+            // the trigger recorded in the transcript.
+            reason: "explicit_clear",
+          });
           const fresh = store.getTask(taskId)!;
           const event = {
             type: "task_created",
@@ -2331,6 +2358,14 @@ export function createRequestHandler(
             agentCommands: tasks.getAgentCommands(taskId),
           });
         } catch (err) {
+          if (err instanceof TaskBusyError) {
+            json(res, HTTP_STATUS.CONFLICT, { error: err.message });
+            return;
+          }
+          if (err instanceof TaskNotFoundError) {
+            json(res, HTTP_STATUS.NOT_FOUND, { error: err.message });
+            return;
+          }
           json(res, HTTP_STATUS.BAD_REQUEST, {
             error: err instanceof Error ? err.message : String(err),
           });

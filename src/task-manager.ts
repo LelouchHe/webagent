@@ -6,6 +6,8 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   MessageNotFoundError,
+  emptyExecutionSlot,
+  isEmptyExecutionSlot,
   type CollaborationDeliveryRow,
   type CollaborationMessageRow,
   type TaskDelete,
@@ -18,23 +20,32 @@ import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
 import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
-import type {
-  AgentCommand,
-  AgentCommandSnapshot,
-  AgentEvent,
-  ConfigOption,
-  PendingPermission,
+import {
+  isTaskExecutionEvent,
+  type AgentCommand,
+  type AgentCommandSnapshot,
+  type AgentEvent,
+  type ConfigOption,
+  type PendingPermission,
 } from "./types.ts";
 
 import { TaskStateManager } from "./task-state.ts";
 import {
   ObligationController,
   type ActiveAgentTurn,
+  type DeliveryOutcome,
   type DirectedObligation,
   type ObligationNotice,
   type SettlementDecision,
 } from "./obligation-controller.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
+import { ExecutionAdapter } from "./execution-adapter.ts";
+import {
+  ExecutionAuthority,
+  GenerationLedger,
+  leaseOf,
+  type ExecutionLease,
+} from "./execution-authority.ts";
 import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { log } from "./log.ts";
@@ -74,7 +85,12 @@ type SessionBridge = Pick<
       AgentBridge,
       "sessionMapped" | "discardUnboundSession" | "retireExecution"
     >
-  >;
+  > & {
+    /** Install the authority that gates execution-scoped events. */
+    setExecutionLeaseSource?: AgentBridge["setExecutionLeaseSource"];
+    /** False while the agent process is dead or not connected. */
+    isAvailable?: AgentBridge["isAvailable"];
+  };
 
 type DeliveryBridge = SessionBridge & Pick<AgentBridge, "prompt">;
 
@@ -93,6 +109,38 @@ function configOptionId(
     );
   }
   return selectable.find((option) => option.id === logicalId)?.id;
+}
+
+const ROTATION_TITLES: Record<RotationReason, string> = {
+  owner_removed: "Execution moved to a configured agent",
+  explicit_clear: "Execution replaced",
+  compact: "Context compacted",
+};
+
+function rotationBody(
+  reason: RotationReason,
+  fromAgent: string | null,
+  toAgent: string,
+): string {
+  switch (reason) {
+    case "owner_removed":
+      return (
+        `The agent that ran this task (${fromAgent ?? "unknown"}) is no longer ` +
+        `configured. Its execution was replaced with ${toAgent}; the task, its ` +
+        `history and its outstanding work are unchanged.`
+      );
+    case "compact":
+      return (
+        "The task's context was compacted: its ACP execution was replaced and a " +
+        "handoff summary was saved for the next prompt. The task id, history " +
+        "and outstanding work are unchanged."
+      );
+    case "explicit_clear":
+      return (
+        "The task's ACP execution was explicitly cleared. Its task id, history " +
+        "and outstanding work are unchanged."
+      );
+  }
 }
 
 /** Minimum age (seconds) before an empty task is eligible for cleanup. */
@@ -163,6 +211,12 @@ export class AgentNotReadyError extends Error {
   }
 }
 
+/**
+ * Why a task's execution was replaced. Every rotation leaves a transcript line
+ * naming its trigger; only the trigger differs.
+ */
+export type RotationReason = "explicit_clear" | "owner_removed" | "compact";
+
 export type TaskCancelStatus =
   | "idle"
   | "cancelling"
@@ -180,10 +234,124 @@ export interface ConsumeMessageResult {
 }
 
 /**
+ * The services `ObligationController` needs from the task runtime. It is a
+ * narrow host interface, not the manager itself, so the controller can be
+ * constructed by the server before (or independently of) the manager.
+ */
+export interface ObligationHost {
+  getBusyKind(taskId: string): "agent" | "bash" | null;
+  isTurnRunning(taskId: string, promptId: string): boolean;
+  submitObligationReminder(
+    obligation: DirectedObligation,
+  ): Promise<ObligationSubmissionOutcome>;
+  retryObligationDispatch(obligation: DirectedObligation): void;
+  emitObligationNotice(
+    notice: ObligationNotice,
+    obligation: DirectedObligation,
+  ): void;
+}
+
+/**
+ * How one reminder/dispatch submission ended. `deferred` is not a failure: the
+ * transport was unavailable (no live execution, a rotation in progress, a
+ * stale lease), so the debt keeps waiting without consuming its failure
+ * budget and without pretending the agent rejected the work.
+ */
+export type ObligationSubmissionOutcome = DeliveryOutcome;
+
+/** Build the process-local obligation controller for one task runtime. */
+export function createObligationController(
+  host: ObligationHost,
+): ObligationController {
+  return new ObligationController({
+    now: () => Date.now(),
+    setTimer: (fn, ms) => {
+      const handle = setTimeout(fn, ms);
+      // Reminder/watchdog timers must never hold the process open; the server
+      // is long-lived and a stalled timer is recoverable on the next turn
+      // boundary anyway.
+      handle.unref();
+      return handle;
+    },
+    clearTimer: (handle) => {
+      clearTimeout(handle);
+    },
+    isAgentBusy: (taskId) => host.getBusyKind(taskId) === "agent",
+    isTurnRunning: (taskId, promptId) => host.isTurnRunning(taskId, promptId),
+    submitReminder: (obligation) => host.submitObligationReminder(obligation),
+    retryDispatch: (obligation) => {
+      host.retryObligationDispatch(obligation);
+    },
+    emitNotice: (notice, obligation) => {
+      host.emitObligationNotice(notice, obligation);
+    },
+    log: (event, fields) => {
+      slog.debug(event, fields);
+    },
+  });
+}
+
+/**
+ * Collaborators injected into one `TaskManager`. The signature is the
+ * "shared vs private" boundary: everything here is server-scoped, everything
+ * the manager creates itself is task-scoped.
+ */
+export interface TaskManagerOptions {
+  store: Store;
+  defaultCwd: string;
+  dataDir: string;
+  /**
+   * Optional MCP capability store. When provided together with `mcpBaseUrl`,
+   * every created/restored task is given a uniquely named MCP server entry
+   * whose Authorization header carries a freshly minted capability — the MCP
+   * control plane for ACP tasks. Lifecycle here is the single source of truth:
+   * mint happens next to `liveTasks.add`, revoke next to `liveTasks.delete`.
+   */
+  capabilities?: CapabilityStore;
+  mcpBaseUrl?: string;
+  /** Shared per-task runtime state ledger (owner of the monotonic `seq`). */
+  state: TaskStateManager;
+  /** Shared execution write authority (binding facts + generation ledger). */
+  authority: ExecutionAuthority;
+  /** The execution environment for this agent. This process creates one. */
+  adapter: ExecutionAdapter;
+  /** Additional adapters, for retiring executions owned by other agents. */
+  adapters?: Iterable<ExecutionAdapter>;
+  /** Injected obligation state machine; defaults to one bound to this manager. */
+  obligations?: ObligationController;
+  /** True while the agent is still present in configuration. */
+  isAgentConfigured?: (agentId: string) => boolean;
+}
+
+/**
+ * Convenience wiring for the single-agent runtime: everything the server
+ * normally injects is created here. Used by tests and by any embedder that has
+ * exactly one agent and no need to share the collaborators.
+ */
+export function createTaskManager(
+  store: Store,
+  defaultCwd: string,
+  dataDir: string,
+  capabilities?: CapabilityStore,
+  mcpBaseUrl?: string,
+): TaskManager {
+  return new TaskManager({
+    store,
+    defaultCwd,
+    dataDir,
+    capabilities,
+    mcpBaseUrl,
+    state: new TaskStateManager(),
+    authority: new ExecutionAuthority(new GenerationLedger()),
+    adapter: new ExecutionAdapter(store.agentKey),
+  });
+}
+
+/**
  * Centralizes all task-related state that was previously scattered
  * across module-level variables in server.ts.
  */
-export class TaskManager {
+export class TaskManager implements ObligationHost {
   readonly liveTasks = new Set<string>();
   /** Tasks with a minted MCP capability awaiting ACP task/new. */
   readonly creatingTasks = new Set<string>();
@@ -211,6 +379,19 @@ export class TaskManager {
     | null = null;
   /** Process-local directed-dispatch obligation state machine. */
   private readonly obligations: ObligationController;
+  /**
+   * Task-scoped collaborators. Injected, not owned: a second `TaskManager`
+   * (when the runtime drives more than one agent) must observe the same
+   * runtime state ledger, the same obligation records, and the same generation
+   * ledger as the first.
+   */
+  readonly state: TaskStateManager;
+  readonly authority: ExecutionAuthority;
+  /** The execution environment driving this agent. */
+  readonly adapter: ExecutionAdapter;
+  /** Every adapter this process can retire executions through (one today). */
+  private readonly adapters: Map<string, ExecutionAdapter>;
+  private readonly isAgentConfigured: (agentId: string) => boolean;
   /** Delivery rows currently being claimed/resolved for one target task. */
   readonly drainingCollaborationTasks = new Set<string>();
   /** Tasks undergoing compact summary generation or ACP rotation. */
@@ -225,8 +406,6 @@ export class TaskManager {
   readonly interruptedBashProcs = new WeakSet<ChildProcess>();
   /** Pending permission requests keyed by requestId. */
   readonly pendingPermissions = new Map<string, PendingPermission>();
-  /** Per-task runtime state (busy/streaming/permissions snapshots + patches). */
-  readonly state = new TaskStateManager();
   /** Deduplicates concurrent resume calls for the same task. */
   private readonly pendingResumes = new Map<string, Promise<void>>();
   /** Hierarchical lock for task-tree structure mutations. */
@@ -247,14 +426,6 @@ export class TaskManager {
    * DELETE. Lookup is cheap (Map.get); rebuild is one SQLite query.
    */
   private readonly attachmentLabelCache = new Map<string, LabelMap>();
-  private readonly agentCommandSnapshots = new Map<
-    string,
-    AgentCommandSnapshot
-  >();
-  private readonly agentCommandEpoch = randomUUID();
-
-  cachedConfigOptions: ConfigOption[] = [];
-  agentInfo: { name: string; version: string } | null = null;
 
   private readonly store: Store;
   private readonly defaultCwd: string;
@@ -262,68 +433,55 @@ export class TaskManager {
   private readonly capabilities?: CapabilityStore;
   private readonly mcpBaseUrl?: string;
 
-  constructor(
-    store: Store,
-    defaultCwd: string,
-    dataDir: string,
-    /**
-     * Optional MCP capability store. When provided together with
-     * `mcpBaseUrl`, every created/restored task is given a uniquely
-     * named MCP server entry whose Authorization header carries a freshly
-     * minted capability — the MCP control plane for ACP tasks. Lifecycle
-     * here is the single source of truth: mint happens next to
-     * `liveTasks.add`, revoke next to `liveTasks.delete`.
-     */
-    capabilities?: CapabilityStore,
-    mcpBaseUrl?: string,
-  ) {
-    this.store = store;
-    this.defaultCwd = defaultCwd;
-    this.dataDir = dataDir;
-    this.capabilities = capabilities;
-    this.mcpBaseUrl = mcpBaseUrl;
-    this.obligations = new ObligationController({
-      now: () => Date.now(),
-      setTimer: (fn, ms) => {
-        const handle = setTimeout(fn, ms);
-        // Reminder/watchdog timers must never hold the process open; the
-        // server is long-lived and a stalled timer is recoverable on the next
-        // turn boundary anyway.
-        handle.unref();
-        return handle;
-      },
-      clearTimer: (handle) => {
-        clearTimeout(handle);
-      },
-      isAgentBusy: (taskId) => this.getBusyKind(taskId) === "agent",
-      isTurnRunning: (taskId, promptId) => this.isTurnRunning(taskId, promptId),
-      submitReminder: (obligation) => this.submitObligationReminder(obligation),
-      retryDispatch: (obligation) => {
-        const bridge = this.recoveryBridge;
-        // A target has one record, so its pending retry is keyed by target.
-        const deliveryIds = this.pendingDispatchRetries.get(
-          obligation.targetTaskId,
-        );
-        if (!bridge) return;
-        if (deliveryIds?.length) {
-          this.pendingDispatchRetries.delete(obligation.targetTaskId);
-          this.store.requeueCollaborationDeliveries(deliveryIds);
-        }
-        void this.drainCollaborationDeliveries(bridge, obligation.targetTaskId);
-      },
-      emitNotice: (notice, obligation) => {
-        this.emitObligationNotice(notice, obligation);
-      },
-      log: (event, fields) => {
-        slog.debug(event, fields);
-      },
-    });
+  constructor(options: TaskManagerOptions) {
+    this.store = options.store;
+    this.defaultCwd = options.defaultCwd;
+    this.dataDir = options.dataDir;
+    this.capabilities = options.capabilities;
+    this.mcpBaseUrl = options.mcpBaseUrl;
+    this.state = options.state;
+    this.authority = options.authority;
+    this.adapter = options.adapter;
+    this.adapters = new Map<string, ExecutionAdapter>([
+      [options.adapter.agentId, options.adapter],
+    ]);
+    for (const adapter of options.adapters ?? []) {
+      this.adapters.set(adapter.agentId, adapter);
+    }
+    this.isAgentConfigured =
+      options.isAgentConfigured ??
+      ((agentId) => agentId === this.adapter.agentId);
+    this.obligations = options.obligations ?? createObligationController(this);
     // One structural choke point: the Store emits exactly one fact per created
     // message and this observer decides the arming policy, so no creation path
     // can silently bypass it.
-    store.onCollaborationMessageCreated(({ message, delivery }) => {
+    this.store.onCollaborationMessageCreated(({ message, delivery }) => {
       this.onCollaborationMessageCreated(message, delivery);
     });
+    // Binding facts are applied before any other post-commit side effect: the
+    // generation ledger must already name the new generation when the
+    // replacement's own initialization starts writing.
+    this.store.onBindingsCommitted((changes) => {
+      this.authority.applyBindingChanges(changes);
+    });
+  }
+
+  /** Config schema reported by the live execution of this agent. */
+  get cachedConfigOptions(): ConfigOption[] {
+    return this.adapter.cachedConfigOptions;
+  }
+
+  set cachedConfigOptions(options: ConfigOption[]) {
+    this.adapter.cachedConfigOptions = options;
+  }
+
+  /** Identity reported by this agent at ACP initialize. */
+  get agentInfo(): { name: string; version: string } | null {
+    return this.adapter.agentInfo;
+  }
+
+  set agentInfo(info: { name: string; version: string } | null) {
+    this.adapter.agentInfo = info;
   }
 
   /**
@@ -408,17 +566,186 @@ export class TaskManager {
   }
 
   /**
+   * Retire one execution through the adapter that owns it. `(agentId,
+   * sessionId)` is the identity, so an execution belonging to an agent this
+   * process has no adapter for is left alone rather than retired through the
+   * wrong process.
+   */
+  private retireExecution(
+    taskId: string,
+    agentId: string | null,
+    agentSessionId: string | null,
+    bridge?: SessionBridge | null,
+  ): void {
+    if (!agentId || !agentSessionId) return;
+    // This task's own empty slot is not an execution; there is nothing to
+    // retire. Exact equality: a real session id may share the namespace prefix.
+    if (isEmptyExecutionSlot(taskId, agentSessionId)) return;
+    const adapter = this.adapters.get(agentId);
+    if (!adapter) {
+      slog.warn("no adapter for retired execution", {
+        agentId,
+        agentSessionId,
+      });
+      return;
+    }
+    const retired = adapter.retire(agentSessionId, bridge ?? null);
+    if (retired) void retired;
+  }
+
+  /**
+   * Make `bridge` the execution transport this runtime gates on. Idempotent;
+   * called from every entry point that receives a bridge, because a caller's
+   * bridge is the only handle the runtime has on the live execution.
+   */
+  attachExecutionBridge(bridge: SessionBridge): void {
+    this.adapter.bindBridge(bridge);
+    bridge.setExecutionLeaseSource?.(this.authority);
+  }
+
+  /**
+   * True when an agent event may still write.
+   *
+   * Fail-closed: only agent-level lifecycle events pass without a lease. A
+   * task-addressing event must carry a captured lease naming *this* task's
+   * current generation; a missing stamp is never inferred as permission from
+   * a missing ledger entry, and an unknown or replaced generation is refused.
+   */
+  acceptsEventLease(event: AgentEvent): boolean {
+    if (!isTaskExecutionEvent(event)) return true;
+    const lease = leaseOf(event);
+    if (!lease) return false;
+    if (lease.taskId !== event.taskId) return false;
+    return this.authority.accepts(lease);
+  }
+
+  /**
+   * The current owner of a task when it is no longer in configuration, i.e.
+   * when an *implicit* rotation is allowed.
+   *
+   * A configured agent that simply is not running (binary missing, start
+   * failure, temporary disconnect) is still the configured owner and must not
+   * be displaced; only its removal from configuration grants the takeover.
+   */
+  private removedOwnerBinding(
+    taskId: string,
+  ): { agentId: string; sessionId: string } | null {
+    const binding = this.store.getCurrentExecutionBinding(taskId);
+    if (!binding) return null;
+    if (binding.agent_key === this.adapter.agentId) return null;
+    if (this.isAgentConfigured(binding.agent_key)) return null;
+    return {
+      agentId: binding.agent_key,
+      sessionId: binding.agent_session_id,
+    };
+  }
+
+  /**
+   * The one owner-change transition: bump the generation, truncate the old
+   * transport, keep the debt, and leave a transcript line naming the reason.
+   * Both triggers (explicit clear, removed owner) run through here; only the
+   * whatever-policy check differs, and that lives with the caller.
+   *
+   * The replacement execution is materialized lazily (empty session id), so
+   * this works while the previous agent process is gone.
+   */
+  private applyOwnerRotation(
+    taskId: string,
+    from: { agentId: string; sessionId: string },
+    reason: RotationReason,
+  ): void {
+    const task = this.store.getTaskIncludingDeleted(taskId);
+    this.store.replaceAgentSession(taskId, emptyExecutionSlot(taskId));
+    this.liveTasks.delete(taskId);
+    this.resetTaskRuntime(taskId);
+    this.pendingDispatchRetries.delete(taskId);
+    this.store.failOutstandingDeliveriesForTaskClear(taskId);
+    this.obligations.noteExecutionRotated(taskId);
+    this.retireExecution(
+      taskId,
+      from.agentId,
+      from.sessionId,
+      this.recoveryBridge,
+    );
+    if (!task) return;
+    const fromLabel = from.agentId;
+    const toLabel = this.adapter.agentId;
+    this.store.saveEvent(
+      taskId,
+      "system_message",
+      {
+        kind: "agent_rotation",
+        title: ROTATION_TITLES[reason],
+        body: rotationBody(reason, fromLabel, toLabel),
+        reason,
+        fromAgent: fromLabel,
+        toAgent: toLabel,
+      },
+      { from_ref: "system" },
+    );
+  }
+
+  /**
+   * A live task read **regardless of which agent owns it**. Internal lifecycle
+   * paths work on the task, not on this Store's ownership scope: after an
+   * implicit rotation the task is owned by an agent this Store no longer maps,
+   * and it must still be resumable, rotatable and deletable. Public reads keep
+   * using the agent-scoped Store methods.
+   */
+  private liveTask(taskId: string): TaskRow | undefined {
+    const task = this.store.getTaskIncludingDeleted(taskId);
+    if (task?.deleted_at !== null) return undefined;
+    return task;
+  }
+
+  /**
+   * A task owned by another *configured* agent belongs to that agent's
+   * runtime. This process has one adapter, so it must refuse rather than
+   * execute the foreign execution under the wrong agent. A removed owner is not covered
+   * here: the implicit-rotation path takes it over first.
+   */
+  private assertRunnableOwner(taskId: string): void {
+    const binding = this.store.getCurrentExecutionBinding(taskId);
+    if (!binding) return;
+    if (binding.agent_key === this.adapter.agentId) return;
+    if (!this.isAgentConfigured(binding.agent_key)) return;
+    throw new Error(
+      `Task ${taskId.slice(0, 8)} belongs to agent ${binding.agent_key}, which is still configured`,
+    );
+  }
+
+  /** True when the bridge can currently accept a prompt for this agent. */
+  private isExecutionAvailable(bridge: SessionBridge): boolean {
+    return bridge.isAvailable?.() ?? true;
+  }
+
+  /** The lease a replacement execution must initialize under, after commit. */
+  private currentLease(taskId: string): ExecutionLease | null {
+    return this.authority.leaseFor(taskId);
+  }
+
+  /** True when `lease` still names the task's current generation. */
+  private leaseCurrent(lease: ExecutionLease | null): boolean {
+    return this.authority.accepts(lease);
+  }
+
+  /**
    * Drop live state for tasks that the store cleaned as empty.
    */
   private cleanupEmptyTasks(bridge?: SessionBridge): void {
     const cleaned = this.store.deleteEmptyTasks(EMPTY_TASK_MIN_AGE_S);
     for (const entry of cleaned) {
       if (entry.agentSessionId) {
-        void bridge?.retireExecution?.(entry.agentSessionId);
+        this.retireExecution(
+          entry.id,
+          this.adapter.agentId,
+          entry.agentSessionId,
+          bridge,
+        );
       }
       this.liveTasks.delete(entry.id);
       this.capabilities?.revokeByTask(entry.id);
-      this.agentCommandSnapshots.delete(entry.id);
+      this.adapter.agentCommandSnapshots.delete(entry.id);
     }
     if (cleaned.length > 0)
       slog.info("cleaned empty task(s)", { count: cleaned.length });
@@ -481,6 +808,11 @@ export class TaskManager {
    */
   private getActiveTaskWorkKind(taskId: string): "agent" | "bash" | null {
     if (this.creatingTasks.has(taskId)) return "agent";
+    // Restoring is work too: `resumeTask` awaits ACP `loadSession` while the
+    // task's stored binding is still the one being loaded. Leaving it out of
+    // the busy gate let a `/clear` replace the execution the restore was
+    // about to make live.
+    if (this.restoringTasks.has(taskId)) return "agent";
     if (this.pendingPromptSubmissions.has(taskId)) return "agent";
     if (this.drainingCollaborationTasks.has(taskId)) return "agent";
     if (this.activePrompts.has(taskId)) return "agent";
@@ -535,6 +867,7 @@ export class TaskManager {
       workflowStatus?: WorkflowStatus;
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+    this.attachExecutionBridge(bridge);
     const parentId = this.resolveParentId(opts?.parentId);
     if (parentId) {
       await this.waitForRootResetIfNeeded(parentId);
@@ -698,8 +1031,9 @@ export class TaskManager {
     }
     try {
       this.liveTasks.add(taskId);
-      this.recordConfigOptions(taskId, createdConfigOptions);
-      bridge.sessionMapped?.(agentSessionId);
+      const lease = this.currentLease(taskId);
+      this.recordConfigOptions(taskId, createdConfigOptions, lease);
+      bridge.sessionMapped?.(agentSessionId, taskId);
 
       // Inherit config options from source task
       if (sourceTask) {
@@ -794,10 +1128,28 @@ export class TaskManager {
     opts: {
       preservePendingCompactSummary?: boolean;
       preserveRuntimeState?: boolean;
+      /** The compaction path owns its own busy source and may rotate inside it. */
+      allowCompacting?: boolean;
+      /**
+       * Why the owner is changing. Rotations that name a reason leave a
+       * transcript line; internal replacements (compaction) stay silent.
+       */
+      reason?: RotationReason;
     } = {},
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+    this.attachExecutionBridge(bridge);
+    // One synchronous gate: the final busy recheck and the `rotating` claim
+    // must happen in the same block with no await between them. A caller that
+    // checked busy before awaiting a request body would otherwise rotate a
+    // task that started restoring in that window.
     if (this.rotatingTasks.has(taskId)) {
       throw new Error(`Task is already being rotated: ${taskId}`);
+    }
+    const busyForRotation = opts.allowCompacting
+      ? this.getBusyKindForOwnRotation(taskId)
+      : this.getBusyKind(taskId);
+    if (busyForRotation !== null) {
+      throw new TaskBusyError(taskId, this.store.getTaskPath(taskId));
     }
     this.rotatingTasks.add(taskId);
     // Other clients watching this task see busy for the whole rotation
@@ -809,6 +1161,7 @@ export class TaskManager {
         taskId,
         cwd,
         opts.preserveRuntimeState,
+        opts.reason,
       );
       if (!opts.preservePendingCompactSummary) {
         this.store.clearPendingCompactSummary(taskId);
@@ -830,8 +1183,9 @@ export class TaskManager {
     taskId: string,
     cwd?: string,
     preserveRuntimeState = false,
+    reason?: RotationReason,
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
-    const task = this.store.getTask(taskId);
+    const task = this.liveTask(taskId);
     if (!task) throw new Error(`Task not found: ${taskId}`);
     const taskCwd = expandHomePath(cwd ?? task.cwd);
     try {
@@ -850,9 +1204,9 @@ export class TaskManager {
       execution?.token,
     );
 
-    const retiredAgentSessionId = this.store.getAgentSessionId(taskId);
+    const retiredBinding = this.store.getCurrentExecutionBinding(taskId);
     try {
-      this.store.rotateAgentSession(taskId, created.sessionId, taskCwd);
+      this.store.replaceAgentSession(taskId, created.sessionId, taskCwd);
     } catch (error) {
       bridge.discardUnboundSession?.(created.sessionId);
       this.creatingTasks.delete(taskId);
@@ -865,29 +1219,111 @@ export class TaskManager {
     if (execution?.token) {
       this.capabilities?.revokeOtherTokens(taskId, execution.token);
     }
-    bridge.sessionMapped?.(created.sessionId);
-    // The old ACP execution is explicitly retired now that the new binding
-    // is authoritative; best-effort, never rolls back the rotation. Only
-    // retire when the binding actually moved: an agent that returns the
-    // current execution id makes rotate a no-op, and retiring it would kill
-    // the still-live execution.
-    if (retiredAgentSessionId && retiredAgentSessionId !== created.sessionId) {
-      void bridge.retireExecution?.(retiredAgentSessionId);
-    }
+    const lease = this.currentLease(taskId);
+    bridge.sessionMapped?.(created.sessionId, taskId);
+    this.retireReplacedExecution(
+      taskId,
+      retiredBinding,
+      created.sessionId,
+      bridge,
+    );
     this.resetTaskRuntime(taskId, preserveRuntimeState);
-    this.store.failOutstandingDeliveriesForTaskClear(taskId);
-    this.store.updateTaskWorkflowStatus(taskId, "idle");
+    this.commitRotation(taskId, retiredBinding?.agent_key ?? null, reason);
 
     const configOptions = await this.restoreTaskConfig(
       bridge,
       taskId,
       created.configOptions,
       task,
+      lease,
     );
     return {
       taskId,
-      configOptions: this.applyStoredConfig(configOptions, task),
+      configOptions: this.applyStoredConfigUnderLease(
+        taskId,
+        configOptions,
+        task,
+        lease,
+      ),
     };
+  }
+
+  /**
+   * The last write boundary of a rotation: the stored-config overlay may
+   * persist a canonical model value, so a generation that moved during the
+   * config replay must not produce it.
+   */
+  private applyStoredConfigUnderLease(
+    taskId: string,
+    configOptions: ConfigOption[],
+    task: Pick<TaskRow, "id" | "model" | "mode" | "reasoning_effort">,
+    lease: ExecutionLease | null,
+  ): ConfigOption[] {
+    if (!this.leaseCurrent(lease)) {
+      throw new Error(`Execution replaced while rotating ${taskId}`);
+    }
+    return this.applyStoredConfig(configOptions, task);
+  }
+
+  /**
+   * The synchronous tail of every binding replacement: truncate the old
+   * transport, keep the debt, and (when the trigger is named) leave a
+   * transcript line. `resetTaskRuntime` has already dropped the in-flight
+   * prompt state; the retry ids, the unfinished delivery rows and the
+   * obligation's dispatch phase still point at the execution that no longer
+   * exists, and the debt survives as a closing reminder aimed at the
+   * replacement.
+   */
+  private commitRotation(
+    taskId: string,
+    fromAgent: string | null,
+    reason?: RotationReason,
+  ): void {
+    this.pendingDispatchRetries.delete(taskId);
+    this.store.failOutstandingDeliveriesForTaskClear(taskId);
+    this.obligations.noteExecutionRotated(taskId);
+    this.store.updateTaskWorkflowStatus(taskId, "idle");
+    if (!reason) return;
+    const toAgent = this.adapter.agentId;
+    this.store.saveEvent(
+      taskId,
+      "system_message",
+      {
+        kind: "agent_rotation",
+        title: ROTATION_TITLES[reason],
+        body: rotationBody(reason, fromAgent, toAgent),
+        reason,
+        fromAgent,
+        toAgent,
+      },
+      { from_ref: "system" },
+    );
+  }
+
+  /**
+   * Retire the execution a replacement displaced. Best-effort: it never rolls
+   * back the rotation. Identity is the `(agentId, sessionId)` pair, so a
+   * same-session replacement is a storage no-op and must not retire the
+   * still-authoritative execution.
+   */
+  private retireReplacedExecution(
+    taskId: string,
+    retired: { agent_key: string; agent_session_id: string } | undefined,
+    replacementSessionId: string,
+    bridge: SessionBridge,
+  ): void {
+    if (!retired) return;
+    if (isEmptyExecutionSlot(taskId, retired.agent_session_id)) return;
+    const moved =
+      retired.agent_key !== this.adapter.agentId ||
+      retired.agent_session_id !== replacementSessionId;
+    if (!moved) return;
+    this.retireExecution(
+      taskId,
+      retired.agent_key,
+      retired.agent_session_id,
+      bridge,
+    );
   }
 
   /**
@@ -907,7 +1343,7 @@ export class TaskManager {
       this.cancelledPromptSubmissions.delete(pendingSubmission);
     }
     this.runningBashProcs.delete(taskId);
-    this.agentCommandSnapshots.delete(taskId);
+    this.adapter.agentCommandSnapshots.delete(taskId);
     for (const [requestId, permission] of this.pendingPermissions) {
       if (permission.taskId === taskId) {
         this.pendingPermissions.delete(requestId);
@@ -918,12 +1354,20 @@ export class TaskManager {
 
   /** Bind an ACP execution to the reserved Root record after bridge startup. */
   async ensureRootTask(bridge: SessionBridge): Promise<void> {
+    this.attachExecutionBridge(bridge);
     const rootTaskId = this.store.rootTaskId;
     const root = this.store.getTaskIncludingDeleted(rootTaskId);
+    const removedOwner = this.removedOwnerBinding(rootTaskId);
+    if (removedOwner) {
+      // The Root is bound to an agent that is no longer configured: take it
+      // over implicitly. A configured owner is never displaced here.
+      this.applyOwnerRotation(rootTaskId, removedOwner, "owner_removed");
+      return;
+    }
     // Gate on the binding row, not its session id: a DB-only Root reset keeps
     // an intentionally empty id as the lazy-materialization marker. Binding
     // here would conflict with that row and discard the new ACP session.
-    if (!root || this.store.getAgentSessionBinding(rootTaskId)) return;
+    if (!root || this.store.getCurrentExecutionBinding(rootTaskId)) return;
 
     const execution = this.buildMcpServerForExecution(rootTaskId, false);
     const created = await this.createAgentSession(
@@ -934,7 +1378,7 @@ export class TaskManager {
       execution?.token,
     );
     try {
-      this.store.bindAgentSession(rootTaskId, created.sessionId);
+      this.store.attachAgentSession(rootTaskId, created.sessionId);
     } catch (error) {
       bridge.discardUnboundSession?.(created.sessionId);
       this.creatingTasks.delete(rootTaskId);
@@ -943,8 +1387,12 @@ export class TaskManager {
     }
     this.liveTasks.add(rootTaskId);
     this.creatingTasks.delete(rootTaskId);
-    this.recordConfigOptions(rootTaskId, created.configOptions);
-    bridge.sessionMapped?.(created.sessionId);
+    this.recordConfigOptions(
+      rootTaskId,
+      created.configOptions,
+      this.currentLease(rootTaskId),
+    );
+    bridge.sessionMapped?.(created.sessionId, rootTaskId);
   }
 
   /** Reapply the stable Task config to a newly created ACP execution. */
@@ -953,6 +1401,7 @@ export class TaskManager {
     taskId: string,
     configOptions: ConfigOption[],
     task: Pick<TaskRow, "mode" | "reasoning_effort" | "model">,
+    lease?: ExecutionLease | null,
   ): Promise<ConfigOption[]> {
     const values: Array<{
       id: string | undefined;
@@ -968,21 +1417,47 @@ export class TaskManager {
     let updated = configOptions;
     for (const { id, value } of values) {
       if (!id || !value) continue;
+      // Every request is re-authorized: the lease was captured when the
+      // rotation started, and this loop outlives several awaits.
+      if (lease !== undefined && !this.leaseCurrent(lease)) {
+        slog.warn("skipped config restore for a replaced execution", {
+          taskId: taskId.slice(0, 8),
+        });
+        break;
+      }
+      let next: ConfigOption[];
       try {
-        const next = await bridge.setConfigOption(taskId, id, value);
-        if (next.length > 0) {
-          updated = next;
-          this.cachedConfigOptions = next;
-        }
+        next = await bridge.setConfigOption(taskId, id, value);
       } catch {
         // An option may no longer be supported by the current agent.
+        continue;
       }
+      if (next.length === 0) continue;
+      updated = next;
+      // The response may have arrived after the execution was replaced; it
+      // describes that execution, not the task's current one.
+      if (lease !== undefined && !this.leaseCurrent(lease)) {
+        slog.warn("discarded a replaced execution's config response", {
+          taskId: taskId.slice(0, 8),
+        });
+        break;
+      }
+      this.cachedConfigOptions = next;
     }
     return updated;
   }
 
-  /** Cache the ACP config schema and persist this task's current values. */
-  recordConfigOptions(taskId: string, configOptions: ConfigOption[]): void {
+  /**
+   * Cache the ACP config schema and persist this task's current values. An
+   * execution-scoped caller passes the lease it captured: a stale one writes
+   * neither the cache nor the task row.
+   */
+  recordConfigOptions(
+    taskId: string,
+    configOptions: ConfigOption[],
+    lease?: ExecutionLease | null,
+  ): void {
+    if (lease !== undefined && !this.leaseCurrent(lease)) return;
     if (configOptions.length === 0) return;
     this.cachedConfigOptions = configOptions;
     for (const option of configOptions) {
@@ -1084,7 +1559,8 @@ export class TaskManager {
 
   /** Resume a task — returns event to send to the requesting client. */
   async resumeTask(bridge: SessionBridge, taskId: string): Promise<AgentEvent> {
-    const task = this.store.getTask(taskId);
+    this.attachExecutionBridge(bridge);
+    const task = this.liveTask(taskId);
     if (!task) throw new Error("Task not found");
 
     if (this.liveTasks.has(taskId)) {
@@ -1104,66 +1580,57 @@ export class TaskManager {
     // Restore via ACP. A DB-only Root reset leaves an empty execution id:
     // materialize a fresh ACP session instead of trying to load one the
     // agent has never seen.
-    const existingSessionId = this.store.getAgentSessionId(taskId);
+    const removedOwner = this.removedOwnerBinding(taskId);
+    if (removedOwner) {
+      this.applyOwnerRotation(taskId, removedOwner, "owner_removed");
+    }
+    this.assertRunnableOwner(taskId);
+    const existingBinding = this.store.getCurrentExecutionBinding(taskId);
+    const existingSessionId = existingBinding?.agent_session_id;
+    // An empty execution slot (Root after a reset, or any task after an
+    // implicit rotation) is a materialization marker, not a session to load.
+    // The restore runs under the generation it started with. A rotation that
+    // slips in while the ACP call is in flight invalidates every write this
+    // continuation would make.
+    const startLease = this.authority.adopt(taskId);
     this.restoringTasks.add(taskId);
     try {
-      if (!existingSessionId) {
-        const execution = this.buildMcpServerForExecution(taskId, false);
-        const created = await this.createAgentSession(
-          bridge,
-          taskId,
-          task.cwd,
-          this.buildNewTaskOptions(undefined, execution?.servers),
-          execution?.token,
-        );
-        try {
-          this.store.rotateAgentSession(taskId, created.sessionId, task.cwd);
-        } catch (error) {
-          bridge.discardUnboundSession?.(created.sessionId);
-          this.creatingTasks.delete(taskId);
-          if (execution?.token) this.capabilities?.revoke(execution.token);
-          throw error;
-        }
-        this.liveTasks.add(taskId);
-        this.creatingTasks.delete(taskId);
-        if (execution?.token) {
-          this.capabilities?.revokeOtherTokens(taskId, execution.token);
-        }
-        bridge.sessionMapped?.(created.sessionId);
-        const configOptions = await this.restoreTaskConfig(
-          bridge,
-          taskId,
-          created.configOptions,
-          task,
-        );
-        return {
-          type: "task_created",
-          rootTaskId: this.store.rootTaskId,
-          taskId,
-          cwd: task.cwd,
-          cwdDisplay: abbreviateHomePath(task.cwd),
-          title: task.title,
-          configOptions: this.applyStoredConfig(configOptions, task),
-        };
+      if (
+        !existingSessionId ||
+        isEmptyExecutionSlot(taskId, existingSessionId)
+      ) {
+        return await this.materializeRestoredTask(bridge, taskId, task);
       }
       // Mint a fresh capability for the restored task: any token from
       // before a restart is gone with the old process, and the task is
       // still live, so it gets an MCP server entry like a new task does.
       const mcpServers = this.buildMcpServers(taskId);
       const loaded = await bridge.loadSession(taskId, task.cwd, mcpServers);
+      if (!this.leaseCurrent(startLease)) {
+        throw new Error(`Execution replaced while restoring ${taskId}`);
+      }
       this.liveTasks.add(taskId);
       // Piggyback a cache-warming setConfigOption on the user's own resume
       // when the global cache is empty (typical after bridge.restart). Uses
       // the task's own stored value — idempotent, no side effect. Failure
       // is swallowed: the resume still succeeds and the frontend falls back
       // to snapshot-based mode/model display (see public/js/state.ts).
-      await this.tryWarmCache(bridge, taskId, task, loaded.configOptions);
+      await this.tryWarmCache(
+        bridge,
+        taskId,
+        task,
+        loaded.configOptions,
+        startLease,
+      );
       const configOptions = this.applyStoredConfig(
         loaded.configOptions.length > 0
           ? loaded.configOptions
           : this.cachedConfigOptions,
         task,
       );
+      if (!this.leaseCurrent(startLease)) {
+        throw new Error(`Execution replaced while restoring ${taskId}`);
+      }
       slog.info("restored", { taskId: taskId.slice(0, 8) + "…" });
       return {
         type: "task_created",
@@ -1175,12 +1642,72 @@ export class TaskManager {
         configOptions,
       };
     } catch (err) {
-      this.capabilities?.revokeByTask(taskId);
+      // Revoking by task kills the *current* execution's capability. After a
+      // rotation that is the replacement's token, which is not this failed
+      // restore's to revoke.
+      if (this.leaseCurrent(startLease)) {
+        this.capabilities?.revokeByTask(taskId);
+      }
       slog.error("restore failed", { error: err });
       throw err;
     } finally {
       this.restoringTasks.delete(taskId);
     }
+  }
+
+  /**
+   * Materialize the empty execution slot left by a DB-only Root reset or a
+   * reset that never materialized. The replacement commits a new binding, so
+   * its initialization runs under the *new* lease, not the one the restore
+   * started with.
+   */
+  private async materializeRestoredTask(
+    bridge: SessionBridge,
+    taskId: string,
+    task: TaskRow,
+  ): Promise<AgentEvent> {
+    const execution = this.buildMcpServerForExecution(taskId, false);
+    const created = await this.createAgentSession(
+      bridge,
+      taskId,
+      task.cwd,
+      this.buildNewTaskOptions(undefined, execution?.servers),
+      execution?.token,
+    );
+    try {
+      this.store.replaceAgentSession(taskId, created.sessionId, task.cwd);
+    } catch (error) {
+      bridge.discardUnboundSession?.(created.sessionId);
+      this.creatingTasks.delete(taskId);
+      if (execution?.token) this.capabilities?.revoke(execution.token);
+      throw error;
+    }
+    this.liveTasks.add(taskId);
+    this.creatingTasks.delete(taskId);
+    if (execution?.token) {
+      this.capabilities?.revokeOtherTokens(taskId, execution.token);
+    }
+    const lease = this.currentLease(taskId);
+    bridge.sessionMapped?.(created.sessionId, taskId);
+    const configOptions = await this.restoreTaskConfig(
+      bridge,
+      taskId,
+      created.configOptions,
+      task,
+      lease,
+    );
+    if (!this.leaseCurrent(lease)) {
+      throw new Error(`Execution replaced while restoring ${taskId}`);
+    }
+    return {
+      type: "task_created",
+      rootTaskId: this.store.rootTaskId,
+      taskId,
+      cwd: task.cwd,
+      cwdDisplay: abbreviateHomePath(task.cwd),
+      title: task.title,
+      configOptions: this.applyStoredConfig(configOptions, task),
+    };
   }
 
   /**
@@ -1205,6 +1732,7 @@ export class TaskManager {
       reasoning_effort: string | null;
     },
     configOptions: ConfigOption[],
+    lease: ExecutionLease | null,
   ): Promise<void> {
     if (this.cachedConfigOptions.length > 0) return;
     const candidates: Array<{ id: string; value: string }> = [];
@@ -1221,6 +1749,14 @@ export class TaskManager {
 
     let lastError: unknown = null;
     for (const candidate of candidates) {
+      // A candidate request is only sent while the restore still owns the
+      // execution it was started for.
+      if (!this.leaseCurrent(lease)) {
+        slog.warn("stopped cache warming for a replaced execution", {
+          taskId: taskId.slice(0, 8),
+        });
+        return;
+      }
       try {
         const opts = await bridge.setConfigOption(
           taskId,
@@ -1228,6 +1764,14 @@ export class TaskManager {
           candidate.value,
         );
         if (opts.length > 0) {
+          // Never cache a response that outlived its execution: it describes
+          // the replaced session, not the task's current one.
+          if (!this.leaseCurrent(lease)) {
+            slog.warn("discarded a replaced execution's cache response", {
+              taskId: taskId.slice(0, 8),
+            });
+            return;
+          }
           this.cachedConfigOptions = opts;
           slog.info("warmed cache on resume", { options: opts.length });
           return;
@@ -1338,23 +1882,23 @@ export class TaskManager {
     taskId: string,
     commands: AgentCommand[],
   ): AgentCommandSnapshot {
-    const current = this.agentCommandSnapshots.get(taskId);
+    const current = this.adapter.agentCommandSnapshots.get(taskId);
     const snapshot = {
-      epoch: this.agentCommandEpoch,
+      epoch: this.adapter.agentCommandEpoch,
       revision: (current?.revision ?? 0) + 1,
       commands: commands.map((command) => ({
         ...command,
         ...(command.input ? { input: { ...command.input } } : {}),
       })),
     };
-    this.agentCommandSnapshots.set(taskId, snapshot);
+    this.adapter.agentCommandSnapshots.set(taskId, snapshot);
     return snapshot;
   }
 
   getAgentCommands(taskId: string): AgentCommandSnapshot {
     return (
-      this.agentCommandSnapshots.get(taskId) ?? {
-        epoch: this.agentCommandEpoch,
+      this.adapter.agentCommandSnapshots.get(taskId) ?? {
+        epoch: this.adapter.agentCommandEpoch,
         revision: 0,
         commands: [],
       }
@@ -1363,13 +1907,13 @@ export class TaskManager {
 
   clearAgentCommands(): Array<AgentCommandSnapshot & { taskId: string }> {
     const cleared: Array<AgentCommandSnapshot & { taskId: string }> = [];
-    for (const [taskId, current] of this.agentCommandSnapshots) {
+    for (const [taskId, current] of this.adapter.agentCommandSnapshots) {
       const snapshot: AgentCommandSnapshot = {
-        epoch: this.agentCommandEpoch,
+        epoch: this.adapter.agentCommandEpoch,
         revision: current.revision + 1,
         commands: [],
       };
-      this.agentCommandSnapshots.set(taskId, snapshot);
+      this.adapter.agentCommandSnapshots.set(taskId, snapshot);
       cleared.push({
         taskId,
         ...snapshot,
@@ -1388,6 +1932,7 @@ export class TaskManager {
   async resetRootTask(
     bridge?: SessionBridge,
   ): Promise<{ affected: TaskDelete[] }> {
+    if (bridge) this.attachExecutionBridge(bridge);
     const rootTaskId = this.store.rootTaskId;
     if (this.resettingTasks.has(rootTaskId)) {
       throw new Error("Root task is already being reset");
@@ -1443,11 +1988,20 @@ export class TaskManager {
       }
       const result = this.store.resetRootTask();
       if (result.retiredAgentSessionId) {
-        void bridge?.retireExecution?.(result.retiredAgentSessionId);
+        this.retireExecution(
+          rootTaskId,
+          this.adapter.agentId,
+          result.retiredAgentSessionId,
+          bridge,
+        );
       }
       for (const entry of result.affected) {
-        if (entry.agentSessionId)
-          void bridge?.retireExecution?.(entry.agentSessionId);
+        this.retireExecution(
+          entry.id,
+          entry.agentId,
+          entry.agentSessionId,
+          bridge,
+        );
         this.releaseTaskRuntime(entry.id, entry.mode);
       }
       this.liveTasks.delete(rootTaskId);
@@ -1478,8 +2032,9 @@ export class TaskManager {
     bridge: SessionBridge | undefined,
     taskId: string,
   ): Promise<{ mode: "hard" | "soft"; affected: TaskDelete[] }> {
+    if (bridge) this.attachExecutionBridge(bridge);
     const release = await this.acquireTaskTreeMutationLock(taskId);
-    const task = this.store.getTask(taskId);
+    const task = this.liveTask(taskId);
     if (!task) {
       release();
       throw new TaskNotFoundError(taskId);
@@ -1493,8 +2048,12 @@ export class TaskManager {
     try {
       const result = this.store.deleteTask(taskId);
       for (const entry of result.affected) {
-        if (entry.agentSessionId)
-          void bridge?.retireExecution?.(entry.agentSessionId);
+        this.retireExecution(
+          entry.id,
+          entry.agentId,
+          entry.agentSessionId,
+          bridge,
+        );
         this.releaseTaskRuntime(entry.id, entry.mode);
       }
       return result;
@@ -1524,12 +2083,14 @@ export class TaskManager {
     }
     this.runningBashProcs.delete(id);
     this.attachmentLabelCache.delete(id);
-    this.agentCommandSnapshots.delete(id);
+    this.adapter.agentCommandSnapshots.delete(id);
     // Clean pending permissions for this task
     for (const [reqId, perm] of this.pendingPermissions) {
       if (perm.taskId === id) this.pendingPermissions.delete(reqId);
     }
     this.state.delete(id);
+    // Drop the generation entry with the task: a stale id must never revive.
+    this.authority.clear(id);
     if (mode === "hard") {
       // Tombstoned tasks keep their attachments alive for the share viewer
       // (shared files still resolve via /s/:token/attachments/...). The reap
@@ -1599,6 +2160,23 @@ export class TaskManager {
     if (this.compactingTasks.has(taskId)) return "agent";
     if (this.resettingTasks.has(taskId)) return "agent";
     return this.getActiveTaskWorkKind(taskId);
+  }
+
+  /**
+   * Busy sources that still block a rotation *started by this task's own
+   * compaction turn*. The compaction path holds `compactingTasks` and an
+   * active prompt on the task by design, so those two are the only excluded
+   * sources; everything else (a restore, a queued submission, a drain) still
+   * refuses the rotation.
+   */
+  private getBusyKindForOwnRotation(taskId: string): "agent" | "bash" | null {
+    if (this.creatingTasks.has(taskId)) return "agent";
+    if (this.restoringTasks.has(taskId)) return "agent";
+    if (this.pendingPromptSubmissions.has(taskId)) return "agent";
+    if (this.drainingCollaborationTasks.has(taskId)) return "agent";
+    if (this.rotatingTasks.has(taskId)) return "agent";
+    if (this.runningBashProcs.has(taskId)) return "bash";
+    return null;
   }
 
   /**
@@ -1770,6 +2348,7 @@ export class TaskManager {
   /** Remember the bridge used by a caller that may later transition idle. */
   setRecoveryBridge(bridge: DeliveryBridge): void {
     this.recoveryBridge = bridge;
+    this.attachExecutionBridge(bridge);
   }
 
   /**
@@ -1959,28 +2538,77 @@ export class TaskManager {
   }
 
   /**
+   * Retry the original dispatch at an idle boundary. The claimed rows are
+   * requeued only when a bridge exists; without one the debt keeps waiting and
+   * the bounded retry simply does not start.
+   */
+  retryObligationDispatch(obligation: DirectedObligation): void {
+    const bridge = this.recoveryBridge;
+    // A target has one record, so its pending retry is keyed by target.
+    const deliveryIds = this.pendingDispatchRetries.get(
+      obligation.targetTaskId,
+    );
+    if (!bridge) return;
+    if (deliveryIds?.length) {
+      this.pendingDispatchRetries.delete(obligation.targetTaskId);
+      this.store.requeueCollaborationDeliveries(deliveryIds);
+    }
+    void this.drainCollaborationDeliveries(bridge, obligation.targetTaskId);
+  }
+
+  /**
    * Submit one closing accounting prompt and record a truthful accepted
    * reminder event. Returns false when the bridge rejects the submission; a
    * rejection never records a successful reminder and never consumes an
    * attempt.
    */
-  private async submitObligationReminder(
+  async submitObligationReminder(
     obligation: DirectedObligation,
-  ): Promise<boolean> {
+  ): Promise<ObligationSubmissionOutcome> {
     const bridge = this.recoveryBridge;
-    const task = this.store.getTask(obligation.targetTaskId);
-    if (!bridge || !task) return false;
+    const task = this.liveTask(obligation.targetTaskId);
+    if (!task) {
+      // The target is gone; its debt is purged with the task lifecycle, which
+      // is not a delivery failure.
+      return { status: "deferred", reason: "task_gone" };
+    }
+    if (!bridge) {
+      // No execution to submit to. Nothing was attempted, so this must not
+      // consume the failure budget: the debt keeps waiting.
+      return { status: "deferred", reason: "no_execution" };
+    }
     if (this.resettingTasks.has(task.id) || this.rotatingTasks.has(task.id)) {
-      return false;
+      return { status: "deferred", reason: "rotating" };
+    }
+    if (!this.isExecutionAvailable(bridge)) {
+      return { status: "deferred", reason: "agent_unavailable" };
     }
     const text = handoffReminderText();
+    // Single ownership of the turn: one `add`, one guarded release in
+    // `finally`. Every outcome below — resume failure, replaced execution,
+    // unavailable agent, delivered, rejected — leaves the task idle, so a
+    // deferral can never strand `busy=agent` and block later submissions.
     this.activePrompts.add(task.id);
     this.syncBusy(task.id);
     const promptId =
       this.state.getState(task.id).runtime.busy?.promptId ?? undefined;
     try {
-      await this.ensureResumed(bridge, task.id);
+      try {
+        await this.ensureResumed(bridge, task.id);
+      } catch (error) {
+        slog.warn("handoff reminder could not resume the target", {
+          taskId: task.id.slice(0, 8),
+          error,
+        });
+        return { status: "deferred", reason: "resume_failed" };
+      }
+      const lease = this.currentLease(task.id);
       await bridge.prompt(task.id, text, undefined, promptId);
+      if (!this.leaseCurrent(lease)) {
+        // The prompt reached an execution that has already been replaced, so
+        // it is not a delivered attempt for the task's current debt.
+        return { status: "deferred", reason: "execution_replaced" };
+      }
       // Truthful: the reminder text reached the target, so record it now. A
       // request-level failure throws `PromptNotDeliveredError` and records
       // nothing; an in-turn agent error resolves and is a delivered attempt.
@@ -1998,24 +2626,32 @@ export class TaskManager {
         },
         { from_ref: "system" },
       );
-      return true;
+      return { status: "delivered" };
     } catch (error) {
+      if (!this.isExecutionAvailable(bridge)) {
+        // The agent died or disconnected mid-submission; that is the
+        // transport's problem, not the target's debt.
+        return { status: "deferred", reason: "agent_unavailable" };
+      }
       slog.warn("handoff reminder failed", {
         taskId: task.id.slice(0, 8),
         sourceTaskId: obligation.sourceTaskId.slice(0, 8),
         targetTaskId: obligation.targetTaskId.slice(0, 8),
         error,
       });
+      return { status: "failed", reason: "prompt_rejected" };
+    } finally {
+      // Release only while this submission still owns the turn: a replacement
+      // prompt keeps its own busy marker.
       if (this.isCurrentPrompt(task.id, promptId)) {
         this.activePrompts.delete(task.id);
         this.syncBusy(task.id);
       }
-      return false;
     }
   }
 
   /** Emit a runtime outcome notice; implemented with the notice dispatcher. */
-  private emitObligationNotice(
+  emitObligationNotice(
     notice: ObligationNotice,
     obligation: DirectedObligation,
   ): void {
@@ -2179,7 +2815,7 @@ export class TaskManager {
       }
       const deliveries = this.store.claimQueuedDeliveries(taskId);
       if (deliveries.length === 0) return false;
-      const task = this.store.getTask(taskId);
+      const task = this.liveTask(taskId);
       // Only a direct parent dispatch participates in the directed obligation;
       // unrelated messages are ordinary collaboration and carry no obligation
       // state or settlement role.
@@ -2225,6 +2861,7 @@ export class TaskManager {
       this.drainingCollaborationTasks.delete(taskId);
       this.activePrompts.add(taskId);
       this.syncBusy(taskId);
+      const lease = this.currentLease(taskId);
       const promptId =
         this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
       const promptPromise = bridge.prompt(
@@ -2241,6 +2878,12 @@ export class TaskManager {
         this.obligations.markDelivered(sourceTaskId, taskId, promptId);
       }
       const dispatchFailed = (error: unknown) => {
+        if (!this.leaseCurrent(lease)) {
+          slog.debug("ignored dispatch failure from a replaced execution", {
+            taskId: taskId.slice(0, 8),
+          });
+          return;
+        }
         slog.error("collaboration delivery failed", {
           taskId: taskId.slice(0, 8),
           error,
@@ -2264,6 +2907,9 @@ export class TaskManager {
         this.syncBusy(taskId);
       };
       void promptPromise.then(() => {
+        // A rotation truncated this transport; its late success must not
+        // settle rows that now belong to the replacement execution.
+        if (!this.leaseCurrent(lease)) return;
         this.store.markCollaborationDeliveriesDelivered(allDeliveryIds);
         for (const sourceTaskId of qualifyingSources) {
           this.obligations.markDispatchSucceeded(

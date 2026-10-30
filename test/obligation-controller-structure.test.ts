@@ -116,6 +116,10 @@ describe("obligation controller structure", () => {
       ["turn_aborted", "cleanup-scoped (bridge reset aborts whatever is busy)"],
       ["agent_activity", "unattributable (agent events carry no prompt id)"],
       ["released", "lifecycle"],
+      [
+        "execution_rotated",
+        "target-addressed-by-sole-record; the record's own recovery generation",
+      ],
       ["settle_requested", "target-addressed-by-sole-record"],
       ["timer_due", "target-addressed-by-sole-record; kind-scoped"],
       ["disposed", "lifecycle"],

@@ -24,6 +24,10 @@ import {
   normalizeModelConfigOptions,
 } from "./model-identity.ts";
 import { log } from "./log.ts";
+import type {
+  ExecutionLease,
+  ExecutionLeaseSource,
+} from "./execution-authority.ts";
 
 const blog = log.scope("bridge");
 
@@ -54,7 +58,7 @@ export class PromptNotDeliveredError extends Error {
 
 export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
-  private conn: acp.ClientSideConnection | null = null;
+  private connection: acp.ClientSideConnection | null = null;
   private readonly permissionResolvers = new Map<
     string,
     (resp: acp.RequestPermissionResponse) => void
@@ -68,12 +72,52 @@ export class AgentBridge extends EventEmitter {
     string,
     acp.SessionNotification["update"][]
   >();
-  private readonly pendingAborts = new Map<string, (e: Error) => void>();
+  /**
+   * In-flight prompt aborts, keyed by the abort key the caller used. The entry
+   * also records *which task* the prompt belongs to and the execution lease
+   * captured at submission: a death notice may only be attributed to a task
+   * this prompt really wrote for, under the generation it started with.
+   * `promptForText` keys by ACP session id and names no task, so its death has
+   * no task to write to.
+   */
+  private readonly pendingAborts = new Map<
+    string,
+    {
+      reject: (error: Error) => void;
+      taskId: string | null;
+      lease: ExecutionLease | null;
+    }
+  >();
   private readonly modelOptionIdsBySession = new Map<string, Set<string>>();
   private readonly modelValuesBySession = new Map<
     string,
     Map<string, Map<string, string>>
   >();
+  /**
+   * Register the abort channel for one in-flight prompt, together with the task
+   * it writes for and the lease captured at submission.
+   */
+  private registerPromptAbort(
+    abortKey: string,
+    taskId: string | null,
+    agentSessionId: string,
+    reject: (error: Error) => void,
+  ): void {
+    this.pendingAborts.set(abortKey, {
+      reject,
+      taskId,
+      lease: this.executionLeases.get(agentSessionId) ?? null,
+    });
+  }
+
+  /**
+   * The lease each ACP execution was given when it became a task's current
+   * binding, plus the authority that can tell whether it is still current.
+   * An execution missing here never became current in this process, so it is
+   * not allowed to write.
+   */
+  private readonly executionLeases = new Map<string, ExecutionLease>();
+  private leaseSource: ExecutionLeaseSource | null = null;
   private readonly knownModelOptionIdsBySession = new Map<
     string,
     Set<string>
@@ -96,7 +140,7 @@ export class AgentBridge extends EventEmitter {
   private stderrTail = "";
   private readonly closedProcesses = new WeakSet<ChildProcess>();
   readonly agentCmd: string;
-  /** Configured agent id this bridge serves (single bridge in P1). */
+  /** Configured agent id this bridge serves (this process runs one bridge). */
   readonly agentId: string;
   private readonly sessionIds: AgentSessionIds;
   reloading = false;
@@ -192,9 +236,9 @@ export class AgentBridge extends EventEmitter {
         this.handleSessionUpdate(params),
     };
 
-    this.conn = new acp.ClientSideConnection((_agent) => client, stream);
+    this.connection = new acp.ClientSideConnection((_agent) => client, stream);
 
-    const init = await this.conn.initialize({
+    const init = await this.connection.initialize({
       protocolVersion: acp.PROTOCOL_VERSION,
       clientCapabilities: {
         fs: { readTextFile: false, writeTextFile: false },
@@ -220,10 +264,10 @@ export class AgentBridge extends EventEmitter {
     cwd: string,
     opts?: { silent?: boolean; mcpServers?: acp.McpServer[] },
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
-    if (!this.conn) throw new Error("Not connected");
+    if (!this.connection) throw new Error("Not connected");
     this.pendingNewSessions++;
     try {
-      const session = await this.conn.newSession({
+      const session = await this.connection.newSession({
         cwd,
         mcpServers: opts?.mcpServers ?? [],
       });
@@ -262,8 +306,60 @@ export class AgentBridge extends EventEmitter {
     }
   }
 
-  sessionMapped(agentSessionId: string): void {
+  /**
+   * True when this agent can accept a prompt right now. A dead or
+   * disconnected agent is an unavailable transport, not a rejected handoff.
+   */
+  isAvailable(): boolean {
+    return !this.deadReason && this.connection !== null;
+  }
+
+  /**
+   * Install the authority that decides whether an execution's lease is still
+   * current. Until one is installed the bridge runs without lease gating
+   * (unit drivers only); the server always installs one before events flow.
+   */
+  setExecutionLeaseSource(source: ExecutionLeaseSource | null): void {
+    this.leaseSource = source;
+  }
+
+  /** Record the lease of an execution that just became a task's binding. */
+  recordExecutionLease(agentSessionId: string, taskId: string): void {
+    const lease = this.leaseSource?.leaseFor(taskId);
+    if (lease) this.executionLeases.set(agentSessionId, lease);
+    else this.executionLeases.delete(agentSessionId);
+  }
+
+  private executionStale(agentSessionId: string): boolean {
+    if (!this.leaseSource) return false;
+    const lease = this.executionLeases.get(agentSessionId);
+    if (!lease) return true;
+    return !this.leaseSource.accepts(lease);
+  }
+
+  /** Stamp and emit one execution-scoped event, or drop it when stale. */
+  private emitForSession(agentSessionId: string, event: AgentEvent): void {
+    if (this.executionStale(agentSessionId)) {
+      blog.debug("dropped event from a stale execution", {
+        agentSessionId,
+        type: event.type,
+      });
+      return;
+    }
+    const lease = this.executionLeases.get(agentSessionId);
+    this.emit(
+      "event",
+      lease
+        ? (Object.assign({}, event, {
+            executionLease: lease,
+          }) as AgentEvent)
+        : event,
+    );
+  }
+
+  sessionMapped(agentSessionId: string, taskId?: string): void {
     this.unboundNewSessionIds.delete(agentSessionId);
+    if (taskId) this.recordExecutionLease(agentSessionId, taskId);
     const updates = this.pendingSessionUpdates.get(agentSessionId) ?? [];
     this.pendingSessionUpdates.delete(agentSessionId);
     for (const update of updates) {
@@ -272,6 +368,7 @@ export class AgentBridge extends EventEmitter {
   }
 
   discardUnboundSession(agentSessionId: string): void {
+    this.executionLeases.delete(agentSessionId);
     this.unboundNewSessionIds.delete(agentSessionId);
     this.pendingSessionUpdates.delete(agentSessionId);
     this.clearSessionConfigCodec(agentSessionId);
@@ -285,14 +382,15 @@ export class AgentBridge extends EventEmitter {
    * so retirement can never roll back an already-successful rotation.
    */
   async retireExecution(agentSessionId: string): Promise<void> {
+    this.executionLeases.delete(agentSessionId);
     this.clearSessionConfigCodec(agentSessionId);
-    if (!this.conn) return;
+    if (!this.connection) return;
     const params = { sessionId: agentSessionId } as const;
     try {
       if (this.sessionCapabilities?.delete) {
-        await this.conn.deleteSession(params);
+        await this.connection.deleteSession(params);
       } else if (this.sessionCapabilities?.close) {
-        await this.conn.closeSession(params);
+        await this.connection.closeSession(params);
       }
     } catch (err) {
       blog.warn("failed to retire retired ACP session", {
@@ -308,8 +406,11 @@ export class AgentBridge extends EventEmitter {
     cwd: string,
     mcpServers?: acp.McpServer[],
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
-    if (!this.conn) throw new Error("Not connected");
+    if (!this.connection) throw new Error("Not connected");
     const agentSessionId = this.agentSessionId(taskId);
+    // The lease is captured when the operation starts, and this execution's
+    // own initialization writes under it rather than under a later value.
+    this.recordExecutionLease(agentSessionId, taskId);
     let session: acp.LoadSessionResponse | acp.ResumeSessionResponse;
     try {
       const params = {
@@ -318,9 +419,9 @@ export class AgentBridge extends EventEmitter {
         mcpServers: mcpServers ?? [],
       };
       if (this.sessionCapabilities?.resume) {
-        session = await this.conn.resumeSession(params);
+        session = await this.connection.resumeSession(params);
       } else if (this.loadSessionSupported) {
-        session = await this.conn.loadSession(params);
+        session = await this.connection.loadSession(params);
       } else {
         throw new Error(
           "The agent does not support restoring sessions. Use /new to start a fresh one.",
@@ -347,7 +448,7 @@ export class AgentBridge extends EventEmitter {
           session.configOptions as unknown as ConfigOption[],
         )
       : [];
-    this.emit("event", {
+    this.emitForSession(agentSessionId, {
       type: "task_created",
       taskId,
       cwd,
@@ -362,7 +463,7 @@ export class AgentBridge extends EventEmitter {
     configId: string,
     value: ConfigValue,
   ): Promise<ConfigOption[]> {
-    if (!this.conn) throw new Error("Not connected");
+    if (!this.connection) throw new Error("Not connected");
     const agentSessionId = this.agentSessionId(taskId);
     const wireValue = this.resolveWireConfigValue(
       agentSessionId,
@@ -370,7 +471,7 @@ export class AgentBridge extends EventEmitter {
       value,
     );
     const codecEpoch = this.sessionCodecEpoch(agentSessionId);
-    const result = await this.conn.setSessionConfigOption({
+    const result = await this.connection.setSessionConfigOption({
       sessionId: agentSessionId,
       configId,
       ...(typeof wireValue === "boolean"
@@ -389,14 +490,14 @@ export class AgentBridge extends EventEmitter {
     configId: string,
     value: ConfigValue,
   ): Promise<ConfigOption[]> {
-    if (!this.conn) throw new Error("Not connected");
+    if (!this.connection) throw new Error("Not connected");
     const wireValue = this.resolveWireConfigValue(
       agentSessionId,
       configId,
       value,
     );
     const codecEpoch = this.sessionCodecEpoch(agentSessionId);
-    const result = await this.conn.setSessionConfigOption({
+    const result = await this.connection.setSessionConfigOption({
       sessionId: agentSessionId,
       configId,
       ...(typeof wireValue === "boolean"
@@ -554,20 +655,26 @@ export class AgentBridge extends EventEmitter {
      *  completion that outlives its turn can be told apart from the live one. */
     promptId?: string,
   ): Promise<void> {
+    const agentSessionId = this.agentSessionId(taskId);
     if (this.deadReason) {
-      this.emit("event", {
+      this.emitForSession(agentSessionId, {
         type: "error",
         taskId,
         message: this.deadReason,
       } satisfies AgentEvent);
       throw new PromptNotDeliveredError(this.deadReason);
     }
-    if (!this.conn) throw new PromptNotDeliveredError("Not connected");
+    if (!this.connection) throw new PromptNotDeliveredError("Not connected");
+    if (this.executionStale(agentSessionId)) {
+      // Request-level: the turn was never handed to this execution, so callers
+      // must not account for it as delivered.
+      throw new PromptNotDeliveredError("A newer execution replaced this one");
+    }
     let abortReject: (e: Error) => void = () => {};
     const abortPromise = new Promise<never>((_, rej) => {
       abortReject = rej;
     });
-    this.pendingAborts.set(taskId, abortReject);
+    this.registerPromptAbort(taskId, taskId, agentSessionId, abortReject);
     let handedOver = false;
     try {
       const promptParts: PromptBlock[] = [];
@@ -586,15 +693,15 @@ export class AgentBridge extends EventEmitter {
       promptParts.push({ type: "text", text });
       // Evaluate the request call before flipping the flag: a synchronous
       // throw here means the agent never received the prompt.
-      const request = this.conn.prompt({
-        sessionId: this.agentSessionId(taskId),
+      const request = this.connection.prompt({
+        sessionId: agentSessionId,
         prompt: promptParts,
       });
       handedOver = true;
       const result = (await Promise.race([request, abortPromise])) as {
         stopReason?: string;
       };
-      this.emit("event", {
+      this.emitForSession(agentSessionId, {
         type: "prompt_done",
         taskId,
         stopReason: result.stopReason ?? "end_turn",
@@ -608,7 +715,7 @@ export class AgentBridge extends EventEmitter {
             ? err
             : JSON.stringify(err);
       if (/cancel/i.test(message)) {
-        this.emit("event", {
+        this.emitForSession(agentSessionId, {
           type: "prompt_done",
           taskId,
           stopReason: "cancelled",
@@ -629,7 +736,7 @@ export class AgentBridge extends EventEmitter {
         // markAgentDead would raise it as an unhandled rejection.
         this.pendingAborts.delete(taskId);
         abortPromise.catch(() => {});
-        this.emit("event", {
+        this.emitForSession(agentSessionId, {
           type: "error",
           taskId,
           message: reason,
@@ -639,7 +746,7 @@ export class AgentBridge extends EventEmitter {
         if (!handedOver) throw new PromptNotDeliveredError(reason);
         return;
       }
-      this.emit("event", {
+      this.emitForSession(agentSessionId, {
         type: "error",
         taskId,
         message,
@@ -660,11 +767,11 @@ export class AgentBridge extends EventEmitter {
         this.denyPermission(requestId);
       }
     }
-    await this.conn?.cancel({ sessionId: this.agentSessionId(taskId) });
+    await this.connection?.cancel({ sessionId: this.agentSessionId(taskId) });
   }
 
   async cancelAgentSession(agentSessionId: string): Promise<void> {
-    await this.conn?.cancel({ sessionId: agentSessionId });
+    await this.connection?.cancel({ sessionId: agentSessionId });
   }
 
   /**
@@ -683,37 +790,47 @@ export class AgentBridge extends EventEmitter {
     this.deadReason = reason;
     this.clearSessionConfigCodecs();
     blog.error("agent subprocess dead", { reason });
-    const aborts = [...this.pendingAborts.entries()];
+    const aborts = [...this.pendingAborts.values()];
     this.pendingAborts.clear();
-    for (const [taskId, abort] of aborts) {
-      this.emit("event", {
-        type: "error",
-        taskId,
-        message: reason,
-      } satisfies AgentEvent);
-      abort(new Error(reason));
+    for (const { taskId, lease, reject } of aborts) {
+      // The lease is the one captured when the prompt was submitted, never a
+      // freshly resolved current generation. No captured lease means this
+      // prompt never became an execution write, so nothing is attributed.
+      if (taskId !== null && lease !== null) {
+        const death: AgentEvent = {
+          type: "error",
+          taskId,
+          message: reason,
+        };
+        this.emit("event", Object.assign(death, { executionLease: lease }));
+      } else if (taskId !== null) {
+        blog.warn("agent death has no captured lease to attribute", { taskId });
+      }
+      reject(new Error(reason));
     }
     this.emit("event", {
       type: "agent_disconnected",
       agentId: this.agentId,
     } satisfies AgentEvent);
-    this.conn = null;
+    this.connection = null;
   }
 
   /** Send a prompt and collect the full text response without emitting events. */
   async promptForText(sessionId: string, text: string): Promise<string> {
     if (this.deadReason) throw new Error(this.deadReason);
-    if (!this.conn) throw new Error("Not connected");
+    if (!this.connection) throw new Error("Not connected");
     this.silentSessions.add(sessionId);
     this.silentBuffers.set(sessionId, "");
     let abortReject: (e: Error) => void = () => {};
     const abortPromise = new Promise<never>((_, rej) => {
       abortReject = rej;
     });
-    this.pendingAborts.set(sessionId, abortReject);
+    // The silent prompt is addressed by ACP session id, not by task, so this
+    // entry has no task to write a death notice to.
+    this.registerPromptAbort(sessionId, null, sessionId, abortReject);
     try {
       await Promise.race([
-        this.conn.prompt({ sessionId, prompt: [{ type: "text", text }] }),
+        this.connection.prompt({ sessionId, prompt: [{ type: "text", text }] }),
         abortPromise,
       ]);
       return this.silentBuffers.get(sessionId) ?? "";
@@ -847,7 +964,7 @@ export class AgentBridge extends EventEmitter {
         }
       }
 
-      if (lastError || !this.conn) {
+      if (lastError || !this.connection) {
         const msg =
           lastError instanceof Error ? lastError.message : String(lastError);
         this.emit("event", {
@@ -898,7 +1015,7 @@ export class AgentBridge extends EventEmitter {
       });
     }
     this.proc = null;
-    this.conn = null;
+    this.connection = null;
   }
 
   // --- ACP Client callbacks ---
@@ -929,7 +1046,7 @@ export class AgentBridge extends EventEmitter {
       // Register resolver BEFORE emitting, so synchronous auto-approve can find it
       this.permissionResolvers.set(requestId, resolve);
       this.permissionRequestTasks.set(requestId, taskId);
-      this.emit("event", {
+      this.emitForSession(params.sessionId, {
         type: "permission_request",
         requestId,
         taskId: taskId,
@@ -977,7 +1094,7 @@ export class AgentBridge extends EventEmitter {
       return Promise.resolve();
     }
     const event = this.sessionUpdateToEvent(taskId, agentSessionId, update);
-    if (event) this.emit("event", event);
+    if (event) this.emitForSession(agentSessionId, event);
     return Promise.resolve();
   }
 

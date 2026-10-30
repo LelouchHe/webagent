@@ -599,11 +599,15 @@ describe("timestamp millis migration", () => {
     assert.equal(converted.created_at, expectedMillis(NO_MS));
     migrated.close();
 
-    // Per-(agent_key, task_id) uniqueness remains in force for ordinary task
-    // ids; the single Root has no per-agent ownership check.
+    // A task has exactly one current execution binding, independent of agent
+    // scope: a second agent cannot attach another one.
     const other = new Store(dir, "other-agent");
-    other.bindAgentSession("legacy-task", "sess-other");
-    assert.equal(other.getAgentSessionId("legacy-task"), "sess-other");
+    assert.throws(() => other.attachAgentSession("legacy-task", "sess-other"));
+    assert.equal(other.getAgentSessionId("legacy-task"), undefined);
+    assert.equal(
+      other.getCurrentExecutionBinding("legacy-task")?.agent_key,
+      "test-agent",
+    );
     other.close();
   });
 

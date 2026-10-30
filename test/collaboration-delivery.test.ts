@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { TaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import { mockBridgeStubs, waitFor } from "./fixtures.ts";
 
 describe("TaskManager collaboration delivery drain", () => {
@@ -15,8 +16,8 @@ describe("TaskManager collaboration delivery drain", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-collaboration-delivery-"));
     store = new Store(tmpDir, "test-agent");
-    tasks = new TaskManager(store, tmpDir, tmpDir);
-    store.bindAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
+    tasks = createTaskManager(store, tmpDir, tmpDir);
+    store.attachAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
     store.createTask("source", tmpDir, "auto", "agent-source", "root");
     store.createTask("target", tmpDir, "auto", "agent-target", "root");
     store.updateTaskTitle("source", "source");
