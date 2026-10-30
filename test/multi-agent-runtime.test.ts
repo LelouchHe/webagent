@@ -220,6 +220,41 @@ describe("multi-agent runtime", () => {
     );
   });
 
+  it("drops the retired agent's command snapshot when a task moves", async () => {
+    const aTransport = await harness.tasks.resolveAgentTransport("agent-a");
+    const created = await harness.tasks.createTask(
+      aTransport,
+      harness.dir,
+      undefined,
+      "agent",
+    );
+    harness.tasks.updateAgentCommands(
+      created.taskId,
+      [{ name: "context", description: "Show context usage" }],
+      "agent-a",
+    );
+    assert.equal(
+      harness.registry
+        .existing("agent-a")
+        ?.agentCommandSnapshots.has(created.taskId),
+      true,
+    );
+
+    // Move the task onto B. A's snapshot describes a process that no longer
+    // serves it, and A's later reload must not announce it as lost.
+    const bTransport = await harness.tasks.resolveAgentTransport("agent-b");
+    await harness.tasks.clearTask(bTransport, created.taskId);
+
+    assert.equal(harness.store.getBindingAgent(created.taskId), "agent-b");
+    assert.equal(
+      harness.registry
+        .existing("agent-a")
+        ?.agentCommandSnapshots.has(created.taskId),
+      false,
+      "the retired agent keeps no snapshot for a task it lost",
+    );
+  });
+
   it("never projects a task onto another agent's identical session id", async () => {
     const aExecution = await harness.tasks.resolveAgentTransport("agent-a");
     const created = await harness.tasks.createTask(

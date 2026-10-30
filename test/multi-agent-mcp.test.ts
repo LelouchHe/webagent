@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
-import type { McpCallerPrincipal } from "../src/mcp/tools.ts";
+import type { McpCallerPrincipal, McpTaskToolHost } from "../src/mcp/tools.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
 import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
@@ -166,6 +166,7 @@ describe("mcp authority over the production host", () => {
   let authority: ExecutionAuthority;
   let tasks: TaskManager;
   let endpoint: Endpoint;
+  let host: McpTaskToolHost;
   let bridge: DeliveryBridge;
   let newSessionHook:
     | ((options?: { mcpServers?: McpEntry[] }) => Promise<void>)
@@ -190,10 +191,11 @@ describe("mcp authority over the production host", () => {
       agents: new StaticAgentEnvironment("agent-a"),
     });
     tasks.attachExecutionBridge(bridge);
+    host = createMcpTaskToolHost({ store, tasks });
     endpoint = await startEndpoint({
       capabilities,
       isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
-      taskTools: createMcpTaskToolHost({ store, tasks }),
+      taskTools: host,
     });
   });
 
@@ -303,27 +305,10 @@ describe("mcp authority over the production host", () => {
     };
 
     const principal = principalFor(token);
-    // The captured principal, not a fresh read: a rotation revokes the token,
-    // and the point of the boundary is that the *request's* identity is stale.
-    const assertCaller = (): void => {
-      if (principal.generation === null) throw new Error("execution_replaced");
-      if (store.getBindingAgent(principal.taskId) !== principal.agentId) {
-        throw new Error("execution_replaced");
-      }
-      if (
-        !authority.accepts({
-          taskId: principal.taskId,
-          generation: principal.generation,
-        })
-      ) {
-        throw new Error("execution_replaced");
-      }
-    };
-    const pending = tasks.createTask(bridge, dir, source.taskId, "agent", {
-      parentId: source.taskId,
-      title: "child in flight",
-      assertCaller,
-    });
+    // The real host drives the create: its own authorization is what the
+    // persist boundary re-runs, so this proves the production chain rather
+    // than a copy of it.
+    const pending = host.create(principal, { title: "child in flight" });
 
     await reachedInsideSession;
     // A real rotation: same owner, new execution, higher generation.
