@@ -175,31 +175,31 @@ export function createMcpEndpoint(
     // The caller principal is captured once, here, and never mutated: every
     // tool call in this request authorizes against this snapshot, and the
     // generation is re-validated after each business await.
-    const principal: McpCallerPrincipal = {
+    // Frozen so no layer can mutate the identity a request was authorized
+    // for; a shared mutable slot would let one request authorize another.
+    const principal: McpCallerPrincipal = Object.freeze({
       taskId: grant.taskId,
       agentId: grant.agentId,
       generation: options.generationFor?.(grant.taskId) ?? null,
       initializing,
+    });
+    const validateCaller = (caller: McpCallerPrincipal): string | null => {
+      if (caller.taskId !== grant.taskId) return "caller_changed";
+      const bindingAgent = options.taskAgent?.(caller.taskId);
+      if (bindingAgent && bindingAgent !== caller.agentId) {
+        return "execution_replaced";
+      }
+      if (
+        caller.generation !== null &&
+        options.acceptsGeneration &&
+        !options.acceptsGeneration(caller.taskId, caller.generation)
+      ) {
+        return "execution_replaced";
+      }
+      return null;
     };
     const taskTools = options.taskTools
-      ? {
-          ...options.taskTools,
-          validateCaller: (caller: McpCallerPrincipal): string | null => {
-            if (caller.taskId !== grant.taskId) return "caller_changed";
-            const bindingAgent = options.taskAgent?.(caller.taskId);
-            if (bindingAgent && bindingAgent !== caller.agentId) {
-              return "execution_replaced";
-            }
-            if (
-              caller.generation !== null &&
-              options.acceptsGeneration &&
-              !options.acceptsGeneration(caller.taskId, caller.generation)
-            ) {
-              return "execution_replaced";
-            }
-            return null;
-          },
-        }
+      ? { ...options.taskTools, validateCaller }
       : undefined;
     const server = new McpServer(
       { name: MCP_SERVER_NAME, version: "0.1.0" },

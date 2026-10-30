@@ -195,7 +195,15 @@ describe("S3 collaboration write routes", () => {
       broadcastTaskCreated: (event) =>
         broadcasts.push({ ...buildTaskCreatedBroadcast(event) }),
     });
-    await host.create("parent", { title: "agent-child" });
+    await host.create(
+      {
+        taskId: "parent",
+        agentId: "test-agent",
+        generation: null,
+        initializing: false,
+      },
+      { title: "agent-child" },
+    );
 
     const agentRow = systemRows().find((row) => row.from_ref === "agent");
     assert.ok(agentRow, "the agent path must still record its own row");

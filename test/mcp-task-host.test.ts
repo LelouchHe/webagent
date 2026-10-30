@@ -9,6 +9,13 @@ import { createTaskManager } from "../src/task-manager.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
 import { projectTaskHistoryRow } from "../src/mcp/task-history.ts";
 
+const PRINCIPAL = {
+  taskId: "alpha",
+  agentId: "test-agent",
+  generation: 1,
+  initializing: false,
+};
+
 describe("MCP Task tool host", () => {
   let dir: string;
   let store: Store;
@@ -79,7 +86,7 @@ describe("MCP Task tool host", () => {
         .run(stamp, id);
     }
     const host = createMcpTaskToolHost({ store, tasks });
-    const listed = host.list("alpha");
+    const listed = host.list(PRINCIPAL);
     assert.deepEqual(
       listed.map(({ id, relation }) => ({ id, relation })),
       [
@@ -102,7 +109,7 @@ describe("MCP Task tool host", () => {
     // the live runtime source while a turn is active.
     tasks.activePrompts.add("alpha-child");
     assert.equal(
-      host.list("alpha").find((item) => item.id === "alpha-child")
+      host.list(PRINCIPAL).find((item) => item.id === "alpha-child")
         ?.executionState,
       "agent",
     );
@@ -120,7 +127,7 @@ describe("MCP Task tool host", () => {
       /Z$/,
     );
     tasks.noteAgentActivity("alpha");
-    const afterActivity = host.list("alpha");
+    const afterActivity = host.list(PRINCIPAL);
     assert.match(
       afterActivity.find((item) => item.id === "alpha")?.lastAgentActivityAt ??
         "",
@@ -167,7 +174,7 @@ describe("MCP Task tool host", () => {
       { from_ref: "agent" },
     );
     const host = createMcpTaskToolHost({ store, tasks });
-    const all = host.query("alpha", {});
+    const all = host.query(PRINCIPAL, {});
     assert.deepEqual(
       all.rows.map((row) => row.seq),
       [1, 2, 3, 4],
@@ -175,7 +182,7 @@ describe("MCP Task tool host", () => {
     assert.equal(all.rows[0].type, "thinking");
     assert.equal(all.rows[1].group, "tool-1");
     assert.equal(all.rows[3].group, "tool-1");
-    const found = host.query("alpha", { text: "needle" });
+    const found = host.query(PRINCIPAL, { text: "needle" });
     assert.equal(found.rows.length, 1);
     assert.equal(found.rows[0].field, "rawInput.path");
     assert.match(found.rows[0].text ?? "", /needle/i);
@@ -192,15 +199,15 @@ describe("MCP Task tool host", () => {
     }
     const host = createMcpTaskToolHost({ store, tasks });
     assert.deepEqual(
-      host.query("alpha", { range: [-20, -1] }).rows.map((r) => r.seq),
+      host.query(PRINCIPAL, { range: [-20, -1] }).rows.map((r) => r.seq),
       Array.from({ length: 20 }, (_, i) => i + 11),
     );
     assert.deepEqual(
-      host.query("alpha", { range: [20, 10] }).rows.map((r) => r.seq),
+      host.query(PRINCIPAL, { range: [20, 10] }).rows.map((r) => r.seq),
       Array.from({ length: 11 }, (_, i) => i + 10),
     );
     assert.deepEqual(
-      host.query("alpha", { range: [1, 0] }).rows.map((r) => r.seq),
+      host.query(PRINCIPAL, { range: [1, 0] }).rows.map((r) => r.seq),
       [1],
     );
   });
@@ -229,7 +236,7 @@ describe("MCP Task tool host", () => {
         tasks,
       });
       assert.deepEqual(
-        host.query("alpha", { range: [-20, -1] }).rows.map((row) => row.seq),
+        host.query(PRINCIPAL, { range: [-20, -1] }).rows.map((row) => row.seq),
         Array.from({ length: 20 }, (_, i) => i + 11),
       );
       assert.deepEqual(observed, { afterSeq: 10, beforeSeq: 31 });
@@ -266,18 +273,18 @@ describe("MCP Task tool host", () => {
       { from_ref: "agent" },
     );
     const host = createMcpTaskToolHost({ store, tasks });
-    const rows = host.query("alpha", {}).rows;
+    const rows = host.query(PRINCIPAL, {}).rows;
     assert.equal(Array.from(rows[0].text ?? "").length, 200);
     assert.match(rows[0].text ?? "", /…$/);
     assert.equal((rows[2].text ?? "").includes("…"), false);
-    const found = host.query("alpha", { text: "needle" }).rows;
+    const found = host.query(PRINCIPAL, { text: "needle" }).rows;
     assert.equal(found.length, 2);
     const projected = found.find((row) => row.type === "assistant_message")!;
     assert.match(projected.text ?? "", /Needle/);
     assert.match(projected.text ?? "", /^…/);
     assert.match(projected.text ?? "", /…$/);
     assert.ok(Array.from(projected.text ?? "").length <= 200);
-    const maxFound = host.query("alpha", { text: maxNeedle }).rows[0];
+    const maxFound = host.query(PRINCIPAL, { text: maxNeedle }).rows[0];
     assert.match(maxFound.text ?? "", new RegExp(maxNeedle));
     assert.ok(Array.from(maxFound.text ?? "").length <= 200);
     const unprojected = found.find((row) => row.type === "plan")!;
@@ -292,7 +299,7 @@ describe("MCP Task tool host", () => {
       from_ref: "agent",
     });
     const host = createMcpTaskToolHost({ store, tasks });
-    const result = host.read("alpha", {
+    const result = host.read(PRINCIPAL, {
       taskId: "alpha",
       seqs: [event.seq, event.seq],
     });
@@ -317,24 +324,27 @@ describe("MCP Task tool host", () => {
       },
     );
     const host = createMcpTaskToolHost({ store, tasks });
-    const explicit = host.read("alpha", { taskId: "alpha", seqs: [event.seq] });
+    const explicit = host.read(PRINCIPAL, {
+      taskId: "alpha",
+      seqs: [event.seq],
+    });
     // A waking Task does not know its own id, so reading its own history must
     // not require one: omitting the target is the same call as naming self.
-    assert.deepEqual(host.read("alpha", { seqs: [event.seq] }), explicit);
+    assert.deepEqual(host.read(PRINCIPAL, { seqs: [event.seq] }), explicit);
   });
 
   it("rejects unknown and out-of-family targets identically", () => {
     const host = createMcpTaskToolHost({ store, tasks });
     assert.throws(
-      () => host.query("alpha", { taskId: "missing" }),
+      () => host.query(PRINCIPAL, { taskId: "missing" }),
       /target_not_allowed/,
     );
     assert.throws(
-      () => host.read("alpha", { taskId: "missing", seqs: [1] }),
+      () => host.read(PRINCIPAL, { taskId: "missing", seqs: [1] }),
       /target_not_allowed/,
     );
     assert.throws(
-      () => host.query("alpha", { taskId: "unrelated" }),
+      () => host.query(PRINCIPAL, { taskId: "unrelated" }),
       /target_not_allowed/,
     );
     store.createTask(
@@ -354,7 +364,7 @@ describe("MCP Task tool host", () => {
       { title: "Unrelated" },
     );
     assert.throws(
-      () => host.query("alpha", { taskId: "unrelated" }),
+      () => host.query(PRINCIPAL, { taskId: "unrelated" }),
       /target_not_allowed/,
     );
   });
@@ -368,7 +378,7 @@ describe("MCP Task tool host", () => {
     );
     const host = createMcpTaskToolHost({ store, tasks });
     assert.throws(
-      () => host.read("alpha", { taskId: "alpha", seqs: [1, 99] }),
+      () => host.read(PRINCIPAL, { taskId: "alpha", seqs: [1, 99] }),
       /unknown_seq/,
     );
   });
@@ -379,7 +389,7 @@ describe("MCP Task tool host", () => {
       from_ref: "agent",
     });
     const host = createMcpTaskToolHost({ store, tasks });
-    const result = host.read("alpha", { taskId: "alpha", seqs: [event.seq] });
+    const result = host.read(PRINCIPAL, { taskId: "alpha", seqs: [event.seq] });
     assert.deepEqual(result.rows[0].data, payload);
     const bytes = Buffer.byteLength(JSON.stringify(result), "utf8");
     // Over the batch budget, under the single-row exemption.
@@ -400,11 +410,12 @@ describe("MCP Task tool host", () => {
     );
     const host = createMcpTaskToolHost({ store, tasks });
     assert.deepEqual(
-      host.read("alpha", { taskId: "alpha", seqs: [big.seq] }).rows[0].data,
+      host.read(PRINCIPAL, { taskId: "alpha", seqs: [big.seq] }).rows[0].data,
       payload,
     );
     assert.throws(
-      () => host.read("alpha", { taskId: "alpha", seqs: [big.seq, small.seq] }),
+      () =>
+        host.read(PRINCIPAL, { taskId: "alpha", seqs: [big.seq, small.seq] }),
       (error: unknown) => {
         const parsed = JSON.parse(String((error as Error).message)) as {
           error: string;
@@ -429,7 +440,7 @@ describe("MCP Task tool host", () => {
       );
     }
     const host = createMcpTaskToolHost({ store, tasks });
-    const page = host.query("alpha", { range: [-50, -1] });
+    const page = host.query(PRINCIPAL, { range: [-50, -1] });
     assert.equal(page.rows.length, 50);
     const bytes = Buffer.byteLength(JSON.stringify(page), "utf8");
     // The documented opening window must fit even with maximal row text.
@@ -443,7 +454,7 @@ describe("MCP Task tool host", () => {
     });
     const host = createMcpTaskToolHost({ store, tasks });
     assert.throws(
-      () => host.read("alpha", { taskId: "alpha", seqs: [event.seq] }),
+      () => host.read(PRINCIPAL, { taskId: "alpha", seqs: [event.seq] }),
       (error: unknown) => {
         const parsed = JSON.parse(String((error as Error).message)) as Record<
           string,
@@ -481,7 +492,7 @@ describe("MCP Task tool host", () => {
     }
     const host = createMcpTaskToolHost({ store, tasks });
     assert.throws(
-      () => host.query("alpha", {}),
+      () => host.query(PRINCIPAL, {}),
       (error: unknown) => {
         const parsed = JSON.parse(String((error as Error).message)) as {
           error: string;
@@ -538,7 +549,7 @@ describe("MCP Task tool host", () => {
       tasks,
     });
     assert.deepEqual(
-      await host.cancel("alpha", "alpha-child", "No longer needed"),
+      await host.cancel(PRINCIPAL, "alpha-child", "No longer needed"),
       {
         accepted: true,
         taskId: "alpha-child",
@@ -551,7 +562,7 @@ describe("MCP Task tool host", () => {
       /No longer needed/,
     );
     await assert.rejects(
-      () => host.cancel("alpha", "beta", "wrong scope"),
+      () => host.cancel(PRINCIPAL, "beta", "wrong scope"),
       /target_not_allowed/,
     );
   });
@@ -559,7 +570,7 @@ describe("MCP Task tool host", () => {
   it("returns idle when a direct child has no active execution", async () => {
     const host = createMcpTaskToolHost({ store, tasks });
     assert.deepEqual(
-      await host.cancel("alpha", "alpha-child", "stop before start"),
+      await host.cancel(PRINCIPAL, "alpha-child", "stop before start"),
       {
         accepted: true,
         taskId: "alpha-child",
@@ -598,7 +609,7 @@ describe("MCP Task tool host", () => {
       tasks: fakeTasks,
     });
     assert.deepEqual(
-      await host.create("alpha", {
+      await host.create(PRINCIPAL, {
         title: "New child",
         cwd: "subdir",
         model: "m",
@@ -622,7 +633,7 @@ describe("MCP Task tool host", () => {
 
   it("queues an agent message without returning delivery metadata", async () => {
     const host = createMcpTaskToolHost({ store, tasks });
-    await host.send("alpha", "beta", "hello beta");
+    await host.send(PRINCIPAL, "beta", "hello beta");
     const messages = store
       .getEvents("beta")
       .filter((event) => event.type === "system_message");

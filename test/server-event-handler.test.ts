@@ -113,7 +113,16 @@ async function armDirectDispatch(
   // must be the binding agent's transport.
   tasks.attachExecutionBridge(bridge);
   const host = createMcpTaskToolHost({ store, tasks });
-  await host.send(sourceTaskId, targetTaskId, body);
+  await host.send(
+    {
+      taskId: sourceTaskId,
+      agentId: "test-agent",
+      generation: null,
+      initializing: false,
+    },
+    targetTaskId,
+    body,
+  );
   const obligation = tasks.getObligation(sourceTaskId, targetTaskId);
   assert.ok(obligation, "a direct parent dispatch must arm an obligation");
   return obligation;
@@ -396,7 +405,16 @@ describe("handleAgentEvent", () => {
       store,
       tasks,
     });
-    await host.send("sibling", "child", "A sibling note.");
+    await host.send(
+      {
+        taskId: "sibling",
+        agentId: "test-agent",
+        generation: null,
+        initializing: false,
+      },
+      "child",
+      "A sibling note.",
+    );
     // Mutation evidence: arming on any local relation puts a record here.
     assert.equal(tasks.getObligation("sibling", "child"), undefined);
     calls.prompts[0].resolve();
@@ -736,7 +754,16 @@ describe("handleAgentEvent", () => {
       store,
       tasks,
     });
-    await host.update("child", "done", "Everything is verified.");
+    await host.update(
+      {
+        taskId: "child",
+        agentId: "test-agent",
+        generation: null,
+        initializing: false,
+      },
+      "done",
+      "Everything is verified.",
+    );
 
     assert.equal(store.getTask("child")?.workflow_status, "done");
     // Mutation evidence: not retiring on settle leaves a non-terminal record.
@@ -781,7 +808,16 @@ describe("handleAgentEvent", () => {
       store,
       tasks,
     });
-    await host.update("child", "done", "Settled from the dispatch turn.");
+    await host.update(
+      {
+        taskId: "child",
+        agentId: "test-agent",
+        generation: null,
+        initializing: false,
+      },
+      "done",
+      "Settled from the dispatch turn.",
+    );
 
     assert.equal(tasks.getObligation("parent", "child")?.state, "settled");
     assert.ok(
@@ -827,7 +863,16 @@ describe("handleAgentEvent", () => {
       store,
       tasks,
     });
-    await host.update("child", "done", "Early report.");
+    await host.update(
+      {
+        taskId: "child",
+        agentId: "test-agent",
+        generation: null,
+        initializing: false,
+      },
+      "done",
+      "Early report.",
+    );
 
     // Mutation evidence: dropping the awaiting_delivery state gate settles here.
     assert.equal(
@@ -873,7 +918,16 @@ describe("handleAgentEvent", () => {
       store,
       tasks,
     });
-    await host.update("child", "done", "Stored-source account.");
+    await host.update(
+      {
+        taskId: "child",
+        agentId: "test-agent",
+        generation: null,
+        initializing: false,
+      },
+      "done",
+      "Stored-source account.",
+    );
 
     // Mutation evidence: routing to the current parent_id sends this to
     // "sibling" instead, leaving the originally accountable source unaware.
@@ -910,7 +964,16 @@ describe("handleAgentEvent", () => {
       tasks,
     });
     // The sibling delivery queues behind the live dispatch turn.
-    await host.send("sibling", "child", "A sibling note that settles nothing.");
+    await host.send(
+      {
+        taskId: "sibling",
+        agentId: "test-agent",
+        generation: null,
+        initializing: false,
+      },
+      "child",
+      "A sibling note that settles nothing.",
+    );
 
     endTurn(bridge, "child", calls.prompts[0].promptId);
     calls.prompts[0].resolve();
@@ -1103,7 +1166,16 @@ describe("handleAgentEvent", () => {
       store,
       tasks,
     });
-    await host.update("child", "done", "done");
+    await host.update(
+      {
+        taskId: "child",
+        agentId: "test-agent",
+        generation: null,
+        initializing: false,
+      },
+      "done",
+      "done",
+    );
     await flushTimers();
     calls.prompts.at(-1)?.resolve();
     await flushTimers();

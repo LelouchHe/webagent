@@ -188,9 +188,9 @@ describe("createMcpEndpoint", () => {
   const caps = new CapabilityStore();
   const calls: Array<unknown> = [];
   const taskTools = {
-    list: (taskId: string) => [
+    list: (principal: { taskId: string }) => [
       {
-        id: taskId,
+        id: principal.taskId,
         title: "Current",
         relation: "self" as const,
         workflowStatus: "idle" as const,
@@ -199,7 +199,7 @@ describe("createMcpEndpoint", () => {
         lastEventAt: "2026-01-01T00:00:00.000Z",
       },
     ],
-    query: (_sourceTaskId: string, input: unknown) => {
+    query: (_principal: { taskId: string }, input: unknown) => {
       calls.push({ kind: "query", input });
       return {
         task_id: "web-1",
@@ -207,7 +207,7 @@ describe("createMcpEndpoint", () => {
         rows: [],
       };
     },
-    read: (_sourceTaskId: string, input: unknown) => {
+    read: (_principal: { taskId: string }, input: unknown) => {
       calls.push({ kind: "read", input });
       return { task_id: "web-1", rows: [] };
     },
@@ -617,7 +617,18 @@ describe("createMcpEndpoint", () => {
       auth(token),
     );
     assert.equal(update.status, 200);
-    assert.deepEqual(calls, [
+    // Every host call carries the request's caller principal first.
+    for (const entry of calls) {
+      const args = (entry as { args?: unknown[] }).args;
+      if (args) assert.equal((args[0] as { taskId: string }).taskId, "web-1");
+    }
+    // The principal is transport-level identity, not part of the operation's
+    // own arguments, so the rest of each call is compared without it.
+    const withoutPrincipal = calls.map((entry) => {
+      const row = entry as { kind: string; args?: unknown[]; input?: unknown };
+      return row.args ? { kind: row.kind, args: row.args.slice(1) } : row;
+    });
+    assert.deepEqual(withoutPrincipal, [
       {
         kind: "query",
         input: {
@@ -631,7 +642,6 @@ describe("createMcpEndpoint", () => {
       {
         kind: "create",
         args: [
-          "web-1",
           {
             title: "child",
             cwd: undefined,
@@ -640,9 +650,9 @@ describe("createMcpEndpoint", () => {
           },
         ],
       },
-      { kind: "cancel", args: ["web-1", "task-2", "superseded"] },
-      { kind: "send", args: ["web-1", "task-2", "hello"] },
-      { kind: "update", args: ["web-1", "done", "finished"] },
+      { kind: "cancel", args: ["task-2", "superseded"] },
+      { kind: "send", args: ["task-2", "hello"] },
+      { kind: "update", args: ["done", "finished"] },
     ]);
 
     live.delete("web-1");

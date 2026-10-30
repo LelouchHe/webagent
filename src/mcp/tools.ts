@@ -103,25 +103,40 @@ export interface McpCallerPrincipal {
   readonly initializing: boolean;
 }
 
-/** Operations supplied by the WebAgent runtime behind the MCP tool surface. */
+/**
+ * Operations supplied by the WebAgent runtime behind the MCP tool surface.
+ *
+ * Every operation takes the request's immutable caller principal: the write
+ * operations re-check it at their own submission boundary (immediately before
+ * the first side effect), so a rotation that lands while a request is in
+ * flight cannot be written through.
+ */
 export interface McpTaskToolHost {
-  /** Re-check the caller's authority, before acting and after every await. */
-  validateCaller?(principal: McpCallerPrincipal): string | null;
-  list(sourceTaskId: string): McpTaskListItem[];
-  query(sourceTaskId: string, input: McpTaskQueryInput): McpTaskQueryResult;
-  read(sourceTaskId: string, input: McpTaskReadInput): McpTaskReadResult;
+  list(principal: McpCallerPrincipal): McpTaskListItem[];
+  query(
+    principal: McpCallerPrincipal,
+    input: McpTaskQueryInput,
+  ): McpTaskQueryResult;
+  read(
+    principal: McpCallerPrincipal,
+    input: McpTaskReadInput,
+  ): McpTaskReadResult;
   cancel(
-    sourceTaskId: string,
+    principal: McpCallerPrincipal,
     targetTaskId: string,
     reason: string,
   ): Promise<McpTaskCancelResult>;
   create(
-    sourceTaskId: string,
+    principal: McpCallerPrincipal,
     input: McpTaskCreateInput,
   ): Promise<McpTaskCreateResult>;
-  send(sourceTaskId: string, targetTaskId: string, body: string): Promise<void>;
+  send(
+    principal: McpCallerPrincipal,
+    targetTaskId: string,
+    body: string,
+  ): Promise<void>;
   update(
-    sourceTaskId: string,
+    principal: McpCallerPrincipal,
     status: "blocked" | "done",
     body: string,
   ): Promise<void>;
@@ -157,7 +172,6 @@ export function registerMcpTools(
   principal: McpCallerPrincipal,
   host?: McpTaskToolHost,
 ): void {
-  const taskId = principal.taskId;
   /**
    * Business tools never run in the pending window, and every call re-checks
    * the caller's authority. The error text is explicit so an agent can tell
@@ -166,8 +180,6 @@ export function registerMcpTools(
   const guard = (): void => {
     if (!host) unavailable();
     if (principal.initializing) throw new Error("initializing");
-    const rejection = host.validateCaller?.(principal);
-    if (rejection) throw new Error(rejection);
   };
 
   server.registerTool(
@@ -189,7 +201,7 @@ export function registerMcpTools(
     },
     async () => {
       guard();
-      return jsonContent({ tasks: host!.list(taskId) });
+      return jsonContent({ tasks: host!.list(principal) });
     },
   );
 
@@ -243,7 +255,7 @@ export function registerMcpTools(
     async ({ task_id, text, range }) => {
       guard();
       return jsonContent(
-        host!.query(taskId, {
+        host!.query(principal, {
           taskId: task_id ?? undefined,
           text: text ?? undefined,
           range: range ?? undefined,
@@ -274,7 +286,7 @@ export function registerMcpTools(
     async ({ task_id, seqs }) => {
       guard();
       return jsonContent(
-        host!.read(taskId, { taskId: task_id ?? undefined, seqs }),
+        host!.read(principal, { taskId: task_id ?? undefined, seqs }),
       );
     },
   );
@@ -328,7 +340,7 @@ export function registerMcpTools(
     async ({ title, cwd, model, thinking }) => {
       guard();
       return jsonContent(
-        await host!.create(taskId, {
+        await host!.create(principal, {
           title,
           cwd: cwd ?? undefined,
           model: model ?? undefined,
@@ -351,7 +363,7 @@ export function registerMcpTools(
     },
     async ({ target, reason }) => {
       guard();
-      return jsonContent(await host!.cancel(taskId, target, reason));
+      return jsonContent(await host!.cancel(principal, target, reason));
     },
   );
 
@@ -370,11 +382,7 @@ export function registerMcpTools(
     },
     async ({ target, body }) => {
       guard();
-      await host!.send(taskId, target, body);
-      // The caller's authority is re-checked after the write path's awaits: a
-      // rotation during dispatch must not turn this request into a new one.
-      const rejection = host!.validateCaller?.(principal);
-      if (rejection) throw new Error(rejection);
+      await host!.send(principal, target, body);
       return accepted();
     },
   );
@@ -396,9 +404,7 @@ export function registerMcpTools(
     },
     async ({ status, body }) => {
       guard();
-      await host!.update(taskId, status, body);
-      const rejection = host!.validateCaller?.(principal);
-      if (rejection) throw new Error(rejection);
+      await host!.update(principal, status, body);
       return accepted();
     },
   );
