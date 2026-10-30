@@ -656,30 +656,55 @@ describe("retirement follows the recorded binding", () => {
       authority.adopt("junk");
       tasks.liveTasks.add("junk");
 
-      // The GC only reaps tasks older than its minimum age; backdate this one.
-      store["db"]
-        .prepare("UPDATE tasks SET created_at = ? WHERE id = ?")
-        .run(Date.now() - 24 * 60 * 60 * 1000, "junk");
+      // A second empty task, this one carried by the non-default agent B. The
+      // GC must retire it through B, so a "use the default adapter" mistake
+      // cannot pass by accident on the A task.
+      store.createTask("junk-b", dir, "auto", "agent-b", "b-junk-sid");
+      tasks.state.patch("junk-b", {
+        runtime: { plan: [{ content: "step", status: "pending" }] },
+      });
+      tasks.updateAgentCommands("junk-b", [
+        { name: "context", description: "x" },
+      ]);
+      authority.adopt("junk-b");
+      tasks.liveTasks.add("junk-b");
+
+      // The GC only reaps tasks older than its minimum age; backdate both.
+      for (const id of ["junk", "junk-b"]) {
+        store["db"]
+          .prepare("UPDATE tasks SET created_at = ? WHERE id = ?")
+          .run(Date.now() - 24 * 60 * 60 * 1000, id);
+      }
 
       // The create is only here to run the GC; the Root is still unbound, so
       // the new task is carried by the transport's agent (A).
       await tasks.createTask(bridge, dir);
 
-      // GC: the junk task's execution is retired through A, never through the
-      // default adapter *or* through B (which holds the same session id).
+      // GC retires each removed execution through the agent in its record: A's
+      // task through A (never through B, which holds the same session id), and
+      // B's task through B (never through the default adapter).
       assert.deepEqual(
-        retired,
-        [{ agentId: "agent-a", sessionId: "same-sid" }],
-        "GC retires through the removed binding's agent",
+        [...retired].sort((a, b) => a.sessionId.localeCompare(b.sessionId)),
+        [
+          { agentId: "agent-b", sessionId: "b-junk-sid" },
+          { agentId: "agent-a", sessionId: "same-sid" },
+        ],
+        "GC retires through each removed binding's own agent",
       );
-      // And its runtime is fully released, not just its live-task flag.
-      assert.equal(tasks.state.hasState("junk"), false);
-      assert.equal(authority.generationOf("junk"), undefined);
+      // And their runtime is fully released, not just the live-task flag.
+      for (const id of ["junk", "junk-b"]) {
+        assert.equal(tasks.state.hasState(id), false, `${id} runtime state`);
+        assert.equal(authority.generationOf(id), undefined, `${id} generation`);
+        assert.equal(tasks.liveTasks.has(id), false, `${id} live task`);
+      }
       assert.equal(
         registry.existing("agent-a")?.agentCommandSnapshots.has("junk"),
         false,
       );
-      assert.equal(tasks.liveTasks.has("junk"), false);
+      assert.equal(
+        registry.existing("agent-b")?.agentCommandSnapshots.has("junk-b"),
+        false,
+      );
 
       // Root reset retires Root's own execution. Bind the Root to B — the
       // non-default agent — using the same session id the A task had.
