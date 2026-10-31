@@ -225,6 +225,11 @@ const broadcastCollaboration = ({
   }
 };
 tasks.setCollaborationBroadcast(broadcastCollaboration);
+// A read no longer waits for its task's execution to warm up; this is how the
+// client learns the schema and commands once the restore finishes.
+tasks.setRuntimeWarmBroadcast((event) => {
+  sseManager.broadcast({ type: "task_runtime_warmed", ...event });
+});
 const mcpTaskTools = createMcpTaskToolHost({
   store,
   tasks,

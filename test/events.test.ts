@@ -2858,6 +2858,63 @@ describe("events", () => {
       assert.ok(dom.statusBar.textContent.includes("new-model"));
     });
 
+    it("applies a completed warm-up for the current task only", () => {
+      state.taskId = "s-warm";
+      state.configOptions = [];
+      events.handleEvent({
+        type: "task_runtime_warmed",
+        taskId: "s-warm",
+        agentId: "mock",
+        configOptions: [
+          {
+            type: "select",
+            id: "model",
+            name: "Model",
+            currentValue: "mock-model-2",
+            options: [{ value: "mock-model-2", name: "Mock Model 2" }],
+          },
+          {
+            type: "select",
+            id: "mode",
+            name: "Mode",
+            currentValue: "plan",
+            options: [{ value: "plan", name: "Plan" }],
+          },
+        ],
+        agentCommands: { epoch: "e1", revision: 1, commands: [] },
+      });
+      assert.deepEqual(
+        state.configOptions.map((option: { id: string }) => option.id),
+        ["model", "mode"],
+        "the restored schema was installed",
+      );
+      assert.ok(
+        dom.statusBar.textContent.includes("mock-model-2"),
+        "the status bar reflects the restored schema",
+      );
+
+      // A warm-up for another task is ignored: no state change, no repaint.
+      state.configOptions = [];
+      const statusBefore = dom.statusBar.textContent;
+      events.handleEvent({
+        type: "task_runtime_warmed",
+        taskId: "s-other",
+        agentId: "mock",
+        configOptions: [
+          {
+            type: "select",
+            id: "model",
+            name: "Model",
+            currentValue: "other-model",
+            options: [{ value: "other-model", name: "Other Model" }],
+          },
+        ],
+        agentCommands: { epoch: "e2", revision: 3, commands: [] },
+      });
+      assert.equal(dom.statusBar.textContent, statusBefore);
+      assert.deepEqual(state.configOptions, []);
+    });
+
     it("cleared by resetTaskUI", () => {
       state.awaitingNewTask = true;
       events.handleEvent({

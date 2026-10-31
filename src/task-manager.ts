@@ -495,6 +495,21 @@ export class TaskManager implements ObligationHost {
   private readonly pendingDispatchRetries = new Map<string, string[]>();
   /** Latest qualifying agent-runtime activity per task, epoch ms. */
   private readonly lastAgentActivityAt = new Map<string, number>();
+  /**
+   * Last warmed identity published per task (`agentId:generation`). Reads and
+   * re-reads of one task must not turn a single warm-up into a broadcast
+   * storm; a rotation changes the key, so the next warm-up publishes again.
+   */
+  private readonly publishedWarmIdentity = new Map<string, string>();
+  /** Subscriber notification for a completed background warm-up. */
+  private runtimeWarmBroadcast:
+    | ((event: {
+        taskId: string;
+        agentId: string;
+        configOptions: ConfigOption[];
+        agentCommands: AgentCommandSnapshot;
+      }) => void)
+    | null = null;
   /** SSE broadcast hook for runtime collaboration messages. */
   private collaborationBroadcast:
     | ((event: {
@@ -1614,6 +1629,7 @@ export class TaskManager implements ObligationHost {
    * validate incremental state_patch events against a monotonic server seq.
    */
   private resetTaskRuntime(taskId: string, preserveRuntimeState = false): void {
+    this.publishedWarmIdentity.delete(taskId);
     this.assistantBuffers.delete(taskId);
     this.thinkingBuffers.delete(taskId);
     this.activePrompts.delete(taskId);
@@ -1677,6 +1693,39 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
+   * Publish a completed warm-up to that task's subscribers.
+   *
+   * The read already answered with whatever was known, so this is the only
+   * way a cold client learns the schema and commands. It must not describe the
+   * wrong execution: the task has to still exist, still bind the agent the
+   * warm-up started under, and still accept that generation.
+   */
+  private publishWarmedRuntime(
+    taskId: string,
+    agentId: string,
+    generation: number,
+  ): void {
+    const publish = this.runtimeWarmBroadcast;
+    if (!publish) return;
+    const task = this.store.getTask(taskId);
+    if (!task) return;
+    if (this.store.getBindingAgent(taskId) !== agentId) return;
+    if (!this.authority.accepts({ taskId, generation })) return;
+    const identity = `${agentId}:${generation}`;
+    if (this.publishedWarmIdentity.get(taskId) === identity) return;
+    this.publishedWarmIdentity.set(taskId, identity);
+    publish({
+      taskId,
+      agentId,
+      configOptions: this.applyStoredConfig(
+        this.configOptionsFor(agentId),
+        task,
+      ),
+      agentCommands: this.getAgentCommands(taskId),
+    });
+  }
+
+  /**
    * Warm a task's execution without deciding anything about its binding.
    *
    * A read may pay for a restore so the client gets config and commands, but
@@ -1691,6 +1740,46 @@ export class TaskManager implements ObligationHost {
     const bridge = adapter.bridge as DeliveryBridge | null;
     if (!bridge) return;
     await this.ensureResumed(bridge, taskId);
+  }
+
+  /**
+   * Start a warm-up without blocking the read that asked for it, and publish
+   * what it learned when it finishes. Reads return immediately; a cold client
+   * is filled in by `task_runtime_warmed` instead of by waiting.
+   *
+   * Deduplicated through `ensureResumed` (one resume per task), silent when the
+   * warm-up fails, and identity-checked before publishing.
+   */
+  warmTaskInBackground(taskId: string): void {
+    const binding = this.store.getCurrentExecutionBinding(taskId);
+    const agentId = binding?.agent_key;
+    if (!agentId || !this.agents.isConfigured(agentId)) return;
+    // Generations are not persisted, so a task that was bound before this
+    // process started has no entry yet. Adopting it is the same restart case
+    // the restore path handles; without it a cold read could never warm.
+    const generation = this.authority.adopt(taskId).generation;
+    void this.warmTaskExecution(taskId).then(
+      () => {
+        this.publishWarmedRuntime(taskId, agentId, generation);
+      },
+      () => {
+        // The read already returned; a failed warm-up is not a read failure.
+      },
+    );
+  }
+
+  /** Install the subscriber notification used by `warmTaskInBackground`. */
+  setRuntimeWarmBroadcast(
+    broadcast:
+      | ((event: {
+          taskId: string;
+          agentId: string;
+          configOptions: ConfigOption[];
+          agentCommands: AgentCommandSnapshot;
+        }) => void)
+      | null,
+  ): void {
+    this.runtimeWarmBroadcast = broadcast;
   }
 
   /**
@@ -2062,6 +2151,14 @@ export class TaskManager implements ObligationHost {
         throw new Error(`Execution replaced while restoring ${taskId}`);
       }
       this.liveTasks.add(taskId);
+      // The agent just reported its schema. Cache it for this agent's process;
+      // the broadcast after a background warm-up needs it, and so does any
+      // later read. It is the agent's schema, not the task's stored choice, so
+      // nothing is written to the task row here.
+      if (loaded.configOptions.length > 0) {
+        this.agents.adapterFor(agentId).cachedConfigOptions =
+          loaded.configOptions;
+      }
       // Piggyback a cache-warming setConfigOption on the user's own resume
       // when the global cache is empty (typical after bridge.restart). Uses
       // the task's own stored value — idempotent, no side effect. Failure
@@ -2567,6 +2664,7 @@ export class TaskManager implements ObligationHost {
   /** Drop in-memory state owned by a task that no longer exists. */
   private releaseTaskRuntime(id: string, mode: "hard" | "soft"): void {
     this.capabilities?.revokeByTask(id);
+    this.publishedWarmIdentity.delete(id);
     this.liveTasks.delete(id);
     this.assistantBuffers.delete(id);
     this.thinkingBuffers.delete(id);

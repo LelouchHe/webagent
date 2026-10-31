@@ -334,6 +334,18 @@ export type AgentEvent =
       signal: string | null;
       error?: string;
     }
+  /**
+   * A background warm-up finished for a task whose read already returned.
+   * Carries what the restored execution reported so a cold client fills in
+   * without re-fetching. Server-originated, not an execution event.
+   */
+  | {
+      type: "task_runtime_warmed";
+      taskId: string;
+      agentId: string;
+      configOptions: ConfigOption[];
+      agentCommands: AgentCommandSnapshot;
+    }
   // Server lifecycle events (no taskId); agentId scopes them to one agent.
   | { type: "agent_reloading"; agentId: string }
   | { type: "agent_reloading_failed"; error: string; agentId: string }

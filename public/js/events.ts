@@ -2382,6 +2382,19 @@ export function handleEvent(msg: AgentEvent) {
       if (msg.configOptions.length) updateConfigOptions(msg.configOptions);
       break;
 
+    case "task_runtime_warmed":
+      // A read returned before its task's execution finished restoring. Apply
+      // what the restore learned to the task the user is looking at, and
+      // nothing else: no navigation, no activation, no task switch.
+      if (msg.taskId !== state.taskId) break;
+      if (msg.configOptions.length) updateConfigOptions(msg.configOptions);
+      if (applyAgentCommandSnapshot(msg.agentCommands)) {
+        dom.input.dispatchEvent(new window.Event("input", { bubbles: true }));
+      }
+      updateModeUI();
+      updateStatusBar();
+      break;
+
     case "task_title_updated":
       if (msg.taskId === state.taskId) {
         state.taskTitle = msg.title;

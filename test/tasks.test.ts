@@ -1091,7 +1091,7 @@ describe("Task REST API", () => {
       assert.equal(tasks.getBusyKind("interrupted"), null);
     });
 
-    it("snapshot waits for command discovery during a warm-cache resume", async () => {
+    it("snapshot returns before command discovery and picks it up later", async () => {
       store.createTask("stored-only", tmpDir, "auto", "test-agent");
       tasks.cachedConfigOptions.push({
         type: "select",
@@ -1101,7 +1101,7 @@ describe("Task REST API", () => {
         options: [{ value: "claude-sonnet", name: "Sonnet" }],
       });
       mockBridge.loadSession = async (taskId: string) => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, 50));
         tasks.updateAgentCommands(taskId, [
           { name: "context", description: "Show context usage" },
         ]);
@@ -1114,13 +1114,34 @@ describe("Task REST API", () => {
         "/api/v1/tasks/stored-only",
       );
       assert.equal(detail.status, 200);
-      const snapshot = await makeRequest(
+      // A read does not wait for the restore: the response is immediate and
+      // carries only what the process already knew (the cached schema above,
+      // and no per-task commands yet).
+      const first = await makeRequest(
         port,
         "GET",
         "/api/v1/tasks/stored-only/snapshot",
       );
+      assert.deepEqual(
+        JSON.parse(first.body).agentCommands.commands,
+        [],
+        "the snapshot did not wait for command discovery",
+      );
 
-      assert.deepEqual(JSON.parse(snapshot.body).agentCommands.commands, [
+      // The background restore still completes, and the next read sees it.
+      const deadline = Date.now() + 5000;
+      let commands: unknown[] = [];
+      while (Date.now() < deadline) {
+        const next = await makeRequest(
+          port,
+          "GET",
+          "/api/v1/tasks/stored-only/snapshot",
+        );
+        commands = JSON.parse(next.body).agentCommands.commands;
+        if (commands.length > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.deepEqual(commands, [
         { name: "context", description: "Show context usage" },
       ]);
     });

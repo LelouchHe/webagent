@@ -43,27 +43,7 @@ import {
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
-const slog = rlog.scope("task");
 const mlog = rlog.scope("msg");
-
-/**
- * Upper bound on an optional read-path warm-up. A snapshot is served either
- * way; this only prevents one slow agent from holding the response.
- */
-const SNAPSHOT_WARMUP_TIMEOUT_MS = 5000;
-
-/** Resolve `work`, or after `ms` — never reject. */
-async function withTimeout(work: Promise<void>, ms: number): Promise<void> {
-  let timer: NodeJS.Timeout | null = null;
-  await Promise.race([
-    work.finally(() => {
-      if (timer) clearTimeout(timer);
-    }),
-    new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, ms);
-    }),
-  ]).catch(() => {});
-}
 
 const COMPACT_SUMMARY_PROMPT = [
   "Prepare a concise context handoff for a fresh execution of this WebAgent task.",
@@ -1261,14 +1241,11 @@ export function createRequestHandler(
           });
           return;
         }
-        // A snapshot is a read: an unavailable, rotated, or not-yet-started
-        // agent must not block it, so the optional warm-up is bounded and a
-        // failure only costs command discovery.
+        // A read returns what is known now. Warming the execution happens in
+        // the background and reports back through `task_runtime_warmed`; no
+        // fixed wait can be right, because a real restore replays history.
         if (!tasks.liveTasks.has(taskId)) {
-          await withTimeout(
-            tasks.warmTaskExecution(taskId).catch(() => {}),
-            SNAPSHOT_WARMUP_TIMEOUT_MS,
-          );
+          tasks.warmTaskInBackground(taskId);
         }
         // Make sure runtime reflects the current activePrompts/bash state even
         // if no patch has been emitted yet for this task.
@@ -2549,59 +2526,12 @@ export function createRequestHandler(
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
             return;
           }
-          // Start resume in background (non-blocking) so the client gets metadata fast.
-          // BUT: if cache is cold (cold-restart case), block on resume up to 8s so
-          // configOptions returns inline. This eliminates the race where the
-          // post-resume `config_option_update` broadcast can arrive before the
-          // client's SSE is fully wired up — a flake observed on slow CI runners.
-          // Reading a task never requires a started agent: the response below
-          // is served either way. When the task is not live yet, a background
-          // resume warms the config schema; a failure only costs that optional
-          // payload.
+          // A read answers with the task's metadata and whatever the process
+          // already knows. Warming a non-live task runs in the background and
+          // publishes `task_runtime_warmed`; the client never waits for ACP
+          // restore, and no fixed timeout is involved.
           const wasLive = tasks?.liveTasks.has(taskId) ?? true;
-          let resumePromise: Promise<void> | null = null;
-          if (tasks && !wasLive) {
-            resumePromise = tasks.warmTaskExecution(taskId).catch(() => {});
-            // Broadcast config_option_update too, so any OTHER client viewing
-            // the same task (whose own GET may have raced and returned cold)
-            // also picks up the warm values.
-            resumePromise
-              .then(() => {
-                const cur = store.getTask(taskId);
-                const warmed = tasks.configOptionsForTask(taskId);
-                if (!cur || !warmed.length) return;
-                const opts = tasks.applyStoredConfig(warmed, cur);
-                sseManager.broadcast({
-                  type: "config_option_update",
-                  taskId,
-                  configOptions: opts,
-                });
-              })
-              .catch(() => {});
-            resumePromise.catch((err) => {
-              slog.error("background resume failed", {
-                taskId: taskId.slice(0, 8) + "…",
-                error: err,
-              });
-            });
-          }
-          // If cache is cold and we kicked off a resume, wait briefly so the
-          // GET response includes warm configOptions. Bounded to 8s — past that
-          // we fall back to returning empty configOptions and rely on the
-          // broadcast above. The frontend retries (re-fetches) on broadcast.
-          if (resumePromise && !tasks?.configOptionsForTask(taskId).length) {
-            let timer: NodeJS.Timeout | null = null;
-            const timeoutPromise = new Promise<void>((resolve) => {
-              timer = setTimeout(resolve, 8000);
-            });
-            await Promise.race([
-              resumePromise.finally(() => {
-                if (timer) clearTimeout(timer);
-              }),
-              timeoutPromise,
-            ]).catch(() => {});
-          }
-          // Re-read task in case resume mutated stored config
+          if (tasks && !wasLive) tasks.warmTaskInBackground(taskId);
           const freshTask = store.getTask(taskId) ?? task;
           const configOptions = tasks
             ? tasks.applyStoredConfig(
