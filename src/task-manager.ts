@@ -2151,14 +2151,6 @@ export class TaskManager implements ObligationHost {
         throw new Error(`Execution replaced while restoring ${taskId}`);
       }
       this.liveTasks.add(taskId);
-      // The agent just reported its schema. Cache it for this agent's process;
-      // the broadcast after a background warm-up needs it, and so does any
-      // later read. It is the agent's schema, not the task's stored choice, so
-      // nothing is written to the task row here.
-      if (loaded.configOptions.length > 0) {
-        this.agents.adapterFor(agentId).cachedConfigOptions =
-          loaded.configOptions;
-      }
       // Piggyback a cache-warming setConfigOption on the user's own resume
       // when the global cache is empty (typical after bridge.restart). Uses
       // the task's own stored value — idempotent, no side effect. Failure
@@ -2171,6 +2163,19 @@ export class TaskManager implements ObligationHost {
         loaded.configOptions,
         startLease,
       );
+      // The loaded response carries the agent's schema. If the warm-up could
+      // not learn it another way (no stored value to send, or it failed), keep
+      // what the restore just reported so later reads and the background
+      // warm-up broadcast can use it. It is the agent's schema, not the task's
+      // stored choice, so nothing is written to the task row here.
+      if (
+        loaded.configOptions.length > 0 &&
+        this.configOptionsFor(agentId).length === 0 &&
+        this.leaseCurrent(startLease)
+      ) {
+        this.agents.adapterFor(agentId).cachedConfigOptions =
+          loaded.configOptions;
+      }
       const configOptions = this.applyStoredConfig(
         loaded.configOptions.length > 0
           ? loaded.configOptions
