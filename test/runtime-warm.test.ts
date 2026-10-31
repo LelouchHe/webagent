@@ -213,6 +213,43 @@ describe("background warm-up", () => {
     );
   });
 
+  it("refuses to publish an identity that is no longer current", () => {
+    const taskId = seedTask("guard-task");
+    const generation = tasks.authority.leaseFor(taskId)!.generation;
+    const publish = (
+      tasks as unknown as {
+        publishWarmedRuntime: (
+          taskId: string,
+          agentId: string,
+          generation: number,
+        ) => void;
+      }
+    ).publishWarmedRuntime.bind(tasks);
+
+    // A stale generation (the task rotated since the warm-up started) is
+    // refused even though the task and the agent still match.
+    tasks.authority.applyBindingChanges([
+      {
+        taskId,
+        before: { agentId: "agent-a", sessionId: "existing-session" },
+        after: { agentId: "agent-a", sessionId: "replacement-session" },
+      },
+    ]);
+    publish(taskId, "agent-a", generation);
+    assert.deepEqual(warmed, [], "a replaced generation is refused");
+
+    // The current generation publishes.
+    publish(taskId, "agent-a", tasks.authority.leaseFor(taskId)!.generation);
+    assert.equal(warmed.length, 1);
+
+    // A binding that moved to another agent is refused, whatever the
+    // generation says.
+    store.replaceAgentSession(taskId, "agent-b", "other-session");
+    warmed.length = 0;
+    publish(taskId, "agent-a", tasks.authority.leaseFor(taskId)!.generation);
+    assert.deepEqual(warmed, [], "a moved binding is refused");
+  });
+
   it("deduplicates concurrent warm-ups into one restore", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
