@@ -8,7 +8,7 @@ import { AgentBridge } from "./bridge.ts";
 import { Store } from "./store.ts";
 import { TaskManager, createObligationController } from "./task-manager.ts";
 import { TaskStateManager } from "./task-state.ts";
-import { ExecutionAdapter } from "./execution-adapter.ts";
+import { AgentRegistry } from "./agent-registry.ts";
 import { ExecutionAuthority, GenerationLedger } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
@@ -85,7 +85,7 @@ const PKG_VERSION = (() => {
 
 // --- Core dependencies ---
 
-const store = new Store(config.data_dir, config.default_agent);
+const store = new Store(config.data_dir);
 store.ensureRootTask(config.default_cwd);
 console.log(`[store] using ${config.data_dir}/`);
 
@@ -124,8 +124,17 @@ const mcpBaseUrl = `http://127.0.0.1:${config.port}`;
 // assumption of its own.
 const taskState = new TaskStateManager();
 const executionAuthority = new ExecutionAuthority(new GenerationLedger());
-const executionAdapter = new ExecutionAdapter(config.default_agent);
 const taskManagerRef: { current?: TaskManager } = {};
+/**
+ * Agent execution environments, started on demand. Nothing is spawned here:
+ * the first operation that needs an agent resolves it, and every later one
+ * reuses the same single process.
+ */
+const agentRegistry = new AgentRegistry({
+  agents: config.agents,
+  defaultAgentId: config.default_agent,
+  createTransport: (agentId) => createAgentTransport(agentId),
+});
 const obligationController = createObligationController({
   getBusyKind: (taskId) => taskManagerRef.current!.getBusyKind(taskId),
   isTurnRunning: (taskId, promptId) =>
@@ -147,9 +156,8 @@ const tasks = new TaskManager({
   mcpBaseUrl,
   state: taskState,
   authority: executionAuthority,
-  adapter: executionAdapter,
+  agents: agentRegistry,
   obligations: obligationController,
-  isAgentConfigured: (agentId) => Object.hasOwn(config.agents, agentId),
 });
 taskManagerRef.current = tasks;
 const sseManager = new SseManager();
@@ -189,7 +197,6 @@ tasks.state.onPatch((event) => {
   sseManager.broadcast(event);
 });
 
-let bridge: AgentBridge | null = null;
 const broadcastCollaboration = ({
   messageId,
   sourceTaskId,
@@ -218,10 +225,14 @@ const broadcastCollaboration = ({
   }
 };
 tasks.setCollaborationBroadcast(broadcastCollaboration);
+// A read no longer waits for its task's execution to warm up; this is how the
+// client learns the schema and commands once the restore finishes.
+tasks.setRuntimeWarmBroadcast((event) => {
+  sseManager.broadcast({ type: "task_runtime_warmed", ...event });
+});
 const mcpTaskTools = createMcpTaskToolHost({
   store,
   tasks,
-  getBridge: () => bridge,
   cancelTimeoutMs: config.limits.cancel_timeout,
   broadcastCollaboration,
   broadcastTaskCreated: (event) => {
@@ -244,7 +255,6 @@ const requestHandler = createRequestHandler({
   tasks,
   sseManager,
   clientRegistry,
-  getBridge: () => bridge,
   publicDir: PUBLIC_DIR,
   dataDir: config.data_dir,
   limits: config.limits,
@@ -266,22 +276,28 @@ const server = createServer((req, res) => {
   void requestHandler(req, res);
 });
 
-async function initBridge(agentId: string): Promise<AgentBridge> {
-  const agent = config.agents[agentId];
-  const b = new AgentBridge(agent.cmd, store, agentId);
-  b.setAttachmentDispatcher(attachmentDispatcher);
+const eventHandlerConfig = _buildBridgeEventHandlerConfig({
+  cancelTimeout: config.limits.cancel_timeout,
+  recentPathsLimit: config.limits.recent_paths,
+  attachmentInterceptorCounters,
+  shouldLogSchemaDrift: () => {
+    const now = Date.now();
+    if (now - lastSchemaDriftAt < SCHEMA_DRIFT_THROTTLE_MS) return false;
+    lastSchemaDriftAt = now;
+    return true;
+  },
+});
 
-  const eventHandlerConfig = _buildBridgeEventHandlerConfig({
-    cancelTimeout: config.limits.cancel_timeout,
-    recentPathsLimit: config.limits.recent_paths,
-    attachmentInterceptorCounters,
-    shouldLogSchemaDrift: () => {
-      const now = Date.now();
-      if (now - lastSchemaDriftAt < SCHEMA_DRIFT_THROTTLE_MS) return false;
-      lastSchemaDriftAt = now;
-      return true;
-    },
-  });
+/**
+ * Build one agent's transport. The bridge is injected with a session view
+ * pinned to its own agent, so every task → session projection it makes is
+ * verified against the binding's agent instead of trusting the caller.
+ */
+function createAgentTransport(agentId: string): AgentBridge {
+  const agent = config.agents[agentId];
+  const b = new AgentBridge(agent.cmd, store.sessionView(agentId), agentId);
+  b.setAttachmentDispatcher(attachmentDispatcher);
+  b.setExecutionLeaseSource(executionAuthority);
 
   b.on("event", (event: AgentEvent) => {
     handleAgentEvent(
@@ -296,9 +312,6 @@ async function initBridge(agentId: string): Promise<AgentBridge> {
     );
   });
 
-  await b.start();
-  bridge = b;
-  tasks.attachExecutionBridge(b);
   return b;
 }
 
@@ -310,7 +323,7 @@ async function shutdown() {
   messageCleanup.stop();
   sharePreviewCleanup?.stop();
   tasks.killAllBashProcs();
-  await bridge?.shutdown();
+  await agentRegistry.shutdownAll();
   await authStore.close();
   store.close();
   server.close();
@@ -350,17 +363,13 @@ server.listen(config.port, config.host, () => {
       sharePreviewCleanup = startSharePreviewCleanup(store);
       console.log(`[share] preview gc armed (24h interval)`);
     }
-    const agentId = config.default_agent;
+    // Startup owns no execution: task metadata is ready, and every agent
+    // process (including the default one and the Root's) starts on first
+    // demand. A missing or broken agent binary is therefore a runtime
+    // condition, never a boot gate or a daemon restart.
+    tasks.hydrate();
     console.log(
-      `[bridge] starting ${agentId}: ${config.agents[agentId].cmd}...`,
+      `[agents] ${Object.keys(config.agents).join(", ")} start on demand`,
     );
-    try {
-      await initBridge(agentId);
-      console.log(`[bridge] ready`);
-      await tasks.ensureRootTask(bridge!);
-      tasks.hydrate();
-    } catch (err) {
-      console.error(`[bridge] failed to start:`, err);
-    }
   })();
 });

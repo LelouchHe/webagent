@@ -125,15 +125,15 @@ describe("Prompt REST API", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(join(tmpDir, "test.db"), "test-agent");
+    store = new Store(join(tmpDir, "test.db"));
     tasks = createTaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
+    tasks.attachExecutionBridge(mockBridge);
     broadcastEvents = [];
 
     const handler = createRequestHandler({
       store,
       tasks,
-      getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024, cancel_timeout: 10000 },
@@ -214,12 +214,19 @@ describe("Prompt REST API", () => {
     it("does not arm a directed obligation for a user-started turn", async () => {
       // Only a direct parent dispatch arms. A user prompt starts a turn but
       // affects no obligation edge, whether the Task is agent- or user-created.
-      store.createTask("prompt-parent", tmpDir, "agent", "agent-prompt-parent");
+      store.createTask(
+        "prompt-parent",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-prompt-parent",
+      );
       const agentTaskId = "agent-created";
       store.createTask(
         agentTaskId,
         tmpDir,
         "agent",
+        "test-agent",
         `agent-${agentTaskId}`,
         "prompt-parent",
       );
@@ -599,8 +606,7 @@ describe("Prompt REST API", () => {
     it("returns 503 when bridge is not ready", async () => {
       const handler = createRequestHandler({
         store,
-        tasks,
-        getBridge: () => null,
+        tasks: createTaskManager(store, tmpDir, tmpDir),
         publicDir,
         dataDir: tmpDir,
         limits: { bash_output: 1024, image_upload: 1024 },

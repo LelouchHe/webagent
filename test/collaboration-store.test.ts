@@ -12,14 +12,36 @@ describe("Store collaboration records", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-collaboration-test-"));
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     store.attachAgentSession(
       store.ensureRootTask("/tmp/root").id,
+      "test-agent",
       "agent-root",
     );
-    store.createTask("parent", "/tmp/parent", "auto", "agent-parent", "root");
-    store.createTask("a1", "/tmp/a1", "auto", "agent-a1", "parent");
-    store.createTask("a2", "/tmp/a2", "auto", "agent-a2", "parent");
+    store.createTask(
+      "parent",
+      "/tmp/parent",
+      "auto",
+      "test-agent",
+      "agent-parent",
+      "root",
+    );
+    store.createTask(
+      "a1",
+      "/tmp/a1",
+      "auto",
+      "test-agent",
+      "agent-a1",
+      "parent",
+    );
+    store.createTask(
+      "a2",
+      "/tmp/a2",
+      "auto",
+      "test-agent",
+      "agent-a2",
+      "parent",
+    );
   });
 
   afterEach(() => {
@@ -137,7 +159,7 @@ describe("Store collaboration records", () => {
     );
 
     store.close();
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
 
     const rows = store
       .getEvents("a1")
@@ -236,7 +258,12 @@ describe("Store collaboration records", () => {
   });
 
   it("defaults title to the stable task id when no explicit title is given", () => {
-    const task = store.createTask("unnamed-1", "/tmp/unnamed");
+    const task = store.createTask(
+      "unnamed-1",
+      "/tmp/unnamed",
+      "auto",
+      "test-agent",
+    );
     assert.equal(task.title, "unnamed-1");
     assert.equal(store.getTask("unnamed-1")?.title, "unnamed-1");
   });
@@ -250,7 +277,7 @@ describe("Store collaboration records", () => {
     raw.exec("UPDATE tasks SET brief = 'legacy'");
     raw.close();
 
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     const database = (store as unknown as { db: Database.Database }).db;
     const columns = database.pragma("table_info(tasks)") as Array<{
       name: string;

@@ -99,12 +99,18 @@ PK: `(agent_key, agent_session_id)`. A partial unique index on
 binding **per agent**. That is a storage guard, not the authority: the
 authoritative rule — one current binding per task **globally** — is enforced by
 the application write boundary in `src/store.ts` (`attachAgentSession` refuses a
-foreign attach, `replaceAgentSession` is the only way ownership moves,
+second attach, `replaceAgentSession` is the only way the binding moves,
 `detachAgentSession` removes it). Never read the per-agent index as permission
-for two agents to own one task at the same time. Store reads are still
-agent-scoped for task visibility; the single Root is shared, has no per-agent
-ownership check, and must keep `parent_id = NULL`. Per-agent routing of task
-operations is later work.
+for two agents to bind one task at the same time.
+
+**Reads and identity.** The Store is global: task reads (`listTasks`,
+`getTask`, tree traversal, shares, snapshot helpers) have no agent condition and
+no mandatory binding join, so an unbound live Root and a task whose agent left
+the configuration are both visible. Only the `agent_session_id → task_id`
+direction needs the agent (the PK is `(agent_key, agent_session_id)`, so the
+same id under two agents is two executions). A bridge receives a session view
+pinned to its own agent, which refuses to project a task whose binding names a
+different agent. The single Root is shared and must keep `parent_id = NULL`.
 
 **Empty execution slot.** `agent_session_id` also carries a reserved
 placeholder meaning "this task has an owner but no execution yet, materialize
@@ -347,8 +353,11 @@ detachment. The literal `root`
 cannot be generically deleted, garbage collected, or tombstone-reaped. Root
 reset and `/exit` are DB-only: they clear Root's own events, attachments,
 client operations, compact summary, and previews, delete its live descendants,
-preserve the anchor, and leave ownership with Root's empty execution slot so the
-next prompt materializes a new ACP session. Deletion cascades follow the **task
+preserve the anchor, and leave the binding agent with Root's empty execution
+slot (an unbound Root stays unbound) so the next use materializes a new ACP
+session. Retirement uses the `(agent id, session id)` recorded on each removed
+binding, never a default adapter, so two agents sharing one session id still
+retire the right executions. Deletion cascades follow the **task
 tree**, whatever agent owns each descendant. Three rules govern any code that deletes
 or resets a task:
 

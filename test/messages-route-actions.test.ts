@@ -64,7 +64,7 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     const publicDir = join(tmpDir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     tasks = createTaskManager(store, tmpDir, tmpDir);
     newTaskCalls = [];
     newTaskOptions = [];
@@ -138,6 +138,7 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
         throw new Error("newly consumed tasks must already be live");
       },
     };
+    tasks.attachExecutionBridge(bridge);
     const sseManager = new SseManager();
     broadcasts = [];
     const orig = sseManager.broadcast.bind(sseManager);
@@ -155,7 +156,6 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
       sseManager,
       store,
       tasks,
-      getBridge: () => bridge,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
@@ -238,7 +238,7 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
 
   it("reuses new-task config inheritance without inheriting mode", async () => {
     mkMsg("m-inherit");
-    store.createTask("source-task", tmpDir);
+    store.createTask("source-task", tmpDir, "auto", "test-agent");
     store.updateTaskConfig("source-task", "model", "inherited-model");
     store.updateTaskConfig("source-task", "mode", "autopilot-mode");
     store.updateTaskConfig("source-task", "reasoning_effort", "high");
@@ -365,7 +365,10 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     assert.equal(r.status, 500);
     assert.ok(store.getMessage("m-store-fail"));
     assert.equal(store.listTasks({ source: "message" }).length, 0);
-    assert.equal(store.getTaskId("agent-task-1"), undefined);
+    assert.equal(
+      store.sessionView("test-agent").getTaskId("agent-task-1"),
+      undefined,
+    );
     assert.equal(tasks.liveTasks.size, 0);
   });
 

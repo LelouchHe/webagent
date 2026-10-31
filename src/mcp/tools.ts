@@ -85,23 +85,59 @@ export interface McpTaskCreateResult {
   taskId: string;
 }
 
-/** Operations supplied by the WebAgent runtime behind the MCP tool surface. */
+/**
+ * The caller identity of one MCP request, captured once at the endpoint and
+ * never mutated.
+ *
+ * `taskId` is the agent's own task, `agentId` the agent that capability was
+ * minted for, and `generation` the execution generation the *token* was
+ * promoted for. That generation is the authorization: a request that outlives
+ * a rotation must not write even though its token authenticated, and an old
+ * token must not inherit the task's newer generation. `initializing` marks the
+ * pending window of a session creation, where only the protocol handshake is
+ * allowed.
+ */
+export interface McpCallerPrincipal {
+  readonly taskId: string;
+  readonly agentId: string;
+  readonly generation: number | null;
+  readonly initializing: boolean;
+}
+
+/**
+ * Operations supplied by the WebAgent runtime behind the MCP tool surface.
+ *
+ * Every operation takes the request's immutable caller principal: the write
+ * operations re-check it at their own submission boundary (immediately before
+ * the first side effect), so a rotation that lands while a request is in
+ * flight cannot be written through.
+ */
 export interface McpTaskToolHost {
-  list(sourceTaskId: string): McpTaskListItem[];
-  query(sourceTaskId: string, input: McpTaskQueryInput): McpTaskQueryResult;
-  read(sourceTaskId: string, input: McpTaskReadInput): McpTaskReadResult;
+  list(principal: McpCallerPrincipal): McpTaskListItem[];
+  query(
+    principal: McpCallerPrincipal,
+    input: McpTaskQueryInput,
+  ): McpTaskQueryResult;
+  read(
+    principal: McpCallerPrincipal,
+    input: McpTaskReadInput,
+  ): McpTaskReadResult;
   cancel(
-    sourceTaskId: string,
+    principal: McpCallerPrincipal,
     targetTaskId: string,
     reason: string,
   ): Promise<McpTaskCancelResult>;
   create(
-    sourceTaskId: string,
+    principal: McpCallerPrincipal,
     input: McpTaskCreateInput,
   ): Promise<McpTaskCreateResult>;
-  send(sourceTaskId: string, targetTaskId: string, body: string): Promise<void>;
+  send(
+    principal: McpCallerPrincipal,
+    targetTaskId: string,
+    body: string,
+  ): Promise<void>;
   update(
-    sourceTaskId: string,
+    principal: McpCallerPrincipal,
     status: "blocked" | "done",
     body: string,
   ): Promise<void>;
@@ -134,9 +170,19 @@ function unavailable(): never {
 /** Register the Agent-facing Task control-plane tools. */
 export function registerMcpTools(
   server: McpServer,
-  taskId: string,
+  principal: McpCallerPrincipal,
   host?: McpTaskToolHost,
 ): void {
+  /**
+   * Business tools never run in the pending window, and every call re-checks
+   * the caller's authority. The error text is explicit so an agent can tell
+   * "not yet" from "not allowed".
+   */
+  const guard = (): void => {
+    if (!host) unavailable();
+    if (principal.initializing) throw new Error("initializing");
+  };
+
   server.registerTool(
     "task_list",
     {
@@ -154,7 +200,10 @@ export function registerMcpTools(
         "running turn. This is a cheap inspection, not a polling loop.",
       inputSchema: {},
     },
-    async () => jsonContent({ tasks: host?.list(taskId) ?? unavailable() }),
+    async () => {
+      guard();
+      return jsonContent({ tasks: host!.list(principal) });
+    },
   );
 
   server.registerTool(
@@ -204,14 +253,16 @@ export function registerMcpTools(
           .describe("Inclusive seq range; negative values index from max_seq"),
       },
     },
-    async ({ task_id, text, range }) =>
-      jsonContent(
-        host?.query(taskId, {
+    async ({ task_id, text, range }) => {
+      guard();
+      return jsonContent(
+        host!.query(principal, {
           taskId: task_id ?? undefined,
           text: text ?? undefined,
           range: range ?? undefined,
-        }) ?? unavailable(),
-      ),
+        }),
+      );
+    },
   );
 
   server.registerTool(
@@ -233,11 +284,12 @@ export function registerMcpTools(
           .describe("Task-local event sequences to read"),
       },
     },
-    async ({ task_id, seqs }) =>
-      jsonContent(
-        host?.read(taskId, { taskId: task_id ?? undefined, seqs }) ??
-          unavailable(),
-      ),
+    async ({ task_id, seqs }) => {
+      guard();
+      return jsonContent(
+        host!.read(principal, { taskId: task_id ?? undefined, seqs }),
+      );
+    },
   );
 
   server.registerTool(
@@ -287,9 +339,9 @@ export function registerMcpTools(
       },
     },
     async ({ title, cwd, model, thinking }) => {
-      if (!host) return unavailable();
+      guard();
       return jsonContent(
-        await host.create(taskId, {
+        await host!.create(principal, {
           title,
           cwd: cwd ?? undefined,
           model: model ?? undefined,
@@ -311,8 +363,8 @@ export function registerMcpTools(
       },
     },
     async ({ target, reason }) => {
-      if (!host) return unavailable();
-      return jsonContent(await host.cancel(taskId, target, reason));
+      guard();
+      return jsonContent(await host!.cancel(principal, target, reason));
     },
   );
 
@@ -330,8 +382,8 @@ export function registerMcpTools(
       },
     },
     async ({ target, body }) => {
-      if (!host) return unavailable();
-      await host.send(taskId, target, body);
+      guard();
+      await host!.send(principal, target, body);
       return accepted();
     },
   );
@@ -352,8 +404,8 @@ export function registerMcpTools(
       },
     },
     async ({ status, body }) => {
-      if (!host) return unavailable();
-      await host.update(taskId, status, body);
+      guard();
+      await host!.update(principal, status, body);
       return accepted();
     },
   );

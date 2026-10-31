@@ -79,7 +79,7 @@ async function startServer(configPath: string): Promise<ChildProcess> {
     child.stdout?.on("data", (chunk) => {
       const text = chunk.toString();
       process.stdout.write(text);
-      if (text.includes("[bridge] ready")) {
+      if (text.includes("[server] listening")) {
         clearTimeout(timer);
         resolve();
       }

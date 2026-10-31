@@ -23,6 +23,7 @@ import {
   requestBootstrapTask,
   setHashTaskId,
   installRootTaskId,
+  installTaskAgentId,
   updateTaskInfo,
   setConnectionStatus,
   clearCancelTimer,
@@ -1915,8 +1916,16 @@ export function handleEvent(msg: AgentEvent) {
       if (msg.recentPathsLimit != null)
         state.recentPathsLimit = msg.recentPathsLimit;
       applyConnectedLogLevel(msg.debugLevel);
-      if (state.agentReloading) {
+      // An agent's `connected` only completes *that* agent's reload. A client
+      // watching another agent's task must not have its busy state unlocked by
+      // an unrelated process coming up, and an unknown binding never guesses a
+      // default agent.
+      if (state.taskAgentId !== null && msg.agentId !== state.taskAgentId) {
+        break;
+      }
+      if (state.agentReloading && state.agentReloadingAgentId === msg.agentId) {
         state.agentReloading = false;
+        state.agentReloadingAgentId = null;
         const name = msg.agent.name;
         const ver = msg.agent.version;
         const label = name && ver ? `${name} ${ver}` : "Agent";
@@ -1988,6 +1997,7 @@ export function handleEvent(msg: AgentEvent) {
       state.awaitingNewTask = false;
       state.pendingNavigationTaskId = null;
       const isTaskActivation = state.taskId === null;
+      installTaskAgentId(msg.agentId);
       state.taskId = msg.taskId;
       if (isTaskActivation) rearmHistoryObserverAfterTaskActivation();
       state.taskCwd = msg.cwd ?? state.taskCwd;
@@ -2372,6 +2382,19 @@ export function handleEvent(msg: AgentEvent) {
       if (msg.configOptions.length) updateConfigOptions(msg.configOptions);
       break;
 
+    case "task_runtime_warmed":
+      // A read returned before its task's execution finished restoring. Apply
+      // what the restore learned to the task the user is looking at, and
+      // nothing else: no navigation, no activation, no task switch.
+      if (msg.taskId !== state.taskId) break;
+      if (msg.configOptions.length) updateConfigOptions(msg.configOptions);
+      if (applyAgentCommandSnapshot(msg.agentCommands)) {
+        dom.input.dispatchEvent(new window.Event("input", { bubbles: true }));
+      }
+      updateModeUI();
+      updateStatusBar();
+      break;
+
     case "task_title_updated":
       if (msg.taskId === state.taskId) {
         state.taskTitle = msg.title;
@@ -2380,14 +2403,24 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "agent_reloading":
+      // Reload state belongs to one agent. A reload of an agent this client is
+      // not watching is not this task's busy state.
+      if (state.taskAgentId === null || msg.agentId !== state.taskAgentId) {
+        break;
+      }
       state.agentReloading = true;
+      state.agentReloadingAgentId = msg.agentId;
       addSystem("Agent reloading…");
       setBusy(true);
       break;
 
     case "agent_reloading_failed":
+      if (state.agentReloadingAgentId === msg.agentId) {
+        state.agentReloading = false;
+        state.agentReloadingAgentId = null;
+        setBusy(false);
+      }
       addSystem(`err: Agent reload failed: ${msg.error}`);
-      setBusy(false);
       break;
 
     case "error":

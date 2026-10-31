@@ -13,8 +13,8 @@ describe("shares store", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-shares-"));
-    store = new Store(tmpDir, "test-agent");
-    store.createTask(taskId, "/tmp");
+    store = new Store(tmpDir);
+    store.createTask(taskId, "/tmp", "auto", "test-agent");
   });
 
   afterEach(() => {
@@ -153,7 +153,7 @@ describe("shares store", () => {
     store.updateTaskTitle(taskId, "Demo title");
     store.insertSharePreview({ token: t1, taskId, snapshotSeq: 1 });
     store.activateShare(t1);
-    store.createTask("sess-b", "/tmp");
+    store.createTask("sess-b", "/tmp", "auto", "test-agent");
     store.insertSharePreview({
       token: t2,
       taskId: "sess-b",
@@ -173,7 +173,7 @@ describe("shares store", () => {
     assert.equal(t1Row.task_title, "Demo title");
   });
 
-  it("listOwnerShares only returns shares for the current agent", () => {
+  it("listOwnerShares returns every share globally", () => {
     const ownToken = generateShareToken();
     store.insertSharePreview({
       token: ownToken,
@@ -181,8 +181,14 @@ describe("shares store", () => {
       snapshotSeq: 0,
     });
 
-    const other = new Store(tmpDir, "other-agent");
-    other.createTask("other-task", "/tmp", "auto", "other-agent-id");
+    const other = new Store(tmpDir);
+    other.createTask(
+      "other-task",
+      "/tmp",
+      "auto",
+      "other-agent",
+      "other-agent-id",
+    );
     const otherToken = generateShareToken();
     other.insertSharePreview({
       token: otherToken,
@@ -190,13 +196,15 @@ describe("shares store", () => {
       snapshotSeq: 0,
     });
 
+    // The share list is an operator read: execution binding is never a gate.
+    const tokens = store.listOwnerShares().map((share) => share.token);
+    assert.deepEqual(tokens.sort(), [ownToken, otherToken].sort());
     assert.deepEqual(
-      store.listOwnerShares().map((share) => share.token),
-      [ownToken],
-    );
-    assert.deepEqual(
-      other.listOwnerShares().map((share) => share.token),
-      [otherToken],
+      other
+        .listOwnerShares()
+        .map((share) => share.token)
+        .sort(),
+      tokens.sort(),
     );
     other.close();
   });
@@ -256,7 +264,11 @@ describe("shares store", () => {
       assert.equal(store.deleteTask(taskId).mode, "soft");
       // Owner-facing lookup hides tombstone:
       assert.equal(store.getTask(taskId), undefined);
-      assert.equal(store.listTasks().length, 0);
+      // Only the (unbound) Root remains live.
+      assert.deepEqual(
+        store.listTasks().map((task) => task.id),
+        [store.rootTaskId],
+      );
       // Public viewer can still resolve task metadata:
       const tomb = store.getTaskIncludingDeleted(taskId)!;
       assert.notEqual(tomb, undefined);
@@ -325,7 +337,7 @@ describe("owner_prefs store", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-prefs-"));
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
   });
 
   afterEach(() => {

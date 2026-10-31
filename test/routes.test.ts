@@ -5,6 +5,8 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
+import { createTaskManager } from "../src/task-manager.ts";
+import type { TaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { PushService } from "../src/push-service.ts";
 import { ClientRegistry } from "../src/client-registry.ts";
@@ -75,7 +77,7 @@ describe("HTTP routes", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     const handler = createRequestHandler({
       store,
       publicDir,
@@ -232,22 +234,30 @@ describe("HTTP routes", () => {
   });
 
   it("GET /api/v1/tasks returns created tasks and user-input state", async () => {
-    store.createTask("s1", "/x");
+    store.createTask("s1", "/x", "auto", "test-agent");
     let res = await makeRequest(port, "GET", "/api/v1/tasks");
-    let tasks = JSON.parse(res.body);
-    assert.equal(tasks.length, 1);
-    assert.equal(tasks[0].id, "s1");
-    assert.equal(tasks[0].hasUserInput, false);
+    let list = JSON.parse(res.body);
+    let task = list.find((entry: { id: string }) => entry.id === "s1");
+    assert.ok(task);
+    assert.equal(task.hasUserInput, false);
+    assert.equal(task.agentId, "test-agent");
 
     store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
     res = await makeRequest(port, "GET", "/api/v1/tasks");
-    tasks = JSON.parse(res.body);
-    assert.equal(tasks[0].hasUserInput, true);
+    list = JSON.parse(res.body);
+    task = list.find((entry: { id: string }) => entry.id === "s1");
+    assert.equal(task.hasUserInput, true);
   });
 
-  it("hides tasks owned by another agent from list and direct routes", async () => {
-    const other = new Store(tmpDir, "other-agent");
-    other.createTask("other-task", "/tmp", "auto", "other-agent-id");
+  it("lists and reads a task carried by another agent", async () => {
+    const other = new Store(tmpDir);
+    other.createTask(
+      "other-task",
+      "/tmp",
+      "auto",
+      "retired-agent",
+      "other-agent-id",
+    );
     other.saveEvent(
       "other-task",
       "user_message",
@@ -256,18 +266,32 @@ describe("HTTP routes", () => {
     );
     other.close();
 
+    // Default reads are global; `?agent=` is the optional narrowing.
     const list = await makeRequest(port, "GET", "/api/v1/tasks");
-    assert.deepEqual(JSON.parse(list.body), []);
+    assert.deepEqual(
+      JSON.parse(list.body)
+        .map((entry: { id: string }) => entry.id)
+        .sort(),
+      ["other-task", store.rootTaskId].sort(),
+    );
+    const narrowed = await makeRequest(
+      port,
+      "GET",
+      "/api/v1/tasks?agent=someone-else",
+    );
+    assert.deepEqual(JSON.parse(narrowed.body), []);
 
     const task = await makeRequest(port, "GET", "/api/v1/tasks/other-task");
-    assert.equal(task.status, 404);
+    assert.equal(task.status, 200);
 
+    // Reading history is global as well: an unbound/foreign execution is not a
+    // read gate.
     const events = await makeRequest(
       port,
       "GET",
       "/api/v1/tasks/other-task/events",
     );
-    assert.equal(events.status, 404);
+    assert.equal(events.status, 200);
   });
 
   it("GET /api/v1/tasks/:id/events returns 404 for unknown task", async () => {
@@ -276,7 +300,7 @@ describe("HTTP routes", () => {
   });
 
   it("GET /api/v1/tasks/:id/events returns events", async () => {
-    store.createTask("s1", "/x");
+    store.createTask("s1", "/x", "auto", "test-agent");
     store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
     const res = await makeRequest(port, "GET", "/api/v1/tasks/s1/events");
     assert.equal(res.status, 200);
@@ -286,7 +310,7 @@ describe("HTTP routes", () => {
   });
 
   it("GET /api/v1/tasks/:id/events?after=N returns only new events", async () => {
-    store.createTask("s1", "/x");
+    store.createTask("s1", "/x", "auto", "test-agent");
     store.saveEvent("s1", "user_message", { text: "a" }, { from_ref: "user" });
     store.saveEvent(
       "s1",
@@ -308,7 +332,7 @@ describe("HTTP routes", () => {
   });
 
   it("GET /api/v1/tasks/:id/events?limit=N returns latest N events in ASC order", async () => {
-    store.createTask("s1", "/x");
+    store.createTask("s1", "/x", "auto", "test-agent");
     for (let i = 0; i < 5; i++)
       store.saveEvent(
         "s1",
@@ -334,7 +358,7 @@ describe("HTTP routes", () => {
   });
 
   it("GET /api/v1/tasks/:id/events?limit=N&before=SEQ paginates backwards", async () => {
-    store.createTask("s1", "/x");
+    store.createTask("s1", "/x", "auto", "test-agent");
     for (let i = 0; i < 10; i++)
       store.saveEvent(
         "s1",
@@ -390,7 +414,7 @@ describe("HTTP routes", () => {
   });
 
   it("GET /api/v1/tasks/:id/events without limit omits total/hasMore (backward compat)", async () => {
-    store.createTask("s1", "/x");
+    store.createTask("s1", "/x", "auto", "test-agent");
     store.saveEvent("s1", "user_message", { text: "a" }, { from_ref: "user" });
 
     const res = await makeRequest(port, "GET", "/api/v1/tasks/s1/events");
@@ -472,11 +496,11 @@ describe("Image upload", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     // Make tasks exist so the upload handler doesn't 404. Multiple task
     // IDs are used across tests, register all of them up front.
     for (const sid of ["test-task", "s1"]) {
-      store.createTask(sid, "/tmp");
+      store.createTask(sid, "/tmp", "auto", "test-agent");
     }
     const handler = createRequestHandler({
       store,
@@ -717,7 +741,7 @@ describe("Push API routes", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     registry = new ClientRegistry();
     pushService = new PushService(store, tmpDir, "mailto:test@localhost", {
       clientRegistry: registry,
@@ -880,13 +904,14 @@ describe("POST /api/v1/bridge/reload", () => {
   let port: number;
   let broadcastEvents: any[];
   let mockBridge: any;
+  let tasks: TaskManager;
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-reload-"));
     publicDir = join(tmpDir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     broadcastEvents = [];
     mockBridge = {
       agentId: "test-agent",
@@ -901,12 +926,14 @@ describe("POST /api/v1/bridge/reload", () => {
       denyPermission: () => {},
     };
 
+    tasks = createTaskManager(store, tmpDir, tmpDir);
+    tasks.attachExecutionBridge(mockBridge as never);
     const handler = createRequestHandler({
       store,
+      tasks,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024 },
-      getBridge: () => mockBridge,
       sseManager: {
         broadcast: (event: any) => broadcastEvents.push(event),
       } as any,
@@ -953,7 +980,7 @@ describe("POST /api/v1/bridge/reload", () => {
   });
 
   it("reloads the agent of the requested task", async () => {
-    store.createTask("task-a", tmpDir, "auto", "session-a");
+    store.createTask("task-a", tmpDir, "auto", "test-agent", "session-a");
     let restartCalled = false;
     mockBridge.restart = async () => {
       restartCalled = true;
@@ -969,9 +996,15 @@ describe("POST /api/v1/bridge/reload", () => {
     assert.ok(restartCalled);
   });
 
-  it("refuses to reload another agent's task", async () => {
-    const other = new Store(tmpDir, "retired-agent");
-    other.createTask("retired-task", tmpDir, "auto", "session-retired");
+  it("reloads the binding agent of a task whose old agent is gone", async () => {
+    const other = new Store(tmpDir);
+    other.createTask(
+      "retired-task",
+      tmpDir,
+      "auto",
+      "retired-agent",
+      "session-retired",
+    );
     other.close();
     let restartCalled = false;
     mockBridge.restart = async () => {
@@ -984,9 +1017,11 @@ describe("POST /api/v1/bridge/reload", () => {
       "/api/v1/bridge/reload",
       JSON.stringify({ taskId: "retired-task" }),
     );
-    assert.equal(res.status, 409);
-    assert.match(JSON.parse(res.body).error, /retired-agent.*not available/);
-    assert.equal(restartCalled, false);
+    // A removed owner is replaced implicitly, so the reload targets the agent
+    // that now carries the task.
+    assert.equal(res.status, 200);
+    assert.equal(store.getBindingAgent("retired-task"), "test-agent");
+    assert.ok(restartCalled);
   });
 
   it("refuses to reload a task with no agent", async () => {
@@ -1016,10 +1051,10 @@ describe("POST /api/v1/bridge/reload", () => {
   it("returns 503 when bridge is not available", async () => {
     const handler = createRequestHandler({
       store,
+      tasks: createTaskManager(store, tmpDir, tmpDir),
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024 },
-      getBridge: () => null,
       sseManager: { broadcast: () => {} } as any,
     });
     const server2 = http.createServer(handler);

@@ -56,7 +56,7 @@ describe("handleShareRoutes skeleton", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-routes-"));
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
   });
 
   afterEach(() => {

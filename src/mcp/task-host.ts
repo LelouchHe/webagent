@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
-import type { AgentBridge } from "../bridge.ts";
 import type { Store, TaskRow } from "../store.ts";
 import {
   isLocalCollaborationTarget,
@@ -12,6 +11,7 @@ import { formatTaskReference } from "../shared/task-reference.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
 import type {
+  McpCallerPrincipal,
   McpTaskQueryResult,
   McpTaskListItem,
   McpTaskToolHost,
@@ -55,18 +55,44 @@ function relationOrder(relation: McpTaskListItem["relation"]): number {
 export function createMcpTaskToolHost(deps: {
   store: Store;
   tasks: TaskManager;
-  getBridge: () => AgentBridge | null;
   cancelTimeoutMs?: number;
   broadcastCollaboration?: (event: McpTaskCollaborationEvent) => void;
   broadcastTaskCreated?: (event: McpTaskCreatedEvent) => void;
 }): McpTaskToolHost {
-  const {
-    store,
-    tasks,
-    getBridge,
-    broadcastCollaboration,
-    broadcastTaskCreated,
-  } = deps;
+  const { store, tasks, broadcastCollaboration, broadcastTaskCreated } = deps;
+
+  /**
+   * The single authority check for one MCP operation. It lives here because
+   * the host is the only layer that has both the store (binding) and the
+   * execution authority (generation), so there is exactly one implementation
+   * of "may this caller still write?" and no wiring can silently drop it.
+   *
+   * Fail closed: a principal without a generation, a changed task, a moved
+   * binding, or a replaced generation is refused.
+   */
+  function rejectionOf(principal: McpCallerPrincipal): string | null {
+    if (principal.generation === null) return "execution_replaced";
+    const bindingAgent = store.getBindingAgent(principal.taskId);
+    if (bindingAgent !== principal.agentId) return "execution_replaced";
+    if (
+      !tasks.authority.accepts({
+        taskId: principal.taskId,
+        generation: principal.generation,
+      })
+    ) {
+      return "execution_replaced";
+    }
+    return null;
+  }
+
+  function authorize(
+    principal: McpCallerPrincipal,
+    sourceTaskId: string,
+  ): void {
+    if (principal.taskId !== sourceTaskId) throw new Error("caller_changed");
+    const rejection = rejectionOf(principal);
+    if (rejection) throw new Error(rejection);
+  }
 
   function requireTask(taskId: string) {
     const task = store.getTask(taskId);
@@ -135,8 +161,9 @@ export function createMcpTaskToolHost(deps: {
   }
 
   return {
-    list(sourceTaskId) {
-      const source = requireTask(sourceTaskId);
+    list(principal) {
+      authorize(principal, principal.taskId);
+      const source = requireTask(principal.taskId);
       const entries = store
         .listTasks()
         .map((task) => ({
@@ -172,7 +199,9 @@ export function createMcpTaskToolHost(deps: {
       );
     },
 
-    query(sourceTaskId, input): McpTaskQueryResult {
+    query(principal, input): McpTaskQueryResult {
+      authorize(principal, principal.taskId);
+      const sourceTaskId = principal.taskId;
       const targetId = input.taskId ?? sourceTaskId;
       const target = requireHistoryTarget(sourceTaskId, targetId);
       const maxSeq = store.getLastEventSeq(target.id);
@@ -202,7 +231,9 @@ export function createMcpTaskToolHost(deps: {
       return result;
     },
 
-    read(sourceTaskId, input): McpTaskReadResult {
+    read(principal, input): McpTaskReadResult {
+      authorize(principal, principal.taskId);
+      const sourceTaskId = principal.taskId;
       const target = requireHistoryTarget(
         sourceTaskId,
         input.taskId ?? sourceTaskId,
@@ -235,22 +266,47 @@ export function createMcpTaskToolHost(deps: {
     },
 
     async create(
-      sourceTaskId: string,
+      principal: McpCallerPrincipal,
       input: McpTaskCreateInput,
     ): Promise<McpTaskCreateResult> {
-      const bridge = getBridge();
-      if (!bridge) throw new Error("agent_not_ready");
+      authorize(principal, principal.taskId);
+      const sourceTaskId = principal.taskId;
+      // The child runs in the source task's execution environment: a caller
+      // never chooses an agent, its own binding does.
+      const execution = await tasks.resolveTaskExecution(sourceTaskId);
+      // The resolution above awaited; the caller must still own its execution
+      // before anything is created.
+      authorize(principal, sourceTaskId);
       const source = requireTask(sourceTaskId);
       const requestedCwd = input.cwd ? expandHomePath(input.cwd) : source.cwd;
       const cwd = isAbsolute(requestedCwd)
         ? requestedCwd
         : resolve(source.cwd, requestedCwd);
-      const created = await tasks.createTask(bridge, cwd, source.id, "agent", {
-        parentId: source.id,
-        title: input.title,
-        model: input.model,
-        thinking: input.thinking,
-      });
+      const created = await tasks.createTask(
+        execution.bridge,
+        cwd,
+        source.id,
+        "agent",
+        {
+          parentId: source.id,
+          title: input.title,
+          model: input.model,
+          thinking: input.thinking,
+          // Third boundary: the task is persisted only while the caller still
+          // owns its execution. `newSession` and the tree lock are awaits, and
+          // a rotation can land inside either of them.
+          assertCaller: () => {
+            authorize(principal, sourceTaskId);
+          },
+        },
+      );
+      // The child is committed and stays: it was created while the caller
+      // still owned its execution. This last step writes into the *source*
+      // transcript and broadcasts, and `createTask` may have awaited source
+      // config inheritance since the persist boundary — so the caller is
+      // validated again immediately before the source-side commit, with no
+      // await in between.
+      authorize(principal, sourceTaskId);
       const taskCreatedMessageId = randomUUID();
       const taskCreated = buildTaskCreatedSystemMessage({
         taskId: created.taskId,
@@ -272,14 +328,19 @@ export function createMcpTaskToolHost(deps: {
       return { taskId: created.taskId };
     },
 
-    async cancel(sourceTaskId, targetTaskId, reason) {
-      const bridge = getBridge();
+    async cancel(principal, targetTaskId, reason) {
+      authorize(principal, principal.taskId);
+      const sourceTaskId = principal.taskId;
       const { target } = requireChildTarget(sourceTaskId, targetTaskId);
+      const bridge = tasks.existingTaskExecution(target.id)?.bridge ?? null;
       const result = await tasks.cancelTaskExecution(
         target.id,
         bridge,
         deps.cancelTimeoutMs ?? 0,
       );
+      // The cancel awaited a transport round trip; the record of what happened
+      // is only written while the caller still owns its execution.
+      authorize(principal, sourceTaskId);
       store.saveEvent(
         target.id,
         "task_cancel",
@@ -289,8 +350,9 @@ export function createMcpTaskToolHost(deps: {
       return { accepted: true, taskId: target.id, status: result.status };
     },
 
-    async send(sourceTaskId, targetTaskId, body) {
-      const bridge = getBridge();
+    async send(principal, targetTaskId, body) {
+      authorize(principal, principal.taskId);
+      const sourceTaskId = principal.taskId;
       const { source, target } = requireLocalTarget(sourceTaskId, targetTaskId);
       const created = store.createCollaborationMessage({
         id: randomUUID(),
@@ -309,13 +371,12 @@ export function createMcpTaskToolHost(deps: {
         title: `${formatTaskReference(sourceLabel)} sent ${formatTaskReference(targetLabel)}`,
         body: created.message.body,
       });
-      if (bridge) {
-        void tasks.drainCollaborationDeliveries(bridge, target.id);
-      }
+      void tasks.drainCollaborationDeliveries(target.id);
     },
 
-    async update(sourceTaskId, status, body) {
-      const bridge = getBridge();
+    async update(principal, status, body) {
+      authorize(principal, principal.taskId);
+      const sourceTaskId = principal.taskId;
       // The controller decides whether this update settles the target's sole
       // record (eligible current turn) or is only routed: to the stored source
       // when a record exists, or to the current parent when none does.
@@ -337,9 +398,7 @@ export function createMcpTaskToolHost(deps: {
           title: `${formatTaskReference(source.title ?? source.id.slice(0, 8))} sent ${formatTaskReference(target.title ?? target.id.slice(0, 8))}`,
           body: `Task status: ${status}\n${body}`,
         });
-        if (bridge) {
-          void tasks.drainCollaborationDeliveries(bridge, accountTargetTaskId);
-        }
+        void tasks.drainCollaborationDeliveries(accountTargetTaskId);
       }
     },
   };

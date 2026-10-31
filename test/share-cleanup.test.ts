@@ -17,8 +17,8 @@ describe("share preview cleanup — sweepStaleSharePreviewsOnce", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-cleanup-"));
-    store = new Store(tmpDir, "test-agent");
-    store.createTask("s", "/tmp/x");
+    store = new Store(tmpDir);
+    store.createTask("s", "/tmp/x", "auto", "test-agent");
   });
 
   afterEach(() => {
@@ -75,9 +75,9 @@ describe("share preview cleanup — sweepStaleSharePreviewsOnce", () => {
   it("sweeps multiple stale previews in one call", () => {
     // Partial unique index allows only one active preview per task —
     // use distinct tasks to seed multiple orphans.
-    store.createTask("s2", "/tmp/x");
-    store.createTask("s3", "/tmp/x");
-    store.createTask("s4", "/tmp/x");
+    store.createTask("s2", "/tmp/x", "auto", "test-agent");
+    store.createTask("s3", "/tmp/x", "auto", "test-agent");
+    store.createTask("s4", "/tmp/x", "auto", "test-agent");
     const seed = (tok: string, sess: string, age: number) => {
       store.insertSharePreview({ token: tok, taskId: sess, snapshotSeq: 1 });
       (
@@ -104,8 +104,8 @@ describe("share preview cleanup — startSharePreviewCleanup", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-cleanup-sched-"));
-    store = new Store(tmpDir, "test-agent");
-    store.createTask("s", "/tmp/x");
+    store = new Store(tmpDir);
+    store.createTask("s", "/tmp/x", "auto", "test-agent");
   });
 
   afterEach(() => {

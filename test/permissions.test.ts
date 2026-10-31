@@ -111,15 +111,15 @@ describe("Permissions REST API", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(join(tmpDir, "test.db"), "test-agent");
+    store = new Store(join(tmpDir, "test.db"));
     tasks = createTaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
+    tasks.attachExecutionBridge(mockBridge);
     broadcastEvents = [];
 
     const handler = createRequestHandler({
       store,
       tasks,
-      getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024 },
@@ -157,7 +157,9 @@ describe("Permissions REST API", () => {
   function addPendingPermission(
     taskId: string,
     requestId: string,
+    opts: { withExecution?: boolean } = {},
   ): PendingPermission {
+    const lease = tasks.authority.leaseFor(taskId);
     const perm: PendingPermission = {
       requestId,
       taskId,
@@ -167,6 +169,9 @@ describe("Permissions REST API", () => {
         { optionId: "allow_always", label: "Allow always" },
         { optionId: "deny", label: "Deny" },
       ],
+      ...(opts.withExecution !== false && lease
+        ? { execution: { agentId: "test-agent", lease } }
+        : {}),
     };
     tasks.pendingPermissions.set(requestId, perm);
     return perm;
@@ -199,6 +204,22 @@ describe("Permissions REST API", () => {
       assert.equal(perms.length, 2);
       assert.equal(perms[0].requestId, "perm-1");
       assert.equal(perms[1].requestId, "perm-2");
+      // The server's execution provenance is internal: neither the list nor the
+      // status payload may expose it.
+      assert.deepEqual(Object.keys(perms[0]).sort(), [
+        "options",
+        "requestId",
+        "title",
+        "toolName",
+      ]);
+      const status = await makeRequest(
+        port,
+        "GET",
+        `/api/v1/tasks/${taskId}/status`,
+      );
+      const statusBody = JSON.parse(status.body);
+      assert.equal(statusBody.pendingPermissions.length, 2);
+      assert.equal("execution" in statusBody.pendingPermissions[0], false);
     });
 
     it("returns only permissions for the requested task", async () => {
@@ -349,12 +370,13 @@ describe("Permissions REST API", () => {
 
     it("returns 503 when bridge is not ready", async () => {
       const taskId = await createTask();
-      addPendingPermission(taskId, "perm-1");
+      addPendingPermission(taskId, "perm-1", { withExecution: false });
 
+      // The pending request has no recorded execution provenance here, so the
+      // route refuses it before any bridge is consulted.
       const handler = createRequestHandler({
         store,
         tasks,
-        getBridge: () => null,
         publicDir,
         dataDir: tmpDir,
         limits: { bash_output: 1024, image_upload: 1024 },

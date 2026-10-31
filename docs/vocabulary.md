@@ -110,7 +110,17 @@ All three are internal: none of them is product copy, UI wording, or API naming.
 |---|---|
 | **generation** | The integer a task records for "which generation of writes I currently accept". Advanced by exactly one per committed binding change and never persisted — a restart kills every execution, so there is no earlier generation whose late writes could arrive. |
 | **lease** | `{taskId, generation}`, captured when an operation starts and validated at the write boundaries (event entry, and before each synchronous commit). A missing or unknown generation is refused rather than filled in with the current one. |
-| **empty execution slot** | A reserved placeholder session id meaning "the owner is decided, the execution is still to be materialized": the empty string for Root, `no-execution:<taskId>` for an ordinary task. See [`schema.md`](./schema.md#agent_sessions). |
+| **empty execution slot** | A reserved placeholder session id meaning "the binding agent is decided, the execution is still to be materialized": the empty string for Root, `no-execution:<taskId>` for an ordinary task. See [`schema.md`](./schema.md#agent_sessions). |
+| **current execution binding** | The one `(agent id, ACP session id)` pair that currently executes a task. A task has at most one, globally. |
+| **binding agent** | The configured agent of that binding. Public fields call it `agentId`. It is *not* an owner of the task: the task is the product entity and survives every rotation. |
+| **execution environment** | One configured agent's process and the state that dies with it (cached config schema, reported identity, command snapshots). One per agent, started on demand. |
+
+**`owner` is reserved for shares and preferences.** A task has a *binding
+agent*, never an "owner": the binding is replaceable, so calling the agent an
+owner would imply the task changes hands when an execution rotates. `owner`
+still names the operator in share vocabulary (`owner_label`, `owner_prefs`) and
+in the ACP sense of "the agent owns this session" — a real, non-transferable
+relationship.
 
 ## Prose and UI rules
 

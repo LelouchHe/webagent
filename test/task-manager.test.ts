@@ -7,6 +7,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { spawn } from "node:child_process";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -98,7 +99,7 @@ describe("TaskManager", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-test-"));
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     sm = createTaskManager(store, tmpDir, tmpDir);
   });
 
@@ -135,7 +136,7 @@ describe("TaskManager", () => {
           assert.ok(authorization);
           const taskId = capabilities.resolve(
             authorization.replace(/^Bearer\s+/, ""),
-          );
+          )?.taskId;
           assert.ok(taskId);
           assert.equal(mcpTaskManager.liveTasks.has(taskId), false);
           assert.equal(mcpTaskManager.isMcpSessionActive(taskId), true);
@@ -161,7 +162,7 @@ describe("TaskManager", () => {
 
     it("allows MCP auto-connect while an ACP task is being restored", async () => {
       const taskId = "restore-mcp";
-      store.createTask(taskId, tmpDir);
+      store.createTask(taskId, tmpDir, "auto", "test-agent");
       const capabilities = new CapabilityStore();
       const mcpTaskManagerRef: { current?: TaskManager } = {};
       const mcpServer = await startMcpTestServer(capabilities, (activeTaskId) =>
@@ -229,7 +230,7 @@ describe("TaskManager", () => {
           const authorization = entry.headers[0]?.value;
           assert.ok(authorization);
           mintedToken = authorization.replace(/^Bearer\s+/, "");
-          mintedTaskId = capabilities.resolve(mintedToken);
+          mintedTaskId = capabilities.resolve(mintedToken)?.taskId ?? null;
           throw new Error("ACP startup failed");
         },
         async setConfigOption() {
@@ -252,7 +253,7 @@ describe("TaskManager", () => {
 
   describe("deleteTask", () => {
     it("cleans up all state", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       sm.liveTasks.add("s1");
       sm.assistantBuffers.set("s1", "partial");
       sm.thinkingBuffers.set("s1", "hmm");
@@ -276,9 +277,27 @@ describe("TaskManager", () => {
     });
 
     it("purges obligation records when a task is released", async () => {
-      store.attachAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
-      store.createTask("source", tmpDir, "agent", "agent-source", "root");
-      store.createTask("target", tmpDir, "agent", "agent-target", "source");
+      store.attachAgentSession(
+        store.ensureRootTask(tmpDir).id,
+        "test-agent",
+        "agent-root",
+      );
+      store.createTask(
+        "source",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-source",
+        "root",
+      );
+      store.createTask(
+        "target",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-target",
+        "source",
+      );
       store.createCollaborationMessage({
         id: "purge-message",
         deliveryId: "purge-delivery",
@@ -297,8 +316,15 @@ describe("TaskManager", () => {
     });
 
     it("cascades to descendants, cleaning their runtime state and retiring executions", async () => {
-      store.createTask("parent", "/a", "auto", "agent-parent");
-      store.createTask("child", "/b", "auto", "agent-child", "parent");
+      store.createTask("parent", "/a", "auto", "test-agent", "agent-parent");
+      store.createTask(
+        "child",
+        "/b",
+        "auto",
+        "test-agent",
+        "agent-child",
+        "parent",
+      );
       sm.liveTasks.add("parent");
       sm.liveTasks.add("child");
       sm.assistantBuffers.set("child", "partial answer");
@@ -332,7 +358,7 @@ describe("TaskManager", () => {
     });
 
     it("skips retirement when no bridge is available", async () => {
-      store.createTask("s1", "/x", "auto", "agent-s1");
+      store.createTask("s1", "/x", "auto", "test-agent", "agent-s1");
 
       const result = await sm.deleteTask(undefined, "s1");
 
@@ -341,8 +367,15 @@ describe("TaskManager", () => {
     });
 
     it("rejects deleting a subtree with active work", async () => {
-      store.createTask("parent", "/a", "auto", "agent-parent");
-      store.createTask("child", "/b", "auto", "agent-child", "parent");
+      store.createTask("parent", "/a", "auto", "test-agent", "agent-parent");
+      store.createTask(
+        "child",
+        "/b",
+        "auto",
+        "test-agent",
+        "agent-child",
+        "parent",
+      );
       sm.activePrompts.add("child");
 
       await assert.rejects(() => sm.deleteTask(undefined, "parent"), {
@@ -407,11 +440,147 @@ describe("TaskManager", () => {
         commands: [],
       });
     });
+
+    it("moves the epoch when the process is replaced, so revisions may restart", () => {
+      sm.updateAgentCommands("s1", [
+        { name: "context", description: "Show context usage" },
+      ]);
+      const before = sm.getAgentCommands("s1");
+      // A restarted agent renumbers its commands from 1; without a new epoch a
+      // client would keep the older, higher revision and never update.
+      sm.clearAgentRuntime("test-agent");
+      const after = sm.getAgentCommands("s1");
+      assert.notEqual(after.epoch, before.epoch);
+      assert.equal(after.revision, 0);
+    });
+
+    it("does not announce a snapshot for a task another agent now carries", () => {
+      store.createTask("s1", "/x", "auto", "test-agent", "s1-session");
+      // A stale snapshot on A after the task moved to B must be dropped, not
+      // broadcast: the client watching B would read it as "commands vanished".
+      sm.updateAgentCommands("s1", [
+        { name: "context", description: "Show context usage" },
+      ]);
+      const adapterA = sm["agents"].adapterFor("test-agent");
+      assert.equal(adapterA.agentCommandSnapshots.has("s1"), true);
+
+      // Move the task to another agent's binding (the store is the authority).
+      store.replaceAgentSession("s1", "other-agent", "s1-session");
+      const cleared = sm.clearAgentCommands("test-agent");
+      assert.deepEqual(cleared, []);
+      assert.equal(adapterA.agentCommandSnapshots.has("s1"), false);
+    });
+
+    it("stops a bash run before dropping its handle during an agent teardown", () => {
+      store.createTask("bash-only", tmpDir, "auto", "test-agent", "agent-bash");
+      let killed = 0;
+      const proc = {
+        pid: 424242,
+        kill: () => {
+          killed++;
+          return true;
+        },
+        exitCode: null,
+        signalCode: null,
+        stdout: { on() {} },
+        stderr: { on() {} },
+      } as never;
+      sm.runningBashProcs.set("bash-only", proc);
+      // No active prompt: a bash-only task is still this agent's work.
+      assert.equal(sm.activePrompts.has("bash-only"), false);
+
+      sm.clearAgentRuntime("test-agent");
+
+      assert.equal(killed, 1, "the child was stopped, not just forgotten");
+      // The handle stays until the process reports close: dropping it here
+      // would leave a running child that nothing can reach. The route's
+      // identity-checked close handler is what releases it.
+      assert.equal(sm.runningBashProcs.get("bash-only"), proc);
+      assert.equal(sm.releaseBashProc("bash-only", proc), true);
+      assert.equal(sm.runningBashProcs.has("bash-only"), false);
+    });
+
+    it("does not let a replaced run's late close drop the current handle", () => {
+      store.createTask("swap", tmpDir, "auto", "test-agent", "agent-swap");
+      const oldProc = { pid: 111, exitCode: 0, signalCode: null } as never;
+      const newProc = { pid: 222, exitCode: null, signalCode: null } as never;
+      sm.runningBashProcs.set("swap", newProc);
+
+      assert.equal(
+        sm.releaseBashProc("swap", oldProc),
+        false,
+        "an earlier run's close must be ignored",
+      );
+      assert.equal(sm.runningBashProcs.get("swap"), newProc);
+    });
+
+    it("kills a bash run that ignores SIGINT, and waits for it to close", async () => {
+      // A real process that ignores SIGINT: without the escalation it would
+      // outlive the stop request with no handle able to reach it.
+      const child = spawn(process.execPath, [
+        "-e",
+        "process.on('SIGINT', () => {}); console.log('ready'); setInterval(() => {}, 1000);",
+      ]);
+      // Wait until the handler is installed: a SIGINT that arrives before it
+      // would kill the process for the default reason, not because the stop
+      // worked.
+      await new Promise<void>((resolve) =>
+        child.stdout.once("data", () => {
+          resolve();
+        }),
+      );
+      const closed = new Promise<void>((resolve) =>
+        child.once("close", () => {
+          resolve();
+        }),
+      );
+      store.createTask(
+        "ignores-int",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-bash",
+      );
+      sm.runningBashProcs.set("ignores-int", child);
+      child.once("close", () => {
+        sm.releaseBashProc("ignores-int", child);
+      });
+      try {
+        await sm.stopBashProc("ignores-int");
+        // The stop is bounded, so the close must follow it; an unbounded wait
+        // here would turn "it never stopped" into a hung test instead of a
+        // failure.
+        const closedInTime = await Promise.race([
+          closed.then(() => true),
+          new Promise<boolean>((resolve) =>
+            setTimeout(() => {
+              resolve(false);
+            }, 2000),
+          ),
+        ]);
+        assert.equal(
+          closedInTime,
+          true,
+          "the run closed within the stop bound",
+        );
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        assert.throws(
+          () => process.kill(child.pid!, 0),
+          /ESRCH/,
+          "the process is really gone, not merely signalled",
+        );
+        assert.equal(sm.runningBashProcs.has("ignores-int"), false);
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }
+    });
   });
 
   describe("createTask", () => {
     it("inherits config from the source task", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.saveEvent(
         "s1",
         "user_message",
@@ -507,7 +676,7 @@ describe("TaskManager", () => {
     });
 
     it("inherits thinking through an agent's thought_level option", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.saveEvent(
         "s1",
         "user_message",
@@ -586,7 +755,10 @@ describe("TaskManager", () => {
           }),
         /invalid_config_value:model/,
       );
-      assert.equal(store.listTasks().length, 0);
+      assert.deepEqual(
+        store.listTasks().map((task) => task.id),
+        [store.rootTaskId],
+      );
       assert.equal(sm.liveTasks.size, 0);
     });
 
@@ -678,7 +850,7 @@ describe("TaskManager", () => {
 
     it("cleans up old empty tasks and removes them from liveTasks", async () => {
       // Create an empty task and mark it as live (simulating a prior createTask)
-      store.createTask("empty-old", "/x");
+      store.createTask("empty-old", "/x", "auto", "test-agent");
       sm.liveTasks.add("empty-old");
       // Backdate created_at so it's older than the threshold
       store["db"]
@@ -686,7 +858,7 @@ describe("TaskManager", () => {
         .run(Date.now() - 120_000, "empty-old");
 
       // Create a task with events — should not be cleaned
-      store.createTask("has-events", "/x");
+      store.createTask("has-events", "/x", "auto", "test-agent");
       store.saveEvent(
         "has-events",
         "user_message",
@@ -720,7 +892,7 @@ describe("TaskManager", () => {
 
     it("does not clean recently created empty tasks", async () => {
       // Create an empty task that's fresh (just now)
-      store.createTask("fresh-empty", "/x");
+      store.createTask("fresh-empty", "/x", "auto", "test-agent");
       sm.liveTasks.add("fresh-empty");
 
       const bridge = {
@@ -745,8 +917,15 @@ describe("TaskManager", () => {
 
   describe("clearTask", () => {
     it("clears the obligation watchdog on runtime rotation", async () => {
-      store.createTask("parent", tmpDir, "agent", "agent-parent");
-      store.createTask("child", tmpDir, "agent", "agent-child", "parent");
+      store.createTask("parent", tmpDir, "agent", "test-agent", "agent-parent");
+      store.createTask(
+        "child",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-child",
+        "parent",
+      );
       sm.liveTasks.add("child");
       store.createCollaborationMessage({
         id: "rotation-obligation",
@@ -797,7 +976,7 @@ describe("TaskManager", () => {
     });
 
     it("rotates the ACP execution while preserving the WebAgent task", async () => {
-      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       store.updateTaskConfig("web-1", "model", "model-old");
       store.updateTaskConfig("web-1", "mode", "plan");
       sm.liveTasks.add("web-1");
@@ -842,11 +1021,17 @@ describe("TaskManager", () => {
 
       assert.equal(result.taskId, "web-1");
       assert.deepEqual(
-        store.listTasks().map((task) => task.id),
+        store
+          .listTasks()
+          .map((task) => task.id)
+          .filter((id) => id !== store.rootTaskId),
         ["web-1"],
       );
       assert.equal(store.getAgentSessionId("web-1"), "agent-new");
-      assert.equal(store.getTaskId("agent-old"), undefined);
+      assert.equal(
+        store.sessionView("test-agent").getTaskId("agent-old"),
+        undefined,
+      );
       // The retired execution is explicitly removed, not just unbound.
       assert.deepEqual(retired, ["agent-old"]);
       assert.deepEqual(configCalls, [
@@ -856,7 +1041,7 @@ describe("TaskManager", () => {
     });
 
     it("never retires the current execution when the agent returns the same id", async () => {
-      store.createTask("web-1", tmpDir, "auto", "agent-same");
+      store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-same");
       sm.liveTasks.add("web-1");
       const retired: string[] = [];
       const bridge = {
@@ -883,7 +1068,7 @@ describe("TaskManager", () => {
     });
 
     it("restores thinking through the replacement execution's thought_level option", async () => {
-      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       store.updateTaskConfig("web-1", "reasoning_effort", "high");
       sm.liveTasks.add("web-1");
       const configCalls: Array<{ id: string; value: string }> = [];
@@ -916,7 +1101,7 @@ describe("TaskManager", () => {
     });
 
     it("clears runtime buffers and command snapshots for the replacement execution", async () => {
-      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       sm.liveTasks.add("web-1");
       sm.assistantBuffers.set("web-1", "partial answer");
       sm.thinkingBuffers.set("web-1", "partial thought");
@@ -957,7 +1142,7 @@ describe("TaskManager", () => {
       // own lastStateSeq; if rotation restarted the server seq at 0, every
       // post-clear snapshot would look "superseded" and be dropped, leaving
       // the client permanently desynced (stuck busy).
-      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       sm.liveTasks.add("web-1");
       sm.state.patch("web-1", {
         runtime: {
@@ -999,10 +1184,10 @@ describe("TaskManager", () => {
     });
 
     it("rotates MCP capability only after the replacement execution succeeds", async () => {
-      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       sm.liveTasks.add("web-1");
       const capabilities = new CapabilityStore();
-      const oldToken = capabilities.mint("web-1");
+      const oldToken = capabilities.mint("web-1", "test-agent", 1);
       let newToken: string | undefined;
       const manager = createTaskManager(
         store,
@@ -1029,11 +1214,11 @@ describe("TaskManager", () => {
       await manager.clearTask(bridge, "web-1");
 
       assert.equal(capabilities.resolve(oldToken), null);
-      assert.equal(newToken && capabilities.resolve(newToken), "web-1");
+      assert.equal(newToken && capabilities.resolve(newToken)?.taskId, "web-1");
     });
 
     it("does not reset the state ledger when replacement creation fails", async () => {
-      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       sm.liveTasks.add("web-1");
       sm.state.patch("web-1", {
         runtime: { busy: { kind: "agent", since: "t0", promptId: "prompt-1" } },
@@ -1063,10 +1248,10 @@ describe("TaskManager", () => {
     });
 
     it("keeps the current MCP capability when replacement creation fails", async () => {
-      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       sm.liveTasks.add("web-1");
       const capabilities = new CapabilityStore();
-      const oldToken = capabilities.mint("web-1");
+      const oldToken = capabilities.mint("web-1", "test-agent", 1);
       const manager = createTaskManager(
         store,
         tmpDir,
@@ -1091,7 +1276,7 @@ describe("TaskManager", () => {
         () => manager.clearTask(bridge, "web-1"),
         /replacement failed/,
       );
-      assert.equal(capabilities.resolve(oldToken), "web-1");
+      assert.equal(capabilities.resolve(oldToken)?.taskId, "web-1");
       assert.equal(store.getAgentSessionId("web-1"), "agent-old");
     });
   });
@@ -1113,8 +1298,10 @@ describe("TaskManager", () => {
         },
       };
 
-      await sm.ensureRootTask(bridge);
-      await sm.ensureRootTask(bridge);
+      sm.attachExecutionBridge(bridge);
+      await sm.ensureRootTask();
+      sm.attachExecutionBridge(bridge);
+      await sm.ensureRootTask();
 
       assert.equal(newTaskCalls, 1);
       assert.equal(store.getAgentSessionId(store.rootTaskId), "agent-root");
@@ -1124,9 +1311,9 @@ describe("TaskManager", () => {
       );
     });
 
-    it("skips the lazy empty binding at startup and materializes on resume", async () => {
+    it("replaces a reset Root's empty slot with a fresh session on first use", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.attachAgentSession(rootId, "agent-old");
+      store.attachAgentSession(rootId, "test-agent", "agent-old");
       store.resetRootTask();
 
       let newSessionCalls = 0;
@@ -1143,15 +1330,12 @@ describe("TaskManager", () => {
         },
       };
 
-      // Startup sees the binding row (empty session id = "materialize
-      // lazily"). It must not create a session and then collide with that
-      // row; the first resume owns materialization.
-      await sm.ensureRootTask(bridge);
-      assert.equal(newSessionCalls, 0);
-      assert.ok(store.getAgentSessionBinding(rootId));
+      // A reset leaves a binding row holding its own empty execution slot,
+      // which is a distinct state from "never bound": the first use replaces
+      // the slot instead of trying to load a session the agent never saw.
+      sm.attachExecutionBridge(bridge);
       assert.equal(store.getAgentSessionId(rootId), "");
-
-      await sm.ensureResumed(bridge, rootId);
+      await sm.ensureRootTask();
       assert.equal(newSessionCalls, 1);
       assert.equal(store.getAgentSessionId(rootId), "agent-materialized");
       assert.ok(sm.liveTasks.has(rootId));
@@ -1159,7 +1343,7 @@ describe("TaskManager", () => {
 
     it("restores saved config when lazily materializing a DB-only reset", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.attachAgentSession(rootId, "agent-old");
+      store.attachAgentSession(rootId, "test-agent", "agent-old");
       store.resetRootTask();
       store.updateTaskConfig(rootId, "model", "saved-model");
       store.updateTaskConfig(rootId, "mode", "saved-mode");
@@ -1243,7 +1427,7 @@ describe("TaskManager", () => {
   describe("Root reset without a live execution", () => {
     it("resets DB-only, never creates a replacement execution, and retires the old one", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.attachAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
       store.saveEvent(
         rootId,
         "user_message",
@@ -1280,7 +1464,14 @@ describe("TaskManager", () => {
 
     it("succeeds offline with no bridge", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.createTask("child", tmpDir, "auto", "agent-child", rootId);
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-child",
+        rootId,
+      );
       store.saveEvent(
         rootId,
         "user_message",
@@ -1296,15 +1487,24 @@ describe("TaskManager", () => {
       );
       assert.equal(store.getEvents(rootId).length, 0);
       assert.equal(store.getTaskIncludingDeleted("child"), undefined);
-      assert.equal(store.getAgentSessionId(rootId), "");
+      // The Root had no binding, so it stays unbound: a reset never invents an
+      // owner, and the first use will attach one.
+      assert.equal(store.getAgentSessionId(rootId), undefined);
     });
 
     it("deletes another agent's descendant, its disk files, and its label cache", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.attachAgentSession(rootId, "agent-root");
-      store.createTask("a-task", tmpDir, "auto", "agent-a", rootId);
-      const b = new Store(tmpDir, "backend-b");
-      b.createTask("b-child", tmpDir, "auto", "agent-b", rootId);
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
+      store.createTask(
+        "a-task",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-a",
+        rootId,
+      );
+      const b = new Store(tmpDir);
+      b.createTask("b-child", tmpDir, "auto", "backend-b", "agent-b", rootId);
       b.saveEvent(
         "b-child",
         "user_message",
@@ -1353,7 +1553,7 @@ describe("TaskManager", () => {
       assert.equal(store.getTaskIncludingDeleted("a-task"), undefined);
       assert.equal(store.getEvents("b-child").length, 0);
       assert.equal(store.getAttachment("b-child", "b-attachment"), undefined);
-      const check = new Store(tmpDir, "backend-b");
+      const check = new Store(tmpDir);
       assert.equal(check.getTask("b-child"), undefined);
       check.close();
     });
@@ -1363,7 +1563,7 @@ describe("TaskManager", () => {
     it("does not hold Root lock while ACP setup is pending", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
-      store.createTask("a", tmpDir, "auto", "agent-a", rootId);
+      store.createTask("a", tmpDir, "auto", "test-agent", "agent-a", rootId);
 
       let releaseRootCreate!: () => void;
       const rootCreateReleased = new Promise<void>((resolve) => {
@@ -1413,8 +1613,8 @@ describe("TaskManager", () => {
     it("does not block sibling task creation on another branch", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
-      store.createTask("a", tmpDir, "auto", "agent-a", rootId);
-      store.createTask("b", tmpDir, "auto", "agent-b", rootId);
+      store.createTask("a", tmpDir, "auto", "test-agent", "agent-a", rootId);
+      store.createTask("b", tmpDir, "auto", "test-agent", "agent-b", rootId);
 
       let releaseSessions!: () => void;
       const sessionsReleased = new Promise<void>((resolve) => {
@@ -1461,8 +1661,8 @@ describe("TaskManager", () => {
     it("rejects Root reset when a just-created descendant is still initializing", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
-      store.attachAgentSession(rootId, "agent-root");
-      store.createTask("a", tmpDir, "auto", "agent-a", rootId);
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
+      store.createTask("a", tmpDir, "auto", "test-agent", "agent-a", rootId);
       store.updateTaskConfig("a", "model", "model-old");
       sm.liveTasks.add(rootId);
 
@@ -1516,7 +1716,7 @@ describe("TaskManager", () => {
     it("rechecks work that starts while Root reset waits for its lock", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
-      store.createTask("a", tmpDir, "auto", "agent-a", rootId);
+      store.createTask("a", tmpDir, "auto", "test-agent", "agent-a", rootId);
       const releaseBranch = await sm["treeLock"].acquire({
         shared: [rootId],
         exclusive: ["a"],
@@ -1544,7 +1744,7 @@ describe("TaskManager", () => {
     it("creates a task after a concurrent Root reset, never during it", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
-      store.attachAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
       sm.liveTasks.add(rootId);
 
       const releaseRoot = await sm["treeLock"].acquire({
@@ -1593,7 +1793,7 @@ describe("TaskManager", () => {
 
   describe("buffer management", () => {
     it("appends and flushes assistant buffer", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
 
       sm.appendAssistant("s1", "Hello ");
       sm.appendAssistant("s1", "world");
@@ -1609,7 +1809,7 @@ describe("TaskManager", () => {
     });
 
     it("appends and flushes thinking buffer", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
 
       sm.appendThinking("s1", "Let me think...");
       sm.flushBuffers("s1");
@@ -1620,13 +1820,13 @@ describe("TaskManager", () => {
     });
 
     it("flush is a no-op when buffers are empty", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       sm.flushBuffers("s1"); // should not throw
       assert.deepEqual(store.getEvents("s1"), []);
     });
 
     it("discards late buffers for a deleted task", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.deleteTask("s1");
       sm.assistantBuffers.set("s1", "late answer");
       sm.thinkingBuffers.set("s1", "late thought");
@@ -1639,7 +1839,7 @@ describe("TaskManager", () => {
     });
 
     it("flushAssistantBuffer saves only the assistant buffer", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       sm.appendAssistant("s1", "Hello");
       sm.appendThinking("s1", "hmm");
 
@@ -1654,7 +1854,7 @@ describe("TaskManager", () => {
     });
 
     it("flushThinkingBuffer saves only the thinking buffer", () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       sm.appendAssistant("s1", "Hello");
       sm.appendThinking("s1", "hmm");
 
@@ -1671,7 +1871,7 @@ describe("TaskManager", () => {
 
   describe("getTaskCwd", () => {
     it("returns task cwd when exists", () => {
-      store.createTask("s1", "/my/project");
+      store.createTask("s1", "/my/project", "auto", "test-agent");
       assert.equal(sm.getTaskCwd("s1"), "/my/project");
     });
 
@@ -1723,9 +1923,27 @@ describe("TaskManager", () => {
     });
 
     it("recovers a delivery after a pending prompt is cancelled", async () => {
-      store.attachAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
-      store.createTask("source", tmpDir, "agent", "agent-source", "root");
-      store.createTask("target", tmpDir, "agent", "agent-target", "root");
+      store.attachAgentSession(
+        store.ensureRootTask(tmpDir).id,
+        "test-agent",
+        "agent-root",
+      );
+      store.createTask(
+        "source",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-source",
+        "root",
+      );
+      store.createTask(
+        "target",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-target",
+        "root",
+      );
       sm.liveTasks.add("target");
       store.createCollaborationMessage({
         id: "cancelled-message",
@@ -1737,6 +1955,7 @@ describe("TaskManager", () => {
       });
       const prompts: string[] = [];
       const bridge = makeRecoveryBridge(prompts);
+      sm.attachExecutionBridge(bridge);
       const submissionId = sm.reservePromptSubmission("target");
       assert.ok(submissionId);
       sm.syncBusy("target");
@@ -1745,7 +1964,12 @@ describe("TaskManager", () => {
       // intentionally rejected by the ACP busy guard. This call is the
       // registration point for the later idle recovery in the fixed code.
       assert.equal(
-        await sm.drainCollaborationDeliveries(bridge, "target"),
+        await sm.drainCollaborationDeliveries("target", {
+          ...bridge,
+          cancel: async () => {},
+          resolvePermission: () => {},
+          denyPermission: () => {},
+        }),
         false,
       );
       const cancelled = await sm.cancelTaskExecution("target", bridge, 0);
@@ -1766,9 +1990,27 @@ describe("TaskManager", () => {
     });
 
     it("bounds the delivery drain to one per idle transition", async () => {
-      store.attachAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
-      store.createTask("source", tmpDir, "agent", "agent-source", "root");
-      store.createTask("child", tmpDir, "agent", "agent-child", "root");
+      store.attachAgentSession(
+        store.ensureRootTask(tmpDir).id,
+        "test-agent",
+        "agent-root",
+      );
+      store.createTask(
+        "source",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-source",
+        "root",
+      );
+      store.createTask(
+        "child",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-child",
+        "root",
+      );
       sm.liveTasks.add("child");
       store.createCollaborationMessage({
         id: "bounded-message",
@@ -1780,17 +2022,17 @@ describe("TaskManager", () => {
       });
       const prompts: string[] = [];
       const bridge = makeRecoveryBridge(prompts);
-      sm.setRecoveryBridge(bridge);
+      sm.attachExecutionBridge(bridge);
       sm.activePrompts.add("child");
       sm.syncBusy("child");
       let drainCalls = 0;
       const drain = sm.drainCollaborationDeliveries.bind(sm);
       (sm as any).drainCollaborationDeliveries = async (
-        bridgeArg: Parameters<TaskManager["drainCollaborationDeliveries"]>[0],
         taskId: string,
+        bridgeArg?: Parameters<TaskManager["drainCollaborationDeliveries"]>[1],
       ) => {
         drainCalls++;
-        return drain(bridgeArg, taskId);
+        return drain(taskId, bridgeArg);
       };
 
       sm.activePrompts.delete("child");
@@ -1811,20 +2053,20 @@ describe("TaskManager", () => {
     });
 
     it("does not recover when an idle transition has no unfinished work", async () => {
-      store.createTask("manual", tmpDir, "auto", "agent-manual");
+      store.createTask("manual", tmpDir, "auto", "test-agent", "agent-manual");
       const prompts: string[] = [];
       const bridge = makeRecoveryBridge(prompts);
-      sm.setRecoveryBridge(bridge);
+      sm.attachExecutionBridge(bridge);
       sm.activePrompts.add("manual");
       sm.syncBusy("manual");
       let drainCalls = 0;
       const drain = sm.drainCollaborationDeliveries.bind(sm);
       (sm as any).drainCollaborationDeliveries = async (
-        bridgeArg: Parameters<TaskManager["drainCollaborationDeliveries"]>[0],
         taskId: string,
+        bridgeArg?: Parameters<TaskManager["drainCollaborationDeliveries"]>[1],
       ) => {
         drainCalls++;
-        return drain(bridgeArg, taskId);
+        return drain(taskId, bridgeArg);
       };
 
       sm.activePrompts.delete("manual");
@@ -1839,7 +2081,7 @@ describe("TaskManager", () => {
 
   describe("ensureResumed", () => {
     it("is a no-op when task is already live", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       sm.liveTasks.add("s1");
 
       let loadCalled = false;
@@ -1861,7 +2103,7 @@ describe("TaskManager", () => {
     });
 
     it("calls loadSession for non-live tasks", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       sm.cachedConfigOptions = [
         {
           type: "select",
@@ -1892,7 +2134,7 @@ describe("TaskManager", () => {
     });
 
     it("deduplicates concurrent resume calls", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       sm.cachedConfigOptions = [];
 
       let loadCount = 0;
@@ -1929,7 +2171,7 @@ describe("TaskManager", () => {
     });
 
     it("propagates errors to all waiters", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
 
       const bridge = {
         async newSession() {
@@ -1957,7 +2199,7 @@ describe("TaskManager", () => {
     // through a config id the resumed session actually advertises.
 
     it("warms cachedConfigOptions on first resume when cache is empty and task has stored mode", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.updateTaskConfig("s1", "mode", "#plan");
       sm.cachedConfigOptions = [];
 
@@ -2014,7 +2256,7 @@ describe("TaskManager", () => {
     });
 
     it("skips warming when cache is already populated", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.updateTaskConfig("s1", "mode", "#plan");
       sm.cachedConfigOptions = [
         {
@@ -2045,7 +2287,7 @@ describe("TaskManager", () => {
     });
 
     it("skips warming when task has no stored config at all", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       sm.cachedConfigOptions = [];
 
       let setCalled = false;
@@ -2069,7 +2311,7 @@ describe("TaskManager", () => {
     });
 
     it("uses only advertised config keys when warming the cache", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.updateTaskConfig("s1", "reasoning_effort", "medium");
       store.updateTaskConfig("s1", "model", "gpt-5.4");
       sm.cachedConfigOptions = [];
@@ -2120,7 +2362,7 @@ describe("TaskManager", () => {
     });
 
     it("does not probe unsupported thinking aliases", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.updateTaskConfig("s1", "reasoning_effort", "medium");
       sm.cachedConfigOptions = [];
 
@@ -2161,7 +2403,7 @@ describe("TaskManager", () => {
     });
 
     it("resume still succeeds when setConfigOption throws", async () => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.updateTaskConfig("s1", "mode", "#plan");
       sm.cachedConfigOptions = [];
 
@@ -2189,7 +2431,7 @@ describe("TaskManager", () => {
       // Probe responses carry agent in-memory defaults for unrelated keys
       // (e.g. setConfigOption(mode, #plan) response's model.currentValue is
       // NOT the user's preference). Warming must never write these back.
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       store.updateTaskConfig("s1", "mode", "#plan");
       store.updateTaskConfig("s1", "model", "gpt-5.4");
       sm.cachedConfigOptions = [];
@@ -2232,7 +2474,7 @@ describe("TaskManager", () => {
 
   describe("attachment label cache", () => {
     beforeEach(() => {
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
     });
 
     it("getLabelMap lazy-builds from store on first call", () => {
@@ -2296,7 +2538,7 @@ describe("TaskManager", () => {
     });
 
     it("isolates per-task caches", () => {
-      store.createTask("s2", "/y");
+      store.createTask("s2", "/y", "auto", "test-agent");
       store.insertAttachment({
         id: "aaaa1111",
         taskId: "s1",
@@ -2336,7 +2578,7 @@ describe("TaskManager", () => {
       sm.getLabelMap("s1"); // populate cache
       await sm.deleteTask(undefined, "s1");
       // Re-create task and request map — must NOT see stale entry.
-      store.createTask("s1", "/x");
+      store.createTask("s1", "/x", "auto", "test-agent");
       const m = sm.getLabelMap("s1");
       assert.equal(m.size, 0);
     });
@@ -2351,8 +2593,21 @@ describe("TaskManager", () => {
     const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
     function seedDispatch(target: Store) {
-      target.createTask("parent", tmpDir, "agent", "agent-parent");
-      target.createTask("child", tmpDir, "agent", "agent-child", "parent");
+      target.createTask(
+        "parent",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-parent",
+      );
+      target.createTask(
+        "child",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-child",
+        "parent",
+      );
       target.createCollaborationMessage({
         id: "rotation-dispatch",
         deliveryId: "rotation-dispatch-delivery",
@@ -2389,7 +2644,12 @@ describe("TaskManager", () => {
       };
 
       assert.equal(
-        await sm.drainCollaborationDeliveries(bridge, "child"),
+        await sm.drainCollaborationDeliveries("child", {
+          ...bridge,
+          cancel: async () => {},
+          resolvePermission: () => {},
+          denyPermission: () => {},
+        }),
         true,
       );
       await flush();
@@ -2498,8 +2758,15 @@ describe("TaskManager", () => {
   // F1: a deferred reminder must not strand the task's turn.
   describe("reminder turn ownership", () => {
     function seedReminder(): DirectedObligation {
-      store.createTask("parent", tmpDir, "auto", "agent-parent");
-      store.createTask("child", tmpDir, "auto", "agent-child", "parent");
+      store.createTask("parent", tmpDir, "auto", "test-agent", "agent-parent");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-child",
+        "parent",
+      );
       sm.liveTasks.add("child");
       store.createCollaborationMessage({
         id: "turn-ownership",
@@ -2559,7 +2826,7 @@ describe("TaskManager", () => {
         isAvailable: () => true,
       };
       sm.liveTasks.delete("child");
-      sm.setRecoveryBridge(bridge);
+      sm.attachExecutionBridge(bridge);
 
       const outcome = await sm.submitObligationReminder(obligation);
 
@@ -2592,11 +2859,11 @@ describe("TaskManager", () => {
         async prompt(_taskId: string, text: string) {
           prompts.push(text);
           // The task is rotated while the reminder turn is in flight.
-          store.replaceAgentSession("child", "agent-new");
+          store.replaceAgentSession("child", "test-agent", "agent-new");
         },
         isAvailable: () => true,
       };
-      sm.setRecoveryBridge(bridge);
+      sm.attachExecutionBridge(bridge);
 
       const outcome = await sm.submitObligationReminder(obligation);
 
@@ -2642,7 +2909,7 @@ describe("TaskManager", () => {
         },
         isAvailable: () => available,
       };
-      sm.setRecoveryBridge(bridge);
+      sm.attachExecutionBridge(bridge);
 
       const outcome = await sm.submitObligationReminder(obligation);
 
@@ -2654,7 +2921,7 @@ describe("TaskManager", () => {
 
       // Transport recovers: the controller can still submit.
       const healed: string[] = [];
-      sm.setRecoveryBridge({
+      sm.attachExecutionBridge({
         ...bridge,
         async prompt(_taskId: string, text: string) {
           healed.push(text);
@@ -2684,7 +2951,14 @@ describe("TaskManager", () => {
 
     it("rejects a Root reset while a descendant is restoring", async () => {
       const rootTaskId = store.ensureRootTask(tmpDir).id;
-      store.createTask("child", tmpDir, "auto", "child-session", rootTaskId);
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "child-session",
+        rootTaskId,
+      );
       const gate = deferred<void>();
       const loadingBridge = {
         async newSession() {
@@ -2707,7 +2981,7 @@ describe("TaskManager", () => {
     });
 
     it("rejects a rotation that arrives during the restore window", async () => {
-      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       const gate = deferred<void>();
       let loadEntered = false;
       const loadingBridge = {
@@ -2756,7 +3030,7 @@ describe("TaskManager", () => {
     });
 
     it("rejects a restore whose execution was replaced mid-flight", async () => {
-      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       const gate = deferred<void>();
       const loadingBridge = {
         async newSession() {
@@ -2773,7 +3047,7 @@ describe("TaskManager", () => {
 
       const restore = sm.resumeTask(loadingBridge, "web-1");
       // A different client rotates the task while the ACP load is in flight.
-      store.replaceAgentSession("web-1", "agent-new");
+      store.replaceAgentSession("web-1", "test-agent", "agent-new");
       gate.resolve();
 
       await assert.rejects(() => restore, /Execution replaced/);
@@ -2787,7 +3061,7 @@ describe("TaskManager", () => {
     });
 
     it("still rotates when the task's own compaction turn owns the busy state", async () => {
-      store.createTask("web-1", tmpDir, "auto", "agent-old");
+      store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       sm.liveTasks.add("web-1");
       sm.compactingTasks.add("web-1");
       sm.activePrompts.add("web-1");

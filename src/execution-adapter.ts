@@ -7,17 +7,19 @@ const exlog = log.scope("execution");
 /** The one capability the runtime needs to drop a stale execution. */
 export interface ExecutionRetirer {
   retireExecution?(agentSessionId: string): Promise<void>;
+  /** False while this transport has no live agent process. */
+  isAvailable?(): boolean;
+  /** Release the agent process this transport owns, if any. */
+  shutdown?(): Promise<void>;
 }
 
 /**
  * One agent-scoped execution environment: the facts that belong to *the
  * process driving ACP sessions for one configured agent*, not to any task.
  *
- * This process currently instantiates exactly one of these because only
- * `default_agent` has a live bridge. The point of the class is the boundary, not a per-agent
- * `TaskManager`: everything task-scoped stays on `TaskManager`, and everything
- * that would have to be re-created when an agent process is replaced lives
- * here.
+ * Everything task-scoped stays on `TaskManager`; everything that would have to
+ * be re-created when an agent process is replaced lives here. There is one
+ * instance per agent this process has actually started, and none at boot.
  */
 export class ExecutionAdapter {
   readonly agentId: string;
@@ -28,16 +30,45 @@ export class ExecutionAdapter {
   agentInfo: { name: string; version: string } | null = null;
   /** Available-command snapshots are agent process state, not task state. */
   readonly agentCommandSnapshots = new Map<string, AgentCommandSnapshot>();
-  readonly agentCommandEpoch = randomUUID();
-  /** The bridge currently driving this agent, once one is started. */
+  /**
+   * Identifies the revision space of `agentCommandSnapshots`. A new agent
+   * process restarts each task's revision at 1, so the epoch must move with it:
+   * clients accept a lower revision only when the epoch changed.
+   */
+  private commandEpoch = randomUUID();
+
+  get agentCommandEpoch(): string {
+    return this.commandEpoch;
+  }
+  /** The transport currently driving this agent, once one is started. */
   bridge: ExecutionRetirer | null = null;
 
   constructor(agentId: string) {
     this.agentId = agentId;
   }
 
-  bindBridge(bridge: ExecutionRetirer): void {
+  bindBridge(bridge: ExecutionRetirer | null): void {
     this.bridge = bridge;
+  }
+
+  /**
+   * True while a live agent process is behind this adapter. A transport that
+   * does not implement `isAvailable` (test doubles and embedders) counts as
+   * available once bound, so the runtime need not special-case mocks.
+   */
+  isAvailable(): boolean {
+    if (!this.bridge) return false;
+    return this.bridge.isAvailable?.() ?? true;
+  }
+
+  /** Drop everything that described a previous agent process. */
+  resetProcessState(): void {
+    this.cachedConfigOptions = [];
+    this.agentInfo = null;
+    this.agentCommandSnapshots.clear();
+    // A fresh process renumbers commands from 1; advance the epoch so clients
+    // never compare the new revisions with the old ones.
+    this.commandEpoch = randomUUID();
   }
 
   /**

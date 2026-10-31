@@ -110,36 +110,36 @@ function arrayFormItemPaths(schema: unknown, path: string): string[] {
 describe("CapabilityStore", () => {
   it("mints capability tokens with a mcp_ prefix that resolve back to the task", () => {
     const caps = new CapabilityStore();
-    const token = caps.mint("web-1");
+    const token = caps.mint("web-1", "agent-a", 1);
     assert.match(token, /^mcp_/);
-    assert.equal(caps.resolve(token), "web-1");
+    assert.equal(caps.resolve(token)?.taskId, "web-1");
   });
 
   it("minting again for the same task invalidates the previous token", () => {
     const caps = new CapabilityStore();
-    const first = caps.mint("web-1");
-    const second = caps.mint("web-1");
+    const first = caps.mint("web-1", "agent-a", 1);
+    const second = caps.mint("web-1", "agent-a", 1);
     assert.notEqual(first, second);
     assert.equal(caps.resolve(first), null);
-    assert.equal(caps.resolve(second), "web-1");
+    assert.equal(caps.resolve(second)?.taskId, "web-1");
   });
 
   it("can keep the previous token valid while a replacement execution starts", () => {
     const caps = new CapabilityStore();
-    const first = caps.mint("web-1");
-    const second = caps.mintAdditional("web-1");
+    const first = caps.mint("web-1", "agent-a", 1);
+    const second = caps.mintAdditional("web-1", "agent-a", 1);
 
-    assert.equal(caps.resolve(first), "web-1");
-    assert.equal(caps.resolve(second), "web-1");
+    assert.equal(caps.resolve(first)?.taskId, "web-1");
+    assert.equal(caps.resolve(second)?.taskId, "web-1");
 
     caps.revokeOtherTokens("web-1", second);
     assert.equal(caps.resolve(first), null);
-    assert.equal(caps.resolve(second), "web-1");
+    assert.equal(caps.resolve(second)?.taskId, "web-1");
   });
 
   it("revokes per task and fails closed for unknown tokens", () => {
     const caps = new CapabilityStore();
-    const token = caps.mint("web-1");
+    const token = caps.mint("web-1", "agent-a", 1);
     caps.revokeByTask("web-1");
     assert.equal(caps.resolve(token), null);
     assert.equal(caps.resolve("mcp_nope"), null);
@@ -156,8 +156,8 @@ describe("CapabilityStore", () => {
 
   it("clear drops every capability", () => {
     const caps = new CapabilityStore();
-    const a = caps.mint("web-1");
-    const b = caps.mint("web-2");
+    const a = caps.mint("web-1", "agent-a", 1);
+    const b = caps.mint("web-2", "agent-a", 1);
     caps.clear();
     assert.equal(caps.resolve(a), null);
     assert.equal(caps.resolve(b), null);
@@ -188,9 +188,9 @@ describe("createMcpEndpoint", () => {
   const caps = new CapabilityStore();
   const calls: Array<unknown> = [];
   const taskTools = {
-    list: (taskId: string) => [
+    list: (principal: { taskId: string }) => [
       {
-        id: taskId,
+        id: principal.taskId,
         title: "Current",
         relation: "self" as const,
         workflowStatus: "idle" as const,
@@ -199,7 +199,7 @@ describe("createMcpEndpoint", () => {
         lastEventAt: "2026-01-01T00:00:00.000Z",
       },
     ],
-    query: (_sourceTaskId: string, input: unknown) => {
+    query: (_principal: { taskId: string }, input: unknown) => {
       calls.push({ kind: "query", input });
       return {
         task_id: "web-1",
@@ -207,7 +207,7 @@ describe("createMcpEndpoint", () => {
         rows: [],
       };
     },
-    read: (_sourceTaskId: string, input: unknown) => {
+    read: (_principal: { taskId: string }, input: unknown) => {
       calls.push({ kind: "read", input });
       return { task_id: "web-1", rows: [] };
     },
@@ -334,20 +334,20 @@ describe("createMcpEndpoint", () => {
     const unknown = await mcpPost("/mcp", {}, auth("mcp_bogus"));
     assert.equal(unknown.status, 401);
 
-    const token = caps.mint("web-1");
+    const token = caps.mint("web-1", "agent-a", 1);
     caps.revokeByTask("web-1");
     const revoked = await mcpPost("/mcp", {}, auth(token));
     assert.equal(revoked.status, 401);
   });
 
   it("rejects a valid capability for a task that is not live with 401", async () => {
-    const token = caps.mint("web-ghost");
+    const token = caps.mint("web-ghost", "agent-a", 1);
     const res = await mcpPost("/mcp", {}, auth(token));
     assert.equal(res.status, 401);
   });
 
   it("serves the Task control-plane tools", async () => {
-    const token = caps.mint("web-1");
+    const token = caps.mint("web-1", "agent-a", 1);
     live.add("web-1");
 
     const init = await mcpPost(
@@ -617,7 +617,18 @@ describe("createMcpEndpoint", () => {
       auth(token),
     );
     assert.equal(update.status, 200);
-    assert.deepEqual(calls, [
+    // Every host call carries the request's caller principal first.
+    for (const entry of calls) {
+      const args = (entry as { args?: unknown[] }).args;
+      if (args) assert.equal((args[0] as { taskId: string }).taskId, "web-1");
+    }
+    // The principal is transport-level identity, not part of the operation's
+    // own arguments, so the rest of each call is compared without it.
+    const withoutPrincipal = calls.map((entry) => {
+      const row = entry as { kind: string; args?: unknown[]; input?: unknown };
+      return row.args ? { kind: row.kind, args: row.args.slice(1) } : row;
+    });
+    assert.deepEqual(withoutPrincipal, [
       {
         kind: "query",
         input: {
@@ -631,7 +642,6 @@ describe("createMcpEndpoint", () => {
       {
         kind: "create",
         args: [
-          "web-1",
           {
             title: "child",
             cwd: undefined,
@@ -640,16 +650,16 @@ describe("createMcpEndpoint", () => {
           },
         ],
       },
-      { kind: "cancel", args: ["web-1", "task-2", "superseded"] },
-      { kind: "send", args: ["web-1", "task-2", "hello"] },
-      { kind: "update", args: ["web-1", "done", "finished"] },
+      { kind: "cancel", args: ["task-2", "superseded"] },
+      { kind: "send", args: ["task-2", "hello"] },
+      { kind: "update", args: ["done", "finished"] },
     ]);
 
     live.delete("web-1");
   });
 
   it("keeps every tool schema inside the OpenAI function-calling subset", async () => {
-    const token = caps.mint("web-schema");
+    const token = caps.mint("web-schema", "agent-a", 1);
     live.add("web-schema");
     const init = await mcpPost(
       "/mcp",
@@ -692,7 +702,7 @@ describe("createMcpEndpoint", () => {
   });
 
   it("counts the search-text limit in code points, not UTF-16 units", async () => {
-    const token = caps.mint("web-units");
+    const token = caps.mint("web-units", "agent-a", 1);
     live.add("web-units");
     // 128 astral code points is 256 UTF-16 units: allowed by the documented
     // code-point limit, so validation must not reject it, while 129 code

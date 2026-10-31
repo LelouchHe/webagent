@@ -71,6 +71,61 @@ The operational form of that sentence:
   empty-task GC's surviving children rely on it to stay reachable. *Why:*
   filtering the cascade by owner left another agent's descendants alive under a
   parent the user had deleted — unreachable rows, not a protected subtree.
+- **Execution environment comes from the binding, never from the caller.** A
+  request names a task; the runtime resolves which agent executes it. Five
+  contexts are the deliberate exceptions and each names its own source: the
+  first execution of a task (the verified target), a replacement (the new
+  execution), retirement/deletion/GC/Root reset (the old binding recorded at
+  commit), agent events and permission responses (the source execution that
+  produced them), and continuations inside one operation (the context captured
+  at its start). *Why:* "resolve the current binding" at each site looks
+  uniform and silently mis-retires, mis-authorizes, or sends a foreign
+  operation into the default process.
+- **A read never depends on an execution being resolvable, and it never waits
+  for one.** Listing, reading a task, its snapshot, attachments, shares, and
+  deletion return while the binding agent is missing, dead, or no longer
+  configured, and they return immediately: no fixed bound is involved. A read
+  *may* start a warm-up — an opened task starts its agent so the schema and
+  commands can be reported — but that runs in the background and never decides
+  the response. When it finishes, the restored facts are published to that
+  task's subscribers as `task_runtime_warmed`, which is the only compensation a
+  cold client gets. A failed warm-up is silent, and a warm-up that outlived a
+  rotation is refused before publishing (same task, same binding agent, same
+  generation). Operations that genuinely need a process (prompt, create,
+  approve, reload, explicit `/clear`) resolve one, and they fail with the rescue
+  path (`POST /clear { agentId }`) instead of falling back to another agent's
+  process. *Why:* a real CLI replays history on restore, so any fixed wait is
+  either too short (the UI stays cold forever) or too long (every read pays for
+  it); and an unavailable binary must not take the user's history with it.
+- **An agent's lifecycle events touch only the tasks it carries.** Reload,
+  disconnect, and restart clear that agent's streaming, plans, usage, pending
+  permissions, busy claims, and live-task membership; the `connected` event
+  names its agent, and the client only lets the agent carrying its current
+  task complete a reload. *Why:* an unrelated agent coming up must not unlock
+  another client's stuck turn.
+- **Root has three first-use states, and one materialization path.** A task
+  with no binding *attaches* an execution, a binding holding its own empty slot
+  *replaces* it, and a real binding *loads* it. All three run through
+  `ensureResumed`/`pendingResumes`, the one per-task single-flight; a second
+  entry point (such as calling `ensureRootTask` directly, which has no
+  deduplication) could materialize two sessions for one task. A never-bound
+  task must not manufacture a generation before its attach commits.
+- **A write that outlives its authorization is refused at the submission
+  boundary.** An operation that acts on some task's behalf captures the
+  caller's identity once (task, binding agent, generation) and re-validates it
+  immediately before each write, with no await between the check and the write.
+  This includes the last step of `task_create`: the child is committed under
+  the authority that created it and stays, but the row written into the
+  *source* transcript is refused if the source rotated during the child's
+  config inheritance. *Why:* an await is a window, and an authorization checked
+  once at the entrance is stale by the time a later side effect lands.
+- **Stopping a local process is bounded and collectable.** A stop request sends
+  the polite signal and escalates to a kill after a grace period; the handle
+  stays tracked until the process reports `close`, and release is
+  identity-checked so a replaced run's late close cannot drop the current one.
+  *Why:* dropping the only handle after a polite signal leaves a command that
+  ignores it running unmanaged, and an unconditional delete by task id lets a
+  stale process take the replacement's handle with it.
 - **A rotation does not end the task's debt.** It truncates the old transport
   (claimed retry ids, unfinished delivery rows), keeps the same obligation
   record with its attempts and age, cancels only the silence watchdog (its turn

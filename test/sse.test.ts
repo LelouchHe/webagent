@@ -163,15 +163,15 @@ describe("SSE REST API", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(join(tmpDir, "test.db"), "test-agent");
+    store = new Store(join(tmpDir, "test.db"));
     tasks = createTaskManager(store, tmpDir, tmpDir);
     sseManager = new SseManager();
     mockBridge = createMockBridge();
+    tasks.attachExecutionBridge(mockBridge);
 
     const handler = createRequestHandler({
       store,
       tasks,
-      getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024 },

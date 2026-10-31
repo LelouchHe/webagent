@@ -103,8 +103,8 @@ describe("share smoke — end-to-end lifecycle", () => {
 
   before(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-smk-"));
-    store = new Store(tmpDir, "test-agent");
-    store.createTask(sid, "/tmp/smoke");
+    store = new Store(tmpDir);
+    store.createTask(sid, "/tmp/smoke", "auto", "test-agent");
     store.saveEvent(
       sid,
       "user_message",

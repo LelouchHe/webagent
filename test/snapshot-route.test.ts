@@ -42,7 +42,7 @@ describe("GET /api/v1/tasks/:id/snapshot", () => {
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-snapshot-"));
     mkdirSync(join(tmpDir, "public"));
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     tasks = createTaskManager(store, tmpDir, tmpDir);
     sse = new SseManager();
     const handler = createRequestHandler({
@@ -78,7 +78,7 @@ describe("GET /api/v1/tasks/:id/snapshot", () => {
   });
 
   it("returns idle snapshot for a fresh task", async () => {
-    store.createTask("s1", "/tmp/cwd");
+    store.createTask("s1", "/tmp/cwd", "auto", "test-agent");
     const res = await req(port, "GET", "/api/v1/tasks/s1/snapshot");
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
@@ -97,7 +97,12 @@ describe("GET /api/v1/tasks/:id/snapshot", () => {
   });
 
   it("includes a home-abbreviated display cwd", async () => {
-    store.createTask("s1", join(homedir(), "mine", "project"));
+    store.createTask(
+      "s1",
+      join(homedir(), "mine", "project"),
+      "auto",
+      "test-agent",
+    );
 
     const res = await req(port, "GET", "/api/v1/tasks/s1/snapshot");
     const body = JSON.parse(res.body);
@@ -107,7 +112,7 @@ describe("GET /api/v1/tasks/:id/snapshot", () => {
   });
 
   it("includes the current in-memory plan", async () => {
-    store.createTask("s1", "/tmp/cwd");
+    store.createTask("s1", "/tmp/cwd", "auto", "test-agent");
     const plan = [{ content: "Continue work", status: "in_progress" }];
     tasks.state.patch("s1", { runtime: { plan } });
 
@@ -118,7 +123,7 @@ describe("GET /api/v1/tasks/:id/snapshot", () => {
   });
 
   it("reflects agent busy when a prompt is active", async () => {
-    store.createTask("s1", "/tmp/cwd");
+    store.createTask("s1", "/tmp/cwd", "auto", "test-agent");
     tasks.activePrompts.add("s1");
     const res = await req(port, "GET", "/api/v1/tasks/s1/snapshot");
     const body = JSON.parse(res.body);
@@ -128,7 +133,7 @@ describe("GET /api/v1/tasks/:id/snapshot", () => {
   });
 
   it("includes task.lastEventSeq from stored events", async () => {
-    store.createTask("s1", "/tmp/cwd");
+    store.createTask("s1", "/tmp/cwd", "auto", "test-agent");
     store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
     const res = await req(port, "GET", "/api/v1/tasks/s1/snapshot");
     const body = JSON.parse(res.body);
@@ -136,7 +141,7 @@ describe("GET /api/v1/tasks/:id/snapshot", () => {
   });
 
   it("includes the current agent command snapshot", async () => {
-    store.createTask("s1", "/tmp/cwd");
+    store.createTask("s1", "/tmp/cwd", "auto", "test-agent");
     tasks.updateAgentCommands("s1", [
       {
         name: "compact",

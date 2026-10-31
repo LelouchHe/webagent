@@ -7,6 +7,7 @@ import { Store, emptyExecutionSlot } from "../src/store.ts";
 import { TaskManager } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { ExecutionAdapter } from "../src/execution-adapter.ts";
+import { StaticAgentEnvironment } from "../src/agent-registry.ts";
 import {
   ExecutionAuthority,
   GenerationLedger,
@@ -34,8 +35,8 @@ describe("implicit owner rotation", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  function openStore(agentId: string): Store {
-    const store = new Store(dataDir, agentId);
+  function openStore(): Store {
+    const store = new Store(dataDir);
     stores.push(store);
     return store;
   }
@@ -51,8 +52,11 @@ describe("implicit owner rotation", () => {
       dataDir,
       state: new TaskStateManager(),
       authority: new ExecutionAuthority(new GenerationLedger()),
-      adapter: new ExecutionAdapter(agentId),
-      isAgentConfigured: (id) => configured.includes(id),
+      agents: new StaticAgentEnvironment(
+        agentId,
+        [new ExecutionAdapter(agentId)],
+        { isConfigured: (id) => configured.includes(id) },
+      ),
     });
     managers.push(manager);
     return manager;
@@ -83,9 +87,9 @@ describe("implicit owner rotation", () => {
   }
 
   function seedRootOwnedBy(owner: string, sessionId: string): void {
-    const ownerStore = openStore(owner);
+    const ownerStore = openStore();
     ownerStore.ensureRootTask(dataDir);
-    ownerStore.attachAgentSession(ownerStore.rootTaskId, sessionId);
+    ownerStore.attachAgentSession(ownerStore.rootTaskId, owner, sessionId);
   }
 
   function rootBinding(store: Store) {
@@ -102,29 +106,33 @@ describe("implicit owner rotation", () => {
 
   it("never displaces an owner that is still configured", async () => {
     seedRootOwnedBy("agent-a", "session-a");
-    const store = openStore("agent-b");
+    const store = openStore();
     const tasks = makeManager(store, "agent-b", ["agent-a", "agent-b"]);
     const { bridge, created } = bridgeRecorder();
 
-    await tasks.ensureRootTask(bridge);
+    tasks.attachExecutionBridge(bridge);
+    // The owner is still configured, so resolving the task targets it — and
+    // this process cannot start it. Nothing is displaced.
+    await assert.rejects(() => tasks.ensureRootTask(), /not available/);
     assert.deepEqual(created, [], "a configured owner must not be replaced");
     assert.equal(rootBinding(store)?.agent_key, "agent-a");
     assert.equal(rootBinding(store)?.agent_session_id, "session-a");
     assert.deepEqual(rotationEvents(store), []);
 
-    // The same guard applies to a restore attempt.
+    // The same guard applies to a restore attempt through another transport.
     await assert.rejects(() => tasks.resumeTask(bridge, store.rootTaskId));
     assert.equal(rootBinding(store)?.agent_key, "agent-a");
   });
 
   it("takes over Root from an agent that is no longer configured", async () => {
     seedRootOwnedBy("agent-a", "session-a");
-    const store = openStore("agent-b");
+    const store = openStore();
     const tasks = makeManager(store, "agent-b", ["agent-b"]);
     const { bridge, created } = bridgeRecorder();
     const generationBefore = tasks.authority.generationOf(store.rootTaskId);
 
-    await tasks.ensureRootTask(bridge);
+    tasks.attachExecutionBridge(bridge);
+    await tasks.resolveTaskExecution(store.rootTaskId);
 
     assert.deepEqual(created, [], "the takeover materializes lazily");
     const binding = rootBinding(store);
@@ -145,11 +153,12 @@ describe("implicit owner rotation", () => {
 
   it("materializes the taken-over Root through a normal prompt", async () => {
     seedRootOwnedBy("agent-a", "session-a");
-    const store = openStore("agent-b");
+    const store = openStore();
     const tasks = makeManager(store, "agent-b", ["agent-b"]);
     const { bridge, created } = bridgeRecorder();
 
-    await tasks.ensureRootTask(bridge);
+    tasks.attachExecutionBridge(bridge);
+    await tasks.ensureRootTask();
     const event = await tasks.resumeTask(bridge, store.rootTaskId);
 
     assert.equal(created.length, 1);
@@ -160,17 +169,31 @@ describe("implicit owner rotation", () => {
   });
 
   it("keeps the obligation and truncates the transport on an implicit rotation", async () => {
-    const store = openStore("agent-b");
+    const store = openStore();
     store.ensureRootTask(dataDir);
-    store.createTask("parent", dataDir, "agent", "parent-session", "root");
-    store.createTask("child", dataDir, "agent", "child-session", "parent");
+    store.createTask(
+      "parent",
+      dataDir,
+      "agent",
+      "agent-b",
+      "parent-session",
+      "root",
+    );
+    store.createTask(
+      "child",
+      dataDir,
+      "agent",
+      "agent-b",
+      "child-session",
+      "parent",
+    );
     // Re-home both tasks onto the agent that is about to disappear.
-    const owner = openStore("agent-a");
-    owner.replaceAgentSession("parent", "parent-session");
-    owner.replaceAgentSession("child", "child-session");
+    const owner = openStore();
+    owner.replaceAgentSession("parent", "agent-a", "parent-session");
+    owner.replaceAgentSession("child", "agent-a", "child-session");
     const tasks = makeManager(store, "agent-b", ["agent-b"]);
     const { bridge, prompts } = bridgeRecorder();
-    tasks.setRecoveryBridge(bridge);
+    tasks.attachExecutionBridge(bridge);
     store.createCollaborationMessage({
       id: "implicit-rotation-dispatch",
       deliveryId: "implicit-rotation-delivery",
@@ -221,16 +244,17 @@ describe("implicit owner rotation", () => {
     // is keyed by (agent_key, agent_session_id), so a shared sentinel would
     // collide with Root and with each other.
     seedRootOwnedBy("agent-a", "session-a");
-    const store = openStore("agent-b");
+    const store = openStore();
     const tasks = makeManager(store, "agent-b", ["agent-b"]);
     const { bridge } = bridgeRecorder();
-    await tasks.ensureRootTask(bridge);
+    tasks.attachExecutionBridge(bridge);
+    await tasks.resolveTaskExecution(store.rootTaskId);
     const rootSlot = store.getCurrentExecutionBinding(store.rootTaskId);
     assert.ok(rootSlot);
     assert.equal(rootSlot.agent_session_id, emptyExecutionSlot("root"));
 
     // Both ordinary tasks are owned by the agent that just disappeared.
-    const owner = openStore("agent-a");
+    const owner = openStore();
     owner.createTask("t1", dataDir, "auto", "owner-session-1");
     owner.createTask("t2", dataDir, "auto", "owner-session-2");
 

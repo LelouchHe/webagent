@@ -47,7 +47,7 @@ describe("PushService — PushNotification payload shape", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-egress-"));
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     registry = new ClientRegistry();
     push = new StubbedPushService(store, tmpDir, "mailto:test@example.com", {
       clientRegistry: registry,
@@ -242,7 +242,7 @@ describe("PushService — PushNotification payload shape", () => {
   it("sendForEvent uses sess-<sid>-done tag for prompt_done", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
     const taskId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
-    store.createTask(taskId, "/tmp");
+    store.createTask(taskId, "/tmp", "auto", "test-agent");
     store.updateTaskTitle(taskId, "My work");
     await push.sendForEvent(taskId, { type: "prompt_done" });
     assert.equal(push.sent.length, 1);
@@ -254,7 +254,7 @@ describe("PushService — PushNotification payload shape", () => {
   it("sendForEvent uses sess-<sid>-perm-<eid> for permission_request", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
     const taskId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
-    store.createTask(taskId, "/tmp");
+    store.createTask(taskId, "/tmp", "auto", "test-agent");
     await push.sendForEvent(taskId, {
       type: "permission_request",
       title: "Run ls?",
@@ -268,7 +268,7 @@ describe("PushService — PushNotification payload shape", () => {
   it("sendForEvent uses sess-<sid>-bash-<eid> for bash_done", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
     const taskId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
-    store.createTask(taskId, "/tmp");
+    store.createTask(taskId, "/tmp", "auto", "test-agent");
     await push.sendForEvent(taskId, {
       type: "bash_done",
       command: "ls",
@@ -283,7 +283,7 @@ describe("PushService — PushNotification payload shape", () => {
   it("sendForEvent suppresses push when the target task is visible", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
     const taskId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
-    store.createTask(taskId, "/tmp");
+    store.createTask(taskId, "/tmp", "auto", "test-agent");
     push.registerClient("c1", "https://push.example.com/1");
     visBoth(push, registry, "c1", { visible: true });
     visBoth(push, registry, "c1", { active: taskId });
@@ -294,7 +294,7 @@ describe("PushService — PushNotification payload shape", () => {
   it("sendForEvent returns false for non-notifiable event types", async () => {
     store.saveSubscription("https://push.example.com/1", "auth1", "p256dh1");
     const taskId = "abcd1234-aaaa-bbbb-cccc-dddddddddddd";
-    store.createTask(taskId, "/tmp");
+    store.createTask(taskId, "/tmp", "auto", "test-agent");
     const sent = await push.sendForEvent(taskId, {
       type: "assistant_message",
     });
@@ -387,7 +387,7 @@ describe("PushService — Apple endpoint skip for kind:'close'", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-push-apple-filter-"));
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     registry = new ClientRegistry();
     push = new StubbedPushService(store, tmpDir, "mailto:test@example.com", {
       clientRegistry: registry,

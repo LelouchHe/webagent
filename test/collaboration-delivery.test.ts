@@ -15,11 +15,29 @@ describe("TaskManager collaboration delivery drain", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-collaboration-delivery-"));
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     tasks = createTaskManager(store, tmpDir, tmpDir);
-    store.attachAgentSession(store.ensureRootTask(tmpDir).id, "agent-root");
-    store.createTask("source", tmpDir, "auto", "agent-source", "root");
-    store.createTask("target", tmpDir, "auto", "agent-target", "root");
+    store.attachAgentSession(
+      store.ensureRootTask(tmpDir).id,
+      "test-agent",
+      "agent-root",
+    );
+    store.createTask(
+      "source",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-source",
+      "root",
+    );
+    store.createTask(
+      "target",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-target",
+      "root",
+    );
     store.updateTaskTitle("source", "source");
     store.updateTaskTitle("target", "target");
     tasks.liveTasks.add("target");
@@ -58,7 +76,7 @@ describe("TaskManager collaboration delivery drain", () => {
     };
 
     assert.equal(
-      await tasks.drainCollaborationDeliveries(bridge, "target"),
+      await tasks.drainCollaborationDeliveries("target", bridge),
       true,
     );
     await waitFor(
@@ -92,7 +110,7 @@ describe("TaskManager collaboration delivery drain", () => {
     });
     try {
       assert.equal(
-        await tasks.drainCollaborationDeliveries(mockBridgeStubs(), "target"),
+        await tasks.drainCollaborationDeliveries("target", mockBridgeStubs()),
         false,
       );
       assert.deepEqual(
@@ -123,7 +141,7 @@ describe("TaskManager collaboration delivery drain", () => {
     };
 
     assert.equal(
-      await tasks.drainCollaborationDeliveries(bridge, "target"),
+      await tasks.drainCollaborationDeliveries("target", bridge),
       true,
     );
     await waitFor(
@@ -201,7 +219,7 @@ describe("TaskManager collaboration delivery drain", () => {
     tasks.activePrompts.add("target");
 
     assert.equal(
-      await tasks.drainCollaborationDeliveries(mockBridgeStubs(), "target"),
+      await tasks.drainCollaborationDeliveries("target", mockBridgeStubs()),
       false,
     );
     assert.equal(store.getCollaborationDelivery("d1")?.status, "queued");

@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-10-26
+Last updated: 2026-11-02
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -24,6 +24,65 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - Local file viewer (arbitrary paths, signed bytes, slash picker, responsive viewer)
 
 ## Unit / Integration Scenarios
+
+### Multi-agent runtime
+
+- `test/multi-agent-runtime.test.ts` (real ACP child processes, one per agent)
+  - no agent exists before the first demand; unrelated agents stay unstarted
+  - each task executes on its binding agent: B really receives the prompt, A receives nothing, and two agents sharing one session id stay two executions
+  - a task bound to one agent cannot be projected onto another agent's identical session id (`setConfigOption` refuses)
+  - concurrent demand starts one process; a failed `initialize` leaves no process and the next start succeeds
+  - reads (task, list, events, session view, commands, permissions) work with the agent's transport gone, and no read rotates the binding
+  - Root's three first-use states: unbound attaches, empty slot replaces, real binding loads; concurrent first use materializes once; each commit advances the generation
+  - a reload of one agent leaves another agent's streaming, plan, usage, and busy state untouched
+  - GC and Root reset retire through the agent recorded on the binding, never a default adapter (same session id on both agents)
+
+- `test/multi-agent-mcp.test.ts` (production host + endpoint + real store/ledger; business calls go through real HTTP `tools/call`)
+  - a caller that rotates while a `task_create` waits for the tree lock is refused before the task row is written
+  - a caller that rotates while a `task_cancel` awaits the transport gets a refused tool result and no cancellation record
+  - a caller that rotates during a child's config inheritance is refused before the source transcript row is written; the already-committed child stays
+  - an `initializing` capability completes the MCP handshake but every business tool returns `initializing`; after promotion the same token works
+  - a request authenticated before a real rotation cannot write after it (the task-persist boundary re-checks after `newSession`), while a fresh token against the current generation succeeds; the rotated-away token is revoked
+  - a token whose task moved to another agent is refused; a Root reset revokes the Root token
+  - unknown/revoked tokens are refused before any protocol work; the caller principal is frozen and carries `(task, agent, generation)`
+
+- `test/multi-agent-pending.test.ts` (real ACP child process)
+  - the agent connects to `/mcp` from inside `session/new`: the handshake succeeds, `task_list` answers `initializing`, nothing is created, and the same token works after the binding commits
+
+- `test/agent-registry.test.ts` (real child processes with delayed / refused initialize)
+  - a half-initialized bridge is not available and concurrent demand shares one process
+  - a live process that refuses `initialize` is cleaned up (its pid is gone) and the same agent retries successfully
+  - a reload beside a start is refused, a resolve during a reload waits, and one process exists throughout
+  - `shutdownAll` reaches a transport whose adapter was already unbound
+
+- `test/multi-agent-config-race.test.ts` (HTTP)
+  - a configuration request parked in `readBody` while the task is cleared onto another agent is refused with `409`, and no configuration request reaches the new execution
+
+- `test/runtime-warm.test.ts` (background warm-up)
+  - a completed warm-up publishes the restored schema and commands once per task and generation
+  - concurrent reads share one restore; a failed warm-up publishes nothing
+  - a warm-up that outlived a rotation publishes nothing (the guard is exercised directly: a stale generation and a moved binding are both refused)
+  - a deleted task publishes nothing
+
+- `test/e2e/runtime-warm.spec.ts` (slow restore, 3s load delay)
+  - the snapshot answers in well under the restore time, and the detail read returns no schema
+  - without a refresh, the restored model and command appear from `task_runtime_warmed`
+
+- `test/multi-agent-reads.test.ts` (HTTP + real processes)
+  - three genuinely different unavailable shapes, each produced its own way: a real spawn of a missing binary, a configured agent whose transport was shut down, and a binding whose agent left the configuration
+  - reads cover task detail, snapshot, events, the list, attachment bytes, the owner share list, and deletion, in every state, without moving the binding
+  - the snapshot returns while a restore is still hanging (it does not wait at all)
+
+- `test/multi-agent-clear.test.ts` (HTTP)
+  - `/clear { agentId }` moves a task off a removed agent, records `explicit_clear`, preserves history, and creates exactly one session on the configured agent
+  - an unconfigured `agentId`, a non-string `agentId`, and the default-to-binding path
+
+- `test/multi-agent-server.test.ts` (black-box: real server process + two mock agents)
+  - boot starts zero agents; the first task starts only the default agent
+  - global list, `?agent=` narrowing, and `agentId` on every payload
+  - `/clear { agentId }` moves a task onto the second agent without starting the first
+  - reads, snapshots, and deletion keep working with agents idle
+  - a Root carried by another configured agent is returned by bootstrap as metadata without resolving or rebinding
 
 ### ACP bridge and backend orchestration
 
@@ -109,6 +168,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the collaboration-message emitter reports exactly one post-commit fact for both the normal and in-transaction creation entry points
 
 - `test/task-manager.test.ts`
+  - a bash run that ignores `SIGINT` is escalated to `SIGKILL` and the stop waits for close; the handle stays tracked until then; a replaced run's late close is ignored; an agent teardown stops bash-only tasks
   - task title hydration
   - task deletion cleanup
   - inherited config application for new tasks
@@ -187,11 +247,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/tasks.test.ts`
   - task CRUD (create / get / delete / list), with server-only id assignment; the literal `root` resolves like a task and unknown/legacy ids return 404
-  - task list remains an agent-scoped array; detail, bootstrap/create/clear/reset, config, task_created, and connected payloads carry backend Root authority additively
+  - task list is global (`?agent=` narrows); every list entry, task detail, snapshot, bootstrap/create/clear payload, and `task_created` broadcast carries `agentId` alongside backend Root authority
+  - creating a child of a task carried by another configured agent targets that agent without rotating the parent; when the parent's agent is gone the child is created for `default_agent`
+  - `POST /clear { agentId }` rescues a task onto another configured agent, leaves the `agent_rotation` record, and refuses an unconfigured / non-string `agentId`
   - REST and MCP callers cannot choose reserved task ids; bootstrap, clear, compact, and actual/synthetic task_created envelopes preserve Root identity
+  - bootstrap materializes the Root as the workspace's first task (attach on a never-bound Root, materialize on a reset slot) instead of creating an unrelated task
   - config update (model, mode) and broadcast
   - source filter on task list
-  - agent-scoped parent validation: a parent owned by another agent is rejected and no child or system_message is written into it
+  - parent validation: an unknown parent is 400; a parent carried by another agent keeps its own binding
   - gzip compression for events endpoint
   - streaming buffer flush on events endpoint
   - auto-resume of non-live tasks

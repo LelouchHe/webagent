@@ -123,9 +123,10 @@ describe("Task REST API", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     tasks = createTaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
+    tasks.attachExecutionBridge(mockBridge);
     broadcastEvents = [];
     bodyReadStarted = new Promise<string>((resolve) => {
       markBodyReadStarted = resolve;
@@ -134,7 +135,6 @@ describe("Task REST API", () => {
     const handler = createRequestHandler({
       store,
       tasks,
-      getBridge: () => mockBridge,
       onRequestBodyReadStart: (url) => {
         markBodyReadStarted(url);
       },
@@ -217,7 +217,12 @@ describe("Task REST API", () => {
       const bodies = responses.map((response) => JSON.parse(response.body));
       assert.equal(new Set(bodies.map((body) => body.id)).size, 1);
       assert.ok(bodies.every((body) => body.rootTaskId === store.rootTaskId));
-      assert.equal(store.listTasks().length, 1);
+      // Bootstrap materialized the Root as the workspace's first task: no
+      // extra task exists beside it.
+      assert.deepEqual(
+        store.listTasks().map((task) => task.id),
+        [store.rootTaskId],
+      );
       assert.equal(
         broadcastEvents.filter((event) => event.type === "task_created").length,
         1,
@@ -241,12 +246,21 @@ describe("Task REST API", () => {
 
       const explicit = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       assert.notEqual(JSON.parse(explicit.body).id, bootstrapId);
-      assert.equal(store.listTasks().length, 2);
+      assert.equal(
+        store.listTasks().filter((task) => task.id !== store.rootTaskId).length,
+        1,
+      );
     });
 
     it("bootstrap ignores tasks owned by another agent", async () => {
-      const other = new Store(tmpDir, "other-agent");
-      other.createTask("other-web", tmpDir, "auto", "other-agent-task");
+      const other = new Store(tmpDir);
+      other.createTask(
+        "other-web",
+        tmpDir,
+        "auto",
+        "other-agent",
+        "other-agent-task",
+      );
       other.close();
 
       const response = await makeRequest(
@@ -258,13 +272,15 @@ describe("Task REST API", () => {
 
       assert.equal(response.status, 200);
       assert.notEqual(body.id, "other-web");
-      assert.equal(store.listTasks().length, 1);
-      assert.equal(store.getTask("other-web"), undefined);
+      // Bootstrap created (or reused) a task the default agent carries; the
+      // other agent's task remains visible to reads but is never resumed here.
+      assert.equal(store.getBindingAgent(body.id), "test-agent");
+      assert.ok(store.getTask("other-web"));
     });
 
     describe("POST /api/v1/tasks/:id/cancel", () => {
       it("resends cancel while the agent prompt remains active", async () => {
-        store.createTask("s-cancel", tmpDir);
+        store.createTask("s-cancel", tmpDir, "auto", "test-agent");
         tasks.activePrompts.add("s-cancel");
         tasks.syncBusy("s-cancel", "p1");
         let cancelCalls = 0;
@@ -307,7 +323,7 @@ describe("Task REST API", () => {
       });
 
       it("returns idempotent idle status when no work is active", async () => {
-        store.createTask("s-idle", tmpDir);
+        store.createTask("s-idle", tmpDir, "auto", "test-agent");
 
         const res = await makeRequest(
           port,
@@ -324,7 +340,7 @@ describe("Task REST API", () => {
       });
 
       it("does not attach a stale cancel to a replacement prompt", async () => {
-        store.createTask("s-race", tmpDir);
+        store.createTask("s-race", tmpDir, "auto", "test-agent");
         tasks.activePrompts.add("s-race");
         tasks.syncBusy("s-race");
         const oldPromptId =
@@ -369,7 +385,7 @@ describe("Task REST API", () => {
       });
 
       it("reports superseded when a replacement prompt is still reserved", async () => {
-        store.createTask("s-reserved-race", tmpDir);
+        store.createTask("s-reserved-race", tmpDir, "auto", "test-agent");
         tasks.activePrompts.add("s-reserved-race");
         tasks.syncBusy("s-reserved-race");
         let releaseCancel: (() => void) | undefined;
@@ -407,7 +423,7 @@ describe("Task REST API", () => {
       });
 
       it("cancels a prompt submission while task resume is pending", async () => {
-        store.createTask("s-pending", tmpDir);
+        store.createTask("s-pending", tmpDir, "auto", "test-agent");
         let releaseResume!: () => void;
         let promptCalls = 0;
         mockBridge.loadSession = () =>
@@ -477,12 +493,21 @@ describe("Task REST API", () => {
 
       assert.equal(res.status, 400);
       assert.match(res.body, /Parent task not found/);
-      assert.equal(store.listTasks().length, 0);
+      assert.deepEqual(store.listTasks(), []);
     });
 
-    it("rejects a parent task owned by another agent", async () => {
-      const foreign = new Store(tmpDir, "other-agent");
-      foreign.createTask("foreign-parent", tmpDir, "auto", "foreign-session");
+    it("creates a child of a foreign parent without taking the parent over", async () => {
+      // Creating a child never rotates the parent's execution: when the
+      // parent's agent is not available the child is created for the default
+      // agent and the parent keeps its own binding.
+      const foreign = new Store(tmpDir);
+      foreign.createTask(
+        "foreign-parent",
+        tmpDir,
+        "auto",
+        "other-agent",
+        "foreign-session",
+      );
       foreign.close();
 
       const res = await makeRequest(
@@ -492,17 +517,19 @@ describe("Task REST API", () => {
         JSON.stringify({ parentId: "foreign-parent", title: "child" }),
       );
 
-      assert.equal(res.status, 400);
-      assert.match(res.body, /Parent task not found/);
+      assert.equal(res.status, 201);
+      const childId = JSON.parse(res.body).id as string;
+      assert.equal(store.getBindingAgent(childId), "test-agent");
+      assert.equal(store.getBindingAgent("foreign-parent"), "other-agent");
 
-      // No system_message may be written into the foreign parent, and no
-      // child task may be created under it.
-      const check = new Store(tmpDir, "other-agent");
-      assert.equal(check.getEvents("foreign-parent").length, 0);
-      const taskCount = check["db"]
-        .prepare("SELECT COUNT(*) AS n FROM tasks WHERE id != 'root'")
-        .get() as { n: number };
-      assert.equal(taskCount.n, 1);
+      // The child is a real task in the global tree; the parent's execution
+      // binding is untouched, which is the point of the check above.
+      const check = new Store(tmpDir);
+      assert.equal(check.getTask(childId)?.parent_id, "foreign-parent");
+      assert.equal(
+        check.getCurrentExecutionBinding("foreign-parent")?.agent_session_id,
+        "foreign-session",
+      );
       check.close();
     });
 
@@ -579,8 +606,7 @@ describe("Task REST API", () => {
       // Create handler with no bridge
       const handler = createRequestHandler({
         store,
-        tasks,
-        getBridge: () => null,
+        tasks: createTaskManager(store, tmpDir, tmpDir),
         publicDir,
         dataDir: tmpDir,
         limits: {
@@ -609,7 +635,7 @@ describe("Task REST API", () => {
 
   describe("POST /api/v1/tasks/:id/clear", () => {
     it("keeps the WebAgent task id while rotating its ACP execution", async () => {
-      store.createTask("s1", tmpDir, "auto", "agent-old");
+      store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
       store.saveCompactSummary("s1", "old context");
 
       const res = await makeRequest(
@@ -627,15 +653,24 @@ describe("Task REST API", () => {
         (event) => event.type === "task_created",
       );
       assert.equal(created?.rootTaskId, store.rootTaskId);
-      assert.equal(store.listTasks().length, 1);
+      assert.deepEqual(
+        store
+          .listTasks()
+          .map((task) => task.id)
+          .sort(),
+        [store.rootTaskId, "s1"].sort(),
+      );
       assert.equal(store.getAgentSessionId("s1"), "mock-task-1");
-      assert.equal(store.getTaskId("agent-old"), undefined);
+      assert.equal(
+        store.sessionView("test-agent").getTaskId("agent-old"),
+        undefined,
+      );
       assert.equal(store.getPendingCompactSummary("s1"), null);
       assert.deepEqual(mockBridge.retireCalls, ["agent-old"]);
     });
 
     it("persists a clear request's replacement cwd on the stable task", async () => {
-      store.createTask("s1", tmpDir, "auto", "agent-old");
+      store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
 
       const res = await makeRequest(
         port,
@@ -650,7 +685,7 @@ describe("Task REST API", () => {
     });
 
     it("rejects a rotation whose request body window saw a restore start", async () => {
-      store.createTask("s1", tmpDir, "auto", "agent-old");
+      store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
       let release!: () => void;
       const gate = new Promise<void>((resolve) => {
         release = resolve;
@@ -707,7 +742,7 @@ describe("Task REST API", () => {
     });
 
     it("compacts into a fresh ACP execution and defers the summary to the next prompt", async () => {
-      store.createTask("s1", tmpDir, "auto", "agent-old");
+      store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
       tasks.liveTasks.add("s1");
       let promptedText = "";
       mockBridge.prompt = async (_taskId: string, text: string) => {
@@ -797,7 +832,7 @@ describe("Task REST API", () => {
     });
 
     it("includes the previous compact event address in a chained handoff", async () => {
-      store.createTask("s1", tmpDir, "auto", "agent-old");
+      store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
       tasks.liveTasks.add("s1");
       const first = store.saveCompactSummary("s1", "first summary");
       const second = store.saveCompactSummary("s1", "second summary");
@@ -831,7 +866,7 @@ describe("Task REST API", () => {
     });
 
     it("keeps legacy pending summaries in the old handoff format", async () => {
-      store.createTask("s1", tmpDir, "auto", "agent-old");
+      store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
       tasks.liveTasks.add("s1");
       store["db"]
         .prepare("UPDATE tasks SET pending_compact_summary = ? WHERE id = ?")
@@ -856,9 +891,23 @@ describe("Task REST API", () => {
 
     it("recovers a delivery queued during successful compaction", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.attachAgentSession(rootId, "agent-root");
-      store.createTask("source", tmpDir, "agent", "agent-source", rootId);
-      store.createTask("s1", tmpDir, "agent", "agent-old", rootId);
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
+      store.createTask(
+        "source",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-source",
+        rootId,
+      );
+      store.createTask(
+        "s1",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-old",
+        rootId,
+      );
       store.updateTaskConfig("s1", "mode", "agent");
       tasks.liveTasks.add("s1");
 
@@ -928,7 +977,7 @@ describe("Task REST API", () => {
   });
 
   it("passes optional compact guidance only when supplied", async () => {
-    store.createTask("s1", tmpDir, "auto", "agent-old");
+    store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
     tasks.liveTasks.add("s1");
     let compactPrompt = "";
     mockBridge.promptForText = async (_sessionId: string, text: string) => {
@@ -979,7 +1028,7 @@ describe("Task REST API", () => {
 
     it("resolves the literal `root` and 404s unknown/legacy ids", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.attachAgentSession(rootId, "agent-root");
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
       const rootRes = await makeRequest(port, "GET", `/api/v1/tasks/${rootId}`);
       assert.equal(rootRes.status, 200);
       assert.equal(JSON.parse(rootRes.body).id, "root");
@@ -992,8 +1041,15 @@ describe("Task REST API", () => {
 
     it("returns a task's parent relationship", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.attachAgentSession(rootId, "agent-root");
-      store.createTask("child", tmpDir, "auto", "agent-child", rootId);
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-child",
+        rootId,
+      );
 
       const res = await makeRequest(port, "GET", "/api/v1/tasks/child");
 
@@ -1003,7 +1059,7 @@ describe("Task REST API", () => {
 
     it("auto-resumes a non-live task", async () => {
       // Create a task directly in store (not in liveTasks)
-      store.createTask("stored-only", tmpDir);
+      store.createTask("stored-only", tmpDir, "auto", "test-agent");
 
       const res = await makeRequest(port, "GET", "/api/v1/tasks/stored-only");
       assert.equal(res.status, 200);
@@ -1014,7 +1070,7 @@ describe("Task REST API", () => {
     });
 
     it("does not continue an interrupted turn while restoring", async () => {
-      store.createTask("interrupted", tmpDir);
+      store.createTask("interrupted", tmpDir, "auto", "test-agent");
       store.saveEvent(
         "interrupted",
         "user_message",
@@ -1035,8 +1091,8 @@ describe("Task REST API", () => {
       assert.equal(tasks.getBusyKind("interrupted"), null);
     });
 
-    it("snapshot waits for command discovery during a warm-cache resume", async () => {
-      store.createTask("stored-only", tmpDir);
+    it("snapshot returns before command discovery and picks it up later", async () => {
+      store.createTask("stored-only", tmpDir, "auto", "test-agent");
       tasks.cachedConfigOptions.push({
         type: "select",
         id: "model",
@@ -1045,7 +1101,7 @@ describe("Task REST API", () => {
         options: [{ value: "claude-sonnet", name: "Sonnet" }],
       });
       mockBridge.loadSession = async (taskId: string) => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, 50));
         tasks.updateAgentCommands(taskId, [
           { name: "context", description: "Show context usage" },
         ]);
@@ -1058,13 +1114,34 @@ describe("Task REST API", () => {
         "/api/v1/tasks/stored-only",
       );
       assert.equal(detail.status, 200);
-      const snapshot = await makeRequest(
+      // A read does not wait for the restore: the response is immediate and
+      // carries only what the process already knew (the cached schema above,
+      // and no per-task commands yet).
+      const first = await makeRequest(
         port,
         "GET",
         "/api/v1/tasks/stored-only/snapshot",
       );
+      assert.deepEqual(
+        JSON.parse(first.body).agentCommands.commands,
+        [],
+        "the snapshot did not wait for command discovery",
+      );
 
-      assert.deepEqual(JSON.parse(snapshot.body).agentCommands.commands, [
+      // The background restore still completes, and the next read sees it.
+      const deadline = Date.now() + 5000;
+      let commands: unknown[] = [];
+      while (Date.now() < deadline) {
+        const next = await makeRequest(
+          port,
+          "GET",
+          "/api/v1/tasks/stored-only/snapshot",
+        );
+        commands = JSON.parse(next.body).agentCommands.commands;
+        if (commands.length > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.deepEqual(commands, [
         { name: "context", description: "Show context usage" },
       ]);
     });
@@ -1091,8 +1168,15 @@ describe("Task REST API", () => {
 
     it("broadcasts task_deleted with the requested task parent", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.attachAgentSession(rootId, "agent-root");
-      store.createTask("parent", tmpDir, "auto", "agent-parent", rootId);
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
+      store.createTask(
+        "parent",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-parent",
+        rootId,
+      );
       broadcastEvents.length = 0;
 
       const res = await makeRequest(port, "DELETE", "/api/v1/tasks/parent");
@@ -1104,6 +1188,8 @@ describe("Task REST API", () => {
       /* eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- narrowing after assert.ok */
       if (deleted?.type === "task_deleted") {
         assert.equal(deleted.parentId, rootId);
+        // The broadcast names the agent that carried the removed execution.
+        assert.equal(deleted.agentId, "test-agent");
       }
       assert.deepEqual(JSON.parse(res.body), {
         taskId: "parent",
@@ -1123,8 +1209,15 @@ describe("Task REST API", () => {
 
     it("resets Root, deletes its descendants, and keeps Root as the anchor", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.attachAgentSession(rootId, "agent-root");
-      store.createTask("child", tmpDir, "auto", "agent-child", rootId);
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-child",
+        rootId,
+      );
       store.saveEvent(
         rootId,
         "user_message",
@@ -1170,8 +1263,15 @@ describe("Task REST API", () => {
 
     it("resets Root through the task route with no bridge (offline)", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
-      store.attachAgentSession(rootId, "agent-root");
-      store.createTask("child", tmpDir, "auto", "agent-child", rootId);
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-child",
+        rootId,
+      );
       store.saveEvent(
         rootId,
         "user_message",
@@ -1180,8 +1280,7 @@ describe("Task REST API", () => {
       );
       const handler = createRequestHandler({
         store,
-        tasks,
-        getBridge: () => null,
+        tasks: createTaskManager(store, tmpDir, tmpDir),
         publicDir,
         dataDir: tmpDir,
         limits: { bash_output: 1024, image_upload: 1024 },
@@ -1214,8 +1313,15 @@ describe("Task REST API", () => {
     });
 
     it("cascades to descendant tasks and broadcasts task_deleted per id", async () => {
-      store.createTask("parent", tmpDir, "auto", "agent-parent");
-      store.createTask("child", tmpDir, "auto", "agent-child", "parent");
+      store.createTask("parent", tmpDir, "auto", "test-agent", "agent-parent");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-child",
+        "parent",
+      );
       tasks.liveTasks.add("parent");
       tasks.liveTasks.add("child");
 
@@ -1244,8 +1350,15 @@ describe("Task REST API", () => {
     });
 
     it("rejects deletion when a descendant has active work", async () => {
-      store.createTask("parent", tmpDir, "auto", "agent-parent");
-      store.createTask("child", tmpDir, "auto", "agent-child", "parent");
+      store.createTask("parent", tmpDir, "auto", "test-agent", "agent-parent");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-child",
+        "parent",
+      );
       store.updateTaskTitle("parent", "Parent");
       store.updateTaskTitle("child", "Child");
       tasks.activePrompts.add("child");
@@ -1265,7 +1378,7 @@ describe("Task REST API", () => {
     });
 
     it("rejects deletion while prompt work is active", async () => {
-      store.createTask("s-active-delete", tmpDir);
+      store.createTask("s-active-delete", tmpDir, "auto", "test-agent");
       tasks.activePrompts.add("s-active-delete");
       tasks.syncBusy("s-active-delete");
 
@@ -1280,7 +1393,7 @@ describe("Task REST API", () => {
     });
 
     it("rejects deletion while prompt submission is pending", async () => {
-      store.createTask("s-pending-delete", tmpDir);
+      store.createTask("s-pending-delete", tmpDir, "auto", "test-agent");
       assert.notEqual(tasks.reservePromptSubmission("s-pending-delete"), null);
 
       const res = await makeRequest(
@@ -1403,11 +1516,10 @@ describe("Task REST API", () => {
     });
 
     it("returns 503 when bridge is not ready", async () => {
-      store.createTask("no-bridge", tmpDir);
+      store.createTask("no-bridge", tmpDir, "auto", "test-agent");
       const handler = createRequestHandler({
         store,
-        tasks,
-        getBridge: () => null,
+        tasks: createTaskManager(store, tmpDir, tmpDir),
         publicDir,
         dataDir: tmpDir,
         limits: {
@@ -1456,7 +1568,9 @@ describe("Task REST API", () => {
 
       const allRes = await makeRequest(port, "GET", "/api/v1/tasks");
       const all = JSON.parse(allRes.body);
-      assert.equal(all.length, 2);
+      // The unbound Root is a live task too; the source filter is what the
+      // assertions below are about.
+      assert.equal(all.length, 3);
 
       const userRes = await makeRequest(
         port,
@@ -1492,7 +1606,8 @@ describe("Task REST API", () => {
       await makeRequest(port, "POST", "/api/v1/tasks", "{}");
 
       const res = await makeRequest(port, "GET", "/api/v1/tasks");
-      assert.equal(JSON.parse(res.body).length, 2);
+      // Root is a live task as well; without a filter the list is global.
+      assert.equal(JSON.parse(res.body).length, 3);
     });
   });
 

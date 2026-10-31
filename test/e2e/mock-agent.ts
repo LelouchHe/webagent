@@ -30,6 +30,18 @@ import type { McpServer, McpServerHttp } from "@agentclientprotocol/sdk";
 // instead of silently passing through the unadvertised method.
 const MOCK_PROFILE = process.argv[2] ?? "load";
 const MOCK_CALLS_PATH = process.argv[3];
+/**
+ * Optional delay before a restored session reports its schema and commands.
+ * A real CLI replays history on `session/load`, which can take seconds; tests
+ * that assert "the read does not wait" need that latency to exist.
+ */
+const MOCK_LOAD_DELAY_MS = Number(process.argv[4] ?? 0);
+/**
+ * A slow restore also reports one schema entry and one command that only exist
+ * after the load. A test can then tell "the client already knew this" from
+ * "this arrived with the completed restore".
+ */
+const WARM_ONLY_EXTRA = MOCK_LOAD_DELAY_MS > 0;
 const RESUME_ONLY = MOCK_PROFILE === "resume-only";
 
 function recordSessionCall(method: "load" | "resume", params: unknown): void {
@@ -393,7 +405,10 @@ class MockAgent implements Agent {
     if (updated.body?.error) throw new Error("task_update failed");
   }
 
-  private async advertiseCommands(sessionId: string): Promise<void> {
+  private async advertiseCommands(
+    sessionId: string,
+    warmOnly = false,
+  ): Promise<void> {
     await this.connection.sessionUpdate({
       sessionId,
       update: {
@@ -408,6 +423,14 @@ class MockAgent implements Agent {
             description: "Compact conversation",
             input: { hint: "focus instructions" },
           },
+          ...(warmOnly
+            ? [
+                {
+                  name: "warm-extra",
+                  description: "Advertised only by a completed restore",
+                },
+              ]
+            : []),
         ],
       },
     });
@@ -439,6 +462,9 @@ class MockAgent implements Agent {
 
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
     recordSessionCall("load", { sessionId: params.sessionId, cwd: params.cwd });
+    if (MOCK_LOAD_DELAY_MS > 0) {
+      await new Promise((done) => setTimeout(done, MOCK_LOAD_DELAY_MS));
+    }
     if (RESUME_ONLY) {
       throw new Error(
         "E2E: session/load must not be called against a resume-only agent",
@@ -452,7 +478,25 @@ class MockAgent implements Agent {
       };
       this.sessions.set(params.sessionId, session);
     }
-    await this.advertiseCommands(params.sessionId);
+    if (WARM_ONLY_EXTRA) {
+      // Only a restore reports these, so the test can prove the client learned
+      // them from the completed warm-up rather than from earlier state.
+      const options = createConfigOptions();
+      const model = options.find(
+        (option) => option.id === "model" && option.type === "select",
+      );
+      if (model?.type === "select" && Array.isArray(model.options)) {
+        model.options = [
+          ...(model.options as Array<{ value: string; name: string }>),
+          { value: "mock-model-3", name: "Mock Model 3" },
+        ] as typeof model.options;
+      }
+      session.configOptions = options;
+      this.sessions.set(params.sessionId, session);
+      await this.advertiseCommands(params.sessionId, true);
+    } else {
+      await this.advertiseCommands(params.sessionId);
+    }
     return {
       configOptions: session.configOptions,
     };

@@ -2858,6 +2858,63 @@ describe("events", () => {
       assert.ok(dom.statusBar.textContent.includes("new-model"));
     });
 
+    it("applies a completed warm-up for the current task only", () => {
+      state.taskId = "s-warm";
+      state.configOptions = [];
+      events.handleEvent({
+        type: "task_runtime_warmed",
+        taskId: "s-warm",
+        agentId: "mock",
+        configOptions: [
+          {
+            type: "select",
+            id: "model",
+            name: "Model",
+            currentValue: "mock-model-2",
+            options: [{ value: "mock-model-2", name: "Mock Model 2" }],
+          },
+          {
+            type: "select",
+            id: "mode",
+            name: "Mode",
+            currentValue: "plan",
+            options: [{ value: "plan", name: "Plan" }],
+          },
+        ],
+        agentCommands: { epoch: "e1", revision: 1, commands: [] },
+      });
+      assert.deepEqual(
+        state.configOptions.map((option: { id: string }) => option.id),
+        ["model", "mode"],
+        "the restored schema was installed",
+      );
+      assert.ok(
+        dom.statusBar.textContent.includes("mock-model-2"),
+        "the status bar reflects the restored schema",
+      );
+
+      // A warm-up for another task is ignored: no state change, no repaint.
+      state.configOptions = [];
+      const statusBefore = dom.statusBar.textContent;
+      events.handleEvent({
+        type: "task_runtime_warmed",
+        taskId: "s-other",
+        agentId: "mock",
+        configOptions: [
+          {
+            type: "select",
+            id: "model",
+            name: "Model",
+            currentValue: "other-model",
+            options: [{ value: "other-model", name: "Other Model" }],
+          },
+        ],
+        agentCommands: { epoch: "e2", revision: 3, commands: [] },
+      });
+      assert.equal(dom.statusBar.textContent, statusBefore);
+      assert.deepEqual(state.configOptions, []);
+    });
+
     it("cleared by resetTaskUI", () => {
       state.awaitingNewTask = true;
       events.handleEvent({
@@ -6908,6 +6965,7 @@ describe("events", () => {
   describe("agent reload events", () => {
     it("agent_reloading sets busy and shows system message", () => {
       state.taskId = "s1";
+      state.taskAgentId = "test-agent";
       events.handleEvent({ type: "agent_reloading", agentId: "test-agent" });
 
       assert.equal(state.busy, true);
@@ -6918,11 +6976,14 @@ describe("events", () => {
 
     it("connected after agent_reloading shows reloaded message and clears busy", () => {
       state.taskId = "s1";
+      state.taskAgentId = "test-agent";
       state.agentReloading = true;
+      state.agentReloadingAgentId = "test-agent";
       state.busy = true;
 
       events.handleEvent({
         type: "connected",
+        agentId: "test-agent",
         agent: { name: "mock-agent", version: "2.0" },
         configOptions: [],
       });
@@ -6933,9 +6994,61 @@ describe("events", () => {
       assert.ok(msgs.some((m) => m.includes("reloaded")));
     });
 
+    it("ignores another agent's reload while watching B", () => {
+      // The client is looking at a task carried by B; A restarting is not this
+      // task's busy state, and A coming back must not unlock it either.
+      state.taskId = "s-b";
+      state.taskAgentId = "agent-b";
+      state.busy = false;
+      state.agentReloading = false;
+      state.agentReloadingAgentId = null;
+
+      events.handleEvent({ type: "agent_reloading", agentId: "agent-a" });
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+
+      // A's `connected` is equally irrelevant.
+      events.handleEvent({
+        type: "connected",
+        agentId: "agent-a",
+        agent: { name: "agent-a", version: "2.0" },
+        configOptions: [],
+      });
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+
+      // B's own reload still works.
+      events.handleEvent({ type: "agent_reloading", agentId: "agent-b" });
+      assert.equal(state.agentReloading, true);
+      assert.equal(state.busy, true);
+      events.handleEvent({
+        type: "connected",
+        agentId: "agent-b",
+        agent: { name: "agent-b", version: "3.0" },
+        configOptions: [],
+      });
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+    });
+
+    it("does not guess a default agent when the task has no binding", () => {
+      state.taskId = "s-unbound";
+      state.taskAgentId = null;
+      state.busy = false;
+      state.agentReloading = false;
+      state.agentReloadingAgentId = null;
+
+      // No binding means no agent to attribute the reload to: do not unlock
+      // anything on a guess.
+      events.handleEvent({ type: "agent_reloading", agentId: "agent-a" });
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+    });
+
     it("agent_reloading_failed shows error and clears busy", () => {
       state.taskId = "s1";
       state.agentReloading = true;
+      state.agentReloadingAgentId = "test-agent";
       state.busy = true;
 
       events.handleEvent({

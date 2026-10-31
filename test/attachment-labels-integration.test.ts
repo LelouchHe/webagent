@@ -28,9 +28,9 @@ describe("attachment-labels integration (replay egress)", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-att-int-"));
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     sm = createTaskManager(store, tmpDir, tmpDir);
-    store.createTask("s1", "/x");
+    store.createTask("s1", "/x", "auto", "test-agent");
     store.insertAttachment({
       id: "abcd1234",
       taskId: "s1",

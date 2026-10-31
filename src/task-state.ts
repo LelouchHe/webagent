@@ -190,6 +190,11 @@ export class TaskStateManager {
     return s;
   }
 
+  /** True when this task has runtime state in this process (never creates it). */
+  hasState(taskId: string): boolean {
+    return this.states.has(taskId);
+  }
+
   /** Read streaming state without creating runtime state for an unseen task. */
   peekStreaming(taskId: string): StreamingState {
     const streaming = this.states.get(taskId)?.runtime.streaming;
@@ -292,27 +297,33 @@ export class TaskStateManager {
     });
   }
 
-  /** Clear current plans for every known task (used on bridge reload). */
-  clearPlans(): void {
+  /** Clear current plans for the given tasks (or every known task). */
+  clearPlans(taskIds?: readonly string[]): void {
+    const scope = taskIds ? new Set(taskIds) : null;
     for (const [taskId, state] of this.states) {
+      if (scope && !scope.has(taskId)) continue;
       if (state.runtime.plan !== null) {
         this.patch(taskId, { runtime: { plan: null } });
       }
     }
   }
 
-  /** Clear context usage for every known task on bridge teardown. */
-  clearContextUsage(): void {
+  /** Clear context usage for the given tasks (or every known task). */
+  clearContextUsage(taskIds?: readonly string[]): void {
+    const scope = taskIds ? new Set(taskIds) : null;
     for (const [taskId, state] of this.states) {
+      if (scope && !scope.has(taskId)) continue;
       if (state.runtime.contextUsage !== null) {
         this.patch(taskId, { runtime: { contextUsage: null } });
       }
     }
   }
 
-  /** Clear active stream markers for every known task on bridge teardown. */
-  clearStreaming(): void {
+  /** Clear active stream markers for the given tasks (or every known task). */
+  clearStreaming(taskIds?: readonly string[]): void {
+    const scope = taskIds ? new Set(taskIds) : null;
     for (const [taskId, state] of this.states) {
+      if (scope && !scope.has(taskId)) continue;
       if (
         state.runtime.streaming.assistant ||
         state.runtime.streaming.thinking

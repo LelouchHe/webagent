@@ -7,6 +7,7 @@ import { Store } from "../src/store.ts";
 import { TaskManager } from "../src/task-manager.ts";
 import { TaskStateManager, type StatePatchEvent } from "../src/task-state.ts";
 import { ExecutionAdapter } from "../src/execution-adapter.ts";
+import { StaticAgentEnvironment } from "../src/agent-registry.ts";
 import {
   ExecutionAuthority,
   GenerationLedger,
@@ -28,7 +29,7 @@ describe("runtime authority regressions", () => {
 
   beforeEach(() => {
     dataDir = mkdtempSync(join(tmpdir(), "webagent-authority-"));
-    store = new Store(dataDir, "agent-a");
+    store = new Store(dataDir);
   });
 
   afterEach(() => {
@@ -56,15 +57,18 @@ describe("runtime authority regressions", () => {
     const state = new TaskStateManager();
     const authority = new ExecutionAuthority(new GenerationLedger());
     const storeA = store;
-    const storeB = new Store(dataDir, "agent-b");
+    const storeB = new Store(dataDir);
     const managerA = new TaskManager({
       store: storeA,
       defaultCwd: dataDir,
       dataDir,
       state,
       authority,
-      adapter: new ExecutionAdapter("agent-a"),
-      isAgentConfigured: () => true,
+      agents: new StaticAgentEnvironment(
+        "agent-a",
+        [new ExecutionAdapter("agent-a")],
+        { isConfigured: () => true },
+      ),
     });
     const managerB = new TaskManager({
       store: storeB,
@@ -72,8 +76,11 @@ describe("runtime authority regressions", () => {
       dataDir,
       state,
       authority,
-      adapter: new ExecutionAdapter("agent-b"),
-      isAgentConfigured: () => true,
+      agents: new StaticAgentEnvironment(
+        "agent-b",
+        [new ExecutionAdapter("agent-b")],
+        { isConfigured: () => true },
+      ),
     });
     try {
       const { taskId } = await managerA.createTask(
@@ -128,20 +135,30 @@ describe("runtime authority regressions", () => {
     }
   });
 
-  it("keeps public reads filtered by the caller's agent", () => {
-    store.createTask("a-task", dataDir, "auto", "session-a");
-    const b = new Store(dataDir, "agent-b");
-    b.createTask("b-task", dataDir, "auto", "session-b");
+  it("reads tasks globally and narrows only when asked", () => {
+    store.createTask("a-task", dataDir, "auto", "agent-a", "session-a");
+    const b = new Store(dataDir);
+    b.createTask("b-task", dataDir, "auto", "agent-b", "session-b");
     b.close();
 
     assert.deepEqual(
-      store.listTasks().map((task) => task.id),
+      store
+        .listTasks()
+        .map((task) => task.id)
+        .sort(),
+      ["a-task", "b-task", store.rootTaskId].sort(),
+    );
+    assert.equal(store.getTask("b-task")?.id, "b-task");
+    assert.deepEqual(
+      store.listTasks({ agentId: "agent-a" }).map((task) => task.id),
       ["a-task"],
     );
-    assert.equal(store.getTask("b-task"), undefined);
-    assert.equal(store.listTasks({ source: "auto" }).length, 1);
-    // The internal read is deliberately global: lifecycle paths must see a
-    // task whose owner is another agent.
-    assert.ok(store.getTaskIncludingDeleted("b-task"));
+    // Execution identity is still agent-scoped: the same sid under another
+    // agent names a different execution.
+    assert.equal(
+      store.sessionView("agent-a").getTaskId("session-b"),
+      undefined,
+    );
+    assert.equal(store.sessionView("agent-b").getTaskId("session-b"), "b-task");
   });
 });
