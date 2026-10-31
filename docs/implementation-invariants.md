@@ -81,17 +81,22 @@ The operational form of that sentence:
   at its start). *Why:* "resolve the current binding" at each site looks
   uniform and silently mis-retires, mis-authorizes, or sends a foreign
   operation into the default process.
-- **A read never depends on an execution being resolvable.** Listing, reading a
-  task, its snapshot, attachments, shares, and deletion must return while the
-  binding agent is missing, dead, or no longer configured. A read *may* warm an
-  execution — an opened task starts its agent so config and commands can be
-  reported — but the warm-up is optional and bounded: it never decides the
-  response, its failure only costs that payload, and it never rotates a binding
-  or takes a task over from its agent. Operations that genuinely need a process
-  (prompt, create, approve, reload, explicit `/clear`) resolve one, and they
-  fail with the rescue path (`POST /clear { agentId }`) instead of falling back
-  to another agent's process. *Why:* otherwise an unavailable binary takes the
-  user's history with it, and a fallback hides which process acted.
+- **A read never depends on an execution being resolvable, and it never waits
+  for one.** Listing, reading a task, its snapshot, attachments, shares, and
+  deletion return while the binding agent is missing, dead, or no longer
+  configured, and they return immediately: no fixed bound is involved. A read
+  *may* start a warm-up — an opened task starts its agent so the schema and
+  commands can be reported — but that runs in the background and never decides
+  the response. When it finishes, the restored facts are published to that
+  task's subscribers as `task_runtime_warmed`, which is the only compensation a
+  cold client gets. A failed warm-up is silent, and a warm-up that outlived a
+  rotation is refused before publishing (same task, same binding agent, same
+  generation). Operations that genuinely need a process (prompt, create,
+  approve, reload, explicit `/clear`) resolve one, and they fail with the rescue
+  path (`POST /clear { agentId }`) instead of falling back to another agent's
+  process. *Why:* a real CLI replays history on restore, so any fixed wait is
+  either too short (the UI stays cold forever) or too long (every read pays for
+  it); and an unavailable binary must not take the user's history with it.
 - **An agent's lifecycle events touch only the tasks it carries.** Reload,
   disconnect, and restart clear that agent's streaming, plans, usage, pending
   permissions, busy claims, and live-task membership; the `connected` event

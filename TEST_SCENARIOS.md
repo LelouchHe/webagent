@@ -58,10 +58,20 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/multi-agent-config-race.test.ts` (HTTP)
   - a configuration request parked in `readBody` while the task is cleared onto another agent is refused with `409`, and no configuration request reaches the new execution
 
+- `test/runtime-warm.test.ts` (background warm-up)
+  - a completed warm-up publishes the restored schema and commands once per task and generation
+  - concurrent reads share one restore; a failed warm-up publishes nothing
+  - a warm-up that outlived a rotation publishes nothing (the guard is exercised directly: a stale generation and a moved binding are both refused)
+  - a deleted task publishes nothing
+
+- `test/e2e/runtime-warm.spec.ts` (slow restore, 3s load delay)
+  - the snapshot answers in well under the restore time, and the detail read returns no schema
+  - without a refresh, the restored model and command appear from `task_runtime_warmed`
+
 - `test/multi-agent-reads.test.ts` (HTTP + real processes)
   - three genuinely different unavailable shapes, each produced its own way: a real spawn of a missing binary, a configured agent whose transport was shut down, and a binding whose agent left the configuration
   - reads cover task detail, snapshot, events, the list, attachment bytes, the owner share list, and deletion, in every state, without moving the binding
-  - a snapshot returns while a restore is still hanging (bounded warm-up)
+  - the snapshot returns while a restore is still hanging (it does not wait at all)
 
 - `test/multi-agent-clear.test.ts` (HTTP)
   - `/clear { agentId }` moves a task off a removed agent, records `explicit_clear`, preserves history, and creates exactly one session on the configured agent

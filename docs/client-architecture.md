@@ -281,6 +281,8 @@ EventSource.onmessage
         ├── Wrong task? → ignore
         └── Switch on msg.type:
               ├── task_created → update state, UI, hash
+              ├── task_runtime_warmed → apply restored config + commands to the
+              │                        current task only (no navigation)
               ├── message_chunk  → append to streaming element
               ├── tool_call      → create tool call element
               ├── permission_request → show buttons
