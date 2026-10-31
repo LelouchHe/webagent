@@ -221,7 +221,9 @@ test("a cold read answers immediately and the restore fills the UI in", async ({
       await page.request.get(`${ORIGIN}/api/v1/tasks/${taskId}/snapshot`)
     ).json()) as {
       agentCommands: { commands: Array<{ name: string }> };
+      runtime: { busy: unknown };
     };
+    expect(finalSnapshot.runtime.busy, "no turn is running").toBeNull();
     expect(
       finalSnapshot.agentCommands.commands.map((command) => command.name),
       "the restore's commands are in the task's command snapshot",
