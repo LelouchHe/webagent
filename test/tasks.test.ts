@@ -196,6 +196,9 @@ describe("Task REST API", () => {
       const body = JSON.parse(res.body);
       assert.match(body.id, /^[0-9a-f-]{36}$/);
       assert.equal(body.rootTaskId, store.rootTaskId);
+      // The create response is an echo the client installs as the current
+      // task, so it must name the binding agent just like the broadcast does.
+      assert.equal(body.agentId, "test-agent");
       assert.equal(store.getAgentSessionId(body.id), "mock-task-1");
       assert.equal(body.cwd, tmpDir);
       assert.equal(
