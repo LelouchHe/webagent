@@ -118,6 +118,7 @@ setCreatedTaskActivator((task) => {
     cwdDisplay:
       typeof task.cwdDisplay === "string" ? task.cwdDisplay : undefined,
     title: typeof task.title === "string" ? task.title : null,
+    agentId: typeof task.agentId === "string" ? task.agentId : null,
     configOptions: Array.isArray(task.configOptions)
       ? (task.configOptions as ConfigOption[])
       : [],
@@ -228,6 +229,7 @@ async function fallbackToNextTaskImpl(
         type: "task_created",
         rootTaskId: task.rootTaskId,
         taskId: task.id,
+        agentId: task.agentId ?? null,
         cwd: task.cwd,
         cwdDisplay: task.cwdDisplay,
         title: task.title,
@@ -1997,7 +1999,7 @@ export function handleEvent(msg: AgentEvent) {
       state.awaitingNewTask = false;
       state.pendingNavigationTaskId = null;
       const isTaskActivation = state.taskId === null;
-      installTaskAgentId(msg.agentId);
+      installTaskAgentId(msg.taskId, msg.agentId);
       state.taskId = msg.taskId;
       if (isTaskActivation) rearmHistoryObserverAfterTaskActivation();
       state.taskCwd = msg.cwd ?? state.taskCwd;

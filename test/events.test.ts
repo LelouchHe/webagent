@@ -10,6 +10,7 @@ describe("events", () => {
   let render: any;
   let events: any;
   let stateMod: any;
+  let navigation: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
   const ROOT_ID = "root-events-test";
 
@@ -48,6 +49,7 @@ describe("events", () => {
     dom = stateMod.dom;
     render = await import("../public/js/render.ts");
     events = await import("../public/js/events.ts");
+    navigation = await import("../public/js/task-navigation.ts");
   });
   after(() => {
     teardownDOM();
@@ -6959,6 +6961,174 @@ describe("events", () => {
       assert.equal(thinkingEls.length, 1);
       assert.ok(state.currentThinkingEl);
       assert.equal(state.currentThinkingText, "new thought");
+    });
+  });
+
+  describe("binding agent installation", () => {
+    /** A fetch stub for one task's detail / history / snapshot reads. */
+    function serveTask(taskId: string, agentId: string | null) {
+      setFetch((url) => {
+        const response = (body: unknown) => ({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(body),
+          json: async () => body,
+        });
+        if (url === `/api/v1/tasks/${taskId}`) {
+          return response({
+            id: taskId,
+            rootTaskId: ROOT_ID,
+            cwd: "/tmp",
+            title: null,
+            agentId,
+            configOptions: [],
+          });
+        }
+        if (url.startsWith(`/api/v1/tasks/${taskId}/events`)) {
+          return response({ events: [], streaming: {} });
+        }
+        if (url === `/api/v1/tasks/${taskId}/snapshot`) {
+          return response({
+            version: 1,
+            seq: 0,
+            task: { agentId },
+            runtime: { busy: null },
+          });
+        }
+        return response({});
+      });
+    }
+
+    function systemText(): string {
+      return dom.messages.textContent ?? "";
+    }
+
+    /** Dispatch a reload and its completion, asserting both halves. */
+    function expectReloadCycle(agentId: string) {
+      events.handleEvent({ type: "agent_reloading", agentId });
+      assert.equal(state.agentReloading, true, "reload state is installed");
+      assert.equal(state.busy, true, "reload marks the task busy");
+      assert.ok(
+        systemText().includes("Agent reloading"),
+        "the reload notice is shown",
+      );
+
+      events.handleEvent({
+        type: "connected",
+        agentId,
+        agent: { name: "mock-agent", version: "2.0" },
+        configOptions: [],
+      });
+      assert.equal(state.agentReloading, false, "the reload completed");
+      assert.equal(state.busy, false, "completion clears busy");
+      assert.ok(
+        systemText().includes("reloaded"),
+        "the reloaded notice is shown",
+      );
+    }
+
+    it("installs the binding agent from a real switchToTask", async () => {
+      // No pre-seeded state: the navigation itself is what learns the agent.
+      state.taskId = null;
+      state.taskAgentId = null;
+      serveTask("t-alpha", "agent-a");
+
+      assert.equal(await navigation.switchToTask("t-alpha"), "switched");
+      assert.equal(state.taskId, "t-alpha");
+      assert.equal(state.taskAgentId, "agent-a");
+
+      expectReloadCycle("agent-a");
+    });
+
+    it("installs the binding agent from the create response", async () => {
+      state.taskId = null;
+      state.taskAgentId = null;
+      setFetch((url, init) => {
+        const response = (body: unknown) => ({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(body),
+          json: async () => body,
+        });
+        if (url === "/api/v1/tasks" && init?.method === "POST") {
+          return response({
+            id: "t-created",
+            rootTaskId: ROOT_ID,
+            cwd: "/tmp",
+            title: null,
+            agentId: "agent-c",
+            configOptions: [],
+          });
+        }
+        return response({});
+      });
+
+      assert.equal(await stateMod.createNewTaskRequest({}), true);
+      assert.equal(state.taskId, "t-created");
+      assert.equal(state.taskAgentId, "agent-c");
+
+      expectReloadCycle("agent-c");
+    });
+
+    it("installs the binding agent from the delete fallback", async () => {
+      state.taskId = "t-dead";
+      state.taskAgentId = "agent-a";
+      setFetch((url) => {
+        const response = (body: unknown) => ({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(body),
+          json: async () => body,
+        });
+        if (url === "/api/v1/tasks") {
+          return response([{ id: "t-next", agentId: "agent-b" }]);
+        }
+        if (url === "/api/v1/tasks/t-next") {
+          return response({
+            id: "t-next",
+            rootTaskId: ROOT_ID,
+            cwd: "/tmp",
+            title: null,
+            agentId: "agent-b",
+            configOptions: [],
+          });
+        }
+        if (url === "/api/v1/tasks/t-next/snapshot") {
+          return response({
+            version: 1,
+            seq: 0,
+            task: { agentId: "agent-b" },
+            runtime: { busy: null },
+          });
+        }
+        if (url.startsWith("/api/v1/tasks/t-next/events")) {
+          return response({ events: [], streaming: {} });
+        }
+        return response({});
+      });
+
+      events.handleEvent({ type: "task_deleted", taskId: "t-dead" });
+      const deadline = Date.now() + 2000;
+      while (state.taskId !== "t-next" && Date.now() < deadline) {
+        await new Promise((done) => setImmediate(done));
+      }
+      assert.equal(state.taskId, "t-next");
+      assert.equal(state.taskAgentId, "agent-b");
+
+      expectReloadCycle("agent-b");
+    });
+
+    it("keeps a known binding when a same-task echo omits the agent", () => {
+      state.taskId = "t-keep";
+      state.taskAgentId = "agent-a";
+
+      // A local echo of the same task without `agentId` must not downgrade.
+      stateMod.installTaskAgentId("t-keep", undefined);
+      assert.equal(state.taskAgentId, "agent-a");
+
+      // A different task is described by its payload, including "no agent".
+      stateMod.installTaskAgentId("t-other", undefined);
+      assert.equal(state.taskAgentId, null);
     });
   });
 

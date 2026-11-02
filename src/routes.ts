@@ -2814,6 +2814,10 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.CREATED, {
             id: taskId,
             rootTaskId: store.rootTaskId,
+            // The create echo installs the task's binding agent on the client,
+            // exactly like the broadcast; without it the echo would downgrade
+            // the agent the client already knows.
+            agentId: store.getBindingAgent(taskId) ?? null,
             cwd: task?.cwd ?? body.cwd,
             cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
             title: task?.title ?? null,

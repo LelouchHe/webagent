@@ -927,9 +927,31 @@ export function clearRootTaskAuthority(): number {
   return state.rootTaskAuthorityGeneration;
 }
 
-/** Install the current task's binding agent and drop foreign reload state. */
-export function installTaskAgentId(agentId: string | null | undefined): void {
-  state.taskAgentId = typeof agentId === "string" ? agentId : null;
+/**
+ * Install the binding agent of the task a `task_created` payload names.
+ *
+ * The task id is required because "this payload has no agent" means two
+ * different things:
+ *
+ * - a *different* task was activated: the payload is the truth, and a missing
+ *   agent means the task really is unbound (`null`);
+ * - the *same* task was re-announced (a local echo of a create, a navigation
+ *   reload, a post-delete fallback): a payload that does not name an agent must
+ *   not downgrade the binding the client already knows, or the reload guard
+ *   would silently stop working.
+ */
+export function installTaskAgentId(
+  taskId: string | null | undefined,
+  agentId: string | null | undefined,
+): void {
+  const payloadAgent = typeof agentId === "string" ? agentId : null;
+  const sameTask =
+    typeof taskId === "string" &&
+    state.taskId !== null &&
+    taskId === state.taskId;
+  state.taskAgentId = sameTask
+    ? (payloadAgent ?? state.taskAgentId)
+    : payloadAgent;
   if (
     state.agentReloadingAgentId !== null &&
     state.agentReloadingAgentId !== state.taskAgentId
