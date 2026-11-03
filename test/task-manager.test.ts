@@ -2943,13 +2943,18 @@ describe("TaskManager", () => {
       return { promise, resolve };
     }
 
-    it("treats a restoring task as agent-busy for the gate, not for the UI", () => {
+    it("counts a restoring task as agent-busy for the gate", () => {
       sm.restoringTasks.add("s1");
 
-      // A restore blocks state-changing operations...
+      // State-changing operations act on an execution that is not settled yet.
       assert.equal(sm.getGateBusyKind("s1"), "agent");
-      // ...but it is not work the user can see, so the rendered busy state
-      // (snapshot / state_patch / status / task_list) stays idle.
+    });
+
+    it("does not render a restoring task as busy", () => {
+      sm.restoringTasks.add("s1");
+
+      // `syncBusy` reads this, so the snapshot and every `state_patch` report
+      // an idle task while a background restore runs.
       assert.equal(sm.getBusyKind("s1"), null);
     });
 

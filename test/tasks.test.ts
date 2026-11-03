@@ -660,7 +660,7 @@ describe("Task REST API", () => {
       return { started, release, settle: () => restore };
     }
 
-    it("is not rendered as busy but still refuses clear and delete", async () => {
+    it("does not render the restore as busy", async () => {
       store.createTask(
         "s-restoring",
         tmpDir,
@@ -671,8 +671,9 @@ describe("Task REST API", () => {
       const parked = parkRestore("s-restoring");
       await parked.started;
       try {
-        // Rendering face: the snapshot says idle, so no busy indicator and no
-        // unexplained frozen input for a task nobody is working in.
+        // Rendering face: the user is waiting for nothing while a read warms
+        // the task, so the snapshot must say idle — not a busy indicator with
+        // no visible reason.
         const snapshot = await makeRequest(
           port,
           "GET",
@@ -686,9 +687,26 @@ describe("Task REST API", () => {
           "/api/v1/tasks/s-restoring/status",
         );
         assert.equal(JSON.parse(status.body).busyKind, null);
+      } finally {
+        parked.release();
+        await parked.settle().catch(() => {});
+      }
+    });
 
-        // Gate face: the destructive operations still refuse, because they
-        // would replace the execution the restore is about to make live.
+    it("still refuses clear and delete while the restore is in flight", async () => {
+      store.createTask(
+        "s-restoring",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-old",
+      );
+      const parked = parkRestore("s-restoring");
+      await parked.started;
+      try {
+        // Gate face: both would replace the execution the restore is about to
+        // make live, so the restore must refuse them even though the UI shows
+        // an idle task.
         const clear = await makeRequest(
           port,
           "POST",
@@ -702,11 +720,11 @@ describe("Task REST API", () => {
           "/api/v1/tasks/s-restoring",
         );
         assert.equal(deleted.status, 409);
+        assert.equal(store.getAgentSessionId("s-restoring"), "agent-old");
       } finally {
         parked.release();
         await parked.settle().catch(() => {});
       }
-      assert.equal(store.getAgentSessionId("s-restoring"), "agent-old");
     });
   });
 
