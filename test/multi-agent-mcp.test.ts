@@ -13,10 +13,7 @@ import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
 import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { StaticAgentEnvironment } from "../src/agent-registry.ts";
-import {
-  ExecutionAuthority,
-  GenerationLedger,
-} from "../src/execution-authority.ts";
+import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { Store } from "../src/store.ts";
 
 /**
@@ -177,7 +174,7 @@ describe("mcp authority over the production host", () => {
     store = new Store(dir);
     store.ensureRootTask(dir);
     capabilities = new CapabilityStore();
-    authority = new ExecutionAuthority(new GenerationLedger());
+    authority = new ExecutionAuthority();
     newSessionHook = undefined;
     bridge = makeBridge(() => newSessionHook);
     tasks = new TaskManager({

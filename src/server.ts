@@ -9,7 +9,7 @@ import { Store } from "./store.ts";
 import { TaskManager, createObligationController } from "./task-manager.ts";
 import { TaskStateManager } from "./task-state.ts";
 import { AgentRegistry } from "./agent-registry.ts";
-import { ExecutionAuthority, GenerationLedger } from "./execution-authority.ts";
+import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
 import { createMcpTaskToolHost } from "./mcp/task-host.ts";
@@ -123,7 +123,7 @@ const mcpBaseUrl = `http://127.0.0.1:${config.port}`;
 // task runtime carries no implicit "there is only one execution container"
 // assumption of its own.
 const taskState = new TaskStateManager();
-const executionAuthority = new ExecutionAuthority(new GenerationLedger());
+const executionAuthority = new ExecutionAuthority();
 const taskManagerRef: { current?: TaskManager } = {};
 /**
  * Agent execution environments, started on demand. Nothing is spawned here:

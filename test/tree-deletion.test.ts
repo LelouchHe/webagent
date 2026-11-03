@@ -8,10 +8,7 @@ import { TaskBusyError, TaskManager } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { ExecutionAdapter } from "../src/execution-adapter.ts";
 import { StaticAgentEnvironment } from "../src/agent-registry.ts";
-import {
-  ExecutionAuthority,
-  GenerationLedger,
-} from "../src/execution-authority.ts";
+import { ExecutionAuthority } from "../src/execution-authority.ts";
 
 /**
  * Deletion cascades follow the task tree, not an agent, and every retired
@@ -46,7 +43,7 @@ describe("task-tree deletion across agents", () => {
       defaultCwd: dataDir,
       dataDir,
       state: new TaskStateManager(),
-      authority: new ExecutionAuthority(new GenerationLedger()),
+      authority: new ExecutionAuthority(),
       agents: new StaticAgentEnvironment(
         adapterA.agentId,
         [adapterA, adapterB],

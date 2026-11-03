@@ -9,10 +9,7 @@ import { fileURLToPath } from "node:url";
 import { AgentBridge } from "../src/bridge.ts";
 import { AgentRegistry } from "../src/agent-registry.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import {
-  ExecutionAuthority,
-  GenerationLedger,
-} from "../src/execution-authority.ts";
+import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";
@@ -56,7 +53,7 @@ describe("config request across a rotation", () => {
     writeFileSync(callsB, "");
     store = new Store(dir);
     store.ensureRootTask(dir);
-    const authority = new ExecutionAuthority(new GenerationLedger());
+    const authority = new ExecutionAuthority();
     registry = new AgentRegistry({
       agents: {
         "agent-a": { cmd: "configured" },

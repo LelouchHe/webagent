@@ -8,10 +8,7 @@ import { TaskManager } from "../src/task-manager.ts";
 import { TaskStateManager, type StatePatchEvent } from "../src/task-state.ts";
 import { ExecutionAdapter } from "../src/execution-adapter.ts";
 import { StaticAgentEnvironment } from "../src/agent-registry.ts";
-import {
-  ExecutionAuthority,
-  GenerationLedger,
-} from "../src/execution-authority.ts";
+import { ExecutionAuthority } from "../src/execution-authority.ts";
 
 /**
  * The two properties that only exist because the runtime is no longer built
@@ -55,7 +52,7 @@ describe("runtime authority regressions", () => {
     // Two agents, two Stores: the second agent's binding write is what moves
     // the task, so "owner changed" is real rather than a relabelled adapter.
     const state = new TaskStateManager();
-    const authority = new ExecutionAuthority(new GenerationLedger());
+    const authority = new ExecutionAuthority();
     const storeA = store;
     const storeB = new Store(dataDir);
     const managerA = new TaskManager({

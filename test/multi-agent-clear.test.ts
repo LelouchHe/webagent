@@ -9,10 +9,7 @@ import { fileURLToPath } from "node:url";
 import { AgentBridge } from "../src/bridge.ts";
 import { AgentRegistry } from "../src/agent-registry.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import {
-  ExecutionAuthority,
-  GenerationLedger,
-} from "../src/execution-authority.ts";
+import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";
@@ -82,7 +79,7 @@ describe("clear onto another agent", () => {
     writeFileSync(callsPath, "");
     store = new Store(dir);
     store.ensureRootTask(dir);
-    const authority = new ExecutionAuthority(new GenerationLedger());
+    const authority = new ExecutionAuthority();
     // Only agent-a is still configured: "agent-b" has been removed.
     registry = new AgentRegistry({
       agents: { "agent-a": { cmd: "configured" } },

@@ -12,10 +12,7 @@ import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
 import type { McpTaskToolHost } from "../src/mcp/tools.ts";
-import {
-  ExecutionAuthority,
-  GenerationLedger,
-} from "../src/execution-authority.ts";
+import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { Store } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { TaskManager } from "../src/task-manager.ts";
@@ -46,7 +43,7 @@ describe("pending capability over a real ACP session", () => {
     const store = new Store(dir);
     store.ensureRootTask(dir);
     const capabilities = new CapabilityStore();
-    const authority = new ExecutionAuthority(new GenerationLedger());
+    const authority = new ExecutionAuthority();
     const calls = (): Call[] =>
       readFileSync(callsPath, "utf8")
         .split("\n")

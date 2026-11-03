@@ -10,10 +10,7 @@ import { AgentBridge } from "../src/bridge.ts";
 import { AgentRegistry } from "../src/agent-registry.ts";
 import { StaticAgentEnvironment } from "../src/agent-registry.ts";
 import { ExecutionAdapter } from "../src/execution-adapter.ts";
-import {
-  ExecutionAuthority,
-  GenerationLedger,
-} from "../src/execution-authority.ts";
+import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";
@@ -77,7 +74,7 @@ describe("reads with an unavailable execution", () => {
     writeFileSync(deadCalls, "");
     store = new Store(dir);
     store.ensureRootTask(dir);
-    authority = new ExecutionAuthority(new GenerationLedger());
+    authority = new ExecutionAuthority();
     // Each agent's command is the one its transport really launches: the
     // missing-binary state must fail in `spawn`, not in a stub.
     const commands: Record<string, string> = {
@@ -290,7 +287,7 @@ describe("snapshot warm-up is bounded", () => {
       defaultCwd: dir,
       dataDir: dir,
       state: new TaskStateManager(),
-      authority: new ExecutionAuthority(new GenerationLedger()),
+      authority: new ExecutionAuthority(),
       agents: new StaticAgentEnvironment("agent-a", [adapter]),
     });
     store.createTask("slow", dir, "auto", "agent-a", "existing-session");

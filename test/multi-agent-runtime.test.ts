@@ -7,10 +7,7 @@ import { fileURLToPath } from "node:url";
 import { AgentBridge } from "../src/bridge.ts";
 import { AgentRegistry } from "../src/agent-registry.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import {
-  ExecutionAuthority,
-  GenerationLedger,
-} from "../src/execution-authority.ts";
+import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { Store, emptyExecutionSlot } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { TaskManager } from "../src/task-manager.ts";
@@ -70,7 +67,7 @@ function createHarness(
   const store = new Store(dir);
   store.ensureRootTask(dir);
   const capabilities = new CapabilityStore();
-  const authority = new ExecutionAuthority(new GenerationLedger());
+  const authority = new ExecutionAuthority();
   const bridges: AgentBridge[] = [];
   const registry = new AgentRegistry({
     agents: Object.fromEntries(
@@ -587,7 +584,7 @@ describe("retirement follows the recorded binding", () => {
     const retired: Array<{ agentId: string; sessionId: string }> = [];
     const store = new Store(dir);
     store.ensureRootTask(dir);
-    const authority = new ExecutionAuthority(new GenerationLedger());
+    const authority = new ExecutionAuthority();
     const registry = new AgentRegistry({
       agents: {
         "agent-a": { cmd: "unused" },

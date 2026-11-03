@@ -46,7 +46,6 @@ import {
 } from "./agent-registry.ts";
 import {
   ExecutionAuthority,
-  GenerationLedger,
   leaseOf,
   type ExecutionLease,
 } from "./execution-authority.ts";
@@ -467,7 +466,7 @@ export function createTaskManager(
     capabilities,
     mcpBaseUrl,
     state: new TaskStateManager(),
-    authority: new ExecutionAuthority(new GenerationLedger()),
+    authority: new ExecutionAuthority(),
     agents: new SingleAgentEnvironment(agentId),
   });
 }
