@@ -247,7 +247,7 @@ describe("shares store", () => {
       assert.equal(store.getTask(taskId), undefined);
       assert.equal(store.getTaskIncludingDeleted(taskId), undefined);
       assert.equal(store.getEvents(taskId).length, 0);
-      assert.equal(store.getAgentSessionBinding(taskId), undefined);
+      assert.equal(store.getCurrentExecutionBinding(taskId), undefined);
     });
 
     it("deleteTask with active share soft-deletes; events + viewer-side lookup keep working", () => {
@@ -275,7 +275,7 @@ describe("shares store", () => {
       assert.notEqual(tomb.deleted_at, null);
       assert.equal(store.getEvents(taskId).length, 1);
       // The owner-side binding is retired and removed alongside the tombstone.
-      assert.equal(store.getAgentSessionBinding(taskId), undefined);
+      assert.equal(store.getCurrentExecutionBinding(taskId), undefined);
       // Share row still live:
       assert.notEqual(store.getShareByToken(tok), undefined);
     });

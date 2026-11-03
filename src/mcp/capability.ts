@@ -13,7 +13,6 @@ const CAPABILITY_PREFIX = "mcp_";
  * cannot be written through a token that has not been promoted.
  */
 export interface CapabilityGrant {
-  readonly token: string;
   readonly taskId: string;
   readonly agentId: string;
   readonly state: "initializing" | "active";
@@ -79,15 +78,6 @@ export class CapabilityStore {
     return this.mintToken(taskId, agentId, "initializing", null);
   }
 
-  /** Mint a replacement while keeping the current execution capability valid. */
-  mintAdditional(
-    taskId: string,
-    agentId: string,
-    generation: number | null,
-  ): string {
-    return this.mintToken(taskId, agentId, "active", generation);
-  }
-
   /**
    * Promote one token after its execution became the task's binding. The
    * generation is the one that commit produced: a token never inherits a later
@@ -98,20 +88,6 @@ export class CapabilityStore {
     if (!row) return;
     row.state = "active";
     row.generation = generation;
-  }
-
-  /**
-   * True when the grant is still the authority for its task: the same agent and
-   * the exact generation the token was minted for.
-   */
-  accepts(
-    token: string,
-    taskId: string,
-    isCurrent: (taskId: string, generation: number) => boolean,
-  ): boolean {
-    const row = this.byToken.get(token);
-    if (row?.taskId !== taskId || row.generation === null) return false;
-    return isCurrent(taskId, row.generation);
   }
 
   /** Revoke one capability token (no-op when it is unknown). */
@@ -148,7 +124,6 @@ export class CapabilityStore {
     const row = this.byToken.get(token);
     if (!row) return null;
     return {
-      token,
       taskId: row.taskId,
       agentId: row.agentId,
       state: row.state,

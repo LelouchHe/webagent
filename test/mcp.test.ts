@@ -124,17 +124,37 @@ describe("CapabilityStore", () => {
     assert.equal(caps.resolve(second)?.taskId, "web-1");
   });
 
-  it("can keep the previous token valid while a replacement execution starts", () => {
+  it("keeps the previous token valid while a replacement execution starts", () => {
+    // The path a rotation actually takes: the replacement's token starts
+    // initializing, the old execution's token keeps working, and only after the
+    // binding commits is the replacement promoted and the old token dropped.
     const caps = new CapabilityStore();
     const first = caps.mint("web-1", "agent-a", 1);
-    const second = caps.mintAdditional("web-1", "agent-a", 1);
+    const replacement = caps.mintInitializing("web-1", "agent-a");
 
     assert.equal(caps.resolve(first)?.taskId, "web-1");
-    assert.equal(caps.resolve(second)?.taskId, "web-1");
+    assert.equal(caps.resolve(first)?.state, "active");
+    assert.equal(caps.resolve(replacement)?.state, "initializing");
+    assert.equal(caps.resolve(replacement)?.generation, null);
 
-    caps.revokeOtherTokens("web-1", second);
+    caps.promote(replacement, 2);
+    caps.revokeOtherTokens("web-1", replacement);
     assert.equal(caps.resolve(first), null);
-    assert.equal(caps.resolve(second)?.taskId, "web-1");
+    assert.equal(caps.resolve(replacement)?.taskId, "web-1");
+    assert.equal(caps.resolve(replacement)?.state, "active");
+    assert.equal(caps.resolve(replacement)?.generation, 2);
+  });
+
+  it("keeps the old token when a replacement never commits", () => {
+    const caps = new CapabilityStore();
+    const current = caps.mint("web-3", "agent-a", 1);
+    const replacement = caps.mintInitializing("web-3", "agent-a");
+
+    // The replacement failed, so only its own token is discarded.
+    caps.revoke(replacement);
+    assert.equal(caps.resolve(replacement), null);
+    assert.equal(caps.resolve(current)?.taskId, "web-3");
+    assert.equal(caps.resolve(current)?.state, "active");
   });
 
   it("revokes per task and fails closed for unknown tokens", () => {

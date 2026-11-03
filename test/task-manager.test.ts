@@ -1299,9 +1299,9 @@ describe("TaskManager", () => {
       };
 
       sm.attachExecutionBridge(bridge);
-      await sm.ensureRootTask();
+      await sm.ensureTaskLive(store.rootTaskId);
       sm.attachExecutionBridge(bridge);
-      await sm.ensureRootTask();
+      await sm.ensureTaskLive(store.rootTaskId);
 
       assert.equal(newTaskCalls, 1);
       assert.equal(store.getAgentSessionId(store.rootTaskId), "agent-root");
@@ -1335,7 +1335,7 @@ describe("TaskManager", () => {
       // the slot instead of trying to load a session the agent never saw.
       sm.attachExecutionBridge(bridge);
       assert.equal(store.getAgentSessionId(rootId), "");
-      await sm.ensureRootTask();
+      await sm.ensureTaskLive(rootId);
       assert.equal(newSessionCalls, 1);
       assert.equal(store.getAgentSessionId(rootId), "agent-materialized");
       assert.ok(sm.liveTasks.has(rootId));

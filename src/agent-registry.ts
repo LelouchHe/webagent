@@ -26,7 +26,6 @@ export interface AgentEnvironment {
   /** Agent that unbound tasks and caller-less operations target. */
   readonly defaultAgentId: string;
   isConfigured(agentId: string): boolean;
-  configuredAgentIds(): string[];
   /** An adapter created earlier, never a reason to start anything. */
   existing(agentId: string): ExecutionAdapter | undefined;
   /** Every adapter created so far, in creation order. */
@@ -99,10 +98,6 @@ export class AgentRegistry implements AgentEnvironment {
     return Object.hasOwn(this.agents, agentId);
   }
 
-  configuredAgentIds(): string[] {
-    return Object.keys(this.agents);
-  }
-
   existing(agentId: string): ExecutionAdapter | undefined {
     return this.entries.get(agentId)?.adapter;
   }
@@ -133,21 +128,10 @@ export class AgentRegistry implements AgentEnvironment {
     // stays false until that flight's process has finished initializing.
     if (entry.flight) return entry.flight;
     if (adapter.isAvailable()) return adapter;
-    return this.startFlight(agentId, entry);
-  }
-
-  private startFlight(
-    agentId: string,
-    entry: {
-      adapter: ExecutionAdapter;
-      flight: Promise<ExecutionAdapter> | null;
-    },
-  ): Promise<ExecutionAdapter> {
     const flight = this.startAgent(entry.adapter).finally(() => {
       if (entry.flight === flight) entry.flight = null;
     });
     entry.flight = flight;
-    void agentId;
     return flight;
   }
 
@@ -175,15 +159,10 @@ export class AgentRegistry implements AgentEnvironment {
     })().finally(() => {
       if (entry.flight === flight) entry.flight = null;
     });
-    entry.flight = flight;
     // A reload is a flight like any other: `resolve` waits for it instead of
     // starting a second process beside it.
-    await flight.then(
-      () => {},
-      (err: unknown) => {
-        throw err;
-      },
-    );
+    entry.flight = flight;
+    await flight;
   }
 
   private async startAgent(
@@ -255,10 +234,6 @@ export class StaticAgentEnvironment implements AgentEnvironment {
   isConfigured(agentId: string): boolean {
     if (this.configured) return this.configured(agentId);
     return this.adapters.has(agentId) || agentId === this.defaultAgentId;
-  }
-
-  configuredAgentIds(): string[] {
-    return [...this.adapters.keys()];
   }
 
   existing(agentId: string): ExecutionAdapter | undefined {

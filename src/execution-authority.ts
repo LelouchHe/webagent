@@ -80,10 +80,6 @@ export function bindingsEqual(
   return a.agentId === b.agentId && a.sessionId === b.sessionId;
 }
 
-export function formatBinding(binding: ExecutionBinding | null): string {
-  return binding === null ? "none" : `${binding.agentId}:${binding.sessionId}`;
-}
-
 /**
  * Per-task generation ledger. Entries are created when a task becomes live in
  * this process and dropped when it is deleted, so the map cannot accumulate

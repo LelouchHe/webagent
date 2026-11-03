@@ -75,11 +75,8 @@ export class ExecutionAdapter {
    * Retire an execution this agent owns. Best-effort: a failed retirement
    * never rolls back the binding change that made the execution stale.
    */
-  retire(
-    agentSessionId: string,
-    fallback?: ExecutionRetirer | null,
-  ): Promise<void> | null {
-    const bridge = this.bridge ?? fallback ?? null;
+  retire(agentSessionId: string): Promise<void> | null {
+    const bridge = this.bridge;
     if (typeof bridge?.retireExecution !== "function") {
       exlog.warn("no bridge available to retire execution", {
         agentId: this.agentId,

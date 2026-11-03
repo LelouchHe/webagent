@@ -63,11 +63,36 @@ describe("Store", () => {
       assert.equal(store.getAgentSessionId("web-1"), "agent-1");
     });
 
-    it("keeps internal ACP tasks out of the user task list", () => {
-      store.registerInternalAgentSession("test-agent", "agent-title");
+    it("keeps internal ACP sessions out of the user task list", () => {
+      // An internal ACP session is a row with `task_id = NULL`, keyed by
+      // `(agent_key, agent_session_id)`. The schema supports it; nothing in the
+      // runtime creates one any more, so the fixture writes it directly.
+      store["db"]
+        .prepare(
+          "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, NULL, ?)",
+        )
+        .run("test-agent", "agent-title", Date.now());
 
       assert.equal(store.getTaskId("test-agent", "agent-title"), undefined);
       assert.deepEqual(store.listTasks(), []);
+      // A user-visible binding with the same session id under another agent is
+      // a different row: `(agent_key, agent_session_id)` is the primary key.
+      store.createTask("web-1", "/x", "auto", "other-agent", "agent-title");
+      assert.equal(store.getTaskId("other-agent", "agent-title"), "web-1");
+      assert.equal(
+        store.sessionView("test-agent").getAgentSessionId("web-1"),
+        undefined,
+      );
+      assert.equal(
+        (
+          store["db"]
+            .prepare(
+              "SELECT COUNT(*) AS n FROM agent_sessions WHERE agent_session_id = ?",
+            )
+            .get("agent-title") as { n: number }
+        ).n,
+        2,
+      );
     });
 
     it("reads tasks globally while execution identity stays agent-scoped", () => {

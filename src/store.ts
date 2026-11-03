@@ -364,10 +364,8 @@ function migrateSystemMessageData(raw: string): string | null {
  */
 export interface AgentSessionView {
   readonly agentId: string;
-  registerInternalAgentSession(agentSessionId: string): AgentSessionRow;
   getTaskId(agentSessionId: string): string | undefined;
   getAgentSessionId(taskId: string): string | undefined;
-  getBinding(taskId: string): AgentSessionRow | undefined;
 }
 
 export class Store {
@@ -1054,33 +1052,10 @@ export class Store {
   sessionView(agentId: string): AgentSessionView {
     return {
       agentId,
-      registerInternalAgentSession: (agentSessionId) =>
-        this.registerInternalAgentSession(agentId, agentSessionId),
       getTaskId: (agentSessionId) => this.getTaskId(agentId, agentSessionId),
       getAgentSessionId: (taskId) =>
         this.getAgentSessionBindingFor(taskId, agentId)?.agent_session_id,
-      getBinding: (taskId) => this.getAgentSessionBindingFor(taskId, agentId),
     };
-  }
-
-  registerInternalAgentSession(
-    agentId: string,
-    agentSessionId: string,
-  ): AgentSessionRow {
-    this.db
-      .prepare(
-        "INSERT OR IGNORE INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, NULL, ?)",
-      )
-      .run(agentId, agentSessionId, Date.now());
-    const row = this.db
-      .prepare(
-        "SELECT * FROM agent_sessions WHERE agent_key = ? AND agent_session_id = ?",
-      )
-      .get(agentId, agentSessionId) as AgentSessionRow;
-    if (row.task_id) {
-      throw new Error("Agent reused a user-visible task ID internally");
-    }
-    return row;
   }
 
   /**
@@ -1111,10 +1086,6 @@ export class Store {
         )
         .get(agentId, agentSessionId) as { task_id: string } | undefined
     )?.task_id;
-  }
-
-  getAgentSessionBinding(taskId: string): AgentSessionRow | undefined {
-    return this.getCurrentExecutionBinding(taskId);
   }
 
   /** The binding row, but only when the named agent owns it. */

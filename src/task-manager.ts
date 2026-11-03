@@ -370,7 +370,6 @@ export interface PublicPendingPermission {
 
 export interface TaskExecution {
   agentId: string;
-  adapter: ExecutionAdapter;
   bridge: DeliveryBridge;
 }
 
@@ -413,10 +412,6 @@ export class SingleAgentEnvironment implements AgentEnvironment {
 
   isConfigured(agentId: string): boolean {
     return agentId === this.defaultAgentId;
-  }
-
-  configuredAgentIds(): string[] {
-    return [this.defaultAgentId];
   }
 
   existing(agentId: string): ExecutionAdapter | undefined {
@@ -616,15 +611,6 @@ export class TaskManager implements ObligationHost {
   configOptionsForTask(taskId: string): ConfigOption[] {
     const agentId = this.agentsForTask(taskId);
     return agentId ? this.configOptionsFor(agentId) : [];
-  }
-
-  /** Identity reported by the default agent at ACP initialize. */
-  get agentInfo(): { name: string; version: string } | null {
-    return this.agentInfoFor(this.agents.defaultAgentId);
-  }
-
-  set agentInfo(info: { name: string; version: string } | null) {
-    this.setAgentInfo(this.agents.defaultAgentId, info);
   }
 
   agentInfoFor(agentId: string): { name: string; version: string } | null {
@@ -1676,7 +1662,7 @@ export class TaskManager implements ObligationHost {
     const bridge = adapter.bridge as DeliveryBridge | null;
     if (!bridge) throw new AgentNotReadyError(taskId);
     bridge.setExecutionLeaseSource?.(this.authority);
-    return { agentId, adapter, bridge };
+    return { agentId, bridge };
   }
 
   /**
@@ -1689,7 +1675,7 @@ export class TaskManager implements ObligationHost {
     const adapter = this.agents.existing(agentId);
     const bridge = adapter?.bridge as DeliveryBridge | null | undefined;
     if (!adapter || !bridge) return null;
-    return { agentId, adapter, bridge };
+    return { agentId, bridge };
   }
 
   /**
@@ -1794,16 +1780,6 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
-   * Materialize the reserved Root when the server starts. The three states are
-   * distinct: no binding means attach, an empty execution slot means replace,
-   * and a real binding means load. `resumeTask` owns all three, so this only
-   * picks the transport.
-   */
-  async ensureRootTask(): Promise<void> {
-    await this.ensureTaskLive(this.store.rootTaskId);
-  }
-
-  /**
    * Materialize the workspace's first task: the Root anchor. The row is
    * created if this database never had one, and the task's first use either
    * attaches an execution (never bound) or materializes a reset's empty slot.
@@ -1846,11 +1822,6 @@ export class TaskManager implements ObligationHost {
   /** True while `agentId` is still part of the configuration. */
   isAgentConfigured(agentId: string): boolean {
     return this.agents.isConfigured(agentId);
-  }
-
-  /** Configured agent ids, in configuration order. */
-  configuredAgentIds(): string[] {
-    return this.agents.configuredAgentIds();
   }
 
   /**

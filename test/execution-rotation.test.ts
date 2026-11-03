@@ -113,7 +113,10 @@ describe("implicit owner rotation", () => {
     tasks.attachExecutionBridge(bridge);
     // The owner is still configured, so resolving the task targets it — and
     // this process cannot start it. Nothing is displaced.
-    await assert.rejects(() => tasks.ensureRootTask(), /not available/);
+    await assert.rejects(
+      () => tasks.ensureTaskLive(store.rootTaskId),
+      /not available/,
+    );
     assert.deepEqual(created, [], "a configured owner must not be replaced");
     assert.equal(rootBinding(store)?.agent_key, "agent-a");
     assert.equal(rootBinding(store)?.agent_session_id, "session-a");
@@ -158,7 +161,7 @@ describe("implicit owner rotation", () => {
     const { bridge, created } = bridgeRecorder();
 
     tasks.attachExecutionBridge(bridge);
-    await tasks.ensureRootTask();
+    await tasks.ensureTaskLive(store.rootTaskId);
     const event = await tasks.resumeTask(bridge, store.rootTaskId);
 
     assert.equal(created.length, 1);
