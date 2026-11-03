@@ -25,7 +25,13 @@ test("concurrent clients converge on this backend's Root task without creating o
   for (const task of existing) {
     if (task.id === config.rootTaskId) continue;
     const response = await request.delete(`/api/v1/tasks/${task.id}`);
-    expect(response.ok()).toBe(true);
+    // A previous iteration's delete cascades over the whole tree, so a task
+    // listed a moment ago may already be gone.
+    if (response.status() === 404) continue;
+    expect(
+      response.ok(),
+      `${task.id}: ${response.status()} ${await response.text()}`,
+    ).toBe(true);
   }
 
   const pages = await Promise.all(

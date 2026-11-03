@@ -12,6 +12,7 @@ import {
 } from "./attachment-interceptor.ts";
 import { log } from "./log.ts";
 import { isAutopilotMode } from "./mode-bucket.ts";
+import { leaseOf } from "./execution-authority.ts";
 
 const ailog = log.scope("attachment-interceptor");
 const plog = log.scope("push");
@@ -66,7 +67,7 @@ function handleConnected(
   event.cancelTimeout = config.cancelTimeout;
   event.recentPathsLimit = config.recentPathsLimit;
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive check
-  if (event.agent) tasks.agentInfo = event.agent;
+  if (event.agent) tasks.setAgentInfo(event.agentId, event.agent);
 }
 
 function handleConfigLikeEvent(
@@ -272,6 +273,8 @@ function handlePermissionRequest(
     },
     { from_ref: "agent" },
   );
+  const agentId = (bridge as { agentId?: string }).agentId;
+  const lease = leaseOf(event);
   tasks.pendingPermissions.set(event.requestId, {
     requestId: event.requestId,
     taskId: event.taskId,
@@ -282,6 +285,7 @@ function handlePermissionRequest(
         label: o.label ?? o.name ?? o.optionId,
       }),
     ),
+    ...(agentId && lease ? { execution: { agentId, lease } } : {}),
   });
   tasks.syncPendingPermissions(event.taskId);
   const autopiloted = maybeAutoApprovePermission(
@@ -512,7 +516,6 @@ export function handleAgentEvent(
   pushService?: PushService,
   _clientRegistry?: ClientRegistry,
 ): void {
-  tasks.setRecoveryBridge(bridge);
   // Execution write lease: the first of the two boundaries. An event stamped
   // with a stale generation, or one that lost its stamp while the task already
   // has a current execution, cannot reach any of this handler's writes.
@@ -534,24 +537,26 @@ export function handleAgentEvent(
     return;
   }
   if (event.type === "available_commands_update") {
-    const snapshot = tasks.updateAgentCommands(event.taskId, event.commands);
+    const snapshot = tasks.updateAgentCommands(
+      event.taskId,
+      event.commands,
+      (bridge as { agentId?: string }).agentId,
+    );
     if (tasks.restoringTasks.has(event.taskId)) return;
     sseManager.broadcast(withoutLease({ ...event, ...snapshot }));
     return;
   }
   if (event.type === "agent_reloading" || event.type === "agent_disconnected") {
-    for (const taskId of tasks.liveTasks) {
-      tasks.flushBuffers(taskId);
-    }
-    tasks.state.clearStreaming();
-    tasks.state.clearPlans();
-    tasks.state.clearContextUsage();
-    for (const snapshot of tasks.clearAgentCommands()) {
+    // Agent lifecycle events only affect the tasks that agent carries. Another
+    // agent's streaming, plans and usage are untouched. Command snapshots are
+    // cleared and announced before the process state that holds them is reset.
+    for (const snapshot of tasks.clearAgentCommands(event.agentId)) {
       sseManager.broadcast({
         type: "available_commands_update",
         ...snapshot,
       });
     }
+    tasks.clearAgentRuntime(event.agentId);
   }
   if (
     "taskId" in event &&

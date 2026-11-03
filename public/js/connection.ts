@@ -457,6 +457,20 @@ async function initTask(
   requestBootstrapTask();
 }
 
+/** Adopt one task detail response as the current task's creation event. */
+function installTaskFromDetail(task: TaskDetail): void {
+  handleEvent({
+    type: "task_created",
+    rootTaskId: task.rootTaskId,
+    taskId: task.id,
+    agentId: task.agentId ?? null,
+    cwd: task.cwd,
+    cwdDisplay: task.cwdDisplay,
+    title: task.title,
+    configOptions: task.configOptions,
+  });
+}
+
 async function resumeAndLoad(
   taskId: string,
   incremental: boolean,
@@ -474,15 +488,7 @@ async function resumeAndLoad(
     try {
       const task = await api.getTask(taskId);
       if (!isCurrent()) return;
-      handleEvent({
-        type: "task_created",
-        rootTaskId: task.rootTaskId,
-        taskId: task.id,
-        cwd: task.cwd,
-        cwdDisplay: task.cwdDisplay,
-        title: task.title,
-        configOptions: task.configOptions,
-      });
+      installTaskFromDetail(task);
     } catch {
       if (!isCurrent()) return;
       await fallbackToNextTask(
@@ -517,7 +523,6 @@ async function resumeAndLoad(
     state.taskId = null;
     state.pendingNavigationTaskId = taskId;
     const historyPromise = loadHistory(taskId);
-    let task: TaskDetail;
     try {
       const [s, loaded] = await Promise.all([
         api.getTask(taskId),
@@ -538,10 +543,12 @@ async function resumeAndLoad(
         return;
       }
       reconcileReplayedPendingTools();
-      task = s;
       if (!loaded) {
         addSystem("warn: Failed to load history.");
       }
+      if (!isCurrent()) return;
+      installTaskFromDetail(s);
+      drainNavigationEvents(taskId);
     } catch {
       if (!isCurrent()) return;
       await fallbackToNextTask(
@@ -553,17 +560,6 @@ async function resumeAndLoad(
       );
       return;
     }
-    if (!isCurrent()) return;
-    handleEvent({
-      type: "task_created",
-      rootTaskId: task.rootTaskId,
-      taskId: task.id,
-      cwd: task.cwd,
-      cwdDisplay: task.cwdDisplay,
-      title: task.title,
-      configOptions: task.configOptions,
-    });
-    drainNavigationEvents(taskId);
   }
 }
 

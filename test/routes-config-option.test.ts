@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { createRequestHandler } from "../src/routes.ts";
+import { createTaskManager } from "../src/task-manager.ts";
 import type { AgentEvent, ConfigOption } from "../src/types.ts";
 
 function putConfig(port: number, taskId: string, value: string) {
@@ -42,8 +43,8 @@ describe("config option route authority", () => {
     const publicDir = join(dir, "public");
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "ok");
-    const store = new Store(dir, "config-route-test");
-    store.createTask("task-1", dir, "auto", "session-1");
+    const store = new Store(dir);
+    store.createTask("task-1", dir, "auto", "config-route-test", "session-1");
     const events: AgentEvent[] = [];
     const canonicalOptions: ConfigOption[] = [
       {
@@ -55,19 +56,33 @@ describe("config option route authority", () => {
         options: [{ value: "vendor-a/model-one", name: "Vendor A/Model One" }],
       },
     ];
+    const tasks = createTaskManager(
+      store,
+      dir,
+      dir,
+      undefined,
+      undefined,
+      "config-route-test",
+    );
+    tasks.attachExecutionBridge({
+      newSession: async () => ({ sessionId: "", configOptions: [] }),
+      loadSession: async () => ({ taskId: "task-1", configOptions: [] }),
+      setConfigOption: async () => canonicalOptions,
+      prompt: async () => {},
+      cancel: async () => {},
+      resolvePermission: () => {},
+      denyPermission: () => {},
+    });
     const server = http.createServer(
       createRequestHandler({
         store,
+        tasks,
         publicDir,
         dataDir: dir,
         limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
         sseManager: {
           broadcast: (event: AgentEvent) => events.push(event),
         } as any,
-        getBridge: () =>
-          ({
-            setConfigOption: async () => canonicalOptions,
-          }) as any,
       }),
     );
     try {

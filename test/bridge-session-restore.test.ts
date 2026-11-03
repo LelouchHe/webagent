@@ -36,7 +36,7 @@ async function startAgent(t: TestContext, profile: string) {
   });
   const callsPath = join(dir, "calls.jsonl");
   writeFileSync(callsPath, "");
-  const store = new Store(dir, "session-fixture");
+  const store = new Store(dir);
   resources.store = store;
   const capabilities = new CapabilityStore();
   const tasks = createTaskManager(
@@ -45,6 +45,7 @@ async function startAgent(t: TestContext, profile: string) {
     dir,
     capabilities,
     "http://127.0.0.1:6800",
+    "session-fixture",
   );
   resources.tasks = tasks;
   const fixture = fileURLToPath(
@@ -52,7 +53,7 @@ async function startAgent(t: TestContext, profile: string) {
   );
   const bridge = new AgentBridge(
     `${process.execPath} --experimental-strip-types ${fixture} ${profile} ${callsPath}`,
-    store,
+    store.sessionView("session-fixture"),
   );
   resources.bridge = bridge;
   await bridge.start();
@@ -74,7 +75,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
     it(`${profile}: restores through ${method} only with config and cache intact`, async (t) => {
       const { bridge, store, tasks, calls, dir, capabilities } =
         await startAgent(t, profile);
-      store.createTask("web-1", dir, "auto", "agent-1");
+      store.createTask("web-1", dir, "auto", "session-fixture", "agent-1");
       store.updateTaskConfig("web-1", "mode", "#plan");
       const before = store.getTask("web-1");
       const events: AgentEvent[] = [];
@@ -120,7 +121,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
       assert.ok(authorization);
       assert.ok(authorization.startsWith("Bearer "));
       assert.equal(
-        capabilities.resolve(authorization.slice("Bearer ".length)),
+        capabilities.resolve(authorization.slice("Bearer ".length))?.taskId,
         "web-1",
       );
       assert.deepEqual(recorded[1], {
@@ -149,6 +150,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
         {
           type: "task_created",
           taskId: "web-1",
+          agentId: "session-fixture",
           cwd: dir,
           cwdDisplay: abbreviateHomePath(dir),
           configOptions: agentOptions,
@@ -158,6 +160,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
         type: "task_created",
         rootTaskId: store.rootTaskId,
         taskId: "web-1",
+        agentId: "session-fixture",
         cwd: dir,
         cwdDisplay: abbreviateHomePath(dir),
         title: "web-1",
@@ -173,7 +176,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
 
   it("neither: rejects through the existing restore failure path, without calling an unadvertised method", async (t) => {
     const { bridge, store, tasks, calls } = await startAgent(t, "neither");
-    store.createTask("web-1", "/repo", "auto", "agent-1");
+    store.createTask("web-1", "/repo", "auto", "session-fixture", "agent-1");
     const events: AgentEvent[] = [];
     bridge.on("event", (event: AgentEvent) => events.push(event));
 
@@ -204,7 +207,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
       t,
       "resume-missing",
     );
-    store.createTask("web-1", "/repo", "auto", "agent-1");
+    store.createTask("web-1", "/repo", "auto", "session-fixture", "agent-1");
 
     await assert.rejects(tasks.resumeTask(bridge, "web-1"), (err: Error) => {
       assert.match(err.message, /agent no longer remembers task/);
@@ -255,7 +258,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
 
   it("drops events from an execution whose generation was replaced", async (t) => {
     const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
-    store.createTask("web-1", dir, "auto", "agent-1");
+    store.createTask("web-1", dir, "auto", "session-fixture", "agent-1");
     await tasks.resumeTask(bridge, "web-1");
 
     const events: AgentEvent[] = [];
@@ -276,7 +279,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
     // Rotate the task outside the bridge: the old execution's lease dies with
     // it. The terminal `prompt_done`/`error` path emits by task id without a
     // session lookup, so the lease is the only fence it has.
-    store.replaceAgentSession("web-1", "agent-2");
+    store.replaceAgentSession("web-1", "session-fixture", "agent-2");
     emitForSession("agent-1", {
       type: "message_chunk",
       taskId: "web-1",
@@ -300,7 +303,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
     // as `taskId`, the entry accepts it (no ledger entry for "agent-1"), and the
     // downstream write hits a FOREIGN KEY that names no real task.
     const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
-    store.createTask("web-1", dir, "auto", "agent-1");
+    store.createTask("web-1", dir, "auto", "session-fixture", "agent-1");
     await tasks.resumeTask(bridge, "web-1");
     bridge.on("event", (event: AgentEvent) => {
       handleAgentEvent(event, tasks, store, bridge, makeEventHandlerConfig(), {
@@ -320,7 +323,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
 
   it("attributes a death notice to the task whose prompt captured the lease", async (t) => {
     const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
-    store.createTask("web-1", dir, "auto", "agent-1");
+    store.createTask("web-1", dir, "auto", "session-fixture", "agent-1");
     await tasks.resumeTask(bridge, "web-1");
 
     const errors: AgentEvent[] = [];
@@ -354,7 +357,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
 
   it("never re-resolves the current generation for a death notice", async (t) => {
     const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
-    store.createTask("web-1", dir, "auto", "agent-1");
+    store.createTask("web-1", dir, "auto", "session-fixture", "agent-1");
     await tasks.resumeTask(bridge, "web-1");
     const promptLease = tasks.authority.leaseFor("web-1");
     assert.ok(promptLease);
@@ -370,7 +373,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
     // The execution is replaced while the prompt is in flight. A death notice
     // must be attributed to the generation the prompt captured, not to whatever
     // generation the task has by the time the agent dies.
-    store.replaceAgentSession("web-1", "session-2");
+    store.replaceAgentSession("web-1", "session-fixture", "session-2");
     const current = tasks.authority.leaseFor("web-1");
     assert.ok(current);
     assert.equal(current.generation, promptLease.generation + 1);
@@ -398,7 +401,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
 
   it("never lets a warm-cache response from a replaced execution reach the cache", async (t) => {
     const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
-    store.createTask("web-1", dir, "auto", "agent-1");
+    store.createTask("web-1", dir, "auto", "session-fixture", "agent-1");
     store.updateTaskConfig("web-1", "mode", "#plan");
 
     const modeOptions = [
@@ -446,7 +449,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
     );
 
     // The task is rotated while the config request is in flight.
-    store.replaceAgentSession("web-1", "session-2");
+    store.replaceAgentSession("web-1", "session-fixture", "session-2");
     release();
 
     await assert.rejects(() => restoring, /Execution replaced/);
@@ -464,7 +467,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
 
   it("never finishes a config restore for a replaced execution", async (t) => {
     const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
-    store.createTask("web-1", dir, "agent-1");
+    store.createTask("web-1", dir, "auto", "session-fixture", "agent-1");
     store.updateTaskConfig("web-1", "mode", "#plan");
 
     const modeOptions = [
@@ -508,7 +511,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
     const requestsBeforeRotation = sessions.length;
 
     // A second rotation lands while the replay's request is in flight.
-    store.replaceAgentSession("web-1", "session-3");
+    store.replaceAgentSession("web-1", "session-fixture", "session-3");
     release();
 
     await assert.rejects(() => rotating, /Execution replaced/);
@@ -560,7 +563,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
       t,
       "load-only",
     );
-    store.createTask("web-1", dir, "auto", "agent-1");
+    store.createTask("web-1", dir, "auto", "session-fixture", "agent-1");
     // A database written before the write-boundary guard may hold such an id.
     store["db"]
       .prepare(

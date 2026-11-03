@@ -57,7 +57,7 @@ describe("routes auth gate", () => {
     mkdirSync(join(publicDir, "icons"));
     writeFileSync(join(publicDir, "icons", "icon-192.png"), "");
 
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     authStore = new AuthStore(join(tmpDir, "auth.json"));
     await authStore.load();
     const created = await authStore.addToken("test", "admin");

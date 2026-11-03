@@ -100,6 +100,18 @@ function createControllableBridge() {
   };
 }
 
+/** A principal for a task the manager currently owns, with its generation. */
+function principalFor(manager: TaskManager, taskId: string) {
+  const lease = manager.authority.leaseFor(taskId);
+  assert.ok(lease, `task ${taskId} must have a generation`);
+  return {
+    taskId,
+    agentId: "test-agent",
+    generation: lease.generation,
+    initializing: false,
+  };
+}
+
 /** Arm a directed obligation the way a direct parent dispatch does. */
 async function armDirectDispatch(
   store: Store,
@@ -109,8 +121,11 @@ async function armDirectDispatch(
   targetTaskId: string,
   body = "Do the assigned work.",
 ): Promise<DirectedObligation> {
-  const host = createMcpTaskToolHost({ store, tasks, getBridge: () => bridge });
-  await host.send(sourceTaskId, targetTaskId, body);
+  // The target's own transport drives the delivery, so the controllable bridge
+  // must be the binding agent's transport.
+  tasks.attachExecutionBridge(bridge);
+  const host = createMcpTaskToolHost({ store, tasks });
+  await host.send(principalFor(tasks, sourceTaskId), targetTaskId, body);
   const obligation = tasks.getObligation(sourceTaskId, targetTaskId);
   assert.ok(obligation, "a direct parent dispatch must arm an obligation");
   return obligation;
@@ -143,8 +158,19 @@ describe("handleAgentEvent", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-server-test-"));
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     tasks = createTaskManager(store, tmpDir, tmpDir);
+    // Every handler in this file drives one mock transport for the task's
+    // binding agent; the runtime resolves it through the adapter.
+    tasks.attachExecutionBridge({
+      newSession: async () => ({ sessionId: "", configOptions: [] }),
+      loadSession: async (taskId: string) => ({ taskId, configOptions: [] }),
+      setConfigOption: async () => [],
+      prompt: async () => {},
+      cancel: async () => {},
+      resolvePermission: () => {},
+      denyPermission: () => {},
+    });
   });
 
   afterEach(() => {
@@ -158,7 +184,7 @@ describe("handleAgentEvent", () => {
   // --- Event routing ---
 
   it("routes message_chunk through assistant buffer and broadcasts", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
 
@@ -182,7 +208,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("flushes thinking buffer before appending assistant text", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     const { bridge } = createMockBridge();
     const { sseManager } = createMockSseManager();
 
@@ -212,7 +238,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("saves tool_call events to store and broadcasts", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
 
@@ -239,7 +265,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("stores plan history and updates the current runtime plan", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
     const entries = [
@@ -262,7 +288,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("clears runtime plan when every entry is completed", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.state.patch("s1", {
       runtime: {
         plan: [{ content: "Old work", status: "in_progress" }],
@@ -288,7 +314,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("saves prompt_done and clears active prompt", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.activePrompts.add("s1");
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
@@ -313,15 +339,36 @@ describe("handleAgentEvent", () => {
   });
 
   function seedFamily() {
-    store.createTask("grand", "/tmp", "root", "agent-grand");
-    store.createTask("parent", "/tmp", "agent", "agent-parent", "grand");
-    store.createTask("child", "/tmp", "agent", "agent-child", "parent");
-    store.createTask("sibling", "/tmp", "agent", "agent-sibling", "parent");
+    store.createTask("grand", "/tmp", "root", "test-agent", "agent-grand");
+    store.createTask(
+      "parent",
+      "/tmp",
+      "agent",
+      "test-agent",
+      "agent-parent",
+      "grand",
+    );
+    store.createTask(
+      "child",
+      "/tmp",
+      "agent",
+      "test-agent",
+      "agent-child",
+      "parent",
+    );
+    store.createTask(
+      "sibling",
+      "/tmp",
+      "agent",
+      "test-agent",
+      "agent-sibling",
+      "parent",
+    );
     tasks.liveTasks.add("child");
   }
 
   function endTurn(
-    bridge: Parameters<TaskManager["drainCollaborationDeliveries"]>[0],
+    bridge: object,
     taskId: string,
     promptId: string | undefined,
     stopReason = "end_turn",
@@ -360,9 +407,8 @@ describe("handleAgentEvent", () => {
     const host = createMcpTaskToolHost({
       store,
       tasks,
-      getBridge: () => bridge,
     });
-    await host.send("sibling", "child", "A sibling note.");
+    await host.send(principalFor(tasks, "sibling"), "child", "A sibling note.");
     // Mutation evidence: arming on any local relation puts a record here.
     assert.equal(tasks.getObligation("sibling", "child"), undefined);
     calls.prompts[0].resolve();
@@ -701,9 +747,12 @@ describe("handleAgentEvent", () => {
     const host = createMcpTaskToolHost({
       store,
       tasks,
-      getBridge: () => bridge,
     });
-    await host.update("child", "done", "Everything is verified.");
+    await host.update(
+      principalFor(tasks, "child"),
+      "done",
+      "Everything is verified.",
+    );
 
     assert.equal(store.getTask("child")?.workflow_status, "done");
     // Mutation evidence: not retiring on settle leaves a non-terminal record.
@@ -747,9 +796,12 @@ describe("handleAgentEvent", () => {
     const host = createMcpTaskToolHost({
       store,
       tasks,
-      getBridge: () => bridge,
     });
-    await host.update("child", "done", "Settled from the dispatch turn.");
+    await host.update(
+      principalFor(tasks, "child"),
+      "done",
+      "Settled from the dispatch turn.",
+    );
 
     assert.equal(tasks.getObligation("parent", "child")?.state, "settled");
     assert.ok(
@@ -794,9 +846,8 @@ describe("handleAgentEvent", () => {
     const host = createMcpTaskToolHost({
       store,
       tasks,
-      getBridge: () => bridge,
     });
-    await host.update("child", "done", "Early report.");
+    await host.update(principalFor(tasks, "child"), "done", "Early report.");
 
     // Mutation evidence: dropping the awaiting_delivery state gate settles here.
     assert.equal(
@@ -841,9 +892,12 @@ describe("handleAgentEvent", () => {
     const host = createMcpTaskToolHost({
       store,
       tasks,
-      getBridge: () => bridge,
     });
-    await host.update("child", "done", "Stored-source account.");
+    await host.update(
+      principalFor(tasks, "child"),
+      "done",
+      "Stored-source account.",
+    );
 
     // Mutation evidence: routing to the current parent_id sends this to
     // "sibling" instead, leaving the originally accountable source unaware.
@@ -878,10 +932,13 @@ describe("handleAgentEvent", () => {
     const host = createMcpTaskToolHost({
       store,
       tasks,
-      getBridge: () => bridge,
     });
     // The sibling delivery queues behind the live dispatch turn.
-    await host.send("sibling", "child", "A sibling note that settles nothing.");
+    await host.send(
+      principalFor(tasks, "sibling"),
+      "child",
+      "A sibling note that settles nothing.",
+    );
 
     endTurn(bridge, "child", calls.prompts[0].promptId);
     calls.prompts[0].resolve();
@@ -903,9 +960,27 @@ describe("handleAgentEvent", () => {
   });
 
   it("keeps queued collaboration blocked by an active ACP prompt", async () => {
-    store.attachAgentSession(store.ensureRootTask("/tmp").id, "agent-root");
-    store.createTask("source", "/tmp", "agent", "agent-source", "root");
-    store.createTask("target", "/tmp", "agent", "agent-target", "root");
+    store.attachAgentSession(
+      store.ensureRootTask("/tmp").id,
+      "test-agent",
+      "agent-root",
+    );
+    store.createTask(
+      "source",
+      "/tmp",
+      "agent",
+      "test-agent",
+      "agent-source",
+      "root",
+    );
+    store.createTask(
+      "target",
+      "/tmp",
+      "agent",
+      "test-agent",
+      "agent-target",
+      "root",
+    );
     tasks.liveTasks.add("target");
     store.createCollaborationMessage({
       id: "active-message",
@@ -919,7 +994,7 @@ describe("handleAgentEvent", () => {
     const { bridge, calls } = createMockBridge();
     tasks.activePrompts.add("target");
 
-    const drained = await tasks.drainCollaborationDeliveries(bridge, "target");
+    const drained = await tasks.drainCollaborationDeliveries("target", bridge);
 
     assert.equal(drained, false);
     assert.equal(calls.prompts.length, 0);
@@ -930,7 +1005,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("does not remind for a user-started turn", async () => {
-    store.createTask("manual", "/tmp", "auto", "agent-manual");
+    store.createTask("manual", "/tmp", "auto", "test-agent", "agent-manual");
     const { bridge, calls } = createMockBridge();
     tasks.activePrompts.add("manual");
     tasks.syncBusy("manual");
@@ -1055,9 +1130,8 @@ describe("handleAgentEvent", () => {
     const host = createMcpTaskToolHost({
       store,
       tasks,
-      getBridge: () => bridge,
     });
-    await host.update("child", "done", "done");
+    await host.update(principalFor(tasks, "child"), "done", "done");
     await flushTimers();
     calls.prompts.at(-1)?.resolve();
     await flushTimers();
@@ -1095,7 +1169,7 @@ describe("handleAgentEvent", () => {
     // Replay has to make the same judgement the live path does. If the stored
     // event drops its identity, a refresh replays the interleaving with no way
     // to tell a superseded terminator from the live turn's own.
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.activePrompts.add("s1");
     const { bridge } = createMockBridge();
     const { sseManager } = createMockSseManager();
@@ -1126,7 +1200,7 @@ describe("handleAgentEvent", () => {
     // Cancelling a turn and immediately sending another interleaves them: the
     // abandoned turn finishes late, and clearing busy here would strand the
     // replacement turn's spinner and let a second prompt through.
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.activePrompts.add("s1");
     tasks.syncBusy("s1");
     const livePromptId =
@@ -1162,7 +1236,7 @@ describe("handleAgentEvent", () => {
     // the same interleaving as a completion: the abandoned turn fails late and
     // must not clear the busy state of the turn that replaced it, or the
     // spinner dies mid-turn and the task accepts a concurrent prompt.
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.activePrompts.add("s1");
     tasks.syncBusy("s1");
     const { bridge } = createMockBridge();
@@ -1192,7 +1266,7 @@ describe("handleAgentEvent", () => {
 
   it("still clears busy when the live turn errors out", () => {
     // Control: an error for the current turn must end it, or the UI hangs.
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.activePrompts.add("s1");
     tasks.syncBusy("s1");
     const livePromptId =
@@ -1219,7 +1293,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("keeps runtime plan across prompt_done for cross-turn work", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     const plan = [{ content: "Continue later", status: "in_progress" }];
     tasks.state.patch("s1", { runtime: { plan } });
     tasks.activePrompts.add("s1");
@@ -1243,7 +1317,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("clears runtime plans when the agent disconnects", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.state.patch("s1", {
       runtime: {
         plan: [{ content: "Interrupted work", status: "in_progress" }],
@@ -1265,7 +1339,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("clears context usage when the agent disconnects", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.state.patch("s1", {
       runtime: { contextUsage: { used: 61_234, size: 272_000 } },
     });
@@ -1285,7 +1359,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("clears streaming state when the agent disconnects", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.state.patch("s1", {
       runtime: {
         streaming: { assistant: true, thinking: true },
@@ -1310,7 +1384,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("caches config options from task_created", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
     const configOptions = [
@@ -1333,7 +1407,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("skips events for restoring tasks", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.restoringTasks.add("s1");
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
@@ -1352,7 +1426,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("captures context usage during restore", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.restoringTasks.add("s1");
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
@@ -1379,7 +1453,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("caches available commands during restore without broadcasting", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.restoringTasks.add("s1");
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
@@ -1419,7 +1493,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("broadcasts available commands with the server revision", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
 
@@ -1450,12 +1524,16 @@ describe("handleAgentEvent", () => {
   });
 
   it("clears and broadcasts command snapshots when the agent disconnects", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.updateAgentCommands("s1", [
       { name: "context", description: "Show context usage" },
     ]);
     const { bridge } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
+    // The broadcast is emitted before the teardown resets process state, so it
+    // carries the outgoing epoch; a fresh epoch is what lets the client accept
+    // the next snapshot's lower revision.
+    const epochBefore = tasks.getAgentCommands("s1").epoch;
 
     handleAgentEvent(
       withLease({ type: "agent_disconnected", agentId: "test-agent" }),
@@ -1466,21 +1544,22 @@ describe("handleAgentEvent", () => {
       sseManager as any,
     );
 
-    const epoch = tasks.getAgentCommands("s1").epoch;
     assert.deepEqual(broadcasted, [
       {
         type: "available_commands_update",
         taskId: "s1",
-        epoch,
+        epoch: epochBefore,
         revision: 2,
         commands: [],
       },
       { type: "agent_disconnected", agentId: "test-agent" },
     ]);
+    // After the teardown a new epoch starts a fresh revision space.
+    assert.notEqual(tasks.getAgentCommands("s1").epoch, epochBefore);
   });
 
   it("persists error events with their turn identity", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.activePrompts.add("s1");
     const { bridge } = createMockBridge();
     const { sseManager } = createMockSseManager();
@@ -1508,7 +1587,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("removes active prompt on error events", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.activePrompts.add("s1");
     const { bridge } = createMockBridge();
     const { sseManager } = createMockSseManager();
@@ -1530,7 +1609,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("flushes content and clears streaming state on error events", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.appendAssistant("s1", "partial answer");
     tasks.state.patch("s1", {
       runtime: {
@@ -1566,7 +1645,7 @@ describe("handleAgentEvent", () => {
   // --- Autopilot auto-approval ---
 
   it("auto-approves permission in autopilot mode with allow_once", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     store.updateTaskConfig("s1", "mode", "agent#autopilot");
     const { bridge, calls } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
@@ -1610,7 +1689,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("auto-approves permission for Claude bypassPermissions mode (bare string)", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     store.updateTaskConfig("s1", "mode", "bypassPermissions");
     const { bridge, calls } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
@@ -1644,7 +1723,7 @@ describe("handleAgentEvent", () => {
     // These are agent-internal modes — the agent decides what to skip.
     // Webagent should forward permission_requests it does receive.
     for (const mode of ["acceptEdits", "dontAsk", "auto"]) {
-      store.createTask("s_" + mode, "/tmp");
+      store.createTask("s_" + mode, "/tmp", "auto", "test-agent");
       store.updateTaskConfig("s_" + mode, "mode", mode);
       const { bridge, calls } = createMockBridge();
       const { sseManager, broadcasted } = createMockSseManager();
@@ -1682,7 +1761,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("broadcasts permission_request normally when not in autopilot mode", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     store.updateTaskConfig("s1", "mode", "agent");
     const { bridge, calls } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
@@ -1714,7 +1793,7 @@ describe("handleAgentEvent", () => {
   });
 
   it("falls back to broadcasting permission_request when no allow_once option exists in autopilot", () => {
-    store.createTask("s1", "/tmp");
+    store.createTask("s1", "/tmp", "auto", "test-agent");
     store.updateTaskConfig("s1", "mode", "agent#autopilot");
     const { bridge, calls } = createMockBridge();
     const { sseManager, broadcasted } = createMockSseManager();
@@ -1757,11 +1836,11 @@ describe("handleAgentEvent", () => {
     }
 
     it("refuses an event stamped with a replaced generation", () => {
-      store.createTask("s1", "/tmp");
+      store.createTask("s1", "/tmp", "auto", "test-agent");
       const stale = leaseFor("s1");
       // A rotation advances the task's generation; the old execution's writes
       // are no longer welcome.
-      store.replaceAgentSession("s1", "agent-2");
+      store.replaceAgentSession("s1", "test-agent", "agent-2");
       assert.equal(leaseFor("s1").generation, stale.generation + 1);
 
       const { bridge } = createMockBridge();
@@ -1785,7 +1864,7 @@ describe("handleAgentEvent", () => {
     });
 
     it("refuses an event with no lease once the task has a current execution", () => {
-      store.createTask("s1", "/tmp");
+      store.createTask("s1", "/tmp", "auto", "test-agent");
       leaseFor("s1");
       const { bridge } = createMockBridge();
       const { sseManager, broadcasted } = createMockSseManager();
@@ -1804,7 +1883,7 @@ describe("handleAgentEvent", () => {
     });
 
     it("refuses an unstamped event even when the task has no ledger entry", () => {
-      store.createTask("s1", "/tmp");
+      store.createTask("s1", "/tmp", "auto", "test-agent");
       // A missing ledger entry is not evidence of permission: an unstamped
       // task-addressing event is refused either way.
       tasks.authority.clear("s1");
@@ -1827,7 +1906,7 @@ describe("handleAgentEvent", () => {
     });
 
     it("refuses an unknown generation, never falling back to the current one", () => {
-      store.createTask("s1", "/tmp");
+      store.createTask("s1", "/tmp", "auto", "test-agent");
       leaseFor("s1");
       const { bridge } = createMockBridge();
       const { sseManager, broadcasted } = createMockSseManager();
@@ -1849,8 +1928,8 @@ describe("handleAgentEvent", () => {
     });
 
     it("refuses a lease that names another task", () => {
-      store.createTask("s1", "/tmp");
-      store.createTask("s2", "/tmp");
+      store.createTask("s1", "/tmp", "auto", "test-agent");
+      store.createTask("s2", "/tmp", "auto", "test-agent");
       const other = leaseFor("s2");
       const { bridge } = createMockBridge();
       const { sseManager, broadcasted } = createMockSseManager();

@@ -90,7 +90,7 @@ describe("file viewer routes", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "");
 
-    store = new Store(tmpDir, "test-agent");
+    store = new Store(tmpDir);
     authStore = new AuthStore(join(tmpDir, "auth.json"));
     await authStore.load();
     token = (await authStore.addToken("ui", "api")).token;

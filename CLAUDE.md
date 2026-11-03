@@ -58,6 +58,8 @@ schema and operations guide.
 - Each task has at most one current execution binding, globally; writable
   execution facts must hold that task's current generation, and a missing or
   unknown generation is refused.
+- A task's execution environment comes from its binding, never from the caller;
+  agent processes start on demand (none at boot), and reads never require one.
 - Keep repository instructions and documentation self-contained. Do not depend
   on untracked personal configuration or machine-specific paths.
 
@@ -100,6 +102,15 @@ Publishing uses the `v*` tag workflow documented in
 ## TODO
 
 - Add multi-client integration coverage for task-created broadcast guards.
+- Config changes render optimistically and swallow write failures:
+  `setConfigAndUpdate` (`public/js/slash-commands.ts`) writes the
+  `Model → …` transcript line before the request and drops the error, and the
+  mode toggle (`public/js/input.ts`) does the same via `.catch(() => {})`. A
+  refused or lost `PUT /config/:id` (a rotation, a dead process, a shutdown
+  mid-request) therefore leaves the user told the change succeeded while the
+  task keeps its old stored value, and the status bar can disagree with the
+  server until the next read. Pre-existing; the transcript should confirm after
+  the write, or report the failure.
 - Harden `/new`'s create-failure recovery: it clears the view and drops the
   active task before the create request, so a failed create (for example the
   source task is deleted during the cwd probe) leaves no active task until a
@@ -107,9 +118,9 @@ Publishing uses the `v*` tag workflow documented in
   clearing only after a successful create, or restoring the previous task on
   failure.
 - A soft-deleted task's active share can never be revoked: the share route
-  requires `ownsTask`, but soft delete removes the binding, so the tombstone is
-  never reaped. Pre-existing; becomes reachable for tasks owned by a removed
-  agent in P2.
+  requires `hasBinding`, but soft delete removes the binding, so the tombstone
+  is never reaped. Pre-existing; becomes reachable for tasks carried by a
+  removed agent now that agents are configured independently.
 - The frontend installs the Root authority from `connected`/`task_created` with
   the default generation, so a queued `replayQueue` event carried across a
   generation boundary could install the previous connection's Root. Live SSE is

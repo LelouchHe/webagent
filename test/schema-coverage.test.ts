@@ -56,7 +56,7 @@ function documentedColumns(table: string): string[] {
 }
 
 const schemaDir = mkdtempSync(join(tmpdir(), "webagent-schema-docs-"));
-const schemaStore = new Store(schemaDir, "schema-doc-test");
+const schemaStore = new Store(schemaDir);
 schemaStore.close();
 const schemaDb = new Database(join(schemaDir, "webagent.db"), {
   readonly: true,

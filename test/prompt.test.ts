@@ -125,15 +125,15 @@ describe("Prompt REST API", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(join(tmpDir, "test.db"), "test-agent");
+    store = new Store(join(tmpDir, "test.db"));
     tasks = createTaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
+    tasks.attachExecutionBridge(mockBridge);
     broadcastEvents = [];
 
     const handler = createRequestHandler({
       store,
       tasks,
-      getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024, cancel_timeout: 10000 },
@@ -214,12 +214,19 @@ describe("Prompt REST API", () => {
     it("does not arm a directed obligation for a user-started turn", async () => {
       // Only a direct parent dispatch arms. A user prompt starts a turn but
       // affects no obligation edge, whether the Task is agent- or user-created.
-      store.createTask("prompt-parent", tmpDir, "agent", "agent-prompt-parent");
+      store.createTask(
+        "prompt-parent",
+        tmpDir,
+        "agent",
+        "test-agent",
+        "agent-prompt-parent",
+      );
       const agentTaskId = "agent-created";
       store.createTask(
         agentTaskId,
         tmpDir,
         "agent",
+        "test-agent",
         `agent-${agentTaskId}`,
         "prompt-parent",
       );
@@ -487,6 +494,122 @@ describe("Prompt REST API", () => {
       assert.equal(body.busyKind, "agent");
     });
 
+    /**
+     * Park the restore a cold read starts: this process holds no live session
+     * for the task, so the next use begins one, and it stays in flight until
+     * the test releases it. `started` resolves once the restore occupies the
+     * task, which is the moment a write has to wait instead of reporting it as
+     * busy.
+     */
+    function parkRestore(taskId: string) {
+      tasks.liveTasks.delete(taskId);
+      let loads = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let loaded = false;
+      const originalLoad = mockBridge.loadSession;
+      mockBridge.loadSession = async (id: string, cwd: string) => {
+        loads++;
+        await gate;
+        const result = await originalLoad(id, cwd);
+        loaded = true;
+        return result;
+      };
+      const restore = tasks.ensureTaskLive(taskId);
+      const started = (async () => {
+        while (!tasks.restoringTasks.has(taskId)) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+        return () => restore;
+      })();
+      return {
+        started,
+        release,
+        settle: () => restore,
+        loadCount: () => loads,
+        restoreLoaded: () => loaded,
+      };
+    }
+
+    it("waits for the restore a read started instead of refusing the prompt", async () => {
+      const taskId = await createTask();
+      const parked = parkRestore(taskId);
+      await parked.started;
+
+      let status: number | null = null;
+      const promptPromise = makeRequest(
+        port,
+        "POST",
+        `/api/v1/tasks/${taskId}/prompt`,
+        JSON.stringify({ text: "hello" }),
+      ).then((res) => {
+        status = res.status;
+        return res;
+      });
+
+      // The prompt reaches the server while the restore is still in flight.
+      // Answering now would be a 409 "Task is busy".
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(status, null, "the prompt waited for the in-flight restore");
+
+      parked.release();
+      const res = await promptPromise;
+      assert.equal(res.status, 202, `prompt accepted: ${res.body}`);
+      await parked.settle();
+      assert.equal(
+        parked.loadCount(),
+        1,
+        "the restore is shared, not repeated",
+      );
+      assert.equal(mockBridge.lastPromptArgs?.text, "hello");
+      assert.equal(tasks.getBusyKind(taskId), null);
+    });
+
+    it("waits for the restore before writing a config option", async () => {
+      const taskId = await createTask();
+      const parked = parkRestore(taskId);
+      await parked.started;
+      // A config write goes into the ACP session, so it can only be applied
+      // once the restore has loaded that session.
+      let wroteIntoRestoredSession: boolean | null = null;
+      const originalSetConfig = mockBridge.setConfigOption;
+      mockBridge.setConfigOption = async (
+        id: string,
+        configId: string,
+        value: string | boolean,
+      ) => {
+        wroteIntoRestoredSession = parked.restoreLoaded();
+        return originalSetConfig(id, configId, value);
+      };
+
+      let status: number | null = null;
+      const putPromise = makeRequest(
+        port,
+        "PUT",
+        `/api/v1/tasks/${taskId}/config/model`,
+        JSON.stringify({ value: "claude-opus" }),
+      ).then((res) => {
+        status = res.status;
+        return res;
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(status, null, "the write waited for the restore");
+
+      parked.release();
+      const res = await putPromise;
+      assert.equal(res.status, 200, `config applied: ${res.body}`);
+      await parked.settle();
+      assert.equal(parked.loadCount(), 1);
+      assert.equal(
+        wroteIntoRestoredSession,
+        true,
+        "the config was written into the restored session",
+      );
+    });
+
     it("logs prompt rejects that happen before user_message is saved", async () => {
       const taskId = await createTask();
       tasks.activePrompts.add(taskId);
@@ -599,8 +722,7 @@ describe("Prompt REST API", () => {
     it("returns 503 when bridge is not ready", async () => {
       const handler = createRequestHandler({
         store,
-        tasks,
-        getBridge: () => null,
+        tasks: createTaskManager(store, tmpDir, tmpDir),
         publicDir,
         dataDir: tmpDir,
         limits: { bash_output: 1024, image_upload: 1024 },

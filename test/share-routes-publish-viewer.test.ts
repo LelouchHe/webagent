@@ -150,8 +150,8 @@ describe("share publish route — POST /api/v1/tasks/:id/share/publish", () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "wa-share-pub-"));
-    store = new Store(tmpDir, "test-agent");
-    store.createTask(taskId, "/tmp/project");
+    store = new Store(tmpDir);
+    store.createTask(taskId, "/tmp/project", "auto", "test-agent");
     store.saveEvent(
       taskId,
       "user_message",
@@ -248,7 +248,7 @@ describe("share publish route — POST /api/v1/tasks/:id/share/publish", () => {
 
   it("404 when token does not belong to this task", async () => {
     const other = "sess-other";
-    store.createTask(other, "/tmp/other");
+    store.createTask(other, "/tmp/other", "auto", "test-agent");
     store.saveEvent(
       other,
       "user_message",
@@ -352,8 +352,8 @@ describe("share public viewer — GET /s/:token + /api/v1/shared/:token/events",
       join(publicDir, "share-viewer.html"),
       "<!doctype html><html><body data-viewer>ok</body></html>",
     );
-    store = new Store(tmpDir, "test-agent");
-    store.createTask(taskId, "/tmp/project");
+    store = new Store(tmpDir);
+    store.createTask(taskId, "/tmp/project", "auto", "test-agent");
     store.saveEvent(
       taskId,
       "user_message",
@@ -541,8 +541,8 @@ describe("share image proxy — GET /s/:token/attachments/:file", () => {
       Buffer.from([0x89, 0x50, 0x4e, 0x47]),
     );
 
-    store = new Store(tmpDir, "test-agent");
-    store.createTask(taskId, "/tmp/project");
+    store = new Store(tmpDir);
+    store.createTask(taskId, "/tmp/project", "auto", "test-agent");
     store.saveEvent(
       taskId,
       "user_message",

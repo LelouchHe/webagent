@@ -10,6 +10,7 @@ describe("events", () => {
   let render: any;
   let events: any;
   let stateMod: any;
+  let navigation: any;
   let fetchCalls: Array<{ url: string; init?: any }>;
   const ROOT_ID = "root-events-test";
 
@@ -48,6 +49,7 @@ describe("events", () => {
     dom = stateMod.dom;
     render = await import("../public/js/render.ts");
     events = await import("../public/js/events.ts");
+    navigation = await import("../public/js/task-navigation.ts");
   });
   after(() => {
     teardownDOM();
@@ -2856,6 +2858,63 @@ describe("events", () => {
         ],
       });
       assert.ok(dom.statusBar.textContent.includes("new-model"));
+    });
+
+    it("applies a completed warm-up for the current task only", () => {
+      state.taskId = "s-warm";
+      state.configOptions = [];
+      events.handleEvent({
+        type: "task_runtime_warmed",
+        taskId: "s-warm",
+        agentId: "mock",
+        configOptions: [
+          {
+            type: "select",
+            id: "model",
+            name: "Model",
+            currentValue: "mock-model-2",
+            options: [{ value: "mock-model-2", name: "Mock Model 2" }],
+          },
+          {
+            type: "select",
+            id: "mode",
+            name: "Mode",
+            currentValue: "plan",
+            options: [{ value: "plan", name: "Plan" }],
+          },
+        ],
+        agentCommands: { epoch: "e1", revision: 1, commands: [] },
+      });
+      assert.deepEqual(
+        state.configOptions.map((option: { id: string }) => option.id),
+        ["model", "mode"],
+        "the restored schema was installed",
+      );
+      assert.ok(
+        dom.statusBar.textContent.includes("mock-model-2"),
+        "the status bar reflects the restored schema",
+      );
+
+      // A warm-up for another task is ignored: no state change, no repaint.
+      state.configOptions = [];
+      const statusBefore = dom.statusBar.textContent;
+      events.handleEvent({
+        type: "task_runtime_warmed",
+        taskId: "s-other",
+        agentId: "mock",
+        configOptions: [
+          {
+            type: "select",
+            id: "model",
+            name: "Model",
+            currentValue: "other-model",
+            options: [{ value: "other-model", name: "Other Model" }],
+          },
+        ],
+        agentCommands: { epoch: "e2", revision: 3, commands: [] },
+      });
+      assert.equal(dom.statusBar.textContent, statusBefore);
+      assert.deepEqual(state.configOptions, []);
     });
 
     it("cleared by resetTaskUI", () => {
@@ -6905,9 +6964,266 @@ describe("events", () => {
     });
   });
 
+  describe("warm-up ordering", () => {
+    const warmFor = (taskId: string, agentId = "agent-a") => ({
+      type: "task_runtime_warmed" as const,
+      taskId,
+      agentId,
+      configOptions: [
+        {
+          type: "select" as const,
+          id: "model",
+          name: "Model",
+          currentValue: "mock-model-2",
+          options: [{ value: "mock-model-2", name: "Mock Model 2" }],
+        },
+      ],
+      agentCommands: {
+        epoch: "warm-epoch",
+        revision: 1,
+        commands: [{ name: "warm-extra", description: "Only a restore" }],
+      },
+    });
+
+    const installed = (taskId: string, agentId = "agent-a") => ({
+      type: "task_created" as const,
+      rootTaskId: ROOT_ID,
+      taskId,
+      agentId,
+      cwd: "/tmp",
+      configOptions: [] as [],
+    });
+
+    it("applies a warm-up that arrived before its task was installed", () => {
+      // The exact window the read path opens: no task installed yet, so the
+      // payload cannot be applied now — and it must not be dropped either.
+      state.taskId = null;
+      state.pendingNavigationTaskId = null;
+      state.configOptions = [];
+      events.handleEvent(warmFor("t-late"));
+      assert.deepEqual(
+        state.configOptions,
+        [],
+        "nothing applied without a task",
+      );
+
+      events.handleEvent(installed("t-late"));
+
+      assert.deepEqual(
+        state.configOptions.map((option: { id: string }) => option.id),
+        ["model"],
+      );
+      assert.equal(
+        state.agentCommands[0]?.name,
+        "warm-extra",
+        "the commands arrived with the same payload",
+      );
+      assert.ok(dom.statusBar.textContent.includes("mock-model-2"));
+    });
+
+    it("holds a payload for its own task, not the one installed next", () => {
+      state.taskId = null;
+      state.configOptions = [];
+      events.handleEvent(warmFor("t-held"));
+
+      // A different task installs first: the held payload is not its own.
+      events.handleEvent(installed("t-other"));
+      assert.deepEqual(state.configOptions, []);
+
+      // The task it belongs to installs later.
+      state.taskId = null;
+      events.handleEvent(installed("t-held"));
+      assert.deepEqual(
+        state.configOptions.map((option: { id: string }) => option.id),
+        ["model"],
+      );
+    });
+
+    it("drops a held payload for an execution the task no longer has", () => {
+      state.taskId = null;
+      state.configOptions = [];
+      events.handleEvent(warmFor("t-moved", "agent-a"));
+      events.handleEvent(installed("t-moved", "agent-b"));
+      assert.deepEqual(
+        state.configOptions,
+        [],
+        "a payload from another binding agent is not applied",
+      );
+    });
+  });
+
+  describe("binding agent installation", () => {
+    /** A fetch stub for one task's detail / history / snapshot reads. */
+    function serveTask(taskId: string, agentId: string | null) {
+      setFetch((url) => {
+        const response = (body: unknown) => ({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(body),
+          json: async () => body,
+        });
+        if (url === `/api/v1/tasks/${taskId}`) {
+          return response({
+            id: taskId,
+            rootTaskId: ROOT_ID,
+            cwd: "/tmp",
+            title: null,
+            agentId,
+            configOptions: [],
+          });
+        }
+        if (url.startsWith(`/api/v1/tasks/${taskId}/events`)) {
+          return response({ events: [], streaming: {} });
+        }
+        if (url === `/api/v1/tasks/${taskId}/snapshot`) {
+          return response({
+            version: 1,
+            seq: 0,
+            task: { agentId },
+            runtime: { busy: null },
+          });
+        }
+        return response({});
+      });
+    }
+
+    function systemText(): string {
+      return dom.messages.textContent ?? "";
+    }
+
+    /** Dispatch a reload and its completion, asserting both halves. */
+    function expectReloadCycle(agentId: string) {
+      events.handleEvent({ type: "agent_reloading", agentId });
+      assert.equal(state.agentReloading, true, "reload state is installed");
+      assert.equal(state.busy, true, "reload marks the task busy");
+      assert.ok(
+        systemText().includes("Agent reloading"),
+        "the reload notice is shown",
+      );
+
+      events.handleEvent({
+        type: "connected",
+        agentId,
+        agent: { name: "mock-agent", version: "2.0" },
+        configOptions: [],
+      });
+      assert.equal(state.agentReloading, false, "the reload completed");
+      assert.equal(state.busy, false, "completion clears busy");
+      assert.ok(
+        systemText().includes("reloaded"),
+        "the reloaded notice is shown",
+      );
+    }
+
+    it("installs the binding agent from a real switchToTask", async () => {
+      // No pre-seeded state: the navigation itself is what learns the agent.
+      state.taskId = null;
+      state.taskAgentId = null;
+      serveTask("t-alpha", "agent-a");
+
+      assert.equal(await navigation.switchToTask("t-alpha"), "switched");
+      assert.equal(state.taskId, "t-alpha");
+      assert.equal(state.taskAgentId, "agent-a");
+
+      expectReloadCycle("agent-a");
+    });
+
+    it("installs the binding agent from the create response", async () => {
+      state.taskId = null;
+      state.taskAgentId = null;
+      setFetch((url, init) => {
+        const response = (body: unknown) => ({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(body),
+          json: async () => body,
+        });
+        if (url === "/api/v1/tasks" && init?.method === "POST") {
+          return response({
+            id: "t-created",
+            rootTaskId: ROOT_ID,
+            cwd: "/tmp",
+            title: null,
+            agentId: "agent-c",
+            configOptions: [],
+          });
+        }
+        return response({});
+      });
+
+      assert.equal(await stateMod.createNewTaskRequest({}), true);
+      assert.equal(state.taskId, "t-created");
+      assert.equal(state.taskAgentId, "agent-c");
+
+      expectReloadCycle("agent-c");
+    });
+
+    it("installs the binding agent from the delete fallback", async () => {
+      state.taskId = "t-dead";
+      state.taskAgentId = "agent-a";
+      setFetch((url) => {
+        const response = (body: unknown) => ({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify(body),
+          json: async () => body,
+        });
+        if (url === "/api/v1/tasks") {
+          return response([{ id: "t-next", agentId: "agent-b" }]);
+        }
+        if (url === "/api/v1/tasks/t-next") {
+          return response({
+            id: "t-next",
+            rootTaskId: ROOT_ID,
+            cwd: "/tmp",
+            title: null,
+            agentId: "agent-b",
+            configOptions: [],
+          });
+        }
+        if (url === "/api/v1/tasks/t-next/snapshot") {
+          return response({
+            version: 1,
+            seq: 0,
+            task: { agentId: "agent-b" },
+            runtime: { busy: null },
+          });
+        }
+        if (url.startsWith("/api/v1/tasks/t-next/events")) {
+          return response({ events: [], streaming: {} });
+        }
+        return response({});
+      });
+
+      events.handleEvent({ type: "task_deleted", taskId: "t-dead" });
+      const deadline = Date.now() + 2000;
+      while (state.taskId !== "t-next" && Date.now() < deadline) {
+        await new Promise((done) => setImmediate(done));
+      }
+      assert.equal(state.taskId, "t-next");
+      assert.equal(state.taskAgentId, "agent-b");
+
+      expectReloadCycle("agent-b");
+    });
+
+    it("keeps a known binding when a same-task echo omits the agent", () => {
+      state.taskId = "t-keep";
+      state.taskAgentId = "agent-a";
+
+      // A local echo of the same task without `agentId` must not downgrade.
+      stateMod.installTaskAgentId("t-keep", undefined);
+      assert.equal(state.taskAgentId, "agent-a");
+
+      // A different task is described by its payload, including "no agent".
+      stateMod.installTaskAgentId("t-other", undefined);
+      assert.equal(state.taskAgentId, null);
+    });
+  });
+
   describe("agent reload events", () => {
     it("agent_reloading sets busy and shows system message", () => {
       state.taskId = "s1";
+      state.taskAgentId = "test-agent";
       events.handleEvent({ type: "agent_reloading", agentId: "test-agent" });
 
       assert.equal(state.busy, true);
@@ -6918,11 +7234,14 @@ describe("events", () => {
 
     it("connected after agent_reloading shows reloaded message and clears busy", () => {
       state.taskId = "s1";
+      state.taskAgentId = "test-agent";
       state.agentReloading = true;
+      state.agentReloadingAgentId = "test-agent";
       state.busy = true;
 
       events.handleEvent({
         type: "connected",
+        agentId: "test-agent",
         agent: { name: "mock-agent", version: "2.0" },
         configOptions: [],
       });
@@ -6933,9 +7252,61 @@ describe("events", () => {
       assert.ok(msgs.some((m) => m.includes("reloaded")));
     });
 
+    it("ignores another agent's reload while watching B", () => {
+      // The client is looking at a task carried by B; A restarting is not this
+      // task's busy state, and A coming back must not unlock it either.
+      state.taskId = "s-b";
+      state.taskAgentId = "agent-b";
+      state.busy = false;
+      state.agentReloading = false;
+      state.agentReloadingAgentId = null;
+
+      events.handleEvent({ type: "agent_reloading", agentId: "agent-a" });
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+
+      // A's `connected` is equally irrelevant.
+      events.handleEvent({
+        type: "connected",
+        agentId: "agent-a",
+        agent: { name: "agent-a", version: "2.0" },
+        configOptions: [],
+      });
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+
+      // B's own reload still works.
+      events.handleEvent({ type: "agent_reloading", agentId: "agent-b" });
+      assert.equal(state.agentReloading, true);
+      assert.equal(state.busy, true);
+      events.handleEvent({
+        type: "connected",
+        agentId: "agent-b",
+        agent: { name: "agent-b", version: "3.0" },
+        configOptions: [],
+      });
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+    });
+
+    it("does not guess a default agent when the task has no binding", () => {
+      state.taskId = "s-unbound";
+      state.taskAgentId = null;
+      state.busy = false;
+      state.agentReloading = false;
+      state.agentReloadingAgentId = null;
+
+      // No binding means no agent to attribute the reload to: do not unlock
+      // anything on a guess.
+      events.handleEvent({ type: "agent_reloading", agentId: "agent-a" });
+      assert.equal(state.agentReloading, false);
+      assert.equal(state.busy, false);
+    });
+
     it("agent_reloading_failed shows error and clears busy", () => {
       state.taskId = "s1";
       state.agentReloading = true;
+      state.agentReloadingAgentId = "test-agent";
       state.busy = true;
 
       events.handleEvent({

@@ -216,7 +216,7 @@ function buildLegacyDatabase(
   dir: string,
   transform: (table: string, sql: string) => string,
 ): SchemaRow[] {
-  const seed = new Store(dir, AGENT);
+  const seed = new Store(dir);
   seed.close();
   const fresh = new Database(dbPath(dir));
   const freshSchema = readSchema(fresh);
@@ -437,7 +437,7 @@ describe("timestamp millis migration", () => {
 
     assert.ok(Number.isFinite(NO_MS_MILLIS) && Number.isFinite(MS_MILLIS));
 
-    const store = new Store(dir, AGENT);
+    const store = new Store(dir);
     assert.equal(store.getTask("t1")!.created_at, NO_MS_MILLIS);
     assert.equal(store.getTask("t1")!.last_active_at, MS_MILLIS);
     assert.equal(store.getEvent("t1", 1)!.created_at, MS_MILLIS);
@@ -474,7 +474,7 @@ describe("timestamp millis migration", () => {
     assert.equal(preSamples.length, 29);
     assert.ok(preSamples.every((sample) => typeof sample.value === "string"));
 
-    const store = new Store(dir, AGENT);
+    const store = new Store(dir);
     store.close();
 
     const db = new Database(dbPath(dir));
@@ -509,7 +509,7 @@ describe("timestamp millis migration", () => {
     seedLegacyRows(legacy);
     legacy.close();
 
-    const store = new Store(dir, AGENT);
+    const store = new Store(dir);
     store.close();
 
     const migrated = new Database(dbPath(dir));
@@ -524,7 +524,7 @@ describe("timestamp millis migration", () => {
     seedLegacyRows(legacy);
     legacy.close();
 
-    const store = new Store(dir, AGENT);
+    const store = new Store(dir);
     store.close();
 
     const db = new Database(dbPath(dir));
@@ -574,7 +574,7 @@ describe("timestamp millis migration", () => {
       .run(AGENT, "sess-legacy", "legacy-task", NO_MS);
     legacy.close();
 
-    const store = new Store(dir, AGENT);
+    const store = new Store(dir);
     store.close();
 
     const migrated = new Database(dbPath(dir));
@@ -601,9 +601,11 @@ describe("timestamp millis migration", () => {
 
     // A task has exactly one current execution binding, independent of agent
     // scope: a second agent cannot attach another one.
-    const other = new Store(dir, "other-agent");
-    assert.throws(() => other.attachAgentSession("legacy-task", "sess-other"));
-    assert.equal(other.getAgentSessionId("legacy-task"), undefined);
+    const other = new Store(dir);
+    assert.throws(() =>
+      other.attachAgentSession("legacy-task", "test-agent", "sess-other"),
+    );
+    assert.equal(other.getAgentSessionId("legacy-task"), "sess-legacy");
     assert.equal(
       other.getCurrentExecutionBinding("legacy-task")?.agent_key,
       "test-agent",
@@ -639,7 +641,7 @@ describe("timestamp millis migration", () => {
     );
     legacy.close();
 
-    const store = new Store(dir, AGENT);
+    const store = new Store(dir);
     store.close();
 
     const db = new Database(dbPath(dir));
@@ -681,7 +683,7 @@ describe("timestamp millis migration", () => {
       .run();
     legacy.close();
 
-    const store = new Store(dir, AGENT);
+    const store = new Store(dir);
     assert.equal(store.getTask("t1")!.created_at, NO_MS_MILLIS);
     assert.equal(store.getTask("t1")!.last_active_at, NO_MS_MILLIS);
     assert.equal(store.getEvent("t1", 2)!.created_at, NO_MS_MILLIS);
@@ -734,7 +736,7 @@ describe("timestamp millis migration", () => {
       .run("t1", 2, "assistant_message", '{"text":"hi"}', NO_MS, "agent");
     legacy.close();
 
-    const store = new Store(dir, AGENT);
+    const store = new Store(dir);
     assert.equal(store.getTask("t1")!.created_at, NO_MS_MILLIS);
     assert.equal(store.getTask("t1")!.last_active_at, NO_MS_MILLIS);
     assert.equal(store.getTask("t2")!.last_active_at, MS_MILLIS);
@@ -801,7 +803,7 @@ describe("timestamp millis migration", () => {
     );
     legacy.close();
 
-    const store = new Store(dir, AGENT);
+    const store = new Store(dir);
     store.close();
 
     const db = new Database(dbPath(dir));
@@ -838,7 +840,7 @@ describe("timestamp millis migration", () => {
     insert.run("t1", 3, "user_message", "{}", "2024-02-29 00:00:00", "user");
     legacy.close();
 
-    const store = new Store(dir, AGENT);
+    const store = new Store(dir);
     assert.equal(store.getEvent("t1", 1)!.created_at, 0);
     assert.equal(
       store.getEvent("t1", 2)!.created_at,
@@ -884,7 +886,7 @@ describe("timestamp millis migration", () => {
       legacy.close();
 
       assert.throws(
-        () => new Store(dir, AGENT),
+        () => new Store(dir),
         (error: unknown) => {
           assert.ok(error instanceof Error);
           assert.match(error.message, /Timestamp migration aborted/);
@@ -936,13 +938,13 @@ describe("timestamp millis migration", () => {
     seedLegacyRows(legacy);
     legacy.close();
 
-    const first = new Store(dir, AGENT);
+    const first = new Store(dir);
     first.close();
     const migrated = new Database(dbPath(dir));
     const schemaAfterFirstPass = readSchema(migrated);
     migrated.close();
 
-    const second = new Store(dir, AGENT);
+    const second = new Store(dir);
     assert.equal(second.getTask("t1")!.last_active_at, MS_MILLIS);
     second.close();
 
@@ -954,8 +956,8 @@ describe("timestamp millis migration", () => {
 
   it("never relies on the 0 default", () => {
     const dir = tempDir();
-    const store = new Store(dir, AGENT);
-    store.createTask("t1", "/x");
+    const store = new Store(dir);
+    store.createTask("t1", "/x", "auto", AGENT);
     store.saveEvent("t1", "user_message", {}, { from_ref: "user" });
     store.saveClientOp("t1", "op", {});
     store.touchRecentPath("/x");
@@ -995,15 +997,15 @@ describe("timestamp millis migration", () => {
 
   it("leaves an already-integer database untouched", () => {
     const dir = tempDir();
-    const store = new Store(dir, AGENT);
-    store.createTask("t1", "/x");
+    const store = new Store(dir);
+    store.createTask("t1", "/x", "auto", AGENT);
     const created = store.getTask("t1")!.created_at;
     store.close();
     const before = new Database(dbPath(dir));
     const schema = readSchema(before);
     before.close();
 
-    const reopened = new Store(dir, AGENT);
+    const reopened = new Store(dir);
     assert.equal(reopened.getTask("t1")!.created_at, created);
     reopened.close();
 

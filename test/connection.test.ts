@@ -181,9 +181,15 @@ describe("connection", () => {
   function fireBridgeConnected(
     es: InstanceType<typeof MockEventSource>,
     agent: { name: string; version: string },
+    agentId = "test-agent",
   ) {
     return es.onmessage?.({
-      data: JSON.stringify({ type: "connected", agent, cancelTimeout: 10000 }),
+      data: JSON.stringify({
+        type: "connected",
+        agentId,
+        agent,
+        cancelTimeout: 10000,
+      }),
     });
   }
 
@@ -1270,8 +1276,10 @@ describe("connection", () => {
     fireConnected(es, "cl-reload");
     assert.equal(state.clientId, "cl-reload");
 
-    // Simulate reload in progress
+    // Simulate reload in progress for the agent carrying this task
+    state.taskAgentId = "test-agent";
     state.agentReloading = true;
+    state.agentReloadingAgentId = "test-agent";
 
     // Bridge connected event (has agent, no clientId) — must reach handleEvent
     fireBridgeConnected(es, { name: "copilot", version: "2.0" });

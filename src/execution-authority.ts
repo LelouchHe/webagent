@@ -80,79 +80,42 @@ export function bindingsEqual(
   return a.agentId === b.agentId && a.sessionId === b.sessionId;
 }
 
-export function formatBinding(binding: ExecutionBinding | null): string {
-  return binding === null ? "none" : `${binding.agentId}:${binding.sessionId}`;
-}
-
 /**
- * Per-task generation ledger. Entries are created when a task becomes live in
- * this process and dropped when it is deleted, so the map cannot accumulate
- * entries for tasks that no longer exist.
+ * The single write authority for execution-scoped facts: the per-task
+ * generation map and the two things that read it.
+ *
+ * A Store binding write reports its changes here after the outermost commit;
+ * a rotated task's generation advances exactly once per commit, never once per
+ * SQL statement. Entries are created when a task becomes live in this process
+ * and dropped when it is deleted, so the map cannot accumulate ids for tasks
+ * that no longer exist.
  */
-export class GenerationLedger {
+export class ExecutionAuthority {
   private readonly generations = new Map<string, number>();
 
   generationOf(taskId: string): number | undefined {
     return this.generations.get(taskId);
   }
 
-  /** Advance a task's generation, creating the entry when absent. */
-  bump(taskId: string): number {
-    const next = (this.generations.get(taskId) ?? 0) + 1;
-    this.generations.set(taskId, next);
-    return next;
-  }
-
-  clear(taskId: string): void {
-    this.generations.delete(taskId);
-  }
-
-  has(taskId: string): boolean {
-    return this.generations.has(taskId);
-  }
-
-  get size(): number {
-    return this.generations.size;
-  }
-}
-
-/**
- * The single write authority for execution-scoped facts. A Store binding
- * write reports its changes here after the outermost commit; a rotated task's
- * generation advances exactly once per commit, never once per SQL statement.
- */
-export class ExecutionAuthority {
-  private readonly ledger: GenerationLedger;
-
-  constructor(ledger: GenerationLedger) {
-    this.ledger = ledger;
-  }
-
-  generationOf(taskId: string): number | undefined {
-    return this.ledger.generationOf(taskId);
-  }
-
   /**
-   * Current lease for a task, or `null` when the task has no ledger entry.
-   * Callers capture this at operation start; they must not re-read it later
-   * and treat that as validation.
+   * Current lease for a task, or `null` when the task has no entry. Callers
+   * capture this at operation start; they must not re-read it later and treat
+   * that as validation.
    */
   leaseFor(taskId: string): ExecutionLease | null {
-    const generation = this.ledger.generationOf(taskId);
+    const generation = this.generations.get(taskId);
     return generation === undefined ? null : { taskId, generation };
   }
 
   /**
-   * Give a task a ledger entry when a lifecycle path makes it live without a
-   * binding *change*. The one real case is a restore after a restart: the
-   * stored binding is unchanged, but this process has no generation for it yet
-   * because generations are not persisted. Never use this to paper over a
-   * missing lease on a write path.
+   * Give a task an entry when a lifecycle path makes it live without a binding
+   * *change*. The one real case is a restore after a restart: the stored
+   * binding is unchanged, but this process has no generation for it yet because
+   * generations are not persisted. Never use this to paper over a missing lease
+   * on a write path.
    */
   adopt(taskId: string): ExecutionLease {
-    if (!this.ledger.has(taskId)) {
-      this.ledger.bump(taskId);
-    }
+    if (!this.generations.has(taskId)) this.bump(taskId);
     return this.leaseFor(taskId)!;
   }
 
@@ -165,9 +128,9 @@ export class ExecutionAuthority {
     for (const change of changes) {
       if (bindingsEqual(change.before, change.after)) continue;
       if (change.after === null) {
-        this.ledger.clear(change.taskId);
+        this.generations.delete(change.taskId);
       } else {
-        this.ledger.bump(change.taskId);
+        this.bump(change.taskId);
       }
     }
   }
@@ -175,11 +138,17 @@ export class ExecutionAuthority {
   /** True only for a lease naming the task's current generation. */
   accepts(lease: ExecutionLease | null | undefined): boolean {
     if (!lease) return false;
-    return this.ledger.generationOf(lease.taskId) === lease.generation;
+    return this.generations.get(lease.taskId) === lease.generation;
   }
 
   /** Drop a deleted task's entry so the table cannot accumulate stale ids. */
   clear(taskId: string): void {
-    this.ledger.clear(taskId);
+    this.generations.delete(taskId);
+  }
+
+  private bump(taskId: string): number {
+    const next = (this.generations.get(taskId) ?? 0) + 1;
+    this.generations.set(taskId, next);
+    return next;
   }
 }

@@ -14,8 +14,8 @@ describe("persisted model identity", () => {
     const encoded = JSON.stringify(["vendor-a", "model-one"]);
     let store: Store | undefined;
     try {
-      store = new Store(dir, "model-identity-test");
-      store.createTask("task-1", dir, "auto", "session-1");
+      store = new Store(dir);
+      store.createTask("task-1", dir, "auto", "test-agent", "session-1");
       store.close();
       store = undefined;
       const legacyDb = new Database(join(dir, "webagent.db"));
@@ -27,7 +27,7 @@ describe("persisted model identity", () => {
         legacyDb.close();
       }
 
-      store = new Store(dir, "model-identity-test");
+      store = new Store(dir);
       assert.equal(store.getTask("task-1")?.model, "vendor-a/model-one");
 
       const db = new Database(join(dir, "webagent.db"), { readonly: true });
@@ -50,8 +50,8 @@ describe("persisted model identity", () => {
     const wire = JSON.stringify(['["vendor-a","model', 'two"]']);
     let store: Store | undefined;
     try {
-      store = new Store(dir, "model-fixed-point-test");
-      store.createTask("task-1", dir, "auto", "session-1");
+      store = new Store(dir);
+      store.createTask("task-1", dir, "auto", "test-agent", "session-1");
       store.updateTaskConfig("task-1", "model", wire);
       const firstWrite = store.getTask("task-1")?.model;
       assert.ok(firstWrite);
@@ -62,7 +62,7 @@ describe("persisted model identity", () => {
       store.close();
       store = undefined;
 
-      store = new Store(dir, "model-fixed-point-test");
+      store = new Store(dir);
       assert.equal(store.getTask("task-1")?.model, firstWrite);
     } finally {
       store?.close();
@@ -73,7 +73,7 @@ describe("persisted model identity", () => {
   it("normalizes a stale task snapshot before overriding restored options", async () => {
     const dir = mkdtempSync(join(tmpdir(), "model-snapshot-"));
     const encoded = JSON.stringify(["vendor-a", "model-one"]);
-    const store = new Store(dir, "model-snapshot-test");
+    const store = new Store(dir);
     const tasks = createTaskManager(
       store,
       dir,
@@ -82,7 +82,7 @@ describe("persisted model identity", () => {
       "http://127.0.0.1:6800",
     );
     try {
-      store.createTask("task-1", dir, "auto", "session-1");
+      store.createTask("task-1", dir, "auto", "test-agent", "session-1");
       const db = new Database(join(dir, "webagent.db"));
       try {
         db.prepare("UPDATE tasks SET model = ? WHERE id = ?").run(

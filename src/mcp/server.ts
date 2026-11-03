@@ -3,7 +3,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
 import type { CapabilityStore } from "./capability.ts";
-import { registerMcpTools, type McpTaskToolHost } from "./tools.ts";
+import {
+  registerMcpTools,
+  type McpCallerPrincipal,
+  type McpTaskToolHost,
+} from "./tools.ts";
 import { HTTP_STATUS } from "../http-status.ts";
 
 /**
@@ -68,11 +72,11 @@ export interface McpEndpointOptions {
   /** Per-task capability store (keyed by task id). */
   capabilities: CapabilityStore;
   /**
-   * Confirms a resolved task's execution is active. Creating/restoring tasks are
-   * included because the ACP agent may auto-connect before the bridge call
-   * returns and TaskManager promotes the task to live.
+   * Confirms a promoted task really is live before its tools run. An
+   * `initializing` grant is deliberately exempt: the session creation that
+   * carries the token is still in flight, and the handshake must succeed.
    */
-  isTaskActive: (taskId: string) => boolean;
+  isTaskActive?: (taskId: string) => boolean;
   /** Task control-plane operations used by the four direct tools. */
   taskTools?: McpTaskToolHost;
   /** Mount path; the response `true` claims that path. */
@@ -126,8 +130,24 @@ export function createMcpEndpoint(
 
     // --- Capability gate (fail closed) ---
     const capability = capabilityFromRequest(req);
-    const taskId = capability ? capabilities.resolve(capability) : null;
-    if (!taskId || !isTaskActive(taskId)) {
+    const grant = capability ? capabilities.resolve(capability) : null;
+    if (!grant) {
+      res.writeHead(HTTP_STATUS.UNAUTHORIZED, {
+        "Content-Type": "application/json",
+        "WWW-Authenticate": "Bearer",
+      });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Unauthorized" },
+          id: null,
+        }),
+      );
+      return true;
+    }
+
+    const initializing = grant.state === "initializing";
+    if (!initializing && isTaskActive && !isTaskActive(grant.taskId)) {
       res.writeHead(HTTP_STATUS.UNAUTHORIZED, {
         "Content-Type": "application/json",
         "WWW-Authenticate": "Bearer",
@@ -143,11 +163,22 @@ export function createMcpEndpoint(
     }
 
     // --- MCP protocol (stateless, one server+transport per request) ---
+    // The caller principal is captured once, here, and frozen: every tool call
+    // in this request authorizes against this snapshot. Its generation is the
+    // one the *token* was minted for, never the task's current value — an old
+    // token must not ride a newer execution. The host owns the validation
+    // (it has the store and the authority); this layer only builds the value.
+    const principal: McpCallerPrincipal = Object.freeze({
+      taskId: grant.taskId,
+      agentId: grant.agentId,
+      generation: grant.generation,
+      initializing,
+    });
     const server = new McpServer(
       { name: MCP_SERVER_NAME, version: "0.1.0" },
       { instructions: MCP_SERVER_INSTRUCTIONS },
     );
-    registerMcpTools(server, taskId, options.taskTools);
+    registerMcpTools(server, principal, options.taskTools);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       // JSON responses for POST round trips (no SSE streaming needed for the

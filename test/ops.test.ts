@@ -103,14 +103,14 @@ describe("Operations REST API", () => {
     mkdirSync(publicDir);
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
 
-    store = new Store(join(tmpDir, "test.db"), "test-agent");
+    store = new Store(join(tmpDir, "test.db"));
     tasks = createTaskManager(store, tmpDir, tmpDir);
     mockBridge = createMockBridge();
+    tasks.attachExecutionBridge(mockBridge);
 
     const handler = createRequestHandler({
       store,
       tasks,
-      getBridge: () => mockBridge,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024, cancel_timeout: 10000 },
@@ -208,13 +208,14 @@ describe("Operations REST API", () => {
       };
       fakeProc.stdout = new EventEmitter();
       fakeProc.stderr = new EventEmitter();
-      tasks.runningBashProcs.set(taskId, fakeProc);
-      tasks.activePrompts.add(taskId);
-      tasks.syncBusy(taskId);
+      // A manager whose agent has no live transport: its busy work is local.
+      const offlineTasks = createTaskManager(store, tmpDir, tmpDir);
+      offlineTasks.runningBashProcs.set(taskId, fakeProc);
+      offlineTasks.activePrompts.add(taskId);
+      offlineTasks.syncBusy(taskId);
       const handler = createRequestHandler({
         store,
-        tasks,
-        getBridge: () => null,
+        tasks: offlineTasks,
         publicDir,
         dataDir: tmpDir,
         limits: { bash_output: 1024, image_upload: 1024 },
@@ -298,12 +299,12 @@ describe("Operations REST API", () => {
 
     it("returns 503 when bridge is not ready", async () => {
       const taskId = await createTask();
-      tasks.activePrompts.add(taskId);
+      const offlineTasks = createTaskManager(store, tmpDir, tmpDir);
+      offlineTasks.activePrompts.add(taskId);
 
       const handler = createRequestHandler({
         store,
-        tasks,
-        getBridge: () => null,
+        tasks: offlineTasks,
         publicDir,
         dataDir: tmpDir,
         limits: { bash_output: 1024, image_upload: 1024 },

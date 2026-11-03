@@ -167,7 +167,12 @@ export const state = {
   replayInProgress: false,
   replayTarget: null as DocumentFragment | null,
   replayQueue: [] as AgentEvent[],
+  // Reload state is per agent: an agent's restart only marks busy when it is
+  // the agent currently carrying this client's task.
   agentReloading: false,
+  agentReloadingAgentId: null as string | null,
+  /** Agent that carries the current task's execution (null = unbound). */
+  taskAgentId: null as string | null,
   recentPathsLimit: 10,
   // /share preview mode: when non-null, the input area switches to
   // preview UI (textarea disabled, ^P publish / ^C cancel buttons).
@@ -920,6 +925,40 @@ export function clearRootTaskAuthority(): number {
   state.rootTaskId = null;
   state.rootTaskAuthorityGeneration++;
   return state.rootTaskAuthorityGeneration;
+}
+
+/**
+ * Install the binding agent of the task a `task_created` payload names.
+ *
+ * The task id is required because "this payload has no agent" means two
+ * different things:
+ *
+ * - a *different* task was activated: the payload is the truth, and a missing
+ *   agent means the task really is unbound (`null`);
+ * - the *same* task was re-announced (a local echo of a create, a navigation
+ *   reload, a post-delete fallback): a payload that does not name an agent must
+ *   not downgrade the binding the client already knows, or the reload guard
+ *   would silently stop working.
+ */
+export function installTaskAgentId(
+  taskId: string | null | undefined,
+  agentId: string | null | undefined,
+): void {
+  const payloadAgent = typeof agentId === "string" ? agentId : null;
+  const sameTask =
+    typeof taskId === "string" &&
+    state.taskId !== null &&
+    taskId === state.taskId;
+  state.taskAgentId = sameTask
+    ? (payloadAgent ?? state.taskAgentId)
+    : payloadAgent;
+  if (
+    state.agentReloadingAgentId !== null &&
+    state.agentReloadingAgentId !== state.taskAgentId
+  ) {
+    state.agentReloading = false;
+    state.agentReloadingAgentId = null;
+  }
 }
 
 export function installRootTaskId(

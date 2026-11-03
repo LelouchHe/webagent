@@ -4,7 +4,7 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
 
 ## Core ACP Surface
 
-- Session lifecycle goes through ACP (`newSession`, `resumeSession` / `loadSession`, `prompt`, `cancel`)
+- Session lifecycle goes through ACP (`newSession`, `resumeSession` / `loadSession`, `prompt`, `cancel`). A per-agent restart reloads only the tasks that agent carries; other agents' streaming, plans, usage, and pending permissions are untouched.
 - Restore prefers `session/resume` when advertised at
   `agentCapabilities.sessionCapabilities.resume`, avoiding transcript replay.
   Otherwise it uses `session/load` only when `agentCapabilities.loadSession` is
@@ -19,6 +19,40 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
   the command's executable token. The workspace has exactly one Root task with
   the literal id `root` and `parent_id = NULL`. Ordinary tasks use UUIDs;
   ordinary creation/deletion/reaping/GC refuse the literal `root`.
+
+### Agents, sessions, and execution identity
+
+- Every `[agents.<id>]` is an execution environment of its own. One process is
+  started per agent, on demand, the first time a task bound to that agent needs
+  to execute something; nothing runs at boot.
+- A task has exactly **one current execution binding**, globally:
+  `(agent id, ACP session id)`. `agent_sessions` is keyed by
+  `(agent_key, agent_session_id)`, so a session id only identifies a task
+  together with the agent that owns it. Two configured agents (for example two
+  `[agents.x]` entries pointing at the same CLI) can legitimately hand out the
+  same session id; those are still two different executions.
+- Execution environment comes from the binding, never from the caller. A
+  request addresses a task and the runtime resolves which agent executes it.
+  Five contexts are deliberately different: the first execution of a task
+  (the verified target), a replacement (`/clear`, compaction — the new
+  execution), retirement/deletion/GC/Root reset (the old binding recorded at
+  commit time), agent events and permission responses (the source execution
+  that produced them), and continuations inside one operation (the context
+  captured at its start).
+- A bridge is injected with a read-only view of `agent_sessions` pinned to its
+  own agent, so projecting a task onto a session id is verified against the
+  binding's agent. A configuration request that outlived a `/clear` cannot
+  reach another agent's session even when the session ids match.
+- Retirement is best-effort and agent-scoped: an execution is dropped through
+  the adapter of the agent recorded on its binding, and only adapters that
+  already exist are used — retiring never starts a process.
+- A binding whose agent left the configuration is rotated to the configured
+  default agent on next use, or on an explicit `POST /clear`. Until then the
+  task stays readable, deletable, shareable, and clearable while its agent is
+  unavailable.
+- The agent `connected` event names its agent (`agentId`) so a client can tell
+  one agent coming up from another. The SSE connection handshake is a different
+  event and carries no agent.
 - ACP cancel is a notification rather than an acknowledgement. WebAgent keeps
   the prompt active until its prompt response supplies the terminal stop reason;
   timeout only marks the request unconfirmed.

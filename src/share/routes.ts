@@ -292,6 +292,8 @@ async function handlePreviewCreate(
   }
 
   // 409 guard: block while the agent is actively streaming into this task.
+  // A background restore is not a stream: it is invisible to the user and
+  // writes nothing into the task, so it must not refuse a share.
   if (deps.tasks?.getBusyKind(taskId) === "agent") {
     json(res, HTTP_STATUS.CONFLICT, {
       error: "task busy",
@@ -563,7 +565,7 @@ async function handlePublish(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
-  if (!deps.store.ownsTask(taskId)) {
+  if (!deps.store.hasBinding(taskId)) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
@@ -1037,7 +1039,7 @@ async function handleRevoke(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
-  if (!deps.store.ownsTask(taskId)) {
+  if (!deps.store.hasBinding(taskId)) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
@@ -1109,7 +1111,7 @@ async function handlePatchLabel(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
-  if (!deps.store.ownsTask(taskId)) {
+  if (!deps.store.hasBinding(taskId)) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
