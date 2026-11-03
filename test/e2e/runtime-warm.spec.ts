@@ -191,6 +191,18 @@ test("a cold read answers immediately and the restore fills the UI in", async ({
       "the read did not wait for the restore",
     ).toEqual([]);
 
+    // Opening the task started that restore in the background. It is not work
+    // the user can attribute, so the UI must stay idle: a busy indicator (and
+    // the ^C send button) with no visible reason is the symptom this guards.
+    await expect(page.locator("#send-btn")).toHaveText("↵");
+    const idleSnapshot = (await (
+      await page.request.get(`${ORIGIN}/api/v1/tasks/${taskId}/snapshot`)
+    ).json()) as { runtime: { busy: unknown } };
+    expect(
+      idleSnapshot.runtime.busy,
+      "a restore is not rendered busy",
+    ).toBeNull();
+
     // The client still holds what the previous process told it. The restore
     // reports one model and one command that only exist after the load, so
     // seeing them proves the warm-up event was applied.

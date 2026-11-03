@@ -66,6 +66,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/e2e/runtime-warm.spec.ts` (slow restore, 3s load delay)
   - the snapshot answers in well under the restore time, and the detail read returns no schema
+  - while that restore is in flight the UI stays idle (`↵`, `runtime.busy` null): a background restore is never rendered as busy
   - without a refresh, the restored model and command appear from `task_runtime_warmed`
 
 - `test/multi-agent-reads.test.ts` (HTTP + real processes)
