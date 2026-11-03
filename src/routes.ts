@@ -1449,7 +1449,13 @@ export function createRequestHandler(
         const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
         if (replayed) return;
 
-        const promptSubmissionId = tasks.reservePromptSubmission(taskId);
+        // A restore that a read started is still in flight at this point.
+        // Waiting for it below is what a prompt needs; the restore alone must
+        // not refuse the submission. Every other busy source (a live turn, a
+        // queued submission, bash, a rotation) still refuses.
+        const promptSubmissionId = tasks.reservePromptSubmission(taskId, {
+          allowRestoring: true,
+        });
         if (promptSubmissionId === null) {
           const busyKind = tasks.getBusyKind(taskId);
           logPromptRejectBeforeSave({
@@ -1479,7 +1485,10 @@ export function createRequestHandler(
           if (!res.writableEnded) abortPromptSubmission();
         });
 
-        // Ensure task is live in ACP before prompting (awaits in-flight resume)
+        // Ensure task is live in ACP before prompting (awaits in-flight resume).
+        // The restore is shared (`pendingResumes`), so a prompt that arrives
+        // while a read is still restoring waits for that restore instead of
+        // being refused as busy; a failed one is reported as such.
         try {
           await tasks.ensureResumed(bridge, taskId);
         } catch (err) {
@@ -1982,6 +1991,27 @@ export function createRequestHandler(
           });
           return;
         }
+        // A config write goes into the ACP session, so it waits for a restore
+        // a read started instead of failing with "not connected". The lease is
+        // re-checked afterwards, immediately before the call, so a rotation
+        // that landed during the wait is still refused.
+        try {
+          await tasks.ensureResumed(execution.bridge, taskId);
+        } catch (err) {
+          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            error: `Failed to resume task: ${errorMessage(err)}`,
+          });
+          return;
+        }
+        if (
+          !tasks.authority.accepts(capturedLease) ||
+          store.getBindingAgent(taskId) !== execution.agentId
+        ) {
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: "Task execution was replaced; retry the request",
+          });
+          return;
+        }
         try {
           const configOptions = await execution.bridge.setConfigOption(
             taskId,
@@ -2251,6 +2281,17 @@ export function createRequestHandler(
           });
           return;
         }
+        // Compaction needs the execution ready, so a restore that a read
+        // started is awaited rather than reported as "cancel active work".
+        // Anything genuinely busy is still refused by the check below.
+        try {
+          await tasks.ensureResumed(bridge, taskId);
+        } catch (err) {
+          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            error: `Failed to resume task: ${errorMessage(err)}`,
+          });
+          return;
+        }
         if (tasks.getBusyKind(taskId) !== null) {
           json(res, HTTP_STATUS.CONFLICT, {
             error: "Cancel active work before compacting the task",
@@ -2269,15 +2310,6 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.CONFLICT, {
             error: "Task is busy",
             busyKind: tasks.getBusyKind(taskId),
-          });
-          return;
-        }
-        try {
-          await tasks.ensureResumed(bridge, taskId);
-        } catch (err) {
-          tasks.releasePromptSubmission(taskId, submissionId);
-          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
-            error: `Failed to resume task: ${errorMessage(err)}`,
           });
           return;
         }

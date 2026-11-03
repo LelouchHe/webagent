@@ -1037,13 +1037,17 @@ export class TaskManager implements ObligationHost {
    * recomputed after acquisition so a concurrent reparent/delete cannot leave
    * us holding a stale path.
    */
-  private getActiveTaskWorkKind(taskId: string): "agent" | "bash" | null {
+  private getActiveTaskWorkKind(
+    taskId: string,
+    ignoreRestoring = false,
+  ): "agent" | "bash" | null {
     if (this.creatingTasks.has(taskId)) return "agent";
     // Restoring is work too: `resumeTask` awaits ACP `loadSession` while the
     // task's stored binding is still the one being loaded. Leaving it out of
     // the busy gate let a `/clear` replace the execution the restore was
-    // about to make live.
-    if (this.restoringTasks.has(taskId)) return "agent";
+    // about to make live. Only a prompt submission opted into waiting for it
+    // (`busyKindFor(..., true)`); everything else keeps refusing.
+    if (!ignoreRestoring && this.restoringTasks.has(taskId)) return "agent";
     if (this.pendingPromptSubmissions.has(taskId)) return "agent";
     if (this.drainingCollaborationTasks.has(taskId)) return "agent";
     if (this.activePrompts.has(taskId)) return "agent";
@@ -2736,12 +2740,28 @@ export class TaskManager implements ObligationHost {
   }
 
   getBusyKind(taskId: string): "agent" | "bash" | null {
+    return this.busyKindFor(taskId, false);
+  }
+
+  /**
+   * The busy sources, optionally excluding an in-flight restore.
+   *
+   * A prompt waits for the restore a read started (`ensureResumed` shares one
+   * resume per task), so the restore alone must not refuse its submission.
+   * Nothing else is excluded: destructive operations keep calling `getBusyKind`
+   * and still refuse while restoring, because they would replace the execution
+   * being loaded.
+   */
+  private busyKindFor(
+    taskId: string,
+    ignoreRestoring: boolean,
+  ): "agent" | "bash" | null {
     if (this.creatingTasks.has(taskId)) return "agent";
     if (this.pendingPromptSubmissions.has(taskId)) return "agent";
     if (this.activePrompts.has(taskId)) return "agent";
     if (this.compactingTasks.has(taskId)) return "agent";
     if (this.resettingTasks.has(taskId)) return "agent";
-    return this.getActiveTaskWorkKind(taskId);
+    return this.getActiveTaskWorkKind(taskId, ignoreRestoring);
   }
 
   /**
@@ -2774,8 +2794,19 @@ export class TaskManager implements ObligationHost {
     return current == null || current === promptId;
   }
 
-  reservePromptSubmission(taskId: string): number | null {
-    if (this.getBusyKind(taskId) !== null) return null;
+  /**
+   * Reserve the task's one prompt submission slot.
+   *
+   * `allowRestoring` is for the prompt route, which waits for the restore a
+   * read started instead of reporting it as busy. The slot is still exclusive:
+   * a second submission, a live turn, bash, or a rotation refuses.
+   */
+  reservePromptSubmission(
+    taskId: string,
+    opts?: { allowRestoring?: boolean },
+  ): number | null {
+    if (this.busyKindFor(taskId, opts?.allowRestoring === true) !== null)
+      return null;
     const submissionId = ++this.nextPromptSubmissionNumber;
     this.pendingPromptSubmissions.set(taskId, submissionId);
     return submissionId;

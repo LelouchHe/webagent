@@ -91,10 +91,14 @@ The operational form of that sentence:
   task's subscribers as `task_runtime_warmed`, which is the only compensation a
   cold client gets. A failed warm-up is silent, and a warm-up that outlived a
   rotation is refused before publishing (same task, same binding agent, same
-  generation). Operations that genuinely need a process (prompt, create,
-  approve, reload, explicit `/clear`) resolve one, and they fail with the rescue
-  path (`POST /clear { agentId }`) instead of falling back to another agent's
-  process. *Why:* a real CLI replays history on restore, so any fixed wait is
+  generation). Operations that genuinely need a process (prompt, config write,
+  compact, create, approve, reload, explicit `/clear`) resolve one, and they
+  fail with the rescue path (`POST /clear { agentId }`) instead of falling back
+  to another agent's process. A write that needs the execution ready *waits*
+  for the warm-up/restore a read started (`ensureResumed` shares one resume per
+  task) instead of reporting it as busy; only destructive operations (`/clear`,
+  delete, Root reset) refuse while restoring, because they would replace the
+  execution that is being loaded. *Why:* a real CLI replays history on restore, so any fixed wait is
   either too short (the UI stays cold forever) or too long (every read pays for
   it); and an unavailable binary must not take the user's history with it.
 - **An agent's lifecycle events touch only the tasks it carries.** Reload,

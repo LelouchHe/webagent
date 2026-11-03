@@ -542,6 +542,14 @@ schema and commands are published to the task's subscribers as
 `task_runtime_warmed` (see [Live Events](#live-events)). A missing, dead, or no
 longer configured agent simply means no such event arrives.
 
+A write that needs the execution ready — prompt, config, compact — waits for
+that same restore instead of failing with `409 Task is busy`: the restore is
+shared (`ensureResumed` keeps one resume per task), so the write arrives after
+it, not on top of it. A failed restore answers `500` with `Failed to resume
+task: …`, never a busy conflict. Destructive operations (`POST /clear`, delete,
+Root reset) still answer `409` while the task is restoring, because they would
+replace the execution being loaded.
+
 Use `GET /events` for message history (rendering only) and `GET /snapshot` for runtime state (`busy`, `pendingPermissions`, `streaming`). The two are decoupled — `/events` never mutates runtime state in the frontend.
 
 **Response** `200`:
