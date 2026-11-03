@@ -102,15 +102,6 @@ Publishing uses the `v*` tag workflow documented in
 ## TODO
 
 - Add multi-client integration coverage for task-created broadcast guards.
-- Config changes render optimistically and swallow write failures:
-  `setConfigAndUpdate` (`public/js/slash-commands.ts`) writes the
-  `Model → …` transcript line before the request and drops the error, and the
-  mode toggle (`public/js/input.ts`) does the same via `.catch(() => {})`. A
-  refused or lost `PUT /config/:id` (a rotation, a dead process, a shutdown
-  mid-request) therefore leaves the user told the change succeeded while the
-  task keeps its old stored value, and the status bar can disagree with the
-  server until the next read. Pre-existing; the transcript should confirm after
-  the write, or report the failure.
 - Harden `/new`'s create-failure recovery: it clears the view and drops the
   active task before the create request, so a failed create (for example the
   source task is deleted during the cwd probe) leaves no active task until a

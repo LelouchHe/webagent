@@ -1180,7 +1180,13 @@ describe("commands", () => {
     });
 
     it("switches config options using fuzzy matching", async () => {
-      setFetch(() => ({ ok: true, json: async () => ({}) }));
+      // A real 2xx config write has an empty body; `text()` is part of the
+      // contract now that the caller waits for the write to succeed.
+      setFetch(() => ({
+        ok: true,
+        json: async () => ({}),
+        text: async () => "",
+      }));
       state.clientId = "cl-1";
       state.taskId = "s1";
       state.configOptions = [
@@ -1205,6 +1211,47 @@ describe("commands", () => {
       const body = JSON.parse(putCall.init.body);
       assert.equal(body.value, "claude-sonnet-4.6");
       assert.ok(messageLines().includes("Model → Claude Sonnet 4.6"));
+    });
+
+    it("rolls back and reports err when the config write is refused", async () => {
+      setFetch(() => ({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: "refused by test" }),
+        text: async () => "",
+      }));
+      state.clientId = "cl-1";
+      state.taskId = "s1";
+      state.configOptions = [
+        {
+          id: "model",
+          name: "Model",
+          currentValue: "claude-haiku-4.5",
+          options: [
+            { value: "claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
+            { value: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
+          ],
+        },
+      ];
+
+      const handled = await commands.handleSlashCommand("/model sonnet");
+
+      assert.equal(handled, true);
+      assert.equal(
+        state.configOptions[0].currentValue,
+        "claude-haiku-4.5",
+        "the option falls back to the stored value",
+      );
+      assert.ok(
+        !messageLines().includes("Model → Claude Sonnet 4.6"),
+        "a refused write is never announced as a completed switch",
+      );
+      assert.ok(
+        messageLines().some((line: string) =>
+          line.includes("err: refused by test"),
+        ),
+        `expected the failure to be reported, got: ${JSON.stringify(messageLines())}`,
+      );
     });
 
     it("reports ambiguous config matches without sending an update", async () => {
