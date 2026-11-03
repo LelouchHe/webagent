@@ -7,6 +7,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   createNewTask,
+  currentTaskId,
   expectConnectionStatus,
   sendPrompt,
 } from "./helpers.ts";
@@ -155,6 +156,24 @@ test("cold server restart still populates model + slash autocomplete", async ({
     await expect(page.locator("#messages")).toContainText(
       "Model → Mock Model 2",
     );
+    // That line is optimistic: the PUT which persists the model is still in
+    // flight, and the next step kills the server. Restarting before it commits
+    // brings the task back with the default model, so wait for the stored
+    // value rather than for the transcript.
+    await expect
+      .poll(
+        async () => {
+          const taskId = await currentTaskId(page);
+          // Absolute: `page.request` would otherwise resolve against the
+          // suite's baseURL, a different server with a different data dir.
+          const res = await page.request.get(
+            `${RESTART_ORIGIN}/api/v1/tasks/${taskId}`,
+          );
+          return ((await res.json()) as { model?: string }).model;
+        },
+        { timeout: 10_000 },
+      )
+      .toBe("mock-model-2");
 
     // Cold restart: tasks.cachedConfigOptions starts empty in the new process.
     await stopServer(server);
