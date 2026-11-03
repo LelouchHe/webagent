@@ -1457,7 +1457,7 @@ export function createRequestHandler(
           allowRestoring: true,
         });
         if (promptSubmissionId === null) {
-          const busyKind = tasks.getBusyKind(taskId);
+          const busyKind = tasks.getGateBusyKind(taskId);
           logPromptRejectBeforeSave({
             taskId,
             status: HTTP_STATUS.CONFLICT,
@@ -2292,7 +2292,7 @@ export function createRequestHandler(
           });
           return;
         }
-        if (tasks.getBusyKind(taskId) !== null) {
+        if (tasks.getGateBusyKind(taskId) !== null) {
           json(res, HTTP_STATUS.CONFLICT, {
             error: "Cancel active work before compacting the task",
           });
@@ -2309,7 +2309,7 @@ export function createRequestHandler(
         if (submissionId === null) {
           json(res, HTTP_STATUS.CONFLICT, {
             error: "Task is busy",
-            busyKind: tasks.getBusyKind(taskId),
+            busyKind: tasks.getGateBusyKind(taskId),
           });
           return;
         }
@@ -2453,7 +2453,7 @@ export function createRequestHandler(
           });
           return;
         }
-        if (tasks.getBusyKind(taskId) !== null) {
+        if (tasks.getGateBusyKind(taskId) !== null) {
           json(res, HTTP_STATUS.CONFLICT, {
             error: "Cancel active work before clearing the task",
           });
@@ -2600,7 +2600,7 @@ export function createRequestHandler(
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
             return;
           }
-          if (tasks && tasks.getBusyKind(taskId) !== null) {
+          if (tasks && tasks.getGateBusyKind(taskId) !== null) {
             const busyPath = store.getTaskPath(taskId) ?? taskId;
             json(res, HTTP_STATUS.CONFLICT, {
               error: `Cancel active work in ${busyPath} before deleting this task`,
@@ -2615,7 +2615,9 @@ export function createRequestHandler(
           if (tasks) {
             const busyDescendant = store
               .getDescendantTaskIds(taskId)
-              .find((descendantId) => tasks.getBusyKind(descendantId) !== null);
+              .find(
+                (descendantId) => tasks.getGateBusyKind(descendantId) !== null,
+              );
             if (busyDescendant) {
               const busyPath =
                 store.getTaskPath(busyDescendant) ?? busyDescendant;

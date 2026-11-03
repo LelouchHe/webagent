@@ -168,6 +168,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the collaboration-message emitter reports exactly one post-commit fact for both the normal and in-transaction creation entry points
 
 - `test/task-manager.test.ts`
+  - busy has two faces: a restoring task is agent-busy for the gate (`getGateBusyKind`) and idle for rendering (`getBusyKind`); a Root reset under a restoring descendant and a rotation during the restore window are both refused
   - a bash run that ignores `SIGINT` is escalated to `SIGKILL` and the stop waits for close; the handle stays tracked until then; a replaced run's late close is ignored; an agent teardown stops bash-only tasks
   - task title hydration
   - task deletion cleanup
@@ -247,6 +248,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/tasks.test.ts`
   - task CRUD (create / get / delete / list), with server-only id assignment; the literal `root` resolves like a task and unknown/legacy ids return 404
+  - an in-flight restore is rendered idle (snapshot `runtime.busy` and `/status` `busyKind` are null) while `/clear` and delete still refuse with 409
   - task list is global (`?agent=` narrows); every list entry, task detail, snapshot, bootstrap/create/clear payload, and `task_created` broadcast carries `agentId` alongside backend Root authority
   - creating a child of a task carried by another configured agent targets that agent without rotating the parent; when the parent's agent is gone the child is created for `default_agent`
   - `POST /clear { agentId }` rescues a task onto another configured agent, leaves the `agent_rotation` record, and refuses an unconfigured / non-string `agentId`
@@ -281,6 +283,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - user_message storage and broadcast
   - last_active_at update and active-prompt tracking
   - busy-state conflict (409) for agent and bash
+  - a prompt and a config write that arrive while a restore is parked wait for it (one shared restore) instead of answering 409 "Task is busy"
   - events endpoint: listing, thinking filter, after pagination
   - title generation trigger for untitled tasks
   - image support in prompts

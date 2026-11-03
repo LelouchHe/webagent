@@ -301,7 +301,8 @@ export interface ConsumeMessageResult {
  * constructed by the server before (or independently of) the manager.
  */
 export interface ObligationHost {
-  getBusyKind(taskId: string): "agent" | "bash" | null;
+  /** Gate face: a restore defers a reminder submission, so it is included. */
+  getGateBusyKind(taskId: string): "agent" | "bash" | null;
   isTurnRunning(taskId: string, promptId: string): boolean;
   submitObligationReminder(
     obligation: DirectedObligation,
@@ -338,7 +339,7 @@ export function createObligationController(
     clearTimer: (handle) => {
       clearTimeout(handle);
     },
-    isAgentBusy: (taskId) => host.getBusyKind(taskId) === "agent",
+    isAgentBusy: (taskId) => host.getGateBusyKind(taskId) === "agent",
     isTurnRunning: (taskId, promptId) => host.isTurnRunning(taskId, promptId),
     submitReminder: (obligation) => host.submitObligationReminder(obligation),
     retryDispatch: (obligation) => {
@@ -1039,15 +1040,16 @@ export class TaskManager implements ObligationHost {
    */
   private getActiveTaskWorkKind(
     taskId: string,
-    ignoreRestoring = false,
+    opts: { includeRestoring: boolean },
   ): "agent" | "bash" | null {
     if (this.creatingTasks.has(taskId)) return "agent";
     // Restoring is work too: `resumeTask` awaits ACP `loadSession` while the
     // task's stored binding is still the one being loaded. Leaving it out of
-    // the busy gate let a `/clear` replace the execution the restore was
-    // about to make live. Only a prompt submission opted into waiting for it
-    // (`busyKindFor(..., true)`); everything else keeps refusing.
-    if (!ignoreRestoring && this.restoringTasks.has(taskId)) return "agent";
+    // the busy gate let a `/clear` replace the execution the restore was about
+    // to make live. It is included in the gate face and excluded from the
+    // rendering face, which is what `includeRestoring` selects.
+    if (opts.includeRestoring && this.restoringTasks.has(taskId))
+      return "agent";
     if (this.pendingPromptSubmissions.has(taskId)) return "agent";
     if (this.drainingCollaborationTasks.has(taskId)) return "agent";
     if (this.activePrompts.has(taskId)) return "agent";
@@ -1413,7 +1415,7 @@ export class TaskManager implements ObligationHost {
     }
     const busyForRotation = opts.allowCompacting
       ? this.getBusyKindForOwnRotation(taskId)
-      : this.getBusyKind(taskId);
+      : this.getGateBusyKind(taskId);
     if (busyForRotation !== null) {
       throw new TaskBusyError(taskId, this.store.getTaskPath(taskId));
     }
@@ -2531,7 +2533,8 @@ export class TaskManager implements ObligationHost {
       ...this.store.getDescendantTaskIds(rootTaskId),
     ];
     const busyBeforeReset = protectedIds.find(
-      (id) => this.getActiveTaskWorkKind(id) !== null,
+      (id) =>
+        this.getActiveTaskWorkKind(id, { includeRestoring: true }) !== null,
     );
     if (busyBeforeReset) {
       throw new TaskBusyError(
@@ -2558,7 +2561,8 @@ export class TaskManager implements ObligationHost {
         ...this.store.getDescendantTaskIds(rootTaskId),
       ];
       const busyTask = currentIds.find(
-        (id) => this.getActiveTaskWorkKind(id) !== null,
+        (id) =>
+          this.getActiveTaskWorkKind(id, { includeRestoring: true }) !== null,
       );
       if (busyTask) {
         throw new TaskBusyError(busyTask, this.store.getTaskPath(busyTask));
@@ -2623,7 +2627,9 @@ export class TaskManager implements ObligationHost {
       throw new TaskNotFoundError(taskId);
     }
     const affectedIds = [taskId, ...this.store.getDescendantTaskIds(taskId)];
-    const busyTask = affectedIds.find((id) => this.getBusyKind(id) !== null);
+    const busyTask = affectedIds.find(
+      (id) => this.getGateBusyKind(id) !== null,
+    );
     if (busyTask) {
       release();
       throw new TaskBusyError(busyTask, this.store.getTaskPath(busyTask));
@@ -2740,28 +2746,40 @@ export class TaskManager implements ObligationHost {
   }
 
   getBusyKind(taskId: string): "agent" | "bash" | null {
-    return this.busyKindFor(taskId, false);
+    return this.busyKindFor(taskId, { includeRestoring: false });
   }
 
   /**
-   * The busy sources, optionally excluding an in-flight restore.
+   * The gate face: busy sources that must block a state-changing operation,
+   * *including* an in-flight restore.
    *
-   * A prompt waits for the restore a read started (`ensureResumed` shares one
-   * resume per task), so the restore alone must not refuse its submission.
-   * Nothing else is excluded: destructive operations keep calling `getBusyKind`
-   * and still refuse while restoring, because they would replace the execution
-   * being loaded.
+   * `/clear`, delete, Root reset, rotation, sharing, and the obligation
+   * dispatcher ask this, because they act on or into an execution that is not
+   * settled yet. A restore is invisible to the user and must not be invisible
+   * to them.
+   */
+  getGateBusyKind(taskId: string): "agent" | "bash" | null {
+    return this.busyKindFor(taskId, { includeRestoring: true });
+  }
+
+  /**
+   * The two faces differ only in whether an in-flight restore counts.
+   *
+   * A prompt submission asks for the gate without the restore, because it waits
+   * for that restore (`ensureResumed` shares one resume per task) instead of
+   * reporting it as busy. Nothing else is excluded anywhere: a live turn, a
+   * reserved submission, bash, compaction, and a rotation refuse in both faces.
    */
   private busyKindFor(
     taskId: string,
-    ignoreRestoring: boolean,
+    opts: { includeRestoring: boolean },
   ): "agent" | "bash" | null {
     if (this.creatingTasks.has(taskId)) return "agent";
     if (this.pendingPromptSubmissions.has(taskId)) return "agent";
     if (this.activePrompts.has(taskId)) return "agent";
     if (this.compactingTasks.has(taskId)) return "agent";
     if (this.resettingTasks.has(taskId)) return "agent";
-    return this.getActiveTaskWorkKind(taskId, ignoreRestoring);
+    return this.getActiveTaskWorkKind(taskId, opts);
   }
 
   /**
@@ -2805,8 +2823,10 @@ export class TaskManager implements ObligationHost {
     taskId: string,
     opts?: { allowRestoring?: boolean },
   ): number | null {
-    if (this.busyKindFor(taskId, opts?.allowRestoring === true) !== null)
-      return null;
+    // The prompt route waits for the restore a read started, so the restore
+    // alone must not refuse the slot; everything else still refuses.
+    const includeRestoring = opts?.allowRestoring !== true;
+    if (this.busyKindFor(taskId, { includeRestoring }) !== null) return null;
     const submissionId = ++this.nextPromptSubmissionNumber;
     this.pendingPromptSubmissions.set(taskId, submissionId);
     return submissionId;
@@ -3017,7 +3037,7 @@ export class TaskManager implements ObligationHost {
     origin: string,
   ): void {
     this.attachExecutionBridge(bridge);
-    if (this.getBusyKind(taskId) === "agent") return;
+    if (this.getGateBusyKind(taskId) === "agent") return;
     if (!this.store.getTask(taskId)) return;
     if (this.store.countQueuedDeliveries(taskId) === 0) {
       slog.debug("collaboration drain skipped", {
@@ -3423,7 +3443,7 @@ export class TaskManager implements ObligationHost {
     taskId: string,
     providedBridge?: DeliveryBridge | null,
   ): Promise<boolean> {
-    const busyKind = this.getBusyKind(taskId);
+    const busyKind = this.getGateBusyKind(taskId);
     if (busyKind === "agent") {
       slog.debug("collaboration delivery skipped", {
         taskId: taskId.slice(0, 8),

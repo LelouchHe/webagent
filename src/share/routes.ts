@@ -292,6 +292,8 @@ async function handlePreviewCreate(
   }
 
   // 409 guard: block while the agent is actively streaming into this task.
+  // A background restore is not a stream: it is invisible to the user and
+  // writes nothing into the task, so it must not refuse a share.
   if (deps.tasks?.getBusyKind(taskId) === "agent") {
     json(res, HTTP_STATUS.CONFLICT, {
       error: "task busy",

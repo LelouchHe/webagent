@@ -2943,10 +2943,14 @@ describe("TaskManager", () => {
       return { promise, resolve };
     }
 
-    it("treats a restoring task as agent-busy", () => {
+    it("treats a restoring task as agent-busy for the gate, not for the UI", () => {
       sm.restoringTasks.add("s1");
 
-      assert.equal(sm.getBusyKind("s1"), "agent");
+      // A restore blocks state-changing operations...
+      assert.equal(sm.getGateBusyKind("s1"), "agent");
+      // ...but it is not work the user can see, so the rendered busy state
+      // (snapshot / state_patch / status / task_list) stays idle.
+      assert.equal(sm.getBusyKind("s1"), null);
     });
 
     it("rejects a Root reset while a descendant is restoring", async () => {
@@ -2999,33 +3003,36 @@ describe("TaskManager", () => {
       };
 
       const restore = sm.resumeTask(loadingBridge, "web-1");
-      // resumeTask marks the task restoring before its first await, so an
-      // interleaved request observes it without racing the scheduler.
-      assert.equal(loadEntered, true);
-      assert.equal(sm.getBusyKind("web-1"), "agent");
+      try {
+        // resumeTask marks the task restoring before its first await, so an
+        // interleaved request observes it without racing the scheduler.
+        assert.equal(loadEntered, true);
+        assert.equal(sm.getGateBusyKind("web-1"), "agent");
 
-      const rotatingBridge = {
-        async newSession() {
-          return { sessionId: "agent-rotated", configOptions: [] };
-        },
-        async setConfigOption() {
-          return [];
-        },
-        async loadSession() {
-          throw new Error("loadSession should not be called");
-        },
-      };
+        const rotatingBridge = {
+          async newSession() {
+            return { sessionId: "agent-rotated", configOptions: [] };
+          },
+          async setConfigOption() {
+            return [];
+          },
+          async loadSession() {
+            throw new Error("loadSession should not be called");
+          },
+        };
 
-      await assert.rejects(
-        () => sm.clearTask(rotatingBridge, "web-1"),
-        TaskBusyError,
-      );
-      // The refused rotation changed nothing.
-      assert.equal(store.getAgentSessionId("web-1"), "agent-old");
-
-      gate.resolve();
-      await restore;
+        await assert.rejects(
+          () => sm.clearTask(rotatingBridge, "web-1"),
+          TaskBusyError,
+        );
+        // The refused rotation changed nothing.
+        assert.equal(store.getAgentSessionId("web-1"), "agent-old");
+      } finally {
+        gate.resolve();
+        await restore.catch(() => {});
+      }
       assert.equal(sm.liveTasks.has("web-1"), true);
+      assert.equal(sm.getGateBusyKind("web-1"), null);
       assert.equal(sm.getBusyKind("web-1"), null);
     });
 

@@ -636,6 +636,80 @@ describe("Task REST API", () => {
 
   // --- POST /api/v1/tasks/:id/clear ---
 
+  // A read answers before the restore it started has finished, so a restore
+  // can be in flight while the user looks at an idle task. It must not paint
+  // busy, and it must still block destructive operations.
+  describe("an in-flight restore", () => {
+    function parkRestore(taskId: string) {
+      tasks.liveTasks.delete(taskId);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const originalLoad = mockBridge.loadSession;
+      mockBridge.loadSession = async (id: string, cwd: string) => {
+        await gate;
+        return originalLoad(id, cwd);
+      };
+      const restore = tasks.ensureTaskLive(taskId);
+      const started = (async () => {
+        while (!tasks.restoringTasks.has(taskId)) {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+      })();
+      return { started, release, settle: () => restore };
+    }
+
+    it("is not rendered as busy but still refuses clear and delete", async () => {
+      store.createTask(
+        "s-restoring",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-old",
+      );
+      const parked = parkRestore("s-restoring");
+      await parked.started;
+      try {
+        // Rendering face: the snapshot says idle, so no busy indicator and no
+        // unexplained frozen input for a task nobody is working in.
+        const snapshot = await makeRequest(
+          port,
+          "GET",
+          "/api/v1/tasks/s-restoring/snapshot",
+        );
+        assert.equal(snapshot.status, 200);
+        assert.equal(JSON.parse(snapshot.body).runtime.busy, null);
+        const status = await makeRequest(
+          port,
+          "GET",
+          "/api/v1/tasks/s-restoring/status",
+        );
+        assert.equal(JSON.parse(status.body).busyKind, null);
+
+        // Gate face: the destructive operations still refuse, because they
+        // would replace the execution the restore is about to make live.
+        const clear = await makeRequest(
+          port,
+          "POST",
+          "/api/v1/tasks/s-restoring/clear",
+          "{}",
+        );
+        assert.equal(clear.status, 409);
+        const deleted = await makeRequest(
+          port,
+          "DELETE",
+          "/api/v1/tasks/s-restoring",
+        );
+        assert.equal(deleted.status, 409);
+      } finally {
+        parked.release();
+        await parked.settle().catch(() => {});
+      }
+      assert.equal(store.getAgentSessionId("s-restoring"), "agent-old");
+    });
+  });
+
   describe("POST /api/v1/tasks/:id/clear", () => {
     it("keeps the WebAgent task id while rotating its ACP execution", async () => {
       store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
@@ -732,16 +806,30 @@ describe("Task REST API", () => {
       // Only now does the restore start: it is inside the window the early
       // check could not see.
       const restore = tasks.resumeTask(mockBridge, "s1");
-      assert.equal(tasks.getBusyKind("s1"), "agent");
+      let bodyEnded = false;
+      const endBody = () => {
+        if (bodyEnded) return;
+        bodyEnded = true;
+        req.end("}");
+      };
+      try {
+        // The rotation gate includes a restore (it would replace the execution
+        // being loaded), even though the UI renders the task as idle.
+        assert.equal(tasks.getGateBusyKind("s1"), "agent");
+        assert.equal(tasks.getBusyKind("s1"), null);
 
-      req.end("}");
-      const res = await response;
+        endBody();
+        const res = await response;
 
-      assert.equal(res.status, 409);
-      assert.equal(store.getAgentSessionId("s1"), "agent-old");
-
-      release();
-      await restore;
+        assert.equal(res.status, 409);
+        assert.equal(store.getAgentSessionId("s1"), "agent-old");
+      } finally {
+        // A failed assertion here must not strand the parked request or the
+        // restore: `server.close()` in afterEach would never finish.
+        endBody();
+        release();
+        await restore.catch(() => {});
+      }
     });
 
     it("compacts into a fresh ACP execution and defers the summary to the next prompt", async () => {

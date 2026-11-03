@@ -71,6 +71,21 @@ The operational form of that sentence:
   empty-task GC's surviving children rely on it to stay reachable. *Why:*
   filtering the cascade by owner left another agent's descendants alive under a
   parent the user had deleted — unreachable rows, not a protected subtree.
+- **Busy has two faces, and only one of them is rendered.** The rendering
+  face (`TaskManager.getBusyKind`) covers work a user can attribute — a running
+  prompt, bash, compaction, a reserved prompt submission — and is what the
+  snapshot, `state_patch`, `/tasks/:id/status`, and MCP `task_list` report. It
+  **excludes** an in-flight restore. The gate face
+  (`getGateBusyKind`) is the same list **plus** `restoringTasks`, and it is what
+  `/clear`, delete, Root reset, rotation, sharing, the prompt submission slot,
+  recovery drains, and the obligation dispatcher ask. *Why:* a read answers
+  immediately and restores in the background, so opening an idle task can no
+  longer be assumed to finish before anything else happens. Painting that
+  restore as `busy` presents a frozen input with no reason (and the client
+  cannot tell); omitting it from the gate would let `/clear` or a reset replace
+  the execution the restore is about to make live. A prompt is the one write
+  that asks for the gate *without* the restore, because it waits for that
+  restore (`ensureResumed` shares one resume per task) instead of refusing it.
 - **Execution environment comes from the binding, never from the caller.** A
   request names a task; the runtime resolves which agent executes it. Five
   contexts are the deliberate exceptions and each names its own source: the

@@ -391,7 +391,7 @@ Get task details. **Auto-resumes** the task in the ACP agent if it's not already
 | `rootTaskId` | string | Canonical Root id for the workspace (always `root`) |
 | `parentId` | `string \| null` | Parent WebAgent Task; `null` for the Root Task, or for a survivor detached by a delete collision (see DELETE) |
 | `busy`          | boolean                     | Whether the task has an active agent prompt or bash process                |
-| `busyKind`      | `"agent" \| "bash" \| null` | What kind of work is in progress                                              |
+| `busyKind`      | `"agent" \| "bash" \| null` | What kind of work is in progress (user-visible work only, as in `runtime.busy`; a background restore reports `null`) |
 
 **Errors:** `404` (task not found), `500` (ACP restore failed)
 
@@ -581,6 +581,12 @@ Use `GET /events` for message history (rendering only) and `GET /snapshot` for r
 
 - `seq` — monotonically increasing per task; paired with SSE `state_patch.seq` for consistency.
 - `runtime.busy` — `null` when idle; otherwise `{ kind: "agent" | "bash", since, promptId }`.
+  It reports only work a client can attribute: a running prompt, bash,
+  compaction, or a reserved submission. A background restore is **not** busy
+  here — opening a task starts one, and painting it would leave the user
+  looking at a busy indicator with no visible cause. A restore is still a
+  blocker for state-changing operations; that gate is internal and never
+  surfaces as `busy`.
 - `runtime.pendingPermissions` / `runtime.streaming` — present in the schema; population via `state_patch` follows in subsequent milestones.
 
 **Consistency rule**: If an incoming `state_patch.seq != lastSeq + 1`, the frontend reloads the snapshot and drops in-flight patches.
