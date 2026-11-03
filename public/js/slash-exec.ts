@@ -435,11 +435,19 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         addSystem(`err: Unknown "${arg}". Type ${cmd} + space to see options.`);
         return true;
       }
+      const previousValue = opt.currentValue;
       opt.currentValue = match.value;
       updateModeUI();
       updateStatusBar();
-      addSystem(`${opt.name} → ${match.name}`);
-      await api.setConfig(state.taskId!, configId, match.value).catch(() => {});
+      try {
+        await api.setConfig(state.taskId!, configId, match.value);
+        addSystem(`${opt.name} → ${match.name}`);
+      } catch (e) {
+        opt.currentValue = previousValue;
+        updateModeUI();
+        updateStatusBar();
+        addSystem(`err: ${(e as Error).message}`);
+      }
       return true;
     }
 

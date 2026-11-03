@@ -42,5 +42,6 @@ jobs:
           npx playwright --version
 
       - run: npm run test:e2e
+        timeout-minutes: 20
         env:
           PLAYWRIGHT_CHROME_CHANNEL: chrome

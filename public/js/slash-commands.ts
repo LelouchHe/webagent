@@ -196,12 +196,24 @@ async function setConfigAndUpdate(
   name: string,
 ): Promise<void> {
   const opt = getSelectConfigOption(configId);
+  const previousValue = opt?.currentValue;
+  // Optimistic locally so the status bar reacts immediately, but the
+  // transcript line is the user's evidence of success: print it only after
+  // the server accepted the write. A refused or lost PUT (rotation, dead
+  // process, shutdown mid-request) must not read as a completed change.
   if (opt) opt.currentValue = value;
   updateModeUI();
   updateStatusBar();
-  addSystem(`${opt?.name ?? configId} → ${name}`);
-  if (state.taskId)
-    await api.setConfig(state.taskId, configId, value).catch(() => {});
+  try {
+    if (!state.taskId) throw new Error("no active task");
+    await api.setConfig(state.taskId, configId, value);
+    addSystem(`${opt?.name ?? configId} → ${name}`);
+  } catch (e) {
+    if (opt && previousValue !== undefined) opt.currentValue = previousValue;
+    updateModeUI();
+    updateStatusBar();
+    addSystem(`err: ${(e as Error).message}`);
+  }
 }
 
 export async function consumeInbox(m: api.InboxMessage): Promise<void> {

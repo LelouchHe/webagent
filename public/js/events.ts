@@ -26,6 +26,7 @@ import {
   installTaskAgentId,
   updateTaskInfo,
   setConnectionStatus,
+  syncInputEnabled,
   clearCancelTimer,
   onTaskReset,
   applyStatePatch,
@@ -162,11 +163,15 @@ function applyWarmPayload(payload: {
   configOptions: ConfigOption[];
   agentCommands: AgentCommandSnapshot;
 }): void {
-  if (payload.configOptions.length) updateConfigOptions(payload.configOptions);
+  if (payload.configOptions.length) {
+    // Owns the mode/model repaint (updateModeUI + updateStatusBar). No
+    // explicit updateModeUI() here: it was a redundant repaint triggered by a
+    // remote event, and the mode UI has nothing to show that this does not.
+    updateConfigOptions(payload.configOptions);
+  }
   if (applyAgentCommandSnapshot(payload.agentCommands)) {
     dom.input.dispatchEvent(new window.Event("input", { bubbles: true }));
   }
-  updateModeUI();
   updateStatusBar();
 }
 
@@ -2114,7 +2119,7 @@ export function handleEvent(msg: AgentEvent) {
       }
       updateTaskInfo(state.taskId, state.taskTitle);
       setConnectionStatus("connected", "connected");
-      dom.input.disabled = false;
+      syncInputEnabled();
       dom.sendBtn.disabled = false;
       // Placeholder is owned by updateModeUI (called above). No literal here.
       // Do not clear newTurnStarted here. Replay may have opened a foreign

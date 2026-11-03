@@ -30,6 +30,7 @@ import { AuthStore } from "./auth-store.ts";
 import { join as pathJoin } from "node:path";
 import { resolveTasksAnchor } from "./tasks-anchor.ts";
 import { runStartupChecks } from "./startup-checks.ts";
+import { startE2EHeartbeatWatchdog } from "./e2e-watchdog.ts";
 import {
   checkAgentAvailability,
   formatAvailabilityWarnings,
@@ -330,6 +331,20 @@ async function shutdown() {
   process.exit(0);
 }
 
+// Test-harness liveness. Only an E2E run sets E2E_RUN_DIR; without it this
+// call returns before scheduling a timer or reading any file, so production
+// keeps no watchdog at all (src/e2e-watchdog.ts).
+const e2eWatchdog = startE2EHeartbeatWatchdog({
+  env: process.env,
+  onStale: () => {
+    console.warn(
+      "[e2e] runner heartbeat is stale; shutting down so nothing is orphaned",
+    );
+    void shutdown();
+  },
+});
+if (e2eWatchdog) console.log("[e2e] heartbeat watchdog armed");
+
 process.on("SIGINT", () => {
   void shutdown();
 });
@@ -353,12 +368,18 @@ process.on("SIGHUP", () => {
 
 server.listen(config.port, config.host, () => {
   void (async () => {
+    // Report the port the listener actually bound. E2E helpers allocate a
+    // port per spawn and read the real one from this line rather than
+    // assuming the configured value took.
+    const address = server.address();
+    const boundPort =
+      typeof address === "object" && address ? address.port : config.port;
     // The auth gate already ran in runStartupChecks (above) — either in
     // this process or in a parent that handed off via WEBAGENT_STARTUP_
     // CHECKED. Just open the AuthStore handle the rest of the server
     // will use. If the gate ran, auth.json exists and has ≥ 1 token.
     await authStore.load();
-    console.log(`[server] listening on http://localhost:${config.port}`);
+    console.log(`[server] listening on http://localhost:${boundPort}`);
     if (config.share.enabled) {
       sharePreviewCleanup = startSharePreviewCleanup(store);
       console.log(`[share] preview gc armed (24h interval)`);

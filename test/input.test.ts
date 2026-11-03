@@ -65,6 +65,11 @@ describe("input", () => {
     return event;
   }
 
+  /** Let the post-await continuation of a config write run. */
+  function flush(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
   function nextFrame(): Promise<void> {
     return new Promise((resolve) => {
       requestAnimationFrame(() => {
@@ -604,7 +609,7 @@ describe("input", () => {
     assert.equal(clicked, 1);
   });
 
-  it("cycles mode on Ctrl+M", () => {
+  it("cycles mode on Ctrl+M", async () => {
     setFetch(() => ({
       ok: true,
       json: async () => ({}),
@@ -635,7 +640,53 @@ describe("input", () => {
     assert.ok(call, "expected a PUT config call");
     const body = JSON.parse(call.init?.body);
     assert.equal(body.value, "chat#plan");
+    // The line is printed after the server accepted the write.
+    await flush();
     assert.ok(dom.messages.textContent.includes("Mode → Plan"));
+  });
+
+  it("rolls the mode back and reports err when the write fails", async () => {
+    setFetch(() => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: "refused by test" }),
+      text: async () => "",
+    }));
+    state.taskId = "s1";
+    state.clientId = "cl-1";
+    state.configOptions = [
+      {
+        id: "mode",
+        name: "Mode",
+        currentValue: "agent",
+        options: [
+          { value: "agent", name: "Agent" },
+          { value: "chat#plan", name: "Plan" },
+        ],
+      },
+    ];
+    dom.inputArea.className = "";
+    dom.modePill.textContent = "";
+    dom.messages.textContent = "";
+
+    docKeydown("m", { ctrlKey: true });
+    await flush();
+
+    assert.equal(
+      state.configOptions[0].currentValue,
+      "agent",
+      "the selector rolls back to the stored mode",
+    );
+    assert.ok(
+      !dom.messages.textContent.includes("Mode → Plan"),
+      "a refused write is never announced as a completed switch",
+    );
+    assert.ok(
+      dom.messages.textContent.includes("err: refused by test"),
+      `expected the failure to be reported, got: ${dom.messages.textContent}`,
+    );
+    assert.equal(dom.modePill.textContent, "");
+    assert.ok(!dom.inputArea.classList.contains("plan-mode"));
   });
 
   it("does not send prompt when not connected and shows warning", () => {

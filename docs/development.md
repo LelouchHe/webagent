@@ -27,6 +27,57 @@ npm run test:e2e      # Playwright browser E2E
 - Use it when reviewing what is already protected before adding new tests or auditing gaps.
 - The E2E suite covers task lifecycle, reconnect/restart recovery, permissions, cancel flows, bash lifecycle, media persistence, slash-menu UX, config persistence/inheritance, and multi-client config behavior.
 
+### E2E isolation and teardown
+
+`npm run test:e2e` runs `test/e2e/run-suite.ts`, which owns one suite run from
+start to finish. A run is private by construction, so several runs may share a
+worktree and a machine:
+
+- **Port.** The run allocates a free port with `net` (never `lsof`) and exports
+  it as `E2E_PORT`; `playwright.config.ts` derives `baseURL` and the suite
+  server URL from it. A spec that starts its own server allocates a port per
+  spawn and reads the real bound port back from the server's
+  `[server] listening on http://localhost:<port>` line — no spec pins a port,
+  and none assumes another spec's server.
+- **Data directory.** Each run gets `test/e2e-data/<runId>/` for its data dir,
+  token, storage state, generated server config, and Playwright output. Nothing
+  removes the parent directory, so a concurrent run keeps its files. Spec
+  servers keep their data under `<runId>/specs/`.
+- **Heartbeat watchdog.** The runner touches `<runId>/heartbeat` every second
+  while it is alive. A server started with `E2E_RUN_DIR` set checks the file
+  every 2 seconds and shuts down normally (killing the agents it spawned) when
+  it has not moved for 5 seconds. Without `E2E_RUN_DIR` the watchdog is never
+  installed: no timer, no filesystem read (`src/e2e-watchdog.ts`). A run whose
+  runner is killed therefore proves itself gone within
+  `5s stale + 2s check + shutdown`, and its port is free for the next run.
+- **Process groups.** The wrapper puts Playwright in its own process group and
+  forwards `SIGINT`/`SIGTERM` to the whole group (`SIGTERM`, then `SIGKILL`
+  after 3 seconds). Playwright tears the suite server down the same way
+  (`gracefulShutdown`), and spec helpers kill their server's group. Never rely
+  on a PID alone: a `sh`/`npm` wrapper leaves `playwright → node server →
+  chromium → agent` orphaned unless the whole group dies.
+- **Self-check.** After Playwright exits, the wrapper verifies that this run's
+  port is free, that no process carries its run directory, and that no agent is
+  orphaned. It exits non-zero rather than reporting a green run with leftovers.
+- **One clear startup error.** `test/e2e/global-setup.ts` health-checks the
+  suite server once and fails with the run directory, config path, and the
+  likely cause, instead of letting every spec fail on its own.
+
+Repeatable checks outside the normal suite:
+
+```bash
+npm run test:e2e:heartbeat    # SIGKILL the runner: server + agent + port must vanish
+npm run test:e2e:concurrent   # two suites in this worktree at once: both green, distinct state
+```
+
+**Timeouts must kill a process group, not one process.** Outer tooling (`alarm`,
+`timeout`, a CI job timeout) must signal the suite wrapper, and the wrapper's
+teardown must be given room for graceful stop, `SIGKILL`, and reap. Never let a
+test finish only because a product timeout was long enough: a test that waits
+for a server's own timeout hides a hung harness and manufactures orphans, so
+wait for an observable condition (an event, a stored value, a process exit)
+instead.
+
 ## Publishing
 
 Published to npm as `@lelouchhe/webagent`. CI and release are handled by GitHub Actions:

@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-11-02
+Last updated: 2026-11-03
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -390,6 +390,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - send-button label switching (↵ vs ^C) while busy
   - not-connected and not-ready warnings
 
+- `test/input-disabled-writes.test.ts` (counts every write to `dom.input.disabled`)
+  - busy flapping, `updateModeUI()`, `config_option_update`, and
+    `task_runtime_warmed` repaints never write the input
+  - entering preview disables exactly once, leaving it enables exactly once,
+    and a repaint inside preview writes nothing
+  - `resetTaskUI()` and `task_created` restore a preview-disabled input to
+    typeable
+
 - `test/input-focus-recovery.test.ts`
   - fully closed stale iOS keyboard focus unlocks after a short textarea tap
   - half-open keyplane unlocks after a same-position status-bar double tap
@@ -562,6 +570,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - accepts a migrated DB (literal `root`, including a removed-but-valid agent id), ordinary prefix-shaped ids such as `root-forged` / `root-2f3a9c`, and a fresh DB
 - `test/server-bootstrap.test.ts`
   - a missing default-agent binary still starts the service and emits a prominent warning
+
+- `test/e2e-watchdog.test.ts` (injected clock, schedule, and stat)
+  - without `E2E_RUN_DIR` (unset or empty) no timer is scheduled and no file is
+    read
+  - a moving heartbeat never triggers shutdown
+  - a stale heartbeat triggers shutdown exactly once, cancels the timer, and
+    never calls the hook twice
+  - a heartbeat that never appears counts as stale after the threshold
 
 - `test/types.test.ts`
   - errorMessage helper (Error, string, object, null)
@@ -836,6 +852,36 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `new-task-think-inherit.spec.ts`
   - new tasks inherit selected reasoning effort
+
+- `config-write-failure.spec.ts` (the `PUT` is refused at the network boundary)
+  - the `/model` picker reports `err: …` and never prints `Model → …`; the
+    status bar returns to the stored model
+  - the typed `/model <option>` path has the same contract
+  - a `Ctrl+M` mode switch reports the failure and leaves the mode indicator
+    rolled back
+
+### E2E harness determinism
+
+- `test/e2e/run-suite.ts` — `npm run test:e2e` wrapper
+  - preflight refuses to start on an occupied port
+  - frontend build is serialized across runs sharing this worktree
+  - signals are forwarded to the Playwright process group (SIGTERM, then
+    SIGKILL after 3s)
+  - teardown asserts no listener on the run's port, no process carrying the run
+    directory, and no orphaned agent; a leftover fails the run
+
+- `test/e2e/determinism-check.ts heartbeat` — SIGKILL the runner mid-turn
+  - the server and its agent exit through the stale-heartbeat watchdog and the
+    port becomes free (measured against the 5s stale + 2s check bound)
+
+- `test/e2e/determinism-check.ts concurrent` — two suites at once in one
+  worktree
+  - both finish green with distinct run directories and ports, and each one's
+    teardown is clean
+
+- `test/e2e/global-setup.ts`
+  - one actionable error when the suite server is not serving this run's data
+    directory
 
 ### Multi-client synchronization
 

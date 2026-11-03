@@ -368,7 +368,7 @@ document.addEventListener("keydown", (e) => {
 
 // Cycle mode helper
 let lastModeUnavailableWarnTs = 0;
-function cycleMode() {
+async function cycleMode(): Promise<void> {
   const opt = getSelectConfigOption("mode");
   if (!opt?.options.length) {
     if (Date.now() - lastModeUnavailableWarnTs > 3000) {
@@ -381,17 +381,26 @@ function cycleMode() {
   }
   const idx = opt.options.findIndex((o) => o.value === opt.currentValue);
   const next = opt.options[(idx + 1) % opt.options.length];
+  const previousValue = opt.currentValue;
+  // The cycle is only announced once the server stored it; a failed write
+  // rolls the selector back instead of leaving the UI ahead of the task.
   opt.currentValue = next.value;
-  api.setConfig(state.taskId!, "mode", next.value).catch(() => {});
-  addSystem(`Mode → ${next.name}`);
   updateModeUI();
+  try {
+    await api.setConfig(state.taskId!, "mode", next.value);
+    addSystem(`Mode → ${next.name}`);
+  } catch (e) {
+    opt.currentValue = previousValue;
+    updateModeUI();
+    addSystem(`err: ${(e as Error).message}`);
+  }
 }
 
 // Global Ctrl+M to cycle mode
 document.addEventListener("keydown", (e) => {
   if (e.key === "m" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
     e.preventDefault();
-    cycleMode();
+    void cycleMode();
   }
 });
 
@@ -407,7 +416,9 @@ document.addEventListener("keydown", (e) => {
 });
 
 // Click prompt indicator to cycle mode
-dom.prompt.addEventListener("click", cycleMode);
+dom.prompt.addEventListener("click", () => {
+  void cycleMode();
+});
 
 // Repaint send/cancel button when input content toggles command/non-command.
 dom.input.addEventListener("input", refreshInputActions);

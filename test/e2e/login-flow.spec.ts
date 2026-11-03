@@ -1,20 +1,23 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { test, expect } from "playwright/test";
+import { join } from "node:path";
 
 /**
  * Verifies the login flow end-to-end:
  *
  *  1. Clearing localStorage and visiting / bounces the user to /login.
- *  2. Submitting the seeded admin token (written to test/e2e-data/.token
- *     by test/e2e/seed.ts) authenticates the task.
+ *  2. Submitting the seeded admin token (written to this run's .token
+ *     file by test/e2e/seed.ts) authenticates the task.
  *  3. After successful sign-in the page lands on / with the input
  *     enabled — the same readiness signal the rest of the suite uses.
  *  4. The token persists in localStorage under wa_token.
  */
 
 const TOKEN_KEY = "wa_token";
-const TOKEN_PATH = join(import.meta.dirname, "..", "e2e-data", ".token");
+const TOKEN_PATH = join(
+  process.env.E2E_RUN_DIR ?? join(import.meta.dirname, "..", "e2e-data"),
+  ".token",
+);
 
 test.describe("login flow", () => {
   // This spec must NOT inherit the authenticated storageState from
@@ -27,7 +30,7 @@ test.describe("login flow", () => {
     const token = readFileSync(TOKEN_PATH, "utf8").trim();
     expect(
       token,
-      "seed.ts must have written test/e2e-data/.token",
+      "seed.ts must have written the run's .token file",
     ).toBeTruthy();
 
     // Visiting / with no token bounces to /login
