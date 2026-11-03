@@ -63,35 +63,28 @@ export function createMcpTaskToolHost(deps: {
 
   /**
    * The single authority check for one MCP operation. It lives here because
-   * the host is the only layer that has both the store (binding) and the
-   * execution authority (generation), so there is exactly one implementation
-   * of "may this caller still write?" and no wiring can silently drop it.
+   * the host is the only layer that has both the request's principal and the
+   * execution authority, so there is exactly one implementation of "may this
+   * caller still write?" and no wiring can silently drop it.
    *
-   * Fail closed: a principal without a generation, a changed task, a moved
-   * binding, or a replaced generation is refused.
+   * The generation is the fence: a token names the generation it was promoted
+   * for, and every binding change bumps the task's generation, so a moved
+   * binding is already refused by `accepts`. The principal's `agentId` stays as
+   * provenance — it says which agent the token came from, not what may write.
+   *
+   * Fail closed: a principal without a generation, or one whose generation is
+   * no longer current, is refused.
    */
-  function rejectionOf(principal: McpCallerPrincipal): string | null {
-    if (principal.generation === null) return "execution_replaced";
-    const bindingAgent = store.getBindingAgent(principal.taskId);
-    if (bindingAgent !== principal.agentId) return "execution_replaced";
+  function authorize(principal: McpCallerPrincipal): void {
+    if (principal.generation === null) throw new Error("execution_replaced");
     if (
       !tasks.authority.accepts({
         taskId: principal.taskId,
         generation: principal.generation,
       })
     ) {
-      return "execution_replaced";
+      throw new Error("execution_replaced");
     }
-    return null;
-  }
-
-  function authorize(
-    principal: McpCallerPrincipal,
-    sourceTaskId: string,
-  ): void {
-    if (principal.taskId !== sourceTaskId) throw new Error("caller_changed");
-    const rejection = rejectionOf(principal);
-    if (rejection) throw new Error(rejection);
   }
 
   function requireTask(taskId: string) {
@@ -162,7 +155,7 @@ export function createMcpTaskToolHost(deps: {
 
   return {
     list(principal) {
-      authorize(principal, principal.taskId);
+      authorize(principal);
       const source = requireTask(principal.taskId);
       const entries = store
         .listTasks()
@@ -200,7 +193,7 @@ export function createMcpTaskToolHost(deps: {
     },
 
     query(principal, input): McpTaskQueryResult {
-      authorize(principal, principal.taskId);
+      authorize(principal);
       const sourceTaskId = principal.taskId;
       const targetId = input.taskId ?? sourceTaskId;
       const target = requireHistoryTarget(sourceTaskId, targetId);
@@ -232,7 +225,7 @@ export function createMcpTaskToolHost(deps: {
     },
 
     read(principal, input): McpTaskReadResult {
-      authorize(principal, principal.taskId);
+      authorize(principal);
       const sourceTaskId = principal.taskId;
       const target = requireHistoryTarget(
         sourceTaskId,
@@ -269,14 +262,14 @@ export function createMcpTaskToolHost(deps: {
       principal: McpCallerPrincipal,
       input: McpTaskCreateInput,
     ): Promise<McpTaskCreateResult> {
-      authorize(principal, principal.taskId);
+      authorize(principal);
       const sourceTaskId = principal.taskId;
       // The child runs in the source task's execution environment: a caller
       // never chooses an agent, its own binding does.
       const execution = await tasks.resolveTaskExecution(sourceTaskId);
       // The resolution above awaited; the caller must still own its execution
       // before anything is created.
-      authorize(principal, sourceTaskId);
+      authorize(principal);
       const source = requireTask(sourceTaskId);
       const requestedCwd = input.cwd ? expandHomePath(input.cwd) : source.cwd;
       const cwd = isAbsolute(requestedCwd)
@@ -296,7 +289,7 @@ export function createMcpTaskToolHost(deps: {
           // owns its execution. `newSession` and the tree lock are awaits, and
           // a rotation can land inside either of them.
           assertCaller: () => {
-            authorize(principal, sourceTaskId);
+            authorize(principal);
           },
         },
       );
@@ -306,7 +299,7 @@ export function createMcpTaskToolHost(deps: {
       // config inheritance since the persist boundary — so the caller is
       // validated again immediately before the source-side commit, with no
       // await in between.
-      authorize(principal, sourceTaskId);
+      authorize(principal);
       const taskCreatedMessageId = randomUUID();
       const taskCreated = buildTaskCreatedSystemMessage({
         taskId: created.taskId,
@@ -329,7 +322,7 @@ export function createMcpTaskToolHost(deps: {
     },
 
     async cancel(principal, targetTaskId, reason) {
-      authorize(principal, principal.taskId);
+      authorize(principal);
       const sourceTaskId = principal.taskId;
       const { target } = requireChildTarget(sourceTaskId, targetTaskId);
       const bridge = tasks.existingTaskExecution(target.id)?.bridge ?? null;
@@ -340,7 +333,7 @@ export function createMcpTaskToolHost(deps: {
       );
       // The cancel awaited a transport round trip; the record of what happened
       // is only written while the caller still owns its execution.
-      authorize(principal, sourceTaskId);
+      authorize(principal);
       store.saveEvent(
         target.id,
         "task_cancel",
@@ -351,7 +344,7 @@ export function createMcpTaskToolHost(deps: {
     },
 
     async send(principal, targetTaskId, body) {
-      authorize(principal, principal.taskId);
+      authorize(principal);
       const sourceTaskId = principal.taskId;
       const { source, target } = requireLocalTarget(sourceTaskId, targetTaskId);
       const created = store.createCollaborationMessage({
@@ -375,7 +368,7 @@ export function createMcpTaskToolHost(deps: {
     },
 
     async update(principal, status, body) {
-      authorize(principal, principal.taskId);
+      authorize(principal);
       const sourceTaskId = principal.taskId;
       // The controller decides whether this update settles the target's sole
       // record (eligible current turn) or is only routed: to the stored source

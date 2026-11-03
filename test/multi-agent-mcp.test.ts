@@ -562,20 +562,22 @@ describe("mcp authority over the production host", () => {
     const lease = authority.leaseFor(source.taskId);
     assert.ok(lease);
     const token = capabilities.mint(source.taskId, "agent-a", lease.generation);
+    const generationBefore = lease.generation;
     // The binding moves under the same process (a real replacement the caller
-    // did not perform).
+    // did not perform). The manager observes the commit, so the task's
+    // generation advances.
     store.replaceAgentSession(source.taskId, "agent-b", "other-session");
-    authority.applyBindingChanges([
-      {
-        taskId: source.taskId,
-        before: { agentId: "agent-a", sessionId: "session-1" },
-        after: { agentId: "agent-b", sessionId: "other-session" },
-      },
-    ]);
+    assert.notEqual(
+      authority.leaseFor(source.taskId)?.generation,
+      generationBefore,
+      "the replacement committed a new generation",
+    );
 
     const response = await callTool(endpoint.baseUrl, token, "task_create", {
       title: "wrong agent",
     });
+    // Generation is the fence, not an agent comparison: the token names the
+    // generation it was promoted for, and this task is past it.
     assert.match(toolErrorText(response.json), /execution_replaced/);
   });
 
