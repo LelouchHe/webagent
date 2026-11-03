@@ -6964,6 +6964,94 @@ describe("events", () => {
     });
   });
 
+  describe("warm-up ordering", () => {
+    const warmFor = (taskId: string, agentId = "agent-a") => ({
+      type: "task_runtime_warmed" as const,
+      taskId,
+      agentId,
+      configOptions: [
+        {
+          type: "select" as const,
+          id: "model",
+          name: "Model",
+          currentValue: "mock-model-2",
+          options: [{ value: "mock-model-2", name: "Mock Model 2" }],
+        },
+      ],
+      agentCommands: {
+        epoch: "warm-epoch",
+        revision: 1,
+        commands: [{ name: "warm-extra", description: "Only a restore" }],
+      },
+    });
+
+    const installed = (taskId: string, agentId = "agent-a") => ({
+      type: "task_created" as const,
+      rootTaskId: ROOT_ID,
+      taskId,
+      agentId,
+      cwd: "/tmp",
+      configOptions: [] as [],
+    });
+
+    it("applies a warm-up that arrived before its task was installed", () => {
+      // The exact window the read path opens: no task installed yet, so the
+      // payload cannot be applied now — and it must not be dropped either.
+      state.taskId = null;
+      state.pendingNavigationTaskId = null;
+      state.configOptions = [];
+      events.handleEvent(warmFor("t-late"));
+      assert.deepEqual(
+        state.configOptions,
+        [],
+        "nothing applied without a task",
+      );
+
+      events.handleEvent(installed("t-late"));
+
+      assert.deepEqual(
+        state.configOptions.map((option: { id: string }) => option.id),
+        ["model"],
+      );
+      assert.equal(
+        state.agentCommands[0]?.name,
+        "warm-extra",
+        "the commands arrived with the same payload",
+      );
+      assert.ok(dom.statusBar.textContent.includes("mock-model-2"));
+    });
+
+    it("holds a payload for its own task, not the one installed next", () => {
+      state.taskId = null;
+      state.configOptions = [];
+      events.handleEvent(warmFor("t-held"));
+
+      // A different task installs first: the held payload is not its own.
+      events.handleEvent(installed("t-other"));
+      assert.deepEqual(state.configOptions, []);
+
+      // The task it belongs to installs later.
+      state.taskId = null;
+      events.handleEvent(installed("t-held"));
+      assert.deepEqual(
+        state.configOptions.map((option: { id: string }) => option.id),
+        ["model"],
+      );
+    });
+
+    it("drops a held payload for an execution the task no longer has", () => {
+      state.taskId = null;
+      state.configOptions = [];
+      events.handleEvent(warmFor("t-moved", "agent-a"));
+      events.handleEvent(installed("t-moved", "agent-b"));
+      assert.deepEqual(
+        state.configOptions,
+        [],
+        "a payload from another binding agent is not applied",
+      );
+    });
+  });
+
   describe("binding agent installation", () => {
     /** A fetch stub for one task's detail / history / snapshot reads. */
     function serveTask(taskId: string, agentId: string | null) {

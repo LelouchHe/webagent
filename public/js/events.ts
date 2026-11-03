@@ -100,6 +100,12 @@ const orphanToolUpdates = new OrphanToolUpdateCache({
   },
 });
 
+onTaskReset(() => {
+  // A reset starts a new navigation; a payload held for the previous task is
+  // no longer pending installation.
+  pendingWarmPayloads.clear();
+});
+
 setNavigationLoadInvalidator(() => {
   historyLoadToken++;
   replayLoadToken++;
@@ -130,6 +136,71 @@ setCreatedTaskActivator((task) => {
       typeof task.clientOpId === "string" ? task.clientOpId : undefined,
   });
 });
+
+/**
+ * Warm-up payloads that arrived before their task was installed.
+ *
+ * A read answers immediately and the restore reports back whenever it is done,
+ * which can be *before* the client has installed the task the read was for
+ * (every navigation path clears `state.taskId` first). Dropping such a payload
+ * loses it for good: the server publishes a given task/generation once. Keep
+ * the latest one per task and apply it when that task is installed, so the
+ * order of arrival never decides whether the UI fills in. A payload for a task
+ * the client is not showing is never applied to another task.
+ */
+const pendingWarmPayloads = new Map<
+  string,
+  {
+    agentId: string;
+    configOptions: ConfigOption[];
+    agentCommands: AgentCommandSnapshot;
+  }
+>();
+const MAX_PENDING_WARM_PAYLOADS = 8;
+
+function applyWarmPayload(payload: {
+  configOptions: ConfigOption[];
+  agentCommands: AgentCommandSnapshot;
+}): void {
+  if (payload.configOptions.length) updateConfigOptions(payload.configOptions);
+  if (applyAgentCommandSnapshot(payload.agentCommands)) {
+    dom.input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  }
+  updateModeUI();
+  updateStatusBar();
+}
+
+function rememberWarmPayload(
+  taskId: string,
+  payload: {
+    agentId: string;
+    configOptions: ConfigOption[];
+    agentCommands: AgentCommandSnapshot;
+  },
+): void {
+  pendingWarmPayloads.delete(taskId);
+  pendingWarmPayloads.set(taskId, payload);
+  while (pendingWarmPayloads.size > MAX_PENDING_WARM_PAYLOADS) {
+    const oldest = pendingWarmPayloads.keys().next().value;
+    if (oldest === undefined) break;
+    pendingWarmPayloads.delete(oldest);
+  }
+}
+
+/**
+ * Apply the warm-up that arrived before `taskId` was installed, if any. A
+ * payload that names a different binding agent than the one just installed
+ * belongs to an execution the task no longer has, so it is dropped.
+ */
+function applyPendingWarmPayload(taskId: string): void {
+  const payload = pendingWarmPayloads.get(taskId);
+  if (!payload) return;
+  pendingWarmPayloads.delete(taskId);
+  if (state.taskAgentId !== null && payload.agentId !== state.taskAgentId) {
+    return;
+  }
+  applyWarmPayload(payload);
+}
 
 /**
  * When the current task is gone (expired, deleted), try to switch to the
@@ -1902,6 +1973,21 @@ export function handleEvent(msg: AgentEvent) {
     return;
   }
 
+  // A restore can finish before its task is installed (every navigation
+  // clears `state.taskId` first), so this event is handled before the
+  // task filter: apply it now when it is ours, hold it for its own task when
+  // no task is installed yet, and ignore it for any other task.
+  if (msg.type === "task_runtime_warmed") {
+    const payload = {
+      agentId: msg.agentId,
+      configOptions: msg.configOptions,
+      agentCommands: msg.agentCommands,
+    };
+    if (msg.taskId === state.taskId) applyWarmPayload(payload);
+    else if (state.taskId === null) rememberWarmPayload(msg.taskId, payload);
+    return;
+  }
+
   // Ignore events from other tasks (multi-client broadcast).
   // When taskId is null (mid-switch), drop task-specific events
   // to prevent old-task events from leaking into the new task's DOM.
@@ -2009,6 +2095,9 @@ export function handleEvent(msg: AgentEvent) {
       // eslint-disable-next-line @typescript-eslint/prefer-optional-chain, @typescript-eslint/no-unnecessary-condition -- runtime safety for legacy events
       if (msg.configOptions && msg.configOptions.length)
         updateConfigOptions(msg.configOptions);
+      // A restore that finished before this task was installed is waiting:
+      // apply it now, so arrival order cannot decide whether the UI fills in.
+      applyPendingWarmPayload(msg.taskId);
       // Always repaint: when configOptions is empty (typical after reload
       // before the lifecycle probe warms the cache), updateModeUI/
       // updateStatusBar fall back to state.taskMode/taskModel set by
@@ -2382,19 +2471,6 @@ export function handleEvent(msg: AgentEvent) {
 
     case "config_option_update":
       if (msg.configOptions.length) updateConfigOptions(msg.configOptions);
-      break;
-
-    case "task_runtime_warmed":
-      // A read returned before its task's execution finished restoring. Apply
-      // what the restore learned to the task the user is looking at, and
-      // nothing else: no navigation, no activation, no task switch.
-      if (msg.taskId !== state.taskId) break;
-      if (msg.configOptions.length) updateConfigOptions(msg.configOptions);
-      if (applyAgentCommandSnapshot(msg.agentCommands)) {
-        dom.input.dispatchEvent(new window.Event("input", { bubbles: true }));
-      }
-      updateModeUI();
-      updateStatusBar();
       break;
 
     case "task_title_updated":

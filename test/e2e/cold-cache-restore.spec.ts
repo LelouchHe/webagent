@@ -163,9 +163,8 @@ test("cold server restart still populates model + slash autocomplete", async ({
     server = await startServer(configPath);
     await expectConnectionStatus(page, "connected", { timeout: 15_000 });
 
-    // Status bar must eventually show model · cwd. Server now blocks GET
-    // /api/v1/tasks/:id on cold-cache resume (up to 8s) so configOptions
-    // returns inline — no broadcast race.
+    // The read answers without waiting for the restore; the restore reports
+    // back as `task_runtime_warmed` and fills the status bar in. No refresh.
     await expect(page.locator("#status-bar")).toContainText("mock-model-2", {
       timeout: 10_000,
     });

@@ -278,11 +278,13 @@ EventSource.onmessage
   handleEvent(msg)
         │
         ├── replayInProgress? → queue it
+        ├── task_runtime_warmed → apply if it is the current task; hold it if
+        │                        no task is installed yet; ignore otherwise
         ├── Wrong task? → ignore
         └── Switch on msg.type:
-              ├── task_created → update state, UI, hash
-              ├── task_runtime_warmed → apply restored config + commands to the
-              │                        current task only (no navigation)
+              ├── task_created → update state, UI, hash (and apply any held
+              │                  warm-up for this task)
+              ├── task_runtime_warmed → (handled above, before the task filter)
               ├── message_chunk  → append to streaming element
               ├── tool_call      → create tool call element
               ├── permission_request → show buttons
