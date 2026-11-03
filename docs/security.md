@@ -281,20 +281,27 @@ data/
     └── <taskId>/attachments/<file>   # uploaded files (images, docs, etc.)
 ```
 
-- All paths are inside `data_dir` (defaults to `./data`). The dev config uses `./data-dev`. The E2E suite uses `./test/e2e-data`.
+- All paths are inside `data_dir` (defaults to `./data`). The dev config uses `./data-dev`. The E2E suite uses `./test/e2e-data/<runId>/data`.
 - `auth.json` is the only file with mode `0600`. The SQLite files inherit umask defaults — that is intentional: SQLite holds task content, not credentials, and tightening the mode breaks `litecli`-style introspection. If your OS user is shared, restrict the parent directory instead.
 - **Backup**: `auth.json` + `webagent.db` are sufficient. The WAL/SHM are transient. Attachment files under `tasks/` are referenced by events but the app degrades gracefully (renders broken-image placeholder) if they're missing.
 - **Reset**: `rm -rf data/` and start over. The server will refuse to serve until you `--create-token` again.
 
 ## E2E Test Setup
 
-`test/e2e/seed.ts` runs at Playwright config-load time. It:
+`test/e2e/seed.ts` runs at Playwright config-load time, inside the run
+directory minted by `test/e2e/run-context.ts`. It:
 
-1. Wipes `test/e2e-data/`.
+1. Creates that run's data directory (`test/e2e-data/<runId>/`), without
+   touching any other run in the same worktree.
 2. Generates one admin-scope token via `AuthStore.addToken("e2e", "admin")`.
-3. Writes `auth.json` (server-side), `storage-state.json` (Playwright loads into every page's `localStorage` for origin `127.0.0.1:6802`), and `.token` (raw value for specs that need it).
+3. Writes `auth.json` (server-side, in the run's data dir),
+   `storage-state.json` (Playwright loads into every page's `localStorage` for
+   origin `127.0.0.1:<run port>`), and `.token` (raw value for specs that need
+   it).
 
-The seed is idempotent — workers reload the config but skip seeding if `.token` exists. The npm `test:e2e` script wipes the dir once before invoking Playwright.
+The seed is idempotent — it skips seeding if that run's `.token` exists. The
+run port and directory come from `E2E_PORT`/`E2E_RUN_DIR`; see
+[`development.md`](./development.md#e2e-isolation-and-teardown).
 
 `playwright.config.ts` sets `extraHTTPHeaders: { Authorization: 'Bearer <token>' }` so direct `page.request.*` API calls are pre-authenticated. Specs that test rejection paths (e.g. `login-bad-token.spec.ts`) opt out via `test.use({ extraHTTPHeaders: {} })`.
 

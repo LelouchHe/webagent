@@ -8,6 +8,7 @@ import {
   gotoConnected,
   sendPrompt,
 } from "./helpers.ts";
+import { uniqueName } from "./run-context.ts";
 
 async function readStatusBarCwd(
   page: import("playwright/test").Page,
@@ -139,7 +140,7 @@ test("/new resolves a relative cwd against the current task cwd on Enter", async
   const parentId = await currentTaskId(page);
   const parentCwd = await readTaskCwd(page, parentId);
   const parentDisplay = (await readStatusBarCwd(page)).replace(/\/$/, "");
-  const dirName = "new-rel-" + Date.now().toString(36);
+  const dirName = uniqueName("new-rel");
   mkdirSync(join(parentCwd, dirName));
   try {
     await page.locator("#input").fill(`/new ./${dirName}`);
@@ -170,7 +171,7 @@ test("/new resolves a relative cwd against the current task cwd from the picker"
   const parentId = await currentTaskId(page);
   const parentCwd = await readTaskCwd(page, parentId);
   const parentDisplay = (await readStatusBarCwd(page)).replace(/\/$/, "");
-  const dirName = "new-pick-" + Date.now().toString(36);
+  const dirName = uniqueName("new-pick");
   mkdirSync(join(parentCwd, dirName));
   try {
     await page.locator("#input").fill(`/new ./${dirName}`);
@@ -276,7 +277,7 @@ test("+ resolves a relative cwd against the current task cwd", async ({
   const parentId = await currentTaskId(page);
   const parentCwd = await readTaskCwd(page, parentId);
   const title = "e2e-plus-rel-" + Date.now().toString(36);
-  const dirName = "plus-rel-" + Date.now().toString(36);
+  const dirName = uniqueName("plus-rel");
   mkdirSync(join(parentCwd, dirName));
   try {
     await page.locator("#input").fill(`+${title} ./${dirName}`);

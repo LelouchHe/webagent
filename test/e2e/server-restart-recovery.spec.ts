@@ -1,95 +1,23 @@
 import { test, expect, type Page } from "playwright/test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   createNewTask,
   currentTaskId,
   expectConnectionStatus,
   sendPrompt,
 } from "./helpers.ts";
+import { readRunToken, specDataRoot } from "./run-context.ts";
+import {
+  seedSpecAuth,
+  startSpecServer,
+  stopSpecServer,
+  writeSpecConfig,
+  type SpecServer,
+} from "./spawn-server.ts";
 
-const RESTART_PORT = 6803;
-const RESTART_ORIGIN = `http://127.0.0.1:${RESTART_PORT}`;
-const E2E_TOKEN = readFileSync(
-  join(import.meta.dirname, "..", "e2e-data", ".token"),
-  "utf8",
-).trim();
-
-function seedAuthFile(path: string, token: string): void {
-  const hash = createHash("sha256").update(token).digest("hex");
-  const data = {
-    tokens: [
-      {
-        name: "e2e-restart",
-        scope: "admin",
-        hash,
-        createdAt: Date.now(),
-        lastUsedAt: null,
-      },
-    ],
-  };
-  writeFileSync(path, JSON.stringify(data, null, 2), { mode: 0o600 });
-}
-
-async function waitForHealthy(url: string): Promise<void> {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return;
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  throw new Error(`Timed out waiting for ${url}`);
-}
-
-async function startServer(configPath: string): Promise<ChildProcess> {
-  const child = spawn(
-    "node",
-    ["--experimental-strip-types", "src/server.ts", "--config", configPath],
-    { cwd: process.cwd(), stdio: ["ignore", "pipe", "inherit"] },
-  );
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(
-      () =>
-        reject(new Error("Timed out waiting for restart test server bridge")),
-      30_000,
-    );
-    child.once("exit", () => {
-      clearTimeout(timer);
-      reject(new Error("Restart test server exited before becoming ready"));
-    });
-    child.stdout?.on("data", (chunk) => {
-      const text = chunk.toString();
-      process.stdout.write(text);
-      if (text.includes("[server] listening")) {
-        clearTimeout(timer);
-        resolve();
-      }
-    });
-  });
-  await waitForHealthy(`${RESTART_ORIGIN}/api/v1/version`);
-  return child;
-}
-
-async function stopServer(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return;
-  child.kill("SIGTERM");
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error("Timed out stopping restart test server")),
-      10_000,
-    );
-    child.once("exit", () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
-}
+const E2E_TOKEN = readRunToken();
 
 async function gotoConnected(page: Page, url: string): Promise<void> {
   await page.goto(url);
@@ -100,34 +28,20 @@ async function gotoConnected(page: Page, url: string): Promise<void> {
 test("server restart restores the same task without duplicating history", async ({
   page,
 }) => {
-  const root = await mkdtemp(join(tmpdir(), "webagent-restart-e2e-"));
+  const root = specDataRoot("restart");
   const dataDir = join(root, "data");
   const configPath = join(root, "config.toml");
-  let server: ChildProcess | null = null;
+  let server: SpecServer | null = null;
 
   try {
     await mkdir(dataDir, { recursive: true });
-    seedAuthFile(join(dataDir, "auth.json"), E2E_TOKEN);
-    await writeFile(
-      configPath,
-      [
-        `port = ${RESTART_PORT}`,
-        `data_dir = "${dataDir}"`,
-        `public_dir = "dist-dev"`,
-        `default_agent = "mock"`,
-        `[agents.mock]`,
-        `cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"`,
-        "",
-        "[limits]",
-        "bash_output = 1_048_576",
-        "image_upload = 10_485_760",
-        "",
-      ].join("\n"),
-    );
+    seedSpecAuth(dataDir, E2E_TOKEN);
+    writeSpecConfig(configPath, { dataDir });
 
-    server = await startServer(configPath);
-    // Inject the same token into localStorage for this origin (storageState
-    // in playwright.config only targets :6802).
+    server = await startSpecServer(configPath);
+    const origin = server.origin;
+    // Inject the same token into localStorage for this origin (the suite's
+    // storageState only targets the suite server).
     await page.context().addInitScript(
       ({ key, value }) => {
         try {
@@ -136,7 +50,7 @@ test("server restart restores the same task without duplicating history", async 
       },
       { key: "wa_token", value: E2E_TOKEN },
     );
-    await gotoConnected(page, `${RESTART_ORIGIN}/`);
+    await gotoConnected(page, `${origin}/`);
 
     await createNewTask(page);
     await sendPrompt(page, "survive a restart");
@@ -145,12 +59,15 @@ test("server restart restores the same task without duplicating history", async 
     );
 
     const taskId = await currentTaskId(page);
-    await stopServer(server);
+    const port = server.port;
+    await stopSpecServer(server);
     server = null;
 
     await expectConnectionStatus(page, "disconnected");
 
-    server = await startServer(configPath);
+    // Same origin, so the open page reconnects instead of being reloaded.
+    writeSpecConfig(configPath, { dataDir, port });
+    server = await startSpecServer(configPath);
 
     await expectConnectionStatus(page, "connected", { timeout: 15_000 });
     await expect.poll(() => currentTaskId(page)).toBe(taskId);
@@ -162,7 +79,7 @@ test("server restart restores the same task without duplicating history", async 
       "Echo: survive a restart",
     );
   } finally {
-    if (server) await stopServer(server);
+    if (server) await stopSpecServer(server);
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -170,38 +87,27 @@ test("server restart restores the same task without duplicating history", async 
 test("server restart restores through ACP session/resume for a resume-only agent", async ({
   page,
 }) => {
-  const root = await mkdtemp(join(tmpdir(), "webagent-resume-restore-e2e-"));
+  const root = specDataRoot("resume-restore");
   const dataDir = join(root, "data");
   const configPath = join(root, "config.toml");
   const callsPath = join(root, "agent-calls.jsonl");
   const prompt = "survive a restart through resume";
-  let server: ChildProcess | null = null;
+  let server: SpecServer | null = null;
 
   try {
     await mkdir(dataDir, { recursive: true });
-    seedAuthFile(join(dataDir, "auth.json"), E2E_TOKEN);
+    seedSpecAuth(dataDir, E2E_TOKEN);
     await writeFile(callsPath, "");
-    await writeFile(
-      configPath,
-      [
-        `port = ${RESTART_PORT}`,
-        `data_dir = "${dataDir}"`,
-        `public_dir = "dist-dev"`,
-        // Resume-only profile: advertises `session.resume`, does not advertise
-        // `loadSession`, and rejects session/load so a load-preferring client
-        // fails loudly rather than passing through the unadvertised method.
-        `default_agent = "mock"`,
-        `[agents.mock]`,
-        `cmd = "node --experimental-strip-types test/e2e/mock-agent.ts resume-only ${callsPath}"`,
-        "",
-        "[limits]",
-        "bash_output = 1_048_576",
-        "image_upload = 10_485_760",
-        "",
-      ].join("\n"),
-    );
+    // Resume-only profile: advertises `session.resume`, does not advertise
+    // `loadSession`, and rejects session/load so a load-preferring client
+    // fails loudly rather than passing through the unadvertised method.
+    writeSpecConfig(configPath, {
+      dataDir,
+      agentCommand: `node --experimental-strip-types test/e2e/mock-agent.ts resume-only ${callsPath}`,
+    });
 
-    server = await startServer(configPath);
+    server = await startSpecServer(configPath);
+    const origin = server.origin;
     await page.context().addInitScript(
       ({ key, value }) => {
         try {
@@ -210,7 +116,7 @@ test("server restart restores through ACP session/resume for a resume-only agent
       },
       { key: "wa_token", value: E2E_TOKEN },
     );
-    await gotoConnected(page, `${RESTART_ORIGIN}/`);
+    await gotoConnected(page, `${origin}/`);
 
     await createNewTask(page);
     await sendPrompt(page, prompt);
@@ -219,12 +125,18 @@ test("server restart restores through ACP session/resume for a resume-only agent
     );
 
     const taskId = await currentTaskId(page);
-    await stopServer(server);
+    const port = server.port;
+    await stopSpecServer(server);
     server = null;
 
     await expectConnectionStatus(page, "disconnected");
 
-    server = await startServer(configPath);
+    writeSpecConfig(configPath, {
+      dataDir,
+      port,
+      agentCommand: `node --experimental-strip-types test/e2e/mock-agent.ts resume-only ${callsPath}`,
+    });
+    server = await startSpecServer(configPath);
 
     await expectConnectionStatus(page, "connected", { timeout: 15_000 });
     await expect.poll(() => currentTaskId(page)).toBe(taskId);
@@ -254,7 +166,7 @@ test("server restart restores through ACP session/resume for a resume-only agent
     );
     await expect.poll(restoreMethods).toEqual(["resume"]);
   } finally {
-    if (server) await stopServer(server);
+    if (server) await stopSpecServer(server);
     await rm(root, { recursive: true, force: true });
   }
 });
