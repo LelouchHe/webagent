@@ -124,14 +124,16 @@ function paint(btn: HTMLButtonElement, action: InputAction): void {
   if (action.className) btn.classList.add(action.className);
 }
 
-/** Repaint both action buttons based on current mode + busy state. */
+/** Repaint both action buttons based on current mode + busy state.
+ *
+ * Input availability (`dom.input.disabled`) is deliberately not part of this
+ * repaint: it runs from remote events while the user may be typing, and iOS
+ * drops focus and the keyboard on any write to the focused textarea. Preview
+ * owns availability through state.syncInputEnabled(). */
 export function applyInputActions(): void {
   const [left, right] = resolveInputActions();
   paint(dom.attachBtn, left);
   paint(dom.sendBtn, right);
-  // Preview mode treats the textarea as read-only — there's nothing meaningful
-  // to type while reviewing a snapshot. Restored on mode exit.
-  dom.input.disabled = Boolean(state.previewToken);
 }
 
 setInputActionsRefresher(applyInputActions);

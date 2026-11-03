@@ -390,6 +390,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - send-button label switching (↵ vs ^C) while busy
   - not-connected and not-ready warnings
 
+- `test/input-disabled-writes.test.ts` (counts every write to `dom.input.disabled`)
+  - busy flapping, `updateModeUI()`, `config_option_update`, and
+    `task_runtime_warmed` repaints never write the input
+  - entering preview disables exactly once, leaving it enables exactly once,
+    and a repaint inside preview writes nothing
+  - `resetTaskUI()` and `task_created` restore a preview-disabled input to
+    typeable
+
 - `test/input-focus-recovery.test.ts`
   - fully closed stale iOS keyboard focus unlocks after a short textarea tap
   - half-open keyplane unlocks after a same-position status-bar double tap

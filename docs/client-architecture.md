@@ -39,6 +39,7 @@ WebAgent is a terminal-style web UI for ACP-compatible agents. This document des
   - [Status Bar](#status-bar)
   - [Busy State](#busy-state)
   - [Mode Indicator](#mode-indicator)
+  - [Input Availability](#input-availability)
 - [Build System](#build-system)
 - [Key Design Decisions](#key-design-decisions)
 
@@ -744,6 +745,28 @@ The input area gets CSS classes based on mode:
 - `autopilot-mode` → mode label shows "autopilot"
 
 Ctrl+M cycles through available modes. Click on the prompt indicator also cycles.
+
+### Input Availability
+
+`dom.input.disabled` has exactly one writer: `setInputEnabled()` in
+`state.ts`, reached through `syncInputEnabled()` (which derives availability
+from `state.previewToken`: preview is read-only, everything else is typeable).
+A write happens only when the value actually changes.
+
+Repaints never write it. `applyInputActions()` repaints buttons only, and
+`updateModeUI()` reconciles availability through the guarded setter, so a
+redraw triggered by a remote event (`task_runtime_warmed`,
+`config_option_update`, `config_set`) cannot reach the element. Entering or
+leaving preview is the only transition that changes the value, and
+`resetTaskUI()` / `task_created` restore it to typeable.
+
+Why this is a rule and not a style preference: writing `disabled` on the
+*focused* `<textarea>` makes iOS drop focus and dismiss the software keyboard,
+even when the new value equals the current one. Remote-triggered repaints land
+precisely while a user is tapping or typing into the input after opening a
+task, so an equal-value write turns into "the keyboard sometimes does not come
+up". Keep every new redraw path free of input-property writes; change
+availability through state only.
 
 ---
 

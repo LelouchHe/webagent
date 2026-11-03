@@ -279,7 +279,31 @@ export function getFallback(key: "mode" | "model"): string | null {
   return key === "mode" ? state.taskMode : state.taskModel;
 }
 
+/**
+ * Input availability has exactly one writer: this function.
+ *
+ * Writing `disabled` on the *focused* textarea makes iOS drop focus and the
+ * software keyboard, even when the value does not change. Redraws run from
+ * remote events (`task_runtime_warmed`, `config_option_update`, `config_set`)
+ * while the user may be tapping the input, so an equal value must never be
+ * written.
+ */
+export function setInputEnabled(enabled: boolean): void {
+  const disabled = !enabled;
+  if (dom.input.disabled === disabled) return;
+  dom.input.disabled = disabled;
+}
+
+/** Derive input availability from the state that owns it: preview is
+ *  read-only, everything else is typeable. */
+export function syncInputEnabled(): void {
+  setInputEnabled(!state.previewToken);
+}
+
 export function updateModeUI() {
+  // Repaint is remote-triggered; it may reconcile availability but must not
+  // write an unchanged `disabled` (see setInputEnabled).
+  syncInputEnabled();
   dom.inputArea.classList.remove("plan-mode", "autopilot-mode", "preview-mode");
   // Placeholder is owned here — anyone who needs to "restore the default"
   // calls updateModeUI() instead of writing a literal string. Keeps the
@@ -855,7 +879,7 @@ export function resetTaskUI({
   state.previewToken = null;
   dom.attachPreview.innerHTML = "";
   dom.attachPreview.classList.remove("active");
-  dom.input.disabled = false;
+  syncInputEnabled();
   dom.sendBtn.disabled = false;
   // updateModeUI owns placeholder + input-area mode classes; previewToken
   // was just cleared so this collapses preview-mode → default in one go.

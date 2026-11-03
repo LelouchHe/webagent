@@ -7,10 +7,11 @@ describe("input-actions", () => {
   let dom: any;
   let actions: any;
   let inputModule: any;
+  let stateMod: any;
 
   before(async () => {
     setupDOM();
-    const stateMod = await import("../public/js/state.ts");
+    stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
     await import("../public/js/render.ts");
@@ -84,6 +85,9 @@ describe("input-actions", () => {
   describe("preview mode", () => {
     it("paints publish + cancel and disables textarea", () => {
       state.previewToken = "tok123";
+      // Textarea availability belongs to the mode-UI sync, not to the button
+      // repaint (which must never write `disabled`; see state.syncInputEnabled).
+      stateMod.updateModeUI();
       actions.applyInputActions();
       assert.equal(dom.attachBtn.textContent, "^P");
       assert.ok(dom.attachBtn.classList.contains("publish"));
@@ -98,10 +102,12 @@ describe("input-actions", () => {
 
     it("clears modifier classes when leaving preview mode", () => {
       state.previewToken = "tok123";
+      stateMod.updateModeUI();
       actions.applyInputActions();
       assert.ok(dom.attachBtn.classList.contains("publish"));
 
       state.previewToken = null;
+      stateMod.updateModeUI();
       actions.applyInputActions();
       assert.ok(!dom.attachBtn.classList.contains("publish"));
       assert.ok(!dom.sendBtn.classList.contains("cancel"));
