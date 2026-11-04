@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { storeToolResultImages } from "../src/tool-result-image.ts";
+import { enrichEventForDisplay } from "../src/attachment-labels.ts";
 import type { ToolContentItem } from "../src/types.ts";
 import {
   LIMIT,
@@ -73,6 +74,40 @@ describe("tool-result images: ACP image blocks", () => {
     assert.ok(live);
     assert.equal(JSON.stringify(live).includes(base64), false);
     assert.equal((live as { content: ToolContentItem[] }).content.length, 2);
+  });
+
+  it("invalidates the cached label map after storing a tool image", () => {
+    // An earlier SSE for this task cached the label map while it was empty, so
+    // only invalidation can make the new attachment nameable.
+    assert.equal(harness.tasks.getLabelMap("t1").size, 0);
+
+    harness.toolCall("t1", "Screenshot");
+    harness.emit(
+      harness.update("t1", [
+        {
+          type: "image",
+          mimeType: "image/png",
+          data: png().toString("base64"),
+        },
+      ]),
+    );
+
+    const descriptor = attachmentOf(harness.storedContent()[0]);
+    assert.ok(descriptor);
+    const row = store.getAttachment("t1", String(descriptor.attachmentId));
+    assert.ok(row);
+    const enriched = enrichEventForDisplay(
+      {
+        type: "tool_call",
+        taskId: "t1",
+        id: "later",
+        title: `wrote ${row.realpath}`,
+        kind: "other",
+      },
+      harness.tasks.getLabelMap("t1"),
+    ) as { title: string };
+    assert.match(enriched.title, /agent-image-1/);
+    assert.equal(enriched.title.includes(row.realpath), false);
   });
 
   it("accepts the wrapped block shape too, and ignores the claimed mime", () => {

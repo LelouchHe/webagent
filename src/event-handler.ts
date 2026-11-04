@@ -14,6 +14,7 @@ import { log } from "./log.ts";
 import { isAutopilotMode } from "./mode-bucket.ts";
 import { leaseOf } from "./execution-authority.ts";
 import { storeAgentImage } from "./agent-image.ts";
+import { classifyToolContentItem } from "./shared/tool-content.ts";
 import {
   storeToolResultImages,
   stripRawOutputImageData,
@@ -493,7 +494,9 @@ function dispatchAgentEvent(
       // normal path: store every block and replace it with its descriptor, so
       // no inline payload is persisted or broadcast.
       let content = event.content;
+      let storedImage = false;
       if (Array.isArray(content)) {
+        const original = content;
         content = storeToolResultImages(
           {
             store,
@@ -503,6 +506,14 @@ function dispatchAgentEvent(
           },
           content,
         );
+        if (content !== original) {
+          // A refused image also rewrites the block (to visible text); only a
+          // stored descriptor means the task now has an attachment a cached
+          // label map cannot name.
+          storedImage = content.some(
+            (item) => classifyToolContentItem(item).kind === "image_attachment",
+          );
+        }
         // Temporary: recover an image one agent only names by path.
         const recovered = recoverCopilotImagePath({
           store,
@@ -514,9 +525,14 @@ function dispatchAgentEvent(
         });
         if (recovered) {
           content = [...content, { type: "image", attachment: recovered }];
+          storedImage = true;
         }
       }
       if (content) event.content = content;
+      // An earlier SSE for this task may already have cached an empty label
+      // map. The newly stored attachment must be nameable on the very next
+      // egress, exactly like a message image (`handleAgentImage`).
+      if (storedImage) tasks.invalidateLabelCache(event.taskId);
       // `rawOutput` is forwarded as received, but it is not persisted, so the
       // live SSE frame is its only egress. An agent may repeat the tool's
       // content there, image blocks included: drop those payloads too, or the

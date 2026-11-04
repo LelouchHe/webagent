@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolContentItem } from "../src/types.ts";
+import { enrichEventForDisplay } from "../src/attachment-labels.ts";
 import {
   REAL_PNG,
   attachmentOf,
@@ -84,6 +85,29 @@ describe("tool-result images: a named image file", () => {
       JSON.stringify(store.getEvents("t1")).includes("base64"),
       false,
     );
+  });
+
+  it("invalidates the cached label map after storing the recovered image", () => {
+    assert.equal(harness.tasks.getLabelMap("t1").size, 0);
+
+    generated("t1");
+
+    const descriptor = attachmentOf(harness.storedContent()[1]);
+    assert.ok(descriptor);
+    const row = store.getAttachment("t1", String(descriptor.attachmentId));
+    assert.ok(row);
+    const enriched = enrichEventForDisplay(
+      {
+        type: "tool_call",
+        taskId: "t1",
+        id: "later",
+        title: `wrote ${row.realpath}`,
+        kind: "other",
+      },
+      harness.tasks.getLabelMap("t1"),
+    ) as { title: string };
+    assert.match(enriched.title, /generated-image-1/);
+    assert.equal(enriched.title.includes(row.realpath), false);
   });
 
   it("resolves the tool call's title when the update omits it", () => {
