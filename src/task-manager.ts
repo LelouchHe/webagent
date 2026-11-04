@@ -173,6 +173,37 @@ function configOptionId(
   return selectable.find((option) => option.id === logicalId)?.id;
 }
 
+/** The task columns a replacement can adopt from a session's own report. */
+type ExecutionConfigColumn = "model" | "mode" | "reasoning_effort";
+
+/**
+ * A session's reported execution config, keyed by the task column it belongs
+ * to. Logical ids are resolved through that agent's own schema, so
+ * `thought_level` and `reasoning_effort` both land on `reasoning_effort`;
+ * options the task has no column for are not read.
+ */
+function reportedExecutionConfig(
+  configOptions: ConfigOption[],
+): Partial<Record<ExecutionConfigColumn, string>> {
+  const reported: Partial<Record<ExecutionConfigColumn, string>> = {};
+  const columns: Array<[ExecutionConfigColumn, "model" | "mode" | "thinking"]> =
+    [
+      ["model", "model"],
+      ["mode", "mode"],
+      ["reasoning_effort", "thinking"],
+    ];
+  for (const [column, logicalId] of columns) {
+    const optionId = configOptionId(configOptions, logicalId);
+    const option = optionId
+      ? configOptions.find((entry) => entry.id === optionId)
+      : undefined;
+    if (typeof option?.currentValue === "string") {
+      reported[column] = option.currentValue;
+    }
+  }
+  return reported;
+}
+
 const ROTATION_TITLES: Record<RotationReason, string> = {
   owner_removed: "Execution moved to a configured agent",
   explicit_clear: "Execution replaced",
@@ -906,17 +937,6 @@ export class TaskManager implements ObligationHost {
     this.store.updateTaskConfig(taskId, "reasoning_effort", null);
   }
 
-  /** True when a task stores an execution config value of its own. */
-  private hasStoredExecutionConfig(
-    task: Pick<TaskRow, "model" | "mode" | "reasoning_effort">,
-  ): boolean {
-    return (
-      task.model !== null ||
-      task.mode !== null ||
-      task.reasoning_effort !== null
-    );
-  }
-
   /**
    * Clear the stored execution config inside the replacement generation's
    * fence, and return the row view the rest of the rotation must use. Reading
@@ -935,24 +955,42 @@ export class TaskManager implements ObligationHost {
 
   /**
    * A replacement's self-reported execution config becomes the task's read
-   * face when the task stores none of its own (a cross-agent replacement
-   * cleared it). Leaving the columns null would make every read fall back to
-   * the agent's shared schema cache — i.e. whatever another task's session
-   * last set — while the report is the only honest source. The option list's
-   * first entry is a hint, never a default.
+   * face for the columns the task still has no value of its own (a cross-agent
+   * replacement cleared them). The report is the only honest source: the
+   * option list's first entry is a hint, never a default.
+   *
+   * The row is re-read inside the fence rather than taken from the caller.
+   * A `session/new` result is a snapshot of one moment, and this generation may
+   * already hold a **newer** report: the transport queues config updates that
+   * arrive before the session is mapped and replays them when the binding
+   * commits, which happens before this tail runs. Those values are newer than
+   * the snapshot, so only still-unknown columns are filled — per column, so one
+   * known value cannot freeze the other two as unknown.
    */
   private adoptReportedExecutionConfig(
     taskId: string,
-    stored: Pick<TaskRow, "model" | "mode" | "reasoning_effort">,
     configOptions: ConfigOption[],
     lease: ExecutionLease | null,
   ): void {
-    if (this.hasStoredExecutionConfig(stored)) return;
-    if (configOptions.length === 0) return;
+    const reported = reportedExecutionConfig(configOptions);
+    if (Object.keys(reported).length === 0) return;
     if (!this.leaseCurrent(lease)) {
       throw new Error(`Execution replaced while rotating ${taskId}`);
     }
-    this.recordConfigOptions(taskId, configOptions, lease);
+    const stored = this.store.getTask(taskId);
+    if (!stored) return;
+    for (const column of Object.keys(reported) as ExecutionConfigColumn[]) {
+      if (stored[column] !== null) continue;
+      this.store.updateTaskConfig(taskId, column, reported[column]!);
+    }
+    // The schema this session reported is what later reads of this agent can
+    // show. Only an empty cache is filled: a cached schema belongs to a session
+    // that already reported, and overwriting it could roll back the same newer
+    // report this method just protected in the row.
+    const agentId = this.store.getBindingAgent(taskId);
+    if (agentId && this.configOptionsFor(agentId).length === 0) {
+      this.agents.adapterFor(agentId).cachedConfigOptions = configOptions;
+    }
   }
 
   /**
@@ -1634,8 +1672,8 @@ export class TaskManager implements ObligationHost {
       lease,
     );
     // The new execution reported its own environment; that report is what the
-    // task reads when it has no stored choice left.
-    this.adoptReportedExecutionConfig(taskId, configTask, configOptions, lease);
+    // task reads for the columns it has no stored choice for.
+    this.adoptReportedExecutionConfig(taskId, configOptions, lease);
     return {
       taskId,
       configOptions: this.applyStoredConfigUnderLease(
@@ -2388,7 +2426,7 @@ export class TaskManager implements ObligationHost {
     // execution: when the task stores no execution config of its own, the
     // session's report is what its reads must show.
     if (!opts.attach) {
-      this.adoptReportedExecutionConfig(taskId, task, configOptions, lease);
+      this.adoptReportedExecutionConfig(taskId, configOptions, lease);
     }
     return {
       type: "task_created",
