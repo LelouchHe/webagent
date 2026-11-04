@@ -357,11 +357,17 @@ send the directory explicitly.
 
 When the replacement belongs to a **different** agent, the task's stored
 `model`, `mode`, and `reasoning_effort` are cleared: they describe the
-environment that no longer runs the task. The replacement session reports its
-own values, and those become the task's stored config as soon as the rotation
+environment that no longer runs the task. When the replacement session reports
+them, its own values become the task's stored config as soon as the rotation
 commits, so the clear response, `GET /api/v1/tasks/:id`, a live resume, and a
-cold restore all agree. Nothing is inferred from the order of an option list.
-The same-agent replacement keeps replaying the stored values instead.
+cold restore agree. Nothing is inferred from the order of an option list. The
+same-agent replacement keeps replaying the stored values instead.
+
+A replacement that reports no `configOptions` at all leaves those columns
+unknown, and a read of that task then falls back to the agent's cached schema —
+the values of another task on the same agent. That is a known boundary, not a
+guarantee: the response has nothing to offer, and the task's own reads show
+another session's values until something reports for it.
 
 **Request body (optional):**
 
@@ -395,7 +401,7 @@ target agent could not be started)
 
 #### `GET /api/v1/tasks/:id`
 
-Get task details. **Auto-resumes** the task in the ACP agent if it's not already live (e.g., after server restart). Interrupted turns are restored without being continued automatically; the user decides whether to continue.
+Get task details. **Auto-resumes** the task in the ACP agent if it's not already live (e.g., after server restart). Interrupted turns are restored without being continued automatically; the user decides whether to continue. A task whose binding agent is configured but whose execution slot is unmaterialized is materialized by that background warm, which also records the execution config the new session reports for the columns the task has no value of its own — so this read can change those columns. It never takes a task over from an agent that left the configuration; that remains an operation's job (next use or `POST /clear`).
 
 **Response** `200`:
 

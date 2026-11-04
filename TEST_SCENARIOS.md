@@ -66,9 +66,15 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the parent-binding guard still refuses a child built through another agent's transport unless that caller named the target
 
 - `test/multi-agent-execution-config.test.ts` (HTTP + direct runtime; two agents with distinguishable schemas)
-  - an explicit clear onto another agent sends none of the old values (one of them is legal on the target, so a rejection cannot hide an omission), and the clear response, the database row, the detail read, live resume, and a cold process over the same database all agree on the replacement's own defaults
+  - an explicit clear onto another agent sends none of the old values (one of them is legal on the target, so a rejection cannot hide an omission), and the clear response, the database row, and the detail read agree on the replacement's own defaults
+  - the replacement's report survives a live resume (asserted directly, not through the detail read) and a cold reopen — the database reopened in a new store, fresh transports, and a row value the new session does not report — while another task's session values sit in the agent's cache
+  - a replacement that reports no schema leaves the columns null (never the old values), and a follow-up same-agent rotation finds nothing to replay
   - going A → B → A starts from A's defaults again instead of restoring the abandoned choice; a same-agent clear still replays the stored mode/thinking/model in order
   - an implicit takeover (the owner left the configuration) drops the stored values, keeps the `agent_rotation` record, and adopts the replacement's report
+  - named boundary: with the agent's cache warmed by another task, an unreporting replacement's task reads that other task's values (null cannot override the shared cache), while the warm task still reads its own
+
+- `test/multi-agent-config-replay.test.ts` (real ACP agent process, real `AgentBridge`)
+  - a config report written immediately after the `session/new` result is queued by the transport, replayed when the binding commits, and survives the rotation's tail: the initial response's older value never rolls it back
 
 - `test/multi-agent-cwd-defaults.test.ts`
   - an omitted `cwd` on `/clear` keeps the task's own directory while an omitted `cwd` on create uses the server default, even for a child of a task that runs elsewhere

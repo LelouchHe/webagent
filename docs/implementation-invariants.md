@@ -106,6 +106,18 @@ The operational form of that sentence:
   string, an effort level); carrying them over silently asks the new agent for
   something it may not support, and an unclear replacement falls back to the
   agent's shared schema cache, i.e. another task's session.
+- **A read may write the execution config columns; it may not move an owner.**
+  A detail or snapshot read starts a background warm, and a task whose binding
+  agent is configured but whose execution slot is unmaterialized (an earlier
+  takeover, a Root reset) is materialized by that warm. The session it creates
+  reports its own execution config, and adoption records it for the columns the
+  task has no value of its own — so a plain GET can turn `model: null` into the
+  agent's reported value. The same read never takes a task over from an agent
+  that left the configuration: a read must answer while the agent is gone, so
+  the takeover stays an operation's job (next use or explicit `/clear`).
+  *Why:* the alternative — refusing to write from a read — leaves an
+  unmaterialized task's reads forever unknown, and a fresh session's report is
+  the only honest default. What must not leak from a read is a binding change.
 - **A new task may name its agent; an existing task's binding is never chosen
   by a caller.** Creating a child for a different agent than its parent is a
   declared environment, so the parent-binding guard is skipped only there, and
