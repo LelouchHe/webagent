@@ -81,8 +81,13 @@ describe("tool-result images: a named image file", () => {
     assert.ok(existsSync(imagePath));
     assert.deepEqual(readFileSync(row.realpath), REAL_PNG);
     assert.notEqual(row.realpath, imagePath);
+    // The descriptor is a reference, and the persisted row never carries the
+    // file's actual payload. Compute the expectation from the fixture bytes:
+    // checking for the literal string "base64" would pass on any payload.
+    assert.equal("data" in descriptor, false);
+    const encoded = REAL_PNG.toString("base64");
     assert.equal(
-      JSON.stringify(store.getEvents("t1")).includes("base64"),
+      JSON.stringify(store.getEvents("t1")).includes(encoded.slice(0, 32)),
       false,
     );
   });
