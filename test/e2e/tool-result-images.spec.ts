@@ -180,7 +180,7 @@ test("a wide thumbnail follows the card, not a fixed ceiling", async ({
   // Desktop viewport. A fixed 360px ceiling left the picture small beside a
   // paragraph that fills the row, so the display width has to come from the
   // container.
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.setViewportSize({ width: 1200, height: 900 });
   await gotoConnected(page);
   await send(page, "E2E_TOOL_RESULT_IMAGE");
 
@@ -211,7 +211,7 @@ test("a wide thumbnail follows the card, not a fixed ceiling", async ({
 });
 
 test("a small thumbnail is not upscaled", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.setViewportSize({ width: 1200, height: 900 });
   await gotoConnected(page);
   await send(page, "E2E_TOOL_RESULT_IMAGE");
 
