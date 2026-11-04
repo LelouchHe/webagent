@@ -101,11 +101,20 @@ spot gaps, and decide what still needs to be added without reading every spec.
     `content`) is written to the shared attachment layout with a row and an
     unsigned descriptor; the persisted event and the live broadcast carry no
     base64 and keep the surrounding text; the wire's mime claim is ignored
+  - an image nested in a content block's `_meta` is stored the same way, so no
+    base64 survives ingest in a slot a reader never looks at
   - refusals: above `limits.image_upload` and not a storable image container
     each become visible `[image omitted: …]` text with no file and no row;
     successive images are named in order and a text-only update is untouched
   - a stored tool image invalidates the task's cached label map, so a later
     event naming its path renders `agent-image-N` instead of the UUID path
+
+- `test/tool-result-images-legacy-row.test.ts` (a row written before the rule)
+  - a `tool_call_update` written straight to the store with a bare inline image
+    projects as `unknown` (`content_shape`) with no text or field, contributes
+    no text to the frontend extractor, and renders no thumbnail and no payload
+    when the stored rows are replayed — the shape is not a compatibility target,
+    so nothing turns it back into a picture or echoes its bytes
 
 - `test/tool-result-images-sse.test.ts` (real `SseManager` frame)
   - an update carrying the same image in `content` and `rawOutput` writes a
@@ -498,8 +507,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/mcp-task-host.test.ts`, `test/mcp.test.ts`, `test/mcp-doc-coverage.test.ts`
   - flat task_query index includes thinking rows, range normalization, and bounded Unicode projections
-  - an `agent_image` row and an inline image block both project as `[image]`
-    instead of an empty or status-only row
+  - an `agent_image` row and a stored tool-image descriptor both project as
+    `[image]` instead of an empty or status-only row; a row that still holds an
+    inline block is `unknown` and echoes no payload
   - fixed-string search returns a visible matching window and real JSON field path
   - task_read returns batched decoded event data, including large single rows
   - self/parent/child/sibling authorization, tombstone/nonexistent target convergence, unknown sequence rejection

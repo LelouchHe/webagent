@@ -87,6 +87,14 @@ client extension. WebAgent handles it with ordinary code in
 `src/tool-result-image.ts`: `storeToolResultImages` stores every block and
 rewrites the update's `content` before the event is persisted or broadcast.
 
+That file is the only place the wire shape is recognized. Past ingest there is
+exactly one representation — the descriptor an `agent_image` carries — and
+`src/shared/tool-content.ts` judges stored items only, so no reader has to ask
+"inline or stored?". A stored row that still holds an inline block (written
+before this rule) is an **unrecognized** content shape: the history projection
+marks it and the card renders nothing for it. It is not turned back into a
+picture and its payload is never echoed; there is no compatibility branch.
+
 - Storage is the same attachment pipeline an agent message image uses: the same
   `tasks/<taskId>/attachments/<uuid>.<ext>` layout, the same `attachments` row,
   the same `limits.image_upload` ceiling, the same content sniff, the same

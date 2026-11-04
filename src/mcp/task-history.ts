@@ -171,14 +171,10 @@ function projectToolContent(value: unknown): ToolContentProjection {
         if (shape.kind === "terminal")
           return `[terminal ${shape.terminalId ?? "undefined"}]`;
         // A stored image is a reference, not text: name it so the projection is
-        // not silently empty, and never echo a path or payload.
-        if (
-          shape.kind === "image_attachment" ||
-          // An inline image block (the old wire shape, or a historical row) is
-          // still a picture: say so instead of falling back to the status and
-          // leaving the row empty.
-          shape.kind === "image"
-        ) {
+        // not silently empty, and never echo a path or payload. An inline block
+        // that never became an attachment is not a picture to a reader: it is
+        // `unknown` below, which marks the row without echoing its payload.
+        if (shape.kind === "image_attachment") {
           return "[image]";
         }
         return shape.kind === "content" ? shape.text : "";

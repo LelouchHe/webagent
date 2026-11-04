@@ -228,17 +228,14 @@ describe("tool content shape coverage", () => {
     assert.equal(row.text, "[terminal t1]");
   });
 
-  it("recognizes an inline image block and its stored reference", () => {
+  it("recognizes only the stored descriptor, never an inline block", () => {
+    // The wire shape has no stored representation: ingest replaces it with a
+    // descriptor, so a row that still holds one is unrecognized, not a picture.
     const inline = { type: "image", mimeType: "image/png", data: "AAAA" };
-    assert.deepEqual(classifyToolContentItem(inline), {
-      kind: "image",
-      mimeType: "image/png",
-      data: "AAAA",
-    });
-    // The same block wrapped the way an ACP tool result can deliver it.
+    assert.equal(classifyToolContentItem(inline).kind, "unknown");
     assert.equal(
       classifyToolContentItem({ type: "content", content: inline }).kind,
-      "image",
+      "unknown",
     );
 
     const attachment = {
@@ -270,8 +267,8 @@ describe("tool content shape coverage", () => {
     assert.equal(row.text, "done\n[image]");
     assert.equal(row.content_shape, undefined);
 
-    // The old wire shape (an inline block that never became an attachment)
-    // must still project as a picture, not as the status line.
+    // An inline block is the one shape ingest exists to remove: the row is
+    // marked unknown and its payload is neither rendered nor echoed.
     const inlineRow = projectTaskHistoryRow({
       seq: 1,
       type: "tool_call_update",
@@ -281,10 +278,10 @@ describe("tool content shape coverage", () => {
         content: [inline],
       }),
     });
-    assert.equal(inlineRow.text, "[image]");
-    assert.equal(inlineRow.field, "content[]");
+    assert.equal(inlineRow.content_shape, "unknown");
+    assert.equal(inlineRow.text, undefined);
+    assert.equal(inlineRow.field, undefined);
     assert.notEqual(inlineRow.text, "completed");
-    assert.equal(inlineRow.content_shape, undefined);
   });
 
   it("projects an agent image as a visible marker", () => {

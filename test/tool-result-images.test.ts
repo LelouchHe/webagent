@@ -180,6 +180,38 @@ describe("tool-result images: ACP image blocks", () => {
     assert.equal(store.countAttachments("t1", "image"), 0);
   });
 
+  it("stores an image nested in a block's metadata too", () => {
+    const base64 = png(128).toString("base64");
+    harness.toolCall("t1", "Screenshot");
+    harness.emit(
+      harness.update("t1", [
+        {
+          type: "content",
+          content: { type: "text", text: "kept" },
+          // A block's metadata can hold another image block: the outer block
+          // is text, so only the nested payload would survive ingest.
+          _meta: {
+            content: [{ type: "image", mimeType: "image/png", data: base64 }],
+            label: "kept",
+          },
+        } as unknown as ToolContentItem,
+      ]),
+    );
+
+    const content = harness.storedContent();
+    const meta = (
+      content[0] as { _meta?: { content?: unknown[]; label?: string } }
+    )._meta;
+    assert.ok(meta);
+    const descriptor = attachmentOf(meta.content![0] as ToolContentItem);
+    assert.ok(descriptor, "the nested block becomes a stored descriptor");
+    assert.equal(descriptor.kind, "image");
+    assert.equal(store.countAttachments("t1", "image"), 1);
+    assert.equal(meta.label, "kept");
+    assert.equal(textOf(content), "kept");
+    assert.equal(JSON.stringify(store.getEvents("t1")).includes(base64), false);
+  });
+
   it("names successive images in order and leaves text-only updates alone", () => {
     harness.toolCall("t1", "Screenshots");
     harness.emit(

@@ -1,8 +1,14 @@
 /**
- * Runtime shape judgment for ACP tool_call_update content items.
+ * Runtime shape judgment for a *stored* ACP tool_call_update content item.
  *
  * Keep this as a judgment, not a renderer: the MCP history projection and
  * frontend display paths must agree on which item families they understand.
+ *
+ * Only the stored representation is judged here. The wire shape an agent sends
+ * (`{ type: "image", mimeType, data }`) is recognized once, at ingest, in
+ * `src/tool-result-image.ts`; it must not survive into a stored row, so a block
+ * that still carries `data` is `unknown` rather than a picture. One
+ * representation, no fallback.
  */
 import type { AgentImageAttachment } from "../types.ts";
 
@@ -15,8 +21,6 @@ export type ToolContentItemShape =
       oldText: string | null | undefined;
       newText: string;
     }
-  /** An inline image block as it arrived on the wire, still carrying base64. */
-  | { kind: "image"; mimeType: string; data: string }
   /** A stored image, referenced by the same descriptor `agent_image` uses. */
   | { kind: "image_attachment"; attachment: AgentImageAttachment }
   | { kind: "unknown" };
@@ -55,22 +59,17 @@ export function parseImageAttachment(
 }
 
 /**
- * An ACP image block, either still carrying its base64 or already replaced by
- * a stored reference. Accepts both ACP shapes a tool result can use: the bare
- * block and the `{ type: "content", content: <block> }` wrapper.
+ * The stored reference an image block carries, in either position a stored
+ * descriptor can appear: the bare block and the
+ * `{ type: "content", content: <block> }` wrapper.
+ *
+ * A block with no reference is not a stored shape, whatever else it holds: an
+ * inline payload belongs to ingest, never to a reader.
  */
-function imageShape(value: JsonObject): ToolContentItemShape | null {
+function storedImageShape(value: JsonObject): ToolContentItemShape | null {
   if (value.type !== "image") return null;
   const attachment = parseImageAttachment(value.attachment);
-  if (attachment) return { kind: "image_attachment", attachment };
-  if (typeof value.data === "string" && value.data.length > 0) {
-    return {
-      kind: "image",
-      mimeType: typeof value.mimeType === "string" ? value.mimeType : "",
-      data: value.data,
-    };
-  }
-  return null;
+  return attachment ? { kind: "image_attachment", attachment } : null;
 }
 
 function diffShape(item: JsonObject): ToolContentItemShape | null {
@@ -100,7 +99,7 @@ function diffShape(item: JsonObject): ToolContentItemShape | null {
 export function classifyToolContentItem(item: unknown): ToolContentItemShape {
   if (!isObject(item)) return { kind: "unknown" };
 
-  const directImage = imageShape(item);
+  const directImage = storedImageShape(item);
   if (directImage) return directImage;
 
   if (item.type === "terminal") {
@@ -115,7 +114,7 @@ export function classifyToolContentItem(item: unknown): ToolContentItemShape {
   if (diff) return diff;
 
   if (isObject(item.content)) {
-    const wrappedImage = imageShape(item.content);
+    const wrappedImage = storedImageShape(item.content);
     if (wrappedImage) return wrappedImage;
     if (typeof item.content.text === "string") {
       return { kind: "content", text: item.content.text };
