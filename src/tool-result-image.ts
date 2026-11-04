@@ -183,8 +183,9 @@ function normalizeItem(
       };
     case "terminal":
       return { type: "terminal", terminalId: shape.terminalId };
+    // A descriptor is our own stored form, not a wire shape: an inbound one is
+    // dropped, so a forged reference cannot become a stored row.
     case "image_attachment":
-      return { type: "image", attachment: shape.attachment };
     case "unknown":
       return null;
   }

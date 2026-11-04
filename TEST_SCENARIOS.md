@@ -111,6 +111,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     dropped, never passed through) while its siblings are still stored
   - an item no reader can render (an `audio` block, a text array) is dropped,
     and its renderable siblings are kept
+  - an inbound image descriptor is dropped (it is our stored form, not a wire
+    shape), so a forged cross-task reference is never persisted; a descriptor
+    ingest produced still classifies as the image shape
   - a persisted item carries exactly the fields the renderer reads: text, diff
     (including `oldText: null`), terminal and image keep their canonical shape,
     and an extension field on a text block (`vendorExtra`) is not persisted

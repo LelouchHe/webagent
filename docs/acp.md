@@ -97,7 +97,10 @@ picture and its payload is never echoed; there is no compatibility branch.
 
 Only the protocol's content positions are read: the item itself when it is an
 image block, and `item.content` — the `{ type: "content", content: … }` wrapper,
-hoisted to the bare descriptor so a stored row has one shape. Ingest also keeps
+hoisted to the bare descriptor so a stored row has one shape. For an image, only
+the wire shape (`{ type: "image", data }`) is accepted: the descriptor
+(`attachment`) is the internal stored form, so an inbound one is dropped like any
+other shape we do not produce. Ingest also keeps
 only what a reader can render — an image block, a text block, a diff, a terminal —
 and rebuilds each item from exactly those fields. Any field we do not render
 (`_meta`, `annotations`, any other extension slot) and any shape we do not

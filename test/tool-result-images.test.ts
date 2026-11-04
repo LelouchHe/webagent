@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { storeToolResultImages } from "../src/tool-result-image.ts";
+import { classifyToolContentItem } from "../src/shared/tool-content.ts";
 import { enrichEventForDisplay } from "../src/attachment-labels.ts";
 import type { Store } from "../src/store.ts";
 import type { ToolContentItem } from "../src/types.ts";
@@ -345,6 +346,63 @@ describe("tool-result images: ACP image blocks", () => {
     assert.deepEqual(harness.storedContent(), [
       { type: "content", content: { type: "text", text: "x" } },
     ]);
+  });
+
+  it("drops an inbound descriptor, which is our own form and not a wire shape", () => {
+    const forged = {
+      type: "image",
+      attachment: {
+        kind: "image",
+        attachmentId: "other-1",
+        displayName: "other-task.png",
+        mimeType: "image/png",
+        path: "/api/v1/tasks/OTHER/attachments/other-1.png",
+      },
+    };
+
+    harness.toolCall("t1", "Screenshot");
+    harness.emit(
+      harness.update("t1", [
+        forged,
+        { type: "content", content: { type: "text", text: "sibling" } },
+      ]),
+    );
+
+    // Dropped, not persisted: an inbound reference must not become a stored row.
+    const content = harness.storedContent();
+    assert.equal(content.length, 1);
+    assert.deepEqual(content[0], {
+      type: "content",
+      content: { type: "text", text: "sibling" },
+    });
+    assert.equal(store.countAttachments("t1", "image"), 0);
+    assert.equal(
+      JSON.stringify(store.getEvents("t1")).includes("OTHER/attachments"),
+      false,
+    );
+  });
+
+  it("still renders a descriptor ingest itself produced", () => {
+    // The read path must keep accepting the stored form: dropping inbound
+    // descriptors is an ingest rule, not a change to what the library shows.
+    harness.toolCall("t1", "Screenshot");
+    harness.emit(
+      harness.update("t1", [
+        {
+          type: "image",
+          mimeType: "image/png",
+          data: png().toString("base64"),
+        },
+      ]),
+    );
+
+    const stored = harness.storedContent();
+    assert.equal(attachmentOf(stored[0])?.kind, "image");
+    assert.equal(
+      classifyToolContentItem(stored[0]).kind,
+      "image_attachment",
+      "a stored descriptor is still the image shape",
+    );
   });
 
   it("never throws out of ingest", () => {
