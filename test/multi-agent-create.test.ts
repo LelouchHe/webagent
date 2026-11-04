@@ -261,6 +261,43 @@ describe("creating a task for a named agent", () => {
     }
   });
 
+  it("still refuses a child built through another agent's transport", async () => {
+    const harness = await startHarness();
+    try {
+      const root = await bootRootOnA(harness);
+      // A caller that resolved the wrong agent must not be able to create a
+      // child under a parent carried by another one: the exception is "the
+      // caller chose the target", not "any transport may create anywhere".
+      await assert.rejects(
+        () =>
+          harness
+            .tasks()
+            .createTask(
+              harness.agents.b.bridge,
+              harness.dir,
+              undefined,
+              "auto",
+              { parentId: root },
+            ),
+        /is bound to agent agent-a/,
+      );
+      assert.deepEqual(harness.agents.b.newSessions, []);
+      assert.equal(harness.store.getBindingAgent(root), AGENT_A);
+
+      // Naming the target is what makes it legal, and that is the same call.
+      const created = await harness
+        .tasks()
+        .createTask(harness.agents.b.bridge, harness.dir, undefined, "auto", {
+          parentId: root,
+          agentId: AGENT_B,
+        });
+      assert.equal(harness.store.getBindingAgent(created.taskId), AGENT_B);
+      assert.equal(harness.agents.b.newSessions.length, 1);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("still uses the parent's agent when no agent id is given", async () => {
     const harness = await startHarness();
     try {
