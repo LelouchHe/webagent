@@ -523,10 +523,19 @@ body {
   flex-wrap: wrap;
   gap: 6px;
   margin: 4px 0 4px 16px;
+  /* A flex item refuses to shrink below its content unless this is explicit,
+     which would hand the widest image to the page and make the whole app
+     scroll sideways on a phone. */
+  min-width: 0;
+  max-width: 100%;
 }
 .tool-call .tc-images img.tc-image {
-  max-width: var(--agent-image-max-width);
+  /* Never wider than the card: the fixed ceiling is a preference, the viewport
+     is the limit. `height: auto` keeps the attribute-set box proportional when
+     the ceiling is what gets reduced. */
+  max-width: min(100%, var(--agent-image-max-width));
   max-height: var(--agent-image-max-height);
+  height: auto;
   border-radius: 4px;
   border: 1px solid var(--border);
   display: block;
@@ -1275,8 +1284,9 @@ body.file-viewer-open {
   cursor: zoom-in;
 }
 .msg.assistant img.agent-image {
-  max-width: var(--agent-image-max-width);
+  max-width: min(100%, var(--agent-image-max-width));
   max-height: var(--agent-image-max-height);
+  height: auto;
   border-radius: 4px;
   border: 1px solid var(--border);
   display: block;

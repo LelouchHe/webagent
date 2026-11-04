@@ -89,3 +89,62 @@ test("a reload replays the tool result thumbnail", async ({ page }) => {
     page.locator(".tool-call").first().locator(".tc-content"),
   ).toHaveText("captured");
 });
+
+test("a wide thumbnail never widens the page", async ({ page }) => {
+  // A phone-width viewport: the fixed 360px ceiling plus the card's own padding
+  // exceeds it, so anything that ignores the viewport turns the whole app into a
+  // horizontally scrolling surface.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await gotoConnected(page);
+  await send(page, "E2E_TOOL_RESULT_IMAGE");
+
+  // The served fixture is 1×1; give the <img> a genuinely wide natural size so
+  // the layout rules are what is under test, not the fixture.
+  const image = page.locator(".tool-call .tc-images img.tc-image");
+  await image.evaluate(async (el) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1600;
+    canvas.height = 900;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#123456";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const img = el as HTMLImageElement;
+    await new Promise<void>((resolve) => {
+      img.onload = () => resolve();
+      img.src = canvas.toDataURL("image/png");
+    });
+    // What the renderer would produce for a 1600×900 source: the display box is
+    // capped by the ceiling, and the attributes carry that box. The layout rules
+    // are what must keep it inside the card.
+    img.width = 360;
+    img.height = 203;
+  });
+
+  const layout = await page.evaluate(() => {
+    const img = document.querySelector<HTMLImageElement>(
+      ".tool-call .tc-images img.tc-image",
+    )!;
+    const card = img.closest(".tool-call")!;
+    return {
+      viewport: window.innerWidth,
+      pageWidth: document.documentElement.scrollWidth,
+      imageWidth: img.getBoundingClientRect().width,
+      cardWidth: card.getBoundingClientRect().width,
+    };
+  });
+
+  // The page may not scroll sideways, the image may not exceed its card, and the
+  // box keeps the source aspect ratio (1600×900) rather than distorting.
+  expect(layout.pageWidth).toBeLessThanOrEqual(layout.viewport);
+  expect(layout.imageWidth).toBeLessThanOrEqual(layout.cardWidth);
+  const ratio = await image.evaluate(
+    (el) =>
+      (el as HTMLImageElement).naturalWidth /
+      (el as HTMLImageElement).naturalHeight,
+  );
+  const boxRatio = await image.evaluate((el) => {
+    const rect = (el as HTMLImageElement).getBoundingClientRect();
+    return rect.width / rect.height;
+  });
+  expect(Math.abs(boxRatio - ratio)).toBeLessThan(0.05);
+});
