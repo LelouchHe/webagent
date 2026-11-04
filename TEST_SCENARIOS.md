@@ -111,6 +111,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - an update carrying the same image in `content` and `rawOutput` writes a
     frame without its base64: `content` gets the descriptor, while `rawOutput`
     keeps its shape and every other field with `data` emptied
+  - an image nested in an image block's `_meta` (any depth) is emptied too, not
+    only the outer block's `data`
+  - cloning keeps a JSON `__proto__` key as an own property (`JSON.stringify`
+    still sees it) while leaving unrelated fields untouched
 
 - `test/tool-result-images-path.test.ts` (temporary shim)
   - all three markers (`image_id: sha256:…`, `saved_to:` absolute path,
@@ -119,8 +123,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - refusals: sha256 mismatch, non-image magic bytes, above the limit,
     unreadable path, and any missing marker each do nothing; identical bytes
     are stored once and a later update reuses that row
-  - the recovered image invalidates the task's cached label map, like the
-    normal path
+  - the recovered image invalidates the task's cached label map when it inserts
+    a row; a content-hash duplicate reuses the existing row and does not
+    invalidate again
   - delete with `src/agent-compatibility/copilot-image-path.ts`
 
 - `test/tool-result-images-render.test.ts`
