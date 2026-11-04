@@ -14,7 +14,11 @@ import { log } from "./log.ts";
 import { isAutopilotMode } from "./mode-bucket.ts";
 import { leaseOf } from "./execution-authority.ts";
 import { storeAgentImage } from "./agent-image.ts";
-import { storeToolResultImages, toolResultText } from "./tool-result-image.ts";
+import {
+  storeToolResultImages,
+  stripRawOutputImageData,
+  toolResultText,
+} from "./tool-result-image.ts";
 import { recoverCopilotImagePath } from "./agent-compatibility/copilot-image-path.ts";
 
 const ailog = log.scope("attachment-interceptor");
@@ -513,6 +517,13 @@ function dispatchAgentEvent(
         }
       }
       if (content) event.content = content;
+      // `rawOutput` is forwarded as received, but it is not persisted, so the
+      // live SSE frame is its only egress. An agent may repeat the tool's
+      // content there, image blocks included: drop those payloads too, or the
+      // frame would carry the base64 this branch just removed from `content`.
+      if (Object.hasOwn(event, "rawOutput")) {
+        event.rawOutput = stripRawOutputImageData(event.rawOutput);
+      }
       store.saveEvent(
         event.taskId,
         event.type,

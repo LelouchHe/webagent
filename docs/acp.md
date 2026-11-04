@@ -93,6 +93,11 @@ rewrites the update's `content` before the event is persisted or broadcast.
   unsigned base path + egress re-sign, and the same cleanup. In `content` the
   block is replaced by the descriptor an `agent_image` carries, so neither the
   database nor a client ever sees base64.
+- `rawOutput` is forwarded as the agent sent it and is not persisted, but an
+  agent may repeat the same image block inside it. Before the live SSE frame is
+  written, every inline image block in `rawOutput` has its `data` emptied by the
+  same rule; the block shape and every other field stay unchanged. The live
+  frame therefore carries no base64 either, and persistence was already clean.
 - An image above the ceiling, one whose bytes are not PNG/JPEG/GIF/WebP, or one
   that cannot be written becomes visible `[image omitted: …]` text in place of
   the block; nothing is dropped silently and no row is created.

@@ -83,3 +83,57 @@ export function toolResultText(content: ToolContentItem[]): string {
     .filter(Boolean)
     .join("\n");
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** An ACP image block that still carries its payload. */
+function isInlineImage(value: unknown): value is Record<string, unknown> {
+  return (
+    isRecord(value) &&
+    !Array.isArray(value) &&
+    value.type === "image" &&
+    typeof value.data === "string" &&
+    value.data.length > 0
+  );
+}
+
+/**
+ * Drop every inline image payload from a tool update's `rawOutput`.
+ *
+ * `rawOutput` is forwarded as the agent sent it, so an agent that repeats the
+ * tool's result there would put the same base64 into the live SSE frame —
+ * `saveEvent` already omits the field, so the frame is its only egress. Only an
+ * image block's `data` is emptied; the block shape and every other field stay
+ * exactly as received. The walk is iterative: a deeply nested payload must not
+ * turn this into a stack overflow.
+ */
+export function stripRawOutputImageData(rawOutput: unknown): unknown {
+  if (isInlineImage(rawOutput)) return { ...rawOutput, data: "" };
+  if (!isRecord(rawOutput)) return rawOutput;
+
+  const root = (Array.isArray(rawOutput) ? [] : {}) as Record<string, unknown>;
+  const stack: Array<{
+    source: Record<string, unknown>;
+    target: Record<string, unknown>;
+  }> = [{ source: rawOutput, target: root }];
+  while (stack.length > 0) {
+    const { source, target } = stack.pop()!;
+    for (const [key, child] of Object.entries(source)) {
+      if (isInlineImage(child)) {
+        target[key] = { ...child, data: "" };
+      } else if (isRecord(child)) {
+        const copy = (Array.isArray(child) ? [] : {}) as Record<
+          string,
+          unknown
+        >;
+        target[key] = copy;
+        stack.push({ source: child, target: copy });
+      } else {
+        target[key] = child;
+      }
+    }
+  }
+  return root;
+}

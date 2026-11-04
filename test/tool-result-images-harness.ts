@@ -51,7 +51,18 @@ export interface ToolResultImageHarness {
   storedContent(): ToolContentItem[];
 }
 
-export function createToolResultImageHarness(): ToolResultImageHarness {
+export interface ToolResultImageHarnessOptions {
+  /**
+   * The real SSE manager to broadcast through. The default only records
+   * events; a test that asserts on the wire frame passes the real manager with
+   * a fake response.
+   */
+  sseManager?: Parameters<typeof handleAgentEvent>[5];
+}
+
+export function createToolResultImageHarness(
+  options: ToolResultImageHarnessOptions = {},
+): ToolResultImageHarness {
   const dir = mkdtempSync(join(tmpdir(), "webagent-tool-result-images-"));
   const store = new Store(join(dir, "db"));
   const tasks = createTaskManager(store, dir, dir);
@@ -61,11 +72,13 @@ export function createToolResultImageHarness(): ToolResultImageHarness {
   const bridge = {
     resolvePermission: () => {},
   } as unknown as Parameters<typeof handleAgentEvent>[3];
-  const sseManager = {
-    broadcast: (event: AgentEvent) => {
-      broadcasts.push(event);
-    },
-  } as unknown as Parameters<typeof handleAgentEvent>[5];
+  const sseManager =
+    options.sseManager ??
+    ({
+      broadcast: (event: AgentEvent) => {
+        broadcasts.push(event);
+      },
+    } as unknown as Parameters<typeof handleAgentEvent>[5]);
 
   function config() {
     return {
