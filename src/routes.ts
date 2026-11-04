@@ -2817,14 +2817,13 @@ export function createRequestHandler(
           bridge = await tasks.resolveAgentTransport(targetAgentId);
         } catch (err) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            // An explicitly chosen agent reports why it failed; the inherited
-            // path keeps its generic rescue message.
+            // A failed start keeps its real reason, whichever way the target
+            // was chosen: "unavailable" alone cannot be acted on, and the
+            // caller must not be told a different agent answered instead.
             error:
-              explicitAgent !== undefined
+              err instanceof AgentUnavailableError
                 ? `Agent ${targetAgentId} is not available: ${errorMessage(err)}`
-                : err instanceof AgentUnavailableError
-                  ? "Agent is not available for this task"
-                  : errorMessage(err),
+                : errorMessage(err),
           });
           return;
         }

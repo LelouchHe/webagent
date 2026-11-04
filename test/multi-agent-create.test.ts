@@ -256,6 +256,25 @@ describe("creating a task for a named agent", () => {
         harness.store.listTasks().map((task) => task.id),
         [harness.store.rootTaskId],
       );
+
+      // The inherited path (a child of a task carried by the failing agent)
+      // reports the same real reason instead of a generic one.
+      harness.store.createTask(
+        "carried-by-b",
+        harness.dir,
+        "auto",
+        AGENT_B,
+        "b-session",
+      );
+      const inherited = await harness.request("POST", "/api/v1/tasks", {
+        cwd: harness.dir,
+        parentId: "carried-by-b",
+      });
+      assert.equal(inherited.status, 503);
+      assert.match(
+        String(inherited.json.error),
+        /spawn failed: ENOENT \/opt\/webagent\/agent-b/,
+      );
     } finally {
       await harness.close();
     }
