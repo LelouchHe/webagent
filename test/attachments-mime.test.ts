@@ -1,6 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { sniffMime, mimeToExt } from "../src/attachments.ts";
+import {
+  INLINE_MIMES,
+  UPSTREAM_IMAGE_MIMES,
+  sniffMime,
+  mimeToExt,
+} from "../src/attachments.ts";
 
 describe("sniffMime", () => {
   it("detects PDF magic bytes regardless of client-supplied mime", async () => {
@@ -127,5 +132,16 @@ describe("mimeToExt", () => {
   it("is case-insensitive", () => {
     assert.equal(mimeToExt("APPLICATION/PDF"), "pdf");
     assert.equal(mimeToExt("Image/PNG"), "png");
+  });
+});
+
+describe("image mime policy", () => {
+  it("keeps the display and upstream image sets identical", () => {
+    // Two policies that happen to hold the same members. If this fails, the
+    // divergence has to be a deliberate policy change, not drift.
+    assert.deepEqual(
+      [...INLINE_MIMES].sort(),
+      [...UPSTREAM_IMAGE_MIMES].sort(),
+    );
   });
 });

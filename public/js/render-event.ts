@@ -26,8 +26,12 @@ import {
 } from "./event-interpreter.ts";
 import { buildPlanElement } from "./plan-view.ts";
 import { buildStructuredDiffLines } from "./structured-diff.ts";
-import { classifyToolContentItem } from "../../src/shared/tool-content.ts";
+import {
+  classifyToolContentItem,
+  parseImageAttachment,
+} from "../../src/shared/tool-content.ts";
 import type {
+  AgentImageAttachment,
   RawInput,
   DiffLine,
   PlanEntry,
@@ -122,6 +126,7 @@ function applyStructuredDiff(
 export const CONTENT_EVENT_TYPES = [
   "user_message",
   "assistant_message",
+  "agent_image",
   "thinking",
   "tool_call",
   "tool_call_update",
@@ -191,6 +196,8 @@ export function renderContentEvent(
       return buildUserMessage(data, hooks);
     case "assistant_message":
       return buildAssistantMessage(data, hooks);
+    case "agent_image":
+      return buildAgentImageMessage(data.attachment);
     case "thinking":
       return buildThinking(data);
     case "tool_call":
@@ -299,7 +306,17 @@ function buildUserFileLink(src: string, name: string): HTMLAnchorElement {
   return link;
 }
 
-function imageDisplaySize(
+/**
+ * A stored image's own pixel size, or null when the row carries none.
+ *
+ * This is what an agent image's `width`/`height` attributes carry, and nothing
+ * else: the attributes exist so the browser can reserve a proportional box
+ * before the bytes arrive. The display size is CSS's job — `max-width: 100%`
+ * only shrinks, so the picture takes the container's width on a wide screen and
+ * keeps its own pixels when it is small. A px ceiling here would pin every
+ * picture to that width no matter how wide the card is.
+ */
+function naturalImageSize(
   rawWidth: unknown,
   rawHeight: unknown,
 ): { width: number; height: number } | null {
@@ -308,15 +325,34 @@ function imageDisplaySize(
   }
   if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) return null;
   if (rawWidth <= 0 || rawHeight <= 0) return null;
+  return {
+    width: Math.max(1, Math.round(rawWidth)),
+    height: Math.max(1, Math.round(rawHeight)),
+  };
+}
+
+/**
+ * The attribute box for a user's attachment thumbnail.
+ *
+ * A user's picture is a preview inside the message bubble, not the reply
+ * itself, so it keeps that bubble's own 200x150 design: scaled into that box
+ * and never up. Agent images do not use this.
+ */
+function imageDisplaySize(
+  rawWidth: unknown,
+  rawHeight: unknown,
+): { width: number; height: number } | null {
+  const natural = naturalImageSize(rawWidth, rawHeight);
+  if (!natural) return null;
   const maxSize = imageMaxDisplaySize();
   const scale = Math.min(
-    maxSize.width / rawWidth,
-    maxSize.height / rawHeight,
+    maxSize.width / natural.width,
+    maxSize.height / natural.height,
     1,
   );
   return {
-    width: Math.max(1, Math.round(rawWidth * scale)),
-    height: Math.max(1, Math.round(rawHeight * scale)),
+    width: Math.max(1, Math.round(natural.width * scale)),
+    height: Math.max(1, Math.round(natural.height * scale)),
   };
 }
 
@@ -340,6 +376,63 @@ function cssPixelVar(
   if (!raw.endsWith("px")) return fallback;
   const value = Number(raw.slice(0, -2));
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * The stored agent image inside an event payload of unknown shape, or null.
+ * Live streaming and replay share this validator, so the two paths accept
+ * exactly the same payloads.
+ */
+export function parseAgentImage(raw: unknown): AgentImageAttachment | null {
+  return parseImageAttachment(raw);
+}
+
+/**
+ * The bubble for an image the agent returned. Live streaming and replay both
+ * build it here, so the two paths cannot drift: same element, same classes,
+ * same URL form, same order.
+ *
+ * The URL is the stored attachment path — signed at egress, rewritten by the
+ * share viewer's hook — not base64: the transcript holds a reference, exactly
+ * like a user's attachment.
+ */
+export function buildAgentImageMessage(raw: unknown): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "msg assistant";
+  // No `data-raw`: this bubble carries no markdown text, and a markdown host
+  // must never receive foreign children (the streaming renderer owns them).
+  const attachment = parseAgentImage(raw);
+  if (!attachment) return el;
+  const img = document.createElement("img");
+  img.className = "agent-image";
+  img.alt = attachment.displayName;
+  img.loading = "lazy";
+  const size = naturalImageSize(attachment.width, attachment.height);
+  if (size) {
+    img.width = size.width;
+    img.height = size.height;
+  }
+  img.src = hooks_rewriteSrc(attachment.path);
+  el.appendChild(img);
+  return el;
+}
+
+/**
+ * Egress rewriting is a property of the *consumer*, not of the image: the
+ * share viewer maps owner attachment paths to its public ones. Without a
+ * consumer hook the stored path is used as-is (already signed at egress).
+ */
+let agentImageSrcRewriter: ((src: string) => string) | null = null;
+
+/** Install the consumer's attachment-URL rewriter (share viewer). */
+export function setAgentImageSrcRewriter(
+  rewrite: ((src: string) => string) | null,
+): void {
+  agentImageSrcRewriter = rewrite;
+}
+
+function hooks_rewriteSrc(src: string): string {
+  return agentImageSrcRewriter ? agentImageSrcRewriter(src) : src;
 }
 
 function buildAssistantMessage(
@@ -661,6 +754,11 @@ function applyToolCallUpdate(
   const content = Array.isArray(data.content)
     ? (data.content as ToolContentItem[])
     : [];
+  // An explicit array — including the empty one — replaces the content the
+  // card already shows. Omitting `content` means "unchanged". Only that
+  // distinction lets an explicit empty set remove the previous thumbnails
+  // instead of leaving them on the card forever.
+  if (Array.isArray(data.content)) applyToolResultImages(el, content);
   if (content.length > 0) {
     applyStructuredDiff(el, content);
     const text = extractToolCallContent(content);
@@ -742,6 +840,56 @@ function applyToolCallMetadata(
 
 function normalizeToolLabel(value: string): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Thumbnails for images a tool result refers to.
+ *
+ * Live streaming and replay both arrive here (via `renderContentEvent`), so the
+ * card, the URL form and the lightbox wiring cannot drift. Snapshots are
+ * cumulative, so the container is rebuilt from the latest list rather than
+ * appended to.
+ */
+function applyToolResultImages(
+  el: HTMLElement,
+  content: ToolContentItem[],
+): void {
+  const images = content.flatMap((item) => {
+    const shape = classifyToolContentItem(item);
+    return shape.kind === "image_attachment" ? [shape.attachment] : [];
+  });
+
+  let container = el.querySelector<HTMLElement>(".tc-images");
+  if (images.length === 0) {
+    container?.remove();
+    return;
+  }
+  const created = !container;
+  if (!container) {
+    container = document.createElement("div");
+    container.className = "tc-images";
+  }
+  container.replaceChildren();
+  for (const attachment of images) {
+    const img = document.createElement("img");
+    img.className = "tc-image";
+    img.alt = attachment.displayName;
+    img.loading = "lazy";
+    const size = naturalImageSize(attachment.width, attachment.height);
+    if (size) {
+      img.width = size.width;
+      img.height = size.height;
+    }
+    img.src = hooks_rewriteSrc(attachment.path);
+    container.appendChild(img);
+  }
+  // Keep the picture next to the tool's label: before source, diff and output.
+  if (created) {
+    const anchor = el.querySelector(
+      "details.tc-source, details.tc-diff, .tc-output, details.tc-raw-output",
+    );
+    el.insertBefore(container, anchor);
+  }
 }
 
 function buildPlan(data: Record<string, unknown>): HTMLElement {

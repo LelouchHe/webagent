@@ -36,6 +36,27 @@ const blog = log.scope("bridge");
 // its ACP envelope through.
 export const MAX_ACP_MESSAGE_BYTES = 128 * 1024 * 1024;
 
+/**
+ * An image block as an `agent_image` event, still carrying the agent's base64.
+ *
+ * The transport is not the place to decide what to do with the bytes: the event
+ * handler stores them as an attachment (the same layout, row, signing and
+ * cleanup a user upload gets) and replaces the payload. Keeping the decision
+ * there also means a refusal — too large, not an image, disk error — becomes
+ * visible transcript text instead of a hole, which is why nothing is dropped
+ * here.
+ */
+function imageEvent(taskId: string, content: acp.ImageContent): AgentEvent {
+  return {
+    type: "agent_image",
+    taskId,
+    block: {
+      mimeType: typeof content.mimeType === "string" ? content.mimeType : "",
+      data: typeof content.data === "string" ? content.data : "",
+    },
+  };
+}
+
 export interface AgentSessionIds {
   /**
    * The agent this view is pinned to. When present it also identifies the
@@ -1130,6 +1151,21 @@ export class AgentBridge extends EventEmitter {
     }
   }
 
+  /**
+   * A message chunk keeps the blocks the transcript can show: text, and an
+   * image as its own event (one content block per chunk, never a batch).
+   * Audio and embedded resources stay unrendered, as before.
+   */
+  private messageChunkEvent(
+    taskId: string,
+    content: acp.ContentBlock,
+  ): AgentEvent | null {
+    if (content.type === "text") {
+      return { type: "message_chunk", taskId, text: content.text };
+    }
+    return content.type === "image" ? imageEvent(taskId, content) : null;
+  }
+
   private sessionUpdateToEvent(
     taskId: string,
     agentSessionId: string,
@@ -1138,9 +1174,7 @@ export class AgentBridge extends EventEmitter {
     // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- only handles events with UI effects
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
-        return update.content.type === "text"
-          ? { type: "message_chunk", taskId, text: update.content.text }
-          : null;
+        return this.messageChunkEvent(taskId, update.content);
 
       case "agent_thought_chunk":
         return update.content.type === "text"

@@ -13,6 +13,15 @@ import {
 import { log } from "./log.ts";
 import { isAutopilotMode } from "./mode-bucket.ts";
 import { leaseOf } from "./execution-authority.ts";
+import { storeAgentImage } from "./agent-image.ts";
+import {
+  storeToolResultImages,
+  stripRawOutputImageData,
+} from "./tool-result-image.ts";
+import {
+  recoverCopilotImagePath,
+  toolResultText,
+} from "./agent-compatibility/copilot-image-path.ts";
 
 const ailog = log.scope("attachment-interceptor");
 const plog = log.scope("push");
@@ -35,6 +44,10 @@ function withoutLease<T extends object>(event: T): T {
 export interface EventHandlerConfig {
   cancelTimeout: number;
   recentPathsLimit: number;
+  /** Where task data lives; an agent image is stored under `<dataDir>/tasks/`. */
+  dataDir: string;
+  /** `limits.image_upload`: the ceiling an inline agent image must stay under. */
+  imageUploadLimit: number;
   attachmentInterceptor?: {
     counters: InterceptorCounters;
     logger?: InterceptorLogger;
@@ -48,6 +61,7 @@ type ConfigLikeEvent = Extract<
   { type: "task_created" | "config_option_update" }
 >;
 type MessageChunkEvent = Extract<AgentEvent, { type: "message_chunk" }>;
+type AgentImageEvent = Extract<AgentEvent, { type: "agent_image" }>;
 type ThoughtChunkEvent = Extract<AgentEvent, { type: "thought_chunk" }>;
 type ToolCallEvent = Extract<AgentEvent, { type: "tool_call" }>;
 type PlanEvent = Extract<AgentEvent, { type: "plan" }>;
@@ -86,6 +100,55 @@ function handleMessageChunk(
   tasks.state.patch(event.taskId, {
     runtime: { streaming: { assistant: true, thinking: false } },
   });
+}
+
+/**
+ * Store an agent's image as an attachment, or report why it was not stored.
+ *
+ * Both outcomes are transcript content, in the position the image arrived: the
+ * pending text is flushed first, then either the stored record or the visible
+ * placeholder takes the image's place. Returns the event to broadcast — the
+ * stored descriptor, or a text chunk — because the raw base64 block must never
+ * leave this function.
+ */
+function handleAgentImage(
+  event: AgentImageEvent,
+  tasks: TaskManager,
+  store: Store,
+  config: EventHandlerConfig,
+): AgentEvent {
+  const taskId = event.taskId;
+  tasks.flushThinkingBuffer(taskId);
+  // Text before the image is its own record, so a replay keeps
+  // text → image → text instead of merging them.
+  tasks.flushAssistantBuffer(taskId);
+
+  const result = storeAgentImage({
+    store,
+    dataDir: config.dataDir,
+    taskId,
+    data: event.block?.data ?? "",
+    index: store.countAttachments(taskId, "image") + 1,
+    limitBytes: config.imageUploadLimit,
+  });
+  if ("stored" in result) {
+    store.saveEvent(
+      taskId,
+      "agent_image",
+      { attachment: result.stored },
+      { from_ref: "agent" },
+    );
+    // The new row must be visible to the label/URL egress of this very event.
+    tasks.invalidateLabelCache(taskId);
+    return { type: "agent_image", taskId, attachment: result.stored };
+  }
+
+  // A refused image is still part of the reply: say so, in its own place.
+  handleMessageChunk(
+    { type: "message_chunk", taskId, text: result.omitted },
+    tasks,
+  );
+  return { type: "message_chunk", taskId, text: result.omitted };
 }
 
 function handleThoughtChunk(
@@ -427,7 +490,60 @@ function dispatchAgentEvent(
     case "tool_call":
       handleToolCall(event, tasks, store);
       return false;
-    case "tool_call_update":
+    case "tool_call_update": {
+      // ACP defines an image content block in a tool result, so this is the
+      // normal path: store every block and replace it with its descriptor, so
+      // no inline payload is persisted or broadcast.
+      let content = event.content;
+      let storedImage = false;
+      if (Array.isArray(content)) {
+        const stored = storeToolResultImages(
+          {
+            store,
+            dataDir: config.dataDir,
+            taskId: event.taskId,
+            limitBytes: config.imageUploadLimit,
+          },
+          content,
+        );
+        content = stored.content;
+        // Ingest reports the rows it inserted, wherever in the item tree they
+        // landed. A cached label map cannot name them, so it must be
+        // invalidated; a refusal placeholder inserts nothing and does not. The
+        // handler must not sniff shapes again — a nested descriptor would be
+        // invisible to a top-level scan.
+        storedImage = stored.inserted > 0;
+        // Temporary: recover an image one agent only names by path.
+        const recovered = recoverCopilotImagePath({
+          store,
+          dataDir: config.dataDir,
+          taskId: event.taskId,
+          toolCall: { id: event.id, title: event.title ?? "" },
+          text: toolResultText(content),
+          limitBytes: config.imageUploadLimit,
+        });
+        if (recovered) {
+          content = [
+            ...content,
+            { type: "image", attachment: recovered.attachment },
+          ];
+          // A content-hash duplicate reuses the existing row: there is nothing
+          // new for a cached label map to learn.
+          if (recovered.inserted) storedImage = true;
+        }
+      }
+      if (content) event.content = content;
+      // An earlier SSE for this task may already have cached an empty label
+      // map. The newly stored attachment must be nameable on the very next
+      // egress, exactly like a message image (`handleAgentImage`).
+      if (storedImage) tasks.invalidateLabelCache(event.taskId);
+      // `rawOutput` is forwarded as received, but it is not persisted, so the
+      // live SSE frame is its only egress. An agent may repeat the tool's
+      // content there, image blocks included: drop those payloads too, or the
+      // frame would carry the base64 this branch just removed from `content`.
+      if (Object.hasOwn(event, "rawOutput")) {
+        event.rawOutput = stripRawOutputImageData(event.rawOutput);
+      }
       store.saveEvent(
         event.taskId,
         event.type,
@@ -443,6 +559,7 @@ function dispatchAgentEvent(
         { from_ref: "agent" },
       );
       return false;
+    }
     case "plan":
       handlePlan(event, tasks, store);
       return false;
@@ -494,6 +611,7 @@ function maybePushNotify(event: AgentEvent, pushService: PushService): void {
  */
 const AGENT_ACTIVITY_EVENT_TYPES = new Set([
   "message_chunk",
+  "agent_image",
   "thought_chunk",
   "tool_call",
   "tool_call_update",
@@ -564,6 +682,14 @@ export function handleAgentEvent(
     tasks.restoringTasks.has(event.taskId)
   )
     return;
+  if (event.type === "agent_image") {
+    // The incoming event only carries base64; what goes out is the stored
+    // descriptor (or the placeholder that stands in for a refused image).
+    sseManager.broadcast(
+      withoutLease(handleAgentImage(event, tasks, store, config)),
+    );
+    return;
+  }
   const suppress = dispatchAgentEvent(
     event,
     tasks,

@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
@@ -27,12 +27,14 @@ describe("event writers populate from_ref correctly", () => {
   let tmpDir: string;
   let store: Store;
   let tasks: TaskManager;
+  let broadcasts: AgentEvent[];
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-fromref-"));
     store = new Store(tmpDir);
     tasks = createTaskManager(store, tmpDir, tmpDir);
     store.createTask("s1", "/tmp", "auto", "test-agent");
+    broadcasts = [];
   });
 
   afterEach(() => {
@@ -43,10 +45,19 @@ describe("event writers populate from_ref correctly", () => {
   const bridge = {
     resolvePermission: () => {},
   } as unknown as Parameters<typeof handleAgentEvent>[3];
-  const sseManager = { broadcast: () => {} } as unknown as Parameters<
-    typeof handleAgentEvent
-  >[5];
-  const config = { cancelTimeout: 10000, recentPathsLimit: 10 };
+  const sseManager = {
+    broadcast: (event: AgentEvent) => {
+      broadcasts.push(event);
+    },
+  } as unknown as Parameters<typeof handleAgentEvent>[5];
+  function config() {
+    return {
+      cancelTimeout: 10000,
+      recentPathsLimit: 10,
+      dataDir: tmpDir,
+      imageUploadLimit: 1024 * 1024,
+    };
+  }
 
   /**
    * Stamp an event the way the bridge does: with the lease of the execution
@@ -66,7 +77,7 @@ describe("event writers populate from_ref correctly", () => {
       tasks,
       store,
       bridge,
-      config,
+      config(),
       sseManager,
     );
   }
@@ -82,6 +93,127 @@ describe("event writers populate from_ref correctly", () => {
     assert.equal(asst.from_ref, "agent");
     const done = events.find((e) => e.type === "prompt_done");
     assert.equal(done?.from_ref, "agent");
+  });
+
+  /** PNG-signature bytes, so the content sniffer accepts the payload. */
+  const AGENT_PNG = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.alloc(64, 7),
+  ]);
+
+  it("agent_image stores an attachment and keeps its place among the text", () => {
+    const base64 = AGENT_PNG.toString("base64");
+
+    emit({ type: "message_chunk", taskId: "s1", text: "before" });
+    emit({
+      type: "agent_image",
+      taskId: "s1",
+      block: { mimeType: "image/png", data: base64 },
+    });
+    emit({ type: "message_chunk", taskId: "s1", text: "after" });
+    emit({ type: "prompt_done", taskId: "s1", stopReason: "end_turn" });
+
+    const content = store
+      .getEvents("s1")
+      .filter(
+        (event) =>
+          event.type === "assistant_message" || event.type === "agent_image",
+      );
+    // The image is its own record, so a replay keeps text → image → text
+    // instead of glueing the image into a text block.
+    assert.deepEqual(
+      content.map((event) => event.type),
+      ["assistant_message", "agent_image", "assistant_message"],
+    );
+    assert.deepEqual(JSON.parse(content[0].data), { text: "before" });
+    assert.deepEqual(JSON.parse(content[2].data), { text: "after" });
+    assert.equal(content[1].from_ref, "agent");
+
+    // The bytes are NOT in the transcript: only a reference to the stored
+    // attachment, in the shape a user's attachment already uses.
+    assert.equal(
+      content[1].data.includes(base64),
+      false,
+      "the persisted event must not carry base64",
+    );
+    const attachment = (
+      JSON.parse(content[1].data) as {
+        attachment: {
+          kind: string;
+          attachmentId: string;
+          displayName: string;
+          mimeType: string;
+          path: string;
+        };
+      }
+    ).attachment;
+    assert.equal(attachment.kind, "image");
+    assert.equal(attachment.mimeType, "image/png");
+    assert.equal(attachment.displayName, "agent-image-1");
+    assert.match(
+      attachment.path,
+      /^\/api\/v1\/tasks\/s1\/attachments\/[0-9a-f-]+\.png$/,
+    );
+
+    // The row and the file are the same thing the path names.
+    const row = store.getAttachment("s1", attachment.attachmentId);
+    assert.ok(row, "an attachments row must exist");
+    assert.equal(row.kind, "image");
+    assert.ok(existsSync(row.realpath));
+    assert.equal(basename(row.realpath), attachment.path.split("/").pop());
+
+    // The live broadcast carries the same reference, never the bytes.
+    const live = broadcasts.find((event) => event.type === "agent_image");
+    assert.ok(live);
+    assert.deepEqual(live, {
+      type: "agent_image",
+      taskId: "s1",
+      attachment,
+    });
+    assert.equal(JSON.stringify(live).includes(base64), false);
+  });
+
+  it("agent_image above the ceiling becomes visible text, with no row", () => {
+    // Exactly 2 MiB, one MiB over the limit configured above.
+    const bytes = Buffer.concat([
+      AGENT_PNG,
+      Buffer.alloc(2 * 1024 * 1024 - AGENT_PNG.length, 7),
+    ]);
+
+    emit({
+      type: "agent_image",
+      taskId: "s1",
+      block: { mimeType: "image/png", data: bytes.toString("base64") },
+    });
+    emit({ type: "prompt_done", taskId: "s1", stopReason: "end_turn" });
+
+    const events = store.getEvents("s1");
+    assert.equal(
+      events.some((event) => event.type === "agent_image"),
+      false,
+      "an oversized image is never stored",
+    );
+    const text = events
+      .filter((event) => event.type === "assistant_message")
+      .map((event) => (JSON.parse(event.data) as { text: string }).text);
+    assert.ok(
+      text.some((value) =>
+        /^\[image omitted: 2 MB > 1 MB limit\]$/.test(value),
+      ),
+      `expected the placeholder, got ${JSON.stringify(text)}`,
+    );
+    assert.equal(store.countAttachments("s1", "image"), 0);
+    assert.equal(
+      broadcasts.some((event) => event.type === "agent_image"),
+      false,
+    );
+    const liveText = broadcasts.find(
+      (event) => event.type === "message_chunk",
+    ) as { text?: string } | undefined;
+    assert.match(
+      String(liveText?.text),
+      /\[image omitted: 2 MB > 1 MB limit\]/,
+    );
   });
 
   it("thinking (flushed from buffer) is from_ref='agent'", () => {

@@ -170,6 +170,13 @@ function projectToolContent(value: unknown): ToolContentProjection {
       .map((shape) => {
         if (shape.kind === "terminal")
           return `[terminal ${shape.terminalId ?? "undefined"}]`;
+        // A stored image is a reference, not text: name it so the projection is
+        // not silently empty, and never echo a path or payload. An inline block
+        // that never became an attachment is not a picture to a reader: it is
+        // `unknown` below, which marks the row without echoing its payload.
+        if (shape.kind === "image_attachment") {
+          return "[image]";
+        }
         return shape.kind === "content" ? shape.text : "";
       })
       .filter(Boolean)
@@ -258,6 +265,10 @@ function projected(
       }
       return { title, text: stringField(data.status), field: "status" };
     }
+    case "agent_image":
+      // The stored row carries a descriptor, never a payload. A visible marker
+      // keeps the image from projecting as an empty row.
+      return { title, text: "[image]", field: "attachment" };
     case "system_message":
     case "message":
       return { title, text: stringField(data.body), field: "body" };
