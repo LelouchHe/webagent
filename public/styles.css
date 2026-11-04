@@ -517,17 +517,15 @@ body {
   color: var(--text);
 }
 /* Thumbnails of images a tool result refers to. Scoped to the tool card so the
-   chat-bubble image rules stay untouched. */
+   chat-bubble image rules stay untouched. The picture stays inside the card
+   because of its own percentage `max-width` and `height: auto`; this container
+   is a block-level flex container, not a flex item of the card, so it needs no
+   `min-width` override. */
 .tool-call .tc-images {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin: 4px 0 4px 16px;
-  /* A flex item refuses to shrink below its content unless this is explicit,
-     which would hand the widest image to the page and make the whole app
-     scroll sideways on a phone. */
-  min-width: 0;
-  max-width: 100%;
 }
 .tool-call .tc-images img.tc-image {
   /* Never wider than the card: the fixed ceiling is a preference, the viewport
