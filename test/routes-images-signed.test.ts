@@ -256,6 +256,19 @@ describe("image signed URLs", () => {
     const image = await req(port, "GET", `${parsed.pathname}${parsed.search}`);
     assert.equal(image.status, 200);
     assert.equal(image.headers["content-type"], "image/png");
+
+    // Re-signing is an egress mutation only: the stored record keeps the
+    // unsigned base path, so a second read signs it again rather than
+    // accumulating query strings.
+    const storedRow = store
+      .getEvents("sess1")
+      .find((event) => event.type === "agent_image");
+    assert.ok(storedRow);
+    const storedPath = (
+      JSON.parse(storedRow.data) as { attachment: { path: string } }
+    ).attachment.path;
+    assert.equal(storedPath, stored.stored.path);
+    assert.equal(storedPath.includes("?"), false);
   });
 
   it("GET image without sig returns 401", async () => {

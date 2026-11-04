@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { storeAgentImage } from "../src/agent-image.ts";
+import { createTaskManager } from "../src/task-manager.ts";
+import { waitFor } from "./fixtures.ts";
 
 /**
  * An agent's image becomes an ordinary attachment: the same
@@ -96,7 +98,7 @@ describe("storing an inline agent image", () => {
     assert.equal(result.stored.displayName, "agent-image-1");
   });
 
-  it("disappears with its task, like any other attachment row", () => {
+  it("disappears with its task, like any other attachment row and file", async () => {
     const result = storeAgentImage({
       store,
       dataDir: dir,
@@ -106,16 +108,27 @@ describe("storing an inline agent image", () => {
       limitBytes: LIMIT,
     });
     assert.ok("stored" in result);
-    assert.ok(store.getAttachment("t1", result.stored.attachmentId));
+    const row = store.getAttachment("t1", result.stored.attachmentId);
+    assert.ok(row);
+    assert.ok(existsSync(row.realpath));
 
-    // `attachments.task_id` is ON DELETE CASCADE, and TaskManager removes the
-    // task's data directory on a hard delete (the same path an upload takes).
-    store.deleteTask("t1");
+    // No agent-image-specific cleanup: the row goes with the task
+    // (`attachments.task_id` is ON DELETE CASCADE), and the file goes with the
+    // task's data directory, which TaskManager's hard delete removes.
+    const tasks = createTaskManager(store, dir, dir);
+    try {
+      const removed = await tasks.deleteTask(undefined, "t1");
+      assert.equal(removed.mode, "hard");
+    } finally {
+      tasks.dispose();
+    }
     assert.equal(
       store.getAttachment("t1", result.stored.attachmentId),
       undefined,
     );
     assert.equal(store.countAttachments("t1", "image"), 0);
+    await waitFor(() => !existsSync(join(dir, "tasks", "t1")));
+    assert.equal(existsSync(row.realpath), false);
   });
 
   it("ignores the mime the agent claimed", () => {
