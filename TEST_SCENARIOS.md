@@ -77,7 +77,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a config report written immediately after the `session/new` result is queued by the transport, replayed when the binding commits, and survives the rotation's tail: the initial response's older value never rolls it back
 
 - `test/multi-agent-config-clear.test.ts` (real ACP agent process, real `AgentBridge`)
-  - a cross-agent clear whose replacement reports `medium` *before* its `session/new` result (which says `high`) keeps `medium`: the clear zeroes a column only while it still holds its pre-rotation value, and the rotation's own read face agrees with the row
+  - a cross-agent clear whose replacement reports `medium` *before* its `session/new` result (which says `high`) keeps `medium`, and the clear response agrees: the clear runs before the transport replays queued updates, so ordering — not value equality — decides ownership
+  - the same holds when the new report re-selects the value the task already had (`rotate("before", "medium")`): "the row did not change" is not proof nobody wrote
   - control: an unreporting replacement still has the old value cleared and adopts its snapshot default, so the zeroing itself is not disabled
 
 - `test/multi-agent-cwd-defaults.test.ts`
