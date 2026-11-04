@@ -61,22 +61,21 @@ export interface StoredToolResultImages {
 /**
  * Store every ACP image block in one tool result's content, in place.
  *
- * The whole item tree is walked, so no inline payload can survive past this
- * function into SQLite, `GET /events` or a live frame.
+ * Only the protocol's content positions are read: the item itself when it is an
+ * image block, and `item.content` (the `{ type: "content", content: … }`
+ * wrapper). `_meta` is ACP's implementation-specific extension slot — arbitrary
+ * JSON, never read by this app — so it is dropped rather than walked: an opaque
+ * field is not persisted, and a payload inside it cannot reach a client.
  *
  * Degrading is a placeholder, never a pass-through: a block that cannot be
- * stored becomes visible `[image omitted: …]` text, and a walk that fails
- * replaces the item it failed on the same way. The event itself is never lost —
- * the record matters more than the picture — but the bytes never ride along with
- * it.
+ * stored becomes visible `[image omitted: …]` text, and an item that cannot be
+ * normalized is replaced the same way. The event itself is never lost.
  */
 export function storeToolResultImages(
   ctx: ToolResultImageContext,
   content: ToolContentItem[],
 ): StoredToolResultImages {
   let index = 0;
-  /** Image blocks seen: stored *or* degraded (a degradation writes a placeholder). */
-  let processed = 0;
   /** Attachment rows inserted: the only thing a cached label map cares about. */
   let inserted = 0;
 
@@ -87,7 +86,6 @@ export function storeToolResultImages(
    * payload back to the caller.
    */
   function store(data: string): ToolContentItem {
-    processed++;
     try {
       const result = storeImageBytes({
         store: ctx.store,
@@ -111,7 +109,7 @@ export function storeToolResultImages(
   }
 
   // The attachment count only names new files; a failure there must not stop the
-  // walk, because the walk is what removes payloads.
+  // rewrite, because the rewrite is what removes payloads.
   try {
     index = ctx.store.countAttachments(ctx.taskId, "image");
   } catch (error) {
@@ -121,24 +119,22 @@ export function storeToolResultImages(
   try {
     const rewritten = content.map((item) => {
       try {
-        // Most items are text or a diff: nothing to rewrite, and copying their
-        // containers buys nothing.
-        return mayContainImageBlock(item) ? rewriteItem(item, store) : item;
+        return normalizeItem(item, store);
       } catch (error) {
-        // One item's rewrite must not cost its siblings: that item becomes a
-        // placeholder and the rest are still normalized. Returning it as
+        // One item's failure must not cost its siblings, and returning it as
         // received would put its payload into storage and the wire.
-        warn("could not rewrite a tool result image", ctx, error);
+        warn("could not normalize a tool result item", ctx, error);
         return placeholder(UNSTORABLE);
       }
     });
-    return processed > 0
-      ? { content: rewritten, inserted }
-      : { content, inserted };
+    // An item that was rewritten, degraded or stripped is a new object; when
+    // none changed, the caller keeps the array it passed in.
+    const changed = rewritten.some((item, at) => item !== content[at]);
+    return changed ? { content: rewritten, inserted } : { content, inserted };
   } catch (error) {
     // Last resort: no item survives as received, because none of them can be
-    // trusted to be payload-free once the walk itself failed.
-    warn("could not walk tool result content", ctx, error);
+    // trusted to be payload-free once the rewrite itself failed.
+    warn("could not rewrite tool result content", ctx, error);
     return {
       content: content.map(() => placeholder(UNSTORABLE)),
       inserted,
@@ -169,34 +165,6 @@ function warn(
 }
 
 /**
- * Whether this item's tree can hold an image block at all.
- *
- * A cheap scan before the rewriting walk. Ordinary updates are text, diff or
- * terminal items, and copying every container of every item to find nothing was
- * measurable (100 text items: ~4µs → ~23µs per update). The scan visits
- * containers only — a block is itself a container, and only containers nest — so
- * it cannot miss one; it just does not copy.
- */
-function mayContainImageBlock(item: unknown): boolean {
-  if (!isRecord(item)) return false;
-  const stack: Record<string, unknown>[] = [item];
-  while (stack.length > 0) {
-    const node = stack.pop()!;
-    if (Array.isArray(node)) {
-      for (const child of node) {
-        if (isRecord(child)) stack.push(child);
-      }
-      continue;
-    }
-    if (node.type === "image") return true;
-    for (const child of Object.values(node)) {
-      if (isRecord(child)) stack.push(child);
-    }
-  }
-  return false;
-}
-
-/**
  * The base64 an ACP image block still carries, or null when the value is not
  * one.
  *
@@ -212,57 +180,49 @@ function inlineImageData(value: unknown): string | null {
 }
 
 /**
- * Replace every inline image block anywhere in one content item with its stored
- * descriptor.
+ * Normalize one tool result content item.
  *
- * Every position is covered, because ACP allows an image block in more than one:
- * the item itself, a `{ type: "content", content: … }` wrapper, a wrapper's own
- * `_meta`, and a block's `_meta` — any key, any depth, arrays included. A
- * position the walk skipped would store a payload verbatim, which is the defect
- * this replaces.
+ * Two protocol positions can hold an image: the item itself, and `item.content`
+ * — the `{ type: "content", content: … }` wrapper, which is hoisted to the bare
+ * descriptor so a stored row keeps one shape. Nothing else is read or rewritten.
  *
- * The walk is iterative: a legal deeply nested `_meta` (a few thousand
- * single-element arrays is a 4 KB message) must not overflow the host stack.
- * Containers are copied, never mutated, because the event data is agent-supplied
- * and may be shared with the caller's object; an item with no image stores
- * nothing, so `storeToolResultImages` returns the original array.
+ * `_meta` is dropped from both levels instead: ACP defines it as
+ * implementation-specific metadata (arbitrary JSON, never read here), so it is
+ * not persisted. Dropping it is also what makes "no inline payload past ingest"
+ * true for that slot without walking it. An item with neither an image nor a
+ * `_meta` slot is returned as the same object.
  */
-function rewriteItem(
+function normalizeItem(
   item: ToolContentItem,
   store: (data: string) => ToolContentItem,
 ): ToolContentItem {
   const own = inlineImageData(item);
   if (own) return store(own);
 
-  // A `content` wrapper is hoisted to the item: the stored representation is
-  // the bare descriptor, so a stored row has one shape and not two. Any other
-  // field on the wrapper is dropped with it, so nothing it held can leak.
   const wrapped = inlineImageData(item.content);
   if (wrapped) return store(wrapped);
 
   if (!isRecord(item)) return item;
+  return dropMeta(item);
+}
 
-  const root = copyContainer(item);
-  const stack: Array<{
-    source: Record<string, unknown>;
-    target: Record<string, unknown>;
-  }> = [{ source: item, target: root }];
-  while (stack.length > 0) {
-    const { source, target } = stack.pop()!;
-    for (const [key, child] of Object.entries(source)) {
-      const payload = inlineImageData(child);
-      if (payload) {
-        target[key] = store(payload);
-      } else if (isRecord(child)) {
-        const copy = copyContainer(child);
-        target[key] = copy;
-        stack.push({ source: child, target: copy });
-      } else {
-        target[key] = child;
-      }
-    }
-  }
-  return root;
+/** A copy of one container without its `_meta` slot. */
+function withoutMeta(node: Record<string, unknown>): Record<string, unknown> {
+  const copy = { ...node };
+  delete copy._meta;
+  return copy;
+}
+
+/** Drop `_meta` from the item and from its `content` wrapper, if either has it. */
+function dropMeta(item: Record<string, unknown>): ToolContentItem {
+  const content = item.content;
+  const contentIsObject = isRecord(content) && !Array.isArray(content);
+  const contentHasMeta = contentIsObject && Object.hasOwn(content, "_meta");
+  if (!Object.hasOwn(item, "_meta") && !contentHasMeta) return item;
+
+  const copy = withoutMeta(item);
+  if (contentHasMeta) copy.content = withoutMeta(content);
+  return copy;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

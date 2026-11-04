@@ -95,18 +95,20 @@ before this rule) is an **unrecognized** content shape: the history projection
 marks it and the card renders nothing for it. It is not turned back into a
 picture and its payload is never echoed; there is no compatibility branch.
 
-Coverage — every position inside a content item is walked: the item itself, a
-`{ type: "content", content: … }` wrapper (hoisted to the bare descriptor, so a
-stored row has one shape), and any nested `_meta` at any depth, arrays included.
-Persistence and broadcast never carry an inline payload: a block that cannot be
-stored — too large, not a storable container, unwritable, or a walk that fails —
-becomes visible `[image omitted: …]` text in place of the picture, and the event
-itself is never lost: the walk is iterative, so a legal deeply nested `_meta` (a
-few thousand single-element arrays is a ~4 KB message) cannot cost the update.
-Degrading is a placeholder, never a pass-through. Two positions are explicitly
-**not** covered: `rawInput` (tool input, not a result picture — untouched) and
-`rawOutput` (never persisted; its inline `data` is emptied for the live frame
-instead of being stored).
+Only the protocol's content positions are read: the item itself when it is an
+image block, and `item.content` — the `{ type: "content", content: … }` wrapper,
+hoisted to the bare descriptor so a stored row has one shape. `_meta` is ACP's
+implementation-specific metadata (arbitrary JSON, never read by this app), so it
+is **dropped before persistence** instead of being walked: an opaque field is not
+stored, and a payload inside it cannot reach a client. The trade-off is explicit —
+a picture that exists only in `_meta` is not shown, not stored and not leaked.
+Persistence and broadcast therefore never carry an inline payload: a block that
+cannot be stored (too large, not a storable container, unwritable) becomes
+visible `[image omitted: …]` text in place of the picture, and the event itself
+is never lost. Degrading is a placeholder, never a pass-through. Two positions
+are explicitly **not** covered: `rawInput` (tool input, not a result picture —
+untouched) and `rawOutput` (never persisted; its inline `data` is emptied for the
+live frame instead of being stored).
 
 - Storage is the same attachment pipeline an agent message image uses: the same
   `tasks/<taskId>/attachments/<uuid>.<ext>` layout, the same `attachments` row,

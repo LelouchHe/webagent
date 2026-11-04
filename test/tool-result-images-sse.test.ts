@@ -208,7 +208,7 @@ describe("tool-result images: the live frame", () => {
     });
   });
 
-  it("stores an image nested in a content wrapper's metadata", () => {
+  it("drops a wrapper's _meta instead of storing or leaking its image", () => {
     const base64 = png(256).toString("base64");
 
     harness.toolCall("t1", "Screenshot");
@@ -223,8 +223,8 @@ describe("tool-result images: the live frame", () => {
           content: {
             type: "text",
             text: "kept",
-            // A wrapper's own metadata. It is not `item._meta`, so a walk that
-            // only looked there left the payload in SQLite and on the wire.
+            // A wrapper's own metadata: implementation-specific, never read
+            // here, so it is dropped rather than walked.
             _meta: {
               nested: { type: "image", mimeType: "image/png", data: base64 },
             },
@@ -233,30 +233,18 @@ describe("tool-result images: the live frame", () => {
       ] as unknown as ToolContentItem[],
     });
 
-    assert.equal(harness.store.countAttachments("t1", "image"), 1);
-    assert.equal(
-      JSON.stringify(harness.store.getEvents("t1")).includes(base64),
-      false,
-      "SQLite must not hold the payload",
-    );
+    assert.equal(harness.store.countAttachments("t1", "image"), 0);
+    const content = harness.storedContent();
+    assert.equal(textOf(content), "kept");
+    const inner = (content[0] as { content?: Record<string, unknown> }).content;
+    assert.equal(Object.hasOwn(inner!, "_meta"), false);
+
+    const stored = JSON.stringify(harness.store.getEvents("t1"));
+    assert.equal(stored.includes(base64), false, "SQLite must not hold it");
 
     const frame = frames.join("");
     assert.match(frame, /^data: \{/);
-    assert.equal(
-      frame.includes(base64),
-      false,
-      "the wire frame must not carry it",
-    );
-
-    // The descriptor sits where the payload was, and the text is untouched.
-    const content = harness.storedContent();
-    assert.equal(textOf(content), "kept");
-    const inner = (
-      content[0] as {
-        content?: { _meta?: { nested?: ToolContentItem } };
-      }
-    ).content;
-    assert.equal(attachmentOf(inner!._meta!.nested!)?.kind, "image");
+    assert.equal(frame.includes(base64), false, "the frame must not carry it");
   });
 
   it("degrades to a placeholder when the attachments table is unavailable", () => {

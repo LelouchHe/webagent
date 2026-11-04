@@ -101,12 +101,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
     `content`) is written to the shared attachment layout with a row and an
     unsigned descriptor; the persisted event and the live broadcast carry no
     base64 and keep the surrounding text; the wire's mime claim is ignored
-  - an image nested in a content block's `_meta` is stored the same way, so no
-    base64 survives ingest in a slot a reader never looks at
-  - a `_meta` nested 2000 and 5000 levels deep still stores and broadcasts the
-    event (the walk is iterative), and every non-image field survives verbatim
-  - an image that exists only in a nested `_meta` still invalidates the cached
-    label map, so a later event naming its path renders `agent-image-N`
+  - an image that exists only in `_meta` is not stored: no row, no payload in
+    the row, and `_meta` itself is dropped from the stored item
+  - a `_meta` nested 2000 and 5000 levels deep does not cost the event: it is
+    stored and broadcast, and the slot (with the payload inside it) is not
+    persisted
   - an item whose rewrite fails becomes a visible placeholder (its payload is
     dropped, never passed through) while its siblings are still stored
   - a failed attachment count only affects naming: the pictures are still stored
@@ -129,8 +128,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     keeps its shape and every other field with `data` emptied
   - an image nested in an image block's `_meta` (any depth) is emptied too, not
     only the outer block's `data`
-  - an image nested in a `content` wrapper's own `_meta` is stored as a
-    descriptor, and neither SQLite nor the frame carries its payload
+  - a `content` wrapper's own `_meta` is dropped, so the image inside it is
+    neither stored nor carried by SQLite or the frame
   - with the attachments table unavailable (the count or one insert throws), the
     event and the frame still go out, every block degrades to visible
     `[image omitted: …]` text, and neither SQLite nor the frame carries a
