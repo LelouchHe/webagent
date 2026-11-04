@@ -894,6 +894,18 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - one actionable error when the suite server is not serving this run's data
     directory
 
+### Multi-agent runtime
+
+- `agent-scope-reload.spec.ts` (private server, two configured agents)
+  - two tasks carried by two different agents; reloading the agent of the task
+    a client is *not* watching leaves it connected and idle, adds no reload
+    transcript line, keeps the watched task's id and history, and its next
+    prompt still round-trips
+  - reverse control: reloading the watched task's own agent *does* show the
+    busy phase (a `^C` flash caught by a DOM observer, not a poll) and the
+    completion line — without it the negative assertions would be vacuous
+  - the reloaded task is usable afterwards, with its history intact
+
 ### Multi-client synchronization
 
 - `multi-client-sync.spec.ts`
