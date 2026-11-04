@@ -18,6 +18,10 @@
   --accent-soft: rgba(88, 166, 255, 0.18);
   --user-image-max-width: 200px;
   --user-image-max-height: 150px;
+  /* Agent-returned images are the reply itself, so they get more room than a
+     user's attachment thumbnail. */
+  --agent-image-max-width: 360px;
+  --agent-image-max-height: 320px;
 }
 [data-theme="light"] {
   --bg: #ffffff;
@@ -1253,6 +1257,18 @@ body.file-viewer-open {
   display: block;
   margin-top: 4px;
   cursor: zoom-in;
+}
+.msg.assistant img.agent-image {
+  max-width: var(--agent-image-max-width);
+  max-height: var(--agent-image-max-height);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+  margin-top: 4px;
+  cursor: zoom-in;
+}
+.msg.assistant img.agent-image + img.agent-image {
+  margin-top: 8px;
 }
 .msg.user a.user-file {
   display: inline-block;

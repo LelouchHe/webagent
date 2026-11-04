@@ -26,10 +26,18 @@ function close() {
   img.src = "";
 }
 
-// Event delegation — any img.user-image inside #messages
+// Chat images that open the lightbox: a user's attachment and an image an
+// agent returned inline. One delegate, one open() — the payload differs (a
+// signed URL vs. a data URL), the interaction does not.
+const CLICKABLE_IMAGE_CLASSES = ["user-image", "agent-image"];
+
+// Event delegation — any clickable chat image inside #messages
 document.getElementById("messages")!.addEventListener("click", (e) => {
   const target = e.target as HTMLElement;
-  if (target.tagName === "IMG" && target.classList.contains("user-image")) {
+  if (
+    target.tagName === "IMG" &&
+    CLICKABLE_IMAGE_CLASSES.some((cls) => target.classList.contains(cls))
+  ) {
     open((target as HTMLImageElement).src);
   }
 });

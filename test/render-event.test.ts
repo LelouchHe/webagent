@@ -41,10 +41,11 @@ describe("render-event", () => {
   }
 
   describe("CONTENT_EVENT_TYPES", () => {
-    it("includes the canonical 10 event types", () => {
+    it("includes the canonical 11 event types", () => {
       const expected = [
         "user_message",
         "assistant_message",
+        "assistant_image",
         "thinking",
         "tool_call",
         "tool_call_update",
@@ -61,6 +62,69 @@ describe("render-event", () => {
       assert.equal(mod.isContentEventType("user_message"), true);
       assert.equal(mod.isContentEventType("message_chunk"), false);
       assert.equal(mod.isContentEventType("task_created"), false);
+    });
+  });
+
+  describe("assistant_image", () => {
+    it("builds one assistant bubble whose children are the agent's images", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "assistant_image",
+          {
+            images: [
+              { mimeType: "image/png", data: "AAAA" },
+              { mimeType: "image/jpeg", data: "BBBB" },
+            ],
+          },
+          makeHooks(),
+        ),
+      ) as HTMLElement;
+
+      assert.equal(el.className, "msg assistant");
+      const imgs = [...el.querySelectorAll("img")] as HTMLImageElement[];
+      assert.equal(imgs.length, 2);
+      assert.deepEqual(
+        imgs.map((img) => [
+          img.className,
+          img.alt,
+          img.loading,
+          img.getAttribute("src"),
+        ]),
+        [
+          ["agent-image", "agent image", "lazy", "data:image/png;base64,AAAA"],
+          ["agent-image", "agent image", "lazy", "data:image/jpeg;base64,BBBB"],
+        ],
+      );
+      // The bubble is not a markdown host: nothing carries a text payload.
+      assert.equal(el.getAttribute("data-raw"), null);
+    });
+
+    it("ignores payload entries that are not a usable image", () => {
+      const el = append(
+        mod.renderContentEvent(
+          "assistant_image",
+          {
+            images: [
+              { mimeType: "image/png", data: "AAAA" },
+              { mimeType: "", data: "BBBB" },
+              { mimeType: "image/png" },
+              null,
+              "nope",
+            ],
+          },
+          makeHooks(),
+        ),
+      ) as HTMLElement;
+
+      assert.equal(el.querySelectorAll("img.agent-image").length, 1);
+    });
+
+    it("renders nothing extra for an empty payload", () => {
+      const el = append(
+        mod.renderContentEvent("assistant_image", { images: [] }, makeHooks()),
+      ) as HTMLElement;
+      assert.equal(el.className, "msg assistant");
+      assert.equal(el.childElementCount, 0);
     });
   });
 

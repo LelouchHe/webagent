@@ -70,6 +70,8 @@ import {
   isContentEventType,
   getLastMarkdownStreamTiming,
   inheritAssistantDisplayState,
+  buildAgentImageMessage,
+  parseAgentImages,
   type RenderHooks,
   type ContentEventType,
 } from "./render-event.ts";
@@ -1590,6 +1592,16 @@ function handleReplayContentEvent(
       }
       break;
     }
+    case "assistant_image": {
+      // Its own element, never merged into a neighbouring text bubble: the
+      // image is its own stored record, exactly as live streaming renders it.
+      const el = renderContentEvent(type, d, hooks);
+      if (el) {
+        markReplayEventSeq(el, events[idx]);
+        appendMessageElement(el);
+      }
+      break;
+    }
     case "thinking": {
       const container = state.replayTarget ?? dom.messages;
       const lastChild = container.lastElementChild as HTMLElement | null;
@@ -2206,12 +2218,21 @@ export function handleEvent(msg: AgentEvent) {
       // as a fresh assistant bubble without reopening the foreground turn.
       hideWaiting();
       finishThinking();
-      if (!state.currentAssistantEl) {
-        state.currentAssistantEl = addMessage("assistant", "");
-        state.currentAssistantText = "";
+      if (msg.text) {
+        if (!state.currentAssistantEl) {
+          state.currentAssistantEl = addMessage("assistant", "");
+          state.currentAssistantText = "";
+        }
+        state.currentAssistantText += msg.text;
+        scheduleAssistantRender();
       }
-      state.currentAssistantText += msg.text;
-      scheduleAssistantRender();
+      if (parseAgentImages(msg.images).length > 0) {
+        // An agent image is its own element, exactly as replay renders its own
+        // record: close the text bubble (which flushes the pending markdown
+        // render) so the image never lands inside a markdown host.
+        finishAssistant();
+        appendMessageElement(buildAgentImageMessage(msg.images));
+      }
       break;
 
     case "thought_chunk":

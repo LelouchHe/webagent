@@ -28,6 +28,7 @@ import { buildPlanElement } from "./plan-view.ts";
 import { buildStructuredDiffLines } from "./structured-diff.ts";
 import { classifyToolContentItem } from "../../src/shared/tool-content.ts";
 import type {
+  AgentImage,
   RawInput,
   DiffLine,
   PlanEntry,
@@ -122,6 +123,7 @@ function applyStructuredDiff(
 export const CONTENT_EVENT_TYPES = [
   "user_message",
   "assistant_message",
+  "assistant_image",
   "thinking",
   "tool_call",
   "tool_call_update",
@@ -191,6 +193,8 @@ export function renderContentEvent(
       return buildUserMessage(data, hooks);
     case "assistant_message":
       return buildAssistantMessage(data, hooks);
+    case "assistant_image":
+      return buildAgentImageMessage(data.images);
     case "thinking":
       return buildThinking(data);
     case "tool_call":
@@ -340,6 +344,46 @@ function cssPixelVar(
   if (!raw.endsWith("px")) return fallback;
   const value = Number(raw.slice(0, -2));
   return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * The inline images an agent returned, from an event payload of unknown shape.
+ * One validator for both paths, so live streaming and replay accept exactly the
+ * same payloads.
+ */
+export function parseAgentImages(raw: unknown): AgentImage[] {
+  if (!Array.isArray(raw)) return [];
+  const images: AgentImage[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const { mimeType, data } = entry as { mimeType?: unknown; data?: unknown };
+    if (typeof mimeType !== "string" || !mimeType) continue;
+    if (typeof data !== "string" || !data) continue;
+    images.push({ mimeType, data });
+  }
+  return images;
+}
+
+/**
+ * The bubble for images an agent returned inline. Live streaming and replay
+ * both build it here, so the two paths cannot drift: same element, same
+ * classes, same data URL, same order. The payload is base64 and travels with
+ * the event — nothing is fetched, signed, or written to disk.
+ */
+export function buildAgentImageMessage(raw: unknown): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "msg assistant";
+  // No `data-raw`: this bubble carries no markdown text, and a markdown host
+  // must never receive foreign children (the streaming renderer owns them).
+  for (const { mimeType, data } of parseAgentImages(raw)) {
+    const img = document.createElement("img");
+    img.className = "agent-image";
+    img.alt = "agent image";
+    img.loading = "lazy";
+    img.src = `data:${mimeType};base64,${data}`;
+    el.appendChild(img);
+  }
+  return el;
 }
 
 function buildAssistantMessage(

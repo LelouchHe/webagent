@@ -425,6 +425,84 @@ describe("events", () => {
         assert.equal(state.busy, false);
       });
 
+      it("renders an agent image as its own element, identically live and on replay", () => {
+        const images = [
+          { mimeType: "image/png", data: "AAAA" },
+          { mimeType: "image/jpeg", data: "BBBB" },
+        ];
+
+        /** Class names, text, and image attributes, in document order. */
+        function shape() {
+          return Array.from(
+            dom.messages.querySelectorAll(".msg.assistant"),
+          ).map((el: any) => ({
+            className: el.className,
+            text: (el.textContent ?? "").trim(),
+            images: Array.from(el.querySelectorAll("img")).map((img: any) => [
+              img.className,
+              img.getAttribute("alt"),
+              img.getAttribute("loading"),
+              img.getAttribute("src"),
+            ]),
+          }));
+        }
+
+        // Live: text, image, text — one chunk each.
+        events.handleEvent({ type: "message_chunk", text: "before" });
+        events.handleEvent({ type: "message_chunk", text: "", images });
+        events.handleEvent({ type: "message_chunk", text: "after" });
+        events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+        const live = shape();
+        assert.deepEqual(live, [
+          { className: "msg assistant", text: "before", images: [] },
+          {
+            className: "msg assistant",
+            text: "",
+            images: [
+              [
+                "agent-image",
+                "agent image",
+                "lazy",
+                "data:image/png;base64,AAAA",
+              ],
+              [
+                "agent-image",
+                "agent image",
+                "lazy",
+                "data:image/jpeg;base64,BBBB",
+              ],
+            ],
+          },
+          { className: "msg assistant", text: "after", images: [] },
+        ]);
+
+        // Replay of the same records must produce the same DOM.
+        stateMod.resetTaskUI();
+        resetState(state, dom);
+        const stored: any[] = [
+          {
+            type: "assistant_message",
+            data: JSON.stringify({ text: "before" }),
+            seq: 1,
+          },
+          {
+            type: "assistant_image",
+            data: JSON.stringify({ images }),
+            seq: 2,
+          },
+          {
+            type: "assistant_message",
+            data: JSON.stringify({ text: "after" }),
+            seq: 3,
+          },
+        ];
+        stored.forEach((event, idx) => {
+          events.replayEvent(event.type, JSON.parse(event.data), stored, idx);
+        });
+
+        assert.deepEqual(shape(), live);
+      });
+
       it("appends to existing assistant element", () => {
         events.handleEvent({ type: "message_chunk", text: "hello " });
         events.handleEvent({ type: "message_chunk", text: "world" });
