@@ -14,9 +14,11 @@
 // Retirement condition: when Copilot's image tool emits a real ACP image
 // block, delete this file and its call site. Deleting it means exactly:
 //   1. delete `src/agent-compatibility/copilot-image-path.ts`
-//   2. delete the `recoverCopilotImagePath` import in `src/event-handler.ts`
-//   3. delete the one call in that file's `tool_call_update` branch
-// Nothing else refers to it, and no barrel exists to update.
+//   2. delete the import of `recoverCopilotImagePath` **and** `toolResultText`
+//      in `src/event-handler.ts` (they share one import line)
+//   3. delete the one call to `recoverCopilotImagePath` in that file's
+//      `tool_call_update` branch; `toolResultText` exists only to feed it
+// Nothing else refers to either, and no barrel exists to update.
 //
 // Rules for anything that lands in `src/agent-compatibility/` (one directory
 // for upstream-defect shims; no `index.ts` barrel until a second shim exists):
@@ -49,8 +51,9 @@ import { isAbsolute } from "node:path";
 import { attachmentDescriptor, storeImageBytes } from "../agent-image.ts";
 import { sniffImageMime } from "../attachments.ts";
 import { log } from "../log.ts";
+import { classifyToolContentItem } from "../shared/tool-content.ts";
 import type { Store } from "../store.ts";
-import type { AgentImageAttachment } from "../types.ts";
+import type { AgentImageAttachment, ToolContentItem } from "../types.ts";
 
 const plog = log.scope("agent-compatibility");
 
@@ -59,6 +62,23 @@ const TOOL_TITLE = "image_generation";
 
 const IMAGE_ID_MARKER = /image_id:\s*sha256:([0-9a-f]{64})/i;
 const SAVED_TO_MARKER = /saved_to:\s*(\S+)/;
+
+/**
+ * The text a tool result carries, one line per item, empty items dropped.
+ *
+ * Only the shim's eligibility test reads it: whether the result text names a
+ * file. It lives here, not in the normal image path, so deleting the shim also
+ * removes its last caller and leaves no unused import behind.
+ */
+export function toolResultText(content: ToolContentItem[]): string {
+  return content
+    .map((item) => {
+      const shape = classifyToolContentItem(item);
+      return shape.kind === "content" ? shape.text : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
 
 export interface CopilotImagePathContext {
   store: Store;

@@ -18,9 +18,11 @@ import { classifyToolContentItem } from "./shared/tool-content.ts";
 import {
   storeToolResultImages,
   stripRawOutputImageData,
-  toolResultText,
 } from "./tool-result-image.ts";
-import { recoverCopilotImagePath } from "./agent-compatibility/copilot-image-path.ts";
+import {
+  recoverCopilotImagePath,
+  toolResultText,
+} from "./agent-compatibility/copilot-image-path.ts";
 
 const ailog = log.scope("attachment-interceptor");
 const plog = log.scope("push");

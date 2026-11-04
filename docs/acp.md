@@ -131,7 +131,9 @@ never affected. It adds no configuration key and no path allowlist.
 **Delete it when Copilot's image tool emits a real ACP image block**: delete
 `src/agent-compatibility/copilot-image-path.ts`, its import in
 `src/event-handler.ts`, and the one call in that file's `tool_call_update`
-branch. There is no barrel and no registration list.
+branch. The import line also brings in `toolResultText`, which exists only to
+feed the shim's eligibility test, so it goes with the same line; with both
+removed nothing unused remains. There is no barrel and no registration list.
 
 ## Client Extensions
 
