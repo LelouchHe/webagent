@@ -56,7 +56,24 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
 - ACP cancel is a notification rather than an acknowledgement. WebAgent keeps
   the prompt active until its prompt response supplies the terminal stop reason;
   timeout only marks the request unconfirmed.
-- The UI renders a subset of ACP session updates: assistant text, thinking text, tool calls, tool call updates, and plans
+- The UI renders a subset of ACP session updates: assistant text, images,
+  thinking text, tool calls, tool call updates, and plans. Which content blocks
+  survive the bridge:
+  - `agent_message_chunk` **text** → `message_chunk` text (aggregated into an
+    `assistant_message` record).
+  - `agent_message_chunk` **image** → an `agent_image` event, stored as its own
+    record between the text blocks around it. The bytes never reach the
+    database or a client: the event handler writes them as an **attachment**
+    (same layout, row, unsigned `path` + egress re-sign and cleanup a user
+    upload gets) and the event carries the reference. See
+    [Uploads](uploads.md#agent-returned-images).
+  - An image above `limits.image_upload` (the existing upload ceiling), one
+    whose content is not a storable image container, or one that cannot be
+    written, is not stored: the transcript gets the visible text
+    `[image omitted: 12.3 MB > 10 MB limit]` in its place, so a gap always has
+    a reason next to it.
+  - An image inside `agent_thought_chunk` is dropped (thinking is text), as are
+    audio and embedded-resource blocks.
 - Standard prompt stop reasons are preserved in history. `end_turn` completes silently; `cancelled`, `max_tokens`, `max_turn_requests`, and `refusal` also render a system notice explaining why the turn stopped.
 - Rejected `session/prompt` requests render and persist as system errors rather than assistant messages, so UI diagnostics remain outside agent context.
 - Session history is persisted locally and restored after server restart

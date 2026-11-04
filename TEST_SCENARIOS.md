@@ -87,6 +87,15 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 ### ACP bridge and backend orchestration
 
+- `test/bridge-agent-image.test.ts`
+  - an agent image chunk leaves the transport as an `agent_image` event carrying the agent's block; one image per chunk
+  - an image inside a thought chunk is still dropped, and a text chunk is unchanged
+
+- `test/agent-image-store.test.ts`
+  - an inline image is written to the shared attachment layout with a row and an unsigned base path; the wire's mime claim is ignored in favour of the content
+  - dimensions come from the bytes, the row goes with the task, and a second image is named in sequence
+  - an image above `limits.image_upload`, a payload that is not a storable image container, an empty/malformed payload, and a file-write failure each become visible `[image omitted: …]` text with no file and no row
+
 - `test/bridge.test.ts`
   - prompt success / failure / cancellation
   - silent prompt buffering for compact summarization
@@ -208,6 +217,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/store.test.ts`
   - task creation / deletion / updates
   - config persistence
+  - an agent image is stored as an attachment (file + row) and referenced by its own `agent_image` record between the surrounding text blocks; the persisted row carries no base64, the live broadcast is the same reference, and an oversized image becomes visible text with no row
   - title persistence
   - unix-millisecond `last_active_at` for stable ordering
   - the single literal `root` anchor persists across reopen and agent keys, keeps `parent_id = NULL`, preserves a renamed title, and is never adopted into a parent
@@ -779,6 +789,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - clicking an image opens the lightbox overlay
   - backdrop click and Escape close the lightbox
   - mouse wheel zooms the lightbox image
+
+- `agent-image.spec.ts`
+  - an image the agent returns renders as `img.agent-image` with a **signed attachment URL** (never base64), between the text blocks around it, and opens the same lightbox
+  - a reload replays it from the stored `agent_image` record: same three-element order, same URL form, and the row carries no bytes; following the signed URL returns the exact PNG
 
 - `file-attachment-download.spec.ts`
   - non-image attachment renders as a clickable file chip in the user message
