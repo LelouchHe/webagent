@@ -298,6 +298,9 @@ function createAgentTransport(agentId: string): AgentBridge {
   const agent = config.agents[agentId];
   const b = new AgentBridge(agent.cmd, store.sessionView(agentId), agentId);
   b.setAttachmentDispatcher(attachmentDispatcher);
+  // An agent's inline image is rendered as-is, so the upload ceiling is the
+  // one place that decides "too big to carry through an event".
+  b.setImageInlineLimit(config.limits.image_upload);
   b.setExecutionLeaseSource(executionAuthority);
 
   b.on("event", (event: AgentEvent) => {

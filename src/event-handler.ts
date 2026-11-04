@@ -80,9 +80,22 @@ function handleConfigLikeEvent(
 function handleMessageChunk(
   event: MessageChunkEvent,
   tasks: TaskManager,
+  store: Store,
 ): void {
   tasks.flushThinkingBuffer(event.taskId);
-  tasks.appendAssistant(event.taskId, event.text);
+  const images = event.images ?? [];
+  if (images.length > 0) {
+    // An inline image is its own stored record, so the text around it keeps
+    // its order in a replay: the pending text block is flushed first.
+    tasks.flushAssistantBuffer(event.taskId);
+    store.saveEvent(
+      event.taskId,
+      "assistant_image",
+      { images },
+      { from_ref: "agent" },
+    );
+  }
+  if (event.text) tasks.appendAssistant(event.taskId, event.text);
   tasks.state.patch(event.taskId, {
     runtime: { streaming: { assistant: true, thinking: false } },
   });
@@ -419,7 +432,7 @@ function dispatchAgentEvent(
       handleConfigLikeEvent(event, tasks);
       return false;
     case "message_chunk":
-      handleMessageChunk(event, tasks);
+      handleMessageChunk(event, tasks, store);
       return false;
     case "thought_chunk":
       handleThoughtChunk(event, tasks);

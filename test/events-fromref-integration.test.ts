@@ -84,6 +84,34 @@ describe("event writers populate from_ref correctly", () => {
     assert.equal(done?.from_ref, "agent");
   });
 
+  it("assistant_image is its own record, ordered between text blocks", () => {
+    const images = [{ mimeType: "image/png", data: "iVBORw0KGgo=" }];
+
+    emit({ type: "message_chunk", taskId: "s1", text: "before" });
+    emit({ type: "message_chunk", taskId: "s1", text: "", images });
+    emit({ type: "message_chunk", taskId: "s1", text: "after" });
+    emit({ type: "prompt_done", taskId: "s1", stopReason: "end_turn" });
+
+    const assistant = store
+      .getEvents("s1")
+      .filter(
+        (event) =>
+          event.type === "assistant_message" ||
+          event.type === "assistant_image",
+      );
+    // The image is its own record, so a replay keeps text → image → text
+    // instead of glueing the image into a text block.
+    assert.deepEqual(
+      assistant.map((event) => event.type),
+      ["assistant_message", "assistant_image", "assistant_message"],
+    );
+    assert.deepEqual(JSON.parse(assistant[0].data), { text: "before" });
+    assert.deepEqual(JSON.parse(assistant[2].data), { text: "after" });
+    // The payload is stored exactly as the agent sent it: base64, no rewriting.
+    assert.deepEqual(JSON.parse(assistant[1].data), { images });
+    assert.equal(assistant[1].from_ref, "agent");
+  });
+
   it("thinking (flushed from buffer) is from_ref='agent'", () => {
     emit({ type: "thought_chunk", taskId: "s1", text: "hmm" });
     emit({

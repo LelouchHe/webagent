@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import * as acp from "@agentclientprotocol/sdk";
 import type {
   AgentEvent,
+  AgentImage,
   ConfigOption,
   ConfigValue,
   RawInput,
@@ -35,6 +36,28 @@ const blog = log.scope("bridge");
 // message. Keep an explicit finite bound while allowing JSON-escaped text and
 // its ACP envelope through.
 export const MAX_ACP_MESSAGE_BYTES = 128 * 1024 * 1024;
+
+/**
+ * Default ceiling for an inline agent image, matching the schema default of
+ * `limits.image_upload`. An image above it is reported as text instead of
+ * being rendered, so an oversized payload never travels through the event
+ * stream; the server wires the configured value in at boot.
+ */
+const DEFAULT_MAX_INLINE_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** Decoded byte length of a base64 payload, without decoding it. */
+function base64ByteLength(data: string): number {
+  const trimmed = data.endsWith("==")
+    ? data.slice(0, -2)
+    : data.replace(/=$/, "");
+  return Math.floor((trimmed.length * 3) / 4);
+}
+
+/** Human megabyte label; `10 MB`, `12.3 MB`. */
+function megabytes(bytes: number): string {
+  const value = bytes / (1024 * 1024);
+  return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)} MB`;
+}
 
 export interface AgentSessionIds {
   /**
@@ -169,6 +192,13 @@ export class AgentBridge extends EventEmitter {
     this.agentId = agentId;
     this.sessionIds = sessionIds;
   }
+
+  /** Inline an agent image only while its decoded size is under this limit. */
+  setImageInlineLimit(bytes: number): void {
+    this.imageInlineLimit = bytes;
+  }
+
+  private imageInlineLimit = DEFAULT_MAX_INLINE_IMAGE_BYTES;
 
   private agentSessionId(taskId: string): string {
     const id = this.sessionIds.getAgentSessionId(taskId);
@@ -1130,6 +1160,53 @@ export class AgentBridge extends EventEmitter {
     }
   }
 
+  /**
+   * A message chunk keeps the blocks the transcript can show: text, and an
+   * image as its own event (one content block per chunk, never a batch).
+   * Audio and embedded resources stay unrendered, as before.
+   */
+  private messageChunkEvent(
+    taskId: string,
+    content: acp.ContentBlock,
+  ): AgentEvent | null {
+    if (content.type === "text") {
+      return { type: "message_chunk", taskId, text: content.text };
+    }
+    return content.type === "image"
+      ? this.inlineImageChunk(taskId, content)
+      : null;
+  }
+
+  /**
+   * One inline image, or the placeholder that stands in for an oversized one.
+   *
+   * The payload is carried exactly as the agent sent it (base64, no disk, no
+   * rewriting). Oversized images are refused loudly rather than dropped: a
+   * silent hole in the transcript is worse than a visible note, and the note
+   * keeps the event's place in the stream.
+   */
+  private inlineImageChunk(
+    taskId: string,
+    content: acp.ImageContent,
+  ): AgentEvent {
+    const mimeType =
+      typeof content.mimeType === "string" ? content.mimeType : "";
+    const data = typeof content.data === "string" ? content.data : "";
+    const bytes = base64ByteLength(data);
+    if (!mimeType || !data || bytes === 0) {
+      return { type: "message_chunk", taskId, text: "[image omitted: empty]" };
+    }
+    if (bytes > this.imageInlineLimit) {
+      return {
+        type: "message_chunk",
+        taskId,
+        text: `[image omitted: ${megabytes(bytes)} > ${megabytes(this.imageInlineLimit)} limit]`,
+      };
+    }
+    const image: AgentImage = { mimeType, data };
+    return { type: "message_chunk", taskId, text: "", images: [image] };
+  }
+
   private sessionUpdateToEvent(
     taskId: string,
     agentSessionId: string,
@@ -1138,9 +1215,7 @@ export class AgentBridge extends EventEmitter {
     // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- only handles events with UI effects
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
-        return update.content.type === "text"
-          ? { type: "message_chunk", taskId, text: update.content.text }
-          : null;
+        return this.messageChunkEvent(taskId, update.content);
 
       case "agent_thought_chunk":
         return update.content.type === "text"

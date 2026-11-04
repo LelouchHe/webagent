@@ -25,6 +25,19 @@ export interface ConfigBooleanOption {
 
 export type ConfigOption = ConfigSelectOption | ConfigBooleanOption;
 
+/**
+ * One image an agent returned inline with a message chunk.
+ *
+ * The payload is the ACP block's base64 exactly as it arrived: nothing is
+ * decoded, re-encoded, or written to disk. It travels with the event, so both
+ * the live stream and a replay carry the bytes.
+ */
+export interface AgentImage {
+  mimeType: string;
+  /** Base64-encoded image bytes. */
+  data: string;
+}
+
 // --- Shared interfaces used by both frontend and backend ---
 
 /** Debug log entry produced by the frontend Logger or a future server log SSE bridge. */
@@ -197,7 +210,13 @@ export type AgentEvent =
       epoch?: string;
       revision?: number;
     }
-  | { type: "message_chunk"; taskId: string; text: string }
+  | {
+      type: "message_chunk";
+      taskId: string;
+      text: string;
+      /** Inline images from this chunk; empty text is normal for these. */
+      images?: AgentImage[];
+    }
   | { type: "thought_chunk"; taskId: string; text: string }
   | {
       type: "tool_call";
