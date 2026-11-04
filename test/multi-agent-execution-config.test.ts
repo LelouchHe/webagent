@@ -140,6 +140,65 @@ describe("a replacement owned by another agent", () => {
     }
   });
 
+  it("clears the columns even when the replacement reports no config", async () => {
+    // A replacement that reports no schema at all is the case that makes the
+    // clear load-bearing: adopting the report cannot stand in for it, so the
+    // previous agent's values would otherwise stay on the task and be replayed
+    // into the next same-agent replacement.
+    const harness = await startHarness({ schemaB: [] });
+    try {
+      const taskId = await taskOnA(harness);
+
+      const cleared = await harness.request(
+        "POST",
+        `/api/v1/tasks/${taskId}/clear`,
+        { agentId: AGENT_B },
+      );
+      assert.equal(cleared.status, 200);
+      assert.equal(harness.store.getBindingAgent(taskId), AGENT_B);
+      assert.equal(harness.agents.b.newSessions.length, 1);
+
+      // Nothing was sent to B, and nothing of A's survived.
+      assert.deepEqual(harness.agents.b.configWrites, []);
+      const row = harness.store.getTask(taskId);
+      assert.ok(row, "the task row still exists");
+      assert.deepEqual(rowValues(row), {
+        model: null,
+        mode: null,
+        reasoning_effort: null,
+      });
+
+      // The response cannot offer A's values either: B reported no options to
+      // offer. "Absent" is the honest answer here — never a guess.
+      const options = (cleared.json.configOptions ?? []) as Array<{
+        currentValue?: unknown;
+      }>;
+      assert.deepEqual(options, []);
+      assert.deepEqual(executionValues(cleared.json), {
+        model: undefined,
+        mode: undefined,
+        reasoning_effort: undefined,
+      });
+
+      // A later same-agent replacement finds nothing to replay.
+      const writesBefore = harness.agents.b.configWrites.length;
+      const again = await harness.request(
+        "POST",
+        `/api/v1/tasks/${taskId}/clear`,
+        {},
+      );
+      assert.equal(again.status, 200);
+      assert.deepEqual(harness.agents.b.configWrites.slice(writesBefore), []);
+      assert.deepEqual(rowValues(harness.store.getTask(taskId)!), {
+        model: null,
+        mode: null,
+        reasoning_effort: null,
+      });
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("keeps a same-agent replacement's stored config", async () => {
     const harness = await startHarness();
     try {
