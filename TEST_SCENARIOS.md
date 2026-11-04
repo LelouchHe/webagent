@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-11-03
+Last updated: 2026-11-04
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -54,6 +54,35 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a live process that refuses `initialize` is cleaned up (its pid is gone) and the same agent retries successfully
   - a reload beside a start is refused, a resolve during a reload waits, and one process exists throughout
   - `shutdownAll` reaches a transport whose adapter was already unbound
+
+- `test/multi-agent-directory.test.ts` (HTTP; two configured agents)
+  - `GET /config` and every bootstrap branch carry `agents` + `defaultAgentId`; each entry is exactly `id` + `available`, built from a controlled PATH (one real binary, one missing) rather than from the response
+  - taking the directory creates no adapter and no ACP session; bootstrap starts only the agent it materializes
+
+- `test/multi-agent-create.test.ts` (HTTP + direct runtime)
+  - creating for a named agent binds it with exactly one session on that agent, none on the parent's agent, and leaves no rotation record; the parent's binding is untouched
+  - a same-agent create still inherits the source task's model and reasoning effort; a cross-agent create sends the source's values nowhere and reports the target's own schema
+  - an unconfigured or non-string `agentId` is refused with `400` before anything starts, and a configured agent that cannot start returns `503` with its real reason (no silent substitution)
+  - the parent-binding guard still refuses a child built through another agent's transport unless that caller named the target
+
+- `test/multi-agent-execution-config.test.ts` (HTTP + direct runtime; two agents with distinguishable schemas)
+  - an explicit clear onto another agent sends none of the old values (one of them is legal on the target, so a rejection cannot hide an omission), and the clear response, the database row, and the detail read agree on the replacement's own defaults
+  - the replacement's report survives a live resume (asserted directly, not through the detail read) and a cold reopen — the database reopened in a new store, fresh transports, and a row value the new session does not report — while another task's session values sit in the agent's cache
+  - a replacement that reports no schema leaves the columns null (never the old values), and a follow-up same-agent rotation finds nothing to replay
+  - going A → B → A starts from A's defaults again instead of restoring the abandoned choice; a same-agent clear still replays the stored mode/thinking/model in order
+  - an implicit takeover (the owner left the configuration) drops the stored values, keeps the `agent_rotation` record, and adopts the replacement's report
+  - named boundary: with the agent's cache warmed by another task, an unreporting replacement's task reads that other task's values (null cannot override the shared cache), while the warm task still reads its own
+
+- `test/multi-agent-config-replay.test.ts` (real ACP agent process, real `AgentBridge`)
+  - a config report written immediately after the `session/new` result is queued by the transport, replayed when the binding commits, and survives the rotation's tail: the initial response's older value never rolls it back
+
+- `test/multi-agent-config-clear.test.ts` (real ACP agent process, real `AgentBridge`)
+  - a cross-agent clear whose replacement reports `medium` *before* its `session/new` result (which says `high`) keeps `medium`, and the clear response agrees: the clear runs before the transport replays queued updates, so ordering — not value equality — decides ownership
+  - the same holds when the new report re-selects the value the task already had (`rotate("before", "medium")`): "the row did not change" is not proof nobody wrote
+  - control: an unreporting replacement still has the old value cleared and adopts its snapshot default, so the zeroing itself is not disabled
+
+- `test/multi-agent-cwd-defaults.test.ts`
+  - an omitted `cwd` on `/clear` keeps the task's own directory while an omitted `cwd` on create uses the server default, even for a child of a task that runs elsewhere
 
 - `test/multi-agent-config-race.test.ts` (HTTP)
   - a configuration request parked in `readBody` while the task is cleared onto another agent is refused with `409`, and no configuration request reaches the new execution
@@ -291,7 +320,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/store.test.ts`
   - task creation / deletion / updates
-  - config persistence
+  - config persistence, including clearing one column with `null` without touching the others
   - an agent image is stored as an attachment (file + row) and referenced by its own `agent_image` record between the surrounding text blocks; the persisted row carries no base64, the live broadcast is the same reference, and an oversized image becomes visible text with no row
   - title persistence
   - unix-millisecond `last_active_at` for stable ordering
@@ -1010,6 +1039,16 @@ spot gaps, and decide what still needs to be added without reading every spec.
     busy phase (a `^C` flash caught by a DOM observer, not a poll) and the
     completion line — without it the negative assertions would be vacuous
   - the reloaded task is usable afterwards, with its history intact
+
+- `multi-agent-task.spec.ts` (suite server, two configured agents)
+  - `GET /config` and bootstrap name both agents with PATH availability and the
+    default agent
+  - a task created with `agentId: mock2` reports mock2's own defaults (never the
+    first option of its lists) and carries no rotation record
+  - clearing onto the other agent starts from that agent's environment, and
+    clearing back starts from the first agent's defaults rather than restoring
+    the abandoned choice
+  - creating for an unconfigured agent is a `400` client error
 
 ### Multi-client synchronization
 

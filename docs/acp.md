@@ -50,6 +50,34 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
   default agent on next use, or on an explicit `POST /clear`. Until then the
   task stays readable, deletable, shareable, and clearable while its agent is
   unavailable.
+- A task's `model` / `mode` / `reasoning_effort` belong to the execution
+  environment, not to the task, so they are not carried across agents. Both
+  ways the environment can change clear them before any config is replayed: an
+  explicit `/clear` onto another agent, and the implicit takeover of a removed
+  owner (which does not run through `clearTask`). The replacement session's
+  self-reported values then become the task's stored config — never the first
+  entry of an option list — so the database, the detail read, a live resume,
+  and a cold restore agree. A same-agent replacement keeps replaying them.
+- Those three values are agent-defined opaque strings, and ACP treats choice
+  values as opaque, so the host neither validates nor repairs them: a value the
+  agent rejects leaves that session on its own default, and a task that stored
+  none shows what the agent currently reports rather than a guessed value.
+- New tasks may name their agent. That is the one case where the parent-binding
+  guard is not applied: the caller chose the new task's environment, and
+  creating a child never rewrites an existing task's binding. A child created
+  for another agent does not inherit the source task's execution config.
+- A read can write the execution config columns. A task whose binding agent is
+  still configured but whose execution slot is unmaterialized (an earlier
+  takeover, a Root reset) is materialized by the background warm a detail or
+  snapshot read starts; the session it creates reports its own `model` /
+  `mode` / `reasoning_effort`, and adoption fills only the columns the task has
+  no value for. A read never takes a task over from an agent that left the
+  configuration — that stays an operation's job — because a read has to answer
+  while the agent is gone.
+- The configured agent directory (id + startup PATH availability) is reported
+  by `GET /api/v1/config` and bootstrap. It is a configuration fact: taking it
+  resolves and starts nothing, and `available: true` means the launch command
+  exists on PATH — not that the process can start, handshake, or authenticate.
 - The agent `connected` event names its agent (`agentId`) so a client can tell
   one agent coming up from another. The SSE connection handshake is a different
   event and carries no agent.

@@ -1712,8 +1712,17 @@ export class Store {
     return result.changes > 0;
   }
 
-  /** Update a config option value (model, mode, reasoning_effort) for a task. */
-  updateTaskConfig(id: string, configId: string, value: string): void {
+  /**
+   * Update a config option value (model, mode, reasoning_effort) for a task.
+   *
+   * `null` clears the column: the value is an execution fact, so a task whose
+   * execution environment changed has no stored choice of its own rather than
+   * an empty string. Only the named column is touched.
+   */ updateTaskConfig(
+    id: string,
+    configId: string,
+    value: string | null,
+  ): void {
     const column = (
       {
         model: "model",
@@ -1724,7 +1733,9 @@ export class Store {
     )[configId];
     if (!column) return;
     const storedValue =
-      configId === "model" ? canonicalModelIdentity(value) : value;
+      value !== null && configId === "model"
+        ? canonicalModelIdentity(value)
+        : value;
     this.db
       .prepare(`UPDATE tasks SET ${column} = ? WHERE id = ?`)
       .run(storedValue, id);

@@ -31,7 +31,9 @@ import type { McpServer, McpServerHttp } from "@agentclientprotocol/sdk";
 // and rejects `session/load` loudly, so a client that still prefers load fails
 // instead of silently passing through the unadvertised method.
 const MOCK_PROFILE = process.argv[2] ?? "load";
-const MOCK_CALLS_PATH = process.argv[3];
+// "-" means "record nothing": a configured agent's command line needs a
+// placeholder when only later arguments are used.
+const MOCK_CALLS_PATH = process.argv[3] === "-" ? undefined : process.argv[3];
 /**
  * Optional delay before a restored session reports its schema and commands.
  * A real CLI replays history on `session/load`, which can take seconds; tests
@@ -76,7 +78,68 @@ const SCREENSHOT_PROMPT_ALIASES = new Map([
   ["Request approval before running the sensitive command.", "E2E_PERMISSION"],
 ]);
 
+/**
+ * Optional per-agent execution environment, so two configured agents run the
+ * same stub binary but report *different* defaults: `key=value` pairs, comma
+ * separated, e.g. `model=mock2-model,reasoning=high`.
+ *
+ * Each overridden value is placed after the first option. That way "the first
+ * entry of the option list" is never this agent's default either, so a test can
+ * distinguish this agent's own default from the list order and from the other
+ * agent's values.
+ */
+const MOCK_VARIANT = new Map<string, string>(
+  (process.argv[5] ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const separator = entry.indexOf("=");
+      return separator === -1
+        ? [entry, ""]
+        : [entry.slice(0, separator), entry.slice(separator + 1)];
+    }),
+);
+
+const VARIANT_KEYS: Record<string, string> = {
+  model: "model",
+  mode: "mode",
+  reasoning_effort: "reasoning",
+};
+
+function applyVariant(options: SessionConfigOption[]): SessionConfigOption[] {
+  if (MOCK_VARIANT.size === 0) return options;
+  return options.map((option) => {
+    const key = VARIANT_KEYS[option.id];
+    const value = key ? MOCK_VARIANT.get(key) : undefined;
+    if (!key || !value || option.type !== "select") return option;
+    if (!option.options.every((choice) => !("options" in choice))) {
+      // A grouped model list is a different surface; leave it alone.
+      return option;
+    }
+    const choices = option.options as Array<{ value: string; name: string }>;
+    const chosen = choices.find((choice) => choice.value === value) ?? {
+      value,
+      name: value,
+    };
+    const [first, ...rest] = choices;
+    return {
+      ...option,
+      currentValue: value,
+      options: [
+        first,
+        chosen,
+        ...rest.filter((choice) => choice.value !== value),
+      ],
+    };
+  });
+}
+
 function createConfigOptions(groupedModel = false): SessionConfigOption[] {
+  return applyVariant(createBaseConfigOptions(groupedModel));
+}
+
+function createBaseConfigOptions(groupedModel = false): SessionConfigOption[] {
   const modelOneValue = JSON.stringify(["vendor-a", "model-one"]);
   const modelTwoValue = JSON.stringify(["vendor-a", "model-two"]);
   return [

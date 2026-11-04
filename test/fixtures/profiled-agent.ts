@@ -1,0 +1,160 @@
+import type { ConfigOption } from "../../src/types.ts";
+
+/**
+ * A transport that reports one configured agent's execution environment.
+ *
+ * Unlike the repo's generic bridge doubles, this one carries *agent identity*
+ * (`agentId`) and a schema whose `currentValue` is deliberately distinguishable
+ * from every other agent's: a test can tell "this agent's own default" from
+ * "the previous agent's value" and from "the first entry of the option list".
+ *
+ * Every call is recorded, so counting sessions per agent is a plain array read.
+ */
+
+export interface ConfigWrite {
+  taskId: string;
+  id: string;
+  value: string;
+}
+
+export interface ProfiledAgent {
+  agentId: string;
+  /** Sessions this agent created, in order. */
+  newSessions: string[];
+  /** Config writes this agent received, in order. */
+  configWrites: ConfigWrite[];
+  /** Tasks this agent was asked to restore. */
+  loads: string[];
+  /** Executions this agent retired. */
+  retired: string[];
+  bridge: {
+    agentId: string;
+    newSession(cwd: string): Promise<{
+      sessionId: string;
+      configOptions: ConfigOption[];
+    }>;
+    setConfigOption(
+      taskId: string,
+      configId: string,
+      value: string,
+    ): Promise<ConfigOption[]>;
+    loadSession(
+      taskId: string,
+      cwd: string,
+    ): Promise<{ taskId: string; configOptions: ConfigOption[] }>;
+    retireExecution(agentSessionId: string): Promise<void>;
+    isAvailable(): boolean;
+  };
+}
+
+export interface ProfiledAgentOptions {
+  /**
+   * Schema one new session reports, by 1-based session index. Defaults to the
+   * agent's own schema. A test uses this for the shape where a session's result
+   * carries no `configOptions` at all: the agent then has nothing to say about
+   * that session's environment.
+   */
+  newSessionSchema?: (sessionIndex: number) => ConfigOption[];
+}
+
+/** Deep copy so one session's mutation cannot leak into another's report. */
+function copyOptions(configOptions: ConfigOption[]): ConfigOption[] {
+  return JSON.parse(JSON.stringify(configOptions)) as ConfigOption[];
+}
+
+export function createProfiledAgent(
+  agentId: string,
+  schema: ConfigOption[],
+  options: ProfiledAgentOptions = {},
+): ProfiledAgent {
+  const newSessions: string[] = [];
+  const configWrites: ConfigWrite[] = [];
+  const loads: string[] = [];
+  const retired: string[] = [];
+  /** Per-task config values, so a response reports the whole session state. */
+  const sessionValues = new Map<string, Record<string, string>>();
+
+  const report = (taskId: string): ConfigOption[] => {
+    const values = sessionValues.get(taskId) ?? {};
+    return copyOptions(schema).map((option) =>
+      "options" in option && typeof values[option.id] === "string"
+        ? { ...option, currentValue: values[option.id] }
+        : option,
+    );
+  };
+
+  const bridge = {
+    agentId,
+    async newSession(cwd: string) {
+      newSessions.push(cwd);
+      const sessionIndex = newSessions.length;
+      const reported = options.newSessionSchema
+        ? options.newSessionSchema(sessionIndex)
+        : schema;
+      return {
+        sessionId: `${agentId}-session-${sessionIndex}`,
+        // A fresh session reports this agent's own defaults.
+        configOptions: copyOptions(reported),
+      };
+    },
+    async setConfigOption(taskId: string, configId: string, value: string) {
+      configWrites.push({ taskId, id: configId, value });
+      // A real agent answers with the session's whole config, not just the
+      // touched option, so the double accumulates like one.
+      sessionValues.set(taskId, {
+        ...(sessionValues.get(taskId) ?? {}),
+        [configId]: value,
+      });
+      return report(taskId);
+    },
+    async loadSession(taskId: string, _cwd: string) {
+      loads.push(taskId);
+      return { taskId, configOptions: report(taskId) };
+    },
+    async retireExecution(agentSessionId: string) {
+      retired.push(agentSessionId);
+    },
+    isAvailable() {
+      return true;
+    },
+  };
+
+  return { agentId, newSessions, configWrites, loads, retired, bridge };
+}
+
+/** The three execution-config options, in ACP shape. */
+export function executionSchema(profile: {
+  model: { current: string; options: string[] };
+  mode: { current: string; options: string[] };
+  reasoning: { current: string; options: string[] };
+}): ConfigOption[] {
+  return [
+    {
+      type: "select",
+      id: "model",
+      name: "Model",
+      category: "model",
+      currentValue: profile.model.current,
+      options: profile.model.options.map((value) => ({ value, name: value })),
+    },
+    {
+      type: "select",
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      currentValue: profile.mode.current,
+      options: profile.mode.options.map((value) => ({ value, name: value })),
+    },
+    {
+      type: "select",
+      id: "reasoning_effort",
+      name: "Reasoning",
+      category: "thought_level",
+      currentValue: profile.reasoning.current,
+      options: profile.reasoning.options.map((value) => ({
+        value,
+        name: value,
+      })),
+    },
+  ];
+}

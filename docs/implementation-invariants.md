@@ -96,6 +96,34 @@ The operational form of that sentence:
   at its start). *Why:* "resolve the current binding" at each site looks
   uniform and silently mis-retires, mis-authorizes, or sends a foreign
   operation into the default process.
+- **Execution config does not cross agents.** A task's `model`, `mode`, and
+  `reasoning_effort` describe its current execution environment, so a
+  replacement owned by another agent clears them before any config is replayed,
+  and the replacement's own reported values then become the task's stored
+  config. Both triggers are covered deliberately: an explicit `/clear` and the
+  implicit takeover of a removed owner, which does not run through
+  `clearTask`. *Why:* they are one fact about one agent (a model name, a mode
+  string, an effort level); carrying them over silently asks the new agent for
+  something it may not support, and an unclear replacement falls back to the
+  agent's shared schema cache, i.e. another task's session.
+- **A read may write the execution config columns; it may not move an owner.**
+  A detail or snapshot read starts a background warm, and a task whose binding
+  agent is configured but whose execution slot is unmaterialized (an earlier
+  takeover, a Root reset) is materialized by that warm. The session it creates
+  reports its own execution config, and adoption records it for the columns the
+  task has no value of its own — so a plain GET can turn `model: null` into the
+  agent's reported value. The same read never takes a task over from an agent
+  that left the configuration: a read must answer while the agent is gone, so
+  the takeover stays an operation's job (next use or explicit `/clear`).
+  *Why:* the alternative — refusing to write from a read — leaves an
+  unmaterialized task's reads forever unknown, and a fresh session's report is
+  the only honest default. What must not leak from a read is a binding change.
+- **A new task may name its agent; an existing task's binding is never chosen
+  by a caller.** Creating a child for a different agent than its parent is a
+  declared environment, so the parent-binding guard is skipped only there, and
+  such a child does not inherit the source task's execution config. *Why:* the
+  guard exists to stop writes through the wrong process for an execution that
+  already exists; a task that is being created has none.
 - **A read never depends on an execution being resolvable, and it never waits
   for one.** Listing, reading a task, its snapshot, attachments, shares, and
   deletion return while the binding agent is missing, dead, or no longer

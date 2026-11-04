@@ -31,6 +31,7 @@ import { handleFileRoutes } from "./files/routes.ts";
 import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
+import type { AgentAvailability } from "./agent-availability.ts";
 import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 import { isLocalCollaborationTarget } from "./task-collaboration.ts";
@@ -231,6 +232,12 @@ export interface RequestHandlerDeps {
   clientRegistry?: ClientRegistry;
   publicDir: string;
   dataDir: string;
+  /**
+   * Startup PATH snapshot of the configured agents. It is captured once, when
+   * the process starts, and reported as-is: a metadata read must never resolve
+   * or start an agent to answer which agents exist.
+   */
+  agentAvailability?: AgentAvailability[];
   limits: Pick<Config["limits"], "bash_output" | "image_upload"> &
     Partial<
       Pick<
@@ -680,6 +687,18 @@ export function createRequestHandler(
     created: boolean;
   }> | null = null;
 
+  /**
+   * The configured agents a client may target, with the availability the
+   * process saw at startup. `available` only means the launch command is on
+   * PATH: it says nothing about a process starting, handshaking, or being
+   * authenticated.
+   */
+  const agentDirectory = (): Array<{ id: string; available: boolean }> =>
+    (deps.agentAvailability ?? []).map(({ id, available }) => ({
+      id,
+      available,
+    }));
+
   // eslint-disable-next-line complexity -- TODO: refactor main route handler into smaller handlers
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
@@ -807,6 +826,8 @@ export function createRequestHandler(
           configOptions: tasks?.configOptionsFor(tasks.defaultAgentId) ?? [],
           cancelTimeout: deps.limits.cancel_timeout ?? 0,
           recentPathsLimit: deps.limits.recent_paths ?? 10,
+          agents: agentDirectory(),
+          defaultAgentId: tasks?.defaultAgentId ?? null,
         });
         return;
       }
@@ -2215,6 +2236,10 @@ export function createRequestHandler(
           const result = await bootstrapTaskPromise;
           json(res, HTTP_STATUS.OK, {
             ...result,
+            // A brand-new client needs the directory from this response alone:
+            // it may not read /config again after bootstrapping.
+            agents: agentDirectory(),
+            defaultAgentId: taskManager.defaultAgentId,
             clientOpId: getClientOpId(req) ?? undefined,
           });
         } catch (err) {
@@ -2710,6 +2735,7 @@ export function createRequestHandler(
           source?: string;
           parentId?: string;
           title?: string;
+          agentId?: unknown;
         };
         try {
           body = JSON.parse(await readBody(req)) as {
@@ -2718,6 +2744,7 @@ export function createRequestHandler(
             source?: string;
             parentId?: string;
             title?: string;
+            agentId?: unknown;
           };
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
@@ -2747,6 +2774,25 @@ export function createRequestHandler(
             return;
           }
         }
+        // An explicit target is the caller's declared execution environment; it
+        // is checked before anything starts, so an unknown id is a client error
+        // rather than a late failure, and a start failure keeps its real reason.
+        if (body.agentId !== undefined && typeof body.agentId !== "string") {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "agentId must be a string",
+          });
+          return;
+        }
+        const explicitAgent = body.agentId;
+        if (
+          explicitAgent !== undefined &&
+          !tasks.isAgentConfigured(explicitAgent)
+        ) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: `Agent ${explicitAgent} is not configured`,
+          });
+          return;
+        }
         // The new task runs where its parent runs, unless that agent is no
         // longer available: then the child is created for the default agent.
         // Either way the *parent's* binding is untouched — creating a child is
@@ -2762,17 +2808,21 @@ export function createRequestHandler(
           ? store.getBindingAgent(effectiveParentId)
           : undefined;
         const targetAgentId =
-          parentAgent && tasks.isAgentConfigured(parentAgent)
+          explicitAgent ??
+          (parentAgent && tasks.isAgentConfigured(parentAgent)
             ? parentAgent
-            : tasks.defaultAgentId;
+            : tasks.defaultAgentId);
         let bridge;
         try {
           bridge = await tasks.resolveAgentTransport(targetAgentId);
         } catch (err) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            // A failed start keeps its real reason, whichever way the target
+            // was chosen: "unavailable" alone cannot be acted on, and the
+            // caller must not be told a different agent answered instead.
             error:
               err instanceof AgentUnavailableError
-                ? "Agent is not available for this task"
+                ? `Agent ${targetAgentId} is not available: ${errorMessage(err)}`
                 : errorMessage(err),
           });
           return;
@@ -2787,6 +2837,7 @@ export function createRequestHandler(
               parentId: body.parentId,
               title: title ?? undefined,
               workflowStatus: title ? "idle" : undefined,
+              agentId: explicitAgent,
             },
           );
           const task = store.getTask(taskId);

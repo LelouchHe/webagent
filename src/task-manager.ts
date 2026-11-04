@@ -173,6 +173,37 @@ function configOptionId(
   return selectable.find((option) => option.id === logicalId)?.id;
 }
 
+/** The task columns a replacement can adopt from a session's own report. */
+type ExecutionConfigColumn = "model" | "mode" | "reasoning_effort";
+
+/**
+ * A session's reported execution config, keyed by the task column it belongs
+ * to. Logical ids are resolved through that agent's own schema, so
+ * `thought_level` and `reasoning_effort` both land on `reasoning_effort`;
+ * options the task has no column for are not read.
+ */
+function reportedExecutionConfig(
+  configOptions: ConfigOption[],
+): Partial<Record<ExecutionConfigColumn, string>> {
+  const reported: Partial<Record<ExecutionConfigColumn, string>> = {};
+  const columns: Array<[ExecutionConfigColumn, "model" | "mode" | "thinking"]> =
+    [
+      ["model", "model"],
+      ["mode", "mode"],
+      ["reasoning_effort", "thinking"],
+    ];
+  for (const [column, logicalId] of columns) {
+    const optionId = configOptionId(configOptions, logicalId);
+    const option = optionId
+      ? configOptions.find((entry) => entry.id === optionId)
+      : undefined;
+    if (typeof option?.currentValue === "string") {
+      reported[column] = option.currentValue;
+    }
+  }
+  return reported;
+}
+
 const ROTATION_TITLES: Record<RotationReason, string> = {
   owner_removed: "Execution moved to a configured agent",
   explicit_clear: "Execution replaced",
@@ -834,6 +865,12 @@ export class TaskManager implements ObligationHost {
     const task = this.store.getTaskIncludingDeleted(taskId);
     const toAgent = this.agents.defaultAgentId;
     this.store.replaceAgentSession(taskId, toAgent, emptyExecutionSlot(taskId));
+    // The takeover is a change of execution environment even though it does
+    // not run through `clearTask`: what the removed agent's tasks stored for
+    // model / mode / reasoning does not describe the agent taking over. The
+    // binding commit above already advanced the generation, so this write
+    // belongs to the new one.
+    this.clearStoredExecutionConfig(taskId);
     this.liveTasks.delete(taskId);
     this.resetTaskRuntime(taskId);
     this.pendingDispatchRetries.delete(taskId);
@@ -885,6 +922,81 @@ export class TaskManager implements ObligationHost {
     throw new Error(
       `Task ${taskId.slice(0, 8)} is bound to agent ${binding.agent_key}`,
     );
+  }
+
+  /**
+   * Drop a task's stored execution config. `model` / `mode` /
+   * `reasoning_effort` describe one agent's environment, so an execution
+   * replaced by another agent's starts from that agent's own defaults. Callers
+   * must have committed the new binding already: these are facts of the new
+   * generation, not of the one that was replaced.
+   */
+  private clearStoredExecutionConfig(taskId: string): void {
+    this.store.updateTaskConfig(taskId, "model", null);
+    this.store.updateTaskConfig(taskId, "mode", null);
+    this.store.updateTaskConfig(taskId, "reasoning_effort", null);
+  }
+
+  /**
+   * Clear the stored execution config inside the replacement generation's
+   * fence, and return the row view the rest of the rotation must use. Reading
+   * the same stale values back into `restoreTaskConfig` or the read-face
+   * overlay would hand the previous agent's choices to the new one.
+   *
+   * This runs before `bridge.sessionMapped`, i.e. before the transport replays
+   * the replacement's queued config updates. Ordering, not value comparison,
+   * is what decides ownership: a replay after this point describes the new
+   * generation and wins, even when it re-selects the same value the old
+   * execution had. `adopt` then sees a non-null column and leaves it alone.
+   */
+  private zeroExecutionConfig<
+    T extends Pick<TaskRow, "model" | "mode" | "reasoning_effort">,
+  >(taskId: string, task: T, lease: ExecutionLease | null): T {
+    if (!this.leaseCurrent(lease)) {
+      throw new Error(`Execution replaced while rotating ${taskId}`);
+    }
+    this.clearStoredExecutionConfig(taskId);
+    return { ...task, model: null, mode: null, reasoning_effort: null };
+  }
+
+  /**
+   * A replacement's self-reported execution config becomes the task's read
+   * face for the columns the task still has no value of its own (a cross-agent
+   * replacement cleared them). The report is the only honest source: the
+   * option list's first entry is a hint, never a default.
+   *
+   * The row is re-read inside the fence rather than taken from the caller.
+   * A `session/new` result is a snapshot of one moment, and this generation may
+   * already hold a **newer** report: the transport queues config updates that
+   * arrive before the session is mapped and replays them when the binding
+   * commits, which happens before this tail runs. Those values are newer than
+   * the snapshot, so only still-unknown columns are filled — per column, so one
+   * known value cannot freeze the other two as unknown.
+   */
+  private adoptReportedExecutionConfig(
+    taskId: string,
+    configOptions: ConfigOption[],
+    lease: ExecutionLease | null,
+  ): void {
+    const reported = reportedExecutionConfig(configOptions);
+    if (Object.keys(reported).length === 0) return;
+    if (!this.leaseCurrent(lease)) {
+      throw new Error(`Execution replaced while rotating ${taskId}`);
+    }
+    const stored = this.store.getTask(taskId);
+    if (!stored) return;
+    for (const column of Object.keys(reported) as ExecutionConfigColumn[]) {
+      if (stored[column] !== null) continue;
+      this.store.updateTaskConfig(taskId, column, reported[column]!);
+    }
+    // The schema this session reported is what later reads of this agent can
+    // show. Only an empty cache is filled: a cached schema belongs to a session
+    // that already reported, and overwriting it could roll back the same newer
+    // report this method just protected in the row.
+    const agentId = this.store.getBindingAgent(taskId);
+    if (agentId && this.configOptionsFor(agentId).length === 0) {
+      this.agents.adapterFor(agentId).cachedConfigOptions = configOptions;
+    }
   }
 
   /**
@@ -1103,6 +1215,15 @@ export class TaskManager implements ObligationHost {
       thinking?: string;
       workflowStatus?: WorkflowStatus;
       /**
+       * The agent the caller explicitly created this task for. A new task's
+       * target is part of the request, so a parent carried by another agent is
+       * a declared divergence rather than a write through the wrong process —
+       * the one case where the parent-binding guard does not apply. Nothing here
+       * rewrites an existing task's binding, and the value must be the transport
+       * the caller resolved.
+       */
+      agentId?: string;
+      /**
        * Re-validates the caller right before the task is persisted. An MCP
        * request can sit inside `newSession` for a long time; a rotation during
        * that window must leave no task behind.
@@ -1111,6 +1232,13 @@ export class TaskManager implements ObligationHost {
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const agentId = this.attachExecutionBridge(bridge);
+    if (opts?.agentId !== undefined && opts.agentId !== agentId) {
+      // The declared target and the resolved transport must be the same agent,
+      // or the caller's request would be silently satisfied by another one.
+      throw new Error(
+        `Agent ${opts.agentId} was requested but the transport is ${agentId}`,
+      );
+    }
     const parentId = this.resolveParentId(opts?.parentId);
     if (parentId) {
       await this.waitForRootResetIfNeeded(parentId);
@@ -1119,8 +1247,12 @@ export class TaskManager implements ObligationHost {
       }
       // A child runs in its parent's execution environment: the caller that
       // chose the parent also chose the agent, so a mismatch is refused rather
-      // than silently attached to a foreign agent.
-      this.assertBindingAgent(parentId, agentId);
+      // than silently attached to a foreign agent. The exception is a caller
+      // that chose the target agent itself: creating a child does not touch the
+      // parent's execution, so that is a choice, not a foreign write.
+      if (opts?.agentId === undefined) {
+        this.assertBindingAgent(parentId, agentId);
+      }
     }
     const result = await this.createTaskImpl(
       bridge,
@@ -1232,6 +1364,7 @@ export class TaskManager implements ObligationHost {
       model?: string;
       thinking?: string;
       workflowStatus?: WorkflowStatus;
+      agentId?: string;
       assertCaller?: () => void;
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
@@ -1247,6 +1380,16 @@ export class TaskManager implements ObligationHost {
     const sourceTask = inheritFromTaskId
       ? this.store.getTask(inheritFromTaskId)
       : null;
+    // Execution config describes one agent's environment. A child created for a
+    // *different* agent than the source starts from that agent's own defaults;
+    // only a source whose agent is unknown keeps inheriting, because nothing
+    // there proves a difference.
+    const sourceAgentId = sourceTask
+      ? this.store.getBindingAgent(sourceTask.id)
+      : undefined;
+    const inheritConfig =
+      sourceTask !== null &&
+      (sourceAgentId === undefined || sourceAgentId === agentId);
     const taskId = randomUUID();
     // Mint the task capability and build its mcpServers entry BEFORE the
     // ACP task exists (the definition is carried in task/new itself),
@@ -1303,8 +1446,9 @@ export class TaskManager implements ObligationHost {
       // now reach business tools.
       this.promoteCapability(execution?.token, taskId);
 
-      // Inherit config options from source task
-      if (sourceTask) {
+      // Inherit config options from source task (same execution environment
+      // only; see `inheritConfig`).
+      if (sourceTask && inheritConfig) {
         configOptions = await this.inheritTaskConfig(
           bridge,
           taskId,
@@ -1500,6 +1644,19 @@ export class TaskManager implements ObligationHost {
       this.capabilities?.revokeOtherTokens(taskId, execution.token);
     }
     const lease = this.currentLease(taskId);
+    // `task` was read before the rotation; a replacement owned by a different
+    // agent must reach the restore as the cleared view. The clear runs *before*
+    // `sessionMapped`: queued config updates replay there, so replaying after
+    // the clear is what guarantees a newer report is not overwritten. Value
+    // equality could not prove that — a report that re-selected the old value
+    // is still a new fact.
+    const configTask = this.rotationConfigTask(
+      taskId,
+      task,
+      retiredBinding,
+      agentId,
+      lease,
+    );
     bridge.sessionMapped?.(created.sessionId, taskId);
     this.promoteCapability(execution?.token, taskId);
     this.retireReplacedExecution(
@@ -1520,24 +1677,52 @@ export class TaskManager implements ObligationHost {
       bridge,
       taskId,
       created.configOptions,
-      task,
+      configTask,
       lease,
     );
+    // The new execution reported its own environment; that report is what the
+    // task reads for the columns it has no stored choice for.
+    this.adoptReportedExecutionConfig(taskId, configOptions, lease);
     return {
       taskId,
       configOptions: this.applyStoredConfigUnderLease(
         taskId,
         configOptions,
-        task,
+        configTask,
         lease,
       ),
     };
   }
 
   /**
+   * The row view the config tail of a rotation must use. A replacement owned
+   * by a different agent is a change of execution environment: the values
+   * stored for the agent that no longer runs this task are not the new one's
+   * defaults, and re-reading them into the restore or the overlay would hand
+   * them over.
+   */
+  private rotationConfigTask(
+    taskId: string,
+    task: TaskRow,
+    retiredBinding: { agent_key: string } | undefined,
+    agentId: string,
+    lease: ExecutionLease | null,
+  ): TaskRow {
+    if (retiredBinding === undefined || retiredBinding.agent_key === agentId) {
+      return task;
+    }
+    return this.zeroExecutionConfig(taskId, task, lease);
+  }
+
+  /**
    * The last write boundary of a rotation: the stored-config overlay may
    * persist a canonical model value, so a generation that moved during the
    * config replay must not produce it.
+   *
+   * `task` is the cleared pre-replay view that kept the old agent's choices
+   * out of `restoreTaskConfig`. The response's read face is the row as it now
+   * stands: the replay and `adopt` wrote facts of this generation, so a
+   * replayed value must not be reported as the older `session/new` snapshot.
    */
   private applyStoredConfigUnderLease(
     taskId: string,
@@ -1548,7 +1733,8 @@ export class TaskManager implements ObligationHost {
     if (!this.leaseCurrent(lease)) {
       throw new Error(`Execution replaced while rotating ${taskId}`);
     }
-    return this.applyStoredConfig(configOptions, task);
+    const readFace = this.store.getTask(taskId) ?? task;
+    return this.applyStoredConfig(configOptions, readFace);
   }
 
   /**
@@ -1921,7 +2107,10 @@ export class TaskManager implements ObligationHost {
       try {
         next = await bridge.setConfigOption(taskId, id, value);
       } catch {
-        // An option may no longer be supported by the current agent.
+        // These values are agent-defined opaque strings (ACP treats choice
+        // values as opaque), so the host has no basis to validate or repair
+        // one: whether a stored value still exists is the agent's call, and a
+        // refusal leaves the session on its own default.
         continue;
       }
       if (next.length === 0) continue;
@@ -2057,7 +2246,7 @@ export class TaskManager implements ObligationHost {
   /** Resume a task — returns event to send to the requesting client. */
   async resumeTask(bridge: SessionBridge, taskId: string): Promise<AgentEvent> {
     const agentId = this.attachExecutionBridge(bridge);
-    const task = this.liveTask(taskId);
+    let task = this.liveTask(taskId);
     if (!task) throw new Error("Task not found");
 
     if (this.liveTasks.has(taskId)) {
@@ -2081,6 +2270,11 @@ export class TaskManager implements ObligationHost {
     const removedOwner = this.removedOwnerBinding(taskId);
     if (removedOwner) {
       this.applyOwnerRotation(taskId, removedOwner, "owner_removed");
+      // The takeover cleared the stored execution config; the restore must see
+      // that view instead of the values read before the rotation.
+      const rotated = this.liveTask(taskId);
+      if (!rotated) throw new Error("Task not found");
+      task = rotated;
     }
     // A caller that resolved the wrong agent must not load the session under
     // it: the bridge's session view would not map this task anyway, but naming
@@ -2246,6 +2440,12 @@ export class TaskManager implements ObligationHost {
     if (!this.leaseCurrent(lease)) {
       throw new Error(`Execution replaced while restoring ${taskId}`);
     }
+    // A materialized owner slot is a replacement, not a task's first
+    // execution: when the task stores no execution config of its own, the
+    // session's report is what its reads must show.
+    if (!opts.attach) {
+      this.adoptReportedExecutionConfig(taskId, configOptions, lease);
+    }
     return {
       type: "task_created",
       rootTaskId: this.store.rootTaskId,
@@ -2371,6 +2571,13 @@ export class TaskManager implements ObligationHost {
   }
 
   /** Override currentValue in configOptions with stored task values. */
+  /**
+   * Overlay a task's stored choices onto the agent's reported schema.
+   *
+   * A null column leaves the agent's own `currentValue` in place. That is not a
+   * fallback: these are agent-defined opaque strings, so "what this agent
+   * reports" is the only truthful value when the task stored none.
+   */
   applyStoredConfig(
     configOptions: ConfigOption[],
     task: {

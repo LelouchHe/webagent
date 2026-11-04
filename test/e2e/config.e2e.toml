@@ -18,3 +18,11 @@ ttl_hours = 0
 csp_enforce = true
 viewer_origin = ""
 internal_hosts = []
+
+# A second configured agent: the same stub binary with a different execution
+# environment. Its schema reports its own defaults (`mock2-model`, `chat#plan`,
+# `high`), each placed after the first option, so "this agent's default" is
+# distinguishable from option order and from `mock`'s values. It is started only
+# when a task targets it; a metadata read never starts it.
+[agents.mock2]
+cmd = "node --experimental-strip-types test/e2e/mock-agent.ts load - 0 model=mock2-model,mode=chat#plan,reasoning=high"
