@@ -119,6 +119,17 @@ describe("a cross-agent clear of the stored execution config", () => {
     );
   });
 
+  it("keeps a report that re-selects the previous value", async () => {
+    // The replacement reports `medium`, which is also the task's pre-rotation
+    // value. The row never changed, but the report is still a fact of the new
+    // generation: "the stored value is unchanged" is not proof nobody wrote.
+    const result = await rotate("before", "medium");
+    assert.deepEqual(result.reports, ["medium"]);
+    assert.equal(result.final, "medium");
+    assert.notEqual(result.final, "high");
+    assert.equal(result.response, "medium");
+  });
+
   it("still clears the old value when the replacement never reported", async () => {
     // Control: the same cross-agent clear with a session that only sends its
     // `session/new` snapshot. `high` is B's default, so a leftover `low` would

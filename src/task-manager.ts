@@ -176,12 +176,6 @@ function configOptionId(
 /** The task columns a replacement can adopt from a session's own report. */
 type ExecutionConfigColumn = "model" | "mode" | "reasoning_effort";
 
-const EXECUTION_CONFIG_COLUMNS: ExecutionConfigColumn[] = [
-  "model",
-  "mode",
-  "reasoning_effort",
-];
-
 /**
  * A session's reported execution config, keyed by the task column it belongs
  * to. Logical ids are resolved through that agent's own schema, so
@@ -949,12 +943,11 @@ export class TaskManager implements ObligationHost {
    * the same stale values back into `restoreTaskConfig` or the read-face
    * overlay would hand the previous agent's choices to the new one.
    *
-   * Only a column that still holds its pre-rotation value is cleared. The
-   * transport replays the replacement's queued config updates when the binding
-   * commits, which can happen before this tail runs: a value that replay
-   * already rewrote belongs to the new generation and survives. The row is
-   * re-read synchronously afterwards (no await, so no window) and returned, so
-   * the rest of the tail sees the value that actually won.
+   * This runs before `bridge.sessionMapped`, i.e. before the transport replays
+   * the replacement's queued config updates. Ordering, not value comparison,
+   * is what decides ownership: a replay after this point describes the new
+   * generation and wins, even when it re-selects the same value the old
+   * execution had. `adopt` then sees a non-null column and leaves it alone.
    */
   private zeroExecutionConfig<
     T extends Pick<TaskRow, "model" | "mode" | "reasoning_effort">,
@@ -962,18 +955,8 @@ export class TaskManager implements ObligationHost {
     if (!this.leaseCurrent(lease)) {
       throw new Error(`Execution replaced while rotating ${taskId}`);
     }
-    for (const column of EXECUTION_CONFIG_COLUMNS) {
-      this.store.clearTaskConfigIfUnchanged(taskId, column, task[column]);
-    }
-    const stored = this.store.getTask(taskId);
-    if (!stored)
-      return { ...task, model: null, mode: null, reasoning_effort: null };
-    return {
-      ...task,
-      model: stored.model,
-      mode: stored.mode,
-      reasoning_effort: stored.reasoning_effort,
-    };
+    this.clearStoredExecutionConfig(taskId);
+    return { ...task, model: null, mode: null, reasoning_effort: null };
   }
 
   /**
@@ -1661,6 +1644,19 @@ export class TaskManager implements ObligationHost {
       this.capabilities?.revokeOtherTokens(taskId, execution.token);
     }
     const lease = this.currentLease(taskId);
+    // `task` was read before the rotation; a replacement owned by a different
+    // agent must reach the restore as the cleared view. The clear runs *before*
+    // `sessionMapped`: queued config updates replay there, so replaying after
+    // the clear is what guarantees a newer report is not overwritten. Value
+    // equality could not prove that — a report that re-selected the old value
+    // is still a new fact.
+    const configTask = this.rotationConfigTask(
+      taskId,
+      task,
+      retiredBinding,
+      agentId,
+      lease,
+    );
     bridge.sessionMapped?.(created.sessionId, taskId);
     this.promoteCapability(execution?.token, taskId);
     this.retireReplacedExecution(
@@ -1675,16 +1671,6 @@ export class TaskManager implements ObligationHost {
       retiredBinding?.agent_key ?? null,
       reason,
       agentId,
-    );
-
-    // `task` was read before the rotation; a replacement owned by a different
-    // agent must reach the restore as the cleared view.
-    const configTask = this.rotationConfigTask(
-      taskId,
-      task,
-      retiredBinding,
-      agentId,
-      lease,
     );
 
     const configOptions = await this.restoreTaskConfig(
@@ -1732,6 +1718,11 @@ export class TaskManager implements ObligationHost {
    * The last write boundary of a rotation: the stored-config overlay may
    * persist a canonical model value, so a generation that moved during the
    * config replay must not produce it.
+   *
+   * `task` is the cleared pre-replay view that kept the old agent's choices
+   * out of `restoreTaskConfig`. The response's read face is the row as it now
+   * stands: the replay and `adopt` wrote facts of this generation, so a
+   * replayed value must not be reported as the older `session/new` snapshot.
    */
   private applyStoredConfigUnderLease(
     taskId: string,
@@ -1742,7 +1733,8 @@ export class TaskManager implements ObligationHost {
     if (!this.leaseCurrent(lease)) {
       throw new Error(`Execution replaced while rotating ${taskId}`);
     }
-    return this.applyStoredConfig(configOptions, task);
+    const readFace = this.store.getTask(taskId) ?? task;
+    return this.applyStoredConfig(configOptions, readFace);
   }
 
   /**

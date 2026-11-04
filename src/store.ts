@@ -1718,8 +1718,11 @@ export class Store {
    * `null` clears the column: the value is an execution fact, so a task whose
    * execution environment changed has no stored choice of its own rather than
    * an empty string. Only the named column is touched.
-   */
-  updateTaskConfig(id: string, configId: string, value: string | null): void {
+   */ updateTaskConfig(
+    id: string,
+    configId: string,
+    value: string | null,
+  ): void {
     const column = (
       {
         model: "model",
@@ -1736,30 +1739,6 @@ export class Store {
     this.db
       .prepare(`UPDATE tasks SET ${column} = ? WHERE id = ?`)
       .run(storedValue, id);
-  }
-
-  /**
-   * Clear one execution-config column only when it still holds `expected`.
-   *
-   * A rotation that changes the execution environment must not overwrite a
-   * value the replacement generation already reported: the transport replays
-   * queued config updates when the binding commits, and that replay can land
-   * before the rotation's own tail. `IS` is null-safe equality, so a column
-   * that was already `NULL` is also cleared (a no-op) without a read step.
-   *
-   * Returns whether this call actually replaced a value.
-   */
-  clearTaskConfigIfUnchanged(
-    id: string,
-    column: "model" | "mode" | "reasoning_effort",
-    expected: string | null,
-  ): boolean {
-    const result = this.db
-      .prepare(
-        `UPDATE tasks SET ${column} = NULL WHERE id = ? AND ${column} IS ?`,
-      )
-      .run(id, expected);
-    return result.changes > 0;
   }
 
   saveEvent(
