@@ -1511,7 +1511,16 @@ Hard-delete the share row. Idempotent: `200` whether or not the row
 existed (no `revoked_at` audit trail by design — public surface stays
 minimal). Subsequent viewer hits get `410 Gone`.
 
-**Response** `200`: `{ "ok": true }`
+Authorization is the task row plus the token's own `task_id`, never the
+execution binding: a **soft-deleted** (tombstoned) task keeps its row while
+an active share references it, so its shares stay revocable. Revoking the
+last one reaps the tombstone — task row, events, attachment rows, and
+`<data_dir>/tasks/<id>/` — and a hard-deleted task (no row) still answers
+`404`. See [Share Links](share.md#security-model).
+
+**Response** `200`: `{ "ok": true, "revoked": … }`. A replay after the
+call reaped the tombstone answers `404`, because the task row the gate needs
+is gone.
 
 #### `PATCH /api/v1/tasks/:id/share`
 

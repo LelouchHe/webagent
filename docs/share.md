@@ -91,6 +91,24 @@ secret-pattern updates.
   get HTTP 410. There is no `revoked_at` audit column — revoke is a
   tombstone-free delete by design, to keep the public surface as small
   as possible. Image proxy and JSON endpoint both enforce the same check.
+- **Owner-side share writes authorize on the share row, not on an execution
+  binding.** The gate is that the task row exists and that the token's row
+  belongs to the task in the URL; creating a preview and publishing one
+  additionally need that row to be live. A binding says *which agent runs a
+  task*; it never says who may manage the task's shares. The case that makes
+  the difference concrete is the **tombstone**: deleting a task that still has
+  an active share keeps the row, events, and attachments for viewers and
+  removes the binding. Because the gate is the row, the owner can still revoke
+  those shares — and revoking the **last** one reaps the tombstone: the task
+  row, its events, its attachment rows, and `<data_dir>/tasks/<id>/` are
+  deleted. A hard-deleted task has no row at all, so it still answers 404;
+  widening the gate never resurrects one. Reaping is also the one place where
+  the DELETE's idempotency is bounded by the task: replaying the same request
+  after its tombstone was reaped answers 404, not 200.
+- **Expiry is a read-time verdict, not a delete.** `ttl_hours` is evaluated
+  on every fetch; an expired share answers 410 but keeps its row until it is
+  revoked. Expiry therefore never makes a share row disappear and can never
+  orphan a tombstone.
 - **Owner label validation:** `owner_label` and `display_name` reject
   control characters (except `\t`), DEL, unpaired surrogates, and bidi
   override codepoints (`U+202A..U+202E`, `U+2066..U+2069`). UTF-8
@@ -137,24 +155,33 @@ tokens never appear in owner-side URLs.
   which were never activated (`shared_at IS NULL AND created_at <
   now - 24h`). Activated shares (`shared_at IS NOT NULL`) are never
   swept — only an explicit `/share revoke <token>` removes them, and
-  revoke is a hard delete with no audit trail. Log lines:
+  revoke is a hard delete with no audit trail. Reaping a tombstone stays on
+  the revoke path: the sweep only removes previews, and a tombstone normally
+  keeps an activated share. The one exception is a preview whose creation
+  raced the delete (it lands after the delete dropped previews): the tombstone
+  waits for that row to be swept, then for its token to be revoked. Log lines:
   - `[share] preview gc armed (24h interval)` on bootstrap
   - `[share] preview gc removed=N` whenever the sweep deletes rows
 - **Manual prune**: `sqlite3 <data_dir>/wa.db "DELETE FROM shares WHERE
   shared_at IS NULL AND created_at < strftime('%s','now')*1000 - 86400000"`
-- **Image GC (manual)**: images referenced by live shares live under
-  `<data_dir>/uploads/`. Revoke does NOT delete image files (route-edge
-  check blocks access via the missing `shares` row). To reclaim disk,
-  enumerate files not referenced by any live share row and delete them
-  manually. Future hardening will add an automated pass.
+- **Image GC (manual)**: shared files live under
+  `<data_dir>/tasks/<task_id>/attachments/` (the same directory the image
+  proxy serves from). Revoking one share does NOT delete them: the route edge
+  refuses the token, and the bytes stay until the whole task goes away — a
+  hard delete or a tombstone reap removes `tasks/<task_id>/`, including this
+  directory. For a live task that keeps other shares, enumerate files not
+  referenced by any live share and delete them manually; automated per-share
+  image purge is a future hardening pass.
 
 ## Known limitations (v1)
 
 - **No inline fork:** viewers cannot "continue this conversation". The
   viewer footer is static — fork needs `unstable_forkTask` support
   and is deferred.
-- **No background image purge:** revoke blocks access at the route
-  edge; images remain on disk until a future GC pass.
+- **No per-share image purge:** revoking one share blocks access at the
+  route edge but leaves the task's attachments on disk (they belong to the
+  whole task and to its other shares). They are removed with the task's
+  directory on a hard delete or a tombstone reap, not per share.
 - **No CSP violation reporting endpoint yet:** `csp_enforce=false`
   logs to `Content-Security-Policy-Report-Only` but we don't ingest
   reports. The browser console shows violations for development.

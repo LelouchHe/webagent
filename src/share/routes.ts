@@ -565,7 +565,10 @@ async function handlePublish(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
-  if (!deps.store.hasBinding(taskId)) {
+  // Publishing only needs a live task: a preview belongs to the owner's live
+  // edit surface and never outlives it (the delete path drops preview rows).
+  // The execution binding is not a gate here either — see shareTaskExists().
+  if (!deps.store.getTask(taskId)) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
@@ -962,6 +965,12 @@ async function handleViewerImage(
   }
 }
 
+/**
+ * Expiry is a read-time verdict, not a deletion: an expired row keeps existing
+ * (viewers and the image proxy answer 410) until the owner revokes it. So
+ * expiry never makes a share row disappear and cannot orphan a tombstone; the
+ * revoke path is the one that reaps.
+ */
 function isExpired(row: ShareRow): boolean {
   if (row.ttl_hours == null || row.ttl_hours === 0) return false;
   const anchor = row.shared_at ?? row.created_at;
@@ -1013,9 +1022,28 @@ export function validateLabel(
 }
 
 /**
+ * Owner-side authorization for a task-scoped share write: the task row must
+ * exist. A binding is deliberately not consulted — it says which agent runs
+ * the task, not who may manage the task's share rows. The soft-delete path is
+ * exactly what proves the difference: a task with an active share keeps its
+ * row as a tombstone for the public viewer while its binding is removed, so
+ * gating on the binding would lock the owner out of revoking the last share
+ * (and, with it, the reap that reclaims the tombstone).
+ *
+ * Tombstones count because their shares are still publicly visible and still
+ * need to be manageable. A hard-deleted task has no row at all, so widening
+ * the gate to "row exists" never resurrects one.
+ */
+function shareTaskExists(deps: ShareRouteDeps, taskId: string): boolean {
+  return deps.store.getTaskIncludingDeleted(taskId) !== undefined;
+}
+
+/**
  * DELETE /api/v1/tasks/:id/share — revoke an active or preview share.
  * Body: { token }.
  * Idempotent: already-revoked tokens return 200 with revoked=false.
+ * One bounded exception: when this call reaped the task's tombstone, a replay
+ * of the same request answers 404 — the task row the gate needs is gone.
  * Returns { ok, token, revoked, purge_status }. purge_status is always
  * 'skipped' in v1 — image/event purge is a future hardening pass.
  */
@@ -1039,7 +1067,7 @@ async function handleRevoke(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
-  if (!deps.store.hasBinding(taskId)) {
+  if (!shareTaskExists(deps, taskId)) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
@@ -1111,7 +1139,7 @@ async function handlePatchLabel(
     json(res, HTTP_STATUS.BAD_REQUEST, { error: "token required" });
     return;
   }
-  if (!deps.store.hasBinding(taskId)) {
+  if (!shareTaskExists(deps, taskId)) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "share not found" });
     return;
   }
