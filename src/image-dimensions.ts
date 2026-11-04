@@ -1,10 +1,5 @@
 // Dimensions of a storable image container, for reserving its layout box before
-// the bytes finish loading.
-//
-// PNG, GIF and JPEG only: WebP has no parser here, so a WebP attachment stores
-// null dimensions and its box is not reserved (the picture may shift on load).
-// That is a known gap — replacing this module with `image-size` is the
-// follow-up — not a reason to refuse the store.
+// the bytes finish loading. PNG, GIF and JPEG.
 
 export interface ImageDimensions {
   width: number;

@@ -223,8 +223,7 @@ describe("extractToolCallContent", () => {
   });
 
   it("ignores a content array, which is not a protocol shape", () => {
-    // ACP's content block is a single block under `item.content`; an array is
-    // unrecognized (ingest drops it too), so it contributes no text.
+    // `item.content` is one block; an array contributes no text.
     const result = extractToolCallContent([
       { content: [{ text: "a" }, { text: "b" }] },
     ]);

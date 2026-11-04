@@ -182,9 +182,7 @@ describe("tool-result images: ACP image blocks", () => {
   });
 
   it("does not store an image that exists only in _meta", () => {
-    // `_meta` is implementation-specific metadata, not a content position: it
-    // is dropped before persistence, so a picture that exists only there is not
-    // one this app shows — and its payload never reaches a client.
+    // `_meta` is implementation-specific metadata: dropped, never stored.
     harness.toolCall("t1", "Screenshot");
     const base64 = png().toString("base64");
     harness.emit(
@@ -245,9 +243,7 @@ describe("tool-result images: ACP image blocks", () => {
     assert.equal(unchanged.inserted, 0);
   });
 
-  // A few thousand single-element arrays is a ~4 KB message the SDK accepts.
-  // Nothing reads `_meta`, so the update must survive it and the slot must not
-  // be persisted: the payload inside it is dropped, not walked.
+  // A deeply nested `_meta` is legal input; the slot is dropped, not walked.
   for (const depth of [2000, 5000]) {
     it(`keeps the event and drops a _meta nested ${depth} levels deep`, () => {
       const base64 = png(128).toString("base64");
@@ -324,9 +320,8 @@ describe("tool-result images: ACP image blocks", () => {
       mimeType: "image/png",
       data: png().toString("base64"),
     };
-    // Hostile input the walk cannot read: the item itself must become a
-    // placeholder, because whatever comes back is what gets persisted and
-    // broadcast.
+    // Whatever ingest returns is what gets persisted: a failed item becomes a
+    // placeholder.
     const hostile: Record<string, unknown> = {
       type: "content",
       content: { type: "text", text: "kept" },

@@ -44,11 +44,8 @@ describe("tool-result images: the live frame", () => {
   }
 
   /**
-   * The harness store with one attachments-table call broken.
-   *
-   * This is what an unavailable `attachments` table looks like from the handler:
-   * a throw, not a returned error. `countAttachments` is the first touch, so its
-   * failure is the one that used to hand the raw content back for persistence.
+   * The harness store with one attachments-table call broken: a throw, the way
+   * an unavailable table behaves.
    */
   function storeWith(fail: {
     countAttachments?: boolean;
@@ -223,8 +220,7 @@ describe("tool-result images: the live frame", () => {
           content: {
             type: "text",
             text: "kept",
-            // A wrapper's own metadata: implementation-specific, never read
-            // here, so it is dropped rather than walked.
+            // Implementation-specific metadata: dropped, never read.
             _meta: {
               nested: { type: "image", mimeType: "image/png", data: base64 },
             },
@@ -260,8 +256,7 @@ describe("tool-result images: the live frame", () => {
         {
           type: "content",
           // An array under `content` is not the protocol's single block, so no
-          // reader renders it — and keeping it as received is what used to put
-          // the image block's bytes into SQLite and the frame.
+          // reader renders it.
           content: [
             { type: "text", text: "kept" },
             { type: "image", mimeType: "image/png", data: base64 },
@@ -280,8 +275,7 @@ describe("tool-result images: the live frame", () => {
     const frame = frames.join("");
     assert.match(frame, /^data: \{/);
 
-    // Nothing renders that item, so nothing persists it. The update keeps an
-    // empty `content` array rather than losing the field.
+    // Nothing renders that item, so nothing persists it; `content` stays [].
     assert.equal(harness.store.countAttachments("t1", "image"), 0);
     assert.deepEqual(harness.storedContent(), []);
     assert.equal(
@@ -293,9 +287,8 @@ describe("tool-result images: the live frame", () => {
   });
 
   it("degrades to a placeholder when the attachments table is unavailable", () => {
-    // `countAttachments` is the first attachments-table touch. Its failure used
-    // to return the content as received, so the raw payload was persisted and
-    // broadcast; degrading is a placeholder, never a pass-through.
+    // `countAttachments` is the first attachments-table touch: its failure must
+    // not hand the content back, and degrading is a placeholder.
     disposeToolResultImageHarness(harness);
     harness = createHarness({
       decorateStore: storeWith({ countAttachments: true }),

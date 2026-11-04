@@ -132,9 +132,6 @@ function decodesAsUtf8ToleratingTailTruncation(buf: Buffer): boolean {
  * Mimes we are willing to render inline in <img>. Everything else is forced
  * to download via Content-Disposition: attachment so a malicious upload (HTML,
  * SVG, text/plain interpreted as HTML by Chrome) cannot script the page.
- *
- * Exported for the invariant test that pins both image mime sets to the same
- * members: divergence must be a policy decision, not drift.
  */
 export const INLINE_MIMES: ReadonlySet<string> = new Set([
   "image/png",
@@ -150,13 +147,10 @@ export function isInlineMime(mime: string): boolean {
 /**
  * Image mimes the upstream model accepts as inline ACP image blocks.
  *
- * This is deliberately a SEPARATE set from INLINE_MIMES even though the two
- * currently hold the same values: INLINE_MIMES is a display/XSS policy (which
- * mimes may be served `Content-Disposition: inline` in the browser), while
- * UPSTREAM_IMAGE_MIMES is an upstream compatibility policy (which image
- * containers the model provider accepts on the wire). They answer different
- * questions and will diverge — e.g. upstream support for HEIC would change
- * only this set. Never reference one from the other's check.
+ * A separate set from INLINE_MIMES on purpose: that one is a display/XSS policy
+ * (what may be served `Content-Disposition: inline`), this one is an upstream
+ * compatibility policy (what the provider accepts on the wire). The two hold the
+ * same values today. Never reference one from the other's check.
  */
 export const UPSTREAM_IMAGE_MIMES: ReadonlySet<string> = new Set([
   "image/png",

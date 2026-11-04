@@ -10,26 +10,13 @@
 // content sniff, the same unsigned base path + egress re-sign, and the same
 // cleanup (the row by the task FK, the file with the task directory). In
 // `content` the block is replaced by the descriptor an `agent_image` carries,
-// so neither SQLite nor a client ever sees base64. Every position inside an
-// item is covered — the item itself, a `content` wrapper, a wrapper's or a
-// block's `_meta`, at any depth — because a skipped position would store the
-// payload verbatim.
+// so neither SQLite nor a client ever sees base64.
 //
-// The walk is iterative and never throws out of this file: the event is the
-// record, a picture inside it is incidental. A legal deeply nested `_meta` (a
-// few thousand single-element arrays is a 4 KB message) must not cost the
-// update, and a rewrite that fails degrades that item to a visible placeholder —
-// the event survives, the payload does not.
+// Only the items a reader can render are persisted: an image block, a text
+// block, a diff, a terminal. `_meta` is implementation-specific metadata rather
+// than a content position, so it is dropped instead of stored or inspected.
 //
-// A refusal is never silent: an oversized block, a payload that is not a
-// storable image container, or one that cannot be written becomes
-// `[image omitted: …]` text in its place, with no file and no row.
-//
-// This file is the only place that sees base64. The wire shape is recognized
-// here and nowhere else: past ingest there is exactly one representation, the
-// descriptor `agent_image` also carries. A reader that has to ask "inline or
-// stored?" would be a second representation, so no reader gets the choice —
-// `src/shared/tool-content.ts` judges stored items only.
+// This file is the only place that sees base64.
 
 import { decodedBase64Bytes, storeImageBytes } from "./agent-image.ts";
 import { log } from "./log.ts";
@@ -62,19 +49,9 @@ export interface StoredToolResultImages {
 /**
  * Store every ACP image block in one tool result's content, in place.
  *
- * Only what a reader can render is persisted: an image block (the item itself or
- * `item.content`), a text block, a diff, a terminal. Every other shape is
- * **dropped**, so no payload can hide in a shape no reader understands — a text
- * array holding an image block, for instance. An update whose items were all
- * dropped keeps `content: []` rather than losing the field.
- *
- * `_meta` is ACP's implementation-specific extension slot — arbitrary JSON,
- * never read by this app — so it is dropped rather than walked: an opaque field
- * is not persisted, and a payload inside it cannot reach a client.
- *
- * Degrading is a placeholder, never a pass-through: a block that cannot be
- * stored becomes visible `[image omitted: …]` text, and an item that cannot be
- * normalized is replaced the same way. The event itself is never lost.
+ * A block that cannot be stored becomes `[image omitted: …]` text: no path hands
+ * a payload back, and the event is never lost. An update whose items were all
+ * dropped keeps `content: []`.
  */
 export function storeToolResultImages(
   ctx: ToolResultImageContext,
@@ -84,12 +61,7 @@ export function storeToolResultImages(
   /** Attachment rows inserted: the only thing a cached label map cares about. */
   let inserted = 0;
 
-  /**
-   * Store one inline payload and return what takes its place.
-   *
-   * Every failure ends in a placeholder, so this never throws and never hands a
-   * payload back to the caller.
-   */
+  /** Store one inline payload and return what takes its place. */
   function store(data: string): ToolContentItem {
     try {
       const result = storeImageBytes({
@@ -104,8 +76,7 @@ export function storeToolResultImages(
         inserted++;
         return { type: "image", attachment: result.stored };
       }
-      // A refused image is still part of the result: the placeholder keeps a
-      // reason where the picture was, and the payload never reaches storage.
+      // A refused image becomes a placeholder; the payload is not stored.
       return placeholder(result.reason);
     } catch (error) {
       warn("could not store a tool result image", ctx, error);
@@ -113,8 +84,7 @@ export function storeToolResultImages(
     }
   }
 
-  // The attachment count only names new files; a failure there must not stop the
-  // rewrite, because the rewrite is what removes payloads.
+  // The count only names new files; its failure must not stop the rewrite.
   try {
     index = ctx.store.countAttachments(ctx.taskId, "image");
   } catch (error) {
@@ -127,22 +97,19 @@ export function storeToolResultImages(
         const next = normalizeItem(item, store);
         return next === null ? [] : [next];
       } catch (error) {
-        // One item's failure must not cost its siblings, and returning it as
-        // received would put its payload into storage and the wire.
+        // One item's failure must not cost its siblings: it becomes a
+        // placeholder.
         warn("could not normalize a tool result item", ctx, error);
         return [placeholder(UNSTORABLE)];
       }
     });
-    // A kept item that was rewritten, degraded or stripped is a new object, and
-    // a dropped one shortens the array. When neither happened, the caller keeps
-    // the array it passed in.
+    // Identity marks a rewrite; a drop shortens the array.
     const changed =
       normalized.length !== content.length ||
       normalized.some((item, at) => item !== content[at]);
     return changed ? { content: normalized, inserted } : { content, inserted };
   } catch (error) {
-    // Last resort: no item survives as received, because none of them can be
-    // trusted to be payload-free once the rewrite itself failed.
+    // Last resort: nothing survives as received.
     warn("could not rewrite tool result content", ctx, error);
     return {
       content: content.map(() => placeholder(UNSTORABLE)),
@@ -189,17 +156,12 @@ function inlineImageData(value: unknown): string | null {
 }
 
 /**
- * Normalize one tool result content item.
+ * Normalize one tool result content item, or drop it.
  *
- * Two protocol positions can hold an image: the item itself, and `item.content`
- * — the `{ type: "content", content: … }` wrapper, which is hoisted to the bare
- * descriptor so a stored row keeps one shape. Nothing else is read or rewritten.
- *
- * `_meta` is dropped from both levels instead: ACP defines it as
- * implementation-specific metadata (arbitrary JSON, never read here), so it is
- * not persisted. Dropping it is also what makes "no inline payload past ingest"
- * true for that slot without walking it. An item with neither an image nor a
- * `_meta` slot is returned as the same object.
+ * An image block can be the item itself or `item.content` (the wrapper, hoisted
+ * to the bare descriptor so a stored row keeps one shape). `_meta` is
+ * implementation-specific metadata, so it is dropped from both levels. An item
+ * a reader cannot render returns null.
  */
 function normalizeItem(
   item: ToolContentItem,
@@ -211,10 +173,7 @@ function normalizeItem(
   const wrapped = inlineImageData(item.content);
   if (wrapped) return store(wrapped);
 
-  // The classifier *is* the renderability judgment the projection and the card
-  // use, so reusing it keeps "persisted" and "rendered" from drifting. An
-  // unrecognized item is dropped here, not kept: keeping it is what let a
-  // payload survive in a shape no reader understands.
+  // The classifier is the renderability judgment: what it cannot name is dropped.
   if (classifyToolContentItem(item).kind === "unknown") return null;
   return isRecord(item) ? dropMeta(item) : item;
 }

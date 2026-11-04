@@ -47,8 +47,7 @@ const FIXTURES = [
     kind: "terminal" as const,
   },
   {
-    // ACP's `ToolCallContent.content` is one block, never an array: a reader
-    // that accepted an array would disagree with ingest, which drops it.
+    // `ToolCallContent.content` is one block; an array is not a shape we read.
     name: "content array (not a protocol shape)",
     item: {
       type: "content",
@@ -195,8 +194,7 @@ describe("tool content shape coverage", () => {
   });
 
   it("treats a bare text block as unknown, not as text", () => {
-    // ACP carries text in `content.text`; a bare `{ type: "text", text }` is not
-    // a protocol shape, so the projection marks the row instead of guessing.
+    // Text belongs in `content.text`; a bare block is unrecognized.
     assert.equal(
       classifyToolContentItem({ type: "text", text: "legacy output" }).kind,
       "unknown",
@@ -291,9 +289,7 @@ describe("tool content shape coverage", () => {
   });
 
   it("refuses a descriptor with a missing required field", () => {
-    // Descriptors are written by this app: a missing field means a broken write
-    // path, so it is refused (and the renderer ignores it) rather than repaired
-    // into something that looks valid.
+    // This app writes descriptors: a missing required field is refused.
     const complete = {
       kind: "image",
       attachmentId: "a1",

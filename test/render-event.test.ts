@@ -121,8 +121,7 @@ describe("render-event", () => {
     });
 
     it("renders an image with no stored size, leaving the box to CSS", () => {
-      // A container we cannot measure (WebP today) stores null dimensions. The
-      // bubble must still render, with no attribute box to reserve.
+      // An unmeasured image stores null dimensions and reserves no box.
       const el = append(
         mod.renderContentEvent(
           "agent_image",

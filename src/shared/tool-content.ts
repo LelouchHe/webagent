@@ -1,14 +1,11 @@
 /**
- * Runtime shape judgment for a *stored* ACP tool_call_update content item.
+ * Shape judgment for a stored ACP tool_call_update content item.
  *
  * Keep this as a judgment, not a renderer: the MCP history projection and
  * frontend display paths must agree on which item families they understand.
  *
- * Only the stored representation is judged here. The wire shape an agent sends
- * (`{ type: "image", mimeType, data }`) is recognized once, at ingest, in
- * `src/tool-result-image.ts`; it must not survive into a stored row, so a block
- * that still carries `data` is `unknown` rather than a picture. One
- * representation, no fallback.
+ * Stored representation only: the wire shape is recognized at ingest
+ * (`src/tool-result-image.ts`) and never survives into a stored row.
  */
 import type { AgentImageAttachment } from "../types.ts";
 
@@ -37,9 +34,7 @@ function isObject(value: unknown): value is JsonObject {
  * Shared by the classifier (server and frontend) and the renderer, so a
  * reference accepted on the way in is exactly the one rendered on the way out.
  *
- * This app writes the descriptor, so a missing required field is a broken write
- * path and is refused rather than repaired. `width`/`height` stay optional (an
- * unmeasurable container stores null) and `displayName` only feeds `alt`.
+ * This app writes the descriptor; only `width`/`height` are optional.
  */
 export function parseImageAttachment(
   raw: unknown,
@@ -64,12 +59,8 @@ export function parseImageAttachment(
 }
 
 /**
- * The stored reference an image block carries, in either position a stored
- * descriptor can appear: the bare block and the
+ * The stored reference an image block carries: the bare block or the
  * `{ type: "content", content: <block> }` wrapper.
- *
- * A block with no reference is not a stored shape, whatever else it holds: an
- * inline payload belongs to ingest, never to a reader.
  */
 function storedImageShape(value: JsonObject): ToolContentItemShape | null {
   if (value.type !== "image") return null;
@@ -126,9 +117,6 @@ export function classifyToolContentItem(item: unknown): ToolContentItemShape {
     }
   }
 
-  // Everything else is unrecognized, and deliberately so: ACP puts text in
-  // `content.text` (a single block), not in a bare `item.text` or in an array
-  // under `item.content`. Guessing there would also mean a reader accepts
-  // shapes ingest drops, and a payload could hide in the difference.
+  // Text is a single block in `content.text`; anything else is unrecognized.
   return { kind: "unknown" };
 }

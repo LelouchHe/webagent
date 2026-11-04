@@ -31,9 +31,7 @@ describe("readImageDimensions", () => {
   });
 
   it("returns null for WebP, which has no parser here", () => {
-    // WebP is a storable container, but this module does not read its
-    // dimensions: the attachment row stores null and no layout box is reserved.
-    // Pinned so a future parser shows up as a deliberate behaviour change.
+    // WebP has no parser here: no dimensions, so no reserved box.
     const webp = Buffer.concat([
       Buffer.from("RIFF", "latin1"),
       Buffer.from([0x24, 0x00, 0x00, 0x00]),

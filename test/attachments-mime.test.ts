@@ -137,11 +137,8 @@ describe("mimeToExt", () => {
 
 describe("image mime policy", () => {
   it("keeps the display and upstream image sets identical", () => {
-    // Two sets, two questions: INLINE_MIMES is the display/XSS policy, and
-    // UPSTREAM_IMAGE_MIMES is what the provider accepts on the wire. They are
-    // allowed to diverge — but that must be a decision, not drift. If this
-    // fails, confirm the policy really changed and update the sets, their
-    // comments and this test deliberately.
+    // Two policies that happen to hold the same members. If this fails, the
+    // divergence has to be a deliberate policy change, not drift.
     assert.deepEqual(
       [...INLINE_MIMES].sort(),
       [...UPSTREAM_IMAGE_MIMES].sort(),

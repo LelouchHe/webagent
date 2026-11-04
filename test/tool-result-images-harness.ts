@@ -59,8 +59,7 @@ export interface ToolResultImageHarnessOptions {
    */
   sseManager?: Parameters<typeof handleAgentEvent>[5];
   /**
-   * Wrap the harness store, e.g. to make one attachments-table call fail the way
-   * an unavailable table would. Everything the handler touches goes through it.
+   * Wrap the harness store, e.g. to make one attachments-table call fail.
    */
   decorateStore?: (store: Store) => Store;
 }

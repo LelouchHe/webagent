@@ -112,9 +112,7 @@ describe("storing an inline agent image", () => {
   });
 
   it("stores a WebP without dimensions, so no layout box is reserved", () => {
-    // The container is allowed and storable; this module has no WebP parser, so
-    // the row and the descriptor carry no size. Pinned so a future parser is a
-    // deliberate change, not a surprise.
+    // A storable container with no dimension parser: no size is recorded.
     const result = storeAgentImage({
       store,
       dataDir: dir,
