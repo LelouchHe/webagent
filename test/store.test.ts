@@ -450,6 +450,28 @@ describe("Store", () => {
       assert.equal(store.getTask("s1")!.reasoning_effort, "xhigh");
     });
 
+    it("clears one config column with null without touching the others", () => {
+      store.createTask("s1", "/x", "auto", "test-agent");
+      store.updateTaskConfig("s1", "model", "claude-sonnet");
+      store.updateTaskConfig("s1", "mode", "plan");
+      store.updateTaskConfig("s1", "reasoning_effort", "high");
+
+      store.updateTaskConfig("s1", "model", null);
+      const cleared = store.getTask("s1")!;
+      assert.equal(cleared.model, null);
+      // Only the named column is cleared: the others are not collateral.
+      assert.equal(cleared.mode, "plan");
+      assert.equal(cleared.reasoning_effort, "high");
+
+      // The thinking alias also clears the canonical column, and a null write
+      // leaves the row addressable.
+      store.updateTaskConfig("s1", "thought_level", null);
+      const afterAlias = store.getTask("s1")!;
+      assert.equal(afterAlias.reasoning_effort, null);
+      assert.equal(afterAlias.mode, "plan");
+      assert.equal(afterAlias.id, "s1");
+    });
+
     it("ignores unknown config option ids", () => {
       store.createTask("s1", "/x", "auto", "test-agent");
       store.updateTaskConfig("s1", "unknown_thing", "value");
