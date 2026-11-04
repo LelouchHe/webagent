@@ -18,8 +18,10 @@ import {
   type SetSessionConfigOptionResponse,
   type SessionConfigOption,
 } from "@agentclientprotocol/sdk";
-import { randomUUID } from "node:crypto";
-import { appendFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import type { McpServer, McpServerHttp } from "@agentclientprotocol/sdk";
 
@@ -657,6 +659,48 @@ class MockAgent implements Agent {
         update: {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: "That is the full window." },
+        },
+      });
+      return { stopReason: "end_turn" };
+    }
+
+    if (text.startsWith("E2E_TOOL_RESULT_IMAGE_PATH")) {
+      // A tool result that only names the file it wrote: the exact shape the
+      // temporary path adapter recognises. The file is real and its hash
+      // matches the marker, so the adapter has everything it verifies.
+      const dir = mkdtempSync(join(tmpdir(), "webagent-e2e-image-"));
+      const path = join(dir, "image-generated.png");
+      const bytes = Buffer.from(E2E_AGENT_IMAGE_PNG, "base64");
+      writeFileSync(path, bytes);
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      const toolCallId = `tool-${++this.toolCallCounter}`;
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "image_generation",
+          kind: "other",
+        },
+      });
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text:
+                  "Image generated successfully.\n" +
+                  `image_id: sha256:${sha256}\n` +
+                  `saved_to: ${path}`,
+              },
+            },
+          ],
         },
       });
       return { stopReason: "end_turn" };

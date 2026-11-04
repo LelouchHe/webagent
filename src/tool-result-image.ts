@@ -72,3 +72,14 @@ export function storeToolResultImages(
 
   return images > 0 ? rewritten : content;
 }
+
+/** The text a tool result carries, one line per item, empty items dropped. */
+export function toolResultText(content: ToolContentItem[]): string {
+  return content
+    .map((item) => {
+      const shape = classifyToolContentItem(item);
+      return shape.kind === "content" ? shape.text : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}

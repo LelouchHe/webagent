@@ -100,6 +100,34 @@ rewrites the update's `content` before the event is persisted or broadcast.
   chat image. Live streaming and replay both render `tool_call_update` through
   `renderContentEvent`, so the two paths cannot drift.
 
+#### Known workaround: Copilot's image tool returns a path
+
+Copilot's `image_generation` tool does not emit an ACP image block. It returns
+text naming the file it wrote:
+
+```
+Image generated successfully.
+image_id: sha256:<64 hex>
+saved_to: /absolute/path/to/image-….png
+```
+
+The file is real (a measured turn wrote a 2.49 MB PNG); only the text crosses
+ACP. `src/agent-compatibility/copilot-image-path.ts` is a shim for that one
+defect and is imported explicitly from the event handler's `tool_call_update`
+branch, which calls it once. It acts only when all three conditions hold: the
+text carries `image_id: sha256:<64 hex>`, it carries `saved_to:` with an
+absolute path, and the tool call's title is `image_generation`. Anything else is
+left as received. It **copies** (never moves or deletes) the file, requires its
+sha256 to equal the marker's hash, requires PNG/JPEG/GIF/WebP magic bytes and
+the same `limits.image_upload` ceiling, and stores identical bytes once per
+task. Any failure is "do nothing" plus a log line, so the tool call itself is
+never affected. It adds no configuration key and no path allowlist.
+
+**Delete it when Copilot's image tool emits a real ACP image block**: delete
+`src/agent-compatibility/copilot-image-path.ts`, its import in
+`src/event-handler.ts`, and the one call in that file's `tool_call_update`
+branch. There is no barrel and no registration list.
+
 ## Client Extensions
 
 ACP allows the client to inject extra capabilities into the agent on top of its native baseline. WebAgent currently provides:

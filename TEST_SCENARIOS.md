@@ -105,6 +105,15 @@ spot gaps, and decide what still needs to be added without reading every spec.
     each become visible `[image omitted: …]` text with no file and no row;
     successive images are named in order and a text-only update is untouched
 
+- `test/tool-result-images-path.test.ts` (temporary shim)
+  - all three markers (`image_id: sha256:…`, `saved_to:` absolute path,
+    `image_generation` title) copy the file, verify its sha256, record a row and
+    append the descriptor; the tool's text and its own file survive
+  - refusals: sha256 mismatch, non-image magic bytes, above the limit,
+    unreadable path, and any missing marker each do nothing; identical bytes
+    are stored once and a later update reuses that row
+  - delete with `src/agent-compatibility/copilot-image-path.ts`
+
 - `test/tool-result-images-render.test.ts`
   - a tool card renders `.tc-images img.tc-image` from the stored path, before
     the output disclosure, from the same helper live streaming and replay use
@@ -811,6 +820,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `tool-result-images.spec.ts`
   - an image block in a tool result renders as a `.tc-images img.tc-image` thumbnail with a **signed attachment URL** (never base64) next to the tool output, and opens the same lightbox; the stored row carries the descriptor
   - a reload replays the thumbnail from the stored row
+
+- `tool-result-images-path.spec.ts`
+  - a tool result that only names a generated image file (the temporary path adapter) renders the same thumbnail, keeps its text result, and stores the appended descriptor
 
 - `file-attachment-download.spec.ts`
   - non-image attachment renders as a clickable file chip in the user message

@@ -14,7 +14,8 @@ import { log } from "./log.ts";
 import { isAutopilotMode } from "./mode-bucket.ts";
 import { leaseOf } from "./execution-authority.ts";
 import { storeAgentImage } from "./agent-image.ts";
-import { storeToolResultImages } from "./tool-result-image.ts";
+import { storeToolResultImages, toolResultText } from "./tool-result-image.ts";
+import { recoverCopilotImagePath } from "./agent-compatibility/copilot-image-path.ts";
 
 const ailog = log.scope("attachment-interceptor");
 const plog = log.scope("push");
@@ -498,6 +499,18 @@ function dispatchAgentEvent(
           },
           content,
         );
+        // Temporary: recover an image one agent only names by path.
+        const recovered = recoverCopilotImagePath({
+          store,
+          dataDir: config.dataDir,
+          taskId: event.taskId,
+          toolCall: { id: event.id, title: event.title ?? "" },
+          text: toolResultText(content),
+          limitBytes: config.imageUploadLimit,
+        });
+        if (recovered) {
+          content = [...content, { type: "image", attachment: recovered }];
+        }
       }
       if (content) event.content = content;
       store.saveEvent(
