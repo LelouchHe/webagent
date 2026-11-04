@@ -2735,6 +2735,7 @@ export function createRequestHandler(
           source?: string;
           parentId?: string;
           title?: string;
+          agentId?: unknown;
         };
         try {
           body = JSON.parse(await readBody(req)) as {
@@ -2743,6 +2744,7 @@ export function createRequestHandler(
             source?: string;
             parentId?: string;
             title?: string;
+            agentId?: unknown;
           };
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
@@ -2772,6 +2774,25 @@ export function createRequestHandler(
             return;
           }
         }
+        // An explicit target is the caller's declared execution environment; it
+        // is checked before anything starts, so an unknown id is a client error
+        // rather than a late failure, and a start failure keeps its real reason.
+        if (body.agentId !== undefined && typeof body.agentId !== "string") {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "agentId must be a string",
+          });
+          return;
+        }
+        const explicitAgent = body.agentId;
+        if (
+          explicitAgent !== undefined &&
+          !tasks.isAgentConfigured(explicitAgent)
+        ) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: `Agent ${explicitAgent} is not configured`,
+          });
+          return;
+        }
         // The new task runs where its parent runs, unless that agent is no
         // longer available: then the child is created for the default agent.
         // Either way the *parent's* binding is untouched — creating a child is
@@ -2787,18 +2808,23 @@ export function createRequestHandler(
           ? store.getBindingAgent(effectiveParentId)
           : undefined;
         const targetAgentId =
-          parentAgent && tasks.isAgentConfigured(parentAgent)
+          explicitAgent ??
+          (parentAgent && tasks.isAgentConfigured(parentAgent)
             ? parentAgent
-            : tasks.defaultAgentId;
+            : tasks.defaultAgentId);
         let bridge;
         try {
           bridge = await tasks.resolveAgentTransport(targetAgentId);
         } catch (err) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            // An explicitly chosen agent reports why it failed; the inherited
+            // path keeps its generic rescue message.
             error:
-              err instanceof AgentUnavailableError
-                ? "Agent is not available for this task"
-                : errorMessage(err),
+              explicitAgent !== undefined
+                ? `Agent ${targetAgentId} is not available: ${errorMessage(err)}`
+                : err instanceof AgentUnavailableError
+                  ? "Agent is not available for this task"
+                  : errorMessage(err),
           });
           return;
         }
@@ -2812,6 +2838,7 @@ export function createRequestHandler(
               parentId: body.parentId,
               title: title ?? undefined,
               workflowStatus: title ? "idle" : undefined,
+              agentId: explicitAgent,
             },
           );
           const task = store.getTask(taskId);

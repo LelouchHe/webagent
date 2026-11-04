@@ -60,6 +60,17 @@ export function createProfiledAgent(
   const configWrites: ConfigWrite[] = [];
   const loads: string[] = [];
   const retired: string[] = [];
+  /** Per-task config values, so a response reports the whole session state. */
+  const sessionValues = new Map<string, Record<string, string>>();
+
+  const report = (taskId: string): ConfigOption[] => {
+    const values = sessionValues.get(taskId) ?? {};
+    return copyOptions(schema).map((option) =>
+      "options" in option && typeof values[option.id] === "string"
+        ? { ...option, currentValue: values[option.id] }
+        : option,
+    );
+  };
 
   const bridge = {
     agentId,
@@ -73,15 +84,17 @@ export function createProfiledAgent(
     },
     async setConfigOption(taskId: string, configId: string, value: string) {
       configWrites.push({ taskId, id: configId, value });
-      return copyOptions(schema).map((option) =>
-        option.id === configId && "options" in option
-          ? { ...option, currentValue: value }
-          : option,
-      );
+      // A real agent answers with the session's whole config, not just the
+      // touched option, so the double accumulates like one.
+      sessionValues.set(taskId, {
+        ...(sessionValues.get(taskId) ?? {}),
+        [configId]: value,
+      });
+      return report(taskId);
     },
     async loadSession(taskId: string, _cwd: string) {
       loads.push(taskId);
-      return { taskId, configOptions: copyOptions(schema) };
+      return { taskId, configOptions: report(taskId) };
     },
     async retireExecution(agentSessionId: string) {
       retired.push(agentSessionId);

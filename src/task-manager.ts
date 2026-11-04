@@ -1103,6 +1103,15 @@ export class TaskManager implements ObligationHost {
       thinking?: string;
       workflowStatus?: WorkflowStatus;
       /**
+       * The agent the caller explicitly created this task for. A new task's
+       * target is part of the request, so a parent carried by another agent is
+       * a declared divergence rather than a write through the wrong process —
+       * the one case where the parent-binding guard does not apply. Nothing here
+       * rewrites an existing task's binding, and the value must be the transport
+       * the caller resolved.
+       */
+      agentId?: string;
+      /**
        * Re-validates the caller right before the task is persisted. An MCP
        * request can sit inside `newSession` for a long time; a rotation during
        * that window must leave no task behind.
@@ -1111,6 +1120,13 @@ export class TaskManager implements ObligationHost {
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const agentId = this.attachExecutionBridge(bridge);
+    if (opts?.agentId !== undefined && opts.agentId !== agentId) {
+      // The declared target and the resolved transport must be the same agent,
+      // or the caller's request would be silently satisfied by another one.
+      throw new Error(
+        `Agent ${opts.agentId} was requested but the transport is ${agentId}`,
+      );
+    }
     const parentId = this.resolveParentId(opts?.parentId);
     if (parentId) {
       await this.waitForRootResetIfNeeded(parentId);
@@ -1119,8 +1135,12 @@ export class TaskManager implements ObligationHost {
       }
       // A child runs in its parent's execution environment: the caller that
       // chose the parent also chose the agent, so a mismatch is refused rather
-      // than silently attached to a foreign agent.
-      this.assertBindingAgent(parentId, agentId);
+      // than silently attached to a foreign agent. The exception is a caller
+      // that chose the target agent itself: creating a child does not touch the
+      // parent's execution, so that is a choice, not a foreign write.
+      if (opts?.agentId === undefined) {
+        this.assertBindingAgent(parentId, agentId);
+      }
     }
     const result = await this.createTaskImpl(
       bridge,
@@ -1232,6 +1252,7 @@ export class TaskManager implements ObligationHost {
       model?: string;
       thinking?: string;
       workflowStatus?: WorkflowStatus;
+      agentId?: string;
       assertCaller?: () => void;
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
@@ -1247,6 +1268,16 @@ export class TaskManager implements ObligationHost {
     const sourceTask = inheritFromTaskId
       ? this.store.getTask(inheritFromTaskId)
       : null;
+    // Execution config describes one agent's environment. A child created for a
+    // *different* agent than the source starts from that agent's own defaults;
+    // only a source whose agent is unknown keeps inheriting, because nothing
+    // there proves a difference.
+    const sourceAgentId = sourceTask
+      ? this.store.getBindingAgent(sourceTask.id)
+      : undefined;
+    const inheritConfig =
+      sourceTask !== null &&
+      (sourceAgentId === undefined || sourceAgentId === agentId);
     const taskId = randomUUID();
     // Mint the task capability and build its mcpServers entry BEFORE the
     // ACP task exists (the definition is carried in task/new itself),
@@ -1303,8 +1334,9 @@ export class TaskManager implements ObligationHost {
       // now reach business tools.
       this.promoteCapability(execution?.token, taskId);
 
-      // Inherit config options from source task
-      if (sourceTask) {
+      // Inherit config options from source task (same execution environment
+      // only; see `inheritConfig`).
+      if (sourceTask && inheritConfig) {
         configOptions = await this.inheritTaskConfig(
           bridge,
           taskId,
