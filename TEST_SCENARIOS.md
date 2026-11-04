@@ -76,6 +76,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/multi-agent-config-replay.test.ts` (real ACP agent process, real `AgentBridge`)
   - a config report written immediately after the `session/new` result is queued by the transport, replayed when the binding commits, and survives the rotation's tail: the initial response's older value never rolls it back
 
+- `test/multi-agent-config-clear.test.ts` (real ACP agent process, real `AgentBridge`)
+  - a cross-agent clear whose replacement reports `medium` *before* its `session/new` result (which says `high`) keeps `medium`: the clear zeroes a column only while it still holds its pre-rotation value, and the rotation's own read face agrees with the row
+  - control: an unreporting replacement still has the old value cleared and adopts its snapshot default, so the zeroing itself is not disabled
+
 - `test/multi-agent-cwd-defaults.test.ts`
   - an omitted `cwd` on `/clear` keeps the task's own directory while an omitted `cwd` on create uses the server default, even for a child of a task that runs elsewhere
 
