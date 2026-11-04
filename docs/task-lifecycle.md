@@ -44,7 +44,7 @@ the SQL mechanics, and the debt state machine live in their own documents (see
 | Trigger | Keeps | Drops / changes |
 | --- | --- | --- |
 | **Birth** — `POST /api/v1/tasks`, MCP `task_create` | — | Mints the task's MCP capability *before* `newSession`, then writes the task row and its binding in one transaction. A failure past minting discards the unbound ACP session and revokes the token; a persistence failure rolls the row back. |
-| **Rotation** — `/clear` (optionally naming a configured `agentId`), `/compact`, implicit takeover when the binding agent left configuration | Task id, `parent_id`, events, attachments, shares, runtime `seq`, the obligation record with its attempts, stored config, cwd unless a new one is given | Runtime state resets; the old transport is truncated (claimed dispatch retries, unfinished delivery rows); generation +1; the displaced execution is retired through the agent recorded on the old binding; an `agent_rotation` transcript line records the trigger. A pending compact handoff survives `/compact` and is cleared by a plain `/clear`. |
+| **Rotation** — `/clear` (optionally naming a configured `agentId`), `/compact`, implicit takeover when the binding agent left configuration | Task id, `parent_id`, events, attachments, shares, runtime `seq`, the obligation record with its attempts, stored config (only when the agent stays the same; another agent's execution starts from its own defaults), cwd unless a new one is given | Runtime state resets; the old transport is truncated (claimed dispatch retries, unfinished delivery rows); generation +1; the displaced execution is retired through the agent recorded on the old binding; an `agent_rotation` transcript line records the trigger. A pending compact handoff survives `/compact` and is cleared by a plain `/clear`. |
 | **Implicit takeover** — the binding agent is no longer in configuration | Everything a rotation keeps | The binding moves to `default_agent`'s reserved empty slot (Root: `""`, ordinary task: `no-execution:<taskId>`), leaving the task **unmaterialized**. A configured agent that is merely not running, dead, or unavailable is *not* a trigger; only removing it from configuration is. |
 | **Materialization** — first use (resume, prompt, explicit clear) of an unmaterialized task | Everything | A fresh ACP session replaces the empty slot. All first-use paths share the same per-task single-flight. |
 | **Delete** — `DELETE /api/v1/tasks/:id`, `/exit` off Root | Nothing | The **whole task tree**, whatever agent owns each descendant: rows gone, executions retired through each agent's adapter, directories removed. |
@@ -57,7 +57,7 @@ the SQL mechanics, and the debt state machine live in their own documents (see
 
 | Operation | Scope | What happens |
 | --- | --- | --- |
-| `/clear` | One task | Rotates the execution. Task, history, and tree position are unchanged. |
+| `/clear` | One task | Rotates the execution. Task, history, and tree position are unchanged; `model` / `mode` / `reasoning_effort` are kept only when the agent stays the same. |
 | Root reset — `/exit` on Root, or `DELETE /api/v1/tasks/root` | Root and its whole subtree | Deletes the descendant tree, clears Root's own events, attachments, client ops, compact summary, and previews, leaves the Root row with Root's empty execution slot, bumps the generation. Root's identity and `parent_id = null` survive, and the reset is DB-only, so it works with the agent offline. |
 | `/exit` | The current task | Deletes that task and its subtree; on Root it is the reset above. |
 

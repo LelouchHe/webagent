@@ -50,6 +50,22 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
   default agent on next use, or on an explicit `POST /clear`. Until then the
   task stays readable, deletable, shareable, and clearable while its agent is
   unavailable.
+- A task's `model` / `mode` / `reasoning_effort` belong to the execution
+  environment, not to the task, so they are not carried across agents. Both
+  ways the environment can change clear them before any config is replayed: an
+  explicit `/clear` onto another agent, and the implicit takeover of a removed
+  owner (which does not run through `clearTask`). The replacement session's
+  self-reported values then become the task's stored config — never the first
+  entry of an option list — so the database, the detail read, a live resume,
+  and a cold restore agree. A same-agent replacement keeps replaying them.
+- New tasks may name their agent. That is the one case where the parent-binding
+  guard is not applied: the caller chose the new task's environment, and
+  creating a child never rewrites an existing task's binding. A child created
+  for another agent does not inherit the source task's execution config.
+- The configured agent directory (id + startup PATH availability) is reported
+  by `GET /api/v1/config` and bootstrap. It is a configuration fact: taking it
+  resolves and starts nothing, and `available: true` means the launch command
+  exists on PATH — not that the process can start, handshake, or authenticate.
 - The agent `connected` event names its agent (`agentId`) so a client can tell
   one agent coming up from another. The SSE connection handshake is a different
   event and carries no agent.

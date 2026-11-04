@@ -96,6 +96,22 @@ The operational form of that sentence:
   at its start). *Why:* "resolve the current binding" at each site looks
   uniform and silently mis-retires, mis-authorizes, or sends a foreign
   operation into the default process.
+- **Execution config does not cross agents.** A task's `model`, `mode`, and
+  `reasoning_effort` describe its current execution environment, so a
+  replacement owned by another agent clears them before any config is replayed,
+  and the replacement's own reported values then become the task's stored
+  config. Both triggers are covered deliberately: an explicit `/clear` and the
+  implicit takeover of a removed owner, which does not run through
+  `clearTask`. *Why:* they are one fact about one agent (a model name, a mode
+  string, an effort level); carrying them over silently asks the new agent for
+  something it may not support, and an unclear replacement falls back to the
+  agent's shared schema cache, i.e. another task's session.
+- **A new task may name its agent; an existing task's binding is never chosen
+  by a caller.** Creating a child for a different agent than its parent is a
+  declared environment, so the parent-binding guard is skipped only there, and
+  such a child does not inherit the source task's execution config. *Why:* the
+  guard exists to stop writes through the wrong process for an execution that
+  already exists; a task that is being created has none.
 - **A read never depends on an execution being resolvable, and it never waits
   for one.** Listing, reading a task, its snapshot, attachments, shares, and
   deletion return while the binding agent is missing, dead, or no longer
