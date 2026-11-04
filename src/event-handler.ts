@@ -526,8 +526,13 @@ function dispatchAgentEvent(
           limitBytes: config.imageUploadLimit,
         });
         if (recovered) {
-          content = [...content, { type: "image", attachment: recovered }];
-          storedImage = true;
+          content = [
+            ...content,
+            { type: "image", attachment: recovered.attachment },
+          ];
+          // A content-hash duplicate reuses the existing row: there is nothing
+          // new for a cached label map to learn.
+          if (recovered.inserted) storedImage = true;
         }
       }
       if (content) event.content = content;

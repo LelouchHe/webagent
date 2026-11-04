@@ -118,16 +118,24 @@ function ignore(reason: string, fields: Record<string, unknown>): null {
   return null;
 }
 
+export interface RecoveredImage {
+  attachment: AgentImageAttachment;
+  /** True only when this call inserted the attachment row. */
+  inserted: boolean;
+}
+
 /**
  * Recover the image a Copilot `image_generation` result only names by path.
  *
- * Returns the stored descriptor, or null when the three markers do not all
- * hold or the file does not match them. The caller appends it to the tool
- * result's content; this function never mutates the ACP event.
+ * Returns the descriptor together with whether this call inserted a new row,
+ * or null when the three markers do not all hold or the file does not match
+ * them. The caller appends the descriptor to the tool result's content and
+ * invalidates the label cache only for a new row; this function never mutates
+ * the ACP event.
  */
 export function recoverCopilotImagePath(
   ctx: CopilotImagePathContext,
-): AgentImageAttachment | null {
+): RecoveredImage | null {
   const marker = readMarker(ctx.text);
   if (!marker) return null;
 
@@ -183,7 +191,7 @@ export function recoverCopilotImagePath(
   }
 
   const duplicate = findStoredCopy(ctx, marker.sha256, bytes.length);
-  if (duplicate) return duplicate;
+  if (duplicate) return { attachment: duplicate, inserted: false };
 
   const index = ctx.store.countAttachments(ctx.taskId, "image") + 1;
   const result = storeImageBytes({
@@ -201,7 +209,7 @@ export function recoverCopilotImagePath(
       reason: result.reason,
     });
   }
-  return result.stored;
+  return { attachment: result.stored, inserted: true };
 }
 
 /**

@@ -115,6 +115,26 @@ describe("tool-result images: a named image file", () => {
     assert.equal(enriched.title.includes(row.realpath), false);
   });
 
+  it("does not invalidate the label cache when a duplicate row is reused", () => {
+    let invalidations = 0;
+    const original = harness.tasks.invalidateLabelCache.bind(harness.tasks);
+    harness.tasks.invalidateLabelCache = (taskId: string) => {
+      invalidations++;
+      original(taskId);
+    };
+
+    generated("t1");
+    assert.equal(store.countAttachments("t1", "image"), 1);
+    const afterFirst = invalidations;
+    assert.equal(afterFirst, 1, "the first image inserted a row");
+
+    // Identical bytes: `findStoredCopy` reuses the existing row, so the cache
+    // has nothing new to learn and must not be dropped again.
+    generated("t1");
+    assert.equal(store.countAttachments("t1", "image"), 1);
+    assert.equal(invalidations, afterFirst);
+  });
+
   it("resolves the tool call's title when the update omits it", () => {
     harness.toolCall("t1", "image_generation");
     harness.emit(
