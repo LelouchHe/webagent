@@ -89,11 +89,35 @@ describe("render-event", () => {
       assert.equal(img.loading, "lazy");
       // A reference, not base64: the path the egress signs.
       assert.equal(img.getAttribute("src"), attachment.path);
-      // Reserved geometry comes from the 800x600 the store recorded.
-      assert.ok(Number(img.getAttribute("width")) > 0);
-      assert.ok(Number(img.getAttribute("height")) > 0);
+      // Reserved geometry is the image's own size: the browser reserves a
+      // proportional box, and CSS decides the display width.
+      assert.equal(img.getAttribute("width"), "800");
+      assert.equal(img.getAttribute("height"), "600");
       // The bubble is not a markdown host: nothing carries a text payload.
       assert.equal(el.getAttribute("data-raw"), null);
+    });
+
+    it("keeps a wide image's own size instead of a fixed ceiling", () => {
+      // The display width comes from the container (CSS), so the attributes
+      // must not pre-shrink the picture to a px ceiling: a 360px box would pin
+      // it no matter how wide the bubble is.
+      const el = append(
+        mod.renderContentEvent(
+          "agent_image",
+          {
+            attachment: {
+              ...attachment,
+              width: 1600,
+              height: 900,
+            },
+          },
+          makeHooks(),
+        ),
+      ) as HTMLElement;
+
+      const img = el.querySelector("img") as HTMLImageElement;
+      assert.equal(img.getAttribute("width"), "1600");
+      assert.equal(img.getAttribute("height"), "900");
     });
 
     it("renders nothing extra for a payload that is not a stored image", () => {

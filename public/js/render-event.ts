@@ -306,51 +306,65 @@ function buildUserFileLink(src: string, name: string): HTMLAnchorElement {
   return link;
 }
 
-type ImageVariant = "user" | "agent";
-
-function imageDisplaySize(
+/**
+ * A stored image's own pixel size, or null when the row carries none.
+ *
+ * This is what an agent image's `width`/`height` attributes carry, and nothing
+ * else: the attributes exist so the browser can reserve a proportional box
+ * before the bytes arrive. The display size is CSS's job — `max-width: 100%`
+ * only shrinks, so the picture takes the container's width on a wide screen and
+ * keeps its own pixels when it is small. A px ceiling here would pin every
+ * picture to that width no matter how wide the card is.
+ */
+function naturalImageSize(
   rawWidth: unknown,
   rawHeight: unknown,
-  variant: ImageVariant = "user",
 ): { width: number; height: number } | null {
   if (typeof rawWidth !== "number" || typeof rawHeight !== "number") {
     return null;
   }
   if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) return null;
   if (rawWidth <= 0 || rawHeight <= 0) return null;
-  const maxSize = imageMaxDisplaySize(variant);
-  const scale = Math.min(
-    maxSize.width / rawWidth,
-    maxSize.height / rawHeight,
-    1,
-  );
   return {
-    width: Math.max(1, Math.round(rawWidth * scale)),
-    height: Math.max(1, Math.round(rawHeight * scale)),
+    width: Math.max(1, Math.round(rawWidth)),
+    height: Math.max(1, Math.round(rawHeight)),
   };
 }
 
-function imageMaxDisplaySize(variant: ImageVariant = "user"): {
-  width: number;
-  height: number;
-} {
+/**
+ * The attribute box for a user's attachment thumbnail.
+ *
+ * A user's picture is a preview inside the message bubble, not the reply
+ * itself, so it keeps that bubble's own 200x150 design: scaled into that box
+ * and never up. Agent images do not use this.
+ */
+function imageDisplaySize(
+  rawWidth: unknown,
+  rawHeight: unknown,
+): { width: number; height: number } | null {
+  const natural = naturalImageSize(rawWidth, rawHeight);
+  if (!natural) return null;
+  const maxSize = imageMaxDisplaySize();
+  const scale = Math.min(
+    maxSize.width / natural.width,
+    maxSize.height / natural.height,
+    1,
+  );
+  return {
+    width: Math.max(1, Math.round(natural.width * scale)),
+    height: Math.max(1, Math.round(natural.height * scale)),
+  };
+}
+
+function imageMaxDisplaySize(): { width: number; height: number } {
   const style = document.defaultView?.getComputedStyle(
     document.documentElement,
   );
-  if (!style) {
-    return variant === "agent"
-      ? { width: 360, height: 320 }
-      : { width: 200, height: 150 };
-  }
-  return variant === "agent"
-    ? {
-        width: cssPixelVar(style, "--agent-image-max-width", 360),
-        height: cssPixelVar(style, "--agent-image-max-height", 320),
-      }
-    : {
-        width: cssPixelVar(style, "--user-image-max-width", 200),
-        height: cssPixelVar(style, "--user-image-max-height", 150),
-      };
+  if (!style) return { width: 200, height: 150 };
+  return {
+    width: cssPixelVar(style, "--user-image-max-width", 200),
+    height: cssPixelVar(style, "--user-image-max-height", 150),
+  };
 }
 
 function cssPixelVar(
@@ -393,14 +407,10 @@ export function buildAgentImageMessage(raw: unknown): HTMLElement {
   img.className = "agent-image";
   img.alt = attachment.displayName;
   img.loading = "lazy";
-  const displaySize = imageDisplaySize(
-    attachment.width,
-    attachment.height,
-    "agent",
-  );
-  if (displaySize) {
-    img.width = displaySize.width;
-    img.height = displaySize.height;
+  const size = naturalImageSize(attachment.width, attachment.height);
+  if (size) {
+    img.width = size.width;
+    img.height = size.height;
   }
   img.src = hooks_rewriteSrc(attachment.path);
   el.appendChild(img);
@@ -865,14 +875,10 @@ function applyToolResultImages(
     img.className = "tc-image";
     img.alt = attachment.displayName;
     img.loading = "lazy";
-    const displaySize = imageDisplaySize(
-      attachment.width,
-      attachment.height,
-      "agent",
-    );
-    if (displaySize) {
-      img.width = displaySize.width;
-      img.height = displaySize.height;
+    const size = naturalImageSize(attachment.width, attachment.height);
+    if (size) {
+      img.width = size.width;
+      img.height = size.height;
     }
     img.src = hooks_rewriteSrc(attachment.path);
     container.appendChild(img);

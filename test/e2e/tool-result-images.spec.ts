@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "playwright/test";
+import { test, expect, type Locator, type Page } from "playwright/test";
 import { createNewTask, currentTaskId, gotoConnected } from "./helpers.ts";
 
 /**
@@ -22,6 +22,39 @@ async function send(page: Page, scenario: string): Promise<void> {
   await input.press("Enter");
   await expect(page.locator(".tool-call .tc-images img.tc-image")).toHaveCount(
     1,
+  );
+}
+
+/**
+ * Give the served 1×1 fixture a real natural size.
+ *
+ * The fixture is 1×1, so the stored descriptor — and therefore the renderer's
+ * `width`/`height` attributes — say 1×1. Rewriting both the bytes and the
+ * attributes is exactly what the renderer produces for that source, which
+ * leaves the layout rules as the thing under test.
+ */
+async function resizeImage(
+  image: Locator,
+  width: number,
+  height: number,
+): Promise<void> {
+  await image.evaluate(
+    async (el, size) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = size.width;
+      canvas.height = size.height;
+      const ctx = canvas.getContext("2d")!;
+      ctx.fillStyle = "#123456";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const img = el as HTMLImageElement;
+      await new Promise<void>((resolve) => {
+        img.onload = () => resolve();
+        img.src = canvas.toDataURL("image/png");
+      });
+      img.width = size.width;
+      img.height = size.height;
+    },
+    { width, height },
   );
 }
 
@@ -101,24 +134,7 @@ test("a wide thumbnail never widens the page", async ({ page }) => {
   // The served fixture is 1×1; give the <img> a genuinely wide natural size so
   // the layout rules are what is under test, not the fixture.
   const image = page.locator(".tool-call .tc-images img.tc-image");
-  await image.evaluate(async (el) => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 1600;
-    canvas.height = 900;
-    const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = "#123456";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const img = el as HTMLImageElement;
-    await new Promise<void>((resolve) => {
-      img.onload = () => resolve();
-      img.src = canvas.toDataURL("image/png");
-    });
-    // What the renderer would produce for a 1600×900 source: the display box is
-    // capped by the ceiling, and the attributes carry that box. The layout rules
-    // are what must keep it inside the card.
-    img.width = 360;
-    img.height = 203;
-  });
+  await resizeImage(image, 1600, 900);
 
   const layout = await page.evaluate(() => {
     const img = document.querySelector<HTMLImageElement>(
@@ -156,4 +172,56 @@ test("a wide thumbnail never widens the page", async ({ page }) => {
     return rect.width / rect.height;
   });
   expect(Math.abs(boxRatio - ratio)).toBeLessThan(0.05);
+});
+
+test("a wide thumbnail follows the card, not a fixed ceiling", async ({
+  page,
+}) => {
+  // Desktop viewport. A fixed 360px ceiling left the picture small beside a
+  // paragraph that fills the row, so the display width has to come from the
+  // container.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await gotoConnected(page);
+  await send(page, "E2E_TOOL_RESULT_IMAGE");
+
+  const image = page.locator(".tool-call .tc-images img.tc-image");
+  await resizeImage(image, 1600, 900);
+
+  const layout = await page.evaluate(() => {
+    const img = document.querySelector<HTMLImageElement>(
+      ".tool-call .tc-images img.tc-image",
+    )!;
+    const container = img.closest(".tc-images")!;
+    const rect = img.getBoundingClientRect();
+    return {
+      imageWidth: rect.width,
+      imageHeight: rect.height,
+      // The content box the picture is allowed to fill.
+      containerWidth: container.clientWidth,
+    };
+  });
+
+  // Clearly wider than the old 360px ceiling, still inside the card, and still
+  // 16:9 rather than stretched to whatever the height cap allows.
+  expect(layout.imageWidth).toBeGreaterThan(600);
+  expect(layout.imageWidth).toBeLessThanOrEqual(layout.containerWidth + 0.5);
+  expect(
+    Math.abs(layout.imageWidth / layout.imageHeight - 16 / 9),
+  ).toBeLessThan(0.05);
+});
+
+test("a small thumbnail is not upscaled", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await gotoConnected(page);
+  await send(page, "E2E_TOOL_RESULT_IMAGE");
+
+  const image = page.locator(".tool-call .tc-images img.tc-image");
+  await resizeImage(image, 200, 100);
+
+  const width = await image.evaluate(
+    (el) => (el as HTMLImageElement).getBoundingClientRect().width,
+  );
+  // Its own 200px, not the container's width: `max-width: 100%` only shrinks.
+  expect(width).toBeLessThanOrEqual(210);
+  expect(width).toBeGreaterThanOrEqual(190);
 });

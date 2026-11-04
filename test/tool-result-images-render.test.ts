@@ -85,6 +85,30 @@ describe("tool-result image rendering", () => {
     assert.equal(card.querySelector(".tc-content")?.textContent, "here it is");
   });
 
+  it("reserves the picture's own size, not a fixed ceiling", () => {
+    // The card's width decides the display size (CSS); the attributes only
+    // reserve a proportional box before the bytes arrive, so they must carry
+    // the image's own pixels rather than a 360px ceiling.
+    events.handleEvent({ type: "tool_call", ...CALL });
+    events.handleEvent({
+      type: "tool_call_update",
+      ...UPDATE,
+      content: [
+        {
+          type: "image",
+          attachment: { ...ATTACHMENT, width: 1600, height: 900 },
+        },
+      ],
+    });
+
+    const img = document.querySelector(
+      "#tc-tc-img img.tc-image",
+    ) as HTMLImageElement;
+    assert.ok(img);
+    assert.equal(img.getAttribute("width"), "1600");
+    assert.equal(img.getAttribute("height"), "900");
+  });
+
   it("opens the shared lightbox when the thumbnail is clicked", () => {
     renderLive();
     const img = document.querySelector(

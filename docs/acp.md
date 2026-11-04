@@ -112,6 +112,13 @@ picture and its payload is never echoed; there is no compatibility branch.
 - The tool card shows a thumbnail that opens the same lightbox as any other
   chat image. Live streaming and replay both render `tool_call_update` through
   `renderContentEvent`, so the two paths cannot drift.
+- Display size comes from the container, not a fixed ceiling: `max-width: 100%`
+  with `height: auto`, so a wide card shows a wide picture, a narrow one still
+  keeps it inside the card, and a small picture keeps its own pixels (nothing
+  upscales). The height is capped (`min(70vh, 480px)`) so one portrait image
+  cannot fill the screen. The `width`/`height` attributes carry the image's own
+  size — they reserve a proportional box before the bytes arrive — and an
+  `agent_image` bubble uses the same rule.
 
 #### Known workaround: Copilot's image tool returns a path
 
