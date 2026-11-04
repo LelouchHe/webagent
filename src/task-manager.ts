@@ -176,6 +176,12 @@ function configOptionId(
 /** The task columns a replacement can adopt from a session's own report. */
 type ExecutionConfigColumn = "model" | "mode" | "reasoning_effort";
 
+const EXECUTION_CONFIG_COLUMNS: ExecutionConfigColumn[] = [
+  "model",
+  "mode",
+  "reasoning_effort",
+];
+
 /**
  * A session's reported execution config, keyed by the task column it belongs
  * to. Logical ids are resolved through that agent's own schema, so
@@ -942,6 +948,13 @@ export class TaskManager implements ObligationHost {
    * fence, and return the row view the rest of the rotation must use. Reading
    * the same stale values back into `restoreTaskConfig` or the read-face
    * overlay would hand the previous agent's choices to the new one.
+   *
+   * Only a column that still holds its pre-rotation value is cleared. The
+   * transport replays the replacement's queued config updates when the binding
+   * commits, which can happen before this tail runs: a value that replay
+   * already rewrote belongs to the new generation and survives. The row is
+   * re-read synchronously afterwards (no await, so no window) and returned, so
+   * the rest of the tail sees the value that actually won.
    */
   private zeroExecutionConfig<
     T extends Pick<TaskRow, "model" | "mode" | "reasoning_effort">,
@@ -949,8 +962,18 @@ export class TaskManager implements ObligationHost {
     if (!this.leaseCurrent(lease)) {
       throw new Error(`Execution replaced while rotating ${taskId}`);
     }
-    this.clearStoredExecutionConfig(taskId);
-    return { ...task, model: null, mode: null, reasoning_effort: null };
+    for (const column of EXECUTION_CONFIG_COLUMNS) {
+      this.store.clearTaskConfigIfUnchanged(taskId, column, task[column]);
+    }
+    const stored = this.store.getTask(taskId);
+    if (!stored)
+      return { ...task, model: null, mode: null, reasoning_effort: null };
+    return {
+      ...task,
+      model: stored.model,
+      mode: stored.mode,
+      reasoning_effort: stored.reasoning_effort,
+    };
   }
 
   /**
