@@ -64,6 +64,10 @@ const COLLABORATION_CHILD_INSTRUCTION =
   "Review the authentication flow for access-control gaps. Summarize the highest-priority finding and hand the task back when finished.";
 const COLLABORATION_DONE_SUMMARY =
   "Authentication review complete: session checks consistently enforce the requested access boundary; no high-priority gaps found.";
+/** A real 1x1 PNG, sent as an inline agent image (base64, no file). */
+const E2E_AGENT_IMAGE_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn3mXQAAAAASUVORK5CYII=";
+
 const SCREENSHOT_PROMPT_ALIASES = new Map([
   ["Update the server configuration for deployment.", "E2E_TOOL_EDIT"],
   ["Add the default configuration module.", "E2E_TOOL_CREATE"],
@@ -626,6 +630,38 @@ class MockAgent implements Agent {
     params: PromptRequest,
     text: string,
   ): Promise<PromptResponse> {
+    if (text.startsWith("E2E_AGENT_IMAGE")) {
+      // Text, then an inline image, then more text: the runtime has to keep
+      // all three in order and render the image as its own element. The bytes
+      // are a real 1x1 PNG, sent the way an agent sends a screenshot.
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Here is the screenshot:" },
+        },
+      });
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "image",
+            mimeType: "image/png",
+            data: E2E_AGENT_IMAGE_PNG,
+          },
+        },
+      });
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "That is the full window." },
+        },
+      });
+      return { stopReason: "end_turn" };
+    }
+
     if (text.startsWith("E2E_SLOW_TOOL")) {
       const toolCallId = `tool-${++this.toolCallCounter}`;
       await this.connection.sessionUpdate({
