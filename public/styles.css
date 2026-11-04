@@ -516,6 +516,22 @@ body {
   font-size: 14px;
   color: var(--text);
 }
+/* Thumbnails of images a tool result refers to. Scoped to the tool card so the
+   chat-bubble image rules stay untouched. */
+.tool-call .tc-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 4px 16px;
+}
+.tool-call .tc-images img.tc-image {
+  max-width: var(--agent-image-max-width);
+  max-height: var(--agent-image-max-height);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+  cursor: zoom-in;
+}
 
 /* Source disclosure for tool inputs with code */
 .tool-call .tc-source pre {

@@ -96,6 +96,20 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - dimensions come from the bytes, the row goes with the task, and a second image is named in sequence
   - an image above `limits.image_upload`, a payload that is not a storable image container, an empty/malformed payload, and a file-write failure each become visible `[image omitted: …]` text with no file and no row
 
+- `test/tool-result-images.test.ts` (the normal ACP path)
+  - an image content block in a `tool_call_update` (bare or wrapped in
+    `content`) is written to the shared attachment layout with a row and an
+    unsigned descriptor; the persisted event and the live broadcast carry no
+    base64 and keep the surrounding text; the wire's mime claim is ignored
+  - refusals: above `limits.image_upload` and not a storable image container
+    each become visible `[image omitted: …]` text with no file and no row;
+    successive images are named in order and a text-only update is untouched
+
+- `test/tool-result-images-render.test.ts`
+  - a tool card renders `.tc-images img.tc-image` from the stored path, before
+    the output disclosure, from the same helper live streaming and replay use
+    (identical DOM), and the thumbnail opens the shared lightbox
+
 - `test/bridge.test.ts`
   - prompt success / failure / cancellation
   - silent prompt buffering for compact summarization
@@ -793,6 +807,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `agent-image.spec.ts`
   - an image the agent returns renders as `img.agent-image` with a **signed attachment URL** (never base64), between the text blocks around it, and opens the same lightbox
   - a reload replays it from the stored `agent_image` record: same three-element order, same URL form, and the row carries no bytes; following the signed URL returns the exact PNG
+
+- `tool-result-images.spec.ts`
+  - an image block in a tool result renders as a `.tc-images img.tc-image` thumbnail with a **signed attachment URL** (never base64) next to the tool output, and opens the same lightbox; the stored row carries the descriptor
+  - a reload replays the thumbnail from the stored row
 
 - `file-attachment-download.spec.ts`
   - non-image attachment renders as a clickable file chip in the user message

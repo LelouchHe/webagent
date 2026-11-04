@@ -170,6 +170,9 @@ function projectToolContent(value: unknown): ToolContentProjection {
       .map((shape) => {
         if (shape.kind === "terminal")
           return `[terminal ${shape.terminalId ?? "undefined"}]`;
+        // A stored image is a reference, not text: name it so the projection is
+        // not silently empty, and never echo a path or payload.
+        if (shape.kind === "image_attachment") return "[image]";
         return shape.kind === "content" ? shape.text : "";
       })
       .filter(Boolean)

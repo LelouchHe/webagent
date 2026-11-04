@@ -71,7 +71,7 @@ const FIXTURES = [
   },
   {
     name: "future shape",
-    item: { type: "image", data: "not a supported content item" },
+    item: { type: "audio", data: "not a supported content item" },
     kind: "unknown" as const,
   },
 ] as const;
@@ -164,7 +164,7 @@ describe("tool content shape coverage", () => {
         status: "completed",
         content: [
           { type: "content", content: { type: "text", text: "visible" } },
-          { type: "image", data: "png" },
+          { type: "audio", data: "waves" },
         ],
       }),
     });
@@ -182,7 +182,7 @@ describe("tool content shape coverage", () => {
         status: "completed",
         content: [
           { type: "diff", path: "src/a.ts", oldText: null, newText: "A\n" },
-          { type: "image", data: "png" },
+          { type: "audio", data: "waves" },
         ],
       }),
     });
@@ -226,6 +226,49 @@ describe("tool content shape coverage", () => {
     });
     assert.equal(row.field, "content[0].terminalId");
     assert.equal(row.text, "[terminal t1]");
+  });
+
+  it("recognizes an inline image block and its stored reference", () => {
+    const inline = { type: "image", mimeType: "image/png", data: "AAAA" };
+    assert.deepEqual(classifyToolContentItem(inline), {
+      kind: "image",
+      mimeType: "image/png",
+      data: "AAAA",
+    });
+    // The same block wrapped the way an ACP tool result can deliver it.
+    assert.equal(
+      classifyToolContentItem({ type: "content", content: inline }).kind,
+      "image",
+    );
+
+    const attachment = {
+      kind: "image",
+      attachmentId: "a1",
+      displayName: "agent-image-1",
+      mimeType: "image/png",
+      path: "/api/v1/tasks/s1/attachments/a1.png",
+    };
+    assert.equal(
+      classifyToolContentItem({ type: "image", attachment }).kind,
+      "image_attachment",
+    );
+    // The stored reference is not text: it is a picture the card renders.
+    assert.equal(extractToolCallContent([{ type: "image", attachment }]), "");
+
+    const row = projectTaskHistoryRow({
+      seq: 1,
+      type: "tool_call_update",
+      data: JSON.stringify({
+        id: "tool-1",
+        status: "completed",
+        content: [
+          { type: "content", content: { type: "text", text: "done" } },
+          { type: "image", attachment },
+        ],
+      }),
+    });
+    assert.equal(row.text, "done\n[image]");
+    assert.equal(row.content_shape, undefined);
   });
 
   it("keeps an empty recognized output on the status projection", () => {

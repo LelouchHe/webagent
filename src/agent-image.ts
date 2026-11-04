@@ -29,7 +29,7 @@ import {
 } from "./attachments.ts";
 import { readImageDimensions } from "./image-dimensions.ts";
 import { log } from "./log.ts";
-import type { Store } from "./store.ts";
+import type { AttachmentRow, Store } from "./store.ts";
 import type { AgentImageAttachment } from "./types.ts";
 
 const ilog = log.scope("agent-image");
@@ -60,10 +60,50 @@ export interface StoreAgentImageInput {
   limitBytes: number;
 }
 
+/**
+ * The byte-source entry to the same storage pipeline. An inline ACP block is
+ * decoded to bytes first; a tool-result image producer may already hold bytes
+ * (an image block's payload, or a file it read). Both then share one size
+ * check, one content sniff, one write, one row, and one descriptor.
+ */
+export interface StoreImageBytesInput {
+  store: Store;
+  dataDir: string;
+  taskId: string;
+  bytes: Buffer;
+  /** 1-based index within the task, for the default display name. */
+  index: number;
+  /** `limits.image_upload`: the same ceiling a user upload gets. */
+  limitBytes: number;
+  /** Defaults to `agent-image-<index>`. */
+  displayName?: string;
+}
+
 export type StoreAgentImageResult =
   | { stored: AgentImageAttachment }
   /** Visible replacement text; the bytes are not stored and no row exists. */
   | { omitted: string; reason: string };
+
+/**
+ * The transcript reference for a stored image row: the shape `agent_image`
+ * already uses, with the unsigned base path the egress re-signer recognizes.
+ */
+export function attachmentDescriptor(
+  taskId: string,
+  row: AttachmentRow,
+): AgentImageAttachment {
+  return {
+    kind: "image",
+    attachmentId: row.id,
+    displayName: row.name,
+    mimeType: row.mime,
+    // Unsigned base path: the egress re-sign turns it into a usable URL.
+    path: `/api/v1/tasks/${taskId}/attachments/${basename(row.realpath)}`,
+    ...(row.width !== null && row.height !== null
+      ? { width: row.width, height: row.height }
+      : {}),
+  };
+}
 
 /**
  * Store one inline agent image, or explain why it was not stored.
@@ -74,10 +114,29 @@ export type StoreAgentImageResult =
 export function storeAgentImage(
   input: StoreAgentImageInput,
 ): StoreAgentImageResult {
-  const { store, dataDir, taskId, index, limitBytes } = input;
-
   const bytes = decodedBase64Bytes(input.data);
   if (!bytes || bytes.length === 0) {
+    return omitted("empty payload");
+  }
+  return storeImageBytes({ ...input, bytes });
+}
+
+/**
+ * Store image bytes as an ordinary attachment, or explain why not.
+ *
+ * Synchronous on purpose: the event pipeline has no per-task queue, so an
+ * `await` between receiving the block and writing the row would let a later
+ * text chunk flush ahead of the image and reorder the transcript.
+ */
+export function storeImageBytes(
+  input: StoreImageBytesInput,
+): StoreAgentImageResult {
+  const { store, dataDir, taskId, index, limitBytes } = input;
+  // Buffer is a Uint8Array subtype; accept any byte source the caller holds.
+  const bytes = Buffer.isBuffer(input.bytes)
+    ? input.bytes
+    : Buffer.from(input.bytes);
+  if (bytes.length === 0) {
     return omitted("empty payload");
   }
   if (bytes.length > limitBytes) {
@@ -122,7 +181,9 @@ export function storeAgentImage(
   }
 
   const dimensions = readImageDimensions(bytes);
-  const displayName = normalizeDisplayName(`agent-image-${index}`) ?? "image";
+  const displayName =
+    normalizeDisplayName(input.displayName ?? `agent-image-${index}`) ??
+    "image";
   try {
     store.insertAttachment({
       id,

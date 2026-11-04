@@ -78,6 +78,28 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
 - Rejected `session/prompt` requests render and persist as system errors rather than assistant messages, so UI diagnostics remain outside agent context.
 - Session history is persisted locally and restored after server restart
 
+### Tool Result Images
+
+An ACP image content block (`{ type: "image", mimeType, data }`, bare or wrapped
+in `{ type: "content", content: … }`) inside a `tool_call_update` is the
+protocol's **normal** way for an agent to return a picture from a tool, not a
+client extension. WebAgent handles it with ordinary code in
+`src/tool-result-image.ts`: `storeToolResultImages` stores every block and
+rewrites the update's `content` before the event is persisted or broadcast.
+
+- Storage is the same attachment pipeline an agent message image uses: the same
+  `tasks/<taskId>/attachments/<uuid>.<ext>` layout, the same `attachments` row,
+  the same `limits.image_upload` ceiling, the same content sniff, the same
+  unsigned base path + egress re-sign, and the same cleanup. In `content` the
+  block is replaced by the descriptor an `agent_image` carries, so neither the
+  database nor a client ever sees base64.
+- An image above the ceiling, one whose bytes are not PNG/JPEG/GIF/WebP, or one
+  that cannot be written becomes visible `[image omitted: …]` text in place of
+  the block; nothing is dropped silently and no row is created.
+- The tool card shows a thumbnail that opens the same lightbox as any other
+  chat image. Live streaming and replay both render `tool_call_update` through
+  `renderContentEvent`, so the two paths cannot drift.
+
 ## Client Extensions
 
 ACP allows the client to inject extra capabilities into the agent on top of its native baseline. WebAgent currently provides:

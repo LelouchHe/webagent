@@ -26,7 +26,10 @@ import {
 } from "./event-interpreter.ts";
 import { buildPlanElement } from "./plan-view.ts";
 import { buildStructuredDiffLines } from "./structured-diff.ts";
-import { classifyToolContentItem } from "../../src/shared/tool-content.ts";
+import {
+  classifyToolContentItem,
+  parseImageAttachment,
+} from "../../src/shared/tool-content.ts";
 import type {
   AgentImageAttachment,
   RawInput,
@@ -367,23 +370,7 @@ function cssPixelVar(
  * exactly the same payloads.
  */
 export function parseAgentImage(raw: unknown): AgentImageAttachment | null {
-  if (!raw || typeof raw !== "object") return null;
-  const a = raw as Record<string, unknown>;
-  if (a.kind !== "image") return null;
-  if (typeof a.path !== "string" || !a.path) return null;
-  if (typeof a.mimeType !== "string" || !a.mimeType) return null;
-  return {
-    kind: "image",
-    attachmentId: typeof a.attachmentId === "string" ? a.attachmentId : "",
-    displayName:
-      typeof a.displayName === "string" && a.displayName
-        ? a.displayName
-        : "agent image",
-    mimeType: a.mimeType,
-    path: a.path,
-    width: typeof a.width === "number" ? a.width : null,
-    height: typeof a.height === "number" ? a.height : null,
-  };
+  return parseImageAttachment(raw);
 }
 
 /**
@@ -759,6 +746,7 @@ function applyToolCallUpdate(
     : [];
   if (content.length > 0) {
     applyStructuredDiff(el, content);
+    applyToolResultImages(el, content);
     const text = extractToolCallContent(content);
     if (text) {
       // ACP agents stream cumulative snapshots (full output-so-far), not deltas.
@@ -838,6 +826,60 @@ function applyToolCallMetadata(
 
 function normalizeToolLabel(value: string): string {
   return value.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Thumbnails for images a tool result refers to.
+ *
+ * Live streaming and replay both arrive here (via `renderContentEvent`), so the
+ * card, the URL form and the lightbox wiring cannot drift. Snapshots are
+ * cumulative, so the container is rebuilt from the latest list rather than
+ * appended to.
+ */
+function applyToolResultImages(
+  el: HTMLElement,
+  content: ToolContentItem[],
+): void {
+  const images = content.flatMap((item) => {
+    const shape = classifyToolContentItem(item);
+    return shape.kind === "image_attachment" ? [shape.attachment] : [];
+  });
+
+  let container = el.querySelector<HTMLElement>(".tc-images");
+  if (images.length === 0) {
+    container?.remove();
+    return;
+  }
+  const created = !container;
+  if (!container) {
+    container = document.createElement("div");
+    container.className = "tc-images";
+  }
+  container.replaceChildren();
+  for (const attachment of images) {
+    const img = document.createElement("img");
+    img.className = "tc-image";
+    img.alt = attachment.displayName;
+    img.loading = "lazy";
+    const displaySize = imageDisplaySize(
+      attachment.width,
+      attachment.height,
+      "agent",
+    );
+    if (displaySize) {
+      img.width = displaySize.width;
+      img.height = displaySize.height;
+    }
+    img.src = hooks_rewriteSrc(attachment.path);
+    container.appendChild(img);
+  }
+  // Keep the picture next to the tool's label: before source, diff and output.
+  if (created) {
+    const anchor = el.querySelector(
+      "details.tc-source, details.tc-diff, .tc-output, details.tc-raw-output",
+    );
+    el.insertBefore(container, anchor);
+  }
 }
 
 function buildPlan(data: Record<string, unknown>): HTMLElement {

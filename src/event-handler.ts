@@ -14,6 +14,7 @@ import { log } from "./log.ts";
 import { isAutopilotMode } from "./mode-bucket.ts";
 import { leaseOf } from "./execution-authority.ts";
 import { storeAgentImage } from "./agent-image.ts";
+import { storeToolResultImages } from "./tool-result-image.ts";
 
 const ailog = log.scope("attachment-interceptor");
 const plog = log.scope("push");
@@ -482,7 +483,23 @@ function dispatchAgentEvent(
     case "tool_call":
       handleToolCall(event, tasks, store);
       return false;
-    case "tool_call_update":
+    case "tool_call_update": {
+      // ACP defines an image content block in a tool result, so this is the
+      // normal path: store every block and replace it with its descriptor, so
+      // no inline payload is persisted or broadcast.
+      let content = event.content;
+      if (Array.isArray(content)) {
+        content = storeToolResultImages(
+          {
+            store,
+            dataDir: config.dataDir,
+            taskId: event.taskId,
+            limitBytes: config.imageUploadLimit,
+          },
+          content,
+        );
+      }
+      if (content) event.content = content;
       store.saveEvent(
         event.taskId,
         event.type,
@@ -498,6 +515,7 @@ function dispatchAgentEvent(
         { from_ref: "agent" },
       );
       return false;
+    }
     case "plan":
       handlePlan(event, tasks, store);
       return false;

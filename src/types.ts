@@ -472,14 +472,30 @@ export interface PlanStatusCountView {
   count: number;
 }
 
+/** The inner block of an ACP `{ type: "content", content: … }` tool item. */
+export interface ToolContentPart {
+  type?: string;
+  text?: string;
+  /** Inline image block, before the server stores it. */
+  mimeType?: string;
+  data?: string;
+  /** Stored image reference, after the server replaced the block. */
+  attachment?: unknown;
+}
+
 /** Content item from ACP tool_call_update events. */
 export interface ToolContentItem {
   type?: string;
   terminalId?: string;
-  content?: { text?: string } | Array<{ text?: string }>;
+  content?: ToolContentPart | ToolContentPart[];
   path?: string;
   oldText?: string | null;
   newText?: string;
+  /** Inline image block (`type: "image"`), before the server stores it. */
+  mimeType?: string;
+  data?: string;
+  /** Stored image reference (`type: "image"`), after storage. */
+  attachment?: unknown;
 }
 
 export interface NormalizedEventsResponse {

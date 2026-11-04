@@ -662,6 +662,44 @@ class MockAgent implements Agent {
       return { stopReason: "end_turn" };
     }
 
+    if (text.startsWith("E2E_TOOL_RESULT_IMAGE")) {
+      // A picture inside a tool result, exactly as a screenshot tool would
+      // return it: a text block and an ACP image content block.
+      const toolCallId = `tool-${++this.toolCallCounter}`;
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Screenshot tool",
+          kind: "other",
+        },
+      });
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: { type: "text", text: "captured" },
+            },
+            {
+              type: "content",
+              content: {
+                type: "image",
+                mimeType: "image/png",
+                data: E2E_AGENT_IMAGE_PNG,
+              },
+            },
+          ],
+        },
+      });
+      return { stopReason: "end_turn" };
+    }
+
     if (text.startsWith("E2E_SLOW_TOOL")) {
       const toolCallId = `tool-${++this.toolCallCounter}`;
       await this.connection.sessionUpdate({
