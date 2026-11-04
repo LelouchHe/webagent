@@ -1,10 +1,17 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Store } from "../src/store.ts";
+import { waitFor } from "./fixtures.ts";
 import {
   handleShareRoutes,
   type ShareRouteDeps,
@@ -280,6 +287,103 @@ describe("DELETE /api/v1/tasks/:id/share — revoke", () => {
     );
     assert.equal(r.status(), 404);
   });
+
+  it("revokes the last share of a tombstoned task, then reaps it", async () => {
+    const token = await createPreview(deps, sid);
+    await publish(deps, sid, token);
+    const attachmentsDir = join(tmpDir, "tasks", sid, "attachments");
+    mkdirSync(attachmentsDir, { recursive: true });
+    writeFileSync(join(attachmentsDir, "keep.png"), "png");
+    store.insertAttachment({
+      id: "att-1",
+      taskId: sid,
+      kind: "image",
+      name: "keep.png",
+      mime: "image/png",
+      size: 3,
+      realpath: join(attachmentsDir, "keep.png"),
+    });
+
+    // An active share turns the delete into a tombstone and retires the
+    // binding, which is what used to make the share irreversible.
+    assert.equal(store.deleteTask(sid).mode, "soft");
+    assert.equal(store.getTask(sid), undefined);
+    assert.equal(store.hasBinding(sid), false);
+
+    const r = mockRes();
+    await handleShareRoutes(
+      ownerReq(`/api/v1/tasks/${sid}/share`, "DELETE", { token }),
+      r.res,
+      deps,
+    );
+    assert.equal(r.status(), 200, r.body());
+    assert.equal((r.json() as { revoked: boolean }).revoked, true);
+
+    // Last share gone → the tombstone is reaped with everything it owned.
+    assert.equal(store.getTaskIncludingDeleted(sid), undefined);
+    assert.equal(store.getShareByToken(token), undefined);
+    assert.equal(store.getEvents(sid).length, 0);
+    assert.equal(store.getAttachment(sid, "att-1"), undefined);
+    await waitFor(() => !existsSync(join(tmpDir, "tasks", sid)), {
+      message: "reaped tombstone left its attachments directory behind",
+    });
+  });
+
+  it("404 for a hard-deleted task (widening the gate never resurrects one)", async () => {
+    // A preview-only task hard-deletes and its preview row goes with it.
+    const token = await createPreview(deps, sid);
+    assert.equal(store.deleteTask(sid).mode, "hard");
+
+    const r = mockRes();
+    await handleShareRoutes(
+      ownerReq(`/api/v1/tasks/${sid}/share`, "DELETE", { token }),
+      r.res,
+      deps,
+    );
+    assert.equal(r.status(), 404);
+    assert.equal(store.getTaskIncludingDeleted(sid), undefined);
+  });
+
+  it("404 when another task's token targets a tombstoned task", async () => {
+    const mine = await createPreview(deps, sid);
+    await publish(deps, sid, mine);
+    store.createTask("s2", "/tmp/p2", "auto", "test-agent");
+    store.saveEvent(
+      "s2",
+      "user_message",
+      { text: "hi2" },
+      { from_ref: "agent" },
+    );
+    const other = await createPreview(deps, "s2");
+    await publish(deps, "s2", other);
+    assert.equal(store.deleteTask(sid).mode, "soft");
+
+    const r = mockRes();
+    await handleShareRoutes(
+      ownerReq(`/api/v1/tasks/${sid}/share`, "DELETE", { token: other }),
+      r.res,
+      deps,
+    );
+    assert.equal(r.status(), 404);
+    // Neither the tombstone nor either share moved.
+    assert.notEqual(store.getTaskIncludingDeleted(sid), undefined);
+    assert.notEqual(store.getShareByToken(mine), undefined);
+    assert.notEqual(store.getShareByToken(other), undefined);
+  });
+
+  it("404 when the target task itself no longer exists", async () => {
+    const token = await createPreview(deps, sid);
+    await publish(deps, sid, token);
+    store.createTask("s2", "/tmp/p2", "auto", "test-agent");
+    const r = mockRes();
+    await handleShareRoutes(
+      ownerReq(`/api/v1/tasks/ghost/share`, "DELETE", { token }),
+      r.res,
+      deps,
+    );
+    assert.equal(r.status(), 404);
+    assert.notEqual(store.getShareByToken(token), undefined);
+  });
 });
 
 describe("PATCH /api/v1/tasks/:id/share — label/display_name", () => {
@@ -414,6 +518,25 @@ describe("PATCH /api/v1/tasks/:id/share — label/display_name", () => {
       deps,
     );
     assert.equal(r.status(), 404);
+  });
+
+  it("still relabels a share whose task was tombstoned by an active share", async () => {
+    const token = await createPreview(deps, sid);
+    await publish(deps, sid, token);
+    assert.equal(store.deleteTask(sid).mode, "soft");
+    assert.equal(store.hasBinding(sid), false);
+
+    const r = mockRes();
+    await handleShareRoutes(
+      ownerReq(`/api/v1/tasks/${sid}/share`, "PATCH", {
+        token,
+        owner_label: "revoked-later",
+      }),
+      r.res,
+      deps,
+    );
+    assert.equal(r.status(), 200, r.body());
+    assert.equal(store.getShareByToken(token)!.owner_label, "revoked-later");
   });
 });
 

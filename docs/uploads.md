@@ -128,6 +128,11 @@ shows in the meantime — the agent is never silently denied.
 - Disk: the task directory `<data_dir>/tasks/<sid>/` is removed
   recursively, which takes the `attachments/` subdir with it.
 
+A task that still has an active share is **tombstoned** instead of deleted:
+its rows, events, and attachments stay so public viewers keep resolving, and
+the directory is kept. Revoking the last share reaps the tombstone with the
+same cascade and disk removal as a hard delete.
+
 When `:id` is the literal Root id `root`, that Root row remains as the tree
 anchor. Its events and attachment rows are cleared, its attachment directory is
 removed, and its descendant tree is deleted with the same rules as any other

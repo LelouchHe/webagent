@@ -49,7 +49,7 @@ the SQL mechanics, and the debt state machine live in their own documents (see
 | **Materialization** — first use (resume, prompt, explicit clear) of an unmaterialized task | Everything | A fresh ACP session replaces the empty slot. All first-use paths share the same per-task single-flight. |
 | **Delete** — `DELETE /api/v1/tasks/:id`, `/exit` off Root | Nothing | The **whole task tree**, whatever agent owns each descendant: rows gone, executions retired through each agent's adapter, directories removed. |
 | **Delete with an active share** | Row, events, attachments, shares | Soft delete: `deleted_at` set, binding removed, re-parented under Root (detached when Root is missing or a live sibling-title collision exists). |
-| **Tombstone reap** — last active share revoked | The row, until reaped | Hard-deleted. |
+| **Tombstone reap** — last share revoked (the revoke route is the only caller) | The row, until reaped | Hard-deleted: task row, events, attachment rows (cascaded), and `tasks/<id>` on disk. Repeating the reap is a no-op, and a tombstone that still has an activated share is never reaped. |
 | **Empty-task GC** | The task's children | Only zero-event tasks older than 60 s, never Root, whatever agent carries them. Each removed execution is retired through the agent in its record. Children are re-parented under Root, not deleted. |
 | **Process restart** | Bindings, history, shares, tree | Every execution is gone (its session id is dead); no agent process starts until a task needs one; the generation ledger starts empty and is re-adopted on the first restore; clients rebuild from a snapshot with a fresh `lastSeq`, because `seq` is process-local. |
 

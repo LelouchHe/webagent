@@ -305,18 +305,33 @@ describe("shares store", () => {
       store.activateShare(t1);
       store.insertSharePreview({ token: t2, taskId, snapshotSeq: 2 });
       store.activateShare(t2);
+      store.insertAttachment({
+        id: "reaped-file",
+        taskId,
+        kind: "file",
+        name: "reaped.txt",
+        mime: "text/plain",
+        size: 1,
+        realpath: "/tmp/reaped.txt",
+      });
       store.deleteTask(taskId);
 
       // First revoke: tombstone still has another share — reap is a no-op.
       store.revokeShare(t1);
       assert.equal(store.reapTombstoneIfOrphaned(taskId), false);
       assert.notEqual(store.getTaskIncludingDeleted(taskId), undefined);
+      assert.equal(store.getEvents(taskId).length, 1);
 
-      // Last revoke: reap finishes the hard-delete.
+      // Last revoke: reap finishes the hard-delete, cascading the rows that
+      // hang off the task (attachments included).
       store.revokeShare(t2);
       assert.equal(store.reapTombstoneIfOrphaned(taskId), true);
       assert.equal(store.getTaskIncludingDeleted(taskId), undefined);
       assert.equal(store.getEvents(taskId).length, 0);
+      assert.equal(store.getAttachment(taskId, "reaped-file"), undefined);
+
+      // Repeating the reap is safe: the tombstone row is already gone.
+      assert.equal(store.reapTombstoneIfOrphaned(taskId), false);
     });
 
     it("reapTombstoneIfOrphaned is a no-op on a live (not-tombstoned) task", () => {

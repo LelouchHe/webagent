@@ -108,16 +108,17 @@ Publishing uses the `v*` tag workflow documented in
   reload. The probe's liveness guard fails open on purpose; fixing this means
   clearing only after a successful create, or restoring the previous task on
   failure.
-- A soft-deleted task's active share can never be revoked: the share route
-  requires `hasBinding`, but soft delete removes the binding, so the tombstone
-  is never reaped. Pre-existing; becomes reachable for tasks carried by a
-  removed agent now that agents are configured independently.
 - The frontend installs the Root authority from `connected`/`task_created` with
   the default generation, so a queued `replayQueue` event carried across a
   generation boundary could install the previous connection's Root. Live SSE is
   guarded by `gen !== streamGen` and any current-connection payload overwrites it.
 - `MAX_ACP_MESSAGE_BYTES` is a hardcoded 128 MiB inbound cap, not derived from
   configured limits, so raising `file_upload` above ~120 MiB still hits it.
+- The empty-task GC (`Store.deleteEmptyTasks`) throws `FOREIGN KEY constraint
+  failed` for a zero-event task that still has a share row, and `TaskManager`
+  does not catch it, so an unrelated task creation can fail. Pre-existing:
+  `shares.task_id` is the one task FK with no `ON DELETE`, which is also what
+  makes the tombstone reap explicit instead of implicit.
 - `ClientSideConnection`/`AgentSideConnection` are `@deprecated` in ACP SDK
   1.7.0 in favour of the `client()`/`agent()` app API; that migration is deferred.
 - Restore rejections other than `-32002` (for example `-32601`, or a cwd

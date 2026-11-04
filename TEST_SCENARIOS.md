@@ -597,6 +597,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - DDL + state machine: preview (`shared_at IS NULL`) → activated (`shared_at` set)
   - `revoked_at` column migration (drop on existing DBs)
   - revoke is hard delete; preview-GC sweep deletes only stale unactivated rows
+  - `reapTombstoneIfOrphaned`: no-op while an active share remains, no-op on a
+    live task, cascades attachment rows, and repeating it after a successful
+    reap is a no-op
 
 - `test/share-sanitize.test.ts` / `test/share-sanitize-secrets.test.ts`
   - secret detection → hard-reject with `event_id` + `rule`
@@ -606,11 +609,19 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/share-routes-preview.test.ts` / `test/share-routes-publish-viewer.test.ts`
   - preview create / read / staleness flag
   - publish freezes snapshot; viewer JSON strips `task_id`
+  - publish works for a live task with no execution binding (the gate is the
+    task row, not `hasBinding`)
   - 410 when share row is missing or `enabled=false`
   - viewer attachment proxy: serves correct `Content-Type` from `attachments.mime` and emits RFC 5987 `Content-Disposition` with original filename for non-image attachments (regression: iOS Safari `.bin` suffix)
 
 - `test/share-routes-revoke-list-patch.test.ts`
   - DELETE is idempotent; PATCH updates `owner_label` / `display_name`
+  - owner share writes authorize on the share row + task existence, never the
+    execution binding: revoking the last share of a tombstoned (soft-deleted)
+    task reaps the tombstone (row, events, attachment rows, `tasks/<id>` on
+    disk), and a tombstoned task's share can still be relabeled
+  - a hard-deleted or unknown task still 404s (the wider gate resurrects
+    nothing); another task's token still 404s against a tombstone
   - GET `/api/v1/shares` returns owner's live shares
 
 - `test/share-routes-skeleton.test.ts`

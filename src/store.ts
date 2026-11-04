@@ -2693,6 +2693,14 @@ export class Store {
    * Lazy prune of preview rows older than 24h (share-plan §4.1).
    * `now` is injectable for tests. Activated rows (shared_at set) are
    * NEVER touched — only orphaned previews are GC'd.
+   *
+   * This sweep cannot orphan a tombstone in the ordinary flow: the delete path
+   * drops every preview of a task before tombstoning it, so a tombstone keeps
+   * at least one activated share row and reaping belongs to the revoke path
+   * (reapTombstoneIfOrphaned), not here. The exception is a preview created
+   * after the delete swept previews (a liveness check that raced the delete):
+   * the reap no-ops while that row exists, this sweep later removes it, and the
+   * tombstone stays until its owner revokes that token.
    */
   pruneStalePreviews(now: number = Date.now()): number {
     const cutoff = now - 24 * 60 * 60 * 1000;

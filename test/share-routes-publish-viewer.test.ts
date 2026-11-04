@@ -212,6 +212,34 @@ describe("share publish route — POST /api/v1/tasks/:id/share/publish", () => {
     assert.equal(store.getOwnerPref("share.default_display_name"), "alice");
   });
 
+  it("publishes for a live task that has no execution binding", async () => {
+    // A binding says who runs the task, not who may publish its preview. The
+    // owner of an unbound live task (an empty Root slot, a detached task) can
+    // still publish; the old `hasBinding` gate answered 404 here.
+    store.detachAgentSession(taskId);
+    assert.equal(store.hasBinding(taskId), false);
+    assert.notEqual(store.getTask(taskId), undefined);
+
+    const r1 = mockRes();
+    await handleShareRoutes(
+      ownerReq(`/api/v1/tasks/${taskId}/share`, "POST", { body: {} }),
+      r1.res,
+      deps,
+    );
+    const token = (r1.json() as { token: string }).token;
+
+    const r2 = mockRes();
+    await handleShareRoutes(
+      ownerReq(`/api/v1/tasks/${taskId}/share/publish`, "POST", {
+        body: { token },
+      }),
+      r2.res,
+      deps,
+    );
+    assert.equal(r2.status(), 200, r2.body());
+    assert.ok(store.getShareByToken(token)!.shared_at != null);
+  });
+
   it("409 on double-publish", async () => {
     const { token } = await createAndPublishShare(deps, taskId);
     const r = mockRes();
