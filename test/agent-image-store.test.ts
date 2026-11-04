@@ -35,6 +35,19 @@ function png(payloadBytes = 64): Buffer {
   return Buffer.concat([signature, rest]);
 }
 
+/** WebP bytes: RIFF....WEBP, a container we store but cannot measure. */
+function webp(payloadBytes = 64): Buffer {
+  const head = Buffer.concat([
+    Buffer.from("RIFF", "latin1"),
+    Buffer.from([0x24, 0x00, 0x00, 0x00]),
+    Buffer.from("WEBPVP8 ", "latin1"),
+  ]);
+  return Buffer.concat([
+    head,
+    Buffer.alloc(Math.max(0, payloadBytes - head.length), 1),
+  ]);
+}
+
 function jpeg(payloadBytes = 64): Buffer {
   const signature = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
   return Buffer.concat([
@@ -96,6 +109,28 @@ describe("storing an inline agent image", () => {
     assert.equal(result.stored.path.includes("?"), false);
     assert.equal(result.stored.mimeType, "image/png");
     assert.equal(result.stored.displayName, "agent-image-1");
+  });
+
+  it("stores a WebP without dimensions, so no layout box is reserved", () => {
+    // The container is allowed and storable; this module has no WebP parser, so
+    // the row and the descriptor carry no size. Pinned so a future parser is a
+    // deliberate change, not a surprise.
+    const result = storeAgentImage({
+      store,
+      dataDir: dir,
+      taskId: "t1",
+      data: webp(200).toString("base64"),
+      index: 1,
+      limitBytes: LIMIT,
+    });
+    assert.ok("stored" in result);
+    assert.equal(result.stored.mimeType, "image/webp");
+    const row = store.getAttachment("t1", result.stored.attachmentId);
+    assert.ok(row);
+    assert.equal(row.width, null);
+    assert.equal(row.height, null);
+    assert.equal("width" in result.stored, false);
+    assert.equal("height" in result.stored, false);
   });
 
   it("disappears with its task, like any other attachment row and file", async () => {

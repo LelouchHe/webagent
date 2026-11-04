@@ -1,6 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { classifyToolContentItem } from "../src/shared/tool-content.ts";
+import {
+  classifyToolContentItem,
+  parseImageAttachment,
+} from "../src/shared/tool-content.ts";
 import { projectTaskHistoryRow } from "../src/mcp/task-history.ts";
 import { extractToolCallContent } from "../public/js/event-interpreter.ts";
 import { buildStructuredDiffLines } from "../public/js/structured-diff.ts";
@@ -191,10 +194,12 @@ describe("tool content shape coverage", () => {
     assert.equal(row.content_shape, "unknown");
   });
 
-  it("accepts a bare text block instead of dropping it", () => {
+  it("treats a bare text block as unknown, not as text", () => {
+    // ACP carries text in `content.text`; a bare `{ type: "text", text }` is not
+    // a protocol shape, so the projection marks the row instead of guessing.
     assert.equal(
       classifyToolContentItem({ type: "text", text: "legacy output" }).kind,
-      "content",
+      "unknown",
     );
     const row = projectTaskHistoryRow({
       seq: 1,
@@ -204,13 +209,14 @@ describe("tool content shape coverage", () => {
         content: [{ type: "text", text: "legacy output" }],
       }),
     });
-    assert.equal(row.text, "legacy output");
-    assert.equal(row.field, "content[]");
+    assert.equal(row.content_shape, "unknown");
+    assert.equal(row.text, undefined);
+    assert.equal(row.field, undefined);
     assert.equal(
       extractToolCallContent([
         { type: "text", text: "legacy output" } as unknown as ToolContentItem,
       ]),
-      "legacy output",
+      "",
     );
   });
 
@@ -282,6 +288,39 @@ describe("tool content shape coverage", () => {
     assert.equal(inlineRow.text, undefined);
     assert.equal(inlineRow.field, undefined);
     assert.notEqual(inlineRow.text, "completed");
+  });
+
+  it("refuses a descriptor with a missing required field", () => {
+    // Descriptors are written by this app: a missing field means a broken write
+    // path, so it is refused (and the renderer ignores it) rather than repaired
+    // into something that looks valid.
+    const complete = {
+      kind: "image",
+      attachmentId: "a1",
+      displayName: "agent-image-1",
+      mimeType: "image/png",
+      path: "/api/v1/tasks/s1/attachments/a1.png",
+    };
+    assert.ok(parseImageAttachment(complete));
+    for (const broken of [
+      { ...complete, attachmentId: undefined },
+      { ...complete, attachmentId: "" },
+      { ...complete, path: "" },
+      { ...complete, mimeType: 42 },
+      { ...complete, kind: "file" },
+    ]) {
+      assert.equal(parseImageAttachment(broken), null);
+      assert.equal(
+        classifyToolContentItem({ type: "image", attachment: broken }).kind,
+        "unknown",
+      );
+    }
+    // Dimensions stay optional: they are layout hints, and an unmeasurable
+    // container stores null.
+    assert.deepEqual(
+      parseImageAttachment({ ...complete, width: 10, height: 20 }),
+      { ...complete, width: 10, height: 20 },
+    );
   });
 
   it("projects an agent image as a visible marker", () => {

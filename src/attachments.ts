@@ -132,8 +132,11 @@ function decodesAsUtf8ToleratingTailTruncation(buf: Buffer): boolean {
  * Mimes we are willing to render inline in <img>. Everything else is forced
  * to download via Content-Disposition: attachment so a malicious upload (HTML,
  * SVG, text/plain interpreted as HTML by Chrome) cannot script the page.
+ *
+ * Exported for the invariant test that pins both image mime sets to the same
+ * members: divergence must be a policy decision, not drift.
  */
-const INLINE_MIMES = new Set([
+export const INLINE_MIMES: ReadonlySet<string> = new Set([
   "image/png",
   "image/jpeg",
   "image/gif",
@@ -155,7 +158,7 @@ export function isInlineMime(mime: string): boolean {
  * questions and will diverge — e.g. upstream support for HEIC would change
  * only this set. Never reference one from the other's check.
  */
-const UPSTREAM_IMAGE_MIMES = new Set([
+export const UPSTREAM_IMAGE_MIMES: ReadonlySet<string> = new Set([
   "image/png",
   "image/jpeg",
   "image/gif",

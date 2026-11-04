@@ -120,6 +120,24 @@ describe("render-event", () => {
       assert.equal(img.getAttribute("height"), "900");
     });
 
+    it("renders an image with no stored size, leaving the box to CSS", () => {
+      // A container we cannot measure (WebP today) stores null dimensions. The
+      // bubble must still render, with no attribute box to reserve.
+      const el = append(
+        mod.renderContentEvent(
+          "agent_image",
+          { attachment: { ...attachment, width: null, height: null } },
+          makeHooks(),
+        ),
+      ) as HTMLElement;
+
+      const img = el.querySelector("img") as HTMLImageElement;
+      assert.ok(img);
+      assert.equal(img.getAttribute("width"), null);
+      assert.equal(img.getAttribute("height"), null);
+      assert.equal(img.getAttribute("src"), attachment.path);
+    });
+
     it("renders nothing extra for a payload that is not a stored image", () => {
       for (const raw of [
         undefined,

@@ -36,17 +36,22 @@ function isObject(value: unknown): value is JsonObject {
  *
  * Shared by the classifier (server and frontend) and the renderer, so a
  * reference accepted on the way in is exactly the one rendered on the way out.
+ *
+ * This app writes the descriptor, so a missing required field is a broken write
+ * path and is refused rather than repaired. `width`/`height` stay optional (an
+ * unmeasurable container stores null) and `displayName` only feeds `alt`.
  */
 export function parseImageAttachment(
   raw: unknown,
 ): AgentImageAttachment | null {
   if (!isObject(raw)) return null;
   if (raw.kind !== "image") return null;
+  if (typeof raw.attachmentId !== "string" || !raw.attachmentId) return null;
   if (typeof raw.path !== "string" || !raw.path) return null;
   if (typeof raw.mimeType !== "string" || !raw.mimeType) return null;
   return {
     kind: "image",
-    attachmentId: typeof raw.attachmentId === "string" ? raw.attachmentId : "",
+    attachmentId: raw.attachmentId,
     displayName:
       typeof raw.displayName === "string" && raw.displayName
         ? raw.displayName
@@ -132,11 +137,8 @@ export function classifyToolContentItem(item: unknown): ToolContentItemShape {
     return { kind: "content", text: text.join("") };
   }
 
-  // A bare text block is a recognized shape: the projection this classifier
-  // replaced accepted it, so dropping it here would be a coverage regression.
-  if (typeof item.text === "string" && item.text) {
-    return { kind: "content", text: item.text };
-  }
-
+  // A bare `{ type: "text", text }` is not a protocol shape — ACP puts the text
+  // in `content.text` — so it is unrecognized rather than silently treated as
+  // text. The projection marks the row instead of guessing.
   return { kind: "unknown" };
 }

@@ -94,6 +94,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/agent-image-store.test.ts`
   - an inline image is written to the shared attachment layout with a row and an unsigned base path; the wire's mime claim is ignored in favour of the content
   - dimensions come from the bytes, the row goes with the task, and a second image is named in sequence
+  - a WebP is stored but carries no dimensions (no parser), so no layout box is reserved — pinned so a future parser is a deliberate change
   - an image above `limits.image_upload`, a payload that is not a storable image container, an empty/malformed payload, and a file-write failure each become visible `[image omitted: …]` text with no file and no row
 
 - `test/tool-result-images.test.ts` (the normal ACP path)
@@ -601,6 +602,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/attachments-mime.test.ts`, `test/attachment-dispatch.test.ts`
   - sniffed MIME detection (PDF/PNG/ZIP/HEIC magic bytes, UTF-8 text vs binary) and mime → disk extension mapping, including heic/heif/avif/bmp/tiff
+  - the display (`INLINE_MIMES`) and upstream (`UPSTREAM_IMAGE_MIMES`) image mime sets hold the same members; a deliberate divergence must update that assertion
   - dispatcher wire format driven by the server-side row, not the client ref: upstream-accepted image mimes inline as base64 image blocks; heic and other unsupported image containers degrade to a hint plus `resource_link`; non-images emit `resource_link` alone
   - fallback text block on row miss, cross-task ref, anchor breach, and disk failure; client-supplied uri/data/path rejection
 
