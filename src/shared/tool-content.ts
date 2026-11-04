@@ -126,19 +126,9 @@ export function classifyToolContentItem(item: unknown): ToolContentItemShape {
     }
   }
 
-  if (Array.isArray(item.content)) {
-    const text: string[] = [];
-    for (const part of item.content) {
-      if (!isObject(part)) return { kind: "unknown" };
-      if (part.text === undefined || part.text === null) continue;
-      if (typeof part.text !== "string") return { kind: "unknown" };
-      text.push(part.text);
-    }
-    return { kind: "content", text: text.join("") };
-  }
-
-  // A bare `{ type: "text", text }` is not a protocol shape — ACP puts the text
-  // in `content.text` — so it is unrecognized rather than silently treated as
-  // text. The projection marks the row instead of guessing.
+  // Everything else is unrecognized, and deliberately so: ACP puts text in
+  // `content.text` (a single block), not in a bare `item.text` or in an array
+  // under `item.content`. Guessing there would also mean a reader accepts
+  // shapes ingest drops, and a payload could hide in the difference.
   return { kind: "unknown" };
 }

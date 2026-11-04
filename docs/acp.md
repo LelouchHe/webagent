@@ -102,6 +102,14 @@ implementation-specific metadata (arbitrary JSON, never read by this app), so it
 is **dropped before persistence** instead of being walked: an opaque field is not
 stored, and a payload inside it cannot reach a client. The trade-off is explicit —
 a picture that exists only in `_meta` is not shown, not stored and not leaked.
+Ingest also keeps only what a reader can render: an image block, a text block, a
+diff, a terminal. Every other shape is dropped — an update whose items were all
+dropped keeps `content: []` — so a payload cannot hide in a shape no reader
+understands (a text array under `content` holding an image block, say). The read
+paths make the same judgment through `src/shared/tool-content.ts`, so they cannot
+disagree with what was persisted; a row written before this rule by such a shape
+projects as `content_shape: unknown`.
+
 Persistence and broadcast therefore never carry an inline payload: a block that
 cannot be stored (too large, not a storable container, unwritable) becomes
 visible `[image omitted: …]` text in place of the picture, and the event itself

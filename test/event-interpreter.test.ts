@@ -222,11 +222,13 @@ describe("extractToolCallContent", () => {
     assert.equal(result, "hello");
   });
 
-  it("extracts content array", () => {
+  it("ignores a content array, which is not a protocol shape", () => {
+    // ACP's content block is a single block under `item.content`; an array is
+    // unrecognized (ingest drops it too), so it contributes no text.
     const result = extractToolCallContent([
       { content: [{ text: "a" }, { text: "b" }] },
     ]);
-    assert.equal(result, "ab");
+    assert.equal(result, "");
   });
 
   it("joins multiple items with newline", () => {

@@ -286,6 +286,20 @@ describe("tool-result images: ACP image blocks", () => {
     });
   }
 
+  it("drops an unrenderable item and keeps its renderable siblings", () => {
+    harness.toolCall("t1", "Screenshot");
+    harness.emit(
+      harness.update("t1", [
+        { type: "content", content: { type: "text", text: "kept" } },
+        { type: "audio", data: "not a content item" },
+      ]),
+    );
+
+    const content = harness.storedContent();
+    assert.equal(content.length, 1);
+    assert.equal(textOf(content), "kept");
+  });
+
   it("never throws out of ingest", () => {
     const content: ToolContentItem[] = [
       { type: "content", content: { type: "text", text: "kept" } },

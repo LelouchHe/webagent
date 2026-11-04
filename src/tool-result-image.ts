@@ -33,6 +33,7 @@
 
 import { decodedBase64Bytes, storeImageBytes } from "./agent-image.ts";
 import { log } from "./log.ts";
+import { classifyToolContentItem } from "./shared/tool-content.ts";
 import type { Store } from "./store.ts";
 import type { ToolContentItem } from "./types.ts";
 
@@ -61,11 +62,15 @@ export interface StoredToolResultImages {
 /**
  * Store every ACP image block in one tool result's content, in place.
  *
- * Only the protocol's content positions are read: the item itself when it is an
- * image block, and `item.content` (the `{ type: "content", content: … }`
- * wrapper). `_meta` is ACP's implementation-specific extension slot — arbitrary
- * JSON, never read by this app — so it is dropped rather than walked: an opaque
- * field is not persisted, and a payload inside it cannot reach a client.
+ * Only what a reader can render is persisted: an image block (the item itself or
+ * `item.content`), a text block, a diff, a terminal. Every other shape is
+ * **dropped**, so no payload can hide in a shape no reader understands — a text
+ * array holding an image block, for instance. An update whose items were all
+ * dropped keeps `content: []` rather than losing the field.
+ *
+ * `_meta` is ACP's implementation-specific extension slot — arbitrary JSON,
+ * never read by this app — so it is dropped rather than walked: an opaque field
+ * is not persisted, and a payload inside it cannot reach a client.
  *
  * Degrading is a placeholder, never a pass-through: a block that cannot be
  * stored becomes visible `[image omitted: …]` text, and an item that cannot be
@@ -117,20 +122,24 @@ export function storeToolResultImages(
   }
 
   try {
-    const rewritten = content.map((item) => {
+    const normalized = content.flatMap((item) => {
       try {
-        return normalizeItem(item, store);
+        const next = normalizeItem(item, store);
+        return next === null ? [] : [next];
       } catch (error) {
         // One item's failure must not cost its siblings, and returning it as
         // received would put its payload into storage and the wire.
         warn("could not normalize a tool result item", ctx, error);
-        return placeholder(UNSTORABLE);
+        return [placeholder(UNSTORABLE)];
       }
     });
-    // An item that was rewritten, degraded or stripped is a new object; when
-    // none changed, the caller keeps the array it passed in.
-    const changed = rewritten.some((item, at) => item !== content[at]);
-    return changed ? { content: rewritten, inserted } : { content, inserted };
+    // A kept item that was rewritten, degraded or stripped is a new object, and
+    // a dropped one shortens the array. When neither happened, the caller keeps
+    // the array it passed in.
+    const changed =
+      normalized.length !== content.length ||
+      normalized.some((item, at) => item !== content[at]);
+    return changed ? { content: normalized, inserted } : { content, inserted };
   } catch (error) {
     // Last resort: no item survives as received, because none of them can be
     // trusted to be payload-free once the rewrite itself failed.
@@ -195,15 +204,19 @@ function inlineImageData(value: unknown): string | null {
 function normalizeItem(
   item: ToolContentItem,
   store: (data: string) => ToolContentItem,
-): ToolContentItem {
+): ToolContentItem | null {
   const own = inlineImageData(item);
   if (own) return store(own);
 
   const wrapped = inlineImageData(item.content);
   if (wrapped) return store(wrapped);
 
-  if (!isRecord(item)) return item;
-  return dropMeta(item);
+  // The classifier *is* the renderability judgment the projection and the card
+  // use, so reusing it keeps "persisted" and "rendered" from drifting. An
+  // unrecognized item is dropped here, not kept: keeping it is what let a
+  // payload survive in a shape no reader understands.
+  if (classifyToolContentItem(item).kind === "unknown") return null;
+  return isRecord(item) ? dropMeta(item) : item;
 }
 
 /** A copy of one container without its `_meta` slot. */

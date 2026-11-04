@@ -247,6 +247,51 @@ describe("tool-result images: the live frame", () => {
     assert.equal(frame.includes(base64), false, "the frame must not carry it");
   });
 
+  it("drops an item whose shape hides an image, so no payload survives", () => {
+    const base64 = png(256).toString("base64");
+
+    harness.toolCall("t1", "Screenshot");
+    harness.emit({
+      type: "tool_call_update",
+      taskId: "t1",
+      id: "t1",
+      status: "completed",
+      content: [
+        {
+          type: "content",
+          // An array under `content` is not the protocol's single block, so no
+          // reader renders it — and keeping it as received is what used to put
+          // the image block's bytes into SQLite and the frame.
+          content: [
+            { type: "text", text: "kept" },
+            { type: "image", mimeType: "image/png", data: base64 },
+          ],
+        },
+      ] as unknown as ToolContentItem[],
+    });
+
+    // The event is still the record: it is stored and broadcast.
+    assert.equal(
+      harness.store
+        .getEvents("t1")
+        .filter((row) => row.type === "tool_call_update").length,
+      1,
+    );
+    const frame = frames.join("");
+    assert.match(frame, /^data: \{/);
+
+    // Nothing renders that item, so nothing persists it. The update keeps an
+    // empty `content` array rather than losing the field.
+    assert.equal(harness.store.countAttachments("t1", "image"), 0);
+    assert.deepEqual(harness.storedContent(), []);
+    assert.equal(
+      JSON.stringify(harness.store.getEvents("t1")).includes(base64),
+      false,
+      "SQLite must not hold the payload",
+    );
+    assert.equal(frame.includes(base64), false, "the frame must not carry it");
+  });
+
   it("degrades to a placeholder when the attachments table is unavailable", () => {
     // `countAttachments` is the first attachments-table touch. Its failure used
     // to return the content as received, so the raw payload was persisted and

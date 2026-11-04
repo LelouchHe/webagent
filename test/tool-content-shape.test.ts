@@ -47,12 +47,14 @@ const FIXTURES = [
     kind: "terminal" as const,
   },
   {
-    name: "content array with a non-text block",
+    // ACP's `ToolCallContent.content` is one block, never an array: a reader
+    // that accepted an array would disagree with ingest, which drops it.
+    name: "content array (not a protocol shape)",
     item: {
       type: "content",
       content: [{ text: "visible" }, { type: "image", data: "ignored" }],
     },
-    kind: "content" as const,
+    kind: "unknown" as const,
   },
   {
     name: "multiple diff items",
@@ -107,10 +109,7 @@ describe("tool content shape coverage", () => {
 
       if (fixture.kind === "content") {
         assert.equal(row.field, "content[]");
-        assert.equal(
-          row.text,
-          fixture.name === "content.text" ? "tool output" : "visible",
-        );
+        assert.equal(row.text, "tool output");
       } else if (fixture.kind === "terminal") {
         assert.equal(row.field, "content[]");
         assert.equal(row.text, "[terminal t1]\nvisible");
@@ -133,10 +132,11 @@ describe("tool content shape coverage", () => {
   it("keeps frontend extraction and diff rendering non-empty for supported fixtures", async () => {
     const content = FIXTURES[0].item;
     assert.equal(extractToolCallContent([content]), "tool output");
+    // The array shape is unrecognized, so it contributes no text.
     const mixedContent = FIXTURES[4].item;
     assert.equal(
       extractToolCallContent([mixedContent as unknown as ToolContentItem]),
-      "visible",
+      "",
     );
     const terminal = FIXTURES[3];
     assert.equal(

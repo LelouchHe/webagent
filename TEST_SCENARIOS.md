@@ -109,6 +109,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     persisted
   - an item whose rewrite fails becomes a visible placeholder (its payload is
     dropped, never passed through) while its siblings are still stored
+  - an item no reader can render (an `audio` block, a text array) is dropped,
+    and its renderable siblings are kept
   - a failed attachment count only affects naming: the pictures are still stored
   - refusals: above `limits.image_upload` and not a storable image container
     each become visible `[image omitted: …]` text with no file and no row;
@@ -131,6 +133,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     only the outer block's `data`
   - a `content` wrapper's own `_meta` is dropped, so the image inside it is
     neither stored nor carried by SQLite or the frame
+  - an item whose shape hides an image (a text array under `content`) is dropped
+    whole: the event is still stored and broadcast, `content` is empty, and
+    neither SQLite nor the frame carries the payload
   - with the attachments table unavailable (the count or one insert throws), the
     event and the frame still go out, every block degrades to visible
     `[image omitted: …]` text, and neither SQLite nor the frame carries a
@@ -585,6 +590,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - zero-DOM tool-call extraction: exact multiline `rawInput.code`, independent
     of title/kind and command/path detail, safe rejection of non-string or empty
     code, and unchanged command-before-path precedence
+  - a text array under `content` contributes no text: it is not a protocol shape
+    (ingest drops it too), so extraction and persistence agree
 
 - `test/render-event.test.ts`
   - shared app/share tool-call source disclosure: initially collapsed, exact
