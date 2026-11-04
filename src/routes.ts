@@ -31,6 +31,7 @@ import { handleFileRoutes } from "./files/routes.ts";
 import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
+import type { AgentAvailability } from "./agent-availability.ts";
 import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 import { isLocalCollaborationTarget } from "./task-collaboration.ts";
@@ -231,6 +232,12 @@ export interface RequestHandlerDeps {
   clientRegistry?: ClientRegistry;
   publicDir: string;
   dataDir: string;
+  /**
+   * Startup PATH snapshot of the configured agents. It is captured once, when
+   * the process starts, and reported as-is: a metadata read must never resolve
+   * or start an agent to answer which agents exist.
+   */
+  agentAvailability?: AgentAvailability[];
   limits: Pick<Config["limits"], "bash_output" | "image_upload"> &
     Partial<
       Pick<
@@ -680,6 +687,18 @@ export function createRequestHandler(
     created: boolean;
   }> | null = null;
 
+  /**
+   * The configured agents a client may target, with the availability the
+   * process saw at startup. `available` only means the launch command is on
+   * PATH: it says nothing about a process starting, handshaking, or being
+   * authenticated.
+   */
+  const agentDirectory = (): Array<{ id: string; available: boolean }> =>
+    (deps.agentAvailability ?? []).map(({ id, available }) => ({
+      id,
+      available,
+    }));
+
   // eslint-disable-next-line complexity -- TODO: refactor main route handler into smaller handlers
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
@@ -807,6 +826,8 @@ export function createRequestHandler(
           configOptions: tasks?.configOptionsFor(tasks.defaultAgentId) ?? [],
           cancelTimeout: deps.limits.cancel_timeout ?? 0,
           recentPathsLimit: deps.limits.recent_paths ?? 10,
+          agents: agentDirectory(),
+          defaultAgentId: tasks?.defaultAgentId ?? null,
         });
         return;
       }
@@ -2215,6 +2236,10 @@ export function createRequestHandler(
           const result = await bootstrapTaskPromise;
           json(res, HTTP_STATUS.OK, {
             ...result,
+            // A brand-new client needs the directory from this response alone:
+            // it may not read /config again after bootstrapping.
+            agents: agentDirectory(),
+            defaultAgentId: taskManager.defaultAgentId,
             clientOpId: getClientOpId(req) ?? undefined,
           });
         } catch (err) {

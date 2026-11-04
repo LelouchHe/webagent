@@ -64,8 +64,12 @@ setLogLevel(config.debug.level);
 // part of this gate.
 await runStartupChecks(config);
 
+// One startup snapshot of which configured agents have a launch command on
+// PATH. It is reported verbatim by the metadata read face; asking which agents
+// exist must never resolve or start one.
+const agentAvailability = checkAgentAvailability(config.agents);
 for (const line of formatAvailabilityWarnings(
-  checkAgentAvailability(config.agents),
+  agentAvailability,
   config.default_agent,
 )) {
   console.warn(line);
@@ -259,6 +263,7 @@ const requestHandler = createRequestHandler({
   publicDir: PUBLIC_DIR,
   dataDir: config.data_dir,
   limits: config.limits,
+  agentAvailability,
   pushService,
   serverVersion: PKG_VERSION,
   debugLevel: config.debug.level,
