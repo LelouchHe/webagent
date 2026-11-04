@@ -10,7 +10,15 @@
 // content sniff, the same unsigned base path + egress re-sign, and the same
 // cleanup (the row by the task FK, the file with the task directory). In
 // `content` the block is replaced by the descriptor an `agent_image` carries,
-// so neither SQLite nor a client ever sees base64.
+// so neither SQLite nor a client ever sees base64. Every position inside an
+// item is covered — the item itself, a `content` wrapper, a wrapper's or a
+// block's `_meta`, at any depth — because a skipped position would store the
+// payload verbatim.
+//
+// The walk is iterative and never throws out of this file: the event is the
+// record, a picture inside it is incidental. A legal deeply nested `_meta` (a
+// few thousand single-element arrays is a 4 KB message) must not cost the
+// update, and a rewrite that fails leaves that item as received.
 //
 // A refusal is never silent: an oversized block, a payload that is not a
 // storable image container, or one that cannot be written becomes
@@ -23,8 +31,11 @@
 // `src/shared/tool-content.ts` judges stored items only.
 
 import { decodedBase64Bytes, storeImageBytes } from "./agent-image.ts";
+import { log } from "./log.ts";
 import type { Store } from "./store.ts";
 import type { ToolContentItem } from "./types.ts";
+
+const ilog = log.scope("tool-result-image");
 
 export interface ToolResultImageContext {
   store: Store;
@@ -35,23 +46,36 @@ export interface ToolResultImageContext {
   limitBytes: number;
 }
 
+export interface StoredToolResultImages {
+  /** The content to persist and broadcast. */
+  content: ToolContentItem[];
+  /**
+   * Attachment rows this call inserted — the only thing a cached
+   * attachment-label map cares about. A refusal placeholder rewrites the block
+   * but writes no row, so it reports 0.
+   */
+  inserted: number;
+}
+
 /**
  * Store every ACP image block in one tool result's content, in place.
  *
- * Returns the rewritten content: the same array when there was no image, and a
- * new one otherwise. Callers persist and broadcast the result, so no inline
- * payload can survive past this function.
+ * The whole item tree is walked, so no inline payload can survive past this
+ * function into SQLite, `GET /events` or a live frame.
  */
 export function storeToolResultImages(
   ctx: ToolResultImageContext,
   content: ToolContentItem[],
-): ToolContentItem[] {
-  let index = ctx.store.countAttachments(ctx.taskId, "image");
-  let images = 0;
+): StoredToolResultImages {
+  let index = 0;
+  /** Image blocks seen: stored *or* refused (a refusal writes a placeholder). */
+  let processed = 0;
+  /** Attachment rows inserted: the only thing a cached label map cares about. */
+  let inserted = 0;
 
   /** Store one inline payload and return what takes its place. */
   function store(data: string): ToolContentItem {
-    images++;
+    processed++;
     const result = storeImageBytes({
       store: ctx.store,
       dataDir: ctx.dataDir,
@@ -61,6 +85,7 @@ export function storeToolResultImages(
       limitBytes: ctx.limitBytes,
     });
     if ("stored" in result) {
+      inserted++;
       return { type: "image", attachment: result.stored };
     }
     // A refused image is still part of the result: the placeholder keeps a
@@ -71,8 +96,40 @@ export function storeToolResultImages(
     };
   }
 
-  const rewritten = content.map((item) => rewriteItem(item, store));
-  return images > 0 ? rewritten : content;
+  try {
+    index = ctx.store.countAttachments(ctx.taskId, "image");
+    const rewritten = content.map((item) => {
+      try {
+        return rewriteItem(item, store);
+      } catch (error) {
+        // One item's rewrite must not cost its siblings: that item stays as
+        // received and the rest are still normalized.
+        warn("could not rewrite a tool result image", ctx, error);
+        return item;
+      }
+    });
+    return processed > 0
+      ? { content: rewritten, inserted }
+      : { content, inserted };
+  } catch (error) {
+    // The event is the record; a picture inside it is incidental. Nothing from
+    // here may escape into `handleAgentEvent`, so the caller gets the content it
+    // passed in plus whatever rows were already inserted (so a cached label map
+    // is still invalidated).
+    warn("could not store tool result images", ctx, error);
+    return { content, inserted };
+  }
+}
+
+function warn(
+  message: string,
+  ctx: ToolResultImageContext,
+  error: unknown,
+): void {
+  ilog.warn(message, {
+    taskId: ctx.taskId.slice(0, 8),
+    error: error instanceof Error ? error.message : String(error),
+  });
 }
 
 /**
@@ -91,21 +148,20 @@ function inlineImageData(value: unknown): string | null {
 }
 
 /**
- * An item with the extension-metadata slot ACP allows on a content block. The
- * slot is not part of `ToolContentItem` because nothing else reads it: only
- * ingest has to, so a nested payload cannot survive into storage.
- */
-type ContentItemWithMeta = ToolContentItem & { _meta?: unknown };
-
-/**
- * Replace every inline image block in one content item with its stored
+ * Replace every inline image block anywhere in one content item with its stored
  * descriptor.
  *
- * The positions an image block can occupy inside an item: the item itself, the
- * `{ type: "content", content: … }` wrapper, and — because a block may carry
- * extension metadata holding another block — anywhere inside `_meta`. An item
- * with no image stores nothing, so `storeToolResultImages` returns the original
- * array and "nothing to store" stays observable to the caller.
+ * Every position is covered, because ACP allows an image block in more than one:
+ * the item itself, a `{ type: "content", content: … }` wrapper, a wrapper's own
+ * `_meta`, and a block's `_meta` — any key, any depth, arrays included. A
+ * position the walk skipped would store a payload verbatim, which is the defect
+ * this replaces.
+ *
+ * The walk is iterative: a legal deeply nested `_meta` (a few thousand
+ * single-element arrays is a 4 KB message) must not overflow the host stack.
+ * Containers are copied, never mutated, because the event data is agent-supplied
+ * and may be shared with the caller's object; an item with no image stores
+ * nothing, so `storeToolResultImages` returns the original array.
  */
 function rewriteItem(
   item: ToolContentItem,
@@ -114,40 +170,35 @@ function rewriteItem(
   const own = inlineImageData(item);
   if (own) return store(own);
 
+  // A `content` wrapper is hoisted to the item: the stored representation is
+  // the bare descriptor, so a stored row has one shape and not two. Any other
+  // field on the wrapper is dropped with it, so nothing it held can leak.
   const wrapped = inlineImageData(item.content);
   if (wrapped) return store(wrapped);
 
-  const meta = (item as ContentItemWithMeta)._meta;
-  if (meta === undefined) return item;
-  return {
-    ...item,
-    _meta: rewriteMetaImages(meta, store),
-  } as ContentItemWithMeta;
-}
+  if (!isRecord(item)) return item;
 
-/**
- * Rewrite image blocks anywhere in a `_meta` subtree.
- *
- * Containers are copied, never mutated: `_meta` is agent-supplied and may be
- * shared with the caller's object.
- */
-function rewriteMetaImages(
-  node: unknown,
-  store: (data: string) => ToolContentItem,
-): unknown {
-  const own = inlineImageData(node);
-  if (own) return store(own);
-  if (Array.isArray(node)) {
-    return node.map((child) => rewriteMetaImages(child, store));
+  const root = copyContainer(item);
+  const stack: Array<{
+    source: Record<string, unknown>;
+    target: Record<string, unknown>;
+  }> = [{ source: item, target: root }];
+  while (stack.length > 0) {
+    const { source, target } = stack.pop()!;
+    for (const [key, child] of Object.entries(source)) {
+      const payload = inlineImageData(child);
+      if (payload) {
+        target[key] = store(payload);
+      } else if (isRecord(child)) {
+        const copy = copyContainer(child);
+        target[key] = copy;
+        stack.push({ source: child, target: copy });
+      } else {
+        target[key] = child;
+      }
+    }
   }
-  if (!isRecord(node)) return node;
-  // `Object.create(null)`: a JSON key named `__proto__` must stay an ordinary
-  // own property instead of running the prototype setter.
-  const next = copyContainer(node);
-  for (const [key, child] of Object.entries(node)) {
-    next[key] = rewriteMetaImages(child, store);
-  }
-  return next;
+  return root;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

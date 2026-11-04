@@ -95,6 +95,16 @@ before this rule) is an **unrecognized** content shape: the history projection
 marks it and the card renders nothing for it. It is not turned back into a
 picture and its payload is never echoed; there is no compatibility branch.
 
+Coverage — every position inside a content item is walked: the item itself, a
+`{ type: "content", content: … }` wrapper (hoisted to the bare descriptor, so a
+stored row has one shape), and any nested `_meta` at any depth, arrays included.
+The walk is iterative and `storeToolResultImages` never throws: a legal deeply
+nested `_meta` (a few thousand single-element arrays is a ~4 KB message) must not
+cost the update, and a rewrite that fails leaves that item as received. Two
+positions are explicitly **not** covered: `rawInput` (tool input, not a result
+picture — untouched) and `rawOutput` (never persisted; its inline `data` is
+emptied for the live frame instead of being stored).
+
 - Storage is the same attachment pipeline an agent message image uses: the same
   `tasks/<taskId>/attachments/<uuid>.<ext>` layout, the same `attachments` row,
   the same `limits.image_upload` ceiling, the same content sniff, the same

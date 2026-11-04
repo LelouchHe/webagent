@@ -103,6 +103,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
     base64 and keep the surrounding text; the wire's mime claim is ignored
   - an image nested in a content block's `_meta` is stored the same way, so no
     base64 survives ingest in a slot a reader never looks at
+  - a `_meta` nested 2000 and 5000 levels deep still stores and broadcasts the
+    event (the walk is iterative), and every non-image field survives verbatim
+  - an image that exists only in a nested `_meta` still invalidates the cached
+    label map, so a later event naming its path renders `agent-image-N`
+  - a store failure inside ingest returns the content unchanged instead of
+    throwing into the event handler
   - refusals: above `limits.image_upload` and not a storable image container
     each become visible `[image omitted: …]` text with no file and no row;
     successive images are named in order and a text-only update is untouched
@@ -122,6 +128,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     keeps its shape and every other field with `data` emptied
   - an image nested in an image block's `_meta` (any depth) is emptied too, not
     only the outer block's `data`
+  - an image nested in a `content` wrapper's own `_meta` is stored as a
+    descriptor, and neither SQLite nor the frame carries its payload
   - cloning keeps a JSON `__proto__` key as an own property (`JSON.stringify`
     still sees it) while leaving unrelated fields untouched
 

@@ -14,7 +14,6 @@ import { log } from "./log.ts";
 import { isAutopilotMode } from "./mode-bucket.ts";
 import { leaseOf } from "./execution-authority.ts";
 import { storeAgentImage } from "./agent-image.ts";
-import { classifyToolContentItem } from "./shared/tool-content.ts";
 import {
   storeToolResultImages,
   stripRawOutputImageData,
@@ -498,8 +497,7 @@ function dispatchAgentEvent(
       let content = event.content;
       let storedImage = false;
       if (Array.isArray(content)) {
-        const original = content;
-        content = storeToolResultImages(
+        const stored = storeToolResultImages(
           {
             store,
             dataDir: config.dataDir,
@@ -508,14 +506,13 @@ function dispatchAgentEvent(
           },
           content,
         );
-        if (content !== original) {
-          // A refused image also rewrites the block (to visible text); only a
-          // stored descriptor means the task now has an attachment a cached
-          // label map cannot name.
-          storedImage = content.some(
-            (item) => classifyToolContentItem(item).kind === "image_attachment",
-          );
-        }
+        content = stored.content;
+        // Ingest reports the rows it inserted, wherever in the item tree they
+        // landed. A cached label map cannot name them, so it must be
+        // invalidated; a refusal placeholder inserts nothing and does not. The
+        // handler must not sniff shapes again — a nested descriptor would be
+        // invisible to a top-level scan.
+        storedImage = stored.inserted > 0;
         // Temporary: recover an image one agent only names by path.
         const recovered = recoverCopilotImagePath({
           store,

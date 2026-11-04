@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { storeToolResultImages } from "../src/tool-result-image.ts";
 import { enrichEventForDisplay } from "../src/attachment-labels.ts";
+import type { Store } from "../src/store.ts";
 import type { ToolContentItem } from "../src/types.ts";
 import {
   LIMIT,
@@ -22,6 +23,13 @@ import {
  * stored through the same attachment pipeline an `agent_image` uses, and the
  * persisted/broadcast content carries the descriptor instead of the bytes.
  */
+/** `depth` single-element arrays around a leaf: a legal `_meta` payload. */
+function nestedMeta(depth: number): unknown {
+  let nested: unknown = { note: "kept" };
+  for (let level = 0; level < depth; level++) nested = [nested];
+  return nested;
+}
+
 describe("tool-result images: ACP image blocks", () => {
   let harness: ToolResultImageHarness;
   let store: ToolResultImageHarness["store"];
@@ -241,9 +249,113 @@ describe("tool-result images: ACP image blocks", () => {
       textOnly,
     );
     assert.equal(
-      unchanged,
+      unchanged.content,
       textOnly,
       "nothing to do must leave content untouched",
     );
+    assert.equal(unchanged.inserted, 0);
+  });
+
+  // A few thousand single-element arrays is a ~4 KB message that the SDK
+  // accepts, so the walk over an item's `_meta` must not be recursive: the
+  // event is the record and a nested payload must never cost it.
+  for (const depth of [2000, 5000]) {
+    it(`keeps the event when _meta nests ${depth} levels deep`, () => {
+      harness.toolCall("t1", "Screenshot");
+      harness.emit(
+        harness.update("t1", [
+          {
+            type: "content",
+            content: { type: "text", text: "kept" },
+            _meta: { nested: nestedMeta(depth) },
+          } as unknown as ToolContentItem,
+        ]),
+      );
+
+      const updates = (events: Array<{ type: string }>) =>
+        events.filter((event) => event.type === "tool_call_update").length;
+      assert.equal(updates(store.getEvents("t1")), 1, "the row must be stored");
+      assert.equal(updates(harness.broadcasts), 1, "the frame must go out");
+
+      // Every non-image field survives verbatim, at every level. The check is
+      // iterative for the same reason the walk is.
+      const content = harness.storedContent();
+      assert.equal(textOf(content), "kept");
+      let node = (content[0] as { _meta?: { nested?: unknown } })._meta!.nested;
+      let levels = 0;
+      while (Array.isArray(node)) {
+        levels++;
+        node = node[0];
+      }
+      assert.equal(levels, depth);
+      assert.deepEqual(node, { note: "kept" });
+    });
+  }
+
+  it("invalidates the label map when the only image is nested in _meta", () => {
+    // Warm the cache empty, as an earlier SSE for this task would.
+    assert.equal(harness.tasks.getLabelMap("t1").size, 0);
+
+    harness.toolCall("t1", "Screenshot");
+    harness.emit(
+      harness.update("t1", [
+        {
+          type: "content",
+          content: { type: "text", text: "kept" },
+          _meta: {
+            content: [
+              {
+                type: "image",
+                mimeType: "image/png",
+                data: png().toString("base64"),
+              },
+            ],
+          },
+        } as unknown as ToolContentItem,
+      ]),
+    );
+
+    // A row exists, and the cached map that could not name it was dropped: a
+    // later event naming the realpath renders the display name instead.
+    assert.equal(store.countAttachments("t1", "image"), 1);
+    const meta = (
+      harness.storedContent()[0] as {
+        _meta?: { content?: ToolContentItem[] };
+      }
+    )._meta;
+    const descriptor = attachmentOf(meta!.content![0]);
+    assert.ok(descriptor);
+    const row = store.getAttachment("t1", String(descriptor.attachmentId));
+    assert.ok(row);
+    const enriched = enrichEventForDisplay(
+      {
+        type: "tool_call",
+        taskId: "t1",
+        id: "later",
+        title: `wrote ${row.realpath}`,
+        kind: "other",
+      },
+      harness.tasks.getLabelMap("t1"),
+    ) as { title: string };
+    assert.match(enriched.title, /agent-image-1/);
+    assert.equal(enriched.title.includes(row.realpath), false);
+  });
+
+  it("never throws out of ingest", () => {
+    const content: ToolContentItem[] = [
+      { type: "content", content: { type: "text", text: "kept" } },
+    ];
+    const broken = {
+      countAttachments() {
+        throw new Error("boom");
+      },
+    } as unknown as Store;
+
+    const result = storeToolResultImages(
+      { store: broken, dataDir: harness.dir, taskId: "t1", limitBytes: LIMIT },
+      content,
+    );
+    assert.equal(result.content, content);
+    assert.equal(result.inserted, 0);
   });
 });
