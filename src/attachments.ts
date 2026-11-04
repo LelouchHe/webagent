@@ -166,6 +166,65 @@ export function isUpstreamImageMime(mime: string): boolean {
   return UPSTREAM_IMAGE_MIMES.has(mime.toLowerCase());
 }
 
+const PNG_SIGNATURE = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
+
+/**
+ * Image containers an inline agent image may use, with their magic-byte
+ * signatures.
+ *
+ * Synchronous on purpose: storing an agent image has to happen in the same step
+ * that receives it. The event pipeline has no per-task queue, so an `await`
+ * between receiving the block and writing the row would let a later text chunk
+ * be flushed ahead of the image and reorder the transcript. `sniffMime` (async,
+ * `file-type`) is still the upload path's sniffer; this one only has to answer
+ * "is this one of the containers we can store and serve inline".
+ */
+const IMAGE_SIGNATURES: Array<{
+  mime: string;
+  matches(head: Buffer): boolean;
+}> = [
+  {
+    mime: "image/png",
+    matches: (head) =>
+      head.length >= 8 && head.subarray(0, 8).equals(PNG_SIGNATURE),
+  },
+  {
+    mime: "image/jpeg",
+    matches: (head) =>
+      head.length >= 3 &&
+      head[0] === 0xff &&
+      head[1] === 0xd8 &&
+      head[2] === 0xff,
+  },
+  {
+    mime: "image/gif",
+    matches: (head) =>
+      head.length >= 6 && /^GIF8[79]a$/.test(head.toString("latin1", 0, 6)),
+  },
+  {
+    mime: "image/webp",
+    matches: (head) =>
+      head.length >= 12 &&
+      head.toString("latin1", 0, 4) === "RIFF" &&
+      head.toString("latin1", 8, 12) === "WEBP",
+  },
+];
+
+/**
+ * Detect the container of an image from its content, never from what the
+ * sender claimed. Returns null for anything that is not one of the containers
+ * this app can both store and serve inline (an SVG, for instance, is neither).
+ */
+export function sniffImageMime(head: Buffer): string | null {
+  const match = IMAGE_SIGNATURES.find(
+    (signature) =>
+      isUpstreamImageMime(signature.mime) && signature.matches(head),
+  );
+  return match?.mime ?? null;
+}
+
 /**
  * Classify an upload as "image" (sent as ACP image block, inlined as base64)
  * or "file" (sent as ACP resource_link). Decision is mime-prefix-based —

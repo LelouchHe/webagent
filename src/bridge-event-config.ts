@@ -15,6 +15,10 @@ import type { InterceptorCounters } from "./attachment-interceptor.ts";
 export interface BridgeEventConfigDeps {
   cancelTimeout: number;
   recentPathsLimit: number;
+  /** Task data root; an inline agent image is stored under `<dataDir>/tasks/`. */
+  dataDir: string;
+  /** `limits.image_upload`, the ceiling for an inline agent image. */
+  imageUploadLimit: number;
   attachmentInterceptorCounters: InterceptorCounters;
   shouldLogSchemaDrift: () => boolean;
 }
@@ -25,6 +29,8 @@ export function buildBridgeEventHandlerConfig(
   return {
     cancelTimeout: deps.cancelTimeout,
     recentPathsLimit: deps.recentPathsLimit,
+    dataDir: deps.dataDir,
+    imageUploadLimit: deps.imageUploadLimit,
     attachmentInterceptor: {
       counters: deps.attachmentInterceptorCounters,
       logger: log.scope("attachment-interceptor"),

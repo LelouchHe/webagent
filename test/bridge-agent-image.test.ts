@@ -4,10 +4,10 @@ import { AgentBridge } from "../src/bridge.ts";
 import type { AgentEvent } from "../src/types.ts";
 
 /**
- * An agent's inline image reaches the transcript as an event carrying the
- * agent's own base64 — nothing is decoded, rewritten, or written to disk. The
- * event stream is the only carrier, so the mapping is also the only place that
- * can decide an image is too large to carry.
+ * An agent's inline image must leave the transport as an event, not be dropped.
+ * The bridge hands over the agent's own block; turning it into an attachment
+ * (file, row, unsigned path) is the event handler's job, because only that
+ * layer has the store and the task's data root.
  */
 
 const mappedTasks = {
@@ -19,22 +19,12 @@ const mappedTasks = {
   },
 };
 
-/** Base64 of exactly `bytes` decoded bytes. */
-function base64Of(bytes: number): string {
-  return Buffer.alloc(bytes).toString("base64");
-}
-
-function collect(bridge: AgentBridge): AgentEvent[] {
-  const events: AgentEvent[] = [];
-  bridge.on("event", (event) => events.push(event as AgentEvent));
-  return events;
-}
-
 async function emitImage(
   bridge: AgentBridge,
   content: Record<string, unknown>,
 ): Promise<AgentEvent[]> {
-  const events = collect(bridge);
+  const events: AgentEvent[] = [];
+  bridge.on("event", (event) => events.push(event as AgentEvent));
   await (bridge as any).handleSessionUpdate({
     sessionId: "agent-1",
     update: { sessionUpdate: "agent_message_chunk", content },
@@ -42,8 +32,8 @@ async function emitImage(
   return events;
 }
 
-describe("inline agent images", () => {
-  it("carries the agent's base64 payload as a message chunk", async () => {
+describe("an agent image block", () => {
+  it("leaves the transport as an agent_image event carrying the block", async () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
     const events = await emitImage(bridge, {
       type: "image",
@@ -53,17 +43,17 @@ describe("inline agent images", () => {
 
     assert.deepEqual(events, [
       {
-        type: "message_chunk",
+        type: "agent_image",
         taskId: "web-1",
-        text: "",
-        images: [{ mimeType: "image/png", data: "iVBORw0KGgo=" }],
+        block: { mimeType: "image/png", data: "iVBORw0KGgo=" },
       },
     ]);
   });
 
-  it("keeps one image per chunk", async () => {
+  it("emits one image per chunk", async () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
-    const events = collect(bridge);
+    const events: AgentEvent[] = [];
+    bridge.on("event", (event) => events.push(event as AgentEvent));
     for (const payload of ["AAAA", "BBBB"]) {
       await (bridge as any).handleSessionUpdate({
         sessionId: "agent-1",
@@ -74,51 +64,18 @@ describe("inline agent images", () => {
       });
     }
 
-    assert.equal(events.length, 2);
-    for (const [index, event] of events.entries()) {
-      const images = (event as { images?: unknown[] }).images ?? [];
-      assert.equal(images.length, 1, "a chunk never batches images");
-      assert.equal(
-        (images[0] as { data: string }).data,
-        index === 0 ? "AAAA" : "BBBB",
-      );
-    }
-  });
-
-  it("reports an oversized image instead of carrying it", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedTasks);
-    bridge.setImageInlineLimit(2 * 1024 * 1024);
-    const events = await emitImage(bridge, {
-      type: "image",
-      mimeType: "image/png",
-      // 3 MiB decoded: above the limit, so the bytes must not travel.
-      data: base64Of(3 * 1024 * 1024),
-    });
-
-    assert.equal(events.length, 1);
-    const event = events[0] as Extract<AgentEvent, { type: "message_chunk" }>;
-    assert.equal(event.type, "message_chunk");
-    assert.equal(event.images, undefined);
-    assert.match(event.text, /^\[image omitted: 3 MB > 2 MB limit\]$/);
-  });
-
-  it("inlines an image exactly at the limit", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedTasks);
-    bridge.setImageInlineLimit(1024);
-    const events = await emitImage(bridge, {
-      type: "image",
-      mimeType: "image/jpeg",
-      data: base64Of(1024),
-    });
-
-    const event = events[0] as Extract<AgentEvent, { type: "message_chunk" }>;
-    assert.equal(event.images?.length, 1);
-    assert.equal(event.text, "");
+    assert.deepEqual(
+      events.map(
+        (event) => (event as { block?: { data: string } }).block?.data,
+      ),
+      ["AAAA", "BBBB"],
+    );
   });
 
   it("still drops an image in a thought chunk", async () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
-    const events = collect(bridge);
+    const events: AgentEvent[] = [];
+    bridge.on("event", (event) => events.push(event as AgentEvent));
     await (bridge as any).handleSessionUpdate({
       sessionId: "agent-1",
       update: {
@@ -134,22 +91,6 @@ describe("inline agent images", () => {
     const events = await emitImage(bridge, { type: "text", text: "hello" });
     assert.deepEqual(events, [
       { type: "message_chunk", taskId: "web-1", text: "hello" },
-    ]);
-  });
-
-  it("reports an empty image payload instead of emitting nothing", async () => {
-    const bridge = new AgentBridge("fake-agent", mappedTasks);
-    const events = await emitImage(bridge, {
-      type: "image",
-      mimeType: "image/png",
-      data: "",
-    });
-    assert.deepEqual(events, [
-      {
-        type: "message_chunk",
-        taskId: "web-1",
-        text: "[image omitted: empty]",
-      },
     ]);
   });
 });

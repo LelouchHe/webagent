@@ -13,6 +13,7 @@ import {
 import { log } from "./log.ts";
 import { isAutopilotMode } from "./mode-bucket.ts";
 import { leaseOf } from "./execution-authority.ts";
+import { storeAgentImage } from "./agent-image.ts";
 
 const ailog = log.scope("attachment-interceptor");
 const plog = log.scope("push");
@@ -35,6 +36,10 @@ function withoutLease<T extends object>(event: T): T {
 export interface EventHandlerConfig {
   cancelTimeout: number;
   recentPathsLimit: number;
+  /** Where task data lives; an agent image is stored under `<dataDir>/tasks/`. */
+  dataDir: string;
+  /** `limits.image_upload`: the ceiling an inline agent image must stay under. */
+  imageUploadLimit: number;
   attachmentInterceptor?: {
     counters: InterceptorCounters;
     logger?: InterceptorLogger;
@@ -48,6 +53,7 @@ type ConfigLikeEvent = Extract<
   { type: "task_created" | "config_option_update" }
 >;
 type MessageChunkEvent = Extract<AgentEvent, { type: "message_chunk" }>;
+type AgentImageEvent = Extract<AgentEvent, { type: "agent_image" }>;
 type ThoughtChunkEvent = Extract<AgentEvent, { type: "thought_chunk" }>;
 type ToolCallEvent = Extract<AgentEvent, { type: "tool_call" }>;
 type PlanEvent = Extract<AgentEvent, { type: "plan" }>;
@@ -80,25 +86,61 @@ function handleConfigLikeEvent(
 function handleMessageChunk(
   event: MessageChunkEvent,
   tasks: TaskManager,
-  store: Store,
 ): void {
   tasks.flushThinkingBuffer(event.taskId);
-  const images = event.images ?? [];
-  if (images.length > 0) {
-    // An inline image is its own stored record, so the text around it keeps
-    // its order in a replay: the pending text block is flushed first.
-    tasks.flushAssistantBuffer(event.taskId);
-    store.saveEvent(
-      event.taskId,
-      "assistant_image",
-      { images },
-      { from_ref: "agent" },
-    );
-  }
-  if (event.text) tasks.appendAssistant(event.taskId, event.text);
+  tasks.appendAssistant(event.taskId, event.text);
   tasks.state.patch(event.taskId, {
     runtime: { streaming: { assistant: true, thinking: false } },
   });
+}
+
+/**
+ * Store an agent's image as an attachment, or report why it was not stored.
+ *
+ * Both outcomes are transcript content, in the position the image arrived: the
+ * pending text is flushed first, then either the stored record or the visible
+ * placeholder takes the image's place. Returns the event to broadcast — the
+ * stored descriptor, or a text chunk — because the raw base64 block must never
+ * leave this function.
+ */
+function handleAgentImage(
+  event: AgentImageEvent,
+  tasks: TaskManager,
+  store: Store,
+  config: EventHandlerConfig,
+): AgentEvent {
+  const taskId = event.taskId;
+  tasks.flushThinkingBuffer(taskId);
+  // Text before the image is its own record, so a replay keeps
+  // text → image → text instead of merging them.
+  tasks.flushAssistantBuffer(taskId);
+
+  const result = storeAgentImage({
+    store,
+    dataDir: config.dataDir,
+    taskId,
+    data: event.block?.data ?? "",
+    index: store.countAttachments(taskId, "image") + 1,
+    limitBytes: config.imageUploadLimit,
+  });
+  if ("stored" in result) {
+    store.saveEvent(
+      taskId,
+      "agent_image",
+      { attachment: result.stored },
+      { from_ref: "agent" },
+    );
+    // The new row must be visible to the label/URL egress of this very event.
+    tasks.invalidateLabelCache(taskId);
+    return { type: "agent_image", taskId, attachment: result.stored };
+  }
+
+  // A refused image is still part of the reply: say so, in its own place.
+  handleMessageChunk(
+    { type: "message_chunk", taskId, text: result.omitted },
+    tasks,
+  );
+  return { type: "message_chunk", taskId, text: result.omitted };
 }
 
 function handleThoughtChunk(
@@ -432,7 +474,7 @@ function dispatchAgentEvent(
       handleConfigLikeEvent(event, tasks);
       return false;
     case "message_chunk":
-      handleMessageChunk(event, tasks, store);
+      handleMessageChunk(event, tasks);
       return false;
     case "thought_chunk":
       handleThoughtChunk(event, tasks);
@@ -507,6 +549,7 @@ function maybePushNotify(event: AgentEvent, pushService: PushService): void {
  */
 const AGENT_ACTIVITY_EVENT_TYPES = new Set([
   "message_chunk",
+  "agent_image",
   "thought_chunk",
   "tool_call",
   "tool_call_update",
@@ -577,6 +620,14 @@ export function handleAgentEvent(
     tasks.restoringTasks.has(event.taskId)
   )
     return;
+  if (event.type === "agent_image") {
+    // The incoming event only carries base64; what goes out is the stored
+    // descriptor (or the placeholder that stands in for a refused image).
+    sseManager.broadcast(
+      withoutLease(handleAgentImage(event, tasks, store, config)),
+    );
+    return;
+  }
   const suppress = dispatchAgentEvent(
     event,
     tasks,

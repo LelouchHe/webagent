@@ -26,16 +26,34 @@ export interface ConfigBooleanOption {
 export type ConfigOption = ConfigSelectOption | ConfigBooleanOption;
 
 /**
- * One image an agent returned inline with a message chunk.
+ * An ACP image block as the agent sent it: base64, exactly as received.
  *
- * The payload is the ACP block's base64 exactly as it arrived: nothing is
- * decoded, re-encoded, or written to disk. It travels with the event, so both
- * the live stream and a replay carry the bytes.
+ * This shape exists only on the hop from the transport to the event handler.
+ * The handler stores the bytes as an ordinary attachment and replaces the block
+ * with `AgentImageAttachment`, so neither the database nor the client ever sees
+ * base64.
  */
-export interface AgentImage {
+export interface AgentImageBlock {
   mimeType: string;
   /** Base64-encoded image bytes. */
   data: string;
+}
+
+/**
+ * A stored agent image. Deliberately the same shape as one entry of a
+ * `user_message`'s `attachments[]`: same `kind`/`attachmentId`/`displayName`/
+ * `mimeType`/`path`/`width`/`height`, same unsigned base `path` (egress re-signs
+ * it), same attachment row and cleanup.
+ */
+export interface AgentImageAttachment {
+  kind: "image";
+  attachmentId: string;
+  displayName: string;
+  mimeType: string;
+  /** Unsigned base path; `reSignAttachmentUrlsInJson` appends `?sig=&exp=`. */
+  path: string;
+  width?: number | null;
+  height?: number | null;
 }
 
 // --- Shared interfaces used by both frontend and backend ---
@@ -210,12 +228,18 @@ export type AgentEvent =
       epoch?: string;
       revision?: number;
     }
+  | { type: "message_chunk"; taskId: string; text: string }
   | {
-      type: "message_chunk";
+      /**
+       * An image the agent returned with its message. `block` carries the raw
+       * base64 only from the transport to the event handler; it is never
+       * persisted and never broadcast, because the handler stores the bytes as
+       * an attachment and sends/stores `attachment` instead.
+       */
+      type: "agent_image";
       taskId: string;
-      text: string;
-      /** Inline images from this chunk; empty text is normal for these. */
-      images?: AgentImage[];
+      block?: AgentImageBlock;
+      attachment?: AgentImageAttachment;
     }
   | { type: "thought_chunk"; taskId: string; text: string }
   | {

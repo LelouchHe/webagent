@@ -280,6 +280,10 @@ const server = createServer((req, res) => {
 const eventHandlerConfig = _buildBridgeEventHandlerConfig({
   cancelTimeout: config.limits.cancel_timeout,
   recentPathsLimit: config.limits.recent_paths,
+  // An image the agent returns is stored like an upload, under the same root
+  // and the same ceiling.
+  dataDir: config.data_dir,
+  imageUploadLimit: config.limits.image_upload,
   attachmentInterceptorCounters,
   shouldLogSchemaDrift: () => {
     const now = Date.now();
@@ -298,9 +302,6 @@ function createAgentTransport(agentId: string): AgentBridge {
   const agent = config.agents[agentId];
   const b = new AgentBridge(agent.cmd, store.sessionView(agentId), agentId);
   b.setAttachmentDispatcher(attachmentDispatcher);
-  // An agent's inline image is rendered as-is, so the upload ceiling is the
-  // one place that decides "too big to carry through an event".
-  b.setImageInlineLimit(config.limits.image_upload);
   b.setExecutionLeaseSource(executionAuthority);
 
   b.on("event", (event: AgentEvent) => {

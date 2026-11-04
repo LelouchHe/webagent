@@ -2500,6 +2500,16 @@ export class Store {
   }
 
   /** Look up an attachment row by (task_id, id). */
+  /** How many attachments of one kind a task already has (default naming). */
+  countAttachments(taskId: string, kind: string): number {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM attachments WHERE task_id = ? AND kind = ?",
+      )
+      .get(taskId, kind) as { n: number };
+    return row.n;
+  }
+
   getAttachment(taskId: string, id: string): AttachmentRow | undefined {
     return this.db
       .prepare("SELECT * FROM attachments WHERE task_id = ? AND id = ?")
