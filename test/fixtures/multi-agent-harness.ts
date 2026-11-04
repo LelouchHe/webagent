@@ -10,7 +10,10 @@ import { Store } from "../../src/store.ts";
 import { TaskStateManager } from "../../src/task-state.ts";
 import { ExecutionAuthority } from "../../src/execution-authority.ts";
 
-import { StaticAgentEnvironment } from "../../src/agent-registry.ts";
+import {
+  AgentUnavailableError,
+  StaticAgentEnvironment,
+} from "../../src/agent-registry.ts";
 import { TaskManager } from "../../src/task-manager.ts";
 import { createRequestHandler } from "../../src/routes.ts";
 import type { AgentAvailability } from "../../src/agent-availability.ts";
@@ -67,6 +70,11 @@ export interface HarnessOptions {
   configured?: AgentKey[];
   /** Agents whose transport is bound (i.e. startable). Default: configured. */
   started?: AgentKey[];
+  /**
+   * Configured agents whose start fails, with the failure the transport would
+   * report. Used to prove a specific reason survives to the response.
+   */
+  resolveErrors?: Partial<Record<string, string>>;
   schemaA?: ConfigOption[];
   schemaB?: ConfigOption[];
 }
@@ -83,8 +91,11 @@ export interface Harness {
     path: string,
     body?: unknown,
   ): Promise<{ status: number; json: Record<string, unknown> }>;
-  /** Rebuild the task runtime over the same database, as a process restart. */
-  restart(): Promise<void>;
+  /**
+   * Rebuild the task runtime over the same database, as a process restart.
+   * Configuration overrides are how a restart changes which agents exist.
+   */
+  restart(overrides?: HarnessOptions): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -111,20 +122,34 @@ export async function startHarness(
     a: createProfiledAgent(AGENT_A, options.schemaA ?? SCHEMA_A),
     b: createProfiledAgent(AGENT_B, options.schemaB ?? SCHEMA_B),
   };
-  const configured = new Set(
-    (options.configured ?? ["a", "b"]).map((key) => agents[key].agentId),
-  );
-  const started = options.started ?? options.configured ?? ["a", "b"];
-
+  // Configuration is reconfigurable: a restart is how a deployment changes
+  // which agents exist, and a task's implicit takeover happens after that.
+  let configuration: HarnessOptions = { ...options };
   let tasks: TaskManager | null = null;
   let env: StaticAgentEnvironment | null = null;
 
   const build = (): void => {
+    const configured = new Set(
+      (configuration.configured ?? ["a", "b"]).map(
+        (key) => agents[key].agentId,
+      ),
+    );
+    const started = configuration.started ??
+      configuration.configured ?? ["a", "b"];
     // Adapters are created by demand (bind or resolve), so "no adapter exists"
     // is a real observation rather than a harness artifact.
     env = new StaticAgentEnvironment(AGENT_A, [], {
       isConfigured: (id) => configured.has(id),
     });
+    if (configuration.resolveErrors) {
+      const resolveErrors = configuration.resolveErrors;
+      const resolve = env.resolve.bind(env);
+      env.resolve = async (agentId) => {
+        const failure = resolveErrors[agentId];
+        if (failure) throw new AgentUnavailableError(agentId, failure);
+        return resolve(agentId);
+      };
+    }
     tasks = new TaskManager({
       store,
       defaultCwd: dir,
@@ -139,15 +164,17 @@ export async function startHarness(
   };
   build();
 
-  let handler = createRequestHandler({
-    store,
-    tasks: tasks!,
-    sseManager: Object.assign(new SseManager(), { broadcast() {} }),
-    publicDir: join(dir, "public"),
-    dataDir: dir,
-    limits: { bash_output: 1024, image_upload: 1024 },
-    agentAvailability: options.agentAvailability,
-  });
+  const makeHandler = (): ReturnType<typeof createRequestHandler> =>
+    createRequestHandler({
+      store,
+      tasks: tasks!,
+      sseManager: Object.assign(new SseManager(), { broadcast() {} }),
+      publicDir: join(dir, "public"),
+      dataDir: dir,
+      limits: { bash_output: 1024, image_upload: 1024 },
+      agentAvailability: configuration.agentAvailability,
+    });
+  let handler = makeHandler();
 
   const server = await startServer((req, res) => handler(req, res));
   const port = (server.address() as AddressInfo).port;
@@ -193,19 +220,12 @@ export async function startHarness(
     tasks: () => tasks!,
     env: () => env!,
     request,
-    async restart() {
+    async restart(overrides: HarnessOptions = {}) {
       tasks?.dispose();
       tasks = null;
+      configuration = { ...configuration, ...overrides };
       build();
-      handler = createRequestHandler({
-        store,
-        tasks: tasks!,
-        sseManager: Object.assign(new SseManager(), { broadcast() {} }),
-        publicDir: join(dir, "public"),
-        dataDir: dir,
-        limits: { bash_output: 1024, image_upload: 1024 },
-        agentAvailability: options.agentAvailability,
-      });
+      handler = makeHandler();
     },
     async close() {
       tasks?.dispose();

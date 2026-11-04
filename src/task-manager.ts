@@ -834,6 +834,12 @@ export class TaskManager implements ObligationHost {
     const task = this.store.getTaskIncludingDeleted(taskId);
     const toAgent = this.agents.defaultAgentId;
     this.store.replaceAgentSession(taskId, toAgent, emptyExecutionSlot(taskId));
+    // The takeover is a change of execution environment even though it does
+    // not run through `clearTask`: what the removed agent's tasks stored for
+    // model / mode / reasoning does not describe the agent taking over. The
+    // binding commit above already advanced the generation, so this write
+    // belongs to the new one.
+    this.clearStoredExecutionConfig(taskId);
     this.liveTasks.delete(taskId);
     this.resetTaskRuntime(taskId);
     this.pendingDispatchRetries.delete(taskId);
@@ -885,6 +891,68 @@ export class TaskManager implements ObligationHost {
     throw new Error(
       `Task ${taskId.slice(0, 8)} is bound to agent ${binding.agent_key}`,
     );
+  }
+
+  /**
+   * Drop a task's stored execution config. `model` / `mode` /
+   * `reasoning_effort` describe one agent's environment, so an execution
+   * replaced by another agent's starts from that agent's own defaults. Callers
+   * must have committed the new binding already: these are facts of the new
+   * generation, not of the one that was replaced.
+   */
+  private clearStoredExecutionConfig(taskId: string): void {
+    this.store.updateTaskConfig(taskId, "model", null);
+    this.store.updateTaskConfig(taskId, "mode", null);
+    this.store.updateTaskConfig(taskId, "reasoning_effort", null);
+  }
+
+  /** True when a task stores an execution config value of its own. */
+  private hasStoredExecutionConfig(
+    task: Pick<TaskRow, "model" | "mode" | "reasoning_effort">,
+  ): boolean {
+    return (
+      task.model !== null ||
+      task.mode !== null ||
+      task.reasoning_effort !== null
+    );
+  }
+
+  /**
+   * Clear the stored execution config inside the replacement generation's
+   * fence, and return the row view the rest of the rotation must use. Reading
+   * the same stale values back into `restoreTaskConfig` or the read-face
+   * overlay would hand the previous agent's choices to the new one.
+   */
+  private zeroExecutionConfig<
+    T extends Pick<TaskRow, "model" | "mode" | "reasoning_effort">,
+  >(taskId: string, task: T, lease: ExecutionLease | null): T {
+    if (!this.leaseCurrent(lease)) {
+      throw new Error(`Execution replaced while rotating ${taskId}`);
+    }
+    this.clearStoredExecutionConfig(taskId);
+    return { ...task, model: null, mode: null, reasoning_effort: null };
+  }
+
+  /**
+   * A replacement's self-reported execution config becomes the task's read
+   * face when the task stores none of its own (a cross-agent replacement
+   * cleared it). Leaving the columns null would make every read fall back to
+   * the agent's shared schema cache — i.e. whatever another task's session
+   * last set — while the report is the only honest source. The option list's
+   * first entry is a hint, never a default.
+   */
+  private adoptReportedExecutionConfig(
+    taskId: string,
+    stored: Pick<TaskRow, "model" | "mode" | "reasoning_effort">,
+    configOptions: ConfigOption[],
+    lease: ExecutionLease | null,
+  ): void {
+    if (this.hasStoredExecutionConfig(stored)) return;
+    if (configOptions.length === 0) return;
+    if (!this.leaseCurrent(lease)) {
+      throw new Error(`Execution replaced while rotating ${taskId}`);
+    }
+    this.recordConfigOptions(taskId, configOptions, lease);
   }
 
   /**
@@ -1548,22 +1616,55 @@ export class TaskManager implements ObligationHost {
       agentId,
     );
 
+    // `task` was read before the rotation; a replacement owned by a different
+    // agent must reach the restore as the cleared view.
+    const configTask = this.rotationConfigTask(
+      taskId,
+      task,
+      retiredBinding,
+      agentId,
+      lease,
+    );
+
     const configOptions = await this.restoreTaskConfig(
       bridge,
       taskId,
       created.configOptions,
-      task,
+      configTask,
       lease,
     );
+    // The new execution reported its own environment; that report is what the
+    // task reads when it has no stored choice left.
+    this.adoptReportedExecutionConfig(taskId, configTask, configOptions, lease);
     return {
       taskId,
       configOptions: this.applyStoredConfigUnderLease(
         taskId,
         configOptions,
-        task,
+        configTask,
         lease,
       ),
     };
+  }
+
+  /**
+   * The row view the config tail of a rotation must use. A replacement owned
+   * by a different agent is a change of execution environment: the values
+   * stored for the agent that no longer runs this task are not the new one's
+   * defaults, and re-reading them into the restore or the overlay would hand
+   * them over.
+   */
+  private rotationConfigTask(
+    taskId: string,
+    task: TaskRow,
+    retiredBinding: { agent_key: string } | undefined,
+    agentId: string,
+    lease: ExecutionLease | null,
+  ): TaskRow {
+    if (retiredBinding === undefined || retiredBinding.agent_key === agentId) {
+      return task;
+    }
+    return this.zeroExecutionConfig(taskId, task, lease);
   }
 
   /**
@@ -2089,7 +2190,7 @@ export class TaskManager implements ObligationHost {
   /** Resume a task — returns event to send to the requesting client. */
   async resumeTask(bridge: SessionBridge, taskId: string): Promise<AgentEvent> {
     const agentId = this.attachExecutionBridge(bridge);
-    const task = this.liveTask(taskId);
+    let task = this.liveTask(taskId);
     if (!task) throw new Error("Task not found");
 
     if (this.liveTasks.has(taskId)) {
@@ -2113,6 +2214,11 @@ export class TaskManager implements ObligationHost {
     const removedOwner = this.removedOwnerBinding(taskId);
     if (removedOwner) {
       this.applyOwnerRotation(taskId, removedOwner, "owner_removed");
+      // The takeover cleared the stored execution config; the restore must see
+      // that view instead of the values read before the rotation.
+      const rotated = this.liveTask(taskId);
+      if (!rotated) throw new Error("Task not found");
+      task = rotated;
     }
     // A caller that resolved the wrong agent must not load the session under
     // it: the bridge's session view would not map this task anyway, but naming
@@ -2277,6 +2383,12 @@ export class TaskManager implements ObligationHost {
     );
     if (!this.leaseCurrent(lease)) {
       throw new Error(`Execution replaced while restoring ${taskId}`);
+    }
+    // A materialized owner slot is a replacement, not a task's first
+    // execution: when the task stores no execution config of its own, the
+    // session's report is what its reads must show.
+    if (!opts.attach) {
+      this.adoptReportedExecutionConfig(taskId, task, configOptions, lease);
     }
     return {
       type: "task_created",
