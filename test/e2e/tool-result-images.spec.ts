@@ -125,16 +125,25 @@ test("a wide thumbnail never widens the page", async ({ page }) => {
       ".tool-call .tc-images img.tc-image",
     )!;
     const card = img.closest(".tool-call")!;
+    // `#messages` is the element that actually scrolls: it sets
+    // `overflow-y: auto`, which computes `overflow-x` to `auto` too. The
+    // document element stays at viewport width even when a child overflows it,
+    // so measuring `documentElement.scrollWidth` would miss this defect.
+    const scroller = document.getElementById("messages")!;
     return {
       viewport: window.innerWidth,
       pageWidth: document.documentElement.scrollWidth,
+      scrollerWidth: scroller.scrollWidth,
+      scrollerClientWidth: scroller.clientWidth,
       imageWidth: img.getBoundingClientRect().width,
       cardWidth: card.getBoundingClientRect().width,
     };
   });
 
-  // The page may not scroll sideways, the image may not exceed its card, and the
-  // box keeps the source aspect ratio (1600×900) rather than distorting.
+  // The real scroll container may not overflow, the document may not either,
+  // the image may not exceed its card, and the box keeps the source aspect
+  // ratio (1600×900) rather than distorting.
+  expect(layout.scrollerWidth).toBeLessThanOrEqual(layout.scrollerClientWidth);
   expect(layout.pageWidth).toBeLessThanOrEqual(layout.viewport);
   expect(layout.imageWidth).toBeLessThanOrEqual(layout.cardWidth);
   const ratio = await image.evaluate(

@@ -820,6 +820,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `tool-result-images.spec.ts`
   - an image block in a tool result renders as a `.tc-images img.tc-image` thumbnail with a **signed attachment URL** (never base64) next to the tool output, and opens the same lightbox; the stored row carries the descriptor
   - a reload replays the thumbnail from the stored row
+  - at 390px, a 1600×900 source stays inside the card and the **real scroll container** (`#messages.scrollWidth <= #messages.clientWidth`, not the document element) does not overflow; the box keeps its aspect ratio
 
 - `tool-result-images-path.spec.ts`
   - a tool result that only names a generated image file (the temporary path adapter) renders the same thumbnail, keeps its text result, and stores the appended descriptor
