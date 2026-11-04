@@ -269,6 +269,41 @@ describe("tool content shape coverage", () => {
     });
     assert.equal(row.text, "done\n[image]");
     assert.equal(row.content_shape, undefined);
+
+    // The old wire shape (an inline block that never became an attachment)
+    // must still project as a picture, not as the status line.
+    const inlineRow = projectTaskHistoryRow({
+      seq: 1,
+      type: "tool_call_update",
+      data: JSON.stringify({
+        id: "tool-1",
+        status: "completed",
+        content: [inline],
+      }),
+    });
+    assert.equal(inlineRow.text, "[image]");
+    assert.equal(inlineRow.field, "content[]");
+    assert.notEqual(inlineRow.text, "completed");
+    assert.equal(inlineRow.content_shape, undefined);
+  });
+
+  it("projects an agent image as a visible marker", () => {
+    const row = projectTaskHistoryRow({
+      seq: 1,
+      type: "agent_image",
+      data: JSON.stringify({
+        attachment: {
+          kind: "image",
+          attachmentId: "a1",
+          displayName: "agent-image-1",
+          mimeType: "image/png",
+          path: "/api/v1/tasks/s1/attachments/a1.png",
+        },
+      }),
+    });
+    assert.equal(row.type, "agent_image");
+    assert.equal(row.text, "[image]");
+    assert.equal(row.field, "attachment");
   });
 
   it("keeps an empty recognized output on the status projection", () => {

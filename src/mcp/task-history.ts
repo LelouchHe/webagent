@@ -172,7 +172,15 @@ function projectToolContent(value: unknown): ToolContentProjection {
           return `[terminal ${shape.terminalId ?? "undefined"}]`;
         // A stored image is a reference, not text: name it so the projection is
         // not silently empty, and never echo a path or payload.
-        if (shape.kind === "image_attachment") return "[image]";
+        if (
+          shape.kind === "image_attachment" ||
+          // An inline image block (the old wire shape, or a historical row) is
+          // still a picture: say so instead of falling back to the status and
+          // leaving the row empty.
+          shape.kind === "image"
+        ) {
+          return "[image]";
+        }
         return shape.kind === "content" ? shape.text : "";
       })
       .filter(Boolean)
@@ -261,6 +269,10 @@ function projected(
       }
       return { title, text: stringField(data.status), field: "status" };
     }
+    case "agent_image":
+      // The stored row carries a descriptor, never a payload. A visible marker
+      // keeps the image from projecting as an empty row.
+      return { title, text: "[image]", field: "attachment" };
     case "system_message":
     case "message":
       return { title, text: stringField(data.body), field: "body" };
