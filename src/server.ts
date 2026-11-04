@@ -285,6 +285,10 @@ const server = createServer((req, res) => {
 const eventHandlerConfig = _buildBridgeEventHandlerConfig({
   cancelTimeout: config.limits.cancel_timeout,
   recentPathsLimit: config.limits.recent_paths,
+  // An image the agent returns is stored like an upload, under the same root
+  // and the same ceiling.
+  dataDir: config.data_dir,
+  imageUploadLimit: config.limits.image_upload,
   attachmentInterceptorCounters,
   shouldLogSchemaDrift: () => {
     const now = Date.now();

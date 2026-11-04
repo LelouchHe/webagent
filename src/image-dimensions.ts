@@ -1,3 +1,6 @@
+// Dimensions of a storable image container, for reserving its layout box before
+// the bytes finish loading. PNG, GIF and JPEG.
+
 export interface ImageDimensions {
   width: number;
   height: number;

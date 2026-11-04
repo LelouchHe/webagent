@@ -116,6 +116,90 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 ### ACP bridge and backend orchestration
 
+- `test/bridge-agent-image.test.ts`
+  - an agent image chunk leaves the transport as an `agent_image` event carrying the agent's block; one image per chunk
+  - an image inside a thought chunk is still dropped, and a text chunk is unchanged
+
+- `test/agent-image-store.test.ts`
+  - an inline image is written to the shared attachment layout with a row and an unsigned base path; the wire's mime claim is ignored in favour of the content
+  - dimensions come from the bytes, the row goes with the task, and a second image is named in sequence
+  - a WebP is stored but carries no dimensions (no parser), so no layout box is reserved — pinned so a future parser is a deliberate change
+  - an image above `limits.image_upload`, a payload that is not a storable image container, an empty/malformed payload, and a file-write failure each become visible `[image omitted: …]` text with no file and no row
+
+- `test/tool-result-images.test.ts` (the normal ACP path)
+  - an image content block in a `tool_call_update` (bare or wrapped in
+    `content`) is written to the shared attachment layout with a row and an
+    unsigned descriptor; the persisted event and the live broadcast carry no
+    base64 and keep the surrounding text; the wire's mime claim is ignored
+  - an image that exists only in `_meta` is not stored: no row, no payload in
+    the row, and `_meta` itself is dropped from the stored item
+  - a `_meta` nested 2000 and 5000 levels deep does not cost the event: it is
+    stored and broadcast, and the slot (with the payload inside it) is not
+    persisted
+  - an item whose rewrite fails becomes a visible placeholder (its payload is
+    dropped, never passed through) while its siblings are still stored
+  - an item no reader can render (an `audio` block, a text array) is dropped,
+    and its renderable siblings are kept
+  - an inbound image descriptor is dropped (it is our stored form, not a wire
+    shape), so a forged cross-task reference is never persisted; a descriptor
+    ingest produced still classifies as the image shape
+  - a persisted item carries exactly the fields the renderer reads: text, diff
+    (including `oldText: null`), terminal and image keep their canonical shape,
+    and an extension field on a text block (`vendorExtra`) is not persisted
+  - a failed attachment count only affects naming: the pictures are still stored
+  - refusals: above `limits.image_upload` and not a storable image container
+    each become visible `[image omitted: …]` text with no file and no row;
+    successive images are named in order and a text-only update is untouched
+  - a stored tool image invalidates the task's cached label map, so a later
+    event naming its path renders `agent-image-N` instead of the UUID path
+
+- `test/tool-result-images-legacy-row.test.ts` (a row written before the rule)
+  - a `tool_call_update` written straight to the store with a bare inline image
+    projects as `unknown` (`content_shape`) with no text or field, contributes
+    no text to the frontend extractor, and renders no thumbnail and no payload
+    when the stored rows are replayed — the shape is not a compatibility target,
+    so nothing turns it back into a picture or echoes its bytes
+
+- `test/tool-result-images-sse.test.ts` (real `SseManager` frame)
+  - an update carrying the same image in `content` and `rawOutput` writes a
+    frame without its base64: `content` gets the descriptor, while `rawOutput`
+    keeps its shape and every other field with `data` emptied
+  - an image nested in an image block's `_meta` (any depth) is emptied too, not
+    only the outer block's `data`
+  - a `content` wrapper's own `_meta` is dropped, so the image inside it is
+    neither stored nor carried by SQLite or the frame
+  - an item whose shape hides an image (a text array under `content`) is dropped
+    whole: the event is still stored and broadcast, `content` is empty, and
+    neither SQLite nor the frame carries the payload
+  - a payload inside `annotations._meta` reaches neither SQLite nor the frame:
+    the item is rebuilt from its rendered fields, so the slot is not persisted
+  - with the attachments table unavailable (the count or one insert throws), the
+    event and the frame still go out, every block degrades to visible
+    `[image omitted: …]` text, and neither SQLite nor the frame carries a
+    payload; a failed insert degrades only its own block and its sibling is
+    still stored
+  - cloning keeps a JSON `__proto__` key as an own property (`JSON.stringify`
+    still sees it) while leaving unrelated fields untouched
+
+- `test/tool-result-images-path.test.ts` (temporary shim)
+  - all three markers (`image_id: sha256:…`, `saved_to:` absolute path,
+    `image_generation` title) copy the file, verify its sha256, record a row and
+    append the descriptor; the tool's text and its own file survive
+  - refusals: sha256 mismatch, non-image magic bytes, above the limit,
+    unreadable path, and any missing marker each do nothing; identical bytes
+    are stored once and a later update reuses that row
+  - the recovered image invalidates the task's cached label map when it inserts
+    a row; a content-hash duplicate reuses the existing row and does not
+    invalidate again
+  - delete with `src/agent-compatibility/copilot-image-path.ts`
+
+- `test/tool-result-images-render.test.ts`
+  - a tool card renders `.tc-images img.tc-image` from the stored path, before
+    the output disclosure, from the same helper live streaming and replay use
+    (identical DOM), and the thumbnail opens the shared lightbox
+  - an explicit `content: []` removes the thumbnails on both live and replay
+    paths, while an update that omits `content` keeps them
+
 - `test/bridge.test.ts`
   - prompt success / failure / cancellation
   - silent prompt buffering for compact summarization
@@ -237,6 +321,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/store.test.ts`
   - task creation / deletion / updates
   - config persistence, including clearing one column with `null` without touching the others
+  - an agent image is stored as an attachment (file + row) and referenced by its own `agent_image` record between the surrounding text blocks; the persisted row carries no base64, the live broadcast is the same reference, and an oversized image becomes visible text with no row
   - title persistence
   - unix-millisecond `last_active_at` for stable ordering
   - the single literal `root` anchor persists across reopen and agent keys, keeps `parent_id = NULL`, preserves a renamed title, and is never adopted into a parent
@@ -478,6 +563,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/mcp-task-host.test.ts`, `test/mcp.test.ts`, `test/mcp-doc-coverage.test.ts`
   - flat task_query index includes thinking rows, range normalization, and bounded Unicode projections
+  - an `agent_image` row and a stored tool-image descriptor both project as
+    `[image]` instead of an empty or status-only row; a row that still holds an
+    inline block is `unknown` and echoes no payload
   - fixed-string search returns a visible matching window and real JSON field path
   - task_read returns batched decoded event data, including large single rows
   - self/parent/child/sibling authorization, tombstone/nonexistent target convergence, unknown sequence rejection
@@ -539,6 +627,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - zero-DOM tool-call extraction: exact multiline `rawInput.code`, independent
     of title/kind and command/path detail, safe rejection of non-string or empty
     code, and unchanged command-before-path precedence
+  - a text array under `content` contributes no text: it is not a protocol shape
+    (ingest drops it too), so extraction and persistence agree
 
 - `test/render-event.test.ts`
   - shared app/share tool-call source disclosure: initially collapsed, exact
@@ -556,6 +646,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/attachments-mime.test.ts`, `test/attachment-dispatch.test.ts`
   - sniffed MIME detection (PDF/PNG/ZIP/HEIC magic bytes, UTF-8 text vs binary) and mime → disk extension mapping, including heic/heif/avif/bmp/tiff
+  - the display (`INLINE_MIMES`) and upstream (`UPSTREAM_IMAGE_MIMES`) image mime sets hold the same members; a deliberate divergence must update that assertion
   - dispatcher wire format driven by the server-side row, not the client ref: upstream-accepted image mimes inline as base64 image blocks; heic and other unsupported image containers degrade to a hint plus `resource_link`; non-images emit `resource_link` alone
   - fallback text block on row miss, cross-task ref, anchor breach, and disk failure; client-supplied uri/data/path rejection
 
@@ -808,6 +899,20 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - clicking an image opens the lightbox overlay
   - backdrop click and Escape close the lightbox
   - mouse wheel zooms the lightbox image
+
+- `agent-image.spec.ts`
+  - an image the agent returns renders as `img.agent-image` with a **signed attachment URL** (never base64), between the text blocks around it, and opens the same lightbox
+  - a reload replays it from the stored `agent_image` record: same three-element order, same URL form, and the row carries no bytes; following the signed URL returns the exact PNG
+
+- `tool-result-images.spec.ts`
+  - an image block in a tool result renders as a `.tc-images img.tc-image` thumbnail with a **signed attachment URL** (never base64) next to the tool output, and opens the same lightbox; the stored row carries the descriptor
+  - a reload replays the thumbnail from the stored row
+  - at 390px, a 1600×900 source stays inside the card and the **real scroll container** (`#messages.scrollWidth <= #messages.clientWidth`, not the document element) does not overflow; the box keeps its aspect ratio
+  - at a desktop viewport, the same source renders **wider than 600px** (the old fixed 360px ceiling fails this) while staying inside the card's content box and keeping 16:9
+  - a 200×100 source is not upscaled past its own pixels
+
+- `tool-result-images-path.spec.ts`
+  - a tool result that only names a generated image file (the temporary path adapter) renders the same thumbnail, keeps its text result, and stores the appended descriptor
 
 - `file-attachment-download.spec.ts`
   - non-image attachment renders as a clickable file chip in the user message

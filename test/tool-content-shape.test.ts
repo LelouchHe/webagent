@@ -1,6 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { classifyToolContentItem } from "../src/shared/tool-content.ts";
+import {
+  classifyToolContentItem,
+  parseImageAttachment,
+} from "../src/shared/tool-content.ts";
 import { projectTaskHistoryRow } from "../src/mcp/task-history.ts";
 import { extractToolCallContent } from "../public/js/event-interpreter.ts";
 import { buildStructuredDiffLines } from "../public/js/structured-diff.ts";
@@ -44,12 +47,13 @@ const FIXTURES = [
     kind: "terminal" as const,
   },
   {
-    name: "content array with a non-text block",
+    // `ToolCallContent.content` is one block; an array is not a shape we read.
+    name: "content array (not a protocol shape)",
     item: {
       type: "content",
       content: [{ text: "visible" }, { type: "image", data: "ignored" }],
     },
-    kind: "content" as const,
+    kind: "unknown" as const,
   },
   {
     name: "multiple diff items",
@@ -71,7 +75,7 @@ const FIXTURES = [
   },
   {
     name: "future shape",
-    item: { type: "image", data: "not a supported content item" },
+    item: { type: "audio", data: "not a supported content item" },
     kind: "unknown" as const,
   },
 ] as const;
@@ -104,10 +108,7 @@ describe("tool content shape coverage", () => {
 
       if (fixture.kind === "content") {
         assert.equal(row.field, "content[]");
-        assert.equal(
-          row.text,
-          fixture.name === "content.text" ? "tool output" : "visible",
-        );
+        assert.equal(row.text, "tool output");
       } else if (fixture.kind === "terminal") {
         assert.equal(row.field, "content[]");
         assert.equal(row.text, "[terminal t1]\nvisible");
@@ -130,10 +131,11 @@ describe("tool content shape coverage", () => {
   it("keeps frontend extraction and diff rendering non-empty for supported fixtures", async () => {
     const content = FIXTURES[0].item;
     assert.equal(extractToolCallContent([content]), "tool output");
+    // The array shape is unrecognized, so it contributes no text.
     const mixedContent = FIXTURES[4].item;
     assert.equal(
       extractToolCallContent([mixedContent as unknown as ToolContentItem]),
-      "visible",
+      "",
     );
     const terminal = FIXTURES[3];
     assert.equal(
@@ -164,7 +166,7 @@ describe("tool content shape coverage", () => {
         status: "completed",
         content: [
           { type: "content", content: { type: "text", text: "visible" } },
-          { type: "image", data: "png" },
+          { type: "audio", data: "waves" },
         ],
       }),
     });
@@ -182,7 +184,7 @@ describe("tool content shape coverage", () => {
         status: "completed",
         content: [
           { type: "diff", path: "src/a.ts", oldText: null, newText: "A\n" },
-          { type: "image", data: "png" },
+          { type: "audio", data: "waves" },
         ],
       }),
     });
@@ -191,10 +193,11 @@ describe("tool content shape coverage", () => {
     assert.equal(row.content_shape, "unknown");
   });
 
-  it("accepts a bare text block instead of dropping it", () => {
+  it("treats a bare text block as unknown, not as text", () => {
+    // Text belongs in `content.text`; a bare block is unrecognized.
     assert.equal(
       classifyToolContentItem({ type: "text", text: "legacy output" }).kind,
-      "content",
+      "unknown",
     );
     const row = projectTaskHistoryRow({
       seq: 1,
@@ -204,13 +207,14 @@ describe("tool content shape coverage", () => {
         content: [{ type: "text", text: "legacy output" }],
       }),
     });
-    assert.equal(row.text, "legacy output");
-    assert.equal(row.field, "content[]");
+    assert.equal(row.content_shape, "unknown");
+    assert.equal(row.text, undefined);
+    assert.equal(row.field, undefined);
     assert.equal(
       extractToolCallContent([
         { type: "text", text: "legacy output" } as unknown as ToolContentItem,
       ]),
-      "legacy output",
+      "",
     );
   });
 
@@ -226,6 +230,112 @@ describe("tool content shape coverage", () => {
     });
     assert.equal(row.field, "content[0].terminalId");
     assert.equal(row.text, "[terminal t1]");
+  });
+
+  it("recognizes only the stored descriptor, never an inline block", () => {
+    // The wire shape has no stored representation: ingest replaces it with a
+    // descriptor, so a row that still holds one is unrecognized, not a picture.
+    const inline = { type: "image", mimeType: "image/png", data: "AAAA" };
+    assert.equal(classifyToolContentItem(inline).kind, "unknown");
+    assert.equal(
+      classifyToolContentItem({ type: "content", content: inline }).kind,
+      "unknown",
+    );
+
+    const attachment = {
+      kind: "image",
+      attachmentId: "a1",
+      displayName: "agent-image-1",
+      mimeType: "image/png",
+      path: "/api/v1/tasks/s1/attachments/a1.png",
+    };
+    assert.equal(
+      classifyToolContentItem({ type: "image", attachment }).kind,
+      "image_attachment",
+    );
+    // The stored reference is not text: it is a picture the card renders.
+    assert.equal(extractToolCallContent([{ type: "image", attachment }]), "");
+
+    const row = projectTaskHistoryRow({
+      seq: 1,
+      type: "tool_call_update",
+      data: JSON.stringify({
+        id: "tool-1",
+        status: "completed",
+        content: [
+          { type: "content", content: { type: "text", text: "done" } },
+          { type: "image", attachment },
+        ],
+      }),
+    });
+    assert.equal(row.text, "done\n[image]");
+    assert.equal(row.content_shape, undefined);
+
+    // An inline block is the one shape ingest exists to remove: the row is
+    // marked unknown and its payload is neither rendered nor echoed.
+    const inlineRow = projectTaskHistoryRow({
+      seq: 1,
+      type: "tool_call_update",
+      data: JSON.stringify({
+        id: "tool-1",
+        status: "completed",
+        content: [inline],
+      }),
+    });
+    assert.equal(inlineRow.content_shape, "unknown");
+    assert.equal(inlineRow.text, undefined);
+    assert.equal(inlineRow.field, undefined);
+    assert.notEqual(inlineRow.text, "completed");
+  });
+
+  it("refuses a descriptor with a missing required field", () => {
+    // This app writes descriptors: a missing required field is refused.
+    const complete = {
+      kind: "image",
+      attachmentId: "a1",
+      displayName: "agent-image-1",
+      mimeType: "image/png",
+      path: "/api/v1/tasks/s1/attachments/a1.png",
+    };
+    assert.ok(parseImageAttachment(complete));
+    for (const broken of [
+      { ...complete, attachmentId: undefined },
+      { ...complete, attachmentId: "" },
+      { ...complete, path: "" },
+      { ...complete, mimeType: 42 },
+      { ...complete, kind: "file" },
+    ]) {
+      assert.equal(parseImageAttachment(broken), null);
+      assert.equal(
+        classifyToolContentItem({ type: "image", attachment: broken }).kind,
+        "unknown",
+      );
+    }
+    // Dimensions stay optional: they are layout hints, and an unmeasurable
+    // container stores null.
+    assert.deepEqual(
+      parseImageAttachment({ ...complete, width: 10, height: 20 }),
+      { ...complete, width: 10, height: 20 },
+    );
+  });
+
+  it("projects an agent image as a visible marker", () => {
+    const row = projectTaskHistoryRow({
+      seq: 1,
+      type: "agent_image",
+      data: JSON.stringify({
+        attachment: {
+          kind: "image",
+          attachmentId: "a1",
+          displayName: "agent-image-1",
+          mimeType: "image/png",
+          path: "/api/v1/tasks/s1/attachments/a1.png",
+        },
+      }),
+    });
+    assert.equal(row.type, "agent_image");
+    assert.equal(row.text, "[image]");
+    assert.equal(row.field, "attachment");
   });
 
   it("keeps an empty recognized output on the status projection", () => {

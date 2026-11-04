@@ -1785,6 +1785,24 @@ export class Store {
       .get(taskId, seq) as EventRow | undefined;
   }
 
+  /**
+   * The title a task's `tool_call` recorded for one tool call id, or undefined.
+   *
+   * A `tool_call_update` may omit `title`, so a consumer that needs the tool's
+   * identity (a tool-result image producer, for instance) reads the originating
+   * call. Newest first: a re-issued call with the same id wins.
+   */
+  findToolCallTitle(taskId: string, id: string): string | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT json_extract(data, '$.title') AS title FROM events " +
+          "WHERE task_id = ? AND type = 'tool_call' " +
+          "AND json_extract(data, '$.id') = ? ORDER BY seq DESC LIMIT 1",
+      )
+      .get(taskId, id) as { title: unknown } | undefined;
+    return typeof row?.title === "string" ? row.title : undefined;
+  }
+
   getEvents(
     taskId: string,
     opts?: {
@@ -2511,6 +2529,35 @@ export class Store {
   }
 
   /** Look up an attachment row by (task_id, id). */
+  /** How many attachments of one kind a task already has (default naming). */
+  countAttachments(taskId: string, kind: string): number {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM attachments WHERE task_id = ? AND kind = ?",
+      )
+      .get(taskId, kind) as { n: number };
+    return row.n;
+  }
+
+  /**
+   * Attachments of one kind whose stored size matches, newest first.
+   *
+   * A tool-result producer that must not store the same bytes twice narrows a
+   * content-hash scan this way: only equal-size files can be duplicates, so the
+   * scan reads a handful of files instead of every attachment of the task.
+   */
+  listAttachmentsBySize(
+    taskId: string,
+    kind: string,
+    size: number,
+  ): AttachmentRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM attachments WHERE task_id = ? AND kind = ? AND size = ? ORDER BY created_at DESC",
+      )
+      .all(taskId, kind, size) as AttachmentRow[];
+  }
+
   getAttachment(taskId: string, id: string): AttachmentRow | undefined {
     return this.db
       .prepare("SELECT * FROM attachments WHERE task_id = ? AND id = ?")

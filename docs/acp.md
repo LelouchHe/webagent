@@ -80,10 +80,122 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
 - ACP cancel is a notification rather than an acknowledgement. WebAgent keeps
   the prompt active until its prompt response supplies the terminal stop reason;
   timeout only marks the request unconfirmed.
-- The UI renders a subset of ACP session updates: assistant text, thinking text, tool calls, tool call updates, and plans
+- The UI renders a subset of ACP session updates: assistant text, images,
+  thinking text, tool calls, tool call updates, and plans. Which content blocks
+  survive the bridge:
+  - `agent_message_chunk` **text** → `message_chunk` text (aggregated into an
+    `assistant_message` record).
+  - `agent_message_chunk` **image** → an `agent_image` event, stored as its own
+    record between the text blocks around it. The bytes never reach the
+    database or a client: the event handler writes them as an **attachment**
+    (same layout, row, unsigned `path` + egress re-sign and cleanup a user
+    upload gets) and the event carries the reference. See
+    [Uploads](uploads.md#agent-returned-images).
+  - An image above `limits.image_upload` (the existing upload ceiling), one
+    whose content is not a storable image container, or one that cannot be
+    written, is not stored: the transcript gets the visible text
+    `[image omitted: 12.3 MB > 10 MB limit]` in its place, so a gap always has
+    a reason next to it.
+  - An image inside `agent_thought_chunk` is dropped (thinking is text), as are
+    audio and embedded-resource blocks.
 - Standard prompt stop reasons are preserved in history. `end_turn` completes silently; `cancelled`, `max_tokens`, `max_turn_requests`, and `refusal` also render a system notice explaining why the turn stopped.
 - Rejected `session/prompt` requests render and persist as system errors rather than assistant messages, so UI diagnostics remain outside agent context.
 - Session history is persisted locally and restored after server restart
+
+### Tool Result Images
+
+An ACP image content block (`{ type: "image", mimeType, data }`, bare or wrapped
+in `{ type: "content", content: … }`) inside a `tool_call_update` is the
+protocol's **normal** way for an agent to return a picture from a tool, not a
+client extension. WebAgent handles it with ordinary code in
+`src/tool-result-image.ts`: `storeToolResultImages` stores every block and
+rewrites the update's `content` before the event is persisted or broadcast.
+
+That file is the only place the wire shape is recognized. Past ingest there is
+exactly one representation — the descriptor an `agent_image` carries — and
+`src/shared/tool-content.ts` judges stored items only, so no reader has to ask
+"inline or stored?". A stored row that still holds an inline block (written
+before this rule) is an **unrecognized** content shape: the history projection
+marks it and the card renders nothing for it. It is not turned back into a
+picture and its payload is never echoed; there is no compatibility branch.
+
+Only the protocol's content positions are read: the item itself when it is an
+image block, and `item.content` — the `{ type: "content", content: … }` wrapper,
+hoisted to the bare descriptor so a stored row has one shape. For an image, only
+the wire shape (`{ type: "image", data }`) is accepted: the descriptor
+(`attachment`) is the internal stored form, so an inbound one is dropped like any
+other shape we do not produce. Ingest also keeps
+only what a reader can render — an image block, a text block, a diff, a terminal —
+and rebuilds each item from exactly those fields. Any field we do not render
+(`_meta`, `annotations`, any other extension slot) and any shape we do not
+understand therefore cannot enter persistence or broadcast, without having to be
+named. An update whose items were all dropped keeps `content: []`. The read paths
+make the same judgment through `src/shared/tool-content.ts`, so they cannot
+disagree with what was persisted; a row written before this rule by a dropped
+shape projects as `content_shape: unknown`.
+
+Persistence and broadcast therefore never carry an inline payload: a block that
+cannot be stored (too large, not a storable container, unwritable) becomes
+visible `[image omitted: …]` text in place of the picture, and the event itself
+is never lost. Degrading is a placeholder, never a pass-through. Two positions
+are explicitly **not** covered: `rawInput` (tool input, not a result picture —
+untouched) and `rawOutput` (never persisted; its inline `data` is emptied for the
+live frame instead of being stored).
+
+- Storage is the same attachment pipeline an agent message image uses: the same
+  `tasks/<taskId>/attachments/<uuid>.<ext>` layout, the same `attachments` row,
+  the same `limits.image_upload` ceiling, the same content sniff, the same
+  unsigned base path + egress re-sign, and the same cleanup. In `content` the
+  block is replaced by the descriptor an `agent_image` carries, so neither the
+  database nor a client ever sees base64.
+- `rawOutput` is forwarded as the agent sent it and is not persisted, but an
+  agent may repeat the same image block inside it. Before the live SSE frame is
+  written, every inline image block in `rawOutput` has its `data` emptied by the
+  same rule; the block shape and every other field stay unchanged. The live
+  frame therefore carries no base64 either, and persistence was already clean.
+- An image above the ceiling, one whose bytes are not PNG/JPEG/GIF/WebP, or one
+  that cannot be written becomes visible `[image omitted: …]` text in place of
+  the block; nothing is dropped silently and no row is created.
+- The tool card shows a thumbnail that opens the same lightbox as any other
+  chat image. Live streaming and replay both render `tool_call_update` through
+  `renderContentEvent`, so the two paths cannot drift.
+- Display size comes from the container, not a fixed ceiling: `max-width: 100%`
+  with `height: auto`, so a wide card shows a wide picture, a narrow one still
+  keeps it inside the card, and a small picture keeps its own pixels (nothing
+  upscales). The height is capped (`min(70vh, 480px)`) so one portrait image
+  cannot fill the screen. The `width`/`height` attributes carry the image's own
+  size — they reserve a proportional box before the bytes arrive — and an
+  `agent_image` bubble uses the same rule.
+
+#### Known workaround: Copilot's image tool returns a path
+
+Copilot's `image_generation` tool does not emit an ACP image block. It returns
+text naming the file it wrote:
+
+```
+Image generated successfully.
+image_id: sha256:<64 hex>
+saved_to: /absolute/path/to/image-….png
+```
+
+The file is real (a measured turn wrote a 2.49 MB PNG); only the text crosses
+ACP. `src/agent-compatibility/copilot-image-path.ts` is a shim for that one
+defect and is imported explicitly from the event handler's `tool_call_update`
+branch, which calls it once. It acts only when all three conditions hold: the
+text carries `image_id: sha256:<64 hex>`, it carries `saved_to:` with an
+absolute path, and the tool call's title is `image_generation`. Anything else is
+left as received. It **copies** (never moves or deletes) the file, requires its
+sha256 to equal the marker's hash, requires PNG/JPEG/GIF/WebP magic bytes and
+the same `limits.image_upload` ceiling, and stores identical bytes once per
+task. Any failure is "do nothing" plus a log line, so the tool call itself is
+never affected. It adds no configuration key and no path allowlist.
+
+**Delete it when Copilot's image tool emits a real ACP image block**: delete
+`src/agent-compatibility/copilot-image-path.ts`, its import in
+`src/event-handler.ts`, and the one call in that file's `tool_call_update`
+branch. The import line also brings in `toolResultText`, which exists only to
+feed the shim's eligibility test, so it goes with the same line; with both
+removed nothing unused remains. There is no barrel and no registration list.
 
 ## Client Extensions
 

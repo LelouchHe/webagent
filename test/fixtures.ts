@@ -14,6 +14,10 @@ export function makeEventHandlerConfig(
   return {
     cancelTimeout: 10000,
     recentPathsLimit: 10,
+    // A write location and ceiling so an inline agent image can be stored in
+    // tests that never touch one; callers that do pass their own.
+    dataDir: process.cwd(),
+    imageUploadLimit: 10 * 1024 * 1024,
     ...overrides,
   };
 }

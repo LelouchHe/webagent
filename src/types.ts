@@ -25,6 +25,37 @@ export interface ConfigBooleanOption {
 
 export type ConfigOption = ConfigSelectOption | ConfigBooleanOption;
 
+/**
+ * An ACP image block as the agent sent it: base64, exactly as received.
+ *
+ * This shape exists only on the hop from the transport to the event handler.
+ * The handler stores the bytes as an ordinary attachment and replaces the block
+ * with `AgentImageAttachment`, so neither the database nor the client ever sees
+ * base64.
+ */
+export interface AgentImageBlock {
+  mimeType: string;
+  /** Base64-encoded image bytes. */
+  data: string;
+}
+
+/**
+ * A stored agent image. Deliberately the same shape as one entry of a
+ * `user_message`'s `attachments[]`: same `kind`/`attachmentId`/`displayName`/
+ * `mimeType`/`path`/`width`/`height`, same unsigned base `path` (egress re-signs
+ * it), same attachment row and cleanup.
+ */
+export interface AgentImageAttachment {
+  kind: "image";
+  attachmentId: string;
+  displayName: string;
+  mimeType: string;
+  /** Unsigned base path; `reSignAttachmentUrlsInJson` appends `?sig=&exp=`. */
+  path: string;
+  width?: number | null;
+  height?: number | null;
+}
+
 // --- Shared interfaces used by both frontend and backend ---
 
 /** Debug log entry produced by the frontend Logger or a future server log SSE bridge. */
@@ -198,6 +229,18 @@ export type AgentEvent =
       revision?: number;
     }
   | { type: "message_chunk"; taskId: string; text: string }
+  | {
+      /**
+       * An image the agent returned with its message. `block` carries the raw
+       * base64 only from the transport to the event handler; it is never
+       * persisted and never broadcast, because the handler stores the bytes as
+       * an attachment and sends/stores `attachment` instead.
+       */
+      type: "agent_image";
+      taskId: string;
+      block?: AgentImageBlock;
+      attachment?: AgentImageAttachment;
+    }
   | { type: "thought_chunk"; taskId: string; text: string }
   | {
       type: "tool_call";
@@ -429,14 +472,30 @@ export interface PlanStatusCountView {
   count: number;
 }
 
+/** The inner block of an ACP `{ type: "content", content: … }` tool item. */
+export interface ToolContentPart {
+  type?: string;
+  text?: string;
+  /** Inline image block, before the server stores it. */
+  mimeType?: string;
+  data?: string;
+  /** Stored image reference, after the server replaced the block. */
+  attachment?: unknown;
+}
+
 /** Content item from ACP tool_call_update events. */
 export interface ToolContentItem {
   type?: string;
   terminalId?: string;
-  content?: { text?: string } | Array<{ text?: string }>;
+  content?: ToolContentPart | ToolContentPart[];
   path?: string;
   oldText?: string | null;
   newText?: string;
+  /** Inline image block (`type: "image"`), before the server stores it. */
+  mimeType?: string;
+  data?: string;
+  /** Stored image reference (`type: "image"`), after storage. */
+  attachment?: unknown;
 }
 
 export interface NormalizedEventsResponse {

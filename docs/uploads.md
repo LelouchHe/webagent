@@ -334,6 +334,44 @@ bubble — the sender's own echo is suppressed, so a replayed view
 (reload, or any other client) shows the fallback link, and the decode
 verdict still belongs to the viewing browser.
 
+## Agent-returned images
+
+An agent can send a picture with its reply (`agent_message_chunk` carrying an
+`image` content block). It becomes an **ordinary attachment**, not an inline
+payload: the same directory, the same `attachments` row, the same unsigned
+`path` plus egress re-sign, and the same cleanup. Only the trigger differs — it
+arrives with the agent's stream instead of an upload request.
+
+- **Storage** — `<data_dir>/tasks/<taskId>/attachments/<uuid>.<ext>`, written
+  atomically through a `.tmp` rename, extension from the sniffed MIME. The
+  `display_name` is server-generated (`agent-image-N`); the agent sends no
+  filename.
+- **MIME** — never the wire's claim. The bytes are checked for the PNG / JPEG /
+  GIF / WebP signatures, and only those containers are accepted: they are the
+  ones this app both stores and serves inline. Anything else (an SVG, say) is
+  reported instead of stored.
+- **Ceiling** — `limits.image_upload`, the same knob as a user upload. An image
+  above it is not written at all; the transcript gets
+  `[image omitted: 12.3 MB > 10 MB limit]` in the image's place. A write or DB
+  failure takes the same path (with the cause in the log), so a bad disk costs
+  one visible line, never the rest of the reply.
+- **Ordering** — the stored record is its own event (`agent_image`), written
+  after the pending assistant text is flushed. A replay therefore keeps
+  text → image → text; the image is never merged into a text block.
+- **Rendering** — `public/js/render-event.ts → buildAgentImageMessage` is shared
+  by live streaming and replay: `<img class="agent-image" src={signed URL}
+  alt={displayName} loading="lazy">`, dimensions reserved from the stored
+  `width`/`height`, and the same `lightbox.ts` click delegation a user image
+  uses. The share viewer rewrites the path to its public route exactly as it
+  does for `attachments[]`.
+- **Cleanup** — the row goes with the task (`attachments.task_id` is
+  `ON DELETE CASCADE`) and the file goes with the task's data directory, which
+  a hard delete removes. No separate reaper.
+
+Storing has to happen synchronously in the event handler: the pipeline has no
+per-task queue, so an `await` between receiving the block and writing the row
+would let a later text flush land ahead of the image.
+
 ## Tests — what guards what
 
 | Layer        | Test                                            | Pins                                                                            |

@@ -125,3 +125,8 @@ Publishing uses the `v*` tag workflow documented in
   mismatch) surface raw with no `/new` hint and no `load` fallback.
 - Trip-wire: if a future SDK moves `loadSession` under `sessionCapabilities`,
   the capability read in `src/bridge.ts` must be revisited.
+- Trip-wire: once Copilot's image tool emits a real ACP image block, delete
+  `src/agent-compatibility/copilot-image-path.ts`, its import in
+  `src/event-handler.ts`, and the one call in that file's `tool_call_update`
+  branch. The normal path in `src/tool-result-image.ts` then covers tool result
+  pictures. See [`docs/acp.md`](./docs/acp.md).

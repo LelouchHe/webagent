@@ -425,6 +425,82 @@ describe("events", () => {
         assert.equal(state.busy, false);
       });
 
+      it("renders an agent image as its own element, identically live and on replay", () => {
+        const attachment = {
+          kind: "image",
+          attachmentId: "img-1",
+          displayName: "agent-image-1",
+          mimeType: "image/png",
+          path: "/api/v1/tasks/s1/attachments/img-1.png?exp=1&sig=abc",
+          width: 800,
+          height: 600,
+        };
+
+        /** Class names, text, and image attributes, in document order. */
+        function shape() {
+          return Array.from(
+            dom.messages.querySelectorAll(".msg.assistant"),
+          ).map((el: any) => ({
+            className: el.className,
+            text: (el.textContent ?? "").trim(),
+            images: Array.from(el.querySelectorAll("img")).map((img: any) => [
+              img.className,
+              img.getAttribute("alt"),
+              img.getAttribute("loading"),
+              img.getAttribute("src"),
+            ]),
+          }));
+        }
+
+        // Live: text, image, text — one event each. The image names its task,
+        // so the live filter needs the client to be on it.
+        state.taskId = "s1";
+        events.handleEvent({ type: "message_chunk", text: "before" });
+        events.handleEvent({
+          type: "agent_image",
+          taskId: "s1",
+          attachment,
+        });
+        events.handleEvent({ type: "message_chunk", text: "after" });
+        events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
+        const live = shape();
+        assert.deepEqual(live, [
+          { className: "msg assistant", text: "before", images: [] },
+          {
+            className: "msg assistant",
+            text: "",
+            images: [["agent-image", "agent-image-1", "lazy", attachment.path]],
+          },
+          { className: "msg assistant", text: "after", images: [] },
+        ]);
+
+        // Replay of the same records must produce the same DOM.
+        stateMod.resetTaskUI();
+        resetState(state, dom);
+        const stored: any[] = [
+          {
+            type: "assistant_message",
+            data: JSON.stringify({ text: "before" }),
+            seq: 1,
+          },
+          {
+            type: "agent_image",
+            data: JSON.stringify({ attachment }),
+            seq: 2,
+          },
+          {
+            type: "assistant_message",
+            data: JSON.stringify({ text: "after" }),
+            seq: 3,
+          },
+        ];
+        stored.forEach((event, idx) => {
+          events.replayEvent(event.type, JSON.parse(event.data), stored, idx);
+        });
+
+        assert.deepEqual(shape(), live);
+      });
+
       it("appends to existing assistant element", () => {
         events.handleEvent({ type: "message_chunk", text: "hello " });
         events.handleEvent({ type: "message_chunk", text: "world" });

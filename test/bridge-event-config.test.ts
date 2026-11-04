@@ -18,6 +18,8 @@ describe("buildBridgeEventHandlerConfig — structural wiring", () => {
     return {
       cancelTimeout: 1234,
       recentPathsLimit: 5,
+      dataDir: "/var/lib/webagent",
+      imageUploadLimit: 10 * 1024 * 1024,
       attachmentInterceptorCounters: createCounters(),
       shouldLogSchemaDrift: () => true,
       ...over,

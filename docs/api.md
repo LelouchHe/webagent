@@ -1796,6 +1796,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `config_option_update`  | `taskId`, `configOptions`                                                             | Config options changed (model switch, mode change, etc.)                                                            |
 | `config_set`            | `configId`, `value`                                                                      | Specific config value changed (broadcast for non-owning clients)                                                    |
 | `message_chunk`         | `taskId`, `text`                                                                      | Incremental assistant text (streamed)                                                                               |
+| `agent_image`           | `taskId`, `attachment`                                                                  | An image the agent returned. `attachment` has the same shape as one entry of a `user_message`'s `attachments[]` (`kind`, `attachmentId`, `displayName`, `mimeType`, `path`, `width`, `height`), with an **unsigned** base `path` that egress re-signs. The bytes are an attachment on disk; neither this event nor its stored row carries base64. An image that cannot be stored is sent as `message_chunk` text `[image omitted: …]` instead |
 | `thought_chunk`         | `taskId`, `text`                                                                      | Incremental thinking text (streamed)                                                                                |
 | `tool_call`             | `taskId`, `id`, `title`, `kind`, `rawInput?`                                          | Agent started a tool call                                                                                           |
 | `tool_call_update`      | `taskId`, `id`, `status`, `content?`                                                  | Tool call status changed (`completed`, `failed`)                                                                    |
@@ -1821,6 +1822,7 @@ These are **aggregated** events stored in the database. They appear in `GET /api
 | Type                | Key Fields                 | Description                                                   |
 | ------------------- | -------------------------- | ------------------------------------------------------------- |
 | `assistant_message` | `text`                     | Complete assistant message (aggregated from `message_chunk`s) |
+| `agent_image`       | `attachment` (same shape as a `user_message` attachment) | An image the agent returned, stored as its own record between the text blocks around it. The bytes live in an attachment file; the record holds the reference |
 | `thinking`          | `text`                     | Complete thinking block (aggregated from `thought_chunk`s)    |
 | `bash_result`       | `output`, `code`, `signal` | Aggregated bash output (replaces live `bash_output` chunks)   |
 
@@ -1830,6 +1832,7 @@ The server buffers streaming chunks in memory and flushes them to the database a
 
 ```
 message_chunk + message_chunk + ... → assistant_message  (flushed on tool_call, plan, prompt_done, error)
+agent_image                         → agent_image        (immediately, after flushing the pending text)
 thought_chunk + thought_chunk + ... → thinking            (flushed on message_chunk, tool_call, prompt_done, error)
 bash_output + bash_output + ...     → bash_result         (flushed on bash close)
 ```
@@ -1839,6 +1842,10 @@ This means:
 - **Live SSE clients** see granular `message_chunk` events for streaming display
 - **History load** sees aggregated `assistant_message` events with the complete text
 - No text duplication — the types are different, so clients can handle both paths
+- An agent image is not aggregated: it is stored as soon as it arrives, so the
+  live `agent_image` and the replayed record are the same event. The bytes are
+  an ordinary attachment (file + row), so neither the event row nor a history
+  read carries them — only the reference, which egress re-signs
 
 ---
 

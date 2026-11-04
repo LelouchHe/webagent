@@ -41,10 +41,11 @@ describe("render-event", () => {
   }
 
   describe("CONTENT_EVENT_TYPES", () => {
-    it("includes the canonical 10 event types", () => {
+    it("includes the canonical 11 event types", () => {
       const expected = [
         "user_message",
         "assistant_message",
+        "agent_image",
         "thinking",
         "tool_call",
         "tool_call_update",
@@ -61,6 +62,99 @@ describe("render-event", () => {
       assert.equal(mod.isContentEventType("user_message"), true);
       assert.equal(mod.isContentEventType("message_chunk"), false);
       assert.equal(mod.isContentEventType("task_created"), false);
+    });
+  });
+
+  describe("agent_image", () => {
+    const attachment = {
+      kind: "image",
+      attachmentId: "img-1",
+      displayName: "agent-image-1",
+      mimeType: "image/png",
+      path: "/api/v1/tasks/s1/attachments/img-1.png",
+      width: 800,
+      height: 600,
+    };
+
+    it("builds an assistant bubble whose child is the stored attachment", () => {
+      const el = append(
+        mod.renderContentEvent("agent_image", { attachment }, makeHooks()),
+      ) as HTMLElement;
+
+      assert.equal(el.className, "msg assistant");
+      const img = el.querySelector("img") as HTMLImageElement;
+      assert.ok(img, "the image must render");
+      assert.equal(img.className, "agent-image");
+      assert.equal(img.alt, "agent-image-1");
+      assert.equal(img.loading, "lazy");
+      // A reference, not base64: the path the egress signs.
+      assert.equal(img.getAttribute("src"), attachment.path);
+      // Reserved geometry is the image's own size: the browser reserves a
+      // proportional box, and CSS decides the display width.
+      assert.equal(img.getAttribute("width"), "800");
+      assert.equal(img.getAttribute("height"), "600");
+      // The bubble is not a markdown host: nothing carries a text payload.
+      assert.equal(el.getAttribute("data-raw"), null);
+    });
+
+    it("keeps a wide image's own size instead of a fixed ceiling", () => {
+      // The display width comes from the container (CSS), so the attributes
+      // must not pre-shrink the picture to a px ceiling: a 360px box would pin
+      // it no matter how wide the bubble is.
+      const el = append(
+        mod.renderContentEvent(
+          "agent_image",
+          {
+            attachment: {
+              ...attachment,
+              width: 1600,
+              height: 900,
+            },
+          },
+          makeHooks(),
+        ),
+      ) as HTMLElement;
+
+      const img = el.querySelector("img") as HTMLImageElement;
+      assert.equal(img.getAttribute("width"), "1600");
+      assert.equal(img.getAttribute("height"), "900");
+    });
+
+    it("renders an image with no stored size, leaving the box to CSS", () => {
+      // An unmeasured image stores null dimensions and reserves no box.
+      const el = append(
+        mod.renderContentEvent(
+          "agent_image",
+          { attachment: { ...attachment, width: null, height: null } },
+          makeHooks(),
+        ),
+      ) as HTMLElement;
+
+      const img = el.querySelector("img") as HTMLImageElement;
+      assert.ok(img);
+      assert.equal(img.getAttribute("width"), null);
+      assert.equal(img.getAttribute("height"), null);
+      assert.equal(img.getAttribute("src"), attachment.path);
+    });
+
+    it("renders nothing extra for a payload that is not a stored image", () => {
+      for (const raw of [
+        undefined,
+        {},
+        { kind: "file", path: "/x.png" },
+        { kind: "image" },
+        { kind: "image", path: "" },
+      ]) {
+        const el = append(
+          mod.renderContentEvent(
+            "agent_image",
+            { attachment: raw },
+            makeHooks(),
+          ),
+        ) as HTMLElement;
+        assert.equal(el.className, "msg assistant");
+        assert.equal(el.childElementCount, 0);
+      }
     });
   });
 

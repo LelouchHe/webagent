@@ -30,6 +30,17 @@ describe("readImageDimensions", () => {
     assert.deepEqual(readImageDimensions(buf), { width: 320, height: 240 });
   });
 
+  it("returns null for WebP, which has no parser here", () => {
+    // WebP has no parser here: no dimensions, so no reserved box.
+    const webp = Buffer.concat([
+      Buffer.from("RIFF", "latin1"),
+      Buffer.from([0x24, 0x00, 0x00, 0x00]),
+      Buffer.from("WEBPVP8 ", "latin1"),
+      Buffer.alloc(32, 1),
+    ]);
+    assert.equal(readImageDimensions(webp), null);
+  });
+
   it("returns null for non-image bytes", () => {
     assert.equal(readImageDimensions(Buffer.from("hello")), null);
   });

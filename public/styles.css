@@ -512,6 +512,32 @@ body {
   font-size: 14px;
   color: var(--text);
 }
+/* Thumbnails of images a tool result refers to. Scoped to the tool card so the
+   chat-bubble image rules stay untouched. The picture stays inside the card
+   because of its own percentage `max-width` and `height: auto`; this container
+   is a block-level flex container, not a flex item of the card, so it needs no
+   `min-width` override. */
+.tool-call .tc-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 4px 16px;
+}
+.tool-call .tc-images img.tc-image {
+  /* Agent images are the reply itself, so they take the width they are given:
+     a fixed px ceiling left a 360px picture beside a full-width paragraph on a
+     wide screen. `max-width: 100%` only shrinks, so a small picture keeps its
+     own pixels; `height: auto` keeps the aspect ratio. The height cap stops one
+     portrait picture from filling the screen. */
+  max-width: 100%;
+  max-height: min(70vh, 480px);
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+  cursor: zoom-in;
+}
 
 /* Source disclosure for tool inputs with code */
 .tool-call .tc-source pre {
@@ -1253,6 +1279,22 @@ body.file-viewer-open {
   display: block;
   margin-top: 4px;
   cursor: zoom-in;
+}
+.msg.assistant img.agent-image {
+  /* Same rule as a tool result's thumbnail: the container decides the width, a
+     fixed ceiling would pin every reply picture to 360px. */
+  max-width: 100%;
+  max-height: min(70vh, 480px);
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+  margin-top: 4px;
+  cursor: zoom-in;
+}
+.msg.assistant img.agent-image + img.agent-image {
+  margin-top: 8px;
 }
 .msg.user a.user-file {
   display: inline-block;

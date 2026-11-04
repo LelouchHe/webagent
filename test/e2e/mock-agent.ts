@@ -18,8 +18,10 @@ import {
   type SetSessionConfigOptionResponse,
   type SessionConfigOption,
 } from "@agentclientprotocol/sdk";
-import { randomUUID } from "node:crypto";
-import { appendFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import type { McpServer, McpServerHttp } from "@agentclientprotocol/sdk";
 
@@ -66,6 +68,10 @@ const COLLABORATION_CHILD_INSTRUCTION =
   "Review the authentication flow for access-control gaps. Summarize the highest-priority finding and hand the task back when finished.";
 const COLLABORATION_DONE_SUMMARY =
   "Authentication review complete: session checks consistently enforce the requested access boundary; no high-priority gaps found.";
+/** A real 1x1 PNG, sent as an inline agent image (base64, no file). */
+const E2E_AGENT_IMAGE_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wn3mXQAAAAASUVORK5CYII=";
+
 const SCREENSHOT_PROMPT_ALIASES = new Map([
   ["Update the server configuration for deployment.", "E2E_TOOL_EDIT"],
   ["Add the default configuration module.", "E2E_TOOL_CREATE"],
@@ -689,6 +695,118 @@ class MockAgent implements Agent {
     params: PromptRequest,
     text: string,
   ): Promise<PromptResponse> {
+    if (text.startsWith("E2E_AGENT_IMAGE")) {
+      // Text, then an inline image, then more text: the runtime has to keep
+      // all three in order and render the image as its own element. The bytes
+      // are a real 1x1 PNG, sent the way an agent sends a screenshot.
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Here is the screenshot:" },
+        },
+      });
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "image",
+            mimeType: "image/png",
+            data: E2E_AGENT_IMAGE_PNG,
+          },
+        },
+      });
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "That is the full window." },
+        },
+      });
+      return { stopReason: "end_turn" };
+    }
+
+    if (text.startsWith("E2E_TOOL_RESULT_IMAGE_PATH")) {
+      // A tool result that only names the file it wrote: the exact shape the
+      // temporary path adapter recognises. The file is real and its hash
+      // matches the marker, so the adapter has everything it verifies.
+      const dir = mkdtempSync(join(tmpdir(), "webagent-e2e-image-"));
+      const path = join(dir, "image-generated.png");
+      const bytes = Buffer.from(E2E_AGENT_IMAGE_PNG, "base64");
+      writeFileSync(path, bytes);
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      const toolCallId = `tool-${++this.toolCallCounter}`;
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "image_generation",
+          kind: "other",
+        },
+      });
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text:
+                  "Image generated successfully.\n" +
+                  `image_id: sha256:${sha256}\n` +
+                  `saved_to: ${path}`,
+              },
+            },
+          ],
+        },
+      });
+      return { stopReason: "end_turn" };
+    }
+
+    if (text.startsWith("E2E_TOOL_RESULT_IMAGE")) {
+      // A picture inside a tool result, exactly as a screenshot tool would
+      // return it: a text block and an ACP image content block.
+      const toolCallId = `tool-${++this.toolCallCounter}`;
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Screenshot tool",
+          kind: "other",
+        },
+      });
+      await this.connection.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: { type: "text", text: "captured" },
+            },
+            {
+              type: "content",
+              content: {
+                type: "image",
+                mimeType: "image/png",
+                data: E2E_AGENT_IMAGE_PNG,
+              },
+            },
+          ],
+        },
+      });
+      return { stopReason: "end_turn" };
+    }
+
     if (text.startsWith("E2E_SLOW_TOOL")) {
       const toolCallId = `tool-${++this.toolCallCounter}`;
       await this.connection.sessionUpdate({
