@@ -108,4 +108,54 @@ describe("tool-result images: the live frame", () => {
       attempts: [1, 2, 3],
     });
   });
+
+  it("clears an image payload nested inside an image block's metadata", () => {
+    const bytes = png(256);
+    const base64 = bytes.toString("base64");
+
+    harness.toolCall("t1", "Screenshot");
+    harness.emit({
+      type: "tool_call_update",
+      taskId: "t1",
+      id: "t1",
+      status: "completed",
+      rawOutput: {
+        type: "image",
+        mimeType: "image/png",
+        data: base64,
+        // ACP image blocks may carry metadata, and that metadata can hold
+        // another image block. `data` on the outer block is not the only
+        // payload in this subtree.
+        _meta: {
+          content: [{ type: "image", mimeType: "image/png", data: base64 }],
+          label: "kept",
+        },
+      },
+    });
+
+    const frame = frames.join("");
+    assert.equal(frame.includes(base64), false);
+
+    const updateFrame = frames
+      .map((chunk) => chunk.replace(/^data: /, "").trim())
+      .find((chunk) => chunk.includes('"rawOutput"'));
+    assert.ok(updateFrame, "the tool_call_update frame must reach the client");
+    const payload = JSON.parse(updateFrame) as {
+      rawOutput: {
+        type: string;
+        mimeType: string;
+        data: string;
+        _meta: { content: Array<Record<string, unknown>>; label: string };
+      };
+    };
+    assert.deepEqual(payload.rawOutput, {
+      type: "image",
+      mimeType: "image/png",
+      data: "",
+      _meta: {
+        content: [{ type: "image", mimeType: "image/png", data: "" }],
+        label: "kept",
+      },
+    });
+  });
 });

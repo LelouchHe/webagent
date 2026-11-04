@@ -94,35 +94,45 @@ function isInlineImage(value: unknown): value is Record<string, unknown> {
  * `rawOutput` is forwarded as the agent sent it, so an agent that repeats the
  * tool's result there would put the same base64 into the live SSE frame —
  * `saveEvent` already omits the field, so the frame is its only egress. Only an
- * image block's `data` is emptied; the block shape and every other field stay
- * exactly as received. The walk is iterative: a deeply nested payload must not
- * turn this into a stack overflow.
+ * image block's own `data` is emptied; the block shape and every other field
+ * stay exactly as received, and an image block's other fields (`_meta`
+ * included) are still traversed, because an image can nest another one. The
+ * walk is iterative: a deeply nested payload must not turn this into a stack
+ * overflow.
  */
 export function stripRawOutputImageData(rawOutput: unknown): unknown {
-  if (isInlineImage(rawOutput)) return { ...rawOutput, data: "" };
   if (!isRecord(rawOutput)) return rawOutput;
 
-  const root = (Array.isArray(rawOutput) ? [] : {}) as Record<string, unknown>;
+  const root = copyContainer(rawOutput);
   const stack: Array<{
     source: Record<string, unknown>;
     target: Record<string, unknown>;
-  }> = [{ source: rawOutput, target: root }];
+    /** This node is an image block, so its own `data` is the payload. */
+    image: boolean;
+  }> = [{ source: rawOutput, target: root, image: isInlineImage(rawOutput) }];
   while (stack.length > 0) {
-    const { source, target } = stack.pop()!;
+    const { source, target, image } = stack.pop()!;
     for (const [key, child] of Object.entries(source)) {
-      if (isInlineImage(child)) {
-        target[key] = { ...child, data: "" };
+      if (image && key === "data") {
+        target[key] = "";
       } else if (isRecord(child)) {
-        const copy = (Array.isArray(child) ? [] : {}) as Record<
-          string,
-          unknown
-        >;
+        const copy = copyContainer(child);
         target[key] = copy;
-        stack.push({ source: child, target: copy });
+        stack.push({
+          source: child,
+          target: copy,
+          image: isInlineImage(child),
+        });
       } else {
         target[key] = child;
       }
     }
   }
   return root;
+}
+
+function copyContainer(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  return (Array.isArray(value) ? [] : {}) as Record<string, unknown>;
 }
