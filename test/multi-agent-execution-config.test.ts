@@ -107,20 +107,7 @@ describe("a replacement owned by another agent", () => {
       assert.equal(detail.json.agentId, AGENT_B);
       assert.equal(harness.store.getTask(taskId)?.model, "model-b2");
 
-      // 4. A cold process over the same database reports the same values.
-      await harness.restart();
-      assert.deepEqual(
-        rowValues(harness.store.getTask(taskId)!),
-        B_DEFAULTS,
-        "the values are durable, not process state",
-      );
-      // The cold read itself answers without a schema; the restore then
-      // publishes what it learned, so read after it completed.
-      await harness.tasks().ensureTaskLive(taskId);
-      const cold = await harness.request("GET", `/api/v1/tasks/${taskId}`);
-      assert.deepEqual(executionValues(cold.json), B_DEFAULTS);
-
-      // 5. Going back to A starts from A's defaults, not from A's old choice.
+      // 4. Going back to A starts from A's defaults, not from A's old choice.
       const writesBefore = harness.agents.a.configWrites.length;
       const back = await harness.request(
         "POST",
@@ -136,6 +123,93 @@ describe("a replacement owned by another agent", () => {
         [],
         "the abandoned values are not restored on the way back",
       );
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("keeps the replacement's report on live resume and after a cold reopen", async () => {
+    // The read faces that the row — not the in-memory schema — has to supply:
+    // an agent whose cache belongs to *another* task, a resume of the live
+    // task, and a process that starts with nothing warm at all.
+    const harness = await startHarness();
+    try {
+      // Warm the agent cache through a different task on the same agent, with a
+      // value that is not this agent's default. A read that leaked the cache
+      // would show `low` here instead of this task's own values.
+      const other = await harness.request("POST", "/api/v1/tasks", {
+        cwd: harness.dir,
+        agentId: AGENT_B,
+      });
+      assert.equal(other.status, 201);
+      const otherId = String(other.json.id);
+      await harness.request(
+        "PUT",
+        `/api/v1/tasks/${otherId}/reasoning-effort`,
+        {
+          value: "low",
+        },
+      );
+      const warm = await harness.request(
+        "POST",
+        `/api/v1/tasks/${otherId}/clear`,
+        {},
+      );
+      assert.equal(warm.status, 200);
+
+      const taskId = await taskOnA(harness);
+      const cleared = await harness.request(
+        "POST",
+        `/api/v1/tasks/${taskId}/clear`,
+        { agentId: AGENT_B },
+      );
+      assert.equal(cleared.status, 200);
+      assert.deepEqual(executionValues(cleared.json), B_DEFAULTS);
+
+      // Live resume, asserted directly instead of through the detail read: the
+      // task is live, so this answers from the in-memory schema overlaid by the
+      // row.
+      const resumed = await harness
+        .tasks()
+        .resumeTask(harness.agents.b.bridge, taskId);
+      assert.equal(resumed.type, "task_created");
+      assert.deepEqual(executionValues(resumed), B_DEFAULTS);
+
+      // Give the row a value that a fresh session will *not* report, so the
+      // cold read can only produce it by overlaying the row.
+      const coldChoice = await harness.request(
+        "PUT",
+        `/api/v1/tasks/${taskId}/reasoning-effort`,
+        { value: "low" },
+      );
+      assert.equal(coldChoice.status, 200);
+      assert.equal(harness.store.getTask(taskId)?.reasoning_effort, "low");
+
+      // Cold reopen: a new store over the same database and fresh transports,
+      // so no cache and no session values survive.
+      await harness.coldRestart();
+      assert.deepEqual(harness.agents.b.configWrites, []);
+      const cold = await harness
+        .tasks()
+        .resumeTask(harness.agents.b.bridge, taskId);
+      assert.equal(cold.type, "task_created");
+      // The fresh session reports its own default (`high`); the resume must
+      // still answer with the task's stored choice, which is the overlay.
+      assert.deepEqual(executionValues(cold), {
+        model: "model-b2",
+        mode: "agent",
+        reasoning_effort: "low",
+      });
+      const coldDetail = await harness.request(
+        "GET",
+        `/api/v1/tasks/${taskId}`,
+      );
+      assert.deepEqual(executionValues(coldDetail.json), {
+        model: "model-b2",
+        mode: "agent",
+        reasoning_effort: "low",
+      });
+      assert.equal(harness.store.getTask(taskId)?.reasoning_effort, "low");
     } finally {
       await harness.close();
     }

@@ -95,10 +95,18 @@ export interface Harness {
     body?: unknown,
   ): Promise<{ status: number; json: Record<string, unknown> }>;
   /**
-   * Rebuild the task runtime over the same database, as a process restart.
-   * Configuration overrides are how a restart changes which agents exist.
+   * Rebuild the task runtime over the same database, as a service restart
+   * within one process. Configuration overrides are how a restart changes
+   * which agents exist.
    */
   restart(overrides?: HarnessOptions): Promise<void>;
+  /**
+   * The colder restart: close the database and reopen it in a new `Store`, and
+   * rebuild the runtime with fresh agent transports. Nothing in memory
+   * survives — no schema cache, no generation ledger, no session values — so a
+   * read after this is driven by what the database actually holds.
+   */
+  coldRestart(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -119,9 +127,11 @@ export async function startHarness(
   options: HarnessOptions = {},
 ): Promise<Harness> {
   const dir = mkdtempSync(join(tmpdir(), "webagent-multi-agent-"));
-  const store = new Store(dir);
+  // Both are replaced by `coldRestart`: a reopened database and fresh agent
+  // transports are exactly what a process boundary leaves behind.
+  let store = new Store(dir);
   store.ensureRootTask(dir);
-  const agents: Record<AgentKey, ProfiledAgent> = {
+  const createAgents = (): Record<AgentKey, ProfiledAgent> => ({
     a: createProfiledAgent(
       AGENT_A,
       options.schemaA ?? SCHEMA_A,
@@ -132,7 +142,8 @@ export async function startHarness(
       options.schemaB ?? SCHEMA_B,
       options.profiled?.b,
     ),
-  };
+  });
+  let agents = createAgents();
   // Configuration is reconfigurable: a restart is how a deployment changes
   // which agents exist, and a task's implicit takeover happens after that.
   let configuration: HarnessOptions = { ...options };
@@ -224,10 +235,16 @@ export async function startHarness(
       req.end();
     });
 
-  return {
+  const harness: Harness = {
     dir,
-    store,
-    agents,
+    // Read through getters: `coldRestart` swaps both, and a test must never
+    // keep asserting against a closed database or a retired transport.
+    get store() {
+      return store;
+    },
+    get agents() {
+      return agents;
+    },
     tasks: () => tasks!,
     env: () => env!,
     request,
@@ -235,6 +252,15 @@ export async function startHarness(
       tasks?.dispose();
       tasks = null;
       configuration = { ...configuration, ...overrides };
+      build();
+      handler = makeHandler();
+    },
+    async coldRestart() {
+      tasks?.dispose();
+      tasks = null;
+      store.close();
+      store = new Store(dir);
+      agents = createAgents();
       build();
       handler = makeHandler();
     },
@@ -249,6 +275,7 @@ export async function startHarness(
       rmSync(dir, { recursive: true, force: true });
     },
   };
+  return harness;
 }
 
 /** The three execution-config values a task stores, from a REST payload. */
