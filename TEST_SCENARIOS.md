@@ -107,8 +107,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     event (the walk is iterative), and every non-image field survives verbatim
   - an image that exists only in a nested `_meta` still invalidates the cached
     label map, so a later event naming its path renders `agent-image-N`
-  - a store failure inside ingest returns the content unchanged instead of
-    throwing into the event handler
+  - an item whose rewrite fails becomes a visible placeholder (its payload is
+    dropped, never passed through) while its siblings are still stored
+  - a failed attachment count only affects naming: the pictures are still stored
   - refusals: above `limits.image_upload` and not a storable image container
     each become visible `[image omitted: …]` text with no file and no row;
     successive images are named in order and a text-only update is untouched
@@ -130,6 +131,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
     only the outer block's `data`
   - an image nested in a `content` wrapper's own `_meta` is stored as a
     descriptor, and neither SQLite nor the frame carries its payload
+  - with the attachments table unavailable (the count or one insert throws), the
+    event and the frame still go out, every block degrades to visible
+    `[image omitted: …]` text, and neither SQLite nor the frame carries a
+    payload; a failed insert degrades only its own block and its sibling is
+    still stored
   - cloning keeps a JSON `__proto__` key as an own property (`JSON.stringify`
     still sees it) while leaving unrelated fields untouched
 

@@ -289,6 +289,8 @@ describe("tool-result images: ACP image blocks", () => {
       }
       assert.equal(levels, depth);
       assert.deepEqual(node, { note: "kept" });
+      // The no-image path is untouched: no degradation text appeared.
+      assert.equal(textOf(content).includes("image omitted"), false);
     });
   }
 
@@ -357,5 +359,40 @@ describe("tool-result images: ACP image blocks", () => {
     );
     assert.equal(result.content, content);
     assert.equal(result.inserted, 0);
+  });
+
+  it("degrades an item whose rewrite fails instead of passing its payload on", () => {
+    const sibling = {
+      type: "image",
+      mimeType: "image/png",
+      data: png().toString("base64"),
+    };
+    // Hostile input the walk cannot read: the item itself must become a
+    // placeholder, because whatever comes back is what gets persisted and
+    // broadcast.
+    const hostile: Record<string, unknown> = {
+      type: "content",
+      content: { type: "text", text: "kept" },
+    };
+    Object.defineProperty(hostile, "_meta", {
+      enumerable: true,
+      get() {
+        throw new Error("boom");
+      },
+    });
+
+    const result = storeToolResultImages(
+      { store, dataDir: harness.dir, taskId: "t1", limitBytes: LIMIT },
+      [hostile, sibling],
+    );
+
+    assert.deepEqual(result.content[0], {
+      type: "content",
+      content: { type: "text", text: "[image omitted: could not be stored]" },
+    });
+    // The sibling is unaffected: one item's failure is not the whole update's.
+    assert.equal(attachmentOf(result.content[1])?.kind, "image");
+    assert.equal(result.inserted, 1);
+    assert.equal(JSON.stringify(result.content).includes(sibling.data), false);
   });
 });

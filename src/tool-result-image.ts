@@ -18,7 +18,8 @@
 // The walk is iterative and never throws out of this file: the event is the
 // record, a picture inside it is incidental. A legal deeply nested `_meta` (a
 // few thousand single-element arrays is a 4 KB message) must not cost the
-// update, and a rewrite that fails leaves that item as received.
+// update, and a rewrite that fails degrades that item to a visible placeholder —
+// the event survives, the payload does not.
 //
 // A refusal is never silent: an oversized block, a payload that is not a
 // storable image container, or one that cannot be written becomes
@@ -62,63 +63,98 @@ export interface StoredToolResultImages {
  *
  * The whole item tree is walked, so no inline payload can survive past this
  * function into SQLite, `GET /events` or a live frame.
+ *
+ * Degrading is a placeholder, never a pass-through: a block that cannot be
+ * stored becomes visible `[image omitted: …]` text, and a walk that fails
+ * replaces the item it failed on the same way. The event itself is never lost —
+ * the record matters more than the picture — but the bytes never ride along with
+ * it.
  */
 export function storeToolResultImages(
   ctx: ToolResultImageContext,
   content: ToolContentItem[],
 ): StoredToolResultImages {
   let index = 0;
-  /** Image blocks seen: stored *or* refused (a refusal writes a placeholder). */
+  /** Image blocks seen: stored *or* degraded (a degradation writes a placeholder). */
   let processed = 0;
   /** Attachment rows inserted: the only thing a cached label map cares about. */
   let inserted = 0;
 
-  /** Store one inline payload and return what takes its place. */
+  /**
+   * Store one inline payload and return what takes its place.
+   *
+   * Every failure ends in a placeholder, so this never throws and never hands a
+   * payload back to the caller.
+   */
   function store(data: string): ToolContentItem {
     processed++;
-    const result = storeImageBytes({
-      store: ctx.store,
-      dataDir: ctx.dataDir,
-      taskId: ctx.taskId,
-      bytes: decodedBase64Bytes(data) ?? Buffer.alloc(0),
-      index: ++index,
-      limitBytes: ctx.limitBytes,
-    });
-    if ("stored" in result) {
-      inserted++;
-      return { type: "image", attachment: result.stored };
+    try {
+      const result = storeImageBytes({
+        store: ctx.store,
+        dataDir: ctx.dataDir,
+        taskId: ctx.taskId,
+        bytes: decodedBase64Bytes(data) ?? Buffer.alloc(0),
+        index: ++index,
+        limitBytes: ctx.limitBytes,
+      });
+      if ("stored" in result) {
+        inserted++;
+        return { type: "image", attachment: result.stored };
+      }
+      // A refused image is still part of the result: the placeholder keeps a
+      // reason where the picture was, and the payload never reaches storage.
+      return placeholder(result.reason);
+    } catch (error) {
+      warn("could not store a tool result image", ctx, error);
+      return placeholder(UNSTORABLE);
     }
-    // A refused image is still part of the result: the placeholder keeps a
-    // reason where the picture was, and the payload never reaches storage.
-    return {
-      type: "content",
-      content: { type: "text", text: result.omitted },
-    };
+  }
+
+  // The attachment count only names new files; a failure there must not stop the
+  // walk, because the walk is what removes payloads.
+  try {
+    index = ctx.store.countAttachments(ctx.taskId, "image");
+  } catch (error) {
+    warn("could not count stored images", ctx, error);
   }
 
   try {
-    index = ctx.store.countAttachments(ctx.taskId, "image");
     const rewritten = content.map((item) => {
       try {
-        return rewriteItem(item, store);
+        // Most items are text or a diff: nothing to rewrite, and copying their
+        // containers buys nothing.
+        return mayContainImageBlock(item) ? rewriteItem(item, store) : item;
       } catch (error) {
-        // One item's rewrite must not cost its siblings: that item stays as
-        // received and the rest are still normalized.
+        // One item's rewrite must not cost its siblings: that item becomes a
+        // placeholder and the rest are still normalized. Returning it as
+        // received would put its payload into storage and the wire.
         warn("could not rewrite a tool result image", ctx, error);
-        return item;
+        return placeholder(UNSTORABLE);
       }
     });
     return processed > 0
       ? { content: rewritten, inserted }
       : { content, inserted };
   } catch (error) {
-    // The event is the record; a picture inside it is incidental. Nothing from
-    // here may escape into `handleAgentEvent`, so the caller gets the content it
-    // passed in plus whatever rows were already inserted (so a cached label map
-    // is still invalidated).
-    warn("could not store tool result images", ctx, error);
-    return { content, inserted };
+    // Last resort: no item survives as received, because none of them can be
+    // trusted to be payload-free once the walk itself failed.
+    warn("could not walk tool result content", ctx, error);
+    return {
+      content: content.map(() => placeholder(UNSTORABLE)),
+      inserted,
+    };
   }
+}
+
+/** Why a block or an item could not be normalized; logged, never surfaced raw. */
+const UNSTORABLE = "could not be stored";
+
+/** The visible replacement for an image that will not be stored. */
+function placeholder(reason: string): ToolContentItem {
+  return {
+    type: "content",
+    content: { type: "text", text: `[image omitted: ${reason}]` },
+  };
 }
 
 function warn(
@@ -130,6 +166,34 @@ function warn(
     taskId: ctx.taskId.slice(0, 8),
     error: error instanceof Error ? error.message : String(error),
   });
+}
+
+/**
+ * Whether this item's tree can hold an image block at all.
+ *
+ * A cheap scan before the rewriting walk. Ordinary updates are text, diff or
+ * terminal items, and copying every container of every item to find nothing was
+ * measurable (100 text items: ~4µs → ~23µs per update). The scan visits
+ * containers only — a block is itself a container, and only containers nest — so
+ * it cannot miss one; it just does not copy.
+ */
+function mayContainImageBlock(item: unknown): boolean {
+  if (!isRecord(item)) return false;
+  const stack: Record<string, unknown>[] = [item];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        if (isRecord(child)) stack.push(child);
+      }
+      continue;
+    }
+    if (node.type === "image") return true;
+    for (const child of Object.values(node)) {
+      if (isRecord(child)) stack.push(child);
+    }
+  }
+  return false;
 }
 
 /**

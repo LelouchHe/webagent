@@ -58,13 +58,21 @@ export interface ToolResultImageHarnessOptions {
    * a fake response.
    */
   sseManager?: Parameters<typeof handleAgentEvent>[5];
+  /**
+   * Wrap the harness store, e.g. to make one attachments-table call fail the way
+   * an unavailable table would. Everything the handler touches goes through it.
+   */
+  decorateStore?: (store: Store) => Store;
 }
 
 export function createToolResultImageHarness(
   options: ToolResultImageHarnessOptions = {},
 ): ToolResultImageHarness {
   const dir = mkdtempSync(join(tmpdir(), "webagent-tool-result-images-"));
-  const store = new Store(join(dir, "db"));
+  const realStore = new Store(join(dir, "db"));
+  const store = options.decorateStore
+    ? options.decorateStore(realStore)
+    : realStore;
   const tasks = createTaskManager(store, dir, dir);
   store.createTask("t1", "/tmp", "auto", "test-agent");
   const broadcasts: AgentEvent[] = [];
