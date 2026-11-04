@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { SseManager } from "../src/sse-manager.ts";
+import { stripRawOutputImageData } from "../src/tool-result-image.ts";
 import type { ToolContentItem } from "../src/types.ts";
 import {
   attachmentOf,
@@ -157,5 +158,21 @@ describe("tool-result images: the live frame", () => {
         label: "kept",
       },
     });
+  });
+});
+
+describe("rawOutput cloning", () => {
+  it("keeps a __proto__ field as an own property", () => {
+    // `JSON.parse` creates own data properties, `__proto__` included. A clone
+    // through a plain `{}` would run the prototype setter and drop the field.
+    const value = JSON.parse(
+      '{"__proto__":{"note":"kept"},"text":"kept","data":"not an image"}',
+    ) as Record<string, unknown>;
+    const stripped = stripRawOutputImageData(value) as Record<string, unknown>;
+
+    assert.equal(Object.hasOwn(stripped, "__proto__"), true);
+    assert.equal(JSON.stringify(stripped), JSON.stringify(value));
+    assert.match(JSON.stringify(stripped), /"__proto__":\{"note":"kept"\}/);
+    assert.match(JSON.stringify(stripped), /"data":"not an image"/);
   });
 });

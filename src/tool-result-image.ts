@@ -99,6 +99,11 @@ function isInlineImage(value: unknown): value is Record<string, unknown> {
  * included) are still traversed, because an image can nest another one. The
  * walk is iterative: a deeply nested payload must not turn this into a stack
  * overflow.
+ *
+ * Object nodes are copied with a null prototype. A plain `{}` target would
+ * interpret a JSON key named `__proto__` as a prototype setter and silently
+ * drop the field; a null-prototype object keeps it as an ordinary own
+ * property, so `JSON.stringify` still sees it.
  */
 export function stripRawOutputImageData(rawOutput: unknown): unknown {
   if (!isRecord(rawOutput)) return rawOutput;
@@ -134,5 +139,9 @@ export function stripRawOutputImageData(rawOutput: unknown): unknown {
 function copyContainer(
   value: Record<string, unknown>,
 ): Record<string, unknown> {
-  return (Array.isArray(value) ? [] : {}) as Record<string, unknown>;
+  // Arrays cannot carry a `__proto__` own key from JSON; objects must not
+  // inherit the setter that would swallow it.
+  return Array.isArray(value)
+    ? ([] as unknown as Record<string, unknown>)
+    : (Object.create(null) as Record<string, unknown>);
 }
