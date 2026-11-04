@@ -176,3 +176,35 @@ describe("SseManager attachment label egress rewrite", () => {
     assert.equal(events[1].title, "Read a.txt [#1111]");
   });
 });
+
+describe("SseManager attachment URL signing", () => {
+  it("signs a stored agent image path on the way out, leaving the row unsigned", () => {
+    const sm = new SseManager();
+    const secret = Buffer.alloc(32, 9);
+    sm.setAttachmentSecret(secret);
+    const { client, chunks } = makeFakeClient("c1");
+    sm.add(client);
+
+    const path = "/api/v1/tasks/s1/attachments/abcd1234.png";
+    sm.broadcast({
+      type: "agent_image",
+      taskId: "s1",
+      attachment: {
+        kind: "image",
+        attachmentId: "abcd1234",
+        displayName: "agent-image-1",
+        mimeType: "image/png",
+        path,
+        width: 1,
+        height: 1,
+      },
+    });
+
+    const [event] = readDataLines(chunks) as Array<{
+      attachment: { path: string };
+    }>;
+    const parsed = new URL(event.attachment.path, "http://localhost");
+    assert.equal(parsed.pathname, path);
+    assert.match(parsed.search, /^\?exp=\d+&sig=[a-f0-9]+$/);
+  });
+});

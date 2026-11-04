@@ -2,11 +2,13 @@ import { test, expect, type Page } from "playwright/test";
 import { createNewTask, currentTaskId, gotoConnected } from "./helpers.ts";
 
 /**
- * An image the agent returns is rendered inline, from the base64 that arrived
- * with the event: no upload, no attachment row, no signed URL.
+ * An image the agent returns is rendered inline from a *stored attachment*: the
+ * transcript holds an unsigned base path, egress signs it, and the browser
+ * fetches the bytes like any other attachment. Nothing base64 lives in the
+ * event row.
  *
- * The mock answers `E2E_AGENT_IMAGE` with text → image → text, so ordering,
- * the image element, and the replay path are all observable.
+ * The mock answers `E2E_AGENT_IMAGE` with text → image → text, so ordering, the
+ * image element, its URL and the replay path are all observable.
  */
 
 const AGENT_IMAGE_PNG =
@@ -23,21 +25,9 @@ async function sendImagePrompt(page: Page): Promise<void> {
   );
 }
 
-test("an agent image renders inline and opens the lightbox", async ({
-  page,
-}) => {
-  await gotoConnected(page);
-  await sendImagePrompt(page);
-
-  const image = page.locator(".msg.assistant .agent-image");
-  const src = await image.getAttribute("src");
-  expect(src).toBe(`data:image/png;base64,${AGENT_IMAGE_PNG}`);
-  await expect(image).toHaveAttribute("alt", "agent image");
-  await expect(image).toHaveAttribute("loading", "lazy");
-
-  // Text → image → text: the image is its own element between the two bubbles,
-  // so the transcript keeps the order the agent produced.
-  const order = await page.evaluate(() => {
+/** Text → image → text, as the agent produced it. */
+async function bubbleOrder(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
     const nodes = Array.from(
       document.querySelectorAll("#messages .msg.assistant"),
     );
@@ -45,17 +35,37 @@ test("an agent image renders inline and opens the lightbox", async ({
       node.querySelector("img.agent-image") ? "image" : "text",
     );
   });
-  expect(order).toEqual(["text", "image", "text"]);
+}
+
+test("an agent image renders and opens the lightbox", async ({ page }) => {
+  await gotoConnected(page);
+  await sendImagePrompt(page);
+
+  const image = page.locator(".msg.assistant .agent-image");
+  const src = (await image.getAttribute("src")) ?? "";
+  // A signed attachment URL, not base64.
+  expect(src).toMatch(
+    /^\/api\/v1\/tasks\/[^/]+\/attachments\/[0-9a-f-]+\.png\?exp=\d+&sig=[a-f0-9]+$/,
+  );
+  expect(src).not.toContain("base64");
+  // The lightbox shows the same image; `src` reads back absolute.
+  const absoluteSrc = await image.evaluate(
+    (el) => (el as HTMLImageElement).src,
+  );
+  await expect(image).toHaveAttribute("alt", "agent-image-1");
+  await expect(image).toHaveAttribute("loading", "lazy");
+
+  expect(await bubbleOrder(page)).toEqual(["text", "image", "text"]);
 
   await image.click();
   const overlay = page.locator("#lightbox-overlay");
   await expect(overlay).toBeVisible();
-  await expect(overlay.locator("img")).toHaveAttribute("src", src as string);
+  await expect(overlay.locator("img")).toHaveAttribute("src", absoluteSrc);
   await page.keyboard.press("Escape");
   await expect(overlay).not.toBeVisible();
 });
 
-test("a reload replays the same inline image", async ({ page }) => {
+test("a reload replays the same stored image", async ({ page }) => {
   await gotoConnected(page);
   await sendImagePrompt(page);
 
@@ -65,23 +75,12 @@ test("a reload replays the same inline image", async ({ page }) => {
   const replayed = page.locator(".msg.assistant .agent-image");
   await expect(replayed).toHaveAttribute(
     "src",
-    `data:image/png;base64,${AGENT_IMAGE_PNG}`,
+    /^\/api\/v1\/tasks\/[^/]+\/attachments\/[0-9a-f-]+\.png\?exp=\d+&sig=[a-f0-9]+$/,
   );
+  expect(await bubbleOrder(page)).toEqual(["text", "image", "text"]);
 
-  // Replay produces the same three elements in the same order as the live
-  // stream did: no extra empty bubble, nothing merged.
-  const order = await page.evaluate(() => {
-    const nodes = Array.from(
-      document.querySelectorAll("#messages .msg.assistant"),
-    );
-    return nodes.map((node) =>
-      node.querySelector("img.agent-image") ? "image" : "text",
-    );
-  });
-  expect(order).toEqual(["text", "image", "text"]);
-
-  // The bytes are stored with the event, not fetched: the row keeps the
-  // agent's own base64, and no attachment was created for it.
+  // The row references an attachment and carries no bytes; the attachment is
+  // served back when the signed URL is followed.
   const events = await page.request.get(
     `/api/v1/tasks/${taskId}/events?thinking=0`,
   );
@@ -91,15 +90,30 @@ test("a reload replays the same inline image", async ({ page }) => {
       events: Array<{ type: string; data: string }>;
     }
   ).events;
-  const imageRows = rows.filter((row) => row.type === "assistant_image");
+  const imageRows = rows.filter((row) => row.type === "agent_image");
   expect(imageRows).toHaveLength(1);
-  const stored = JSON.parse(imageRows[0].data) as {
-    images: Array<{ mimeType: string; data: string }>;
-  };
-  expect(stored.images).toEqual([
-    { mimeType: "image/png", data: AGENT_IMAGE_PNG },
-  ]);
-  // No attachment was created or referenced: the image never becomes a file,
-  // so nothing in the transcript points at the attachment surface.
-  expect(rows.some((row) => row.data.includes("/attachments/"))).toBe(false);
+  expect(imageRows[0].data).not.toContain(AGENT_IMAGE_PNG);
+  const attachment = (
+    JSON.parse(imageRows[0].data) as {
+      attachment: {
+        kind: string;
+        attachmentId: string;
+        displayName: string;
+        mimeType: string;
+        path: string;
+      };
+    }
+  ).attachment;
+  expect(attachment.kind).toBe("image");
+  expect(attachment.mimeType).toBe("image/png");
+  expect(attachment.displayName).toBe("agent-image-1");
+  expect(attachment.path).toMatch(
+    /^\/api\/v1\/tasks\/[^/]+\/attachments\/[0-9a-f-]+\.png\?exp=\d+&sig=[a-f0-9]+$/,
+  );
+  const served = await page.request.get(attachment.path);
+  expect(served.ok()).toBeTruthy();
+  expect(served.headers()["content-type"]).toBe("image/png");
+  expect(Buffer.from(await served.body()).toString("base64")).toBe(
+    AGENT_IMAGE_PNG,
+  );
 });

@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
+import { storeAgentImage } from "../src/agent-image.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { signAttachmentUrl, verifyAttachmentSig } from "../src/auth.ts";
@@ -201,6 +202,60 @@ describe("image signed URLs", () => {
       ),
       true,
     );
+  });
+
+  it("re-signs a stored agent image in history and serves it by that URL", async () => {
+    // Stored exactly the way the event handler stores one.
+    const stored = storeAgentImage({
+      store,
+      dataDir: tmpDir,
+      taskId: "sess1",
+      data: PNG.toString("base64"),
+      index: 1,
+      limitBytes: 10 * 1024 * 1024,
+    });
+    assert.ok("stored" in stored);
+    store.saveEvent(
+      "sess1",
+      "agent_image",
+      { attachment: stored.stored },
+      { from_ref: "agent" },
+    );
+    // The stored path is unsigned: re-signing is an egress concern.
+    assert.equal(stored.stored.path.includes("?"), false);
+
+    const response = await req(port, "GET", "/api/v1/tasks/sess1/events", {
+      Authorization: `Bearer ${token}`,
+    });
+    assert.equal(response.status, 200);
+    const payload = JSON.parse(response.body) as {
+      events: Array<{ type: string; data: string }>;
+    };
+    const row = payload.events.find((event) => event.type === "agent_image");
+    assert.ok(row);
+    assert.equal(
+      row.data.includes(PNG.toString("base64")),
+      false,
+      "history must not carry the bytes",
+    );
+    const attachment = (
+      JSON.parse(row.data) as { attachment: { path: string } }
+    ).attachment;
+    const parsed = new URL(attachment.path, "http://localhost");
+    assert.match(parsed.search, /^\?exp=\d+&sig=[a-f0-9]+$/);
+    assert.equal(
+      verifyAttachmentSig(
+        parsed.pathname,
+        parsed.searchParams.get("exp") ?? "",
+        parsed.searchParams.get("sig") ?? "",
+        attachmentSecret,
+      ),
+      true,
+    );
+    // The signed URL in the history payload actually serves the image.
+    const image = await req(port, "GET", `${parsed.pathname}${parsed.search}`);
+    assert.equal(image.status, 200);
+    assert.equal(image.headers["content-type"], "image/png");
   });
 
   it("GET image without sig returns 401", async () => {
