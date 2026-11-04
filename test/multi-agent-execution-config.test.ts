@@ -5,6 +5,7 @@ import {
   AGENT_A,
   AGENT_B,
   A_CHOICES,
+  SCHEMA_B as SCHEMA_B_FOR_BOUNDARY,
   executionValues,
   startHarness,
   type Harness,
@@ -222,6 +223,104 @@ describe("a replacement owned by another agent", () => {
       ]);
       assert.deepEqual(executionValues(cleared.json), A_CHOICES);
       assert.deepEqual(rowValues(harness.store.getTask(taskId)!), A_CHOICES);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("falls back to the agent cache when the replacement reports no config (documented boundary)", async () => {
+    // A known boundary, not desired behavior: `model` / `mode` /
+    // `reasoning_effort` are stored per task, but the *schema* they are rendered
+    // into is cached per agent. A replacement that reports no `configOptions`
+    // leaves the task's columns unknown, and null cannot override that cache —
+    // so this task's reads show the values of another task on the same agent
+    // until something reports for this one. Closing that needs the cache split
+    // per task/session (or a "unknown" marker); it is deliberately out of scope
+    // here, and this case exists so the boundary is visible before anyone
+    // changes the overlay semantics.
+    const harness = await startHarness({
+      profiled: {
+        // Two ordinary sessions first (the warm task's creation and its
+        // rotation); the third — the one the cleared task materializes —
+        // reports nothing at all.
+        b: {
+          newSessionSchema: (sessionIndex) =>
+            sessionIndex === 3 ? [] : SCHEMA_B_FOR_BOUNDARY,
+        },
+      },
+    });
+    try {
+      // Warm the shared cache through a *different* task on the same agent, and
+      // give it a value that is not this agent's default: whatever this task
+      // then shows did not come from its own row. A same-agent rotation is the
+      // realistic way the cache learns those values (its config replay caches
+      // the responses).
+      const other = await harness.request("POST", "/api/v1/tasks", {
+        cwd: harness.dir,
+        agentId: AGENT_B,
+      });
+      assert.equal(other.status, 201);
+      const otherId = String(other.json.id);
+      const warm = await harness.request(
+        "PUT",
+        `/api/v1/tasks/${otherId}/reasoning-effort`,
+        { value: "low" },
+      );
+      assert.equal(warm.status, 200);
+      const warmRotation = await harness.request(
+        "POST",
+        `/api/v1/tasks/${otherId}/clear`,
+        {},
+      );
+      assert.equal(warmRotation.status, 200);
+      assert.deepEqual(executionValues(warmRotation.json), {
+        model: "model-b2",
+        mode: "agent",
+        reasoning_effort: "low",
+      });
+
+      const taskId = await taskOnA(harness);
+      const cleared = await harness.request(
+        "POST",
+        `/api/v1/tasks/${taskId}/clear`,
+        { agentId: AGENT_B },
+      );
+      assert.equal(cleared.status, 200);
+      assert.equal(harness.store.getBindingAgent(taskId), AGENT_B);
+
+      // Nothing was adopted: the replacement had nothing to report.
+      const row = harness.store.getTask(taskId);
+      assert.ok(row, "the task row still exists");
+      assert.deepEqual(rowValues(row), {
+        model: null,
+        mode: null,
+        reasoning_effort: null,
+      });
+      assert.deepEqual(
+        cleared.json.configOptions ?? [],
+        [],
+        "the response has no options to offer",
+      );
+
+      // Boundary: the read is the *other* task's session values, not this
+      // task's (unknown) ones and not the agent's defaults.
+      const detail = await harness.request("GET", `/api/v1/tasks/${taskId}`);
+      assert.deepEqual(executionValues(detail.json), {
+        model: "model-b2",
+        mode: "agent",
+        reasoning_effort: "low",
+      });
+      // The other task still reads its own values, so the fallback is a read of
+      // the shared cache rather than a corruption of the warm task.
+      const otherDetail = await harness.request(
+        "GET",
+        `/api/v1/tasks/${otherId}`,
+      );
+      assert.deepEqual(executionValues(otherDetail.json), {
+        model: "model-b2",
+        mode: "agent",
+        reasoning_effort: "low",
+      });
     } finally {
       await harness.close();
     }

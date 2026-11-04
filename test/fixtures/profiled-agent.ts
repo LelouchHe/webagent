@@ -47,6 +47,16 @@ export interface ProfiledAgent {
   };
 }
 
+export interface ProfiledAgentOptions {
+  /**
+   * Schema one new session reports, by 1-based session index. Defaults to the
+   * agent's own schema. A test uses this for the shape where a session's result
+   * carries no `configOptions` at all: the agent then has nothing to say about
+   * that session's environment.
+   */
+  newSessionSchema?: (sessionIndex: number) => ConfigOption[];
+}
+
 /** Deep copy so one session's mutation cannot leak into another's report. */
 function copyOptions(configOptions: ConfigOption[]): ConfigOption[] {
   return JSON.parse(JSON.stringify(configOptions)) as ConfigOption[];
@@ -55,6 +65,7 @@ function copyOptions(configOptions: ConfigOption[]): ConfigOption[] {
 export function createProfiledAgent(
   agentId: string,
   schema: ConfigOption[],
+  options: ProfiledAgentOptions = {},
 ): ProfiledAgent {
   const newSessions: string[] = [];
   const configWrites: ConfigWrite[] = [];
@@ -76,10 +87,14 @@ export function createProfiledAgent(
     agentId,
     async newSession(cwd: string) {
       newSessions.push(cwd);
+      const sessionIndex = newSessions.length;
+      const reported = options.newSessionSchema
+        ? options.newSessionSchema(sessionIndex)
+        : schema;
       return {
-        sessionId: `${agentId}-session-${newSessions.length}`,
+        sessionId: `${agentId}-session-${sessionIndex}`,
         // A fresh session reports this agent's own defaults.
-        configOptions: copyOptions(schema),
+        configOptions: copyOptions(reported),
       };
     },
     async setConfigOption(taskId: string, configId: string, value: string) {

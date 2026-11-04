@@ -22,6 +22,7 @@ import {
   createProfiledAgent,
   executionSchema,
   type ProfiledAgent,
+  type ProfiledAgentOptions,
 } from "./profiled-agent.ts";
 
 /**
@@ -77,6 +78,8 @@ export interface HarnessOptions {
   resolveErrors?: Partial<Record<string, string>>;
   schemaA?: ConfigOption[];
   schemaB?: ConfigOption[];
+  /** Per-agent transport behavior, e.g. one session that reports no schema. */
+  profiled?: Partial<Record<AgentKey, ProfiledAgentOptions>>;
 }
 
 export interface Harness {
@@ -119,8 +122,16 @@ export async function startHarness(
   const store = new Store(dir);
   store.ensureRootTask(dir);
   const agents: Record<AgentKey, ProfiledAgent> = {
-    a: createProfiledAgent(AGENT_A, options.schemaA ?? SCHEMA_A),
-    b: createProfiledAgent(AGENT_B, options.schemaB ?? SCHEMA_B),
+    a: createProfiledAgent(
+      AGENT_A,
+      options.schemaA ?? SCHEMA_A,
+      options.profiled?.a,
+    ),
+    b: createProfiledAgent(
+      AGENT_B,
+      options.schemaB ?? SCHEMA_B,
+      options.profiled?.b,
+    ),
   };
   // Configuration is reconfigurable: a restart is how a deployment changes
   // which agents exist, and a task's implicit takeover happens after that.
