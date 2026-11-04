@@ -104,6 +104,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - refusals: above `limits.image_upload` and not a storable image container
     each become visible `[image omitted: …]` text with no file and no row;
     successive images are named in order and a text-only update is untouched
+  - a stored tool image invalidates the task's cached label map, so a later
+    event naming its path renders `agent-image-N` instead of the UUID path
+
+- `test/tool-result-images-sse.test.ts` (real `SseManager` frame)
+  - an update carrying the same image in `content` and `rawOutput` writes a
+    frame without its base64: `content` gets the descriptor, while `rawOutput`
+    keeps its shape and every other field with `data` emptied
 
 - `test/tool-result-images-path.test.ts` (temporary shim)
   - all three markers (`image_id: sha256:…`, `saved_to:` absolute path,
@@ -112,12 +119,16 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - refusals: sha256 mismatch, non-image magic bytes, above the limit,
     unreadable path, and any missing marker each do nothing; identical bytes
     are stored once and a later update reuses that row
+  - the recovered image invalidates the task's cached label map, like the
+    normal path
   - delete with `src/agent-compatibility/copilot-image-path.ts`
 
 - `test/tool-result-images-render.test.ts`
   - a tool card renders `.tc-images img.tc-image` from the stored path, before
     the output disclosure, from the same helper live streaming and replay use
     (identical DOM), and the thumbnail opens the shared lightbox
+  - an explicit `content: []` removes the thumbnails on both live and replay
+    paths, while an update that omits `content` keeps them
 
 - `test/bridge.test.ts`
   - prompt success / failure / cancellation
@@ -482,6 +493,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/mcp-task-host.test.ts`, `test/mcp.test.ts`, `test/mcp-doc-coverage.test.ts`
   - flat task_query index includes thinking rows, range normalization, and bounded Unicode projections
+  - an `agent_image` row and an inline image block both project as `[image]`
+    instead of an empty or status-only row
   - fixed-string search returns a visible matching window and real JSON field path
   - task_read returns batched decoded event data, including large single rows
   - self/parent/child/sibling authorization, tombstone/nonexistent target convergence, unknown sequence rejection
