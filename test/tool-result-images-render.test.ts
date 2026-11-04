@@ -99,6 +99,49 @@ describe("tool-result image rendering", () => {
     assert.equal(overlay.querySelector("img")!.getAttribute("src"), img.src);
   });
 
+  it("clears the thumbnail when an update replaces content with an empty set", () => {
+    renderLive();
+    assert.ok(document.querySelector("#tc-tc-img .tc-images"));
+
+    events.handleEvent({
+      type: "tool_call_update",
+      ...UPDATE,
+      content: [],
+    });
+
+    const card = document.getElementById("tc-tc-img")!;
+    assert.equal(card.querySelector(".tc-images"), null);
+    assert.equal(card.querySelector("img.tc-image"), null);
+  });
+
+  it("keeps the thumbnail when an update omits content", () => {
+    renderLive();
+    const { content: _content, ...withoutContent } = UPDATE;
+    events.handleEvent({
+      type: "tool_call_update",
+      ...withoutContent,
+    });
+
+    assert.ok(document.querySelector("#tc-tc-img img.tc-image"));
+  });
+
+  it("replays the cleared thumbnail too", () => {
+    events.replayEvent("tool_call", CALL, [], 0);
+    const rows = [
+      { seq: 1, type: "tool_call", data: JSON.stringify(CALL) },
+      { seq: 2, type: "tool_call_update", data: JSON.stringify(UPDATE) },
+      {
+        seq: 3,
+        type: "tool_call_update",
+        data: JSON.stringify({ ...UPDATE, content: [] }),
+      },
+    ];
+    events.replayEvent("tool_call_update", UPDATE, rows, 1);
+    events.replayEvent("tool_call_update", { ...UPDATE, content: [] }, rows, 2);
+
+    assert.equal(document.querySelector("#tc-tc-img .tc-images"), null);
+  });
+
   it("replays the same DOM the live path produced", () => {
     renderLive();
     const liveHtml = document.getElementById("tc-tc-img")!.outerHTML;

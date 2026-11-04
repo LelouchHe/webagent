@@ -744,9 +744,13 @@ function applyToolCallUpdate(
   const content = Array.isArray(data.content)
     ? (data.content as ToolContentItem[])
     : [];
+  // An explicit array — including the empty one — replaces the content the
+  // card already shows. Omitting `content` means "unchanged". Only that
+  // distinction lets an explicit empty set remove the previous thumbnails
+  // instead of leaving them on the card forever.
+  if (Array.isArray(data.content)) applyToolResultImages(el, content);
   if (content.length > 0) {
     applyStructuredDiff(el, content);
-    applyToolResultImages(el, content);
     const text = extractToolCallContent(content);
     if (text) {
       // ACP agents stream cumulative snapshots (full output-so-far), not deltas.
