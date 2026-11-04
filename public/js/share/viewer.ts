@@ -14,6 +14,7 @@
 import {
   renderContentEvent,
   isContentEventType,
+  setAgentImageSrcRewriter,
   updateAssistantDisplay,
 } from "../render-event.ts";
 import { extractCompletedFinalAnswer } from "../event-interpreter.ts";
@@ -101,8 +102,13 @@ function renderEvents(
   let currentBashEl: HTMLElement | null = null;
   let finalAnswerToolText: string | null = null;
 
+  const rewriteAttachmentSrc = makeAttachmentRewriter(token);
+  // An agent image is an attachment too: on this surface its path must point at
+  // the public share route, exactly like a user's attachment.
+  setAgentImageSrcRewriter(rewriteAttachmentSrc);
+
   const hooks = {
-    rewriteAttachmentSrc: makeAttachmentRewriter(token),
+    rewriteAttachmentSrc,
     enhanceMarkdown: enhanceCodeBlocks,
     findToolCallEl: (id: string) => toolCalls.get(id) ?? null,
     findPermissionEl: (reqId: string) => permissions.get(reqId) ?? null,

@@ -70,8 +70,6 @@ import {
   isContentEventType,
   getLastMarkdownStreamTiming,
   inheritAssistantDisplayState,
-  buildAgentImageMessage,
-  parseAgentImages,
   type RenderHooks,
   type ContentEventType,
 } from "./render-event.ts";
@@ -1592,7 +1590,7 @@ function handleReplayContentEvent(
       }
       break;
     }
-    case "assistant_image": {
+    case "agent_image": {
       // Its own element, never merged into a neighbouring text bubble: the
       // image is its own stored record, exactly as live streaming renders it.
       const el = renderContentEvent(type, d, hooks);
@@ -2218,22 +2216,26 @@ export function handleEvent(msg: AgentEvent) {
       // as a fresh assistant bubble without reopening the foreground turn.
       hideWaiting();
       finishThinking();
-      if (msg.text) {
-        if (!state.currentAssistantEl) {
-          state.currentAssistantEl = addMessage("assistant", "");
-          state.currentAssistantText = "";
-        }
-        state.currentAssistantText += msg.text;
-        scheduleAssistantRender();
+      if (!state.currentAssistantEl) {
+        state.currentAssistantEl = addMessage("assistant", "");
+        state.currentAssistantText = "";
       }
-      if (parseAgentImages(msg.images).length > 0) {
-        // An agent image is its own element, exactly as replay renders its own
-        // record: close the text bubble (which flushes the pending markdown
-        // render) so the image never lands inside a markdown host.
-        finishAssistant();
-        appendMessageElement(buildAgentImageMessage(msg.images));
-      }
+      state.currentAssistantText += msg.text;
+      scheduleAssistantRender();
       break;
+
+    case "agent_image": {
+      // An image the agent returned is its own element, exactly as replay
+      // renders its own record. Close the text bubble first (which flushes the
+      // pending markdown render) so the image never lands inside a markdown
+      // host, and so text → image → text keeps three elements.
+      hideWaiting();
+      finishThinking();
+      finishAssistant();
+      const el = renderContentEvent("agent_image", msg, liveHooks());
+      if (el) appendMessageElement(el);
+      break;
+    }
 
     case "thought_chunk":
       // Like assistant chunks, thought chunks may belong to Main-agent work

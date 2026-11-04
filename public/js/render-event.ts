@@ -28,7 +28,7 @@ import { buildPlanElement } from "./plan-view.ts";
 import { buildStructuredDiffLines } from "./structured-diff.ts";
 import { classifyToolContentItem } from "../../src/shared/tool-content.ts";
 import type {
-  AgentImage,
+  AgentImageAttachment,
   RawInput,
   DiffLine,
   PlanEntry,
@@ -123,7 +123,7 @@ function applyStructuredDiff(
 export const CONTENT_EVENT_TYPES = [
   "user_message",
   "assistant_message",
-  "assistant_image",
+  "agent_image",
   "thinking",
   "tool_call",
   "tool_call_update",
@@ -193,8 +193,8 @@ export function renderContentEvent(
       return buildUserMessage(data, hooks);
     case "assistant_message":
       return buildAssistantMessage(data, hooks);
-    case "assistant_image":
-      return buildAgentImageMessage(data.images);
+    case "agent_image":
+      return buildAgentImageMessage(data.attachment);
     case "thinking":
       return buildThinking(data);
     case "tool_call":
@@ -303,16 +303,19 @@ function buildUserFileLink(src: string, name: string): HTMLAnchorElement {
   return link;
 }
 
+type ImageVariant = "user" | "agent";
+
 function imageDisplaySize(
   rawWidth: unknown,
   rawHeight: unknown,
+  variant: ImageVariant = "user",
 ): { width: number; height: number } | null {
   if (typeof rawWidth !== "number" || typeof rawHeight !== "number") {
     return null;
   }
   if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) return null;
   if (rawWidth <= 0 || rawHeight <= 0) return null;
-  const maxSize = imageMaxDisplaySize();
+  const maxSize = imageMaxDisplaySize(variant);
   const scale = Math.min(
     maxSize.width / rawWidth,
     maxSize.height / rawHeight,
@@ -324,15 +327,27 @@ function imageDisplaySize(
   };
 }
 
-function imageMaxDisplaySize(): { width: number; height: number } {
+function imageMaxDisplaySize(variant: ImageVariant = "user"): {
+  width: number;
+  height: number;
+} {
   const style = document.defaultView?.getComputedStyle(
     document.documentElement,
   );
-  if (!style) return { width: 200, height: 150 };
-  return {
-    width: cssPixelVar(style, "--user-image-max-width", 200),
-    height: cssPixelVar(style, "--user-image-max-height", 150),
-  };
+  if (!style) {
+    return variant === "agent"
+      ? { width: 360, height: 320 }
+      : { width: 200, height: 150 };
+  }
+  return variant === "agent"
+    ? {
+        width: cssPixelVar(style, "--agent-image-max-width", 360),
+        height: cssPixelVar(style, "--agent-image-max-height", 320),
+      }
+    : {
+        width: cssPixelVar(style, "--user-image-max-width", 200),
+        height: cssPixelVar(style, "--user-image-max-height", 150),
+      };
 }
 
 function cssPixelVar(
@@ -347,43 +362,80 @@ function cssPixelVar(
 }
 
 /**
- * The inline images an agent returned, from an event payload of unknown shape.
- * One validator for both paths, so live streaming and replay accept exactly the
- * same payloads.
+ * The stored agent image inside an event payload of unknown shape, or null.
+ * Live streaming and replay share this validator, so the two paths accept
+ * exactly the same payloads.
  */
-export function parseAgentImages(raw: unknown): AgentImage[] {
-  if (!Array.isArray(raw)) return [];
-  const images: AgentImage[] = [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== "object") continue;
-    const { mimeType, data } = entry as { mimeType?: unknown; data?: unknown };
-    if (typeof mimeType !== "string" || !mimeType) continue;
-    if (typeof data !== "string" || !data) continue;
-    images.push({ mimeType, data });
-  }
-  return images;
+export function parseAgentImage(raw: unknown): AgentImageAttachment | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as Record<string, unknown>;
+  if (a.kind !== "image") return null;
+  if (typeof a.path !== "string" || !a.path) return null;
+  if (typeof a.mimeType !== "string" || !a.mimeType) return null;
+  return {
+    kind: "image",
+    attachmentId: typeof a.attachmentId === "string" ? a.attachmentId : "",
+    displayName:
+      typeof a.displayName === "string" && a.displayName
+        ? a.displayName
+        : "agent image",
+    mimeType: a.mimeType,
+    path: a.path,
+    width: typeof a.width === "number" ? a.width : null,
+    height: typeof a.height === "number" ? a.height : null,
+  };
 }
 
 /**
- * The bubble for images an agent returned inline. Live streaming and replay
- * both build it here, so the two paths cannot drift: same element, same
- * classes, same data URL, same order. The payload is base64 and travels with
- * the event — nothing is fetched, signed, or written to disk.
+ * The bubble for an image the agent returned. Live streaming and replay both
+ * build it here, so the two paths cannot drift: same element, same classes,
+ * same URL form, same order.
+ *
+ * The URL is the stored attachment path — signed at egress, rewritten by the
+ * share viewer's hook — not base64: the transcript holds a reference, exactly
+ * like a user's attachment.
  */
 export function buildAgentImageMessage(raw: unknown): HTMLElement {
   const el = document.createElement("div");
   el.className = "msg assistant";
   // No `data-raw`: this bubble carries no markdown text, and a markdown host
   // must never receive foreign children (the streaming renderer owns them).
-  for (const { mimeType, data } of parseAgentImages(raw)) {
-    const img = document.createElement("img");
-    img.className = "agent-image";
-    img.alt = "agent image";
-    img.loading = "lazy";
-    img.src = `data:${mimeType};base64,${data}`;
-    el.appendChild(img);
+  const attachment = parseAgentImage(raw);
+  if (!attachment) return el;
+  const img = document.createElement("img");
+  img.className = "agent-image";
+  img.alt = attachment.displayName;
+  img.loading = "lazy";
+  const displaySize = imageDisplaySize(
+    attachment.width,
+    attachment.height,
+    "agent",
+  );
+  if (displaySize) {
+    img.width = displaySize.width;
+    img.height = displaySize.height;
   }
+  img.src = hooks_rewriteSrc(attachment.path);
+  el.appendChild(img);
   return el;
+}
+
+/**
+ * Egress rewriting is a property of the *consumer*, not of the image: the
+ * share viewer maps owner attachment paths to its public ones. Without a
+ * consumer hook the stored path is used as-is (already signed at egress).
+ */
+let agentImageSrcRewriter: ((src: string) => string) | null = null;
+
+/** Install the consumer's attachment-URL rewriter (share viewer). */
+export function setAgentImageSrcRewriter(
+  rewrite: ((src: string) => string) | null,
+): void {
+  agentImageSrcRewriter = rewrite;
+}
+
+function hooks_rewriteSrc(src: string): string {
+  return agentImageSrcRewriter ? agentImageSrcRewriter(src) : src;
 }
 
 function buildAssistantMessage(

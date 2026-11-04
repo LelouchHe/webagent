@@ -426,10 +426,15 @@ describe("events", () => {
       });
 
       it("renders an agent image as its own element, identically live and on replay", () => {
-        const images = [
-          { mimeType: "image/png", data: "AAAA" },
-          { mimeType: "image/jpeg", data: "BBBB" },
-        ];
+        const attachment = {
+          kind: "image",
+          attachmentId: "img-1",
+          displayName: "agent-image-1",
+          mimeType: "image/png",
+          path: "/api/v1/tasks/s1/attachments/img-1.png?exp=1&sig=abc",
+          width: 800,
+          height: 600,
+        };
 
         /** Class names, text, and image attributes, in document order. */
         function shape() {
@@ -447,9 +452,15 @@ describe("events", () => {
           }));
         }
 
-        // Live: text, image, text — one chunk each.
+        // Live: text, image, text — one event each. The image names its task,
+        // so the live filter needs the client to be on it.
+        state.taskId = "s1";
         events.handleEvent({ type: "message_chunk", text: "before" });
-        events.handleEvent({ type: "message_chunk", text: "", images });
+        events.handleEvent({
+          type: "agent_image",
+          taskId: "s1",
+          attachment,
+        });
         events.handleEvent({ type: "message_chunk", text: "after" });
         events.handleEvent({ type: "prompt_done", stopReason: "end_turn" });
         const live = shape();
@@ -458,20 +469,7 @@ describe("events", () => {
           {
             className: "msg assistant",
             text: "",
-            images: [
-              [
-                "agent-image",
-                "agent image",
-                "lazy",
-                "data:image/png;base64,AAAA",
-              ],
-              [
-                "agent-image",
-                "agent image",
-                "lazy",
-                "data:image/jpeg;base64,BBBB",
-              ],
-            ],
+            images: [["agent-image", "agent-image-1", "lazy", attachment.path]],
           },
           { className: "msg assistant", text: "after", images: [] },
         ]);
@@ -486,8 +484,8 @@ describe("events", () => {
             seq: 1,
           },
           {
-            type: "assistant_image",
-            data: JSON.stringify({ images }),
+            type: "agent_image",
+            data: JSON.stringify({ attachment }),
             seq: 2,
           },
           {

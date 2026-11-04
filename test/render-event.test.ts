@@ -45,7 +45,7 @@ describe("render-event", () => {
       const expected = [
         "user_message",
         "assistant_message",
-        "assistant_image",
+        "agent_image",
         "thinking",
         "tool_call",
         "tool_call_update",
@@ -65,66 +65,55 @@ describe("render-event", () => {
     });
   });
 
-  describe("assistant_image", () => {
-    it("builds one assistant bubble whose children are the agent's images", () => {
+  describe("agent_image", () => {
+    const attachment = {
+      kind: "image",
+      attachmentId: "img-1",
+      displayName: "agent-image-1",
+      mimeType: "image/png",
+      path: "/api/v1/tasks/s1/attachments/img-1.png",
+      width: 800,
+      height: 600,
+    };
+
+    it("builds an assistant bubble whose child is the stored attachment", () => {
       const el = append(
-        mod.renderContentEvent(
-          "assistant_image",
-          {
-            images: [
-              { mimeType: "image/png", data: "AAAA" },
-              { mimeType: "image/jpeg", data: "BBBB" },
-            ],
-          },
-          makeHooks(),
-        ),
+        mod.renderContentEvent("agent_image", { attachment }, makeHooks()),
       ) as HTMLElement;
 
       assert.equal(el.className, "msg assistant");
-      const imgs = [...el.querySelectorAll("img")] as HTMLImageElement[];
-      assert.equal(imgs.length, 2);
-      assert.deepEqual(
-        imgs.map((img) => [
-          img.className,
-          img.alt,
-          img.loading,
-          img.getAttribute("src"),
-        ]),
-        [
-          ["agent-image", "agent image", "lazy", "data:image/png;base64,AAAA"],
-          ["agent-image", "agent image", "lazy", "data:image/jpeg;base64,BBBB"],
-        ],
-      );
+      const img = el.querySelector("img") as HTMLImageElement;
+      assert.ok(img, "the image must render");
+      assert.equal(img.className, "agent-image");
+      assert.equal(img.alt, "agent-image-1");
+      assert.equal(img.loading, "lazy");
+      // A reference, not base64: the path the egress signs.
+      assert.equal(img.getAttribute("src"), attachment.path);
+      // Reserved geometry comes from the 800x600 the store recorded.
+      assert.ok(Number(img.getAttribute("width")) > 0);
+      assert.ok(Number(img.getAttribute("height")) > 0);
       // The bubble is not a markdown host: nothing carries a text payload.
       assert.equal(el.getAttribute("data-raw"), null);
     });
 
-    it("ignores payload entries that are not a usable image", () => {
-      const el = append(
-        mod.renderContentEvent(
-          "assistant_image",
-          {
-            images: [
-              { mimeType: "image/png", data: "AAAA" },
-              { mimeType: "", data: "BBBB" },
-              { mimeType: "image/png" },
-              null,
-              "nope",
-            ],
-          },
-          makeHooks(),
-        ),
-      ) as HTMLElement;
-
-      assert.equal(el.querySelectorAll("img.agent-image").length, 1);
-    });
-
-    it("renders nothing extra for an empty payload", () => {
-      const el = append(
-        mod.renderContentEvent("assistant_image", { images: [] }, makeHooks()),
-      ) as HTMLElement;
-      assert.equal(el.className, "msg assistant");
-      assert.equal(el.childElementCount, 0);
+    it("renders nothing extra for a payload that is not a stored image", () => {
+      for (const raw of [
+        undefined,
+        {},
+        { kind: "file", path: "/x.png" },
+        { kind: "image" },
+        { kind: "image", path: "" },
+      ]) {
+        const el = append(
+          mod.renderContentEvent(
+            "agent_image",
+            { attachment: raw },
+            makeHooks(),
+          ),
+        ) as HTMLElement;
+        assert.equal(el.className, "msg assistant");
+        assert.equal(el.childElementCount, 0);
+      }
     });
   });
 
