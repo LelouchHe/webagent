@@ -58,6 +58,10 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
   self-reported values then become the task's stored config — never the first
   entry of an option list — so the database, the detail read, a live resume,
   and a cold restore agree. A same-agent replacement keeps replaying them.
+- Those three values are agent-defined opaque strings, and ACP treats choice
+  values as opaque, so the host neither validates nor repairs them: a value the
+  agent rejects leaves that session on its own default, and a task that stored
+  none shows what the agent currently reports rather than a guessed value.
 - New tasks may name their agent. That is the one case where the parent-binding
   guard is not applied: the caller chose the new task's environment, and
   creating a child never rewrites an existing task's binding. A child created

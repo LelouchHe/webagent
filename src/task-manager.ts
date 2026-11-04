@@ -2107,7 +2107,10 @@ export class TaskManager implements ObligationHost {
       try {
         next = await bridge.setConfigOption(taskId, id, value);
       } catch {
-        // An option may no longer be supported by the current agent.
+        // These values are agent-defined opaque strings (ACP treats choice
+        // values as opaque), so the host has no basis to validate or repair
+        // one: whether a stored value still exists is the agent's call, and a
+        // refusal leaves the session on its own default.
         continue;
       }
       if (next.length === 0) continue;
@@ -2568,6 +2571,13 @@ export class TaskManager implements ObligationHost {
   }
 
   /** Override currentValue in configOptions with stored task values. */
+  /**
+   * Overlay a task's stored choices onto the agent's reported schema.
+   *
+   * A null column leaves the agent's own `currentValue` in place. That is not a
+   * fallback: these are agent-defined opaque strings, so "what this agent
+   * reports" is the only truthful value when the task stored none.
+   */
   applyStoredConfig(
     configOptions: ConfigOption[],
     task: {
