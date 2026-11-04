@@ -235,11 +235,8 @@ describe("tool-result images: ACP image blocks", () => {
       { store, dataDir: harness.dir, taskId: "t1", limitBytes: LIMIT },
       textOnly,
     );
-    assert.equal(
-      unchanged.content,
-      textOnly,
-      "nothing to do must leave content untouched",
-    );
+    // Rebuilt from the fields we render, so the value is the same.
+    assert.deepEqual(unchanged.content, textOnly);
     assert.equal(unchanged.inserted, 0);
   });
 
@@ -296,6 +293,60 @@ describe("tool-result images: ACP image blocks", () => {
     assert.equal(textOf(content), "kept");
   });
 
+  it("persists exactly the fields the renderer reads", () => {
+    harness.toolCall("t1", "Screenshot");
+    harness.emit(
+      harness.update("t1", [
+        { type: "content", content: { type: "text", text: "plain" } },
+        { type: "diff", path: "a.ts", oldText: null, newText: "b\n" },
+        { type: "terminal", terminalId: "term-1" },
+        {
+          type: "content",
+          content: {
+            type: "image",
+            mimeType: "image/png",
+            data: png().toString("base64"),
+          },
+        },
+      ]),
+    );
+
+    const content = harness.storedContent();
+    assert.deepEqual(content[0], {
+      type: "content",
+      content: { type: "text", text: "plain" },
+    });
+    assert.deepEqual(content[1], {
+      type: "diff",
+      path: "a.ts",
+      oldText: null,
+      newText: "b\n",
+    });
+    assert.deepEqual(content[2], { type: "terminal", terminalId: "term-1" });
+    assert.deepEqual(Object.keys(content[3]).sort(), ["attachment", "type"]);
+    assert.equal(attachmentOf(content[3])?.kind, "image");
+  });
+
+  it("drops an extension field a text block carries", () => {
+    harness.toolCall("t1", "Screenshot");
+    harness.emit(
+      harness.update("t1", [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: "x",
+            vendorExtra: { data: "payload" },
+          },
+        } as unknown as ToolContentItem,
+      ]),
+    );
+
+    assert.deepEqual(harness.storedContent(), [
+      { type: "content", content: { type: "text", text: "x" } },
+    ]);
+  });
+
   it("never throws out of ingest", () => {
     const content: ToolContentItem[] = [
       { type: "content", content: { type: "text", text: "kept" } },
@@ -310,7 +361,7 @@ describe("tool-result images: ACP image blocks", () => {
       { store: broken, dataDir: harness.dir, taskId: "t1", limitBytes: LIMIT },
       content,
     );
-    assert.equal(result.content, content);
+    assert.deepEqual(result.content, content);
     assert.equal(result.inserted, 0);
   });
 
@@ -326,7 +377,7 @@ describe("tool-result images: ACP image blocks", () => {
       type: "content",
       content: { type: "text", text: "kept" },
     };
-    Object.defineProperty(hostile, "_meta", {
+    Object.defineProperty(hostile.content, "text", {
       enumerable: true,
       get() {
         throw new Error("boom");

@@ -12,9 +12,9 @@
 // `content` the block is replaced by the descriptor an `agent_image` carries,
 // so neither SQLite nor a client ever sees base64.
 //
-// Only the items a reader can render are persisted: an image block, a text
-// block, a diff, a terminal. `_meta` is implementation-specific metadata rather
-// than a content position, so it is dropped instead of stored or inspected.
+// Only the items a reader can render are persisted, rebuilt from exactly the
+// fields it reads: an image block, a text block, a diff, a terminal. Any field
+// we do not render cannot reach storage or a client.
 //
 // This file is the only place that sees base64.
 
@@ -103,11 +103,7 @@ export function storeToolResultImages(
         return [placeholder(UNSTORABLE)];
       }
     });
-    // Identity marks a rewrite; a drop shortens the array.
-    const changed =
-      normalized.length !== content.length ||
-      normalized.some((item, at) => item !== content[at]);
-    return changed ? { content: normalized, inserted } : { content, inserted };
+    return { content: normalized, inserted };
   } catch (error) {
     // Last resort: nothing survives as received.
     warn("could not rewrite tool result content", ctx, error);
@@ -156,12 +152,13 @@ function inlineImageData(value: unknown): string | null {
 }
 
 /**
- * Normalize one tool result content item, or drop it.
+ * Rebuild one tool result content item from the fields the renderer reads, or
+ * drop it.
  *
- * An image block can be the item itself or `item.content` (the wrapper, hoisted
- * to the bare descriptor so a stored row keeps one shape). `_meta` is
- * implementation-specific metadata, so it is dropped from both levels. An item
- * a reader cannot render returns null.
+ * Built, not trimmed: a field this function does not name cannot reach storage,
+ * so no extension slot (`_meta`, `annotations`, anything a provider adds later)
+ * has to be enumerated. An image block is the item itself or `item.content` (the
+ * wrapper, hoisted to the bare descriptor so a stored row keeps one shape).
  */
 function normalizeItem(
   item: ToolContentItem,
@@ -173,28 +170,24 @@ function normalizeItem(
   const wrapped = inlineImageData(item.content);
   if (wrapped) return store(wrapped);
 
-  // The classifier is the renderability judgment: what it cannot name is dropped.
-  if (classifyToolContentItem(item).kind === "unknown") return null;
-  return isRecord(item) ? dropMeta(item) : item;
-}
-
-/** A copy of one container without its `_meta` slot. */
-function withoutMeta(node: Record<string, unknown>): Record<string, unknown> {
-  const copy = { ...node };
-  delete copy._meta;
-  return copy;
-}
-
-/** Drop `_meta` from the item and from its `content` wrapper, if either has it. */
-function dropMeta(item: Record<string, unknown>): ToolContentItem {
-  const content = item.content;
-  const contentIsObject = isRecord(content) && !Array.isArray(content);
-  const contentHasMeta = contentIsObject && Object.hasOwn(content, "_meta");
-  if (!Object.hasOwn(item, "_meta") && !contentHasMeta) return item;
-
-  const copy = withoutMeta(item);
-  if (contentHasMeta) copy.content = withoutMeta(content);
-  return copy;
+  const shape = classifyToolContentItem(item);
+  switch (shape.kind) {
+    case "content":
+      return { type: "content", content: { type: "text", text: shape.text } };
+    case "diff":
+      return {
+        type: "diff",
+        path: shape.path,
+        oldText: shape.oldText,
+        newText: shape.newText,
+      };
+    case "terminal":
+      return { type: "terminal", terminalId: shape.terminalId };
+    case "image_attachment":
+      return { type: "image", attachment: shape.attachment };
+    case "unknown":
+      return null;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

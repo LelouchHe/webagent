@@ -111,6 +111,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     dropped, never passed through) while its siblings are still stored
   - an item no reader can render (an `audio` block, a text array) is dropped,
     and its renderable siblings are kept
+  - a persisted item carries exactly the fields the renderer reads: text, diff
+    (including `oldText: null`), terminal and image keep their canonical shape,
+    and an extension field on a text block (`vendorExtra`) is not persisted
   - a failed attachment count only affects naming: the pictures are still stored
   - refusals: above `limits.image_upload` and not a storable image container
     each become visible `[image omitted: …]` text with no file and no row;
@@ -136,6 +139,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - an item whose shape hides an image (a text array under `content`) is dropped
     whole: the event is still stored and broadcast, `content` is empty, and
     neither SQLite nor the frame carries the payload
+  - a payload inside `annotations._meta` reaches neither SQLite nor the frame:
+    the item is rebuilt from its rendered fields, so the slot is not persisted
   - with the attachments table unavailable (the count or one insert throws), the
     event and the frame still go out, every block degrades to visible
     `[image omitted: …]` text, and neither SQLite nor the frame carries a

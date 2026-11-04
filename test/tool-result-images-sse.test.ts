@@ -243,6 +243,54 @@ describe("tool-result images: the live frame", () => {
     assert.equal(frame.includes(base64), false, "the frame must not carry it");
   });
 
+  it("persists nothing from annotations, a block's other extension slot", () => {
+    const base64 = png(128).toString("base64");
+
+    harness.toolCall("t1", "Screenshot");
+    harness.emit({
+      type: "tool_call_update",
+      taskId: "t1",
+      id: "t1",
+      status: "completed",
+      content: [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: "kept",
+            annotations: {
+              audience: ["user"],
+              _meta: {
+                nested: { type: "image", mimeType: "image/png", data: base64 },
+              },
+            },
+          },
+        },
+      ] as unknown as ToolContentItem[],
+    });
+
+    assert.equal(
+      harness.store
+        .getEvents("t1")
+        .filter((row) => row.type === "tool_call_update").length,
+      1,
+    );
+    const frame = frames.join("");
+    assert.match(frame, /^data: \{/);
+
+    // The item is rebuilt from the fields the card reads, so the extension slot
+    // never reaches storage or the wire.
+    assert.deepEqual(harness.storedContent(), [
+      { type: "content", content: { type: "text", text: "kept" } },
+    ]);
+    assert.equal(
+      JSON.stringify(harness.store.getEvents("t1")).includes(base64),
+      false,
+      "SQLite must not hold the payload",
+    );
+    assert.equal(frame.includes(base64), false, "the frame must not carry it");
+  });
+
   it("drops an item whose shape hides an image, so no payload survives", () => {
     const base64 = png(256).toString("base64");
 

@@ -97,18 +97,15 @@ picture and its payload is never echoed; there is no compatibility branch.
 
 Only the protocol's content positions are read: the item itself when it is an
 image block, and `item.content` — the `{ type: "content", content: … }` wrapper,
-hoisted to the bare descriptor so a stored row has one shape. `_meta` is ACP's
-implementation-specific metadata (arbitrary JSON, never read by this app), so it
-is **dropped before persistence** instead of being walked: an opaque field is not
-stored, and a payload inside it cannot reach a client. The trade-off is explicit —
-a picture that exists only in `_meta` is not shown, not stored and not leaked.
-Ingest also keeps only what a reader can render: an image block, a text block, a
-diff, a terminal. Every other shape is dropped — an update whose items were all
-dropped keeps `content: []` — so a payload cannot hide in a shape no reader
-understands (a text array under `content` holding an image block, say). The read
-paths make the same judgment through `src/shared/tool-content.ts`, so they cannot
-disagree with what was persisted; a row written before this rule by such a shape
-projects as `content_shape: unknown`.
+hoisted to the bare descriptor so a stored row has one shape. Ingest also keeps
+only what a reader can render — an image block, a text block, a diff, a terminal —
+and rebuilds each item from exactly those fields. Any field we do not render
+(`_meta`, `annotations`, any other extension slot) and any shape we do not
+understand therefore cannot enter persistence or broadcast, without having to be
+named. An update whose items were all dropped keeps `content: []`. The read paths
+make the same judgment through `src/shared/tool-content.ts`, so they cannot
+disagree with what was persisted; a row written before this rule by a dropped
+shape projects as `content_shape: unknown`.
 
 Persistence and broadcast therefore never carry an inline payload: a block that
 cannot be stored (too large, not a storable container, unwritable) becomes
