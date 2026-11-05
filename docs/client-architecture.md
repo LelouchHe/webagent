@@ -99,6 +99,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`agent-directory.ts`**   | The configured agent directory from `GET /config` / bootstrap; PATH availability, default agent      | `installAgentDirectory()`, `getAgentDirectory()`, `availableAgentIds()`                          |
 | **`task-topology.ts`**     | The current task's parent reference and the list-arrival flag          | `loadTaskList()`, `setCurrentTask()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
 | **`create-command.ts`**    | Shared `+` / `/new` / `/clear` helpers: coordinate parsing, cwd resolution, preview, failure rescue   | `parseCoordinate()`, `suggestCoordinatePrefix()`, `resolveCreateCwd()`, `agentRescueCommand()`    |
+| **`agent-suggestions.ts`** | Menu rows for the coordinate field: the agent segment of `+`, `/new`, and `/clear`                    | `coordinateField()`                                                                              |
 
 **Dependency graph** (arrows = imports):
 
@@ -480,6 +481,36 @@ directory exists and fails as a directory error when it does not. `./` is the
   `/clear <live-agent>:<raw-cwd>`. `<live-agent>` is an available agent other
   than the one that just failed, falling back to the configured default;
   `<raw-cwd>` is the task's raw cwd. An unconfigured agent (400) gets no rescue.
+
+#### Coordinate completion
+
+`+`, `/new`, and `/clear` share one field reading, not just one parser:
+`coordinateField` (`agent-suggestions.ts`) consumes `suggestCoordinatePrefix`
+and returns the agent rows, the text path completion may use, and the settled
+`<agent>:` prefix. A menu never re-reads the raw text as a coordinate, so it
+cannot offer a choice submission would not honor.
+
+- **Two independent answers.** `co` still suggests agents *and* keeps offering
+  path rows; `co ` (first token ended by whitespace), `copilot:` (settled), and
+  `./co` (path escape) suggest none. "No agent" is not "no candidates".
+- **The agent segment needs a choice.** Rows appear only when the configuration
+  offers at least two agents; a single-agent deployment's menus are unchanged.
+  Rows are ordered available-first (configuration order inside each group), show
+  `<id>:` with the colon, mark the current task's binding with an explicit `*`
+  (`current` alone only colors the label), and say availability in words —
+  `agent` or `unavailable` — never by color alone.
+- **Position.** Rows lead the *data segment*: after the submit row and its
+  separator. The default selection and the row order above it do not move.
+- **Fill.** A row replaces the whole first token (`+t co` → `+t copilot:`,
+  `/new co` → `/new copilot:`) and keeps the menu open. From then on the
+  completion acts on `:`'s suffix (`pathInput`) and re-states the settled
+  prefix instead of rewriting it; fetched rows filter on the suffix and their
+  selection carries the agent with the directory.
+- **Raw input.** The walker's tail query is normalized (tokens re-joined, the
+  trailing whitespace that ends the first token dropped), so a node that owns a
+  field reads `resolvePath(...).rawRemainder` through `CmdNode.field` and hands
+  that raw text to its freeform row. That is why `co` and `co ` differ in the
+  menu, and why an action row previews the bytes a coordinate will submit.
 
 ### Parent Reference and Agent Coordinates
 

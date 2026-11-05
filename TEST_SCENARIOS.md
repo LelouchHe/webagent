@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-11-04
+Last updated: 2026-11-05
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -148,6 +148,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - `createTask`/`clearTask` send a named `agentId`, omit it for `null` or an
     omitted option, and refuse an empty string locally before any request
 
+- `test/slash-tree.test.ts` (`resolvePath` raw remainder)
+  - `rawRemainder` keeps the argument byte for byte (trailing space, TAB,
+    interior double spaces, full-width space, a degraded token) while
+    `tailQuery` stays token-joined: the two answer different questions and a
+    node's field reads only the raw one
+
 - `test/agent-status-bar.test.ts` (DOM cwd field)
   - no prefix while the parent reference is unresolved, and none for a
     single-agent deployment (byte-identical text and tooltip, no agent node)
@@ -160,6 +166,24 @@ spot gaps, and decide what still needs to be added without reading every spec.
     non-default parent still draws nothing
   - an unbound current task draws nothing; a parent rotation repaints without
     navigation and removes the coordinate once the parent matches
+
+- `test/agent-coordinate-menu.test.ts` (real menu pipeline for `+`, `/new`, `/clear`)
+  - the empty field leads the data segment with one row per configured agent
+    (`<id>:`), available first, the current binding starred by an explicit
+    prefix; the submit row keeps the default selection
+  - a first-token prefix narrows the agent rows; a settled coordinate, a token
+    ended by a space, TAB, or a full-width space, and a `./` escape suggest none
+    while the path rows stay
+  - picking a row replaces the whole first token (`+t co` → `+t copilot:`,
+    `/new`/`/clear` → `/clear copilot:`), keeps the menu open, and every later
+    path fill keeps the settled prefix
+  - all three entries offer the same agent rows for the same input; a
+    single-agent directory offers none (rows byte-identical to before)
+  - an unavailable agent is listed last with a `unavailable` text marker and
+    still completes to its own id; `+`'s action row previews and submits the
+    coordinate's raw suffix (interior double space kept)
+  - `/clear` and `/new` filter recent paths by the coordinate's suffix and their
+    selection sends the suffix's directory with the coordinate's agent
 
 - `test/agent-coordinate-entries.test.ts` (`+`, `/new`, `/clear` payloads)
   - `/clear` sends the coordinate's agent and raw cwd; `/new` omits the cwd for
@@ -1142,6 +1166,29 @@ spot gaps, and decide what still needs to be added without reading every spec.
     an already-open menu re-renders when the current binding changes
   - a cross-agent `/clear` repaints the new agent's own model and coordinate,
     and the detail read agrees; clearing back removes the coordinate
+
+- `agent-suggestions.spec.ts` (private servers; real menus, Tab/click, real
+  submissions)
+  - `+` offers `mock:`/`mock2:` rows (available first, current binding starred),
+    narrows them by prefix, and offers none for a settled coordinate, a closed
+    first token (space, TAB, full-width space), or `./`
+  - a suggested agent row is selected through the menu and submitted: the
+    request body and the stored task carry the id that row displayed
+  - `/new` and `/clear` offer the same rows, complete to their own command head,
+    and the clear omits `cwd` while the create carries `agentId`
+  - a settled coordinate filters recent rows by its suffix; picking one creates
+    for that agent at that directory (the prefix is never rewritten)
+  - single-agent template (`config.single-agent.toml`): none of the three menus
+    has an agent row or an agent annotation, and `+` keeps exactly its action
+    row plus the current cwd
+  - an agent whose command is missing from PATH (`available: false`) is listed
+    with an `unavailable` marker, and its row still submits its own `agentId`
+    (the server rejects it for the real reason) while the available row binds
+    and succeeds
+  - at 390px an agent row is one line, the menu and page never scroll
+    sideways, and each `<id>:` is complete
+  - reopening a `+` menu after switching into another agent's task moves the
+    star to that task's binding
 
 - `agent-rescue.spec.ts` (private server, an agent whose command exists in PATH
   but whose process exits immediately)
