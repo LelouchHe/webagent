@@ -5,7 +5,7 @@
 // plus Tab/Click/keyboard dispatch. Execution paths (onSelect handlers) live
 // in slash-commands.ts so this file stays a thin pipeline.
 
-import { state, dom, setInputValue } from "./state.ts";
+import { state, dom, onTaskAgentChanged, setInputValue } from "./state.ts";
 import {
   resolvePath,
   buildCandidates,
@@ -518,6 +518,7 @@ export function refreshSlashMenuRows(): void {
 }
 
 subscribeTaskTopology(refreshSlashMenuRows);
+onTaskAgentChanged(refreshSlashMenuRows);
 
 // --- DOM listeners ---
 

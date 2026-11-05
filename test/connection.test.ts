@@ -720,7 +720,9 @@ describe("connection", () => {
 
     assert.equal(state.rootTaskId, ROOT_ID);
     assert.equal(state.taskId, ROOT_ID);
-    assert.equal(listCalls, 1);
+    // One list for the connection baseline and one for the activated task's
+    // parent reference (the parent is learned from a list response).
+    assert.equal(listCalls, 2);
     assert.equal(
       fetchCalls.some((call) => call.url === "/api/v1/tasks/recent-child"),
       false,

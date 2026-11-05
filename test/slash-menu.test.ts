@@ -1306,8 +1306,6 @@ describe("slash menu — Tab vs Click behavior", () => {
 
     // The current task rotates while the menu is open. No new input event.
     installTaskAgentId("current", "copilot");
-    const topology = await import("../public/js/task-topology.ts");
-    topology.observeTaskCreated("current", "copilot");
 
     // Every row is re-spec'd against the new baseline: the other task now
     // matches it, and this task's row (still recorded as pi in the list) no

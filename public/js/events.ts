@@ -60,6 +60,8 @@ import {
   loadTaskList,
   observeTaskCreated,
   observeTaskDeleted,
+  observeTaskReset,
+  setCurrentTask,
 } from "./task-topology.ts";
 import { applyConnectedLogLevel } from "./log.ts";
 import { log } from "./log.ts";
@@ -1949,21 +1951,14 @@ function applyLiveToolCallUpdate(
   scrollToBottom();
 }
 
-let topologyRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-
 /**
- * Complete the global collection from the authoritative list. Coalesced: a
- * burst of creates from several clients is one read.
+ * The newly activated task's parent link comes from the shared list read; the
+ * response only fills a reference that is still unresolved.
  */
-function scheduleTopologyRefresh(): void {
-  if (topologyRefreshTimer !== null) return;
-  topologyRefreshTimer = setTimeout(() => {
-    topologyRefreshTimer = null;
-    void loadTaskList().catch(() => {
-      // A failed refresh leaves the previous collection in place; the next
-      // connection rebuilds it from scratch anyway.
-    });
-  }, 0);
+function requestParentReference(): void {
+  void loadTaskList().catch(() => {
+    // Unresolved stays unresolved: the status bar draws no coordinate.
+  });
 }
 
 export function drainNavigationEvents(taskId: string): void {
@@ -1981,21 +1976,15 @@ export function handleEvent(msg: AgentEvent) {
   if (msg.type === "connected" || msg.type === "task_created") {
     installRootTaskId(msg.rootTaskId);
   }
-  // The global topology is consumed *before* the per-view filters below: the
-  // status bar's reference binding and the list-row baseline both need facts
-  // about other tasks, so another task's creation, rotation, or deletion must
-  // reach the collection even though its own events must not touch this view.
+  // The status bar's reference binding is consumed *before* the per-view
+  // filters below: only events for the current task's parent matter, and that
+  // parent is usually another task this client is not viewing.
   if (msg.type === "task_created") {
-    const known = observeTaskCreated(msg.taskId, msg.agentId ?? null);
-    // A task we have no metadata for yet (a fresh create, or another client's)
-    // has no parent link, so complete it from the authoritative list.
-    if (!known) scheduleTopologyRefresh();
+    observeTaskCreated(msg.taskId, msg.agentId ?? null);
   } else if (msg.type === "task_deleted") {
     observeTaskDeleted(msg.taskId);
   } else if (msg.type === "task_reset") {
-    // A Root reset tombstones its descendants; the list is the authority for
-    // what remains.
-    scheduleTopologyRefresh();
+    observeTaskReset(msg.taskId);
   }
   if (msg.type === "inbox_count_changed") {
     updateInboxCount(msg.pendingCount);
@@ -2140,6 +2129,9 @@ export function handleEvent(msg: AgentEvent) {
       const isTaskActivation = state.taskId === null;
       installTaskAgentId(msg.taskId, msg.agentId);
       state.taskId = msg.taskId;
+      // The parent reference belongs to the previous task; a real switch asks
+      // for the new one from the shared list read.
+      if (setCurrentTask(msg.taskId)) requestParentReference();
       if (isTaskActivation) rearmHistoryObserverAfterTaskActivation();
       state.taskCwd = msg.cwd ?? state.taskCwd;
       state.taskCwdDisplay = msg.cwdDisplay ?? msg.cwd ?? state.taskCwdDisplay;

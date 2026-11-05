@@ -129,30 +129,35 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the rescue prefers an available agent other than the failed target, falls
     back to the configured default, and yields nothing when none is left
 
-- `test/task-topology.test.ts` (collection state machine)
-  - not-loaded claims nothing and is distinct from loaded-and-empty; a list
-    from an older connection generation is dropped
+- `test/task-topology.test.ts` (the current task's parent reference)
+  - a fresh task claims nothing until the list response resolves its parent;
+    no parent, a parent without a binding, and "not looked up yet" are three
+    distinct answers
+  - a rotation or deletion of the parent that arrives while a list request is
+    in flight survives the response: a list only fills an unresolved reference
+    and never overwrites a settled one, so no reconciliation is involved
+  - a pending parent is completed by its own event; a later detail read cannot
+    describe a reference that is already settled
+  - when the list lacks the parent row the detail read fills the binding, and
+    when it lacks the current task's row the detail read supplies the parent
+    link first; a detail issued for a task the client has left cannot fill the
+    new task's reference
+  - events for any task other than the parent change nothing
+  - the list-arrival flag still distinguishes not-loaded from loaded-and-empty
+    for row labels; a list from an older connection generation is discarded
   - entry labels are baseline-relative to the current task (same agent → none,
-    other agent → its id, no baseline → all); a null binding never prints one,
-    and the number of distinct agents changes nothing
-  - a binding for an agent absent from the configuration still labels; the
-    configured directory is never consulted
-  - `parentOf` separates "no parent link" from "parent with no binding"; a
-    deletion keeps the link and drops the binding, so the reference falls back
-    to the caller's default rather than a stale agent
-  - a `task_created` rotation updates a task this client is not viewing and
-    repaints; concurrent list callers in one generation share one request
-  - a list that was in flight cannot undo a newer event: a rotation that
-    arrived during the request survives, and a deleted task is not resurrected
+    other agent → its id, no baseline → all); a null binding never prints one
+  - concurrent list callers in one generation share one request
 
 - `test/agent-status-bar.test.ts` (DOM cwd field)
-  - no prefix while the collection is unloaded, and none for a single-agent
-    deployment (byte-identical text and tooltip, no agent node)
+  - no prefix while the parent reference is unresolved, and none for a
+    single-agent deployment (byte-identical text and tooltip, no agent node)
   - the agent is folded into the cwd field (`copilot:/work/child`) only when it
     differs from the parent's binding; the title names both, and the coordinate
     prefix stays outside the truncating tail
-  - a task without a parent (or with an unbound one, or not in the cache) is
-    compared against the configured default and says so in the title; a task
+  - a task without a parent (or with an unbound one) is compared against the
+    configured default and says so in the title; a task whose row is missing
+    from the list resolves its parent link from the detail read; a task
     matching a non-default parent still draws nothing
   - an unbound current task draws nothing; a parent rotation repaints without
     navigation and removes the coordinate once the parent matches

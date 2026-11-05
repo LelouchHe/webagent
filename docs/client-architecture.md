@@ -97,7 +97,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`render.ts`**            | DOM helpers: add messages, streaming markdown render, theme, scroll, diff HTML generation           | `addMessage()`, `addSystem()`, `scrollToBottom()`, `updateMarkdownStream()`, `resetMarkdownStream()` |
 | **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createTask()`, `sendMessage()`, `cancelTask()`, etc.                                     |
 | **`agent-directory.ts`**   | The configured agent directory from `GET /config` / bootstrap; PATH availability, default agent      | `installAgentDirectory()`, `getAgentDirectory()`, `availableAgentIds()`                          |
-| **`task-topology.ts`**     | Workspace-wide task collection: per-connection generation, parent bindings, list baseline | `loadTaskList()`, `recordTaskList()`, `observeTaskCreated()`, `parentOf()`, `entryAgentLabel()` |
+| **`task-topology.ts`**     | The current task's parent reference and the list-arrival flag          | `loadTaskList()`, `setCurrentTask()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
 | **`create-command.ts`**    | Shared `+` / `/new` / `/clear` helpers: coordinate parsing, cwd resolution, preview, failure rescue   | `parseCoordinate()`, `suggestCoordinatePrefix()`, `resolveCreateCwd()`, `agentRescueCommand()`    |
 
 **Dependency graph** (arrows = imports):
@@ -481,54 +481,48 @@ directory exists and fails as a directory error when it does not. `./` is the
   than the one that just failed, falling back to the configured default;
   `<raw-cwd>` is the task's raw cwd. An unconfigured agent (400) gets no rescue.
 
-### Global Task Collection and Agent Coordinates
+### Parent Reference and Agent Coordinates
 
-Two display rules need facts about tasks this client is not viewing, so the
-client keeps a global collection (`task-topology.ts`):
+Two references decide what an agent label says, and neither needs a task
+collection:
 
-- **Status bar reference.** A task states its agent only when it runs on an
-  agent other than the one it should have inherited: its parent's confirmed
-  binding, or the configured default when there is no parent (or the parent has
-  no binding). Another client rotating the parent must change this client's
-  status bar.
-- **List baseline.** A task row states its agent when it differs from the
-  current task's binding.
+- **Status bar.** A task states its agent only when it runs on an agent other
+  than the one it should have inherited: its parent's confirmed binding, or the
+  configured default when there is no parent (or the parent has no binding).
+- **Task rows.** A row states its agent when it differs from the current task's
+  binding; the row's own agent comes from the row itself.
 
-The two references are deliberately different: the status bar asks "is this
-what I inherited?", a list row asks "is this the task I am looking at?".
+The status bar therefore keeps exactly one fact — the current task's parent
+reference (`task-topology.ts`) — not a map of tasks. Its sources, in order:
 
-The collection is fed from the authoritative task list and from the SSE stream:
+1. **A list response.** The shared, de-duplicated `loadTaskList` supplies the
+   current task's `parentId` and, when the parent's row is there, its binding.
+   If the parent's row is missing, `GET /tasks/<parentId>` fills the binding;
+   if the current task's row is missing, `GET /tasks/<taskId>` supplies the
+   parent link first. Both reads are owned by the connection generation and the
+   task they were issued for, so a late response cannot describe a task the
+   client has since left.
+2. **Events for that parent.** `task_created` / `task_deleted` / `task_reset`
+   update the reference only when the event names the parent. Every other
+   task's events are ignored.
+3. **A task switch or a new connection** resets the reference (and a new
+   connection also clears the list-arrival flag). Until it is resolved, the
+   status bar draws no coordinate: "not looked up yet" is not "no parent".
 
-1. **Consume first, filter the view second.** `handleEvent` applies
-   `task_created` / `task_deleted` / `task_reset` to the collection *before* the
-   per-view guards, so another client's creation, rotation, or deletion of a
-   task this client is not viewing still updates the coordinate and the row
-   labels. A `task_created` for a task the collection has no metadata for
-   schedules one coalesced list refresh (it needs the parent link).
-2. **One generation per connection.** A dropped stream starts a new generation
-   and marks the collection not-loaded. Lists are recorded only for the
-   generation that requested them, so a response from a previous connection
-   cannot become the new baseline. Each (re)connect fetches the list, even when
-   the task itself is restored incrementally.
-3. **A list is older than an event that arrived while it was in flight.** Every
-   event-applied change carries a mutation sequence. A list records the
-   sequence at request start and only wins over facts older than that: a
-   rotation received during the request survives, a deleted task is not
-   resurrected, and a task created meanwhile stays in the collection.
-4. **Not loaded is not loaded-and-empty.** Neither claims the reference value,
-   but a loaded-and-empty collection is still a baseline: a row's own binding is
-   known, while the status bar has no parent link to compare against and falls
-   back to the default.
-5. **Bindings are task facts.** A `null` binding is never guessed to be the
-   default, and a binding for an agent that has since left the configuration
-   still counts.
-6. **Entry labels are baseline-relative.** A list row states its agent only when
-   it differs from the current task's binding. Without a current task there is
-   no baseline, so every confirmed row states its agent. A row shows the plain
-   path only when the collection is not loaded or the row itself has no
-   confirmed binding. `/switch` rows recompute this at render time, so a menu
-   opened after a switch (or after the current binding changes while it is
-   open) uses the new baseline.
+**A list only fills an unresolved reference.** Once resolved, no list
+overwrites it, so a rotation or deletion that arrived while a request was in
+flight survives structurally — there is no per-task reconciliation log because
+there is nothing for a list to reconcile. A brief window remains: a rotation of
+a task the client does not yet know is the parent cannot be attributed, and the
+first resolution may then carry the list's snapshot; the next task switch or
+reconnect resolves it again.
+
+The list-arrival flag is separate and only answers "has this connection's list
+arrived yet", which is what lets a row claim that "no label means the current
+agent". `entryAgentLabel` combines it with the current task's binding; a row
+with no binding, or a connection without a list, states nothing. `/switch` rows recompute this at render time, so a menu opened after a
+switch (or after the current binding changes while it is open) uses the new
+baseline.
 
 ---
 
@@ -830,8 +824,8 @@ Updated by `updateStatusBar()` in `state.ts`, called from:
 
 - `updateConfigOptions()` (on any config change)
 - `handleEvent(task_created)` (on task load/switch)
-- any change to the global task collection (`subscribeTaskTopology`), because
-  the cwd field's reference binding lives there.
+- any change to the parent reference (`subscribeTaskTopology`), because the
+  cwd field's comparison is derived from it.
 
 There is no separate agent segment. The agent is folded into the cwd field with
 the same `<agent>:<cwd>` coordinate the list rows and the input preview use, and
@@ -843,8 +837,8 @@ pi-model · 12k/200k · ~/mine/repo              ← no deviation; unchanged
 ```
 
 The reference is the parent's confirmed binding, otherwise the configured
-default; it is not guessed before the collection loads, and an unbound task
-draws no prefix. The reference object is named in the `title` (for example
+default; it is not guessed before the parent reference is resolved, and an
+unbound task draws no prefix. The reference object is named in the `title` (for example
 `This task runs on copilot; its parent runs on pi`). At narrow widths the split
 keeps the agent, its colon, and the path root in `status-cwd-prefix` (never
 truncated) — `<agent>:~/`, `<agent>:/`, `<agent>:C:/`, or `<agent>:~` — and

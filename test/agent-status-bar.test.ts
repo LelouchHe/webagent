@@ -79,8 +79,16 @@ describe("status bar agent coordinate", () => {
     return dom.statusBar.querySelector(".status-cwd");
   }
 
-  function loadList(tasks: TaskSummary[]): void {
-    topology.recordTaskList(topology.currentTopologyGeneration(), tasks);
+  /** Resolve the current task's parent from a list response. */
+  async function loadList(tasks: TaskSummary[]): Promise<void> {
+    topology.setCurrentTask(state.taskId);
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify(tasks));
+    try {
+      await topology.loadTaskList();
+    } finally {
+      globalThis.fetch = original;
+    }
   }
 
   it("draws no prefix while the collection is not loaded", () => {
@@ -95,8 +103,8 @@ describe("status bar agent coordinate", () => {
     assert.equal(cwdSegment().getAttribute("title"), "/work/a");
   });
 
-  it("is byte-identical for a single-agent deployment", () => {
-    loadList([task("a", "pi")]);
+  it("is byte-identical for a single-agent deployment", async () => {
+    await loadList([task("a", "pi")]);
     updateStatusBar();
     assert.equal(dom.statusBar.textContent, "gpt-5\u00a0·\u00a0/work/a");
     assert.equal(cwdSegment().textContent, "/work/a");
@@ -108,12 +116,12 @@ describe("status bar agent coordinate", () => {
     assert.deepEqual(classes, ["status-model", "status-cwd"]);
   });
 
-  it("folds the agent into the cwd when it deviates from the parent", () => {
+  it("folds the agent into the cwd when it deviates from the parent", async () => {
     state.taskId = "child";
     state.taskAgentId = "copilot";
     state.taskCwd = "/work/child";
     state.taskCwdDisplay = "/work/child";
-    loadList([task("parent", "pi"), task("child", "copilot", "parent")]);
+    await loadList([task("parent", "pi"), task("child", "copilot", "parent")]);
 
     assert.equal(
       dom.statusBar.textContent,
@@ -134,29 +142,32 @@ describe("status bar agent coordinate", () => {
     );
   });
 
-  it("draws nothing when the task matches a non-default parent", () => {
+  it("draws nothing when the task matches a non-default parent", async () => {
     state.taskId = "child";
     state.taskAgentId = "copilot";
     state.taskCwd = "/work/child";
     state.taskCwdDisplay = "/work/child";
     // The parent is on copilot, which is not the configured default: the
     // reference is the parent, not the default.
-    loadList([task("parent", "copilot"), task("child", "copilot", "parent")]);
+    await loadList([
+      task("parent", "copilot"),
+      task("child", "copilot", "parent"),
+    ]);
     assert.equal(cwdSegment().textContent, "/work/child");
   });
 
-  it("draws nothing when the task matches its parent", () => {
+  it("draws nothing when the task matches its parent", async () => {
     state.taskId = "child";
     state.taskAgentId = "pi";
     state.taskCwd = "/work/child";
     state.taskCwdDisplay = "/work/child";
-    loadList([task("parent", "pi"), task("child", "pi", "parent")]);
+    await loadList([task("parent", "pi"), task("child", "pi", "parent")]);
     assert.equal(cwdSegment().textContent, "/work/child");
   });
 
-  it("uses the default agent as the reference for a task without a parent", () => {
+  it("uses the default agent as the reference for a task without a parent", async () => {
     state.taskAgentId = "copilot";
-    loadList([task("a", "copilot")]);
+    await loadList([task("a", "copilot")]);
     updateStatusBar();
     assert.equal(cwdSegment().textContent, "copilot:/work/a");
     assert.equal(
@@ -170,12 +181,12 @@ describe("status bar agent coordinate", () => {
     assert.equal(cwdSegment().textContent, "/work/a");
   });
 
-  it("falls back to the default when the parent has no binding", () => {
+  it("falls back to the default when the parent has no binding", async () => {
     state.taskId = "child";
     state.taskAgentId = "copilot";
     state.taskCwd = "/work/child";
     state.taskCwdDisplay = "/work/child";
-    loadList([task("parent", null), task("child", "copilot", "parent")]);
+    await loadList([task("parent", null), task("child", "copilot", "parent")]);
     assert.equal(cwdSegment().textContent, "copilot:/work/child");
     assert.equal(
       cwdSegment().getAttribute("title"),
@@ -183,14 +194,33 @@ describe("status bar agent coordinate", () => {
     );
   });
 
-  it("falls back to the default when the current task is not cached", () => {
-    // The current task is not in the collection, so its parent link is unknown.
-    loadList([task("other", "pi")]);
+  it("reads the current task's parent link when the list lacks its row", async () => {
     state.taskId = "child";
     state.taskAgentId = "copilot";
     state.taskCwd = "/work/child";
     state.taskCwdDisplay = "/work/child";
-    updateStatusBar();
+    // The list predates the task; its detail says it has no parent, so the
+    // reference falls back to the configured default.
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url: string) => {
+      if (url === "/api/v1/tasks") {
+        return new Response(JSON.stringify([task("other", "pi")]));
+      }
+      if (url === "/api/v1/tasks/child") {
+        return new Response(
+          JSON.stringify({ id: "child", parentId: null, agentId: "copilot" }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+    try {
+      await loadList([task("other", "pi")]);
+    } finally {
+      globalThis.fetch = original;
+    }
+    // The detail read is one microtask behind the list; its resolution
+    // repaints the bar on its own.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(cwdSegment().textContent, "copilot:/work/child");
     assert.match(
       cwdSegment().getAttribute("title") ?? "",
@@ -198,19 +228,45 @@ describe("status bar agent coordinate", () => {
     );
   });
 
-  it("never guesses a default for an unbound current task", () => {
-    state.taskAgentId = null;
-    loadList([task("a", "pi")]);
-    updateStatusBar();
-    assert.equal(cwdSegment().textContent, "/work/a");
-  });
-
-  it("recomputes when another client rotates the parent", () => {
+  it("draws nothing while the parent reference is unresolved", async () => {
     state.taskId = "child";
     state.taskAgentId = "copilot";
     state.taskCwd = "/work/child";
     state.taskCwdDisplay = "/work/child";
-    loadList([task("parent", "pi"), task("child", "copilot", "parent")]);
+    // The list cannot see the task and the detail read is still pending: no
+    // reference may be guessed from the default.
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url: string) => {
+      if (url === "/api/v1/tasks") {
+        return new Response(JSON.stringify([]));
+      }
+      return new Promise<Response>(() => {
+        // Never settles within the test.
+      });
+    }) as typeof fetch;
+    try {
+      await loadList([]);
+    } finally {
+      globalThis.fetch = original;
+    }
+    updateStatusBar();
+    assert.equal(cwdSegment().textContent, "/work/child");
+    assert.equal(cwdSegment().getAttribute("title"), "/work/child");
+  });
+
+  it("never guesses a default for an unbound current task", async () => {
+    state.taskAgentId = null;
+    await loadList([task("a", "pi")]);
+    updateStatusBar();
+    assert.equal(cwdSegment().textContent, "/work/a");
+  });
+
+  it("recomputes when another client rotates the parent", async () => {
+    state.taskId = "child";
+    state.taskAgentId = "copilot";
+    state.taskCwd = "/work/child";
+    state.taskCwdDisplay = "/work/child";
+    await loadList([task("parent", "pi"), task("child", "copilot", "parent")]);
     assert.equal(cwdSegment().textContent, "copilot:/work/child");
     assert.match(cwdSegment().getAttribute("title") ?? "", /parent runs on pi/);
 
