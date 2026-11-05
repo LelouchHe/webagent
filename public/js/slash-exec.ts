@@ -8,8 +8,6 @@
 
 import {
   state,
-  resetTaskUI,
-  requestNewTask,
   getSelectConfigOption,
   getThinkingConfigOption,
   updateModeUI,
@@ -28,12 +26,10 @@ import {
   resetLocalState,
   setLocalLogLevel,
   showLogStatus,
+  submitClearField,
+  submitCreateField,
 } from "./slash-commands.ts";
-import {
-  compactCurrentTask,
-  exitCurrentTask,
-  replaceCurrentTask,
-} from "./task-actions.ts";
+import { compactCurrentTask, exitCurrentTask } from "./task-actions.ts";
 import {
   createPreview,
   revokeShare,
@@ -43,7 +39,22 @@ import {
 import { controlPlanPanel } from "./plan-panel.ts";
 import { requestAuthoritativeCancel } from "./cancel-command.ts";
 import { openViewPath } from "./view-command.ts";
-import { isSourceTaskMissing, resolveCreateCwd } from "./create-command.ts";
+import { loadTaskList } from "./task-topology.ts";
+
+/**
+ * The raw remainder after the command word, byte for byte.
+ *
+ * `handleSlashCommand` normalizes `arg` for ordinary commands, but a cwd
+ * coordinate must survive that: consecutive spaces, TABs, and trailing spaces
+ * after the `:` are the user's path, not formatting. This split uses the same
+ * `/\s/u` token boundary to find the command word and then keeps everything
+ * after its separator untouched.
+ */
+function rawSlashArgument(text: string): string {
+  const head = /^\s*\S+/u.exec(text);
+  if (!head) return "";
+  return text.slice(head[0].length).replace(/^\s+/u, "");
+}
 
 async function subscribePush(): Promise<void> {
   try {
@@ -165,44 +176,10 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/new": {
-      // Snapshot the source task before any await: the cwd probe can outlive a
-      // navigation, and the child must stay under (and inherit from) the Task
-      // the user actually submitted the command in.
-      const sourceTaskId = state.taskId;
-      // A typed cwd resolves against the current Task cwd via the same helper
-      // the picker uses, so Enter and the action row create in the same place.
-      // A bare `/new` keeps the legacy behavior: current cwd, no extra probe.
-      let cwd: string | undefined;
-      if (arg) {
-        const resolved = await resolveCreateCwd(arg);
-        // A definite cwd error has nothing left to do: report it immediately
-        // rather than waiting on the task-list liveness probe.
-        if ("error" in resolved) {
-          addSystem(`err: create failed — ${resolved.error}`);
-          return true;
-        }
-        // A source Task deleted while the probe was pending must not trigger
-        // the destructive reset below: keep the current (fallback) view intact
-        // and report why. The check only rejects a definite deletion.
-        if (await isSourceTaskMissing(sourceTaskId)) {
-          addSystem("err: create failed — the launching task no longer exists");
-          return true;
-        }
-        cwd = resolved.cwd;
-      } else {
-        cwd = state.taskCwd ?? undefined;
-      }
-      // Pass the snapshot explicitly: after clearing taskId the requestNewTask
-      // defaults would resolve to null (or to a Task the user switched to
-      // during the probe) instead of the launching task.
-      resetTaskUI();
-      state.taskId = null;
-      addSystem("Creating new task…");
-      requestNewTask({
-        cwd: cwd,
-        inheritFromTaskId: sourceTaskId,
-        parentId: sourceTaskId,
-      });
+      // Enter and the picker's action row share one submission: parse,
+      // resolve, probe, and request live in slash-commands, so click and
+      // Enter cannot disagree about the agent, the cwd, or a failure.
+      await submitCreateField(rawSlashArgument(text));
       return true;
     }
 
@@ -226,10 +203,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/clear": {
-      await replaceCurrentTask({
-        cwd: arg || undefined,
-        showCwd: Boolean(arg),
-      });
+      await submitClearField(rawSlashArgument(text));
       return true;
     }
 
@@ -341,7 +315,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
       try {
-        const tasks = await api.listTasks();
+        const tasks = await loadTaskList();
         const query = arg.toLowerCase();
         const match = tasks.find(
           (s) => s.id.startsWith(arg) || s.title?.toLowerCase().includes(query),

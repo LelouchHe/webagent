@@ -1406,6 +1406,40 @@ describe("handleAgentEvent", () => {
     assert.equal(created?.rootTaskId, store.rootTaskId);
   });
 
+  it("fills the parent binding on a task_created that omitted it", () => {
+    store.ensureRootTask("/tmp");
+    store.createTask("parent", "/tmp", "auto", "agent-a");
+    store.createTask(
+      "child",
+      "/tmp",
+      "auto",
+      "agent-b",
+      "child-session",
+      "parent",
+    );
+    const { bridge } = createMockBridge();
+    const { sseManager, broadcasted } = createMockSseManager();
+
+    handleAgentEvent(
+      withLease({
+        type: "task_created",
+        taskId: "child",
+        agentId: "agent-b",
+        configOptions: [],
+      }) as any,
+      tasks,
+      store,
+      bridge,
+      makeEventHandlerConfig(),
+      sseManager as any,
+    );
+
+    const created = broadcasted.find((event) => event.type === "task_created");
+    assert.ok(created, "the event is broadcast");
+    assert.equal(created.parentId, "parent");
+    assert.equal(created.parentAgentId, "agent-a");
+  });
+
   it("skips events for restoring tasks", () => {
     store.createTask("s1", "/tmp", "auto", "test-agent");
     tasks.restoringTasks.add("s1");

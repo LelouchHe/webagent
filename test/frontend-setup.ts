@@ -2,6 +2,8 @@
 // Sets up a happy-dom browser environment so public/js/*.ts modules can be imported.
 
 import { Window } from "happy-dom";
+import { resetAgentDirectoryForTest } from "../public/js/agent-directory.ts";
+import { resetTaskTopologyForTest } from "../public/js/task-topology.ts";
 
 // Inject __DEV__ before any frontend module is imported. Browser bundles get
 // this via esbuild `define` (see scripts/build.js); the node test runtime
@@ -52,6 +54,8 @@ export function teardownDOM() {
 
 /** Reset all mutable state to defaults (call in beforeEach) */
 export function resetState(state: any, dom: any) {
+  resetTaskTopologyForTest();
+  resetAgentDirectoryForTest();
   state.eventSource = null;
   state.clientId = null;
   state.taskId = null;
@@ -78,6 +82,7 @@ export function resetState(state: any, dom: any) {
   state.agentCommandsRevision = 0;
   state.taskMode = null;
   state.taskModel = null;
+  state.taskAgentId = null;
   state.currentAssistantEl = null;
   state.currentAssistantText = "";
   state.pendingFinalAnswerToolText = null;

@@ -82,6 +82,51 @@ describe("creating a task for a named agent", () => {
     }
   });
 
+  it("reports the parent's binding on the payloads a client activates with", async () => {
+    const harness = await startHarness();
+    try {
+      const root = await bootRootOnA(harness);
+      const parent = await harness.request("POST", "/api/v1/tasks", {
+        cwd: harness.dir,
+        parentId: root,
+        inheritFromTaskId: root,
+        agentId: AGENT_A,
+      });
+      assert.equal(parent.status, 201);
+      const parentId = String(parent.json.id);
+      // The parent is on A; the child is created on B. A client that activates
+      // the child must be able to compare without another read.
+      assert.equal(parent.json.parentId, root);
+      assert.equal(parent.json.parentAgentId, AGENT_A);
+
+      const child = await harness.request("POST", "/api/v1/tasks", {
+        cwd: harness.dir,
+        parentId,
+        agentId: AGENT_B,
+      });
+      assert.equal(child.status, 201);
+      assert.equal(child.json.parentId, parentId);
+      assert.equal(child.json.parentAgentId, AGENT_A);
+
+      const detail = await harness.request(
+        "GET",
+        `/api/v1/tasks/${String(child.json.id)}`,
+      );
+      assert.equal(detail.status, 200);
+      assert.equal(detail.json.parentId, parentId);
+      assert.equal(detail.json.parentAgentId, AGENT_A);
+
+      // A task without a parent reports a null link and a null binding, not a
+      // guessed default.
+      const rootDetail = await harness.request("GET", `/api/v1/tasks/${root}`);
+      assert.equal(rootDetail.status, 200);
+      assert.equal(rootDetail.json.parentId, null);
+      assert.equal(rootDetail.json.parentAgentId, null);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("keeps inheriting when the target agent is the source agent", async () => {
     const harness = await startHarness();
     try {

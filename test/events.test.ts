@@ -232,6 +232,8 @@ describe("events", () => {
           events.handleEvent({
             type: "task_created",
             taskId: "s1",
+            parentId: null,
+            parentAgentId: null,
             configOptions: [],
           });
 
@@ -1961,6 +1963,7 @@ describe("events", () => {
         );
         await Promise.all([httpNavigation, sseNavigation]);
 
+        // The two navigations share one list read; activation adds none.
         assert.equal(listCalls, 1);
         assert.equal(state.taskId, "parent-dedupe");
       });

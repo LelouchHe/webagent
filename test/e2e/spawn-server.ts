@@ -9,8 +9,9 @@
  */
 import { createHash } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   pickFreePort,
   REPO_ROOT,
@@ -34,6 +35,13 @@ export interface SpecServerConfig {
   bashOutputLimit?: number;
   /** Extra TOML appended verbatim. */
   extra?: string[];
+  /**
+   * Checked-in template under `test/e2e/` to use instead of building the
+   * config here. Its `port` and `data_dir` lines are substituted; `extra` is
+   * still appended. Used where the agent set itself is under test (a
+   * single-agent deployment, an agent that cannot start).
+   */
+  template?: string;
 }
 
 const LISTENING = /\[server\] listening on http:\/\/localhost:(\d+)/;
@@ -42,6 +50,10 @@ export function writeSpecConfig(
   configPath: string,
   config: SpecServerConfig,
 ): void {
+  if (config.template) {
+    writeTemplateConfig(configPath, config);
+    return;
+  }
   const lines = [
     // A fresh port per spawn; a restart passes the previous port back in.
     // (The config schema rejects 0, so the allocation happens here rather
@@ -63,6 +75,33 @@ export function writeSpecConfig(
     ...(config.extra ?? []),
   ];
   writeFileSync(configPath, lines.join("\n"));
+}
+
+const E2E_DIR = dirname(fileURLToPath(import.meta.url));
+
+/** One run's copy of a checked-in template: same content, private identity. */
+function writeTemplateConfig(
+  configPath: string,
+  config: SpecServerConfig,
+): void {
+  const templatePath = join(E2E_DIR, config.template!);
+  const template = readFileSync(templatePath, "utf8");
+  const withPort = template.replace(
+    /^port\s*=.*$/m,
+    `port = ${config.port ?? pickFreePort()}`,
+  );
+  const withData = withPort.replace(
+    /^data_dir\s*=.*$/m,
+    `data_dir = ${JSON.stringify(config.dataDir)}`,
+  );
+  if (withData === template) {
+    throw new Error(`[e2e] ${templatePath} must declare port and data_dir`);
+  }
+  const extra = config.extra ?? [];
+  writeFileSync(
+    configPath,
+    extra.length > 0 ? `${withData}\n${extra.join("\n")}\n` : withData,
+  );
 }
 
 /** Seed one admin token into a spec-private data dir, without AuthStore's

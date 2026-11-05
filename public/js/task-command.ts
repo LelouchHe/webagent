@@ -14,10 +14,15 @@ import {
 } from "../../src/task-path.ts";
 import { resolveBrowseTarget } from "./file-browser.ts";
 import {
-  previewCwdDisplay,
+  parseCoordinate,
+  previewCreateCwd,
   previewValue,
+  resolveCoordinateTarget,
   resolveCreateCwd,
+  taskAgentFailureLines,
 } from "./create-command.ts";
+import { getAgentDirectory } from "./agent-directory.ts";
+import { loadTaskList } from "./task-topology.ts";
 import { setInputValue, state } from "./state.ts";
 import { listRecentPaths } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
@@ -346,6 +351,9 @@ function bareCreateCandidates(): Candidate[] {
 async function buildCreateCwdCandidates(
   title: string,
   rawCwd: string,
+  /** `<agent>:` to keep glued to every fill, so completing a path after a
+   *  settled coordinate never drops the chosen agent. */
+  coordinatePrefix = "",
 ): Promise<Candidate[]> {
   const titleWord = quoteShellWord(title);
   const base = state.taskCwd ?? "";
@@ -358,7 +366,7 @@ async function buildCreateCwdCandidates(
         spec: {
           primary: display,
           current: true,
-          fill: `+${titleWord} ${display}`,
+          fill: `+${titleWord} ${coordinatePrefix}${display}`,
           continueOnFill: true,
         },
         prefix: "*",
@@ -372,7 +380,7 @@ async function buildCreateCwdCandidates(
         candidates.push({
           spec: {
             primary: p.cwdDisplay,
-            fill: `+${titleWord} ${p.cwdDisplay}`,
+            fill: `+${titleWord} ${coordinatePrefix}${p.cwdDisplay}`,
             continueOnFill: true,
           },
           prefix: "",
@@ -416,7 +424,7 @@ async function buildCreateCwdCandidates(
         primary: entry.name,
         // The cwd is verbatim, so the completed path is appended raw: a
         // space in a directory name never needs quoting after the title.
-        fill: `+${titleWord} ${completedPrefix}${entry.name}/`,
+        fill: `+${titleWord} ${coordinatePrefix}${completedPrefix}${entry.name}/`,
         continueOnFill: true,
       },
       prefix: "",
@@ -453,14 +461,18 @@ async function buildCreateCandidates(parsed: {
     ];
   }
 
-  const rawCwd = parsed.remainder.trim();
+  // The raw cwd field: only the separator after the title is removed, so a
+  // coordinate's suffix keeps its bytes. A field with no path is the bare
+  // form, which keeps the legacy "create where this task runs" behavior.
+  const rawCwd = parsed.remainder.replace(/^\s+/u, "");
+  const coordinate = parseCoordinate(rawCwd, getAgentDirectory());
   const candidates: Candidate[] = [
     {
       spec: {
         primary:
           rawCwd === ""
             ? `create ${previewValue(title)}`
-            : `create ${previewValue(title)} at ${previewValue(previewCwdDisplay(rawCwd))}`,
+            : `create ${previewValue(title)} at ${previewValue(previewCreateCwd(rawCwd, getAgentDirectory()))}`,
         fill: `+${quoteShellWord(title)}${parsed.remainder}`,
         onSelect: () => executeCreateTask(title, parsed.remainder),
       },
@@ -472,7 +484,17 @@ async function buildCreateCandidates(parsed: {
   // The cwd field only exists once the separating space has been typed.
   if (parsed.remainder === "") return candidates;
 
-  const cwdCandidates = await buildCreateCwdCandidates(title, rawCwd);
+  // Once a coordinate is settled, path completion applies to its suffix and
+  // every fill re-states `<agent>:` instead of dropping it.
+  const coordinatePrefix =
+    coordinate.agentId === null ? "" : `${coordinate.agentId}:`;
+  const pathInput =
+    coordinate.agentId === null ? rawCwd.trim() : coordinate.cwd;
+  const cwdCandidates = await buildCreateCwdCandidates(
+    title,
+    pathInput,
+    coordinatePrefix,
+  );
   if (cwdCandidates.length > 0) {
     candidates.push({ spec: { primary: "" }, prefix: "", kind: "separator" });
     candidates.push(...cwdCandidates);
@@ -637,7 +659,7 @@ async function buildMessageCandidates(parsed: {
   if (!state.taskId) return [];
   let tasks: TaskSummary[];
   try {
-    tasks = await api.listTasks();
+    tasks = await loadTaskList();
   } catch {
     return [];
   }
@@ -719,7 +741,7 @@ async function expandBrowseInput(
   path: TaskPath,
 ): Promise<void> {
   try {
-    const tasks = await api.listTasks();
+    const tasks = await loadTaskList();
     const current = buildTaskTree(tasks).get(state.taskId ?? "");
     const resolved = resolveTaskPathNodes(state.taskId, tasks, path);
     if (current && resolved.length === 1) {
@@ -755,19 +777,43 @@ async function executeCreateTask(
     return;
   }
 
-  const resolved = await resolveCreateCwd(remainder.trim());
-  if ("error" in resolved) {
-    addSystem(`err: create failed — ${resolved.error}`);
-    return;
+  const rawCwd = remainder.replace(/^\s+/u, "");
+  const coordinate = parseCoordinate(rawCwd, getAgentDirectory());
+  // Submission-time facts for a late failure. The view can move to another
+  // task while the probe/POST is pending, and the rescue must name the agent
+  // and directory that actually failed.
+  const failedAgentId = coordinate.agentId ?? state.taskAgentId;
+  const failedCwd = state.taskCwd;
+  let agentId: string | undefined;
+  let cwd: string | undefined;
+  if (coordinate.agentId !== null) {
+    const resolved = await resolveCoordinateTarget({
+      agentId: coordinate.agentId,
+      rawSuffix: coordinate.cwd,
+    });
+    if ("error" in resolved) {
+      addSystem(`err: create failed — ${resolved.error}`);
+      return;
+    }
+    agentId = resolved.agentId;
+    cwd = resolved.cwd ?? undefined;
+  } else {
+    const resolved = await resolveCreateCwd(rawCwd.trim());
+    if ("error" in resolved) {
+      addSystem(`err: create failed — ${resolved.error}`);
+      return;
+    }
+    cwd = resolved.cwd;
   }
 
   // Title first, cwd verbatim: creation is idle and does not switch. The
   // first instruction follows as a separate `@<title> <body>` send.
   const body = {
     parentId: currentTaskId,
-    cwd: resolved.cwd,
+    ...(cwd !== undefined ? { cwd } : {}),
     title,
     inheritFromTaskId: currentTaskId,
+    ...(agentId !== undefined ? { agentId } : {}),
   };
 
   try {
@@ -777,8 +823,14 @@ async function executeCreateTask(
     // would duplicate that fact and disappear on reload.
     await api.createTask(body);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    addSystem(`err: create failed — ${msg}`);
+    for (const line of taskAgentFailureLines(
+      "create",
+      err,
+      failedAgentId,
+      failedCwd,
+    )) {
+      addSystem(line);
+    }
   }
 }
 
@@ -797,7 +849,7 @@ async function executeMessageTask(
   }
   let tasks: TaskSummary[];
   try {
-    tasks = await api.listTasks();
+    tasks = await loadTaskList();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     addSystem(`err: task list failed — ${msg}`);

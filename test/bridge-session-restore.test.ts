@@ -164,6 +164,8 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
         cwd: dir,
         cwdDisplay: abbreviateHomePath(dir),
         title: "web-1",
+        parentId: "root",
+        parentAgentId: null,
         configOptions: storedOptions,
       });
       assert.deepEqual(tasks.cachedConfigOptions, storedOptions);

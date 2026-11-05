@@ -13,6 +13,37 @@ export class ApiError extends Error {
 }
 
 /**
+ * A request the client refuses to build. It never reaches the server, so it
+ * cannot produce an HTTP status; the failure report path treats it as a
+ * definite rejection.
+ */
+export class InvalidRequestError extends Error {
+  name = "InvalidRequestError";
+}
+
+/**
+ * The `agentId` field of a task request.
+ *
+ * `null`/omitted means "apply the server's inheritance rule". An empty string
+ * is neither: the caller named an agent, so silently dropping the field would
+ * create or rotate the task on some other agent. It is an upstream bug and is
+ * refused here instead of becoming a server-side "Agent  is not configured".
+ */
+function agentIdField(
+  agentId: string | null | undefined,
+  operation: string,
+): Record<string, string> {
+  if (agentId === undefined || agentId === null) return {};
+  if (agentId === "") {
+    throw new InvalidRequestError(
+      `${operation}: agentId is an empty string — that is an upstream bug, not "inherit"; ` +
+        `omit the field (or pass null) to inherit, so a named agent is never silently dropped`,
+    );
+  }
+  return { agentId };
+}
+
+/**
  * Ceiling for a single request. Without one, a stalled connection (mobile
  * handoff, suspended runtime) leaves the promise pending indefinitely — the
  * browser's own network timeout is not guaranteed and can be minutes. Callers
@@ -119,10 +150,19 @@ export function createTask(
     inheritFromTaskId?: string | null;
     parentId?: string | null;
     title?: string;
+    /**
+     * Explicit execution environment. `null`/omitted = the server's inheritance
+     * rule; an empty string is refused rather than silently treated as
+     * "inherit".
+     */
+    agentId?: string | null;
   },
   clientOpId?: string,
 ): Promise<Record<string, unknown>> {
-  const body: Record<string, unknown> = {};
+  // An empty `agentId` throws before the request is built.
+  const body: Record<string, unknown> = {
+    ...agentIdField(opts?.agentId, "createTask"),
+  };
   if (opts?.cwd) body.cwd = opts.cwd;
   if (opts?.inheritFromTaskId) body.inheritFromTaskId = opts.inheritFromTaskId;
   if (opts?.parentId) body.parentId = opts.parentId;
@@ -143,9 +183,17 @@ export function bootstrapTask(
 
 export function clearTask(
   id: string,
-  opts?: { cwd?: string },
+  opts?: {
+    cwd?: string;
+    /** `null`/omitted = keep the task's own agent; empty is refused. */
+    agentId?: string | null;
+  },
 ): Promise<Record<string, unknown>> {
-  const body: Record<string, unknown> = {};
+  // An empty `agentId` throws before the request is built; removing a stale
+  // `cwd` silently would rotate onto another agent's directory.
+  const body: Record<string, unknown> = {
+    ...agentIdField(opts?.agentId, "clearTask"),
+  };
   if (opts?.cwd) body.cwd = opts.cwd;
   return post("/api/v1/tasks/" + id + "/clear", body);
 }
@@ -206,6 +254,8 @@ export function listTasks(): Promise<TaskSummary[]> {
 export function getConfig(): Promise<{
   rootTaskId: string;
   configOptions: ConfigOption[];
+  agents?: Array<{ id: string; available: boolean }>;
+  defaultAgentId?: string | null;
 }> {
   return request("/api/v1/config");
 }

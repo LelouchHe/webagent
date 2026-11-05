@@ -117,6 +117,8 @@ describe("shared task navigation", () => {
           rootTaskId: rootId,
           cwd: "/tmp",
           title: "root",
+          parentId: null,
+          parentAgentId: null,
           configOptions: [],
         });
       }

@@ -1,6 +1,10 @@
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
+import {
+  getAgentDirectory,
+  getDefaultAgentId,
+} from "../public/js/agent-directory.ts";
 
 const RECONNECT_DELAY_MS = 3000;
 
@@ -716,11 +720,80 @@ describe("connection", () => {
 
     assert.equal(state.rootTaskId, ROOT_ID);
     assert.equal(state.taskId, ROOT_ID);
+    // The activation does not read the list: the parent reference comes from
+    // the task detail that activated it.
     assert.equal(listCalls, 1);
     assert.equal(
       fetchCalls.some((call) => call.url === "/api/v1/tasks/recent-child"),
       false,
     );
+  });
+
+  it("does not install an agent directory from a superseded connection", async () => {
+    let releaseConfig!: (response: MockResponse) => void;
+    let configCalls = 0;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      fetchCalls.push({ url, init });
+      if (url === "/api/v1/sse-ticket" && init?.method === "POST") {
+        return mockResponse({ ticket: "tkt-test", expiresIn: 60 });
+      }
+      if (url === "/api/v1/config") {
+        configCalls += 1;
+        if (configCalls === 1) {
+          return new Promise<MockResponse>((resolve) => {
+            releaseConfig = resolve;
+          });
+        }
+        return mockResponse({
+          rootTaskId: ROOT_ID,
+          configOptions: [],
+          agents: [{ id: "new", available: true }],
+          defaultAgentId: "new",
+        });
+      }
+      if (url === "/api/v1/tasks") return mockResponse([]);
+      if (url === "/api/v1/tasks/bootstrap") {
+        return mockResponse({
+          id: ROOT_ID,
+          rootTaskId: ROOT_ID,
+          cwd: "/tmp",
+          configOptions: [],
+          agents: [{ id: "new", available: true }],
+          defaultAgentId: "new",
+        });
+      }
+      if (url.includes("/visibility")) return mockResponse({});
+      return mockResponse(taskResponse(ROOT_ID));
+    }) as unknown as typeof fetch;
+
+    connection.connect();
+    await flush(20);
+    // A second connection supersedes the first while its config is in flight.
+    connection.connect();
+    await flush(50);
+
+    assert.deepEqual(
+      getAgentDirectory().map((entry) => entry.id),
+      ["new"],
+    );
+    assert.equal(getDefaultAgentId(), "new");
+
+    releaseConfig(
+      mockResponse({
+        rootTaskId: ROOT_ID,
+        configOptions: [],
+        agents: [{ id: "old", available: true }],
+        defaultAgentId: "old",
+      }),
+    );
+    await flush(20);
+
+    assert.deepEqual(
+      getAgentDirectory().map((entry) => entry.id),
+      ["new"],
+      "a superseded connection's config must not replace the directory",
+    );
+    assert.equal(getDefaultAgentId(), "new");
   });
 
   it("keeps hashless Root active across SSE reconnect", async () => {
@@ -753,7 +826,10 @@ describe("connection", () => {
 
     assert.equal(state.taskId, ROOT_ID);
     assert.equal(location.hash, "");
-    assert.equal(listCalls, 0);
+    // The workspace-wide collection is rebuilt from the list on every
+    // connection: a reconnect must not reuse the previous stream's baseline.
+    // (One list per connect: the initial navigation and the reconnect.)
+    assert.equal(listCalls, 2);
   });
 
   it("uses incremental sync on reconnect when taskId matches hash", async () => {

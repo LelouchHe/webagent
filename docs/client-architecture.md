@@ -96,6 +96,9 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`attachments.ts`**       | Attach (click/drag/paste) for images and files, preview, upload to server                          | `renderAttachPreview()`                                                                         |
 | **`render.ts`**            | DOM helpers: add messages, streaming markdown render, theme, scroll, diff HTML generation           | `addMessage()`, `addSystem()`, `scrollToBottom()`, `updateMarkdownStream()`, `resetMarkdownStream()` |
 | **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createTask()`, `sendMessage()`, `cancelTask()`, etc.                                     |
+| **`agent-directory.ts`**   | The configured agent directory from `GET /config` / bootstrap; PATH availability, default agent      | `installAgentDirectory()`, `getAgentDirectory()`, `availableAgentIds()`                          |
+| **`task-topology.ts`**     | The current task's parent reference and the list-arrival flag          | `loadTaskList()`, `setCurrentTask()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
+| **`create-command.ts`**    | Shared `+` / `/new` / `/clear` helpers: coordinate parsing, cwd resolution, preview, failure rescue   | `parseCoordinate()`, `suggestCoordinatePrefix()`, `resolveCreateCwd()`, `agentRescueCommand()`    |
 
 **Dependency graph** (arrows = imports):
 
@@ -419,14 +422,110 @@ click carries the unresolved ID as `/?message=<id>` until startup consumes it.
 ### New Task Creation
 
 ```typescript
-requestNewTask({ cwd, inheritFromTaskId })
+requestNewTask({ cwd, inheritFromTaskId, agentId })
   → state.awaitingNewTask = true
-  → api.createTask({ cwd, inheritFromTaskId })
+  → api.createTask({ cwd, inheritFromTaskId, agentId })
   → server broadcasts task_created
   → handleEvent checks awaitingNewTask === true → accepts the new task
 ```
 
 The `awaitingNewTask` flag prevents the client from ignoring its own `task_created` broadcast (normally filtered out if `taskId` differs from current).
+
+A create the server definitely refuses (400 unknown agent, 503 agent would not
+start) never produces a broadcast, so it is reported immediately instead of
+waiting out the confirmation window.
+
+### Agent Coordinates
+
+`+`, `/new`, and `/clear` accept one cwd field, and that field may name the
+execution environment: `<agent>:<cwd>`. All three entries call the same parse
+(`parseCoordinate` in `create-command.ts`); none may re-parse or reconstruct the
+split from a display string.
+
+- **The colon is the only marker.** With a configured agent id before it, the
+  rest is the cwd; otherwise the whole string is a path. There is no
+  "unconfigured agent" error on this path: an unknown prefix such as
+  `copliot:repo` is a directory named exactly that, so it succeeds when the
+directory exists and fails as a directory error when it does not. `./` is the
+  one-sided escape for a literal directory that looks like a coordinate.
+- **Agent ids match exactly.** The configuration schema is lowercase, so no
+  case folding is applied.
+- **The suffix has one fidelity boundary.** `parseCoordinate` returns the text
+  after the colon byte for byte, and interior bytes are the path: consecutive
+  spaces, TABs, full-width spaces, and backslashes must survive to the wire.
+  Leading and trailing whitespace is only the separator the user typed, so it
+  does not reach the wire — the path resolver trims it, and the empty-suffix
+  test runs on the trimmed value: `copilot:~/a ` equals `copilot:~/a`, and
+  `copilot: ` equals `copilot:`. The boundary is applied after parsing and
+  before the request (in `resolveCoordinateTarget`), so the completion layer can
+  still show the raw text. A `rawSlashArgument` helper keeps the raw remainder
+  available because the normalized `arg` used by the other slash commands
+  cannot represent it.
+- **An empty suffix means "omit the cwd field".** The two create entries omit
+  it, so the server's own default directory applies; `/clear` keeps the task
+  directory (it really sends no `cwd`). Those two omissions are deliberately
+  not interchangeable, and
+  `/clear <agent>:` sends no `cwd` value to express the second.
+- **The preview never hides the choice.** A settled coordinate previews as one
+  `previewValue` field, `<agent>:<cwd>` with no whitespace between them, so it
+  cannot be read as a different pair. Input previews echo what was typed; the
+  list-label baseline rule below does not apply to them.
+- **One submission per entry.** `/new` and `/clear` each expose a single
+  submission function (`submitCreateField` / `submitClearField`) that parses,
+  resolves, probes, requests, and reports failures. Enter and the picker's
+  action row both call it, so the preview, the request body, and a late
+  failure's rescue line cannot disagree between click and keyboard.
+- **Failure rescue.** When a configured agent cannot start (503), the client
+  reports the server's reason and appends one plain, copyable line:
+  `/clear <live-agent>:<raw-cwd>`. `<live-agent>` is an available agent other
+  than the one that just failed, falling back to the configured default;
+  `<raw-cwd>` is the task's raw cwd. An unconfigured agent (400) gets no rescue.
+
+### Parent Reference and Agent Coordinates
+
+Two references decide what an agent label says, and neither needs a task
+collection:
+
+- **Status bar.** A task states its agent only when it runs on an agent other
+  than the one it should have inherited: its parent's confirmed binding, or the
+  configured default when there is no parent (or the parent has no binding).
+- **Task rows.** A row states its agent when it differs from the current task's
+  binding; the row's own agent comes from the row itself.
+
+The status bar therefore keeps exactly one fact — the current task's parent
+reference (`task-topology.ts`) — not a map of tasks. Every payload that
+activates a task carries the answer with it:
+
+1. **The activation payload names the parent and its binding.** `TaskDetail`
+   (used by a task switch, a restore, and the fallback navigation) and the
+   `task_created` event (the create broadcast and the create/bootstrap
+   response) both carry `parentId` and `parentAgentId`. A client therefore
+   settles the comparison with **no request at all**: a known parent compares
+   against its binding, `parentId: null` compares against the configured
+   default.
+2. **Events keep it current.** `task_created` / `task_deleted` / `task_reset`
+   update the reference directly when the event names the parent; every other
+   task's events are ignored. A rotation or deletion after activation is
+   therefore reflected immediately, without navigation.
+3. **The fallback reads exist for a payload that cannot answer** (an older
+   server, or a hint-less synthetic event): `GET /tasks/<currentTaskId>` supplies
+   the parent link and `GET /tasks/<parentId>` its binding. A 404 means there is
+   nothing to inherit; any other failure leaves the reference unresolved and the
+   status bar draws no coordinate rather than guessing. Both reads are owned by
+   the connection generation and the task they were issued for.
+4. **The shared task list is never consulted for this.** `loadTaskList` exists
+   for the pickers and for the list-arrival flag only, so switching or
+   activating a task produces no list read.
+5. **A task switch or a new connection** resets the reference (a new connection
+   also clears the list-arrival flag). Until it is resolved, the status bar
+   draws no coordinate: "not looked up yet" is not "no parent".
+
+The list-arrival flag is separate and only answers "has this connection's list
+arrived yet", which is what lets a row claim that "no label means the current
+agent". `entryAgentLabel` combines it with the current task's binding; a row
+with no binding, or a connection without a list, states nothing. `/switch` rows
+recompute this at render time, so a menu opened after a switch (or after the
+current binding changes while it is open) uses the new baseline.
 
 ---
 
@@ -587,7 +686,7 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | Command             | API Call                                                    | Description                          |
 | ------------------- | ----------------------------------------------------------- | ------------------------------------ |
 | `/switch [query]`   | `api.listTasks()` + `api.getTask()` + `loadHistory()` | Switch to another task            |
-| `/new [path]`       | `requestNewTask()` → `api.createTask()`                  | Create an unnamed child task         |
+| `/new [agent:path]` | `requestNewTask()` → `api.createTask()`                  | Create an unnamed child task         |
 | `/exit`             | `api.deleteTask()` + task navigation                 | Exit task tree; prefer parent     |
 | `/rename <title>`   | `api.setTitle(taskId, title)`                            | Rename current task               |
 | `/model [name]`     | `api.setConfig(taskId, 'model', value)`                 | Set model                           |
@@ -595,7 +694,7 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | `/think [level]`    | `api.setConfig(taskId, 'reasoning_effort', value)`      | Set thinking effort                 |
 | `/compact`          | `api.compactTask(taskId)`                                | Compact context                    |
 | `/notify [on\|off]` | Push API + `/api/beta/push/subscribe`                   | Manage push notifications           |
-| `/clear [path]`     | `api.clearTask(taskId, { cwd })`                         | Clear context; keep history         |
+| `/clear [agent:path]` | `api.clearTask(taskId, { cwd, agentId })`             | Clear context; keep history         |
 | `/view [path]`      | `api.listFiles()` + `api.getFileInfo()`                     | Browse and view a local file          |
 
 The slash menu provides autocomplete with keyboard navigation (arrow keys, Tab to fill, Enter to send).
@@ -722,12 +821,37 @@ A non-empty string in `rawInput.code` adds an independent, collapsed-by-default 
 
 ### Status Bar
 
-A `<div id="status-bar">` below the input area shows: `model · cwd`
+A `<div id="status-bar">` below the input area shows: `model · usage · cwd`.
 
 Updated by `updateStatusBar()` in `state.ts`, called from:
 
 - `updateConfigOptions()` (on any config change)
 - `handleEvent(task_created)` (on task load/switch)
+- any change to the parent reference (`subscribeTaskTopology`), because the
+  cwd field's comparison is derived from it.
+
+There is no separate agent segment. The agent is folded into the cwd field with
+the same `<agent>:<cwd>` coordinate the list rows and the input preview use, and
+only when the task runs on an agent other than the one it should have inherited:
+
+```
+pi-model · 12k/200k · copilot:~/mine/repo      ← runs on copilot, should be on pi
+pi-model · 12k/200k · ~/mine/repo              ← no deviation; unchanged
+```
+
+The reference is the parent's confirmed binding, otherwise the configured
+default; it is not guessed before the parent reference is resolved, and an
+unbound task draws no prefix. The reference object is named in the `title` (for example
+`This task runs on copilot; its parent runs on pi`). At narrow widths the split
+keeps the agent, its colon, and the path root in `status-cwd-prefix` (never
+truncated) — `<agent>:~/`, `<agent>:/`, `<agent>:C:/`, or `<agent>:~` — and
+only the rest in `status-cwd-tail` (ellipsised).
+
+The directory and default agent are connection metadata: a response from a
+superseded stream (or a superseded bootstrap) is discarded rather than
+installed, so coordinates are never parsed against a configuration the client
+no longer has. A stale *navigation* within the same connection does not discard
+them — the directory is not navigation state.
 
 ### Busy State
 

@@ -5,7 +5,7 @@
 // plus Tab/Click/keyboard dispatch. Execution paths (onSelect handlers) live
 // in slash-commands.ts so this file stays a thin pipeline.
 
-import { state, dom, setInputValue } from "./state.ts";
+import { state, dom, onTaskAgentChanged, setInputValue } from "./state.ts";
 import {
   resolvePath,
   buildCandidates,
@@ -15,6 +15,7 @@ import {
 } from "./slash-tree.ts";
 import { renderItem } from "./slash-render.ts";
 import { ROOT } from "./slash-commands.ts";
+import { subscribeTaskTopology } from "./task-topology.ts";
 import { handleSlashCommand } from "./slash-exec.ts";
 import { buildTaskCommandCandidates, isTaskCommand } from "./task-command.ts";
 
@@ -497,6 +498,27 @@ function nextSelectable(from: number, dir: 1 | -1): number {
   }
   return from;
 }
+
+/**
+ * Re-render the open menu's rows from the cached data.
+ *
+ * Row labels are computed at render time from the current task's binding (the
+ * `/switch` baseline), so a rotation that changes that binding while a menu is
+ * open must not leave the old baseline on screen. Only walker menus are
+ * rebuilt here; `+`/`@` rows are assembled asynchronously by their own input
+ * pipeline.
+ */
+export function refreshSlashMenuRows(): void {
+  if (!dom.slashMenu.classList.contains("active")) return;
+  if (currentNode === TASK_COMMAND_ROOT) return;
+  const text = currentMenuInput();
+  const { node, pathPrefix, tailQuery } = resolvePath(text, rootForInput(text));
+  if (node !== currentNode) return;
+  rebuild(tailQuery, pathPrefix);
+}
+
+subscribeTaskTopology(refreshSlashMenuRows);
+onTaskAgentChanged(refreshSlashMenuRows);
 
 // --- DOM listeners ---
 

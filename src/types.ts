@@ -139,6 +139,12 @@ export interface TaskDetail {
   model: string | null;
   mode: string | null;
   parentId: string | null;
+  /**
+   * The parent's confirmed binding. Only meaningful with `parentId`; `null`
+   * means the parent exists but has no binding. Lets a client compare the
+   * task's agent with what it should have inherited without a second read.
+   */
+  parentAgentId?: string | null;
   /** Agent that carries this task's current execution; null when unbound. */
   agentId?: string | null;
   configOptions: ConfigOption[];
@@ -209,6 +215,9 @@ export type AgentEvent =
       taskId: string;
       /** The agent that now executes this task, once it has a binding. */
       agentId?: string | null;
+      /** Parent link and the parent's binding, when the server knows them. */
+      parentId?: string | null;
+      parentAgentId?: string | null;
       cwd?: string;
       cwdDisplay?: string;
       title?: string | null;

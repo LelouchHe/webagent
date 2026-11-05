@@ -29,6 +29,8 @@ import {
   reconcileReplayedPendingTools,
 } from "./events.ts";
 import * as api from "./api.ts";
+import { installAgentDirectory } from "./agent-directory.ts";
+import { beginTaskTopologyGeneration, loadTaskList } from "./task-topology.ts";
 import { applyConnectedLogLevel, log } from "./log.ts";
 
 const clog = log.scope("sse");
@@ -287,8 +289,14 @@ async function initializeTaskAndIntent(
   const navigationGeneration = state.taskSwitchGen;
   try {
     const config = await api.getConfig();
+    // The directory belongs to the connection that requested it, so the
+    // connection guard comes first: a superseded stream's config must not
+    // install a directory (and default) that let the client parse coordinates
+    // against a configuration it no longer has. A stale *navigation* within
+    // this same connection is fine — the directory is not navigation state.
+    if (gen !== streamGen) return;
+    installAgentDirectory(config.agents, config.defaultAgentId);
     if (
-      gen !== streamGen ||
       rootAuthorityGeneration !== state.rootTaskAuthorityGeneration ||
       navigationGeneration !== state.taskSwitchGen
     ) {
@@ -306,6 +314,13 @@ async function initializeTaskAndIntent(
       return;
     }
   }
+  // Establish the workspace-wide baseline independently of which task this
+  // client lands on: the status bar's reference binding and the list-row
+  // baseline both need tasks this client is not viewing, and a hash or a
+  // reconnect may skip the task-list navigation path.
+  void loadTaskList().catch(() => {
+    // A failed baseline stays "not loaded"; nothing is claimed from it.
+  });
   await initTask(reconnectTaskId, gen, rootAuthorityGeneration);
   if (
     gen !== streamGen ||
@@ -325,7 +340,7 @@ async function resumeFromTaskList(
   isCurrent: () => boolean,
 ): Promise<boolean> {
   try {
-    const tasks = await api.listTasks();
+    const tasks = await loadTaskList();
     if (!isCurrent()) return true;
     if (state.rootTaskId === null) {
       installRootTaskId(
@@ -459,11 +474,15 @@ async function initTask(
 
 /** Adopt one task detail response as the current task's creation event. */
 function installTaskFromDetail(task: TaskDetail): void {
+  // The detail carries the parent link and the parent's binding, so the status
+  // bar's reference costs no request at all.
   handleEvent({
     type: "task_created",
     rootTaskId: task.rootTaskId,
     taskId: task.id,
     agentId: task.agentId ?? null,
+    parentId: task.parentId,
+    parentAgentId: task.parentAgentId ?? null,
     cwd: task.cwd,
     cwdDisplay: task.cwdDisplay,
     title: task.title,
@@ -565,6 +584,9 @@ async function resumeAndLoad(
 
 function cleanup() {
   clearRootTaskAuthority();
+  // A dropped stream ends this connection's collection: whatever it told us
+  // must not survive as the next connection's baseline.
+  beginTaskTopologyGeneration();
   setConnectionStatus("disconnected", "disconnected");
   state.eventSource = null;
   state.clientId = null;

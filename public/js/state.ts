@@ -16,6 +16,13 @@ import {
   formatModeLabel,
 } from "../../src/mode-bucket.ts";
 import * as api from "./api.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
+import { getDefaultAgentId, installAgentDirectory } from "./agent-directory.ts";
+import {
+  isParentResolved,
+  parentOf,
+  subscribeTaskTopology,
+} from "./task-topology.ts";
 
 export type { ConfigOption };
 
@@ -354,13 +361,58 @@ export function splitDisplayPath(cwd: string): {
   prefix: string;
   tail: string;
 } {
+  const drive = cwd.match(/^[A-Za-z]:[\\/]/)?.[0];
+  if (drive) return { prefix: drive, tail: cwd.slice(drive.length) };
+  // A coordinate keeps its `<agent>:` glued to whatever root follows, so only
+  // the part after the root can be truncated. Without this the whole
+  // `agent:~/repo`, `agent:C:/repo`, or `agent:~` would land in the
+  // ellipsising tail and take the agent and its colon with it.
+  const coordinate = /^([a-z0-9][a-z0-9-]*):(.*)$/u.exec(cwd);
+  if (coordinate) {
+    const inner = splitDisplayPath(coordinate[2]);
+    return { prefix: `${coordinate[1]}:${inner.prefix}`, tail: inner.tail };
+  }
+  if (cwd === "~") return { prefix: "~", tail: "" };
   if (cwd.startsWith("~/") || cwd.startsWith("~\\")) {
     return { prefix: cwd.slice(0, 2), tail: cwd.slice(2) };
   }
   if (cwd.startsWith("/")) return { prefix: "/", tail: cwd.slice(1) };
-  const drive = cwd.match(/^[A-Za-z]:[\\/]/)?.[0];
-  if (drive) return { prefix: drive, tail: cwd.slice(drive.length) };
   return { prefix: "", tail: cwd };
+}
+
+/**
+ * The cwd field's text and title.
+ *
+ * The agent is not a separate segment: when this task runs on an agent other
+ * than the one it should have inherited, the cwd is written as the same
+ * `<agent>:<cwd>` coordinate the list rows and the input preview use. When
+ * nothing deviates the field is byte-identical to the pre-coordinate status
+ * bar.
+ *
+ * The reference is what the task *should have inherited*: its parent's binding
+ * when that is known, otherwise the configured default. It is never the visible
+ * task set, and it is never guessed before the collection has loaded (the
+ * parent's binding is not known yet). An unbound task draws no prefix at all.
+ *
+ * The reference object is named in the title: without it the reader cannot
+ * tell what the coordinate is being compared against.
+ */
+function statusCwdField(cwd: string): { text: string; title: string } {
+  const agent = state.taskAgentId;
+  if (agent === null || agent === "") return { text: cwd, title: cwd };
+  // The reference is the parent's binding; until it is settled there is
+  // nothing to compare against, so no coordinate is drawn.
+  if (!isParentResolved(state.taskId)) return { text: cwd, title: cwd };
+  const parent = parentOf(state.taskId);
+  const reference = parent?.agentId ?? getDefaultAgentId();
+  if (reference === null || reference === agent) {
+    return { text: cwd, title: cwd };
+  }
+  const title =
+    parent?.agentId != null
+      ? `This task runs on ${agent}; its parent runs on ${parent.agentId}`
+      : `This task runs on ${agent}; the default agent is ${reference}`;
+  return { text: `${agent}:${cwd}`, title };
 }
 
 export function updateStatusBar() {
@@ -388,7 +440,14 @@ export function updateStatusBar() {
       title: `${used.toLocaleString("en-US")} / ${size.toLocaleString("en-US")} tokens`,
     });
   }
-  if (cwd) parts.push({ text: cwd, className: "status-cwd", title: cwd });
+  if (cwd) {
+    const field = statusCwdField(cwd);
+    parts.push({
+      text: field.text,
+      className: "status-cwd",
+      title: field.title,
+    });
+  }
 
   dom.statusBar.textContent = "";
   parts.forEach((part, index) => {
@@ -419,6 +478,11 @@ export function updateStatusBar() {
     dom.statusBar.appendChild(span);
   });
 }
+
+// Any collection change can change the reference binding (a parent rotation,
+// a deletion, a new list), so the status bar repaints from the collection
+// rather than from the event that changed it.
+subscribeTaskTopology(updateStatusBar);
 
 // --- Snapshot / state_patch (client-server-split M1) ---
 
@@ -681,12 +745,22 @@ export function requestNewTask({
   cwd,
   inheritFromTaskId = state.taskId,
   parentId = state.taskId,
+  agentId,
+  onError,
 }: {
   cwd?: string;
   inheritFromTaskId?: string | null;
   parentId?: string | null;
+  agentId?: string | null;
+  onError?: (err: unknown) => void;
 } = {}) {
-  void createNewTaskRequest({ cwd, inheritFromTaskId, parentId });
+  void createNewTaskRequest({
+    cwd,
+    inheritFromTaskId,
+    parentId,
+    agentId,
+    onError,
+  });
 }
 
 export function requestBootstrapTask(): void {
@@ -697,12 +771,16 @@ export async function createNewTaskRequest({
   cwd,
   inheritFromTaskId = state.taskId,
   parentId = state.taskId,
+  agentId,
   bootstrap = false,
+  onError,
 }: {
   cwd?: string;
   inheritFromTaskId?: string | null;
   parentId?: string | null;
+  agentId?: string | null;
   bootstrap?: boolean;
+  onError?: (err: unknown) => void;
 } = {}): Promise<boolean> {
   if (state.newTaskRequestInFlight || state.pendingNewTaskOpId) return false;
   invalidateNavigationLoads();
@@ -723,14 +801,21 @@ export async function createNewTaskRequest({
   try {
     const task = bootstrap
       ? await api.bootstrapTask(clientOpId)
-      : await api.createTask({ cwd, inheritFromTaskId, parentId }, clientOpId);
+      : await api.createTask(
+          { cwd, inheritFromTaskId, parentId, agentId },
+          clientOpId,
+        );
     state.newTaskRequestInFlight = false;
     if (!isCurrentRequest()) {
+      // A superseded create (or a new connection) owns the metadata now; its
+      // own response installs the directory. Applying this one would resolve
+      // coordinates against a configuration that is no longer current.
       if (state.pendingNewTaskOpId === clientOpId) {
         finishNewTaskRequest();
       }
       return false;
     }
+    installAgentDirectory(task.agents, task.defaultAgentId);
     if (typeof task.id !== "string") {
       throw new Error("Task create response is missing an id");
     }
@@ -738,28 +823,22 @@ export async function createNewTaskRequest({
     finishNewTaskRequest();
     createdTaskActivator(task);
     return true;
-  } catch {
+  } catch (err) {
     if (confirmedNewTaskOps.delete(clientOpId)) return true;
-    if (isCurrentRequest() && state.pendingNewTaskOpId === clientOpId) {
-      // The server broadcasts task_created before writing the HTTP
-      // response. Keep ownership briefly so that matching SSE can recover
-      // an ambiguously committed create whose response was interrupted.
-      return await new Promise<boolean>((resolve) => {
-        newTaskConfirmationWaiters.set(clientOpId, resolve);
-        state._newTaskRecoveryTimer = setTimeout(() => {
-          newTaskConfirmationWaiters.delete(clientOpId);
-          if (state.pendingNewTaskOpId === clientOpId) {
-            state.pendingNewTaskOpId = null;
-            if (isCurrentRequest()) {
-              state.awaitingNewTask = false;
-            }
-          }
-          state._newTaskRecoveryTimer = null;
-          resolve(false);
-        }, 3000);
-      });
+    // A definite rejection (unknown agent, agent would not start) never
+    // produces a broadcast, so waiting for one only delays the report.
+    if (isDefiniteCreateRejection(err)) {
+      // Report only while this request still owns the session; a failure the
+      // user already navigated away from must not surface as a late error.
+      if (abandonCreateRequest(clientOpId, isCurrentRequest)) onError?.(err);
+      return false;
     }
-    return false;
+    return await awaitCreateConfirmation(
+      clientOpId,
+      isCurrentRequest,
+      err,
+      onError,
+    );
   } finally {
     state.newTaskRequestInFlight = false;
     if (!isCurrentRequest() && state.pendingNewTaskOpId === clientOpId) {
@@ -773,6 +852,65 @@ const newTaskConfirmationWaiters = new Map<
   string,
   (confirmed: boolean) => void
 >();
+
+function isDefiniteCreateRejection(err: unknown): boolean {
+  // A locally refused request never reaches the server, so it cannot produce a
+  // broadcast either; report it immediately instead of waiting for one.
+  if (err instanceof api.InvalidRequestError) return true;
+  return (
+    err instanceof api.ApiError &&
+    (err.status === HTTP_STATUS.BAD_REQUEST ||
+      err.status === HTTP_STATUS.SERVICE_UNAVAILABLE)
+  );
+}
+
+/** Release ownership of a create the server definitely refused. Returns
+ *  whether this request still owned the session. */
+function abandonCreateRequest(
+  clientOpId: string,
+  isCurrentRequest: () => boolean,
+): boolean {
+  if (!isCurrentRequest() || state.pendingNewTaskOpId !== clientOpId) {
+    return false;
+  }
+  finishNewTaskRequest();
+  state.awaitingNewTask = false;
+  return true;
+}
+
+/**
+ * Hold ownership briefly after an ambiguous failure: the server broadcasts
+ * task_created before writing the HTTP response, so a matching SSE event may
+ * still prove the create committed. Without one, report the real error.
+ */
+async function awaitCreateConfirmation(
+  clientOpId: string,
+  isCurrentRequest: () => boolean,
+  err: unknown,
+  onError?: (err: unknown) => void,
+): Promise<boolean> {
+  if (!isCurrentRequest() || state.pendingNewTaskOpId !== clientOpId) {
+    return false;
+  }
+  return new Promise<boolean>((resolve) => {
+    newTaskConfirmationWaiters.set(clientOpId, resolve);
+    state._newTaskRecoveryTimer = setTimeout(() => {
+      newTaskConfirmationWaiters.delete(clientOpId);
+      if (state.pendingNewTaskOpId === clientOpId) {
+        state.pendingNewTaskOpId = null;
+        if (isCurrentRequest()) {
+          state.awaitingNewTask = false;
+        }
+        state._newTaskRecoveryTimer = null;
+        onError?.(err);
+        resolve(false);
+        return;
+      }
+      state._newTaskRecoveryTimer = null;
+      resolve(false);
+    }, 3000);
+  });
+}
 
 export function finishNewTaskRequest(confirmedOpId?: string): void {
   if (confirmedOpId) {
@@ -964,10 +1102,18 @@ export function clearRootTaskAuthority(): number {
  *   not downgrade the binding the client already knows, or the reload guard
  *   would silently stop working.
  */
+const taskAgentListeners: (() => void)[] = [];
+
+/** Repaint hooks for the current task's binding (an open menu's baseline). */
+export function onTaskAgentChanged(listener: () => void): void {
+  taskAgentListeners.push(listener);
+}
+
 export function installTaskAgentId(
   taskId: string | null | undefined,
   agentId: string | null | undefined,
 ): void {
+  const previousAgent = state.taskAgentId;
   const payloadAgent = typeof agentId === "string" ? agentId : null;
   const sameTask =
     typeof taskId === "string" &&
@@ -982,6 +1128,9 @@ export function installTaskAgentId(
   ) {
     state.agentReloading = false;
     state.agentReloadingAgentId = null;
+  }
+  if (state.taskAgentId !== previousAgent) {
+    for (const listener of taskAgentListeners) listener();
   }
 }
 

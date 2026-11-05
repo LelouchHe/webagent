@@ -63,6 +63,8 @@ export async function switchToTask(taskId: string): Promise<NavigationResult> {
       rootTaskId: task.rootTaskId,
       taskId: task.id,
       agentId: task.agentId ?? null,
+      parentId: task.parentId,
+      parentAgentId: task.parentAgentId ?? null,
       cwd: task.cwd,
       cwdDisplay: task.cwdDisplay,
       title: task.title,

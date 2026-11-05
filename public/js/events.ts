@@ -56,6 +56,13 @@ import {
   flushStreamingRender,
 } from "./render.ts";
 import * as api from "./api.ts";
+import {
+  loadTaskList,
+  observeTaskCreated,
+  observeTaskDeleted,
+  observeTaskReset,
+  setCurrentTask,
+} from "./task-topology.ts";
 import { applyConnectedLogLevel } from "./log.ts";
 import { log } from "./log.ts";
 import { NOTIFY_TIP_DENIED_KEY, NOTIFY_TIP_KEY } from "./local-reset.ts";
@@ -135,6 +142,18 @@ setCreatedTaskActivator((task) => {
         : undefined,
     clientOpId:
       typeof task.clientOpId === "string" ? task.clientOpId : undefined,
+    parentId:
+      typeof task.parentId === "string"
+        ? task.parentId
+        : task.parentId === null
+          ? null
+          : undefined,
+    parentAgentId:
+      typeof task.parentAgentId === "string"
+        ? task.parentAgentId
+        : task.parentAgentId === null
+          ? null
+          : undefined,
   });
 });
 
@@ -257,7 +276,7 @@ async function fallbackToNextTaskImpl(
   state.taskSwitchGen++;
   const gen = state.taskSwitchGen;
   try {
-    const tasks = await api.listTasks();
+    const tasks = await loadTaskList();
     if (
       gen !== state.taskSwitchGen ||
       rootAuthorityGeneration !== state.rootTaskAuthorityGeneration
@@ -306,6 +325,8 @@ async function fallbackToNextTaskImpl(
         rootTaskId: task.rootTaskId,
         taskId: task.id,
         agentId: task.agentId ?? null,
+        parentId: task.parentId,
+        parentAgentId: task.parentAgentId ?? null,
         cwd: task.cwd,
         cwdDisplay: task.cwdDisplay,
         title: task.title,
@@ -1959,6 +1980,16 @@ export function handleEvent(msg: AgentEvent) {
   if (msg.type === "connected" || msg.type === "task_created") {
     installRootTaskId(msg.rootTaskId);
   }
+  // The status bar's reference binding is consumed *before* the per-view
+  // filters below: only events for the current task's parent matter, and that
+  // parent is usually another task this client is not viewing.
+  if (msg.type === "task_created") {
+    observeTaskCreated(msg.taskId, msg.agentId ?? null);
+  } else if (msg.type === "task_deleted") {
+    observeTaskDeleted(msg.taskId);
+  } else if (msg.type === "task_reset") {
+    observeTaskReset(msg.taskId);
+  }
   if (msg.type === "inbox_count_changed") {
     updateInboxCount(msg.pendingCount);
     return;
@@ -2102,6 +2133,15 @@ export function handleEvent(msg: AgentEvent) {
       const isTaskActivation = state.taskId === null;
       installTaskAgentId(msg.taskId, msg.agentId);
       state.taskId = msg.taskId;
+      // The parent reference belongs to the previous task. Every activation
+      // payload carries the parent link and the parent's binding, so this costs
+      // no request; a payload without them leaves a hint-less fallback read.
+      setCurrentTask(
+        msg.taskId,
+        msg.parentId !== undefined && msg.parentAgentId !== undefined
+          ? { parentId: msg.parentId, agentId: msg.parentAgentId }
+          : undefined,
+      );
       if (isTaskActivation) rearmHistoryObserverAfterTaskActivation();
       state.taskCwd = msg.cwd ?? state.taskCwd;
       state.taskCwdDisplay = msg.cwdDisplay ?? msg.cwd ?? state.taskCwdDisplay;

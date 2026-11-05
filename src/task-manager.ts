@@ -2243,6 +2243,21 @@ export class TaskManager implements ObligationHost {
     }
   }
 
+  /** Parent link plus the parent's binding, for activation payloads. */
+  private parentFields(task: { parent_id: string | null }): {
+    parentId: string | null;
+    parentAgentId: string | null;
+  } {
+    const parentId = task.parent_id;
+    return {
+      parentId,
+      parentAgentId:
+        parentId === null
+          ? null
+          : (this.store.getBindingAgent(parentId) ?? null),
+    };
+  }
+
   /** Resume a task — returns event to send to the requesting client. */
   async resumeTask(bridge: SessionBridge, taskId: string): Promise<AgentEvent> {
     const agentId = this.attachExecutionBridge(bridge);
@@ -2260,6 +2275,7 @@ export class TaskManager implements ObligationHost {
         cwd: task.cwd,
         cwdDisplay: abbreviateHomePath(task.cwd),
         title: task.title,
+        ...this.parentFields(task),
         configOptions,
       };
     }
@@ -2364,6 +2380,7 @@ export class TaskManager implements ObligationHost {
         cwd: task.cwd,
         cwdDisplay: abbreviateHomePath(task.cwd),
         title: task.title,
+        ...this.parentFields(task),
         configOptions,
       };
     } catch (err) {
@@ -2454,6 +2471,7 @@ export class TaskManager implements ObligationHost {
       cwd: task.cwd,
       cwdDisplay: abbreviateHomePath(task.cwd),
       title: task.title,
+      ...this.parentFields(task),
       configOptions: this.applyStoredConfig(configOptions, task),
     };
   }

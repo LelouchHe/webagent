@@ -15,6 +15,7 @@ import {
 import type { AgentCommandSnapshot, ConfigOption } from "../../src/types.ts";
 import * as api from "./api.ts";
 import { fallbackToNextTask } from "./events.ts";
+import { taskAgentFailureLines } from "./create-command.ts";
 
 interface ClearTaskResult {
   id: string;
@@ -81,16 +82,26 @@ export async function compactCurrentTask(prompt?: string): Promise<void> {
 export async function replaceCurrentTask({
   cwd,
   showCwd = false,
+  agentId = null,
 }: {
-  cwd?: string;
+  /** `null` = omit the field, so the server keeps the task directory as it is
+   *  when it handles the rotation. `undefined` keeps the legacy behavior of
+   *  sending the directory this client currently believes in. */
+  cwd?: string | null;
   showCwd?: boolean;
+  agentId?: string | null;
 } = {}): Promise<void> {
   if (!state.taskId) {
     addSystem("warn: No active task");
     return;
   }
   const oldId = state.taskId;
-  const nextCwd = cwd ?? state.taskCwd ?? undefined;
+  const nextCwd = cwd === null ? null : (cwd ?? state.taskCwd ?? undefined);
+  // Submission-time facts for a late failure: the view can move elsewhere
+  // while the rotation is pending, and the rescue must not borrow the new
+  // task's agent or directory.
+  const failedAgentId = agentId ?? state.taskAgentId;
+  const failedCwd = state.taskCwd;
   if (state.busy) {
     addSystem("err: Cancel active work before clearing the task");
     return;
@@ -102,7 +113,8 @@ export async function replaceCurrentTask({
   );
   try {
     const result = (await api.clearTask(oldId, {
-      cwd: nextCwd,
+      ...(nextCwd === null ? {} : { cwd: nextCwd }),
+      agentId,
     })) as unknown as ClearTaskResult;
     resetClearedExecution();
     // Snapshot refresh is idempotent with the task_created broadcast, so
@@ -110,7 +122,14 @@ export async function replaceCurrentTask({
     await hydrateTaskRuntime(oldId);
     applyClearResult(oldId, result);
   } catch (err: unknown) {
-    addSystem(`err: Failed to clear task — ${String(err)}`);
+    for (const line of taskAgentFailureLines(
+      "clear",
+      err,
+      failedAgentId,
+      failedCwd,
+    )) {
+      addSystem(line);
+    }
   }
 }
 

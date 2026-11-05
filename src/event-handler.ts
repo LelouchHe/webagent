@@ -624,6 +624,23 @@ function isAgentActivityEvent(event: AgentEvent): boolean {
   return "taskId" in event && typeof event.taskId === "string";
 }
 
+/**
+ * Complete the activation facts for a producer that has no store (the bridge's
+ * restore event). A client can then settle the status bar's reference without a
+ * read.
+ */
+function completeParentFields(
+  event: Extract<AgentEvent, { type: "task_created" }>,
+  store: Store,
+): void {
+  if (event.parentId !== undefined) return;
+  const task = store.getTask(event.taskId);
+  const parentId = task?.parent_id ?? null;
+  event.parentId = parentId;
+  event.parentAgentId =
+    parentId === null ? null : (store.getBindingAgent(parentId) ?? null);
+}
+
 export function handleAgentEvent(
   event: AgentEvent,
   tasks: TaskManager,
@@ -644,8 +661,11 @@ export function handleAgentEvent(
     });
     return;
   }
-  if (event.type === "connected" || event.type === "task_created") {
+  if (event.type === "connected") {
     event.rootTaskId = store.rootTaskId;
+  } else if (event.type === "task_created") {
+    event.rootTaskId = store.rootTaskId;
+    completeParentFields(event, store);
   }
   if (isAgentActivityEvent(event) && "taskId" in event && event.taskId) {
     tasks.noteAgentActivity(event.taskId);

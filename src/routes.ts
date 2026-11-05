@@ -677,9 +677,15 @@ export function createRequestHandler(
     deps.onRequestBodyReadStart?.(req.url ?? "/");
     return readBodyRaw(req);
   };
+  // The branches that can answer are all backed by a task row, so `cwd` is
+  // present at runtime; the helper's shared shape types it as optional.
   let bootstrapTaskPromise: Promise<{
     id: string;
-    cwd: string;
+    cwd?: string;
+    cwdDisplay?: string;
+    parentId?: string | null;
+    parentAgentId?: string | null;
+    agentId?: string | null;
     title: string | null;
     source: string;
     configOptions: ConfigOption[];
@@ -698,6 +704,47 @@ export function createRequestHandler(
       id,
       available,
     }));
+
+  /**
+   * The fields every activation payload carries, so adding one does not mean
+   * editing every producer. Each site keeps its own `id`/`taskId`, `title`,
+   * `source`, `configOptions`, `agentCommands`, and flags.
+   *
+   * `agentId` may be supplied when the caller already knows it (root
+   * materialization); otherwise it is read for `taskId`. A row that could not
+   * be read keeps the caller's parent fallback and reports no parent binding:
+   * there is no row to trust.
+   */
+  const activationFields = (
+    task: { id: string; cwd: string; parent_id: string | null } | undefined,
+    options: {
+      taskId: string;
+      agentId?: string | null;
+      /** Parent id when the row is unavailable (a create branch). */
+      parentId?: string | null;
+    },
+  ): {
+    cwd: string | undefined;
+    cwdDisplay: string | undefined;
+    parentId: string | null;
+    parentAgentId: string | null;
+    agentId: string | null;
+  } => {
+    const parentId = task ? task.parent_id : (options.parentId ?? null);
+    return {
+      cwd: task?.cwd,
+      cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
+      parentId,
+      parentAgentId:
+        task && parentId !== null
+          ? (store.getBindingAgent(parentId) ?? null)
+          : null,
+      agentId:
+        options.agentId !== undefined
+          ? options.agentId
+          : (store.getBindingAgent(options.taskId) ?? null),
+    };
+  };
 
   // eslint-disable-next-line complexity -- TODO: refactor main route handler into smaller handlers
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -2153,11 +2200,9 @@ export function createRequestHandler(
           if (existing) {
             return {
               id: existing.id,
-              cwd: existing.cwd,
-              cwdDisplay: abbreviateHomePath(existing.cwd),
+              ...activationFields(existing, { taskId: existing.id }),
               title: existing.title,
               source: existing.source,
-              agentId: store.getBindingAgent(existing.id) ?? null,
               rootTaskId: store.rootTaskId,
               configOptions: [],
               agentCommands: taskManager.getAgentCommands(existing.id),
@@ -2183,11 +2228,12 @@ export function createRequestHandler(
             if (root) {
               return {
                 id: root.id,
-                cwd: root.cwd,
-                cwdDisplay: abbreviateHomePath(root.cwd),
+                ...activationFields(root, {
+                  taskId: root.id,
+                  agentId: rootBinding.agent_key,
+                }),
                 title: root.title,
                 source: root.source,
-                agentId: rootBinding.agent_key,
                 rootTaskId: store.rootTaskId,
                 configOptions: [],
                 agentCommands: taskManager.getAgentCommands(root.id),
@@ -2203,11 +2249,9 @@ export function createRequestHandler(
           const rootTaskId = store.rootTaskId;
           const result = {
             id: root.id,
-            cwd: root.cwd,
-            cwdDisplay: abbreviateHomePath(root.cwd),
+            ...activationFields(root, { taskId: root.id }),
             title: root.title,
             source: root.source,
-            agentId: store.getBindingAgent(root.id) ?? null,
             rootTaskId,
             configOptions: taskManager.applyStoredConfig(
               taskManager.configOptionsForTask(root.id),
@@ -2223,6 +2267,8 @@ export function createRequestHandler(
             cwd: result.cwd,
             cwdDisplay: result.cwdDisplay,
             title: result.title,
+            parentId: result.parentId,
+            parentAgentId: result.parentAgentId,
             agentId: result.agentId,
             configOptions: result.configOptions,
             agentCommands: result.agentCommands,
@@ -2412,10 +2458,8 @@ export function createRequestHandler(
               type: "task_created",
               rootTaskId: store.rootTaskId,
               taskId,
-              cwd: fresh.cwd,
-              cwdDisplay: abbreviateHomePath(fresh.cwd),
+              ...activationFields(fresh, { taskId }),
               title: fresh.title,
-              agentId: store.getBindingAgent(taskId) ?? null,
               configOptions: clearResult.configOptions,
               agentCommands: tasks.getAgentCommands(taskId),
             } satisfies AgentEvent);
@@ -2533,10 +2577,8 @@ export function createRequestHandler(
             type: "task_created",
             rootTaskId: store.rootTaskId,
             taskId,
-            cwd: fresh.cwd,
-            cwdDisplay: abbreviateHomePath(fresh.cwd),
+            ...activationFields(fresh, { taskId }),
             title: fresh.title,
-            agentId: store.getBindingAgent(taskId) ?? null,
             configOptions: result.configOptions,
             agentCommands: tasks.getAgentCommands(taskId),
           } satisfies AgentEvent;
@@ -2544,9 +2586,7 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.OK, {
             id: taskId,
             rootTaskId: store.rootTaskId,
-            agentId: store.getBindingAgent(taskId) ?? null,
-            cwd: fresh.cwd,
-            cwdDisplay: abbreviateHomePath(fresh.cwd),
+            ...activationFields(fresh, { taskId }),
             title: fresh.title,
             source: fresh.source,
             configOptions: result.configOptions,
@@ -2602,14 +2642,11 @@ export function createRequestHandler(
             {
               id: freshTask.id,
               rootTaskId: store.rootTaskId,
-              cwd: freshTask.cwd,
-              cwdDisplay: abbreviateHomePath(freshTask.cwd),
+              ...activationFields(freshTask, { taskId: freshTask.id }),
               title: freshTask.title,
               source: freshTask.source,
               model: freshTask.model,
               mode: freshTask.mode,
-              parentId: freshTask.parent_id,
-              agentId: store.getBindingAgent(freshTask.id) ?? null,
               configOptions,
             },
             req,
@@ -2845,10 +2882,11 @@ export function createRequestHandler(
             type: "task_created",
             rootTaskId: store.rootTaskId,
             taskId,
-            cwd: task?.cwd,
-            cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
+            ...activationFields(task, {
+              taskId,
+              parentId: body.parentId ?? null,
+            }),
             title: task?.title,
-            agentId: store.getBindingAgent(taskId) ?? null,
             configOptions,
             agentCommands: tasks.getAgentCommands(taskId),
             clientOpId: clientOpId ?? undefined,
@@ -2902,13 +2940,14 @@ export function createRequestHandler(
             // The create echo installs the task's binding agent on the client,
             // exactly like the broadcast; without it the echo would downgrade
             // the agent the client already knows.
-            agentId: store.getBindingAgent(taskId) ?? null,
+            ...activationFields(task, {
+              taskId,
+              parentId: body.parentId ?? null,
+            }),
             cwd: task?.cwd ?? body.cwd,
-            cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
             title: task?.title ?? null,
             workflowStatus: task?.workflow_status ?? "idle",
             source: task?.source ?? source,
-            parentId: task?.parent_id ?? null,
             configOptions,
             agentCommands: tasks.getAgentCommands(taskId),
             clientOpId: clientOpId ?? undefined,
@@ -3591,10 +3630,8 @@ export function createRequestHandler(
           type: "task_created",
           rootTaskId: store.rootTaskId,
           taskId,
-          cwd: task?.cwd,
-          cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
+          ...activationFields(task, { taskId }),
           title: task?.title,
-          agentId: store.getBindingAgent(taskId) ?? null,
           configOptions,
           agentCommands: tasks.getAgentCommands(taskId),
         });
