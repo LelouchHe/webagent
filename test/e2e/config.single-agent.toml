@@ -1,0 +1,25 @@
+# Template only: every suite run substitutes these two lines with its own
+# port and run directory (test/e2e/run-context.ts). Do not read this file
+# directly from a spec.
+#
+# A single-agent configuration, deliberately without the second `[agents.*]`
+# entry the shared suite template carries. Suppression and "zero visual change"
+# can only be asserted here: on the shared template two agents are configured
+# from the start, so a label that never appears would prove nothing.
+port = 6802
+data_dir = "test/e2e-data"
+public_dir = "dist-dev"
+default_agent = "mock"
+[agents.mock]
+cmd = "node --experimental-strip-types test/e2e/mock-agent.ts"
+
+[limits]
+bash_output = 1_048_576
+image_upload = 10_485_760
+
+[share]
+enabled = true
+ttl_hours = 0
+csp_enforce = true
+viewer_origin = ""
+internal_hosts = []

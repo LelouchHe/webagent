@@ -114,6 +114,56 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - reads, snapshots, and deletion keep working with agents idle
   - a Root carried by another configured agent is returned by bootstrap as metadata without resolving or rebinding
 
+### Agent coordinates and labels
+
+- `test/agent-coordinate.test.ts` (pure parse + suggestion, no server)
+  - the colon is the only marker: a configured prefix is a coordinate and the
+    suffix keeps consecutive spaces, TAB, full-width spaces, a trailing space,
+    and a literal backslash; `~/repo`, `/tmp/a:b`, `:~/repo`, `./agent:x`, an
+    unknown prefix, and a case variant are one path
+  - `notes:2026` is a path until an agent named `notes` exists, then a
+    coordinate; `./notes:2026` stays a path either way
+  - `suggestCoordinatePrefix`: `""`/`co` suggest an agent, `co ` and `co /tmp`
+    do not, a settled coordinate re-targets completion at its suffix only, and
+    the baseline agent does not change the parse
+  - the rescue prefers an available agent other than the failed target, falls
+    back to the configured default, and yields nothing when none is left
+
+- `test/task-topology.test.ts` (collection state machine)
+  - not-loaded claims nothing and is distinct from loaded-and-empty; a list
+    from an older connection generation is dropped
+  - one confirmed agent suppresses labels even with several tasks; a null
+    binding is neither agent; a binding for an agent absent from the
+    configuration still counts; the uncached current task's own binding counts
+  - entry labels are baseline-relative (same agent → none, other agent → its
+    id, no baseline → all, suppressed → none)
+  - a `task_created` rotation updates a task this client is not viewing and
+    repaints; a deletion removes it from the set; an unknown or unbound parent
+    is reported as unknown rather than guessed
+  - concurrent list callers in one generation share one request
+
+- `test/agent-status-bar.test.ts` (DOM segment)
+  - no segment while the collection is unloaded or while one agent carries the
+    visible set; the rest of the status bar is unchanged
+  - with two agents the segment sits between model and cwd, `B ≠ A` marks
+    divergence with both ids in the title, an unknown parent shows the current
+    agent alone, an unbound task draws nothing, and a parent rotation repaints
+    without navigation
+
+- `test/agent-coordinate-entries.test.ts` (`+`, `/new`, `/clear` payloads)
+  - `/clear` sends the coordinate's agent and raw cwd; `/new` omits the cwd for
+    an empty suffix (server default) and sends the raw cwd otherwise; `+` sends
+    title, agent, and raw cwd
+  - all three project the same `(agent, cwd)` for the same coordinate, while
+    `/clear <agent>:` and `/new <agent>:` stay different by contract
+  - an unconfigured prefix carries no `agentId` and resolves as a path; a
+    configured `notes` prefix reads as a coordinate; a missing directory reports
+    the raw value and never claims "not configured"
+  - a 503 start failure appends `/clear <live-agent>:<raw-cwd>` (excluding the
+    failed target, preferring available agents then the default, keeping spaces
+    in the cwd); a 400 unconfigured agent and an exhausted candidate list append
+    nothing
+
 ### ACP bridge and backend orchestration
 
 - `test/bridge-agent-image.test.ts`
@@ -1027,6 +1077,52 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/e2e/global-setup.ts`
   - one actionable error when the suite server is not serving this run's data
     directory
+
+- `test/e2e/spawn-server.ts`
+  - `writeSpecConfig` builds a one-agent config by default; a spec may pass
+    `template` to read a checked-in template instead (port and `data_dir` still
+    substituted), which is how `config.single-agent.toml` gives the
+    zero-visual-change assertions a genuinely single-agent deployment
+
+### Agent coordinates and labels
+
+- `agent-coordinate.spec.ts` (suite server, real submissions)
+  - `+`, `/new`, and `/clear` each deliver a cwd containing consecutive spaces,
+    TAB, a full-width space, or a literal backslash byte for byte (request body
+    and stored task both checked)
+  - an unconfigured `notes:2026` / `copliot:repo` is a path, with no `agentId`
+    on the wire, when the directory exists; a missing one fails as a directory
+    error and never as an unconfigured agent
+  - `mock2:` on `/new` lands on the server default, on `/clear` keeps the task
+    directory, and an explicit cwd on create lands there; all three entries
+    agree on the semantic `(agent, cwd)` projection
+  - a child created for `mock2` is bound to it at creation and carries no
+    rotation record, while the parent keeps its own binding
+
+- `agent-labels.spec.ts`
+  - single-agent template (`test/e2e/config.single-agent.toml`): no agent node
+    at all, and the status bar equals a golden built from the fixture model and
+    the API's cwd display (not from the renderer); a same-agent child changes
+    nothing
+  - divergence is marked with both ids and their titles; another client rotating
+    the parent to a third agent repaints the segment without this client
+    navigating; a task whose parent is unbound states its own agent alone
+  - deleting the last task on another agent removes every label without a task
+    switch
+  - the initial list response is genuinely held open: the task renders with no
+    agent segment, and the segment appears only after the list resolves
+  - `/switch` rows state an agent only for rows whose agent differs from the
+    current task's, and a menu reopened after a switch uses the new baseline
+  - a cross-agent `/clear` repaints the new agent's own model and agent, and the
+    detail read agrees; clearing back suppresses the segment again
+
+- `agent-rescue.spec.ts` (private server, an agent whose command exists in PATH
+  but whose process exits immediately)
+  - `/clear dead:` and `+nope dead:<dir>` report the real 503 reason and append
+    one copyable `/clear mock:<raw cwd>` line (spaces preserved), never a button
+  - the directory confirms `dead` as available, so the failure is a real start
+    failure rather than a faked flag
+  - an unconfigured agent through the API is a 400 "not configured"
 
 ### Multi-agent runtime
 

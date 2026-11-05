@@ -43,7 +43,30 @@ import {
 import { controlPlanPanel } from "./plan-panel.ts";
 import { requestAuthoritativeCancel } from "./cancel-command.ts";
 import { openViewPath } from "./view-command.ts";
-import { isSourceTaskMissing, resolveCreateCwd } from "./create-command.ts";
+import {
+  isSourceTaskMissing,
+  parseCoordinate,
+  resolveCreateCoordinate,
+  resolveCreateCwd,
+  taskAgentFailureLines,
+} from "./create-command.ts";
+import { getAgentDirectory } from "./agent-directory.ts";
+import { loadTaskList } from "./task-topology.ts";
+
+/**
+ * The raw remainder after the command word, byte for byte.
+ *
+ * `handleSlashCommand` normalizes `arg` for ordinary commands, but a cwd
+ * coordinate must survive that: consecutive spaces, TABs, and trailing spaces
+ * after the `:` are the user's path, not formatting. This split uses the same
+ * `/\s/u` token boundary to find the command word and then keeps everything
+ * after its separator untouched.
+ */
+function rawSlashArgument(text: string): string {
+  const head = /^\s*\S+/u.exec(text);
+  if (!head) return "";
+  return text.slice(head[0].length).replace(/^\s+/u, "");
+}
 
 async function subscribePush(): Promise<void> {
   try {
@@ -169,28 +192,55 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       // navigation, and the child must stay under (and inherit from) the Task
       // the user actually submitted the command in.
       const sourceTaskId = state.taskId;
+      const sourceAgentId = state.taskAgentId;
+      const sourceCwd = state.taskCwd;
       // A typed cwd resolves against the current Task cwd via the same helper
       // the picker uses, so Enter and the action row create in the same place.
       // A bare `/new` keeps the legacy behavior: current cwd, no extra probe.
+      const rawArg = rawSlashArgument(text);
+      const coordinate = parseCoordinate(rawArg, getAgentDirectory());
       let cwd: string | undefined;
-      if (arg) {
-        const resolved = await resolveCreateCwd(arg);
-        // A definite cwd error has nothing left to do: report it immediately
-        // rather than waiting on the task-list liveness probe.
-        if ("error" in resolved) {
-          addSystem(`err: create failed — ${resolved.error}`);
+      let agentId: string | null = null;
+      if (coordinate.agentId !== null) {
+        // An empty suffix omits the cwd on purpose: on create that means the
+        // server default directory, which is not the current task directory.
+        const target = await resolveCreateCoordinate({
+          agentId: coordinate.agentId,
+          rawSuffix: coordinate.cwd,
+        });
+        if ("error" in target) {
+          addSystem(`err: create failed — ${target.error}`);
           return true;
         }
-        // A source Task deleted while the probe was pending must not trigger
-        // the destructive reset below: keep the current (fallback) view intact
-        // and report why. The check only rejects a definite deletion.
         if (await isSourceTaskMissing(sourceTaskId)) {
           addSystem("err: create failed — the launching task no longer exists");
           return true;
         }
-        cwd = resolved.cwd;
+        agentId = target.agentId;
+        cwd = target.cwd;
       } else {
-        cwd = state.taskCwd ?? undefined;
+        const path = rawArg.trim();
+        if (path) {
+          const resolved = await resolveCreateCwd(path);
+          // A definite cwd error has nothing left to do: report it immediately
+          // rather than waiting on the task-list liveness probe.
+          if ("error" in resolved) {
+            addSystem(`err: create failed — ${resolved.error}`);
+            return true;
+          }
+          // A source Task deleted while the probe was pending must not trigger
+          // the destructive reset below: keep the current (fallback) view intact
+          // and report why. The check only rejects a definite deletion.
+          if (await isSourceTaskMissing(sourceTaskId)) {
+            addSystem(
+              "err: create failed — the launching task no longer exists",
+            );
+            return true;
+          }
+          cwd = resolved.cwd;
+        } else {
+          cwd = state.taskCwd ?? undefined;
+        }
       }
       // Pass the snapshot explicitly: after clearing taskId the requestNewTask
       // defaults would resolve to null (or to a Task the user switched to
@@ -200,8 +250,19 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       addSystem("Creating new task…");
       requestNewTask({
         cwd: cwd,
+        agentId,
         inheritFromTaskId: sourceTaskId,
         parentId: sourceTaskId,
+        onError: (err) => {
+          for (const line of taskAgentFailureLines(
+            "create",
+            err,
+            agentId ?? sourceAgentId,
+            sourceCwd,
+          )) {
+            addSystem(line);
+          }
+        },
       });
       return true;
     }
@@ -226,9 +287,31 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     }
 
     case "/clear": {
+      const rawArg = rawSlashArgument(text);
+      const coordinate = parseCoordinate(rawArg, getAgentDirectory());
+      if (coordinate.agentId !== null) {
+        // The coordinate's cwd is a new syntax, so it gets the same resolution
+        // as the create entries (relative paths against the task cwd, and the
+        // directory must exist). An empty suffix keeps the task directory.
+        const target = await resolveCreateCoordinate({
+          agentId: coordinate.agentId,
+          rawSuffix: coordinate.cwd,
+        });
+        if ("error" in target) {
+          addSystem(`err: Failed to clear task — ${target.error}`);
+          return true;
+        }
+        await replaceCurrentTask({
+          cwd: target.cwd,
+          showCwd: target.cwd !== undefined,
+          agentId: target.agentId,
+        });
+        return true;
+      }
+      const path = rawArg.trim();
       await replaceCurrentTask({
-        cwd: arg || undefined,
-        showCwd: Boolean(arg),
+        cwd: path || undefined,
+        showCwd: Boolean(path),
       });
       return true;
     }
@@ -341,7 +424,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
       try {
-        const tasks = await api.listTasks();
+        const tasks = await loadTaskList();
         const query = arg.toLowerCase();
         const match = tasks.find(
           (s) => s.id.startsWith(arg) || s.title?.toLowerCase().includes(query),

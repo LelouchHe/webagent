@@ -15,6 +15,7 @@ import {
 import type { AgentCommandSnapshot, ConfigOption } from "../../src/types.ts";
 import * as api from "./api.ts";
 import { fallbackToNextTask } from "./events.ts";
+import { taskAgentFailureLines } from "./create-command.ts";
 
 interface ClearTaskResult {
   id: string;
@@ -81,9 +82,11 @@ export async function compactCurrentTask(prompt?: string): Promise<void> {
 export async function replaceCurrentTask({
   cwd,
   showCwd = false,
+  agentId = null,
 }: {
   cwd?: string;
   showCwd?: boolean;
+  agentId?: string | null;
 } = {}): Promise<void> {
   if (!state.taskId) {
     addSystem("warn: No active task");
@@ -103,6 +106,7 @@ export async function replaceCurrentTask({
   try {
     const result = (await api.clearTask(oldId, {
       cwd: nextCwd,
+      agentId,
     })) as unknown as ClearTaskResult;
     resetClearedExecution();
     // Snapshot refresh is idempotent with the task_created broadcast, so
@@ -110,7 +114,16 @@ export async function replaceCurrentTask({
     await hydrateTaskRuntime(oldId);
     applyClearResult(oldId, result);
   } catch (err: unknown) {
-    addSystem(`err: Failed to clear task — ${String(err)}`);
+    // A plain clear inherits the task's own binding, so that is the target
+    // that just failed; an explicit coordinate names its own.
+    for (const line of taskAgentFailureLines(
+      "clear",
+      err,
+      agentId ?? state.taskAgentId,
+      state.taskCwd,
+    )) {
+      addSystem(line);
+    }
   }
 }
 
