@@ -17,10 +17,10 @@ import {
 } from "../../src/mode-bucket.ts";
 import * as api from "./api.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import { installAgentDirectory } from "./agent-directory.ts";
+import { getDefaultAgentId, installAgentDirectory } from "./agent-directory.ts";
 import {
-  parentAgentOf,
-  shouldShowAgentLabels,
+  isTaskTopologyLoaded,
+  parentOf,
   subscribeTaskTopology,
 } from "./task-topology.ts";
 
@@ -361,48 +361,54 @@ export function splitDisplayPath(cwd: string): {
   prefix: string;
   tail: string;
 } {
+  const drive = cwd.match(/^[A-Za-z]:[\\/]/)?.[0];
+  if (drive) return { prefix: drive, tail: cwd.slice(drive.length) };
+  // A coordinate keeps its `<agent>:` glued to the path root, so only the part
+  // after the root can be truncated. Without this the whole `agent:~/repo`
+  // would land in the ellipsising tail.
+  const coordinate = /^([a-z0-9][a-z0-9-]*):((?:~\/|\/).*)$/u.exec(cwd);
+  if (coordinate) {
+    const inner = splitDisplayPath(coordinate[2]);
+    return { prefix: `${coordinate[1]}:${inner.prefix}`, tail: inner.tail };
+  }
   if (cwd.startsWith("~/") || cwd.startsWith("~\\")) {
     return { prefix: cwd.slice(0, 2), tail: cwd.slice(2) };
   }
   if (cwd.startsWith("/")) return { prefix: "/", tail: cwd.slice(1) };
-  const drive = cwd.match(/^[A-Za-z]:[\\/]/)?.[0];
-  if (drive) return { prefix: drive, tail: cwd.slice(drive.length) };
   return { prefix: "", tail: cwd };
 }
 
 /**
- * The status bar's agent segment.
+ * The cwd field's text and title.
  *
- * Positioned between the model and the cwd because it describes the execution
- * environment that model belongs to. Two independent rules apply:
+ * The agent is not a separate segment: when this task runs on an agent other
+ * than the one it should have inherited, the cwd is written as the same
+ * `<agent>:<cwd>` coordinate the list rows and the input preview use. When
+ * nothing deviates the field is byte-identical to the pre-coordinate status
+ * bar.
  *
- * - Collection-level suppression: no segment while the visible tasks share a
- *   single confirmed binding agent (single-agent deployments look unchanged).
- *   An unbound current task draws nothing and never guesses the default.
- * - Divergence: `B ≠ A` when the parent is carried by a different agent, with
- *   a title naming both. An unknown parent is simply not marked.
+ * The reference is what the task *should have inherited*: its parent's binding
+ * when that is known, otherwise the configured default. It is never the visible
+ * task set, and it is never guessed before the collection has loaded (the
+ * parent's binding is not known yet). An unbound task draws no prefix at all.
+ *
+ * The reference object is named in the title: without it the reader cannot
+ * tell what the coordinate is being compared against.
  */
-function agentStatusPart(): {
-  text: string;
-  className: string;
-  title?: string;
-} | null {
+function statusCwdField(cwd: string): { text: string; title: string } {
   const agent = state.taskAgentId;
-  if (!agent) return null;
-  if (!shouldShowAgentLabels(state.taskId, agent)) return null;
-  const parentAgent = parentAgentOf(state.taskId);
-  if (parentAgent !== null && parentAgent !== agent) {
-    return {
-      text: `${agent} ≠ ${parentAgent}`,
-      className: "status-agent",
-      title: `This task runs on ${agent}; its parent runs on ${parentAgent}`,
-    };
+  if (agent === null || agent === "") return { text: cwd, title: cwd };
+  if (!isTaskTopologyLoaded()) return { text: cwd, title: cwd };
+  const parent = parentOf(state.taskId);
+  const reference = parent?.agentId ?? getDefaultAgentId();
+  if (reference === null || reference === agent) {
+    return { text: cwd, title: cwd };
   }
-  return {
-    text: agent,
-    className: "status-agent",
-    title: `Agent: ${agent}`,
-  };
+  const title =
+    parent?.agentId != null
+      ? `This task runs on ${agent}; its parent runs on ${parent.agentId}`
+      : `This task runs on ${agent}; the default agent is ${reference}`;
+  return { text: `${agent}:${cwd}`, title };
 }
 
 export function updateStatusBar() {
@@ -422,8 +428,6 @@ export function updateStatusBar() {
       title: model,
     });
   }
-  const agent = agentStatusPart();
-  if (agent) parts.push(agent);
   if (state.contextUsage) {
     const { used, size } = state.contextUsage;
     parts.push({
@@ -432,7 +436,14 @@ export function updateStatusBar() {
       title: `${used.toLocaleString("en-US")} / ${size.toLocaleString("en-US")} tokens`,
     });
   }
-  if (cwd) parts.push({ text: cwd, className: "status-cwd", title: cwd });
+  if (cwd) {
+    const field = statusCwdField(cwd);
+    parts.push({
+      text: field.text,
+      className: "status-cwd",
+      title: field.title,
+    });
+  }
 
   dom.statusBar.textContent = "";
   parts.forEach((part, index) => {

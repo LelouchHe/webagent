@@ -1,23 +1,24 @@
 // The client's global task topology: every live task the server has told us
 // about, independent of which one this client currently views.
 //
-// Why this exists: two display decisions are workspace-wide, not task-local.
+// Why this exists: the display rules need facts about tasks this client is not
+// viewing.
 //
-// - Suppression: when every visible task is carried by the same agent, no
-//   agent label is shown anywhere. Deciding that needs the whole visible set,
-//   not the current task.
-// - Divergence: a task's status bar says `B ≠ A` when its parent is carried by
-//   another agent. Another client rotating the parent must change this client's
-//   status bar even though this client never navigates.
+// - The status bar's agent coordinate compares the current task against the
+//   agent it *should have inherited*, which is the parent's binding. Another
+//   client rotating the parent must change this client's status bar even
+//   though this client never navigates.
+// - List rows are labelled against the current task's binding, which needs the
+//   other rows' confirmed bindings.
 //
 // The collection is therefore consumed *before* the per-view event filter
 // (`events.ts`), and the current view filters afterwards. It is rebuilt from a
 // list response on every connection: a list from a previous connection must
 // never be mistaken for this one's baseline.
 //
-// A task whose binding is unknown (`null`) contributes nothing to the set: it
-// is neither "the same agent" nor "a second agent". Nothing here guesses the
-// default agent for an unbound task.
+// A task whose binding is unknown (`null`) is neither "the same agent" nor
+// "a second agent". Nothing here guesses the default agent for an unbound
+// task; that fallback is the caller's explicit decision.
 
 import type { TaskSummary } from "../../src/types.ts";
 import * as api from "./api.ts";
@@ -119,59 +120,45 @@ export function observeTaskDeleted(taskId: string): void {
   if (entries.delete(taskId)) notifyChange();
 }
 
-/** The confirmed binding agents of the visible set, plus the current task's
- *  own binding when it is not in the list cache yet. */
-export function visibleAgentSet(
-  currentTaskId: string | null,
-  currentAgentId: string | null,
-): Set<string> {
-  const agents = new Set<string>();
-  for (const entry of entries.values()) {
-    if (entry.agentId !== null) agents.add(entry.agentId);
-  }
-  if (
-    currentAgentId !== null &&
-    (currentTaskId === null || !entries.has(currentTaskId))
-  ) {
-    agents.add(currentAgentId);
-  }
-  return agents;
+/** A task's parent, with its confirmed binding when the collection knows it. */
+export interface ParentBinding {
+  parentId: string;
+  agentId: string | null;
 }
 
 /**
- * Whether agent labels belong on screen at all. Collection-level suppression:
- * one (or zero) confirmed agent across every visible task means no label,
- * which is what keeps a single-agent deployment visually unchanged.
- *
- * Not loaded is not the same as loaded-and-empty: both suppress the label, but
- * only a loaded collection may claim that "no label = the current agent".
+ * The parent of a task, or null when the collection has no parent link for it
+ * (the task is missing from the cache, has no parent, or the list has not
+ * loaded). A parent that exists but has no confirmed binding is returned with
+ * `agentId: null` rather than being collapsed into "no parent".
  */
-export function shouldShowAgentLabels(
-  currentTaskId: string | null,
-  currentAgentId: string | null,
-): boolean {
-  if (!loaded) return false;
-  return visibleAgentSet(currentTaskId, currentAgentId).size > 1;
+export function parentOf(taskId: string | null): ParentBinding | null {
+  if (!taskId) return null;
+  const entry = entries.get(taskId);
+  if (!entry?.parentId) return null;
+  return {
+    parentId: entry.parentId,
+    agentId: entries.get(entry.parentId)?.agentId ?? null,
+  };
 }
 
 /** Binding agent of a task's parent, when both the parent and its binding are
  *  known. A missing parent is "unknown", never the default agent. */
 export function parentAgentOf(taskId: string | null): string | null {
-  if (!taskId) return null;
-  const entry = entries.get(taskId);
-  if (!entry?.parentId) return null;
-  return entries.get(entry.parentId)?.agentId ?? null;
+  return parentOf(taskId)?.agentId ?? null;
 }
 
 /**
- * Entry-level baseline: the agent prefix a list row must carry, or null when
- * the row shows its cwd alone.
+ * Entry-level baseline for a task row: the agent prefix it must carry, or
+ * null when it shows its cwd alone. The baseline is the current task's own
+ * binding — deliberately a different reference from the status bar, which
+ * compares against what the current task *should have inherited*.
  *
  * `null` here means "do not print an agent", which covers three different
  * situations that must stay distinguishable to the caller:
  * - the collection is not loaded yet (nothing may be claimed),
  * - the entry has no confirmed binding (there is no agent to name),
- * - the entry matches the baseline while labels are not suppressed.
+ * - the entry matches the current task's binding.
  */
 export function entryAgentLabel(
   entryAgentId: string | null,
@@ -181,7 +168,6 @@ export function entryAgentLabel(
   if (entryAgentId === null) return null;
   if (!loaded) return null;
   if (currentAgentId === null) return entryAgentId;
-  if (!shouldShowAgentLabels(currentTaskId, currentAgentId)) return null;
   return entryAgentId === currentAgentId ? null : entryAgentId;
 }
 

@@ -17,16 +17,16 @@ import {
 } from "./spawn-server.ts";
 
 /**
- * Agent labels on the display surface.
+ * Agent coordinates on the display surface.
  *
- * Two sets decide what is drawn, and they are not the same set:
- * - the *visible tasks'* confirmed bindings decide whether any label exists
- *   (suppression) and which rows state an agent (baseline),
- * - the configured directory decides nothing here.
+ * The status bar folds the agent into the cwd field and draws it only when the
+ * task runs on an agent other than the one it should have inherited: its
+ * parent's binding when known, otherwise the configured default. There is no
+ * collection-level suppression any more — a task that does not deviate simply
+ * shows its path, byte for byte as before.
  *
- * A single-agent deployment must therefore look exactly as it did before this
- * surface existed. That can only be asserted on a single-agent configuration,
- * which is what `config.single-agent.toml` is for.
+ * List rows use a different reference on purpose: the current task's binding.
+ * Both references are exercised here.
  */
 
 const E2E_TOKEN = readRunToken();
@@ -115,8 +115,8 @@ async function navigateToTitle(page: Page, title: string): Promise<void> {
   await expectConnectionStatus(page, "connected");
 }
 
-function agentSegment(page: Page) {
-  return page.locator("#status-bar .status-agent");
+function cwdSegment(page: Page) {
+  return page.locator("#status-bar .status-cwd");
 }
 
 function modelOf(payload: { configOptions?: unknown }): string | undefined {
@@ -154,11 +154,12 @@ test("a single-agent deployment is visually unchanged", async ({ page }) => {
 
       const statusBar = page.locator("#status-bar");
       await expect(statusBar).toHaveText(golden);
-      // No agent node at all: not hidden, not empty — absent.
-      await expect(page.locator("#status-bar .status-agent")).toHaveCount(0);
-      // The segments that must survive are the frozen ones.
+      // The cwd field carries no coordinate prefix and keeps the path as its
+      // tooltip, exactly like the pre-coordinate status bar.
+      const cwdField = cwdSegment(page);
+      await expect(cwdField).toHaveText(cwd);
+      await expect(cwdField).toHaveAttribute("title", cwd);
       await expect(page.locator("#status-bar .status-model")).toHaveText(model);
-      await expect(page.locator("#status-bar .status-cwd")).toHaveText(cwd);
 
       // A child created without a coordinate inherits the same agent, so it
       // changes nothing either.
@@ -168,7 +169,7 @@ test("a single-agent deployment is visually unchanged", async ({ page }) => {
         "Created task @same",
       );
       await expect(statusBar).toHaveText(golden);
-      await expect(page.locator("#status-bar .status-agent")).toHaveCount(0);
+      await expect(cwdField).toHaveText(cwd);
     },
   );
 });
@@ -194,11 +195,11 @@ function secondAgent(): string[] {
   ];
 }
 
-test("divergence is marked and another client's rotation is recomputed", async ({
+test("the coordinate appears only when the task deviates from what it should inherit", async ({
   page,
 }) => {
   await withSpecServer(
-    "agent-labels-divergence",
+    "agent-labels-deviation",
     {
       extra: [
         ...secondAgent(),
@@ -210,57 +211,130 @@ test("divergence is marked and another client's rotation is recomputed", async (
       await openPrivate(page, origin);
       const parentId = await createChild(page, origin, "parent", `mock:${dir}`);
       await enterTask(page, origin, "parent");
-      await createChild(page, origin, "child", `mock2:${dir}`);
+      // Same agent as the parent (and as the default): nothing to state.
+      await expect(cwdSegment(page)).not.toContainText("mock:");
+
+      await createChild(page, origin, "child", `mock:${dir}`);
       await enterTask(page, origin, "child");
 
-      await expect(agentSegment(page)).toHaveText("mock2 ≠ mock");
-      await expect(agentSegment(page)).toHaveAttribute(
+      // A static deviation: this task runs on mock3, its parent on mock.
+      await createChild(page, origin, "other", `mock3:${dir}`);
+      await enterTask(page, origin, "other");
+      await expect(cwdSegment(page)).toContainText("mock3:");
+      await expect(cwdSegment(page)).toHaveAttribute(
         "title",
-        "This task runs on mock2; its parent runs on mock",
+        "This task runs on mock3; its parent runs on mock",
       );
 
-      // Another client rotates the parent onto a third agent. This client never
-      // navigates; the workspace-wide collection carries the change.
+      // Back on the inherited agent: no coordinate.
+      await enterTask(page, origin, "child");
+      await expect(cwdSegment(page)).not.toContainText("mock:");
+
+      // Another client rotates the parent onto mock2. This client never
+      // navigates, but the child now deviates: it runs on mock, its parent on
+      // mock2.
       const rotated = await page.request.post(
         `${origin}/api/v1/tasks/${parentId}/clear`,
-        { data: { agentId: "mock3" } },
+        { data: { agentId: "mock2" } },
       );
       expect(rotated.ok()).toBeTruthy();
-      await expect(agentSegment(page)).toHaveText("mock2 ≠ mock3");
+      await expect(cwdSegment(page)).toContainText("mock:");
+      await expect(cwdSegment(page)).toHaveAttribute(
+        "title",
+        "This task runs on mock; its parent runs on mock2",
+      );
 
-      // The parent of `parent` is Root, which has no confirmed binding here: a
-      // task with no marked parent states its own agent alone.
+      // Root reference: `parent` has no confirmed parent binding of its own, so
+      // the reference is the configured default (mock).
       await enterTask(page, origin, "parent");
-      await expect(agentSegment(page)).toHaveText("mock3");
+      await expect(cwdSegment(page)).toContainText("mock2:");
+      await expect(cwdSegment(page)).toHaveAttribute(
+        "title",
+        "This task runs on mock2; the default agent is mock",
+      );
+
+      // The retired divergence shape never appears.
+      await expect(page.locator("#status-bar")).not.toContainText("≠");
     },
   );
 });
 
-test("deleting the last task on another agent removes every label", async ({
+test("a task that does not deviate has no coordinate, and a rotation is the only prefix", async ({
   page,
 }) => {
   await withSpecServer(
-    "agent-labels-suppression",
+    "agent-labels-default",
     { extra: secondAgent() },
     async ({ origin, dir }) => {
       await openPrivate(page, origin);
-      const workId = await createChild(page, origin, "work", `mock:${dir}`);
-      expect(workId).toBeTruthy();
+      await createChild(page, origin, "work", `mock:${dir}`);
       await enterTask(page, origin, "work");
-      await expect(agentSegment(page)).toHaveCount(0);
+      // The default path: no coordinate, byte for byte.
+      await expect(cwdSegment(page)).not.toContainText("mock:");
 
+      // A second task on another agent does not touch this task's field.
       const otherId = await createChild(page, origin, "other", `mock2:${dir}`);
-      await expect(agentSegment(page)).toHaveText("mock");
+      await expect(cwdSegment(page)).not.toContainText("mock:");
 
-      // The only task on the second agent is deleted; the current task never
-      // changes, but the collection now has a single confirmed agent.
+      // Only the task that deviates states its agent.
+      await enterTask(page, origin, "other");
+      await expect(cwdSegment(page)).toContainText("mock2:");
+      await expect(cwdSegment(page)).toHaveAttribute(
+        "title",
+        "This task runs on mock2; its parent runs on mock",
+      );
+
+      // Deleting it removes the deviation; the fallback task has no coordinate.
       const deleted = await page.request.delete(
         `${origin}/api/v1/tasks/${otherId}`,
       );
       expect(deleted.ok()).toBeTruthy();
-      await expect(agentSegment(page)).toHaveCount(0);
+      await expect(page.locator("#task-info")).toContainText("work");
+      await expect(cwdSegment(page)).not.toContainText("mock:");
     },
   );
+});
+
+test("a task keeps its binding after its agent leaves the configuration", async ({
+  page,
+}) => {
+  const root = specDataRoot("agent-labels-removed");
+  const dataDir = join(root, "data");
+  const dir = join(root, "work");
+  await mkdir(dataDir, { recursive: true });
+  await mkdir(dir, { recursive: true });
+  seedSpecAuth(dataDir, E2E_TOKEN);
+  const configPath = join(root, "config.toml");
+
+  writeSpecConfig(configPath, { dataDir, extra: secondAgent() });
+  const first = await startSpecServer(configPath);
+  let goneId: string;
+  try {
+    await openPrivate(page, first.origin);
+    await createChild(page, first.origin, "work", `mock:${dir}`);
+    await enterTask(page, first.origin, "work");
+    goneId = await createChild(page, first.origin, "gone", `mock2:${dir}`);
+  } finally {
+    await stopSpecServer(first);
+  }
+
+  // Same database, a configuration that no longer offers mock2 at all.
+  writeSpecConfig(configPath, { dataDir });
+  const second = await startSpecServer(configPath);
+  try {
+    await page.goto(`${second.origin}/#${goneId}`);
+    await expectConnectionStatus(page, "connected");
+    await expect(page.locator("#input")).toBeEnabled();
+    // The binding is a task fact, not a configuration entry: it still states
+    // the agent it runs on.
+    await expect(cwdSegment(page)).toContainText("mock2:");
+    await expect(cwdSegment(page)).toHaveAttribute(
+      "title",
+      "This task runs on mock2; its parent runs on mock",
+    );
+  } finally {
+    await stopSpecServer(second);
+  }
 });
 
 test("the collection stays unloaded until its list arrives", async ({
@@ -275,9 +349,10 @@ test("the collection stays unloaded until its list arrives", async ({
       await createChild(page, origin, "work", `mock:${dir}`);
       await enterTask(page, origin, "work");
       const otherId = await createChild(page, origin, "other", `mock2:${dir}`);
-      // The current task is still `work` on mock; the child on mock2 makes the
-      // collection span two agents without changing this task's own segment.
-      await expect(agentSegment(page)).toHaveText("mock");
+      // `other` deviates from its parent (`work` on mock), so its own field
+      // carries the coordinate.
+      await enterTask(page, origin, "other");
+      await expect(cwdSegment(page)).toContainText("mock2:");
 
       // A fresh page whose list response is genuinely held open: "not loaded"
       // is a network fact here, not a mocked boolean.
@@ -301,13 +376,12 @@ test("the collection stays unloaded until its list arrives", async ({
       await expect(second.locator("#input")).toBeEnabled();
       await expect(second.locator("#status-bar .status-cwd")).toHaveCount(1);
       expect(held).toBeGreaterThan(0);
-      // Two agents are bound, but the baseline is unknown: nothing is claimed.
-      await expect(second.locator("#status-bar .status-agent")).toHaveCount(0);
+      // The reference needs the parent's binding, which the delayed list has
+      // not delivered yet: no prefix is guessed.
+      await expect(cwdSegment(second)).not.toContainText("mock2:");
 
       release();
-      await expect(second.locator("#status-bar .status-agent")).toHaveText(
-        "mock2 ≠ mock",
-      );
+      await expect(cwdSegment(second)).toContainText("mock2:");
       await second.close();
     },
   );
@@ -382,9 +456,14 @@ test("a cross-agent clear repaints the replacement's own environment", async ({
       );
 
       await sendPrompt(page, "/clear mock2:");
-      await expect(agentSegment(page)).toHaveText("mock2 ≠ mock");
       await expect(page.locator("#status-bar .status-model")).toHaveText(
         "mock2-model",
+      );
+      const display = cwdSegment(page);
+      await expect(display).toContainText("mock2:");
+      await expect(display).toHaveAttribute(
+        "title",
+        "This task runs on mock2; its parent runs on mock",
       );
 
       // The read face agrees with the rendered one.
@@ -397,13 +476,13 @@ test("a cross-agent clear repaints the replacement's own environment", async ({
       expect(body.agentId).toBe("mock2");
       expect(modelOf(body)).toBe("mock2-model");
 
-      // Back on the parent's agent the collection has one confirmed agent
-      // again, so the segment disappears with the rotation.
+      // Back on the inherited agent the coordinate disappears.
       await sendPrompt(page, "/clear mock:");
-      await expect(agentSegment(page)).toHaveCount(0);
       await expect(page.locator("#status-bar .status-model")).toHaveText(
         "mock-model",
       );
+      await expect(display).not.toContainText("mock2:");
+      await expect(display).toHaveAttribute("title", /work/);
     },
   );
 });

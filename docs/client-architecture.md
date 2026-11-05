@@ -97,7 +97,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`render.ts`**            | DOM helpers: add messages, streaming markdown render, theme, scroll, diff HTML generation           | `addMessage()`, `addSystem()`, `scrollToBottom()`, `updateMarkdownStream()`, `resetMarkdownStream()` |
 | **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createTask()`, `sendMessage()`, `cancelTask()`, etc.                                     |
 | **`agent-directory.ts`**   | The configured agent directory from `GET /config` / bootstrap; PATH availability, default agent      | `installAgentDirectory()`, `getAgentDirectory()`, `availableAgentIds()`                          |
-| **`task-topology.ts`**     | Workspace-wide task collection: per-connection generation, list baseline, suppression and entry labels | `loadTaskList()`, `recordTaskList()`, `observeTaskCreated()`, `shouldShowAgentLabels()`          |
+| **`task-topology.ts`**     | Workspace-wide task collection: per-connection generation, parent bindings, list baseline | `loadTaskList()`, `recordTaskList()`, `observeTaskCreated()`, `parentOf()`, `entryAgentLabel()` |
 | **`create-command.ts`**    | Shared `+` / `/new` / `/clear` helpers: coordinate parsing, cwd resolution, preview, failure rescue   | `parseCoordinate()`, `suggestCoordinatePrefix()`, `resolveCreateCwd()`, `agentRescueCommand()`    |
 
 **Dependency graph** (arrows = imports):
@@ -470,45 +470,47 @@ the colon is never collapsed. The path resolver then applies the ordinary path
   than the one that just failed, falling back to the configured default;
   `<raw-cwd>` is the task's raw cwd. An unconfigured agent (400) gets no rescue.
 
-### Global Task Collection and Agent Labels
+### Global Task Collection and Agent Coordinates
 
-Two display decisions are workspace-wide, not task-local, so the client keeps a
-global collection (`task-topology.ts`) rather than deriving them from the
-current task:
+Two display rules need facts about tasks this client is not viewing, so the
+client keeps a global collection (`task-topology.ts`):
 
-- **Suppression.** When every visible task is carried by the same confirmed
-  agent, no agent label is shown anywhere. This is what keeps a single-agent
-deployment visually unchanged (`+` still offers the agent menu, which follows
-the configured set, not this one).
-- **Divergence.** The status bar marks `B ≠ A` when this task's agent differs
-  from its parent's.
+- **Status bar reference.** A task states its agent only when it runs on an
+  agent other than the one it should have inherited: its parent's confirmed
+  binding, or the configured default when there is no parent (or the parent has
+  no binding). Another client rotating the parent must change this client's
+  status bar.
+- **List baseline.** A task row states its agent when it differs from the
+  current task's binding.
+
+The two references are deliberately different: the status bar asks "is this
+what I inherited?", a list row asks "is this the task I am looking at?".
 
 The collection is fed from the authoritative task list and from the SSE stream:
 
 1. **Consume first, filter the view second.** `handleEvent` applies
    `task_created` / `task_deleted` / `task_reset` to the collection *before* the
    per-view guards, so another client's creation, rotation, or deletion of a
-   task this client is not viewing still updates the labels and the status bar.
-   A `task_created` for a task the collection has no metadata for schedules one
-   coalesced list refresh (it needs the parent link).
+   task this client is not viewing still updates the coordinate and the row
+   labels. A `task_created` for a task the collection has no metadata for
+   schedules one coalesced list refresh (it needs the parent link).
 2. **One generation per connection.** A dropped stream starts a new generation
    and marks the collection not-loaded. Lists are recorded only for the
    generation that requested them, so a response from a previous connection
-   cannot become the new baseline.
-3. **Not loaded is not loaded-and-empty.** Both suppress the label, but only a
-   loaded collection may claim that "no label means the current agent". Each
-   (re)connect fetches the list, even when the task itself is restored
-   incrementally.
-4. **The set is confirmed bindings of visible tasks.** A `null` binding
-   contributes nothing and is never guessed to be the default. A binding for an
-   agent that has since left the configuration still counts. If the current
-   task is confirmed but not in the list yet, its own binding is added.
+   cannot become the new baseline. Each (re)connect fetches the list, even when
+   the task itself is restored incrementally.
+3. **Not loaded is not loaded-and-empty.** Neither claims the reference value,
+   but a loaded-and-empty collection is still a baseline: a row's own binding is
+   known, while the status bar has no parent link to compare against and falls
+   back to the default.
+4. **Bindings are task facts.** A `null` binding is never guessed to be the
+   default, and a binding for an agent that has since left the configuration
+   still counts.
 5. **Entry labels are baseline-relative.** A list row states its agent only when
    it differs from the current task's binding. Rows show the plain path when the
-   collection is not loaded, when there is no current task (no baseline), when
-   the collection is suppressed, or when the row has no binding. `/switch` rows
-   recompute this at render time, so a menu opened after a switch uses the new
-   baseline.
+   collection is not loaded, when there is no current task (no baseline), or
+   when the row has no binding. `/switch` rows recompute this at render time, so
+   a menu opened after a switch uses the new baseline.
 
 ---
 
@@ -804,20 +806,30 @@ A non-empty string in `rawInput.code` adds an independent, collapsed-by-default 
 
 ### Status Bar
 
-A `<div id="status-bar">` below the input area shows: `model · agent · cwd`
-(usage sits between them when the context window is known).
+A `<div id="status-bar">` below the input area shows: `model · usage · cwd`.
 
 Updated by `updateStatusBar()` in `state.ts`, called from:
 
 - `updateConfigOptions()` (on any config change)
 - `handleEvent(task_created)` (on task load/switch)
 - any change to the global task collection (`subscribeTaskTopology`), because
-  suppression and divergence depend on it rather than on the current task's
-  own event.
+  the cwd field's reference binding lives there.
 
-The agent segment follows the collection-level suppression rule above and is
-omitted entirely for an unbound task; a divergence renders as `child ≠ parent`
-with a `title` naming both agents.
+There is no separate agent segment. The agent is folded into the cwd field with
+the same `<agent>:<cwd>` coordinate the list rows and the input preview use, and
+only when the task runs on an agent other than the one it should have inherited:
+
+```
+pi-model · 12k/200k · copilot:~/mine/repo      ← runs on copilot, should be on pi
+pi-model · 12k/200k · ~/mine/repo              ← no deviation; unchanged
+```
+
+The reference is the parent's confirmed binding, otherwise the configured
+default; it is not guessed before the collection loads, and an unbound task
+draws no prefix. The reference object is named in the `title` (for example
+`This task runs on copilot; its parent runs on pi`). At narrow widths the split
+keeps `<agent>:~/` or `<agent>:/` in `status-cwd-prefix` (never truncated) and
+only the rest in `status-cwd-tail` (ellipsised).
 
 ### Busy State
 

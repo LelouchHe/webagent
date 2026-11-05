@@ -9,19 +9,18 @@ import {
   observeTaskCreated,
   observeTaskDeleted,
   parentAgentOf,
+  parentOf,
   recordTaskList,
   resetTaskTopologyForTest,
-  shouldShowAgentLabels,
   subscribeTaskTopology,
-  visibleAgentSet,
 } from "../public/js/task-topology.ts";
 import type { TaskSummary } from "../src/types.ts";
 
 /**
- * The global task collection: the workspace-wide set that decides whether
- * agent labels exist at all, and the baseline each list row is rendered
- * against. It is consumed before the per-view event filter, so another
- * client's rotation of a task this client is not viewing still lands here.
+ * The global task collection: the workspace-wide set that supplies the status
+ * bar's reference binding and the list-row baseline. It is consumed before the
+ * per-view event filter, so another client's rotation of a task this client is
+ * not viewing still lands here.
  */
 
 function task(
@@ -51,61 +50,24 @@ describe("global task topology", () => {
 
   it("claims nothing before a list arrives", () => {
     assert.equal(isTaskTopologyLoaded(), false);
-    // Even a known current binding does not authorize labels yet.
-    assert.equal(shouldShowAgentLabels("a", "pi"), false);
+    // Even a row whose agent differs from the baseline is not labelled before
+    // the collection has a baseline at all.
     assert.equal(entryAgentLabel("copilot", "a", "pi"), null);
+    // The status bar's reference needs the parent binding, which is unknown.
+    assert.equal(parentOf("child"), null);
   });
 
   it("distinguishes not-loaded from loaded-and-empty", () => {
     assert.equal(isTaskTopologyLoaded(), false);
+    assert.equal(entryAgentLabel("copilot", "a", "pi"), null);
+
     assert.equal(recordTaskList(currentTopologyGeneration(), []), true);
     assert.equal(isTaskTopologyLoaded(), true);
-    assert.deepEqual([...visibleAgentSet(null, null)], []);
+    // Loaded and empty is a baseline: the row's own agent is now knowable.
+    assert.equal(entryAgentLabel("copilot", "a", "pi"), "copilot");
   });
 
-  it("suppresses labels while one agent carries the visible set", () => {
-    const gen = currentTopologyGeneration();
-    recordTaskList(gen, [task("a", "pi"), task("b", "pi", "a")]);
-    assert.equal(shouldShowAgentLabels("a", "pi"), false);
-
-    recordTaskList(gen, [task("a", "pi"), task("b", "copilot", "a")]);
-    assert.equal(shouldShowAgentLabels("a", "pi"), true);
-    assert.deepEqual([...visibleAgentSet("a", "pi")].sort(), ["copilot", "pi"]);
-  });
-
-  it("counts an unbound task as neither agent", () => {
-    const gen = currentTopologyGeneration();
-    recordTaskList(gen, [task("a", "pi"), task("b", null), task("c", null)]);
-    assert.equal(shouldShowAgentLabels("a", "pi"), false);
-    assert.deepEqual([...visibleAgentSet("a", "pi")], ["pi"]);
-    // A null binding on the row itself never prints an agent.
-    assert.equal(entryAgentLabel(null, "a", "pi"), null);
-  });
-
-  it("counts a binding that the configuration no longer offers", () => {
-    const gen = currentTopologyGeneration();
-    // The suppression set comes from task bindings, not the configured
-    // directory: an agent removed from config still carries its tasks.
-    recordTaskList(gen, [task("a", "pi"), task("b", "retired-agent")]);
-    assert.equal(shouldShowAgentLabels("a", "pi"), true);
-  });
-
-  it("counts the current task's own binding when it is not cached", () => {
-    const gen = currentTopologyGeneration();
-    recordTaskList(gen, [task("a", "pi")]);
-    // The current task is not in the list (e.g. a just-created child), but its
-    // confirmed binding belongs to the visible set.
-    assert.equal(shouldShowAgentLabels("child", "copilot"), true);
-    assert.deepEqual([...visibleAgentSet("child", "copilot")].sort(), [
-      "copilot",
-      "pi",
-    ]);
-    // Once it is cached, the entry itself is the source of truth.
-    recordTaskList(gen, [task("a", "pi"), task("child", "copilot", "a")]);
-    assert.equal(shouldShowAgentLabels("child", "copilot"), true);
-  });
-
-  it("labels rows against the current task's agent, not the configuration", () => {
+  it("labels rows against the current task's binding", () => {
     const gen = currentTopologyGeneration();
     recordTaskList(gen, [task("a", "pi"), task("b", "copilot", "a")]);
 
@@ -114,9 +76,29 @@ describe("global task topology", () => {
     // No baseline (no current task): every confirmed row states its agent.
     assert.equal(entryAgentLabel("pi", null, null), "pi");
     assert.equal(entryAgentLabel("copilot", null, null), "copilot");
-    // Suppressed collection: no row states an agent.
+    // A row without a confirmed binding never prints one.
+    assert.equal(entryAgentLabel(null, "a", "pi"), null);
+  });
+
+  it("does not let the count of agents change a row's label", () => {
+    const gen = currentTopologyGeneration();
+    // One agent everywhere: the differing row in the next list still labels.
     recordTaskList(gen, [task("a", "pi"), task("b", "pi", "a")]);
     assert.equal(entryAgentLabel("pi", "a", "pi"), null);
+
+    recordTaskList(gen, [task("a", "pi"), task("b", "copilot", "a")]);
+    // The label is relative to the current binding, not to how many distinct
+    // agents exist in the collection.
+    assert.equal(entryAgentLabel("copilot", "a", "pi"), "copilot");
+    assert.equal(entryAgentLabel("pi", "b", "copilot"), "pi");
+  });
+
+  it("labels a binding that the configuration no longer offers", () => {
+    const gen = currentTopologyGeneration();
+    // Task bindings are the source; the configured directory is not consulted.
+    recordTaskList(gen, [task("a", "pi"), task("b", "retired-agent")]);
+    assert.equal(entryAgentLabel("retired-agent", "a", "pi"), "retired-agent");
+    assert.equal(parentAgentOf("b"), null);
   });
 
   it("updates a known task's binding from a rotation payload", () => {
@@ -137,13 +119,18 @@ describe("global task topology", () => {
     assert.ok(notified > 0, "a rotation must repaint the status bar");
   });
 
-  it("drops a deleted task from the visible set", () => {
+  it("drops a deleted task from the collection", () => {
     const gen = currentTopologyGeneration();
-    recordTaskList(gen, [task("a", "pi"), task("b", "copilot")]);
-    assert.equal(shouldShowAgentLabels("a", "pi"), true);
+    recordTaskList(gen, [
+      task("parent", "pi"),
+      task("child", "copilot", "parent"),
+    ]);
+    assert.equal(parentAgentOf("child"), "pi");
 
-    observeTaskDeleted("b");
-    assert.equal(shouldShowAgentLabels("a", "pi"), false);
+    observeTaskDeleted("parent");
+    // The link survives but its binding is unknown: the reference falls back
+    // to the caller's default rather than to a stale agent.
+    assert.deepEqual(parentOf("child"), { parentId: "parent", agentId: null });
     // Deleting a task we never knew about is not a change.
     observeTaskDeleted("unknown");
   });
@@ -151,19 +138,20 @@ describe("global task topology", () => {
   it("reports an unknown parent as unknown, never as the default", () => {
     const gen = currentTopologyGeneration();
     recordTaskList(gen, [task("child", "copilot")]);
-    assert.equal(parentAgentOf("child"), null);
-    assert.equal(parentAgentOf(null), null);
+    assert.equal(parentOf("child"), null);
+    assert.equal(parentOf(null), null);
 
     recordTaskList(gen, [
       task("parent", null),
       task("child", "copilot", "parent"),
     ]);
-    assert.equal(parentAgentOf("child"), null, "an unbound parent is unknown");
+    assert.deepEqual(parentOf("child"), { parentId: "parent", agentId: null });
 
     recordTaskList(gen, [
       task("parent", "pi"),
       task("child", "copilot", "parent"),
     ]);
+    assert.deepEqual(parentOf("child"), { parentId: "parent", agentId: "pi" });
     assert.equal(parentAgentOf("child"), "pi");
   });
 
@@ -172,7 +160,7 @@ describe("global task topology", () => {
     const fresh = beginTaskTopologyGeneration();
     assert.equal(recordTaskList(stale, [task("a", "pi")]), false);
     assert.equal(isTaskTopologyLoaded(), false);
-    assert.deepEqual([...visibleAgentSet(null, null)], []);
+    assert.equal(entryAgentLabel("copilot", "a", "pi"), null);
 
     assert.equal(recordTaskList(fresh, [task("a", "pi")]), true);
     assert.equal(isTaskTopologyLoaded(), true);
@@ -193,7 +181,7 @@ describe("global task topology", () => {
       assert.equal(calls, 1);
       assert.deepEqual(first, second);
       assert.equal(isTaskTopologyLoaded(), true);
-      assert.deepEqual([...visibleAgentSet(null, null)], ["pi"]);
+      assert.equal(entryAgentLabel("pi", "a", "pi"), null);
     } finally {
       globalThis.fetch = originalFetch;
     }

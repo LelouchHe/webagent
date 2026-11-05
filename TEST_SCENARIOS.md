@@ -132,23 +132,28 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/task-topology.test.ts` (collection state machine)
   - not-loaded claims nothing and is distinct from loaded-and-empty; a list
     from an older connection generation is dropped
-  - one confirmed agent suppresses labels even with several tasks; a null
-    binding is neither agent; a binding for an agent absent from the
-    configuration still counts; the uncached current task's own binding counts
-  - entry labels are baseline-relative (same agent → none, other agent → its
-    id, no baseline → all, suppressed → none)
+  - entry labels are baseline-relative to the current task (same agent → none,
+    other agent → its id, no baseline → all); a null binding never prints one,
+    and the number of distinct agents changes nothing
+  - a binding for an agent absent from the configuration still labels; the
+    configured directory is never consulted
+  - `parentOf` separates "no parent link" from "parent with no binding"; a
+    deletion keeps the link and drops the binding, so the reference falls back
+    to the caller's default rather than a stale agent
   - a `task_created` rotation updates a task this client is not viewing and
-    repaints; a deletion removes it from the set; an unknown or unbound parent
-    is reported as unknown rather than guessed
-  - concurrent list callers in one generation share one request
+    repaints; concurrent list callers in one generation share one request
 
-- `test/agent-status-bar.test.ts` (DOM segment)
-  - no segment while the collection is unloaded or while one agent carries the
-    visible set; the rest of the status bar is unchanged
-  - with two agents the segment sits between model and cwd, `B ≠ A` marks
-    divergence with both ids in the title, an unknown parent shows the current
-    agent alone, an unbound task draws nothing, and a parent rotation repaints
-    without navigation
+- `test/agent-status-bar.test.ts` (DOM cwd field)
+  - no prefix while the collection is unloaded, and none for a single-agent
+    deployment (byte-identical text and tooltip, no agent node)
+  - the agent is folded into the cwd field (`copilot:/work/child`) only when it
+    differs from the parent's binding; the title names both, and the coordinate
+    prefix stays outside the truncating tail
+  - a task without a parent (or with an unbound one, or not in the cache) is
+    compared against the configured default and says so in the title; a task
+    matching a non-default parent still draws nothing
+  - an unbound current task draws nothing; a parent rotation repaints without
+    navigation and removes the coordinate once the parent matches
 
 - `test/agent-coordinate-entries.test.ts` (`+`, `/new`, `/clear` payloads)
   - `/clear` sends the coordinate's agent and raw cwd; `/new` omits the cwd for
@@ -1100,21 +1105,27 @@ spot gaps, and decide what still needs to be added without reading every spec.
     rotation record, while the parent keeps its own binding
 
 - `agent-labels.spec.ts`
-  - single-agent template (`test/e2e/config.single-agent.toml`): no agent node
-    at all, and the status bar equals a golden built from the fixture model and
-    the API's cwd display (not from the renderer); a same-agent child changes
-    nothing
-  - divergence is marked with both ids and their titles; another client rotating
-    the parent to a third agent repaints the segment without this client
-    navigating; a task whose parent is unbound states its own agent alone
-  - deleting the last task on another agent removes every label without a task
-    switch
-  - the initial list response is genuinely held open: the task renders with no
-    agent segment, and the segment appears only after the list resolves
+  - single-agent template (`test/e2e/config.single-agent.toml`): the cwd field
+    has no `<agent>:` prefix and the whole status bar equals a golden built from
+    the fixture model and the API's cwd display (not from the renderer); a
+    same-agent child changes nothing
+  - a task that inherits its agent shows no coordinate; a static deviation
+    (mock3 under mock) states `mock3:` with both ids in the title
+  - another client rotating the parent onto another agent makes the child state
+    its coordinate without this client navigating; a task without a confirmed
+    parent binding compares against the default and says so in the title
+  - a task that does not deviate keeps its plain path while another task on a
+    second agent exists; only the deviating task shows a prefix; deleting it
+    returns to a prefix-free field
+  - the same database restarted without that agent still states the task's
+    confirmed binding, proving the field follows task facts rather than the
+    configuration
+  - the initial list response is genuinely held open: no prefix is guessed
+    before it resolves, and the coordinate appears afterwards
   - `/switch` rows state an agent only for rows whose agent differs from the
     current task's, and a menu reopened after a switch uses the new baseline
-  - a cross-agent `/clear` repaints the new agent's own model and agent, and the
-    detail read agrees; clearing back suppresses the segment again
+  - a cross-agent `/clear` repaints the new agent's own model and coordinate,
+    and the detail read agrees; clearing back removes the coordinate
 
 - `agent-rescue.spec.ts` (private server, an agent whose command exists in PATH
   but whose process exits immediately)
