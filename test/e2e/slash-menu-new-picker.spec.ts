@@ -109,8 +109,11 @@ test("/new picker leads with the action row and marks the current cwd first", as
   const rows = menu.locator(".slash-item");
   await expect(rows.nth(0)).toContainText("create task");
   await expect(rows.nth(0).locator(".slash-prefix")).toHaveText("↵");
-  await expect(rows.nth(1)).toContainText(parentCwdDisplay);
-  await expect(rows.nth(1).locator(".slash-prefix")).toHaveText("*");
+  // The current cwd leads the *path* rows: agent rows (this suite configures
+  // two) sit ahead of it inside the same data segment, and the action row above
+  // them still owns the default selection.
+  const currentCwdRow = rows.filter({ hasText: parentCwdDisplay });
+  await expect(currentCwdRow.locator(".slash-prefix")).toHaveText("*");
 
   // The action row creates in the current cwd and then switches, like Enter.
   await rows.nth(0).click();
@@ -383,8 +386,12 @@ test("+ menu previews the action and lists cwd candidates after a space", async 
   await expect(menu).toContainText("*");
   await expect(menu).toContainText(currentCwd.replace(/\/$/, ""));
 
-  // Completing the current-cwd row fills the cwd and does not create.
-  const currentRow = menu.locator(".slash-item:has(.slash-current)");
+  // Completing the current-cwd row fills the cwd and does not create. Match by
+  // text: the agent row is also `current` (it names the agent this task runs
+  // on), so the color class alone no longer identifies a field value.
+  const currentRow = menu
+    .locator(".slash-item")
+    .filter({ hasText: currentCwd.replace(/\/$/, "") });
   await currentRow.first().click();
   await expect(page.locator("#input")).toHaveValue(`+${unique} ${currentCwd}`);
   await expect(page.locator("#messages")).not.toContainText(
