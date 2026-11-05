@@ -699,6 +699,21 @@ export function createRequestHandler(
       available,
     }));
 
+  /** Parent link plus the parent's binding, for activation payloads. */
+  const parentFields = (task: {
+    parent_id: string | null;
+  }): {
+    parentId: string | null;
+    parentAgentId: string | null;
+  } => {
+    const parentId = task.parent_id;
+    return {
+      parentId,
+      parentAgentId:
+        parentId === null ? null : (store.getBindingAgent(parentId) ?? null),
+    };
+  };
+
   // eslint-disable-next-line complexity -- TODO: refactor main route handler into smaller handlers
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
@@ -2157,6 +2172,7 @@ export function createRequestHandler(
               cwdDisplay: abbreviateHomePath(existing.cwd),
               title: existing.title,
               source: existing.source,
+              ...parentFields(existing),
               agentId: store.getBindingAgent(existing.id) ?? null,
               rootTaskId: store.rootTaskId,
               configOptions: [],
@@ -2187,6 +2203,7 @@ export function createRequestHandler(
                 cwdDisplay: abbreviateHomePath(root.cwd),
                 title: root.title,
                 source: root.source,
+                ...parentFields(root),
                 agentId: rootBinding.agent_key,
                 rootTaskId: store.rootTaskId,
                 configOptions: [],
@@ -2207,6 +2224,7 @@ export function createRequestHandler(
             cwdDisplay: abbreviateHomePath(root.cwd),
             title: root.title,
             source: root.source,
+            ...parentFields(root),
             agentId: store.getBindingAgent(root.id) ?? null,
             rootTaskId,
             configOptions: taskManager.applyStoredConfig(
@@ -2223,6 +2241,8 @@ export function createRequestHandler(
             cwd: result.cwd,
             cwdDisplay: result.cwdDisplay,
             title: result.title,
+            parentId: result.parentId,
+            parentAgentId: result.parentAgentId,
             agentId: result.agentId,
             configOptions: result.configOptions,
             agentCommands: result.agentCommands,
@@ -2415,6 +2435,7 @@ export function createRequestHandler(
               cwd: fresh.cwd,
               cwdDisplay: abbreviateHomePath(fresh.cwd),
               title: fresh.title,
+              ...parentFields(fresh),
               agentId: store.getBindingAgent(taskId) ?? null,
               configOptions: clearResult.configOptions,
               agentCommands: tasks.getAgentCommands(taskId),
@@ -2536,6 +2557,7 @@ export function createRequestHandler(
             cwd: fresh.cwd,
             cwdDisplay: abbreviateHomePath(fresh.cwd),
             title: fresh.title,
+            ...parentFields(fresh),
             agentId: store.getBindingAgent(taskId) ?? null,
             configOptions: result.configOptions,
             agentCommands: tasks.getAgentCommands(taskId),
@@ -2549,6 +2571,7 @@ export function createRequestHandler(
             cwdDisplay: abbreviateHomePath(fresh.cwd),
             title: fresh.title,
             source: fresh.source,
+            ...parentFields(fresh),
             configOptions: result.configOptions,
             agentCommands: tasks.getAgentCommands(taskId),
           });
@@ -2608,7 +2631,7 @@ export function createRequestHandler(
               source: freshTask.source,
               model: freshTask.model,
               mode: freshTask.mode,
-              parentId: freshTask.parent_id,
+              ...parentFields(freshTask),
               agentId: store.getBindingAgent(freshTask.id) ?? null,
               configOptions,
             },
@@ -2848,6 +2871,9 @@ export function createRequestHandler(
             cwd: task?.cwd,
             cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
             title: task?.title,
+            ...(task
+              ? parentFields(task)
+              : { parentId: body.parentId ?? null, parentAgentId: null }),
             agentId: store.getBindingAgent(taskId) ?? null,
             configOptions,
             agentCommands: tasks.getAgentCommands(taskId),
@@ -2908,7 +2934,9 @@ export function createRequestHandler(
             title: task?.title ?? null,
             workflowStatus: task?.workflow_status ?? "idle",
             source: task?.source ?? source,
-            parentId: task?.parent_id ?? null,
+            ...(task
+              ? parentFields(task)
+              : { parentId: body.parentId ?? null, parentAgentId: null }),
             configOptions,
             agentCommands: tasks.getAgentCommands(taskId),
             clientOpId: clientOpId ?? undefined,
@@ -3594,6 +3622,9 @@ export function createRequestHandler(
           cwd: task?.cwd,
           cwdDisplay: task?.cwd ? abbreviateHomePath(task.cwd) : undefined,
           title: task?.title,
+          ...(task
+            ? parentFields(task)
+            : { parentId: null, parentAgentId: null }),
           agentId: store.getBindingAgent(taskId) ?? null,
           configOptions,
           agentCommands: tasks.getAgentCommands(taskId),

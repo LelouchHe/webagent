@@ -97,6 +97,76 @@ describe("api module", () => {
     assert.equal(body.inheritFromTaskId, undefined);
   });
 
+  it("createTask sends a named agent and omits an inherited one", async () => {
+    fetchResponse = {
+      status: 201,
+      ok: true,
+      json: () => Promise.resolve({ id: "s1" }),
+      text: () => Promise.resolve('{"id":"s1"}'),
+    };
+    await api.createTask({ cwd: "/tmp", agentId: "copilot" });
+    assert.equal(
+      JSON.parse(fetchCalls[0].init!.body as string).agentId,
+      "copilot",
+    );
+
+    fetchCalls = [];
+    await api.createTask({ cwd: "/tmp", agentId: null });
+    assert.equal(
+      "agentId" in JSON.parse(fetchCalls[0].init!.body as string),
+      false,
+    );
+    fetchCalls = [];
+    await api.createTask({ cwd: "/tmp" });
+    assert.equal(
+      "agentId" in JSON.parse(fetchCalls[0].init!.body as string),
+      false,
+    );
+  });
+
+  it("createTask refuses an empty agentId without sending anything", async () => {
+    assert.throws(
+      () => api.createTask({ cwd: "/tmp", agentId: "" }),
+      (err: unknown) => {
+        assert.ok(err instanceof api.InvalidRequestError);
+        assert.match(err.message, /empty string/);
+        assert.match(err.message, /upstream bug/);
+        assert.match(err.message, /never silently dropped/);
+        return true;
+      },
+    );
+    assert.equal(fetchCalls.length, 0, "no request may leave the client");
+  });
+
+  it("clearTask sends a named agent, omits an inherited one, and refuses an empty one", async () => {
+    fetchResponse = {
+      status: 200,
+      ok: true,
+      json: () => Promise.resolve({ id: "s1" }),
+      text: () => Promise.resolve('{"id":"s1"}'),
+    };
+    await api.clearTask("s1", { cwd: "/tmp", agentId: "copilot" });
+    let body = JSON.parse(fetchCalls[0].init!.body as string);
+    assert.equal(body.agentId, "copilot");
+    assert.equal(body.cwd, "/tmp");
+
+    fetchCalls = [];
+    await api.clearTask("s1", { agentId: null });
+    body = JSON.parse(fetchCalls[0].init!.body as string);
+    assert.equal("agentId" in body, false);
+
+    fetchCalls = [];
+    assert.throws(
+      () => api.clearTask("s1", { agentId: "" }),
+      (err: unknown) => {
+        assert.ok(err instanceof api.InvalidRequestError);
+        assert.match(err.message, /clearTask/);
+        return true;
+      },
+    );
+    assert.equal(fetchCalls.length, 0);
+  });
+
   it("bootstrapTask sends POST /api/v1/tasks/bootstrap", async () => {
     fetchResponse = {
       status: 200,

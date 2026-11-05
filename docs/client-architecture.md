@@ -493,32 +493,29 @@ collection:
   binding; the row's own agent comes from the row itself.
 
 The status bar therefore keeps exactly one fact — the current task's parent
-reference (`task-topology.ts`) — not a map of tasks. It is answered by the
-smallest read that can answer it:
+reference (`task-topology.ts`) — not a map of tasks. Every payload that
+activates a task carries the answer with it:
 
-1. **The activation payload usually knows the parent.** A task detail (the read
-   that activated the task on a switch, a restore, or a fallback) carries
-   `parentId`, and it is passed as a hint. A hint costs one
-   `GET /tasks/<parentId>` for the parent's binding; a hint of `null` (no
-   parent) costs nothing.
-2. **Without a hint**, `GET /tasks/<currentTaskId>` supplies the parent link and,
-   when there is one, `GET /tasks/<parentId>` follows. A 404 on the parent means
-   there is nothing to inherit (the reference falls back to the default); any
-   other failure leaves the reference unresolved, and the status bar draws no
-   coordinate rather than guessing one. Both reads are owned by the connection
-   generation and the task they were issued for, so a late response cannot
-   describe a task the client has since left.
-3. **The shared task list is never consulted for this.** `loadTaskList` exists
-   for the pickers and for the list-arrival flag only. Switching tasks
-   therefore produces no list read.
-4. **Events for that parent** (`task_created` / `task_deleted` /
-   `task_reset`) update the reference directly once its id is known. While the
-   id is still unknown the client cannot tell which event is the parent's, so a
-   bounded table (64 entries) remembers what arrived during that window;
-   resolution consults it before trusting a read that may predate the event.
-   The table is not a collection: it decides nothing on its own, it is cleared
-   as soon as the reference settles or the task/generation changes, and the cap
-   keeps a busy workspace from growing it.
+1. **The activation payload names the parent and its binding.** `TaskDetail`
+   (used by a task switch, a restore, and the fallback navigation) and the
+   `task_created` event (the create broadcast and the create/bootstrap
+   response) both carry `parentId` and `parentAgentId`. A client therefore
+   settles the comparison with **no request at all**: a known parent compares
+   against its binding, `parentId: null` compares against the configured
+   default.
+2. **Events keep it current.** `task_created` / `task_deleted` / `task_reset`
+   update the reference directly when the event names the parent; every other
+   task's events are ignored. A rotation or deletion after activation is
+   therefore reflected immediately, without navigation.
+3. **The fallback reads exist for a payload that cannot answer** (an older
+   server, or a hint-less synthetic event): `GET /tasks/<currentTaskId>` supplies
+   the parent link and `GET /tasks/<parentId>` its binding. A 404 means there is
+   nothing to inherit; any other failure leaves the reference unresolved and the
+   status bar draws no coordinate rather than guessing. Both reads are owned by
+   the connection generation and the task they were issued for.
+4. **The shared task list is never consulted for this.** `loadTaskList` exists
+   for the pickers and for the list-arrival flag only, so switching or
+   activating a task produces no list read.
 5. **A task switch or a new connection** resets the reference (a new connection
    also clears the list-arrival flag). Until it is resolved, the status bar
    draws no coordinate: "not looked up yet" is not "no parent".

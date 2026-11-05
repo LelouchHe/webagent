@@ -337,53 +337,64 @@ test("a task keeps its binding after its agent leaves the configuration", async 
   }
 });
 
-test("no coordinate is guessed before the parent reference is resolved", async ({
+test("activating a deviating task costs no request for the parent reference", async ({
   page,
   context,
 }) => {
   await withSpecServer(
-    "agent-labels-loading",
+    "agent-labels-activation",
     { extra: secondAgent() },
     async ({ origin, dir }) => {
-      await openPrivate(page, origin);
-      const workId = await createChild(page, origin, "work", `mock:${dir}`);
-      await enterTask(page, origin, "work");
-      const otherId = await createChild(page, origin, "other", `mock2:${dir}`);
-      // `other` deviates from its parent (`work` on mock), so its own field
-      // carries the coordinate.
-      await enterTask(page, origin, "other");
-      await expect(cwdSegment(page)).toContainText("mock2:");
-
-      // A fresh page whose parent read is genuinely held open: "not resolved"
-      // is a network fact here, not a mocked boolean. Activation does not read
-      // the list, so the parent's detail is the read that has to arrive.
-      let release!: () => void;
-      const gate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      let held = 0;
-      const second = await context.newPage();
-      await second.route(`**/api/v1/tasks/${workId}`, async (route) => {
-        if (route.request().method() !== "GET") {
-          await route.continue();
-          return;
+      const pageRequests: string[] = [];
+      page.on("request", (request) => {
+        if (request.method() === "GET") {
+          pageRequests.push(new URL(request.url()).pathname);
         }
-        held += 1;
-        await gate;
-        await route.continue();
       });
-      await second.goto(`${origin}/#${otherId}`);
+      await openPrivate(page, origin);
+      // The parent is on the non-default agent, so "the parent's binding" and
+      // "the default agent" are different answers for its child.
+      const parentId = await createChild(
+        page,
+        origin,
+        "parent",
+        `mock2:${dir}`,
+      );
+      await enterTask(page, origin, "parent");
+      const childId = await createChild(page, origin, "child", `mock:${dir}`);
+      await enterTask(page, origin, "child");
+      await expect(cwdSegment(page)).toHaveText(/mock:/);
+
+      // (a) Activation from the task detail: a client opening the task URL
+      // learns the parent link and its binding from that payload.
+      const detailRequests: string[] = [];
+      const second = await context.newPage();
+      second.on("request", (request) => {
+        if (request.method() === "GET") {
+          detailRequests.push(new URL(request.url()).pathname);
+        }
+      });
+      await second.goto(`${origin}/#${childId}`);
       await expectConnectionStatus(second, "connected");
       await expect(second.locator("#input")).toBeEnabled();
-      await expect(second.locator("#status-bar .status-cwd")).toHaveCount(1);
-      expect(held).toBeGreaterThan(0);
-      // The reference needs the parent's binding, which the delayed read has
-      // not delivered yet: no prefix is guessed.
-      await expect(cwdSegment(second)).not.toContainText("mock2:");
-
-      release();
-      await expect(cwdSegment(second)).toContainText("mock2:");
+      await expect(cwdSegment(second)).toHaveText(/mock:/);
+      expect(detailRequests).not.toContain(`/api/v1/tasks/${parentId}`);
+      // One list for the connection baseline; the activation adds none.
+      expect(
+        detailRequests.filter((path) => path === "/api/v1/tasks"),
+      ).toHaveLength(1);
       await second.close();
+
+      // (b) Activation from the create broadcast: `/new` is accepted by the
+      // live stream, which must already carry the parent reference.
+      pageRequests.length = 0;
+      await page.locator("#input").fill(`/new mock2:${dir}`);
+      await page.locator("#input").press("Enter");
+      await expect(cwdSegment(page)).toHaveText(/mock2:/);
+      expect(pageRequests).not.toContain(`/api/v1/tasks/${childId}`);
+      expect(
+        pageRequests.filter((path) => path === "/api/v1/tasks"),
+      ).toHaveLength(0);
     },
   );
 });

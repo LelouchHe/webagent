@@ -58,19 +58,18 @@ export async function switchToTask(taskId: string): Promise<NavigationResult> {
       throw new Error("Failed to hydrate task snapshot");
     }
     if (!isCurrentNavigation()) return "ignored";
-    handleEvent(
-      {
-        type: "task_created",
-        rootTaskId: task.rootTaskId,
-        taskId: task.id,
-        agentId: task.agentId ?? null,
-        cwd: task.cwd,
-        cwdDisplay: task.cwdDisplay,
-        title: task.title,
-        configOptions: task.configOptions,
-      },
-      { parentId: task.parentId ?? null },
-    );
+    handleEvent({
+      type: "task_created",
+      rootTaskId: task.rootTaskId,
+      taskId: task.id,
+      agentId: task.agentId ?? null,
+      parentId: task.parentId,
+      parentAgentId: task.parentAgentId ?? null,
+      cwd: task.cwd,
+      cwdDisplay: task.cwdDisplay,
+      title: task.title,
+      configOptions: task.configOptions,
+    });
     drainNavigationEvents(taskId);
     if (loaded) scrollToBottom(true);
     return "switched";

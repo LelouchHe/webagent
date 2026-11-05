@@ -229,14 +229,13 @@ describe("events", () => {
           assert.equal(fetchCalls.length, 1);
 
           state.pendingNavigationTaskId = "s1";
-          events.handleEvent(
-            {
-              type: "task_created",
-              taskId: "s1",
-              configOptions: [],
-            },
-            { parentId: null },
-          );
+          events.handleEvent({
+            type: "task_created",
+            taskId: "s1",
+            parentId: null,
+            parentAgentId: null,
+            configOptions: [],
+          });
 
           assert.equal(observers.length, 2);
           observers[1].callback([{ isIntersecting: true }]);

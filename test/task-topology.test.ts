@@ -6,7 +6,6 @@ import {
   isParentResolved,
   loadTaskList,
   observeTaskCreated,
-  observeTaskDeleted,
   observeTaskReset,
   parentOf,
   resetTaskTopologyForTest,
@@ -19,18 +18,14 @@ import type { TaskSummary } from "../src/types.ts";
  * The status bar's reference binding: the parent of the one task the client is
  * viewing.
  *
- * Reads answer only that question: a known parent id costs one `GET` for its
- * binding, an unknown one first reads the task's own link. The shared list is
- * never consulted for this. While the reference is unresolved, events that
- * cannot be attributed yet are kept in a small bounded table, and resolution
- * prefers them over a read that may predate the event.
+ * Every activation payload carries the parent link *and* the parent's binding,
+ * so activation settles without a request. The reads that remain are the
+ * fallback for a payload that could not supply them (and they are owned by the
+ * connection generation and the task they were issued for). The shared task
+ * list is never consulted for this; it only feeds the row-label flag.
  */
 
-function task(
-  id: string,
-  agentId: string | null,
-  parentId: string | null = null,
-): TaskSummary {
+function task(id: string, agentId: string | null): TaskSummary {
   return {
     id,
     cwd: `/work/${id}`,
@@ -41,7 +36,7 @@ function task(
     source: "auto",
     created_at: "2026-01-01T00:00:00.000Z",
     last_active_at: "2026-01-01T00:00:00.000Z",
-    parent_id: parentId,
+    parent_id: null,
     agentId,
   };
 }
@@ -98,21 +93,34 @@ describe("parent reference", () => {
     }
   });
 
-  it("costs one read when the activation already knows the parent", async () => {
+  it("settles an activation hint without any request", async () => {
     const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/parent")
-        return detailBody("parent", null, "pi");
       throw new Error(`Unexpected fetch: ${url}`);
     });
     try {
-      setCurrentTask("child", "parent");
+      setCurrentTask("child", { parentId: "parent", agentId: "pi" });
       await tick();
-      assert.deepEqual(fetchStub.urls, ["/api/v1/tasks/parent"]);
+      assert.deepEqual(fetchStub.urls, []);
       assert.equal(isParentResolved("child"), true);
       assert.deepEqual(parentOf("child"), {
         parentId: "parent",
         agentId: "pi",
       });
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it("settles a 'no parent' hint without any request", async () => {
+    const fetchStub = stubFetch((url) => {
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    try {
+      setCurrentTask("child", { parentId: null, agentId: null });
+      await tick();
+      assert.deepEqual(fetchStub.urls, []);
+      assert.equal(isParentResolved("child"), true);
+      assert.equal(parentOf("child"), null);
     } finally {
       fetchStub.restore();
     }
@@ -159,147 +167,22 @@ describe("parent reference", () => {
     }
   });
 
-  it("settles a known absence without any read", async () => {
-    const fetchStub = stubFetch((url) => {
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-    try {
-      setCurrentTask("child", null);
-      await tick();
-      assert.deepEqual(fetchStub.urls, []);
-      assert.equal(isParentResolved("child"), true);
-      assert.equal(parentOf("child"), null);
-    } finally {
-      fetchStub.restore();
-    }
-  });
-
-  it("keeps a rotation that arrived before the parent id was known", async () => {
-    let releaseTask!: (response: Response) => void;
+  it("does not let a late read describe a task the client has left", async () => {
+    let releaseChild!: (response: Response) => void;
     const fetchStub = stubFetch((url) => {
       if (url === "/api/v1/tasks/child") {
         return new Promise<Response>((resolve) => {
-          releaseTask = resolve;
+          releaseChild = resolve;
         });
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
     try {
+      // A hint-less activation starts a read; leaving the task must make its
+      // response irrelevant.
       setCurrentTask("child");
-      // The parent's rotation arrives while the client is still reading which
-      // task the parent is; it can only be remembered, not attributed.
-      observeTaskCreated("parent", "copilot");
-      releaseTask(detailBody("child", "parent", "copilot"));
-      await tick();
-      // The remembered fact decides; no parent read is needed.
-      assert.deepEqual(fetchStub.urls, ["/api/v1/tasks/child"]);
-      assert.equal(isParentResolved("child"), true);
-      assert.deepEqual(parentOf("child"), {
-        parentId: "parent",
-        agentId: "copilot",
-      });
-    } finally {
-      fetchStub.restore();
-    }
-  });
-
-  it("keeps a deletion that arrived before the parent id was known", async () => {
-    let releaseTask!: (response: Response) => void;
-    const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/child") {
-        return new Promise<Response>((resolve) => {
-          releaseTask = resolve;
-        });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-    try {
-      setCurrentTask("child");
-      observeTaskDeleted("parent");
-      releaseTask(detailBody("child", "parent", "copilot"));
-      await tick();
-      assert.deepEqual(fetchStub.urls, ["/api/v1/tasks/child"]);
-      assert.deepEqual(parentOf("child"), {
-        parentId: "parent",
-        agentId: null,
-      });
-    } finally {
-      fetchStub.restore();
-    }
-  });
-
-  it("prefers a remembered fact over the read that was already in flight", async () => {
-    let releaseParent!: (response: Response) => void;
-    const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/parent") {
-        return new Promise<Response>((resolve) => {
-          releaseParent = resolve;
-        });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-    try {
-      setCurrentTask("child", "parent");
-      // The parent id is already known, so this event updates the reference
-      // directly; the read that resolves later must not roll it back.
-      observeTaskCreated("parent", "copilot");
-      releaseParent(detailBody("parent", null, "pi"));
-      await tick();
-      assert.deepEqual(parentOf("child"), {
-        parentId: "parent",
-        agentId: "copilot",
-      });
-    } finally {
-      fetchStub.restore();
-    }
-  });
-
-  it("bounds the unresolved window and falls back to the read", async () => {
-    let releaseTask!: (response: Response) => void;
-    const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/child") {
-        return new Promise<Response>((resolve) => {
-          releaseTask = resolve;
-        });
-      }
-      if (url === "/api/v1/tasks/parent")
-        return detailBody("parent", null, "pi");
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-    try {
-      setCurrentTask("child");
-      observeTaskCreated("parent", "copilot");
-      // Fill the window so the parent's early fact is evicted.
-      for (let i = 0; i < 70; i++) observeTaskCreated(`filler-${i}`, "pi");
-      releaseTask(detailBody("child", "parent", "copilot"));
-      await tick();
-      assert.deepEqual(fetchStub.urls, [
-        "/api/v1/tasks/child",
-        "/api/v1/tasks/parent",
-      ]);
-      assert.deepEqual(parentOf("child"), {
-        parentId: "parent",
-        agentId: "pi",
-      });
-    } finally {
-      fetchStub.restore();
-    }
-  });
-
-  it("does not let a late parent read describe a task the client has left", async () => {
-    let releaseParent!: (response: Response) => void;
-    const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/parent") {
-        return new Promise<Response>((resolve) => {
-          releaseParent = resolve;
-        });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-    try {
-      setCurrentTask("child", "parent");
-      setCurrentTask("other", null);
-      releaseParent(detailBody("parent", null, "pi"));
+      setCurrentTask("other", { parentId: null, agentId: null });
+      releaseChild(detailBody("child", "parent", "copilot"));
       await tick();
       assert.equal(isParentResolved("other"), true);
       assert.equal(parentOf("other"), null);
@@ -310,12 +193,10 @@ describe("parent reference", () => {
 
   it("updates the parent directly once it is settled", async () => {
     const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/parent")
-        return detailBody("parent", null, "pi");
       throw new Error(`Unexpected fetch: ${url}`);
     });
     try {
-      setCurrentTask("child", "parent");
+      setCurrentTask("child", { parentId: "parent", agentId: "pi" });
       await tick();
       let notified = 0;
       subscribeTaskTopology(() => {
@@ -341,12 +222,10 @@ describe("parent reference", () => {
 
   it("never reads the list for the parent reference", async () => {
     const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/parent")
-        return detailBody("parent", null, "pi");
       throw new Error(`Unexpected fetch: ${url}`);
     });
     try {
-      setCurrentTask("child", "parent");
+      setCurrentTask("child", { parentId: "parent", agentId: "pi" });
       await tick();
       assert.equal(
         fetchStub.urls.some((url) => url === "/api/v1/tasks"),

@@ -130,16 +130,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
     back to the configured default, and yields nothing when none is left
 
 - `test/task-topology.test.ts` (the current task's parent reference)
-  - a known parent id costs one read (`GET /tasks/<parentId>`); no hint costs
-    the task's own link read first; a known absence costs nothing. The shared
-    list is never read for this, so activation adds no list request
-  - a rotation or deletion of the parent that arrives before the parent id is
-    known is remembered in a bounded table and wins over the read; the table is
-    capped, so an early fact beyond the last 64 ids is evicted and the read
-    decides instead
-  - a settled parent is updated directly by its events, and a read that
-    resolves later cannot roll it back; a read issued for a task the client has
-    left cannot fill the new task's reference
+  - an activation hint (parent id + its binding, or a known absence) settles
+    the reference with zero requests; the shared list is never read for this
+  - without a hint the task's own link read supplies the parent and the parent
+    read supplies its binding; a read issued for a task the client has left
+    cannot fill the new task's reference
+  - a settled parent is updated directly by its events
   - no parent, a parent without a binding, and "not looked up yet" are three
     distinct answers
   - the list-arrival flag still distinguishes not-loaded from loaded-and-empty
@@ -147,6 +143,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - entry labels are baseline-relative to the current task (same agent → none,
     other agent → its id, no baseline → all); a null binding never prints one
   - concurrent list callers in one generation share one request
+
+- `test/api-module.test.ts` (request building)
+  - `createTask`/`clearTask` send a named `agentId`, omit it for `null` or an
+    omitted option, and refuse an empty string locally before any request
 
 - `test/agent-status-bar.test.ts` (DOM cwd field)
   - no prefix while the parent reference is unresolved, and none for a
@@ -1133,9 +1133,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the same database restarted without that agent still states the task's
     confirmed binding, proving the field follows task facts rather than the
     configuration
-  - the parent's detail read is genuinely held open: no prefix is guessed
-    before it resolves, and the coordinate appears afterwards (activation
-    itself reads no list)
+  - activating a task whose parent runs on another agent costs no request:
+    no `GET /tasks/<parentId>` and no extra list, whether the activation came
+    from the task detail or from the create broadcast, and the coordinate is
+    already correct (the payload carries `parentId` + `parentAgentId`)
   - `/switch` rows state an agent only for rows whose agent differs from the
     current task's; a menu reopened after a switch uses the new baseline, and
     an already-open menu re-renders when the current binding changes

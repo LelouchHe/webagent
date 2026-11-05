@@ -19,13 +19,10 @@
 // Ownership: every read is scoped to the connection generation and the task it
 // was issued for, so a late response cannot describe a task the client left.
 //
-// Events for the parent update it directly once the parent id is known. While
-// the reference is still unresolved the client cannot tell which events are the
-// parent's, so a small bounded table remembers recent bindings/deletions for
-// that window; resolution consults it before trusting a read that may predate
-// the event. The table is not a collection: it never decides what anything
-// shows, it is cleared as soon as the reference settles, and it is capped so a
-// busy workspace cannot grow it without bound.
+// Events for the parent update it directly once the parent id is known. Every
+// activation payload the client consumes carries the parent link *and* the
+// parent's binding, so activation never has to ask: the only reads left are a
+// safety net for a payload that could not supply them.
 
 import type { TaskSummary } from "../../src/types.ts";
 import * as api from "./api.ts";
@@ -49,8 +46,13 @@ type ParentRef =
       agentId: string | null;
     };
 
-/** Cap for the unresolved-window table: only the parent's entry is used. */
-const MAX_BUFFERED_FACTS = 64;
+/** What an activation payload knows about the task's parent. */
+export interface ParentHint {
+  /** The parent task, or null when the activated task has none. */
+  parentId: string | null;
+  /** The parent's confirmed binding; only meaningful with a parent id. */
+  agentId: string | null;
+}
 
 let generation = 0;
 let listLoaded = false;
@@ -58,8 +60,6 @@ let viewedTaskId: string | null = null;
 let parentRef: ParentRef | null = null;
 let pending: { generation: number; promise: Promise<TaskSummary[]> } | null =
   null;
-/** taskId -> binding (null when unbound or deleted) seen while unresolved. */
-let bufferedFacts = new Map<string, string | null>();
 
 const changeListeners: (() => void)[] = [];
 
@@ -83,43 +83,48 @@ export function beginTaskTopologyGeneration(): void {
   viewedTaskId = null;
   parentRef = null;
   pending = null;
-  bufferedFacts = new Map();
   notifyChange();
 }
 
 /**
  * Tell the module which task the client is now viewing.
  *
- * `parentId` is an optional hint from the payload that activated the task (its
- * detail read): a string is the known parent, `null` is a known absence, and
- * omitting it means the module has to ask the server for the link. A different
- * task always resets the reference; the same task with a hint can still
- * complete an unresolved one.
+ * `hint` is what the payload that activated the task already knows: its parent
+ * link and the parent's binding. With a hint the reference settles immediately
+ * and no request is made; without one the module asks the task detail for the
+ * link. A different task always resets the reference; the same task with a hint
+ * can still complete an unresolved one.
  */
-export function setCurrentTask(
-  taskId: string | null,
-  parentId?: string | null,
-): void {
+export function setCurrentTask(taskId: string | null, hint?: ParentHint): void {
   if (taskId === viewedTaskId) {
-    if (parentId !== undefined && taskId !== null) {
-      applyParentHint(taskId, parentId);
-    }
+    if (hint !== undefined && taskId !== null) applyParentHint(taskId, hint);
     return;
   }
   viewedTaskId = taskId;
-  bufferedFacts = new Map();
   if (taskId === null) {
     parentRef = null;
     notifyChange();
     return;
   }
+  if (hint !== undefined) {
+    parentRef = settleHint(taskId, hint);
+    notifyChange();
+    return;
+  }
   parentRef = { taskId, status: "unknown" };
   notifyChange();
-  if (parentId === undefined) {
-    void resolveParentFromTaskDetail(generation, taskId);
-  } else {
-    applyParentHint(taskId, parentId);
-  }
+  void resolveParentFromTaskDetail(generation, taskId);
+}
+
+function settleHint(taskId: string, hint: ParentHint): ParentRef {
+  return hint.parentId === null
+    ? { taskId, status: "none" }
+    : {
+        taskId,
+        status: "known",
+        parentId: hint.parentId,
+        agentId: hint.agentId,
+      };
 }
 
 /**
@@ -180,23 +185,9 @@ export function observeTaskReset(taskId: string): void {
 function observeFact(taskId: string, agentId: string | null): void {
   const ref = parentRef;
   if (ref?.taskId !== viewedTaskId) return;
-  if (ref.status === "unknown") {
-    // The parent may be this task; remember it for the window, newest first,
-    // dropping the oldest id when the cap is reached.
-    if (
-      bufferedFacts.size >= MAX_BUFFERED_FACTS &&
-      !bufferedFacts.has(taskId)
-    ) {
-      const oldest = bufferedFacts.keys().next().value;
-      if (oldest !== undefined) bufferedFacts.delete(oldest);
-    }
-    bufferedFacts.delete(taskId);
-    bufferedFacts.set(taskId, agentId);
-    return;
-  }
-  if (ref.status === "none" || taskId !== ref.parentId) return;
+  if (ref.status === "unknown" || ref.status === "none") return;
+  if (taskId !== ref.parentId) return;
   parentRef = { ...ref, status: "known", agentId };
-  bufferedFacts = new Map();
   notifyChange();
 }
 
@@ -223,43 +214,20 @@ export function entryAgentLabel(
   return entryAgentId === currentAgentId ? null : entryAgentId;
 }
 
-/** The activation payload knew the parent: settle it without another task read. */
-function applyParentHint(taskId: string, parentId: string | null): void {
+/** A hint can complete an unresolved reference on a re-announced task. */
+function applyParentHint(taskId: string, hint: ParentHint): void {
   const ref = parentRef;
   if (ref?.taskId !== taskId) return;
   if (ref.status !== "unknown") return;
-  if (parentId === null) {
-    parentRef = { taskId, status: "none" };
-    bufferedFacts = new Map();
-    notifyChange();
-    return;
-  }
-  beginParentLookup(taskId, parentId);
+  parentRef = settleHint(taskId, hint);
+  notifyChange();
 }
 
 /** We know the parent id; only its binding is missing. */
 function beginParentLookup(taskId: string, parentId: string): void {
   parentRef = { taskId, status: "pending", parentId };
   notifyChange();
-  if (settleFromBuffer(taskId, parentId)) return;
   void resolveParentFromDetail(generation, taskId, parentId);
-}
-
-/**
- * A fact remembered during the unresolved window is newer than any read issued
- * before it: prefer it and stop looking.
- */
-function settleFromBuffer(taskId: string, parentId: string): boolean {
-  if (!bufferedFacts.has(parentId)) return false;
-  parentRef = {
-    taskId,
-    status: "known",
-    parentId,
-    agentId: bufferedFacts.get(parentId) ?? null,
-  };
-  bufferedFacts = new Map();
-  notifyChange();
-  return true;
 }
 
 /** Owned detail read for the current task's parent link (no hint available). */
@@ -275,7 +243,6 @@ async function resolveParentFromTaskDetail(
     const parentId = task.parentId ?? null;
     if (parentId === null) {
       parentRef = { taskId: ownerTaskId, status: "none" };
-      bufferedFacts = new Map();
       notifyChange();
       return;
     }
@@ -288,7 +255,6 @@ async function resolveParentFromTaskDetail(
     // compare against. Any other failure stays unresolved (no prefix).
     if (err instanceof api.ApiError && err.status === HTTP_STATUS.NOT_FOUND) {
       parentRef = { taskId: ownerTaskId, status: "none" };
-      bufferedFacts = new Map();
       notifyChange();
     }
   }
@@ -311,16 +277,12 @@ async function resolveParentFromDetail(
     ) {
       return;
     }
-    // The event that arrived while this read was in flight is newer than the
-    // response, so it wins.
-    if (settleFromBuffer(ownerTaskId, parentId)) return;
     parentRef = {
       taskId: ownerTaskId,
       status: "known",
       parentId,
       agentId: task.agentId ?? null,
     };
-    bufferedFacts = new Map();
     notifyChange();
   } catch (err) {
     if (ownerGeneration !== generation || ownerTaskId !== viewedTaskId) return;
@@ -332,7 +294,6 @@ async function resolveParentFromDetail(
     ) {
       return;
     }
-    if (settleFromBuffer(ownerTaskId, parentId)) return;
     // A definite absence means there is nothing to inherit; any other failure
     // leaves the reference unresolved instead of pretending it is unbound.
     if (err instanceof api.ApiError && err.status === HTTP_STATUS.NOT_FOUND) {
@@ -342,7 +303,6 @@ async function resolveParentFromDetail(
         parentId,
         agentId: null,
       };
-      bufferedFacts = new Map();
       notifyChange();
     }
   }
@@ -384,5 +344,4 @@ export function resetTaskTopologyForTest(): void {
   viewedTaskId = null;
   parentRef = null;
   pending = null;
-  bufferedFacts = new Map();
 }

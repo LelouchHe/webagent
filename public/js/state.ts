@@ -854,6 +854,9 @@ const newTaskConfirmationWaiters = new Map<
 >();
 
 function isDefiniteCreateRejection(err: unknown): boolean {
+  // A locally refused request never reaches the server, so it cannot produce a
+  // broadcast either; report it immediately instead of waiting for one.
+  if (err instanceof api.InvalidRequestError) return true;
   return (
     err instanceof api.ApiError &&
     (err.status === HTTP_STATUS.BAD_REQUEST ||

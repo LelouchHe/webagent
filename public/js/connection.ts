@@ -474,21 +474,20 @@ async function initTask(
 
 /** Adopt one task detail response as the current task's creation event. */
 function installTaskFromDetail(task: TaskDetail): void {
-  // The detail already knows the parent, so the status bar's reference costs
-  // one read (the parent's binding) instead of two.
-  handleEvent(
-    {
-      type: "task_created",
-      rootTaskId: task.rootTaskId,
-      taskId: task.id,
-      agentId: task.agentId ?? null,
-      cwd: task.cwd,
-      cwdDisplay: task.cwdDisplay,
-      title: task.title,
-      configOptions: task.configOptions,
-    },
-    { parentId: task.parentId ?? null },
-  );
+  // The detail carries the parent link and the parent's binding, so the status
+  // bar's reference costs no request at all.
+  handleEvent({
+    type: "task_created",
+    rootTaskId: task.rootTaskId,
+    taskId: task.id,
+    agentId: task.agentId ?? null,
+    parentId: task.parentId,
+    parentAgentId: task.parentAgentId ?? null,
+    cwd: task.cwd,
+    cwdDisplay: task.cwdDisplay,
+    title: task.title,
+    configOptions: task.configOptions,
+  });
 }
 
 async function resumeAndLoad(
