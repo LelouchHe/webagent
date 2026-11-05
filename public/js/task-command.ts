@@ -17,7 +17,7 @@ import {
   parseCoordinate,
   previewCreateCwd,
   previewValue,
-  resolveCreateCoordinate,
+  resolveCoordinateTarget,
   resolveCreateCwd,
   taskAgentFailureLines,
 } from "./create-command.ts";
@@ -779,9 +779,15 @@ async function executeCreateTask(
 
   const rawCwd = remainder.replace(/^\s+/u, "");
   const coordinate = parseCoordinate(rawCwd, getAgentDirectory());
-  let target: { agentId?: string; cwd?: string };
+  // Submission-time facts for a late failure. The view can move to another
+  // task while the probe/POST is pending, and the rescue must name the agent
+  // and directory that actually failed.
+  const failedAgentId = coordinate.agentId ?? state.taskAgentId;
+  const failedCwd = state.taskCwd;
+  let agentId: string | undefined;
+  let cwd: string | undefined;
   if (coordinate.agentId !== null) {
-    const resolved = await resolveCreateCoordinate({
+    const resolved = await resolveCoordinateTarget({
       agentId: coordinate.agentId,
       rawSuffix: coordinate.cwd,
     });
@@ -789,24 +795,25 @@ async function executeCreateTask(
       addSystem(`err: create failed — ${resolved.error}`);
       return;
     }
-    target = resolved;
+    agentId = resolved.agentId;
+    cwd = resolved.cwd ?? undefined;
   } else {
     const resolved = await resolveCreateCwd(rawCwd.trim());
     if ("error" in resolved) {
       addSystem(`err: create failed — ${resolved.error}`);
       return;
     }
-    target = { cwd: resolved.cwd };
+    cwd = resolved.cwd;
   }
 
   // Title first, cwd verbatim: creation is idle and does not switch. The
   // first instruction follows as a separate `@<title> <body>` send.
   const body = {
     parentId: currentTaskId,
-    ...(target.cwd !== undefined ? { cwd: target.cwd } : {}),
+    ...(cwd !== undefined ? { cwd } : {}),
     title,
     inheritFromTaskId: currentTaskId,
-    ...(target.agentId !== undefined ? { agentId: target.agentId } : {}),
+    ...(agentId !== undefined ? { agentId } : {}),
   };
 
   try {
@@ -819,8 +826,8 @@ async function executeCreateTask(
     for (const line of taskAgentFailureLines(
       "create",
       err,
-      target.agentId ?? state.taskAgentId,
-      state.taskCwd,
+      failedAgentId,
+      failedCwd,
     )) {
       addSystem(line);
     }

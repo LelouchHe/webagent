@@ -237,6 +237,22 @@ describe("status bar agent coordinate", () => {
       prefix: "copilot:/",
       tail: "srv/repo",
     });
+    // A Windows absolute path after the colon keeps agent + colon + drive.
+    assert.deepEqual(splitDisplayPath("copilot:C:/Users/me/repo"), {
+      prefix: "copilot:C:/",
+      tail: "Users/me/repo",
+    });
+    // HOME itself has no tail to truncate.
+    assert.deepEqual(splitDisplayPath("copilot:~"), {
+      prefix: "copilot:~",
+      tail: "",
+    });
+    assert.deepEqual(splitDisplayPath("~"), { prefix: "~", tail: "" });
+    // A drive path is not read as an agent.
+    assert.deepEqual(splitDisplayPath("C:/Users/me"), {
+      prefix: "C:/",
+      tail: "Users/me",
+    });
     assert.deepEqual(splitDisplayPath("~/mine/repo"), {
       prefix: "~/",
       tail: "mine/repo",

@@ -148,6 +148,13 @@ test("raw cwd survives the three entries", async ({ page }) => {
 
   // A literal backslash is an ordinary path byte.
   const backslashId = await createChild(page, "slash", `mock:${backslash}`);
+
+  // Outer whitespace is only the separator: a trailing space submits the same
+  // directory as no trailing space.
+  await submit(page, `/new mock:${doubleSpace} `);
+  await expect
+    .poll(async () => (await detail(page, await currentTaskId(page))).cwd)
+    .toBe(doubleSpace);
   expect(await detail(page, backslashId)).toMatchObject({
     cwd: backslash,
     agentId: "mock",
@@ -195,6 +202,7 @@ test("an unknown prefix is a path, never an agent", async ({ page }) => {
 test("omitted cwd keeps clear and create apart, and the entries agree", async ({
   page,
 }) => {
+  const bodies = captureBodies(page);
   const work = await makeDir("wire");
   await mkdir(join(work, "proj"), { recursive: true });
 
@@ -213,11 +221,15 @@ test("omitted cwd keeps clear and create apart, and the entries agree", async ({
   expect(created.cwd).not.toBe(work);
   expect(created.cwd).toBe(process.env.E2E_DEFAULT_CWD ?? process.cwd());
 
-  // Clear: the same coordinate keeps the task directory.
+  // Clear: the same coordinate keeps the task directory, and it really sends
+  // no cwd field (the server owns the directory at handling time).
+  const clearsBefore = bodies.clears.length;
   await submit(page, "/clear mock2:");
   await expect
     .poll(async () => (await detail(page, createdId)).cwd)
     .toBe(created.cwd);
+  expect(bodies.clears.length).toBeGreaterThan(clearsBefore);
+  expect(bodies.clears.at(-1)).not.toHaveProperty("cwd");
 
   // Explicit cwd on create lands where it says.
   await submit(page, `/new mock2:${work}`);

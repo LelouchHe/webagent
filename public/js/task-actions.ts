@@ -84,7 +84,10 @@ export async function replaceCurrentTask({
   showCwd = false,
   agentId = null,
 }: {
-  cwd?: string;
+  /** `null` = omit the field, so the server keeps the task directory as it is
+   *  when it handles the rotation. `undefined` keeps the legacy behavior of
+   *  sending the directory this client currently believes in. */
+  cwd?: string | null;
   showCwd?: boolean;
   agentId?: string | null;
 } = {}): Promise<void> {
@@ -93,7 +96,12 @@ export async function replaceCurrentTask({
     return;
   }
   const oldId = state.taskId;
-  const nextCwd = cwd ?? state.taskCwd ?? undefined;
+  const nextCwd = cwd === null ? null : (cwd ?? state.taskCwd ?? undefined);
+  // Submission-time facts for a late failure: the view can move elsewhere
+  // while the rotation is pending, and the rescue must not borrow the new
+  // task's agent or directory.
+  const failedAgentId = agentId ?? state.taskAgentId;
+  const failedCwd = state.taskCwd;
   if (state.busy) {
     addSystem("err: Cancel active work before clearing the task");
     return;
@@ -105,7 +113,7 @@ export async function replaceCurrentTask({
   );
   try {
     const result = (await api.clearTask(oldId, {
-      cwd: nextCwd,
+      ...(nextCwd === null ? {} : { cwd: nextCwd }),
       agentId,
     })) as unknown as ClearTaskResult;
     resetClearedExecution();
@@ -114,13 +122,11 @@ export async function replaceCurrentTask({
     await hydrateTaskRuntime(oldId);
     applyClearResult(oldId, result);
   } catch (err: unknown) {
-    // A plain clear inherits the task's own binding, so that is the target
-    // that just failed; an explicit coordinate names its own.
     for (const line of taskAgentFailureLines(
       "clear",
       err,
-      agentId ?? state.taskAgentId,
-      state.taskCwd,
+      failedAgentId,
+      failedCwd,
     )) {
       addSystem(line);
     }

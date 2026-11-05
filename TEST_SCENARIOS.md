@@ -142,6 +142,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     to the caller's default rather than a stale agent
   - a `task_created` rotation updates a task this client is not viewing and
     repaints; concurrent list callers in one generation share one request
+  - a list that was in flight cannot undo a newer event: a rotation that
+    arrived during the request survives, and a deleted task is not resurrected
 
 - `test/agent-status-bar.test.ts` (DOM cwd field)
   - no prefix while the collection is unloaded, and none for a single-agent
@@ -168,6 +170,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
     failed target, preferring available agents then the default, keeping spaces
     in the cwd); a 400 unconfigured agent and an exhausted candidate list append
     nothing
+  - the picker's action row and Enter submit the same `(agent, cwd)` projection
+    for `/new` and `/clear`; `/clear <agent>:` sends no `cwd` field at all
+  - the fidelity boundary: `copilot:~/a ` equals `copilot:~/a`, `copilot: `
+    equals `copilot:` (omitted), and interior double spaces survive
+  - a late 503 reports the agent and directory captured at submission, not the
+    task the view moved to while the request was pending
+  - a superseded bootstrap response installs no agent directory
 
 ### ACP bridge and backend orchestration
 
@@ -1123,7 +1132,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the initial list response is genuinely held open: no prefix is guessed
     before it resolves, and the coordinate appears afterwards
   - `/switch` rows state an agent only for rows whose agent differs from the
-    current task's, and a menu reopened after a switch uses the new baseline
+    current task's; a menu reopened after a switch uses the new baseline, and
+    an already-open menu re-renders when the current binding changes
   - a cross-agent `/clear` repaints the new agent's own model and coordinate,
     and the detail read agrees; clearing back removes the coordinate
 

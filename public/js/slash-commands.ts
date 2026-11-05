@@ -26,10 +26,14 @@ import {
 import type { CmdNode } from "./slash-tree.ts";
 import {
   isSourceTaskMissing,
-  previewCwdDisplay,
+  parseCoordinate,
+  previewCreateCwd,
   previewValue,
+  resolveCoordinateTarget,
   resolveCreateCwd,
+  taskAgentFailureLines,
 } from "./create-command.ts";
+import { getAgentDirectory } from "./agent-directory.ts";
 import type { TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import { entryAgentLabel, loadTaskList } from "./task-topology.ts";
@@ -330,23 +334,143 @@ function shareRowSpec(s: ShareListRow, kind: "open" | "revoke") {
 
 // --- ROOT tree ---
 
+interface SubmissionSource {
+  taskId: string | null;
+  agentId: string | null;
+  cwd: string | null;
+}
+
 /**
- * Create a child task from the `/new` picker. The recents rows and the action
- * row share this so click and Enter stay the same effect. `sourceTaskId` is
- * captured before any await so the child stays under (and inherits from) the
- * Task the command was submitted in, even across the cwd probe.
+ * Snapshot the task a submission belongs to. Everything a late failure needs
+ * (the parent, the agent that would fail, the directory the rescue should
+ * name) is read here, synchronously, before any probe or request can outlive a
+ * navigation.
  */
-function createNewChildTask(
+function submissionSource(): SubmissionSource {
+  return {
+    taskId: state.taskId,
+    agentId: state.taskAgentId,
+    cwd: state.taskCwd,
+  };
+}
+
+/**
+ * Start a child task. Shared by every `/new` submission shape (action row,
+ * recents row, Enter) so click and Enter reset and request identically.
+ */
+function startChildTask(
   cwd: string | undefined,
-  sourceTaskId: string | null,
+  agentId: string | null,
+  source: SubmissionSource,
 ): void {
   resetTaskUI();
+  state.taskId = null;
   addSystem("Creating new task…");
   requestNewTask({
     cwd,
-    inheritFromTaskId: sourceTaskId,
-    parentId: sourceTaskId,
+    agentId,
+    inheritFromTaskId: source.taskId,
+    parentId: source.taskId,
+    onError: (err) => {
+      for (const line of taskAgentFailureLines(
+        "create",
+        err,
+        agentId ?? source.agentId,
+        source.cwd,
+      )) {
+        addSystem(line);
+      }
+    },
   });
+}
+
+/**
+ * Turn a raw `/new` cwd field into the create request. Enter and the picker's
+ * action row both call this — one parse, one wire meaning, one failure report.
+ *
+ * The field is read byte for byte: a coordinate's suffix keeps its interior
+ * bytes, its outer whitespace is only the separator (an empty suffix omits the
+ * cwd so the server uses its default), and a plain path resolves against the
+ * task directory as before.
+ */
+export async function submitCreateField(raw: string): Promise<void> {
+  const source = submissionSource();
+  if (source.taskId === null) {
+    addSystem("err: No active task");
+    return;
+  }
+  const coordinate = parseCoordinate(raw, getAgentDirectory());
+  let agentId: string | null = null;
+  let cwd: string | undefined;
+  if (coordinate.agentId !== null) {
+    const target = await resolveCoordinateTarget({
+      agentId: coordinate.agentId,
+      rawSuffix: coordinate.cwd,
+    });
+    if ("error" in target) {
+      addSystem(`err: create failed — ${target.error}`);
+      return;
+    }
+    agentId = target.agentId;
+    cwd = target.cwd ?? undefined;
+  } else {
+    const path = raw.trim();
+    if (path === "") {
+      cwd = source.cwd ?? undefined;
+    } else {
+      const resolved = await resolveCreateCwd(path);
+      if ("error" in resolved) {
+        addSystem(`err: create failed — ${resolved.error}`);
+        return;
+      }
+      // A source Task deleted while the probe was pending must not trigger the
+      // destructive reset: keep the current view and report why.
+      if (await isSourceTaskMissing(source.taskId)) {
+        addSystem("err: create failed — the launching task no longer exists");
+        return;
+      }
+      cwd = resolved.cwd;
+    }
+  }
+  startChildTask(cwd, agentId, source);
+}
+
+/**
+ * Turn a raw `/clear` cwd field into the rotation request. Enter and the
+ * picker's action row both call this.
+ *
+ * A coordinate's empty suffix omits the cwd so the server keeps the task
+ * directory as it is when it handles the rotation. A plain path keeps the
+ * historical pass-through (the server expands `~` and validates it).
+ */
+export async function submitClearField(raw: string): Promise<void> {
+  const coordinate = parseCoordinate(raw, getAgentDirectory());
+  if (coordinate.agentId !== null) {
+    const target = await resolveCoordinateTarget({
+      agentId: coordinate.agentId,
+      rawSuffix: coordinate.cwd,
+    });
+    if ("error" in target) {
+      addSystem(`err: Failed to clear task — ${target.error}`);
+      return;
+    }
+    await replaceCurrentTask({
+      cwd: target.cwd,
+      showCwd: target.cwd !== null,
+      agentId: target.agentId,
+    });
+    return;
+  }
+  const path = raw.trim();
+  await replaceCurrentTask({
+    cwd: path || undefined,
+    showCwd: Boolean(path),
+  });
+}
+
+/** Preview one cwd field the way both create entries render it. */
+function fieldPreview(raw: string): string {
+  return previewValue(previewCreateCwd(raw.trim(), getAgentDirectory()));
 }
 
 export const ROOT: CmdNode = {
@@ -377,11 +501,15 @@ export const ROOT: CmdNode = {
       freeform: (q) => {
         const trimmed = q.trim();
         if (!trimmed) return null;
+        const coordinate =
+          parseCoordinate(trimmed, getAgentDirectory()).agentId !== null;
         return {
-          primary: `clear and start at '${trimmed}'`,
-          onSelect: () => {
-            void replaceCurrentTask({ cwd: trimmed, showCwd: true });
-          },
+          // A coordinate previews as one `<agent>:<cwd>` field, exactly what
+          // the same text submits as; a plain path keeps its raw wording.
+          primary: coordinate
+            ? `clear and start at ${fieldPreview(trimmed)}`
+            : `clear and start at '${trimmed}'`,
+          onSelect: () => submitClearField(trimmed),
         };
       },
     },
@@ -570,45 +698,21 @@ export const ROOT: CmdNode = {
           primary: p.cwdDisplay,
           current: isCurrent,
           onSelect: () => {
-            createNewChildTask(p.cwd, state.taskId);
+            startChildTask(p.cwd, null, submissionSource());
           },
         };
       },
       freeform: (q) => {
         // The action row mirrors `+`: the default cwd is implicit, and `at`
-        // appears only once a path is typed. A typed path resolves against the
-        // current Task cwd, so the preview names the directory that will be
-        // created.
+        // appears only once a path or coordinate is typed. Its preview and
+        // selection both run the same field resolution Enter uses.
         const trimmed = q.trim();
         return {
           primary: trimmed
-            ? `create task at ${previewValue(previewCwdDisplay(trimmed))}`
+            ? `create task at ${fieldPreview(trimmed)}`
             : "create task",
-          onSelect: async () => {
-            // Snapshot the source task before the probe: the child must stay
-            // under (and inherit from) the Task the command was submitted in.
-            const sourceTaskId = state.taskId;
-            if (trimmed === "") {
-              createNewChildTask(state.taskCwd ?? undefined, sourceTaskId);
-              return;
-            }
-            const resolved = await resolveCreateCwd(trimmed);
-            // A definite cwd error has nothing left to do: report it
-            // immediately rather than waiting on the task-list probe.
-            if ("error" in resolved) {
-              addSystem(`err: create failed — ${resolved.error}`);
-              return;
-            }
-            // A source Task deleted while the probe was pending must not
-            // trigger the destructive reset: keep the current view intact.
-            if (await isSourceTaskMissing(sourceTaskId)) {
-              addSystem(
-                "err: create failed — the launching task no longer exists",
-              );
-              return;
-            }
-            createNewChildTask(resolved.cwd, sourceTaskId);
-          },
+          // Same submission path as Enter: parse, resolve, probe, request.
+          onSelect: () => submitCreateField(trimmed),
         };
       },
     },
@@ -743,7 +847,7 @@ export const ROOT: CmdNode = {
         // List rows use the current task's binding as their baseline: only a
         // row carried by another agent states that agent. A row with no
         // confirmed binding states none, and a collection that is not loaded
-        // (or is suppressed) claims nothing either way.
+        // claims nothing either way.
         const agentLabel = entryAgentLabel(
           s.agentId ?? null,
           state.taskId,

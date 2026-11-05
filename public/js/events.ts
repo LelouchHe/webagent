@@ -1981,10 +1981,10 @@ export function handleEvent(msg: AgentEvent) {
   if (msg.type === "connected" || msg.type === "task_created") {
     installRootTaskId(msg.rootTaskId);
   }
-  // The global topology is consumed *before* the per-view filters below:
-  // suppression and divergence are workspace-wide facts, so another task's
-  // creation, rotation, or deletion must reach the collection even though its
-  // own events must not touch this view.
+  // The global topology is consumed *before* the per-view filters below: the
+  // status bar's reference binding and the list-row baseline both need facts
+  // about other tasks, so another task's creation, rotation, or deletion must
+  // reach the collection even though its own events must not touch this view.
   if (msg.type === "task_created") {
     const known = observeTaskCreated(msg.taskId, msg.agentId ?? null);
     // A task we have no metadata for yet (a fresh create, or another client's)

@@ -7,6 +7,7 @@ describe("slash menu — Tab vs Click behavior", () => {
   let dom: any;
   let commands: any;
   let slashCommands: any;
+  let installTaskAgentId: (id: string, agent: string) => void;
   let fetchCalls: Array<{ url: string; init?: any }>;
 
   before(async () => {
@@ -18,6 +19,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
+    installTaskAgentId = stateMod.installTaskAgentId;
     await import("../public/js/render.ts");
     slashCommands = await import("../public/js/slash-commands.ts");
     commands = await import("../public/js/commands.ts");
@@ -1246,6 +1248,72 @@ describe("slash menu — Tab vs Click behavior", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+  it("/switch rows recompute when the current binding changes while open", async () => {
+    state.taskId = "current";
+    state.taskAgentId = "pi";
+    const tasks = [
+      {
+        id: "current",
+        title: "Current",
+        cwd: "/a",
+        cwdDisplay: "/a",
+        last_active_at: "2026-04-29T09:00:00.000Z",
+        agentId: "pi",
+        parent_id: null,
+      },
+      {
+        id: "other",
+        title: "Other",
+        cwd: "/b",
+        cwdDisplay: "/b",
+        last_active_at: "2026-04-29T08:00:00.000Z",
+        agentId: "copilot",
+        parent_id: null,
+      },
+    ];
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      if (url === "/api/v1/tasks") {
+        const body = JSON.stringify(tasks);
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(tasks),
+          text: () => Promise.resolve(body),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({}),
+        text: () => Promise.resolve("{}"),
+      });
+    }) as any;
+
+    dom.input.value = "/switch ";
+    commands.updateSlashMenu();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const rowPath = (title: string) =>
+      [...dom.slashMenu.querySelectorAll(".slash-item")]
+        .find(
+          (row: any) =>
+            row.querySelector(".slash-primary")?.textContent === title,
+        )
+        ?.querySelector(".slash-path")?.textContent;
+
+    assert.equal(rowPath("Other"), "copilot:/b");
+    assert.equal(rowPath("Current"), "/a");
+
+    // The current task rotates while the menu is open. No new input event.
+    installTaskAgentId("current", "copilot");
+    const topology = await import("../public/js/task-topology.ts");
+    topology.observeTaskCreated("current", "copilot");
+
+    // Every row is re-spec'd against the new baseline: the other task now
+    // matches it, and this task's row (still recorded as pi in the list) no
+    // longer does.
+    assert.equal(rowPath("Other"), "/b", "the old baseline must not linger");
+    assert.equal(rowPath("Current"), "pi:/a");
   });
 });
 

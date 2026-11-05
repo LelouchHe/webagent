@@ -7,7 +7,8 @@
 //   can a create target?" and therefore drives coordinate parsing and (later)
 //   the completion menu.
 // - the agents of visible tasks (`task-topology.ts`): what is actually being
-//   carried right now. That one decides whether agent labels are shown at all.
+//   carried right now. That one supplies the parent binding a task's coordinate
+//   is compared against, and the list-row baseline.
 //
 // `available` only means the launch command was found in PATH at startup. It
 // says nothing about a process starting, handshaking, or being authenticated,

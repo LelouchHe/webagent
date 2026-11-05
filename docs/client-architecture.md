@@ -450,20 +450,31 @@ directory exists and fails as a directory error when it does not. `./` is the
   one-sided escape for a literal directory that looks like a coordinate.
 - **Agent ids match exactly.** The configuration schema is lowercase, so no
   case folding is applied.
-- **The suffix is byte-preserving in the parse.** Only the token boundary is
-  computed with `/\s/u` (TAB and full-width spaces included); the text after
-the colon is never collapsed. The path resolver then applies the ordinary path
-  rules, which trim leading/trailing whitespace and keep interior bytes. A
-  `rawSlashArgument` helper keeps the raw remainder available because the
-  normalized `arg` used by the other slash commands cannot represent it.
+- **The suffix has one fidelity boundary.** `parseCoordinate` returns the text
+  after the colon byte for byte, and interior bytes are the path: consecutive
+  spaces, TABs, full-width spaces, and backslashes must survive to the wire.
+  Leading and trailing whitespace is only the separator the user typed, so it
+  does not reach the wire — the path resolver trims it, and the empty-suffix
+  test runs on the trimmed value: `copilot:~/a ` equals `copilot:~/a`, and
+  `copilot: ` equals `copilot:`. The boundary is applied after parsing and
+  before the request (in `resolveCoordinateTarget`), so the completion layer can
+  still show the raw text. A `rawSlashArgument` helper keeps the raw remainder
+  available because the normalized `arg` used by the other slash commands
+  cannot represent it.
 - **An empty suffix means "omit the cwd field".** The two create entries omit
   it, so the server's own default directory applies; `/clear` keeps the task
-  directory. Those two omissions are deliberately not interchangeable, and
+  directory (it really sends no `cwd`). Those two omissions are deliberately
+  not interchangeable, and
   `/clear <agent>:` sends no `cwd` value to express the second.
 - **The preview never hides the choice.** A settled coordinate previews as one
   `previewValue` field, `<agent>:<cwd>` with no whitespace between them, so it
   cannot be read as a different pair. Input previews echo what was typed; the
   list-label baseline rule below does not apply to them.
+- **One submission per entry.** `/new` and `/clear` each expose a single
+  submission function (`submitCreateField` / `submitClearField`) that parses,
+  resolves, probes, requests, and reports failures. Enter and the picker's
+  action row both call it, so the preview, the request body, and a late
+  failure's rescue line cannot disagree between click and keyboard.
 - **Failure rescue.** When a configured agent cannot start (503), the client
   reports the server's reason and appends one plain, copyable line:
   `/clear <live-agent>:<raw-cwd>`. `<live-agent>` is an available agent other
@@ -499,18 +510,25 @@ The collection is fed from the authoritative task list and from the SSE stream:
    generation that requested them, so a response from a previous connection
    cannot become the new baseline. Each (re)connect fetches the list, even when
    the task itself is restored incrementally.
-3. **Not loaded is not loaded-and-empty.** Neither claims the reference value,
+3. **A list is older than an event that arrived while it was in flight.** Every
+   event-applied change carries a mutation sequence. A list records the
+   sequence at request start and only wins over facts older than that: a
+   rotation received during the request survives, a deleted task is not
+   resurrected, and a task created meanwhile stays in the collection.
+4. **Not loaded is not loaded-and-empty.** Neither claims the reference value,
    but a loaded-and-empty collection is still a baseline: a row's own binding is
    known, while the status bar has no parent link to compare against and falls
    back to the default.
-4. **Bindings are task facts.** A `null` binding is never guessed to be the
+5. **Bindings are task facts.** A `null` binding is never guessed to be the
    default, and a binding for an agent that has since left the configuration
    still counts.
-5. **Entry labels are baseline-relative.** A list row states its agent only when
-   it differs from the current task's binding. Rows show the plain path when the
-   collection is not loaded, when there is no current task (no baseline), or
-   when the row has no binding. `/switch` rows recompute this at render time, so
-   a menu opened after a switch uses the new baseline.
+6. **Entry labels are baseline-relative.** A list row states its agent only when
+   it differs from the current task's binding. Without a current task there is
+   no baseline, so every confirmed row states its agent. A row shows the plain
+   path only when the collection is not loaded or the row itself has no
+   confirmed binding. `/switch` rows recompute this at render time, so a menu
+   opened after a switch (or after the current binding changes while it is
+   open) uses the new baseline.
 
 ---
 
@@ -828,8 +846,15 @@ The reference is the parent's confirmed binding, otherwise the configured
 default; it is not guessed before the collection loads, and an unbound task
 draws no prefix. The reference object is named in the `title` (for example
 `This task runs on copilot; its parent runs on pi`). At narrow widths the split
-keeps `<agent>:~/` or `<agent>:/` in `status-cwd-prefix` (never truncated) and
+keeps the agent, its colon, and the path root in `status-cwd-prefix` (never
+truncated) — `<agent>:~/`, `<agent>:/`, `<agent>:C:/`, or `<agent>:~` — and
 only the rest in `status-cwd-tail` (ellipsised).
+
+The directory and default agent are connection metadata: a response from a
+superseded stream (or a superseded bootstrap) is discarded rather than
+installed, so coordinates are never parsed against a configuration the client
+no longer has. A stale *navigation* within the same connection does not discard
+them — the directory is not navigation state.
 
 ### Busy State
 

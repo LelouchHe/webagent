@@ -36,6 +36,22 @@ let generation = 0;
 let pending: { generation: number; promise: Promise<TaskSummary[]> } | null =
   null;
 
+/**
+ * Facts learned from events after a list request started. A list is a snapshot
+ * of the server at *some* point during the request, so it may be older than an
+ * event this client has already applied. Each entry records the sequence at
+ * which it was last changed by an event; a list only wins over facts older
+ * than its own start sequence.
+ */
+interface TaskMutation {
+  seq: number;
+  agentId?: string | null;
+  deleted?: boolean;
+}
+
+let mutationSeq = 0;
+let mutations = new Map<string, TaskMutation>();
+
 const changeListeners: (() => void)[] = [];
 
 /** Repaint hooks (the status bar) run after any collection change. */
@@ -57,6 +73,8 @@ export function beginTaskTopologyGeneration(): number {
   loaded = false;
   entries = new Map();
   pending = null;
+  mutationSeq = 0;
+  mutations = new Map();
   notifyChange();
   return generation;
 }
@@ -69,22 +87,49 @@ export function isTaskTopologyLoaded(): boolean {
   return loaded;
 }
 
-/** Record one authoritative list. Returns false when it is from an older
- *  connection generation and must not become the baseline. */
+/**
+ * Record one authoritative list. Returns false when it is from an older
+ * connection generation and must not become the baseline.
+ *
+ * `sinceSeq` is the mutation sequence when the request started (defaults to
+ * "now" for a direct, synchronous record). Anything this client learned after
+ * that point is newer than the snapshot, so it is kept: a rotation that
+ * arrived while the list was in flight still wins, and a deletion cannot be
+ * resurrected by a snapshot taken before it.
+ */
 export function recordTaskList(
   listGeneration: number,
   tasks: readonly TaskSummary[],
+  sinceSeq: number = mutationSeq,
 ): boolean {
   if (listGeneration !== generation) return false;
   const next = new Map<string, TopologyEntry>();
   for (const task of tasks) {
-    next.set(task.id, {
+    const listed: TopologyEntry = {
       id: task.id,
       agentId: task.agentId ?? null,
       parentId: task.parent_id ?? null,
-    });
+    };
+    const mutation = mutations.get(task.id);
+    if (mutation && mutation.seq > sinceSeq) {
+      if (mutation.deleted) continue;
+      if (mutation.agentId !== undefined) listed.agentId = mutation.agentId;
+    }
+    next.set(task.id, listed);
+  }
+  // A task created while the request was in flight may be missing from the
+  // snapshot; it is still real, so keep the entry the event produced.
+  for (const [id, mutation] of mutations) {
+    if (mutation.seq <= sinceSeq || mutation.deleted) continue;
+    if (next.has(id)) continue;
+    const known = entries.get(id);
+    if (known) next.set(id, known);
   }
   entries = next;
+  // Everything older than this request's snapshot is reconciled.
+  for (const [id, mutation] of mutations) {
+    if (mutation.seq <= sinceSeq) mutations.delete(id);
+  }
   loaded = true;
   notifyChange();
   return true;
@@ -102,6 +147,8 @@ export function observeTaskCreated(
   agentId: string | null | undefined,
 ): boolean {
   const existing = entries.get(taskId);
+  mutationSeq += 1;
+  mutations.set(taskId, { seq: mutationSeq, agentId: agentId ?? null });
   if (existing) {
     existing.agentId = agentId ?? null;
     notifyChange();
@@ -117,6 +164,10 @@ export function observeTaskCreated(
 }
 
 export function observeTaskDeleted(taskId: string): void {
+  // Tombstoned even when it is not in the cache yet: a list already in flight
+  // may still carry the snapshot from before the deletion.
+  mutationSeq += 1;
+  mutations.set(taskId, { seq: mutationSeq, deleted: true });
   if (entries.delete(taskId)) notifyChange();
 }
 
@@ -181,10 +232,11 @@ export async function loadTaskList(): Promise<TaskSummary[]> {
   if (pending?.generation === requestGeneration) {
     return pending.promise;
   }
+  const sinceSeq = mutationSeq;
   const request = {
     generation: requestGeneration,
     promise: api.listTasks().then((tasks) => {
-      recordTaskList(requestGeneration, tasks);
+      recordTaskList(requestGeneration, tasks, sinceSeq);
       return tasks;
     }),
   };
@@ -202,4 +254,6 @@ export function resetTaskTopologyForTest(): void {
   loaded = false;
   generation = 0;
   pending = null;
+  mutationSeq = 0;
+  mutations = new Map();
 }

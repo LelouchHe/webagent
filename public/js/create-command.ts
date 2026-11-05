@@ -121,17 +121,30 @@ export function suggestCoordinatePrefix(
   };
 }
 
+/** A settled coordinate resolved to the wire shape. `cwd: null` means the
+ *  field is omitted, so each entry keeps its own documented meaning for that
+ *  omission (server default on create, task directory on clear). */
+export interface CoordinateTarget {
+  agentId: string;
+  cwd: string | null;
+}
+
 /**
- * Resolve the create side of a settled coordinate. An empty suffix omits the
- * cwd field on purpose: on create, omitting it means "the server default",
- * which is not the same request as "the current task directory".
+ * Resolve a settled coordinate's suffix for a request.
+ *
+ * Fidelity boundary: interior bytes are the path and travel verbatim, while
+ * leading/trailing whitespace is only the separator the user typed. The empty
+ * suffix test runs on the trimmed value, so `copilot: ` and `copilot:` are the
+ * same request. The parser itself still reports the raw text; trimming happens
+ * here, after parsing and before the request.
  */
-export async function resolveCreateCoordinate(coordinate: {
+export async function resolveCoordinateTarget(coordinate: {
   agentId: string;
   rawSuffix: string;
-}): Promise<{ agentId: string; cwd?: string } | { error: string }> {
-  if (coordinate.rawSuffix === "") return { agentId: coordinate.agentId };
-  const resolved = await resolveCreateCwd(coordinate.rawSuffix);
+}): Promise<CoordinateTarget | { error: string }> {
+  const suffix = coordinate.rawSuffix.trim();
+  if (suffix === "") return { agentId: coordinate.agentId, cwd: null };
+  const resolved = await resolveCreateCwd(suffix);
   if ("error" in resolved) return resolved;
   return { agentId: coordinate.agentId, cwd: resolved.cwd };
 }

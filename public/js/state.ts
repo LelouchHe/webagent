@@ -363,14 +363,16 @@ export function splitDisplayPath(cwd: string): {
 } {
   const drive = cwd.match(/^[A-Za-z]:[\\/]/)?.[0];
   if (drive) return { prefix: drive, tail: cwd.slice(drive.length) };
-  // A coordinate keeps its `<agent>:` glued to the path root, so only the part
-  // after the root can be truncated. Without this the whole `agent:~/repo`
-  // would land in the ellipsising tail.
-  const coordinate = /^([a-z0-9][a-z0-9-]*):((?:~\/|\/).*)$/u.exec(cwd);
+  // A coordinate keeps its `<agent>:` glued to whatever root follows, so only
+  // the part after the root can be truncated. Without this the whole
+  // `agent:~/repo`, `agent:C:/repo`, or `agent:~` would land in the
+  // ellipsising tail and take the agent and its colon with it.
+  const coordinate = /^([a-z0-9][a-z0-9-]*):(.*)$/u.exec(cwd);
   if (coordinate) {
     const inner = splitDisplayPath(coordinate[2]);
     return { prefix: `${coordinate[1]}:${inner.prefix}`, tail: inner.tail };
   }
+  if (cwd === "~") return { prefix: "~", tail: "" };
   if (cwd.startsWith("~/") || cwd.startsWith("~\\")) {
     return { prefix: cwd.slice(0, 2), tail: cwd.slice(2) };
   }
@@ -475,8 +477,9 @@ export function updateStatusBar() {
   });
 }
 
-// Any collection change can change suppression or divergence, so the status
-// bar repaints from the collection rather than from the event that changed it.
+// Any collection change can change the reference binding (a parent rotation,
+// a deletion, a new list), so the status bar repaints from the collection
+// rather than from the event that changed it.
 subscribeTaskTopology(updateStatusBar);
 
 // --- Snapshot / state_patch (client-server-split M1) ---
@@ -800,17 +803,17 @@ export async function createNewTaskRequest({
           { cwd, inheritFromTaskId, parentId, agentId },
           clientOpId,
         );
-    // The directory is connection metadata, not a property of this navigation:
-    // install it before any generation guard so a superseded navigation still
-    // leaves the client able to parse coordinates.
-    installAgentDirectory(task.agents, task.defaultAgentId);
     state.newTaskRequestInFlight = false;
     if (!isCurrentRequest()) {
+      // A superseded create (or a new connection) owns the metadata now; its
+      // own response installs the directory. Applying this one would resolve
+      // coordinates against a configuration that is no longer current.
       if (state.pendingNewTaskOpId === clientOpId) {
         finishNewTaskRequest();
       }
       return false;
     }
+    installAgentDirectory(task.agents, task.defaultAgentId);
     if (typeof task.id !== "string") {
       throw new Error("Task create response is missing an id");
     }

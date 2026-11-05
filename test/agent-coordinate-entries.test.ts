@@ -20,17 +20,22 @@ interface Call {
 describe("coordinate entries", () => {
   let state: any;
   let dom: any;
+  let createNewTaskRequest: (options?: any) => Promise<boolean>;
   let commands: any;
   let taskCommand: any;
   let directory: any;
   let calls: Call[];
-  let handler: (url: string, init?: any) => Response | undefined;
+  let handler: (
+    url: string,
+    init?: any,
+  ) => Response | Promise<Response> | undefined;
 
   before(async () => {
     setupDOM();
     const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
+    createNewTaskRequest = stateMod.createNewTaskRequest;
     await import("../public/js/render.ts");
     commands = await import("../public/js/commands.ts");
     taskCommand = await import("../public/js/task-command.ts");
@@ -62,7 +67,7 @@ describe("coordinate entries", () => {
     globalThis.fetch = (async (input: any, init?: any) => {
       const url = typeof input === "string" ? input : String(input);
       calls.push({ url, init });
-      const response = handler(url, init);
+      const response = await handler(url, init);
       if (response) return response;
       throw new Error(`Unexpected fetch: ${url}`);
     }) as typeof fetch;
@@ -111,12 +116,33 @@ describe("coordinate entries", () => {
     if (url === "/api/v1/tasks") {
       return json([{ id: "old-1" }, { id: "child-1" }]);
     }
+    if (url.startsWith("/api/v1/recent-paths")) {
+      return json([]);
+    }
     return undefined;
   }
 
-  function bodyOf(method: string, suffix: string): any {
+  /** The menu's action row for the current input, activated like a click. */
+  async function clickFirstMenuRow(): Promise<void> {
+    commands.updateSlashMenu();
+    await settle();
+    const row = dom.slashMenu.querySelector(".slash-item");
+    assert.ok(row, `expected an action row; got ${dom.slashMenu.textContent}`);
+    row.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true }),
+    );
+    await settle();
+  }
+
+  function projection(body: any): { agentId: unknown; cwd: unknown } {
+    return { agentId: body.agentId, cwd: body.cwd };
+  }
+
+  function bodyOf(method: string, suffix: string, exact = false): any {
     const call = calls.find(
-      (entry) => entry.url.endsWith(suffix) && entry.init?.method === method,
+      (entry) =>
+        (exact ? entry.url === suffix : entry.url.endsWith(suffix)) &&
+        entry.init?.method === method,
     );
     assert.ok(
       call,
@@ -201,6 +227,67 @@ describe("coordinate entries", () => {
     }
   });
 
+  it("/clear action row and Enter submit the same projection", async () => {
+    await commands.handleSlashCommand("/clear copilot:rel");
+    const enterBody = bodyOf("POST", "/clear");
+
+    calls = [];
+    dom.input.value = "/clear copilot:rel";
+    await clickFirstMenuRow();
+    const clickBody = bodyOf("POST", "/clear");
+
+    assert.deepEqual(projection(clickBody), projection(enterBody));
+    assert.deepEqual(projection(clickBody), {
+      agentId: "copilot",
+      cwd: "/work/rel",
+    });
+  });
+
+  it("/new action row and Enter submit the same projection", async () => {
+    await commands.handleSlashCommand("/new copilot:rel");
+    await settle();
+    const enterBody = bodyOf("POST", "/api/v1/tasks", true);
+
+    calls = [];
+    dom.input.value = "/new copilot:rel";
+    await clickFirstMenuRow();
+    const clickBody = bodyOf("POST", "/api/v1/tasks", true);
+
+    assert.deepEqual(projection(clickBody), projection(enterBody));
+    assert.deepEqual(projection(clickBody), {
+      agentId: "copilot",
+      cwd: "/work/rel",
+    });
+  });
+
+  it("/clear with an empty coordinate suffix sends no cwd at all", async () => {
+    await commands.handleSlashCommand("/clear copilot:");
+    const body = bodyOf("POST", "/clear");
+    assert.equal(body.agentId, "copilot");
+    assert.equal("cwd" in body, false, "the server owns the task directory");
+  });
+
+  it("treats outer whitespace as the separator, never as a path byte", async () => {
+    // Interior bytes are the path.
+    await commands.handleSlashCommand("/new copilot:~/a  b");
+    await settle();
+    assert.equal(bodyOf("POST", "/api/v1/tasks", true).cwd, "~/a  b");
+
+    // A trailing separator is not part of the directory name.
+    calls = [];
+    await commands.handleSlashCommand("/new copilot:~/a ");
+    await settle();
+    assert.equal(bodyOf("POST", "/api/v1/tasks", true).cwd, "~/a");
+
+    // `copilot: ` is the same request as `copilot:`: the field is omitted.
+    calls = [];
+    await commands.handleSlashCommand("/new copilot: ");
+    await settle();
+    const body = bodyOf("POST", "/api/v1/tasks", true);
+    assert.equal(body.agentId, "copilot");
+    assert.equal("cwd" in body, false);
+  });
+
   it("treats an unconfigured prefix as a path", async () => {
     await commands.handleSlashCommand("/new notes:2026");
     await settle();
@@ -248,6 +335,122 @@ describe("coordinate entries", () => {
     const body = bodyOf("POST", "/api/v1/tasks");
     assert.equal("agentId" in body, false);
     assert.equal(body.cwd, "/work/copliot:rel");
+  });
+
+  it("does not install a superseded bootstrap's agent directory", async () => {
+    directory.installAgentDirectory(
+      [{ id: "current", available: true }],
+      "current",
+    );
+    let releaseBootstrap!: (response: Response) => void;
+    handler = (url, init) => {
+      if (url === "/api/v1/tasks/bootstrap" && init?.method === "POST") {
+        return new Promise<Response>((resolve) => {
+          releaseBootstrap = resolve;
+        });
+      }
+      return defaultHandler(url, init);
+    };
+
+    const pending = createNewTaskRequest({
+      bootstrap: true,
+      inheritFromTaskId: null,
+    });
+    await settle();
+    // A navigation supersedes the bootstrap while its response is pending.
+    state.taskSwitchGen += 1;
+    releaseBootstrap(
+      json({
+        id: "root",
+        rootTaskId: "root",
+        cwd: "/work",
+        configOptions: [],
+        agents: [{ id: "ghost", available: true }],
+        defaultAgentId: "ghost",
+      }),
+    );
+    await pending;
+
+    assert.deepEqual(
+      directory.getAgentDirectory().map((entry: { id: string }) => entry.id),
+      ["current"],
+      "a superseded request must not install metadata",
+    );
+    assert.equal(directory.getDefaultAgentId(), "current");
+  });
+
+  it("reports a late create failure with the submitting agent and directory", async () => {
+    directory.installAgentDirectory(
+      [
+        { id: "mock", available: true },
+        { id: "copilot", available: true },
+      ],
+      "mock",
+    );
+    state.taskAgentId = "mock";
+    let releaseCreate!: (response: Response) => void;
+    handler = (url, init) => {
+      if (url === "/api/v1/tasks" && init?.method === "POST") {
+        return new Promise<Response>((resolve) => {
+          releaseCreate = resolve;
+        });
+      }
+      return defaultHandler(url, init);
+    };
+
+    const pending = taskCommand.executeTaskCommand("+t");
+    await settle();
+    // The view moves to another task while the create is still in flight.
+    state.taskId = "other";
+    state.taskAgentId = "copilot";
+    state.taskCwd = "/other";
+    releaseCreate(json({ error: "Agent mock is not available: nope" }, 503));
+    await pending;
+
+    const text = lines().join("\n");
+    assert.match(
+      text,
+      /err: create failed — Agent mock is not available: nope/,
+    );
+    // Submission-time agent (excluded from the rescue) and directory.
+    assert.match(text, /\/clear copilot:\/work/);
+    assert.doesNotMatch(text, /\/other/);
+  });
+
+  it("reports a late clear failure with the submitting agent and directory", async () => {
+    directory.installAgentDirectory(
+      [
+        { id: "mock", available: true },
+        { id: "copilot", available: true },
+      ],
+      "mock",
+    );
+    state.taskAgentId = "mock";
+    let releaseClear!: (response: Response) => void;
+    handler = (url, init) => {
+      if (url.endsWith("/clear") && init?.method === "POST") {
+        return new Promise<Response>((resolve) => {
+          releaseClear = resolve;
+        });
+      }
+      return defaultHandler(url, init);
+    };
+
+    const pending = commands.handleSlashCommand("/clear");
+    await settle();
+    state.taskId = "other";
+    state.taskAgentId = "copilot";
+    state.taskCwd = "/other";
+    releaseClear(json({ error: "Agent mock is not available: nope" }, 503));
+    await pending;
+
+    const text = lines().join("\n");
+    assert.match(
+      text,
+      /Failed to clear task — Agent mock is not available: nope/,
+    );
+    assert.match(text, /\/clear copilot:\/work/);
+    assert.doesNotMatch(text, /\/other/);
   });
 
   it("offers a rescue line when the named agent will not start", async () => {

@@ -166,6 +166,71 @@ describe("global task topology", () => {
     assert.equal(isTaskTopologyLoaded(), true);
   });
 
+  it("keeps a rotation that arrived while the list was in flight", async () => {
+    recordTaskList(currentTopologyGeneration(), [
+      task("parent", "pi"),
+      task("child", "copilot", "parent"),
+    ]);
+    const original = globalThis.fetch;
+    let release!: (response: Response) => void;
+    globalThis.fetch = () =>
+      new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    try {
+      const pending = loadTaskList();
+      // The list is a snapshot from before this rotation; the event is newer.
+      observeTaskCreated("parent", "copilot");
+      release(
+        new Response(
+          JSON.stringify([
+            task("parent", "pi"),
+            task("child", "copilot", "parent"),
+          ]),
+          { status: 200 },
+        ),
+      );
+      await pending;
+      assert.equal(parentAgentOf("child"), "copilot");
+      assert.equal(entryAgentLabel("pi", "child", "copilot"), "pi");
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it("does not let an in-flight list resurrect a deleted task", async () => {
+    recordTaskList(currentTopologyGeneration(), [
+      task("parent", "pi"),
+      task("child", "copilot", "parent"),
+    ]);
+    const original = globalThis.fetch;
+    let release!: (response: Response) => void;
+    globalThis.fetch = () =>
+      new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    try {
+      const pending = loadTaskList();
+      observeTaskDeleted("parent");
+      release(
+        new Response(
+          JSON.stringify([
+            task("parent", "pi"),
+            task("child", "copilot", "parent"),
+          ]),
+          { status: 200 },
+        ),
+      );
+      await pending;
+      assert.deepEqual(parentOf("child"), {
+        parentId: "parent",
+        agentId: null,
+      });
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   it("shares one list request per generation and records its result", async () => {
     const originalFetch = globalThis.fetch;
     let calls = 0;
