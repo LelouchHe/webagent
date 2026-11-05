@@ -112,11 +112,33 @@ function rows(page: Page): Promise<RowView[]> {
   );
 }
 
-/** Type `text` and wait for its menu: `+` builds asynchronously, the slash
- *  entries load their data on the first keystroke. */
+/**
+ * Wait until the open menu shows the *settled* rows of the current input.
+ *
+ * Visibility is not settlement: `+` renders a `(loading...)` placeholder
+ * synchronously before it awaits its candidates, and the slash entries load
+ * their data on the first keystroke of a scope. A negative assertion ("no agent
+ * rows") taken during that window would pass for the wrong reason, and the next
+ * `fill` would discard the pending result through the generation guard.
+ */
+async function expectMenuSettled(page: Page): Promise<void> {
+  await expect
+    .poll(async () => {
+      const texts = await page
+        .locator("#slash-menu.active .slash-item")
+        .allTextContents();
+      if (texts.length === 0) return "empty";
+      if (texts.some((text) => text.includes("(loading...)"))) return "loading";
+      return "ready";
+    })
+    .toBe("ready");
+}
+
+/** Type `text`, then wait for its menu to settle. */
 async function openMenu(page: Page, text: string): Promise<void> {
   await page.locator("#input").fill(text);
   await expect(page.locator("#slash-menu.active")).toBeVisible();
+  await expectMenuSettled(page);
 }
 
 async function expectRows(page: Page, primaries: string[]): Promise<void> {
@@ -228,24 +250,34 @@ test("the field completes an agent prefix and binds the agent it showed", async 
         .poll(async () => agentRows(await rows(page)).map((row) => row.primary))
         .toEqual(["mock:", "mock2:"]);
 
-      // Neither `./` nor a closed first token suggests an agent.
-      for (const text of ["+work ./mo", "+work mo ", "+work mo\t"]) {
+      // Neither `./` nor a closed first token suggests an agent. Each case
+      // waits for its own settled rows first, then pins the render to this
+      // input by the action row a non-empty field always produces: a menu still
+      // showing `(loading...)` (or an older generation) cannot pass here.
+      for (const text of [
+        "+work ./mo",
+        "+work mo ",
+        "+work mo\t",
+        "+work mo\u3000",
+      ]) {
         await openMenu(page, text);
-        await expect
-          .poll(async () => agentRows(await rows(page)).length)
-          .toBe(0);
+        const list = await rows(page);
+        expect(
+          list[0]?.prefix,
+          `expected this input's action row for ${JSON.stringify(text)}`,
+        ).toBe("↵");
+        expect(
+          agentRows(list),
+          `no agent rows for ${JSON.stringify(text)}`,
+        ).toEqual([]);
       }
-      // A full-width space is the same token boundary.
-      await openMenu(page, "+work mo\u3000");
-      await expect.poll(async () => agentRows(await rows(page)).length).toBe(0);
 
       // A settled coordinate offers no agent rows and keeps its prefix on the
       // suffix's path completion.
       await openMenu(page, "+work mock2:");
-      await expect.poll(async () => agentRows(await rows(page)).length).toBe(0);
-      await expect
-        .poll(async () => (await rows(page))[0]?.primary)
-        .toBe("create 'work' at 'mock2:'");
+      const settled = await rows(page);
+      expect(settled[0]?.primary).toBe("create 'work' at 'mock2:'");
+      expect(agentRows(settled)).toEqual([]);
 
       // The suggestion itself goes through the real submit chain.
       await openMenu(page, "+named mo");
@@ -358,26 +390,37 @@ test("a single-agent deployment has no agent rows at all", async ({
       const cwdDisplay = rootTask.cwdDisplay ?? rootTask.cwd;
 
       await openMenu(page, "+work ");
-      const plus = await rows(page);
+      // Compare the complete settled row list: exactly the two rows the
+      // pre-coordinate menu had, the action row and the current cwd.
+      let plus: RowView[] = [];
+      await expect
+        .poll(async () => {
+          plus = await rows(page);
+          return plus.map((row) => row.primary);
+        })
+        .toEqual(["create 'work'", cwdDisplay]);
       expect(agentRows(plus)).toEqual([]);
-      // Exactly the two rows the pre-coordinate menu had: the action row and
-      // the current cwd.
-      expect(plus.map((row) => row.primary)).toEqual([
-        "create 'work'",
-        cwdDisplay,
-      ]);
+      expect(plus).toHaveLength(2);
 
       await openMenu(page, "/new ");
+      let fresh: RowView[] = [];
       await expect
-        .poll(async () => (await rows(page))[0]?.primary)
+        .poll(async () => {
+          fresh = await rows(page);
+          return fresh[0]?.primary;
+        })
         .toBe("create task");
-      expect(agentRows(await rows(page))).toEqual([]);
+      expect(agentRows(fresh)).toEqual([]);
 
       await openMenu(page, "/clear ");
+      let cleared: RowView[] = [];
       await expect
-        .poll(async () => (await rows(page)).length)
+        .poll(async () => {
+          cleared = await rows(page);
+          return cleared.length;
+        })
         .toBeGreaterThan(0);
-      expect(agentRows(await rows(page))).toEqual([]);
+      expect(agentRows(cleared)).toEqual([]);
 
       // No row claims an agent either way, including through its annotation.
       const secondary = (await rows(page)).map((row) => row.secondary);
@@ -472,27 +515,47 @@ test("at 390px an agent row stays one line and keeps its colon", async ({
 
       const metrics = await page.evaluate(() => {
         const menu = document.querySelector("#slash-menu") as HTMLElement;
-        const items = [...menu.querySelectorAll(".slash-item")].filter((el) =>
+        const items = [...menu.querySelectorAll(".slash-item")];
+        const agentItems = items.filter((el) =>
           /^[^/\s]+:$/u.test(
             el.querySelector(".slash-primary")?.textContent ?? "",
           ),
         );
+        // An independent single-line baseline from the same menu: the action
+        // row is one short label, and it shares the row's font and padding.
+        const baseline = items[0]!.getBoundingClientRect().height;
         return {
           menuScrollWidth: menu.scrollWidth,
           menuClientWidth: menu.clientWidth,
           pageScrollWidth: document.scrollingElement!.scrollWidth,
           pageClientWidth: document.scrollingElement!.clientWidth,
-          rows: items.map((el) => {
+          baselineHeight: baseline,
+          rows: agentItems.map((el) => {
+            const primary = el.querySelector(".slash-primary") as HTMLElement;
             const box = el.getBoundingClientRect();
+            // The text's own geometry: if the label wrapped, its first and last
+            // characters would sit in different line boxes. Measuring the row
+            // against itself cannot show that.
+            const node = primary.firstChild as Text | null;
+            let firstTop: number | null = null;
+            let lastTop: number | null = null;
+            if (node && node.length > 0) {
+              const range = document.createRange();
+              range.setStart(node, 0);
+              range.setEnd(node, 1);
+              firstTop = range.getBoundingClientRect().top;
+              range.setStart(node, node.length - 1);
+              range.setEnd(node, node.length);
+              lastTop = range.getBoundingClientRect().top;
+            }
             return {
-              primary: el.querySelector(".slash-primary")?.textContent ?? "",
-              // A second row would mean the l1 line wrapped or an l2 line was
-              // added; agent rows are single-line by construction.
+              primary: primary.textContent ?? "",
+              // A second row would mean an l2 line was added; it says nothing
+              // about whether the l1 label itself wrapped.
               l2Count: el.querySelectorAll(".slash-row-l2").length,
               height: box.height,
-              l1Height: el
-                .querySelector(".slash-row-l1")!
-                .getBoundingClientRect().height,
+              firstTop,
+              lastTop,
             };
           }),
         };
@@ -510,9 +573,13 @@ test("at 390px an agent row stays one line and keeps its colon", async ({
       expect(primaries).toEqual(ids.map((id) => `${id}:`));
       for (const row of metrics.rows) {
         expect(row.l2Count).toBe(0);
-        // One text line: the row is not taller than its own l1 line box plus
-        // the row's vertical padding (6px top and bottom).
-        expect(row.height).toBeLessThanOrEqual(row.l1Height + 12.5);
+        // One label line, proven twice against independent references: the
+        // first and last character share a line box, and the row is no taller
+        // than the menu's known single-line row.
+        expect(row.firstTop).not.toBeNull();
+        expect(row.lastTop).not.toBeNull();
+        expect(Math.abs(row.lastTop! - row.firstTop!)).toBeLessThanOrEqual(0.5);
+        expect(row.height).toBeLessThanOrEqual(metrics.baselineHeight + 0.5);
       }
 
       await page.screenshot({

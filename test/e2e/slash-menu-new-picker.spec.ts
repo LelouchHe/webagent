@@ -29,6 +29,15 @@ async function readTaskCwd(
   }, id);
 }
 
+async function recentPaths(
+  page: import("playwright/test").Page,
+): Promise<Array<{ cwd: string; cwdDisplay: string }>> {
+  return page.evaluate(async () => {
+    const res = await fetch("/api/v1/recent-paths");
+    return (await res.json()) as Array<{ cwd: string; cwdDisplay: string }>;
+  });
+}
+
 async function findTaskByTitle(
   page: import("playwright/test").Page,
   title: string,
@@ -100,23 +109,84 @@ test("/new picker leads with the action row and marks the current cwd first", as
   page,
 }) => {
   await gotoConnected(page);
-  const parentId = await currentTaskId(page);
+  // A real current task, so the cwd row under test is a task's own directory.
+  const parentId = await createNewTask(page);
   const parentCwd = await readTaskCwd(page, parentId);
   const parentCwdDisplay = (await readStatusBarCwd(page)).replace(/\/$/, "");
 
+  // A second recent directory: without one, "the current cwd comes first"
+  // would hold vacuously on a one-row list. It is a real subdirectory (not a
+  // temporary one) because a later test's startup lands on the task left
+  // current here, and a deleted directory would make its mkdir fail.
+  const otherDir = join(parentCwd, "public");
+  await page.locator("#input").fill(`/new ${otherDir}`);
+  await page.locator("#input").press("Enter");
+  await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
+  // Recent paths are recorded on a user message, not on task creation.
+  await sendPrompt(page, "record this directory");
+  let otherDisplay = "";
+  await expect
+    .poll(async () => {
+      const listed = await recentPaths(page);
+      otherDisplay = listed.find((p) => p.cwd === otherDir)?.cwdDisplay ?? "";
+      return otherDisplay;
+    })
+    .not.toBe("");
+
+  // Back to the launching task so the menu's current cwd is its own.
+  await page.locator("#input").fill(`/switch ${parentId}`);
+  await expect(page.locator("#slash-menu.active .slash-item")).toHaveCount(1);
+  await page.locator("#slash-menu .slash-item").first().click();
+  await expect.poll(() => currentTaskId(page)).toBe(parentId);
+  // The hash moves before the detail lands; its cwd is what `/new`'s row is
+  // built from, so wait for the activation rather than for the URL.
+  await expect(page.locator("#status-bar .status-cwd")).toContainText(
+    parentCwdDisplay,
+  );
+
   await page.locator("#input").fill("/new ");
   const menu = page.locator("#slash-menu.active");
-  const rows = menu.locator(".slash-item");
-  await expect(rows.nth(0)).toContainText("create task");
-  await expect(rows.nth(0).locator(".slash-prefix")).toHaveText("↵");
-  // The current cwd leads the *path* rows: agent rows (this suite configures
-  // two) sit ahead of it inside the same data segment, and the action row above
-  // them still owns the default selection.
-  const currentCwdRow = rows.filter({ hasText: parentCwdDisplay });
-  await expect(currentCwdRow.locator(".slash-prefix")).toHaveText("*");
+  await expect(menu.locator(".slash-item").first()).toContainText(
+    "create task",
+  );
+  await expect(
+    menu.locator(".slash-item").first().locator(".slash-prefix"),
+  ).toHaveText("↵");
+
+  // Wait for the settled list (the menu loads recents on its first keystroke)
+  // and then check the order: agent rows (this suite configures two) lead the
+  // data segment, then the current cwd, then the other recent directory.
+  let order: Array<{ prefix: string; primary: string }> = [];
+  await expect
+    .poll(async () => {
+      order = await menu.locator(".slash-item").evaluateAll((els) =>
+        els.map((el) => ({
+          prefix: el.querySelector(".slash-prefix")?.textContent ?? "",
+          primary: el.querySelector(".slash-primary")?.textContent ?? "",
+        })),
+      );
+      const primaries = order.map((row) => row.primary);
+      return (
+        primaries.includes(parentCwdDisplay) && primaries.includes(otherDisplay)
+      );
+    })
+    .toBe(true);
+
+  const primaries = order.map((row) => row.primary);
+  const currentIdx = primaries.indexOf(parentCwdDisplay);
+  const otherIdx = primaries.indexOf(otherDisplay);
+  const agentIdxs = primaries.flatMap((primary, index) =>
+    /^[^/\s]+:$/u.test(primary) ? [index] : [],
+  );
+  expect(agentIdxs.length).toBeGreaterThan(0);
+  expect(Math.max(...agentIdxs)).toBeLessThan(currentIdx);
+  expect(otherIdx).toBeGreaterThan(currentIdx);
+  // The marking belongs to the current-cwd row itself, and only to it.
+  expect(order[currentIdx].prefix).toBe("*");
+  expect(order[otherIdx].prefix).toBe("");
 
   // The action row creates in the current cwd and then switches, like Enter.
-  await rows.nth(0).click();
+  await menu.locator(".slash-item").first().click();
   await expect(page.locator("#messages")).toContainText("Creating new task…");
   await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
   expect(await readTaskCwd(page, await currentTaskId(page))).toBe(parentCwd);
@@ -392,6 +462,13 @@ test("+ menu previews the action and lists cwd candidates after a space", async 
   const currentRow = menu
     .locator(".slash-item")
     .filter({ hasText: currentCwd.replace(/\/$/, "") });
+  await expect(currentRow).toHaveCount(1);
+  // The marking is on the row that is clicked, not merely somewhere in the
+  // menu: green label plus the explicit star prefix.
+  await expect(currentRow.locator(".slash-primary")).toHaveClass(
+    /slash-current/,
+  );
+  await expect(currentRow.locator(".slash-prefix")).toHaveText("*");
   await currentRow.first().click();
   await expect(page.locator("#input")).toHaveValue(`+${unique} ${currentCwd}`);
   await expect(page.locator("#messages")).not.toContainText(

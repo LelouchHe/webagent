@@ -1021,8 +1021,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and
     attaches it under the launching task (`/exit` returns there)
-  - the `/new` picker leads with the `create task` action row and marks the
-    current cwd first with `*`, ahead of the recent paths
+  - the `/new` picker leads with the `create task` action row, then the agent
+    rows, then the current cwd — marked `*` on that row itself — and only then
+    other recent directories (a second recent directory makes the order real,
+    not vacuous)
   - `/new <relative>` resolves against the current task cwd on both Enter and
     the picker action row, and the preview names the resolved directory
   - `+<title>` creates a titled child without switching; `@<title> <body>` then
@@ -1185,8 +1187,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
     with an `unavailable` marker, and its row still submits its own `agentId`
     (the server rejects it for the real reason) while the available row binds
     and succeeds
-  - at 390px an agent row is one line, the menu and page never scroll
-    sideways, and each `<id>:` is complete
+  - menus are asserted only after their settled (non-loading) rows for the
+    current input, so a negative assertion cannot pass on a placeholder or an
+    older generation
+  - at 390px an agent row is one line — the label's first and last characters
+    share a line box, and the row is no taller than the menu's known
+    single-line row — the menu and page never scroll sideways, and each
+    `<id>:` is complete
   - reopening a `+` menu after switching into another agent's task moves the
     star to that task's binding
 
