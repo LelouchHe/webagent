@@ -22,6 +22,7 @@ import {
   taskAgentFailureLines,
 } from "./create-command.ts";
 import { getAgentDirectory } from "./agent-directory.ts";
+import { coordinateField } from "./agent-suggestions.ts";
 import { loadTaskList } from "./task-topology.ts";
 import { setInputValue, state } from "./state.ts";
 import { listRecentPaths } from "./slash-commands.ts";
@@ -465,7 +466,15 @@ async function buildCreateCandidates(parsed: {
   // coordinate's suffix keeps its bytes. A field with no path is the bare
   // form, which keeps the legacy "create where this task runs" behavior.
   const rawCwd = parsed.remainder.replace(/^\s+/u, "");
-  const coordinate = parseCoordinate(rawCwd, getAgentDirectory());
+  const titleWord = quoteShellWord(title);
+  // Same reading as the two slash entries: the agent rows `+` offers can only
+  // differ in how a chosen row is filled, because the title leads here.
+  const field = coordinateField(
+    rawCwd,
+    getAgentDirectory(),
+    state.taskAgentId,
+    (agentId) => `+${titleWord} ${agentId}:`,
+  );
   const candidates: Candidate[] = [
     {
       spec: {
@@ -486,18 +495,18 @@ async function buildCreateCandidates(parsed: {
 
   // Once a coordinate is settled, path completion applies to its suffix and
   // every fill re-states `<agent>:` instead of dropping it.
-  const coordinatePrefix =
-    coordinate.agentId === null ? "" : `${coordinate.agentId}:`;
-  const pathInput =
-    coordinate.agentId === null ? rawCwd.trim() : coordinate.cwd;
+  const coordinatePrefix = field.coordinatePrefix;
+  const pathInput = field.coordinate === null ? rawCwd.trim() : field.pathInput;
   const cwdCandidates = await buildCreateCwdCandidates(
     title,
     pathInput,
     coordinatePrefix,
   );
-  if (cwdCandidates.length > 0) {
+  // Agent rows lead the data segment, after the submit row and its separator:
+  // neither the default selection nor the row order above moves.
+  if (field.rows.length > 0 || cwdCandidates.length > 0) {
     candidates.push({ spec: { primary: "" }, prefix: "", kind: "separator" });
-    candidates.push(...cwdCandidates);
+    candidates.push(...field.rows, ...cwdCandidates);
   }
   return candidates;
 }

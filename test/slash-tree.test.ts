@@ -157,6 +157,23 @@ describe("slash-tree — resolvePath", () => {
     assert.equal(r.node.name, "dismiss");
     assert.equal(r.tailQuery, "stuff and more");
   });
+
+  it("keeps the raw remainder byte for byte next to the normalized tail", () => {
+    const root = makeRoot();
+    // Pathed commands consume a command token; everything after it is raw.
+    const field = (input: string) => resolvePath(input, root).rawRemainder;
+    assert.equal(field("/inbox"), "/inbox");
+    assert.equal(field("/inbox "), "");
+    assert.equal(field("/inbox co "), "co ");
+    assert.equal(field("/inbox co\t"), "co\t");
+    assert.equal(field("/inbox a  b"), "a  b");
+    assert.equal(field("/inbox a\u3000b"), "a\u3000b");
+    assert.equal(field("/inbox   two"), "two");
+    // A degraded token is still part of the raw remainder.
+    assert.equal(field("/inbox co\tx"), "co\tx");
+    // The normalized tail loses exactly what the raw remainder keeps.
+    assert.equal(resolvePath("/inbox a  b", root).tailQuery, "a b");
+  });
 });
 
 describe("slash-tree — buildCandidates", () => {

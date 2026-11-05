@@ -23,7 +23,7 @@ import {
   resetLogLevelOverride,
   setStoredLogLevel,
 } from "./log.ts";
-import type { CmdNode } from "./slash-tree.ts";
+import type { CmdNode, FieldView } from "./slash-tree.ts";
 import {
   isSourceTaskMissing,
   parseCoordinate,
@@ -34,6 +34,7 @@ import {
   taskAgentFailureLines,
 } from "./create-command.ts";
 import { getAgentDirectory } from "./agent-directory.ts";
+import { coordinateField } from "./agent-suggestions.ts";
 import type { TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import { entryAgentLabel, loadTaskList } from "./task-topology.ts";
@@ -473,6 +474,53 @@ function fieldPreview(raw: string): string {
   return previewValue(previewCreateCwd(raw.trim(), getAgentDirectory()));
 }
 
+/** Act on one recent path from `/clear`; a settled coordinate's agent travels
+ *  with the directory so picking a row cannot drop what was typed. */
+function clearToPath(item: PathItem, agentId: string | null): void {
+  void replaceCurrentTask({ cwd: item.cwd, showCwd: true, agentId });
+}
+
+/** Act on one recent path from `/new`, keeping a settled coordinate's agent. */
+function createAtPath(item: PathItem, agentId: string | null): void {
+  startChildTask(item.cwd, agentId, submissionSource());
+}
+
+/**
+ * The `<agent>:<cwd>` argument field of `/clear` and `/new`.
+ *
+ * Rows come from the same reading `+` uses (`coordinateField`), so the three
+ * entries cannot offer different agents for the same prefix. Once a coordinate
+ * is settled the fetched rows are decorated: they filter on the suffix and
+ * their selection keeps the prefix the user already typed.
+ */
+function pathFieldView(
+  rawRemainder: string,
+  pick: (item: PathItem, agentId: string | null) => void,
+): FieldView {
+  const field = coordinateField(
+    rawRemainder,
+    getAgentDirectory(),
+    state.taskAgentId,
+    (agentId) => `${agentId}:`,
+  );
+  const coordinate = field.coordinate;
+  return {
+    raw: rawRemainder,
+    filter: field.pathInput,
+    lead: field.rows,
+    decorate:
+      coordinate === null
+        ? undefined
+        : (spec, item) => ({
+            ...spec,
+            primary: `${coordinate.agentId}:${spec.primary}`,
+            onSelect: () => {
+              pick(item as PathItem, coordinate.agentId);
+            },
+          }),
+  };
+}
+
 export const ROOT: CmdNode = {
   name: "<root>",
   children: [
@@ -486,6 +534,7 @@ export const ROOT: CmdNode = {
       desc: "Clear context",
       help: "Clear context; history stays.",
       fetch: listRecentPaths,
+      field: (rawRemainder) => pathFieldView(rawRemainder, clearToPath),
       toSpec: (item: unknown) => {
         const p = item as PathItem;
         const isCurrent =
@@ -494,7 +543,7 @@ export const ROOT: CmdNode = {
           primary: p.cwdDisplay,
           current: isCurrent,
           onSelect: () => {
-            void replaceCurrentTask({ cwd: p.cwd, showCwd: true });
+            clearToPath(p, null);
           },
         };
       },
@@ -667,6 +716,7 @@ export const ROOT: CmdNode = {
     {
       name: "/new",
       desc: "Create a child task",
+      field: (rawRemainder) => pathFieldView(rawRemainder, createAtPath),
       fetch: async () => {
         const base = state.taskCwd ?? "";
         const items: PathItem[] = [];
@@ -698,7 +748,7 @@ export const ROOT: CmdNode = {
           primary: p.cwdDisplay,
           current: isCurrent,
           onSelect: () => {
-            startChildTask(p.cwd, null, submissionSource());
+            createAtPath(p, null);
           },
         };
       },

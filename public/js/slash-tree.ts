@@ -32,6 +32,12 @@ export interface CmdNode {
   matches?: (item: unknown, q: string) => boolean;
   /** Freeform fallback entry. Returns spec or null (null = no freeform row). */
   freeform?: (query: string) => SlashItemSpec | null;
+  /** Read this node's argument field from the raw input. Present = the node
+   *  owns its data section's filter, the rows it leads with, and the text its
+   *  freeform row sees. Needed because the walker's tail query is normalized:
+   *  it drops the trailing whitespace that ends the first token, which is
+   *  exactly the boundary between "still typing an id" and "id is settled". */
+  field?: (rawRemainder: string) => FieldView;
   /** Leaf action — node selected directly executes (e.g. /notify on). */
   onSelect?: () => void | Promise<void>;
 }
@@ -39,6 +45,20 @@ export interface CmdNode {
 /** Walker's data-state for a fetch node. Either a resolved array, the
  *  "loading" sentinel, or an error wrapper carrying the message to display. */
 export type FetchData = unknown[] | "loading" | { error: string };
+
+/** What a node's own argument field contributes to one rendered menu. */
+export interface FieldView {
+  /** What the node's data rows filter on. A settled coordinate's suffix is the
+   *  only text path completion may see; the prefix is never re-completed. */
+  filter: string;
+  /** Raw argument text handed to `freeform`, so an action row previews and
+   *  submits the same bytes Enter does. */
+  raw: string;
+  /** Rows inserted at the front of the data segment, already filtered. */
+  lead: Candidate[];
+  /** Rewrite a fetched row so acting on it keeps the field's settled parts. */
+  decorate?: (spec: SlashItemSpec, item: unknown) => SlashItemSpec;
+}
 
 /** Output of buildCandidates — one entry per visible row. */
 export interface Candidate {
@@ -64,9 +84,26 @@ export interface Candidate {
 export function resolvePath(
   input: string,
   root: CmdNode,
-): { node: CmdNode; pathPrefix: string; tailQuery: string } {
+): {
+  node: CmdNode;
+  pathPrefix: string;
+  tailQuery: string;
+  /** Everything after the consumed command path, byte for byte (leading
+   *  separator removed). `tailQuery` cannot carry this: it is token-joined and
+   *  trimmed, so a coordinate's suffix loses its interior spacing. */
+  rawRemainder: string;
+} {
   const lstripped = input.replace(/^\s+/, "");
-  if (lstripped === "") return { node: root, pathPrefix: "", tailQuery: "" };
+  if (lstripped === "")
+    return { node: root, pathPrefix: "", tailQuery: "", rawRemainder: "" };
+
+  // Token offsets, so the unconsumed text can be sliced without re-joining it.
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (const match of lstripped.matchAll(/\S+/gu)) {
+    starts.push(match.index);
+    ends.push(match.index + match[0].length);
+  }
 
   const trailing = /\s$/.test(lstripped);
   const parts = lstripped.split(/\s+/).filter((p) => p.length > 0);
@@ -88,7 +125,15 @@ export function resolvePath(
   if (tailToken) leftover.push(tailToken);
   const tailQuery = leftover.join(" ");
 
-  return { node, pathPrefix, tailQuery };
+  // The field starts after the last consumed command token (or at the first
+  // token when nothing was consumed); its leading separator is not part of it.
+  const remainderStart =
+    consumed === 0
+      ? (starts[0] ?? 0)
+      : (ends[consumed - 1] ?? lstripped.length);
+  const rawRemainder = lstripped.slice(remainderStart).replace(/^\s+/u, "");
+
+  return { node, pathPrefix, tailQuery, rawRemainder };
 }
 
 /**
@@ -117,9 +162,10 @@ export function buildCandidates(
   node: CmdNode,
   tailQuery: string,
   data?: FetchData,
+  field?: FieldView,
 ): Candidate[] {
   const out: Candidate[] = [];
-  const q = tailQuery.trim().toLowerCase();
+  const q = (field?.filter ?? tailQuery).trim().toLowerCase();
 
   // 1. Subcommands (fuzzy-matched against tailQuery)
   const subcommands: Candidate[] = [];
@@ -174,7 +220,10 @@ export function buildCandidates(
                 : node.toSpec!(item).primary.toLowerCase().includes(q),
             )
           : data;
-        const filtered = filteredItems.map((item) => node.toSpec!(item));
+        const filtered = filteredItems.map((item) => {
+          const spec = node.toSpec!(item);
+          return field?.decorate ? field.decorate(spec, item) : spec;
+        });
         if (filtered.length === 0) {
           dataState = "no-match";
         } else {
@@ -194,7 +243,7 @@ export function buildCandidates(
       trimmedQ.length > 0 &&
       dataSpecs.some((s) => s.primary.toLowerCase() === trimmedQ.toLowerCase());
     if (!collision) {
-      const fspec = node.freeform(tailQuery);
+      const fspec = node.freeform(field?.raw ?? tailQuery);
       if (fspec) {
         freeformCand = { spec: fspec, prefix: "↵", kind: "freeform" };
         out.push(freeformCand);
@@ -209,13 +258,16 @@ export function buildCandidates(
   }
 
   // 4. Separator: only when navigate/commit group AND data section both present
+  const lead = field?.lead ?? [];
   const hasArrowGroup = subcommands.length > 0 || freeformCand !== null;
-  const hasDataSection = dataState !== "none";
+  const hasDataSection = lead.length > 0 || dataState !== "none";
   if (hasArrowGroup && hasDataSection) {
     out.push({ spec: { primary: "" }, prefix: "", kind: "separator" });
   }
 
-  // 5. Data rows / placeholder
+  // 5. Data rows: the field's own rows lead the segment, then the node's
+  // fetched rows / placeholder.
+  out.push(...lead);
   if (dataState === "loading") {
     out.push({
       spec: { primary: "(loading...)" },
