@@ -387,6 +387,101 @@ test("the collection stays unloaded until its list arrives", async ({
   );
 });
 
+test("at 390px the coordinate keeps its prefix and only the tail truncates", async ({
+  page,
+}, testInfo) => {
+  await withSpecServer(
+    "agent-labels-narrow",
+    { extra: secondAgent() },
+    async ({ origin, dir }) => {
+      // Deep enough that the tail must overflow the remaining width.
+      const deep = join(dir, "a", "b", "c", "d", "e", "f");
+      await mkdir(deep, { recursive: true });
+
+      await page.setViewportSize({ width: 390, height: 844 });
+      await openPrivate(page, origin);
+      await createChild(page, origin, "parent", `mock:${dir}`);
+      await enterTask(page, origin, "parent");
+      const targetId = await createChild(
+        page,
+        origin,
+        "target",
+        `mock2:${deep}`,
+      );
+      await enterTask(page, origin, "target");
+
+      // The full tail, from the server's display form, not from the renderer.
+      const detail = await page.request.get(
+        `${origin}/api/v1/tasks/${targetId}`,
+      );
+      expect(detail.ok()).toBeTruthy();
+      const task = (await detail.json()) as {
+        cwd: string;
+        cwdDisplay?: string;
+      };
+      const display = task.cwdDisplay ?? task.cwd;
+      const expectedTail = display.startsWith("~/")
+        ? display.slice(2)
+        : display.replace(/^\//, "");
+
+      // The agent and its colon are never part of the truncating tail.
+      await expect(page.locator("#status-bar .status-cwd-prefix")).toHaveText(
+        "mock2:~/",
+      );
+
+      const metrics = await page.evaluate(() => {
+        const bar = document.querySelector("#status-bar") as HTMLElement;
+        const tail = document.querySelector(
+          "#status-bar .status-cwd-tail",
+        ) as HTMLElement;
+        const style = getComputedStyle(bar);
+        const text = tail.textContent ?? "";
+        const node = tail.firstChild as Text;
+        const first = document.createRange();
+        first.setStart(node, 0);
+        first.setEnd(node, 1);
+        const last = document.createRange();
+        last.setStart(node, text.length - 1);
+        last.setEnd(node, text.length);
+        const box = tail.getBoundingClientRect();
+        const scrolling = document.scrollingElement!;
+        return {
+          barHeight: bar.getBoundingClientRect().height,
+          singleLine:
+            parseFloat(style.lineHeight) +
+            parseFloat(style.paddingTop) +
+            parseFloat(style.paddingBottom),
+          scrollWidth: scrolling.scrollWidth,
+          clientWidth: scrolling.clientWidth,
+          tailScrollWidth: tail.scrollWidth,
+          tailClientWidth: tail.clientWidth,
+          text,
+          firstLeft: first.getBoundingClientRect().left,
+          lastRight: last.getBoundingClientRect().right,
+          boxLeft: box.left,
+          boxRight: box.right,
+        };
+      });
+
+      // One line: no wrap, and the bar is not taller than its own line box.
+      expect(metrics.barHeight).toBeLessThanOrEqual(metrics.singleLine + 0.5);
+      // The document itself never scrolls sideways.
+      expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth);
+      // The tail is genuinely clipped...
+      expect(metrics.tailScrollWidth).toBeGreaterThan(metrics.tailClientWidth);
+      // ...at its head: the first character is outside the clip box while the
+      // last one is inside, so the visible text is a suffix of the full tail.
+      expect(metrics.firstLeft).toBeLessThan(metrics.boxLeft);
+      expect(metrics.lastRight).toBeLessThanOrEqual(metrics.boxRight + 1);
+      expect(metrics.text).toBe(expectedTail);
+
+      await page.screenshot({
+        path: testInfo.outputPath("status-bar-390.png"),
+      });
+    },
+  );
+});
+
 test("/switch rows state an agent only when it differs from the current one", async ({
   page,
 }) => {
