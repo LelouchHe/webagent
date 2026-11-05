@@ -16,6 +16,13 @@ import {
   formatModeLabel,
 } from "../../src/mode-bucket.ts";
 import * as api from "./api.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
+import { installAgentDirectory } from "./agent-directory.ts";
+import {
+  parentAgentOf,
+  shouldShowAgentLabels,
+  subscribeTaskTopology,
+} from "./task-topology.ts";
 
 export type { ConfigOption };
 
@@ -363,6 +370,41 @@ export function splitDisplayPath(cwd: string): {
   return { prefix: "", tail: cwd };
 }
 
+/**
+ * The status bar's agent segment.
+ *
+ * Positioned between the model and the cwd because it describes the execution
+ * environment that model belongs to. Two independent rules apply:
+ *
+ * - Collection-level suppression: no segment while the visible tasks share a
+ *   single confirmed binding agent (single-agent deployments look unchanged).
+ *   An unbound current task draws nothing and never guesses the default.
+ * - Divergence: `B ≠ A` when the parent is carried by a different agent, with
+ *   a title naming both. An unknown parent is simply not marked.
+ */
+function agentStatusPart(): {
+  text: string;
+  className: string;
+  title?: string;
+} | null {
+  const agent = state.taskAgentId;
+  if (!agent) return null;
+  if (!shouldShowAgentLabels(state.taskId, agent)) return null;
+  const parentAgent = parentAgentOf(state.taskId);
+  if (parentAgent !== null && parentAgent !== agent) {
+    return {
+      text: `${agent} ≠ ${parentAgent}`,
+      className: "status-agent",
+      title: `This task runs on ${agent}; its parent runs on ${parentAgent}`,
+    };
+  }
+  return {
+    text: agent,
+    className: "status-agent",
+    title: `Agent: ${agent}`,
+  };
+}
+
 export function updateStatusBar() {
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- see updateModeUI
   const model = getStringConfigValue("model") || getFallback("model");
@@ -380,6 +422,8 @@ export function updateStatusBar() {
       title: model,
     });
   }
+  const agent = agentStatusPart();
+  if (agent) parts.push(agent);
   if (state.contextUsage) {
     const { used, size } = state.contextUsage;
     parts.push({
@@ -419,6 +463,10 @@ export function updateStatusBar() {
     dom.statusBar.appendChild(span);
   });
 }
+
+// Any collection change can change suppression or divergence, so the status
+// bar repaints from the collection rather than from the event that changed it.
+subscribeTaskTopology(updateStatusBar);
 
 // --- Snapshot / state_patch (client-server-split M1) ---
 
@@ -681,12 +729,22 @@ export function requestNewTask({
   cwd,
   inheritFromTaskId = state.taskId,
   parentId = state.taskId,
+  agentId,
+  onError,
 }: {
   cwd?: string;
   inheritFromTaskId?: string | null;
   parentId?: string | null;
+  agentId?: string | null;
+  onError?: (err: unknown) => void;
 } = {}) {
-  void createNewTaskRequest({ cwd, inheritFromTaskId, parentId });
+  void createNewTaskRequest({
+    cwd,
+    inheritFromTaskId,
+    parentId,
+    agentId,
+    onError,
+  });
 }
 
 export function requestBootstrapTask(): void {
@@ -697,12 +755,16 @@ export async function createNewTaskRequest({
   cwd,
   inheritFromTaskId = state.taskId,
   parentId = state.taskId,
+  agentId,
   bootstrap = false,
+  onError,
 }: {
   cwd?: string;
   inheritFromTaskId?: string | null;
   parentId?: string | null;
+  agentId?: string | null;
   bootstrap?: boolean;
+  onError?: (err: unknown) => void;
 } = {}): Promise<boolean> {
   if (state.newTaskRequestInFlight || state.pendingNewTaskOpId) return false;
   invalidateNavigationLoads();
@@ -723,7 +785,14 @@ export async function createNewTaskRequest({
   try {
     const task = bootstrap
       ? await api.bootstrapTask(clientOpId)
-      : await api.createTask({ cwd, inheritFromTaskId, parentId }, clientOpId);
+      : await api.createTask(
+          { cwd, inheritFromTaskId, parentId, agentId },
+          clientOpId,
+        );
+    // The directory is connection metadata, not a property of this navigation:
+    // install it before any generation guard so a superseded navigation still
+    // leaves the client able to parse coordinates.
+    installAgentDirectory(task.agents, task.defaultAgentId);
     state.newTaskRequestInFlight = false;
     if (!isCurrentRequest()) {
       if (state.pendingNewTaskOpId === clientOpId) {
@@ -738,28 +807,22 @@ export async function createNewTaskRequest({
     finishNewTaskRequest();
     createdTaskActivator(task);
     return true;
-  } catch {
+  } catch (err) {
     if (confirmedNewTaskOps.delete(clientOpId)) return true;
-    if (isCurrentRequest() && state.pendingNewTaskOpId === clientOpId) {
-      // The server broadcasts task_created before writing the HTTP
-      // response. Keep ownership briefly so that matching SSE can recover
-      // an ambiguously committed create whose response was interrupted.
-      return await new Promise<boolean>((resolve) => {
-        newTaskConfirmationWaiters.set(clientOpId, resolve);
-        state._newTaskRecoveryTimer = setTimeout(() => {
-          newTaskConfirmationWaiters.delete(clientOpId);
-          if (state.pendingNewTaskOpId === clientOpId) {
-            state.pendingNewTaskOpId = null;
-            if (isCurrentRequest()) {
-              state.awaitingNewTask = false;
-            }
-          }
-          state._newTaskRecoveryTimer = null;
-          resolve(false);
-        }, 3000);
-      });
+    // A definite rejection (unknown agent, agent would not start) never
+    // produces a broadcast, so waiting for one only delays the report.
+    if (isDefiniteCreateRejection(err)) {
+      // Report only while this request still owns the session; a failure the
+      // user already navigated away from must not surface as a late error.
+      if (abandonCreateRequest(clientOpId, isCurrentRequest)) onError?.(err);
+      return false;
     }
-    return false;
+    return await awaitCreateConfirmation(
+      clientOpId,
+      isCurrentRequest,
+      err,
+      onError,
+    );
   } finally {
     state.newTaskRequestInFlight = false;
     if (!isCurrentRequest() && state.pendingNewTaskOpId === clientOpId) {
@@ -773,6 +836,62 @@ const newTaskConfirmationWaiters = new Map<
   string,
   (confirmed: boolean) => void
 >();
+
+function isDefiniteCreateRejection(err: unknown): boolean {
+  return (
+    err instanceof api.ApiError &&
+    (err.status === HTTP_STATUS.BAD_REQUEST ||
+      err.status === HTTP_STATUS.SERVICE_UNAVAILABLE)
+  );
+}
+
+/** Release ownership of a create the server definitely refused. Returns
+ *  whether this request still owned the session. */
+function abandonCreateRequest(
+  clientOpId: string,
+  isCurrentRequest: () => boolean,
+): boolean {
+  if (!isCurrentRequest() || state.pendingNewTaskOpId !== clientOpId) {
+    return false;
+  }
+  finishNewTaskRequest();
+  state.awaitingNewTask = false;
+  return true;
+}
+
+/**
+ * Hold ownership briefly after an ambiguous failure: the server broadcasts
+ * task_created before writing the HTTP response, so a matching SSE event may
+ * still prove the create committed. Without one, report the real error.
+ */
+async function awaitCreateConfirmation(
+  clientOpId: string,
+  isCurrentRequest: () => boolean,
+  err: unknown,
+  onError?: (err: unknown) => void,
+): Promise<boolean> {
+  if (!isCurrentRequest() || state.pendingNewTaskOpId !== clientOpId) {
+    return false;
+  }
+  return new Promise<boolean>((resolve) => {
+    newTaskConfirmationWaiters.set(clientOpId, resolve);
+    state._newTaskRecoveryTimer = setTimeout(() => {
+      newTaskConfirmationWaiters.delete(clientOpId);
+      if (state.pendingNewTaskOpId === clientOpId) {
+        state.pendingNewTaskOpId = null;
+        if (isCurrentRequest()) {
+          state.awaitingNewTask = false;
+        }
+        state._newTaskRecoveryTimer = null;
+        onError?.(err);
+        resolve(false);
+        return;
+      }
+      state._newTaskRecoveryTimer = null;
+      resolve(false);
+    }, 3000);
+  });
+}
 
 export function finishNewTaskRequest(confirmedOpId?: string): void {
   if (confirmedOpId) {

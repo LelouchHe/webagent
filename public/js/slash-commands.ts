@@ -32,6 +32,8 @@ import {
 } from "./create-command.ts";
 import type { TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
+import { entryAgentLabel, loadTaskList } from "./task-topology.ts";
+import { taskDisplayPath } from "./path-display.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { resetLocalFrontendState } from "./local-reset.ts";
 import { requestAuthoritativeCancel } from "./cancel-command.ts";
@@ -128,7 +130,7 @@ async function unsubscribePush(): Promise<void> {
 // --- shared data fetchers (keep call sites identical for /inbox + /inbox dismiss) ---
 
 async function listTasks(): Promise<TaskSummary[]> {
-  return api.listTasks();
+  return loadTaskList();
 }
 
 interface PathItem {
@@ -738,10 +740,21 @@ export const ROOT: CmdNode = {
         const s = item as TaskSummary;
         const label = s.title ?? s.id;
         const time = formatLocalTime(s.last_active_at);
+        // List rows use the current task's binding as their baseline: only a
+        // row carried by another agent states that agent. A row with no
+        // confirmed binding states none, and a collection that is not loaded
+        // (or is suppressed) claims nothing either way.
+        const agentLabel = entryAgentLabel(
+          s.agentId ?? null,
+          state.taskId,
+          state.taskAgentId,
+        );
+        const displayPath = taskDisplayPath(s);
         return {
           primary: label,
           secondary: time,
-          path: s.cwd,
+          path:
+            agentLabel === null ? displayPath : `${agentLabel}:${displayPath}`,
           current: s.id === state.taskId,
           onSelect: async () => {
             try {

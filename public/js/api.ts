@@ -119,6 +119,8 @@ export function createTask(
     inheritFromTaskId?: string | null;
     parentId?: string | null;
     title?: string;
+    /** Explicit execution environment; omitted = the server's inheritance rule. */
+    agentId?: string | null;
   },
   clientOpId?: string,
 ): Promise<Record<string, unknown>> {
@@ -127,6 +129,7 @@ export function createTask(
   if (opts?.inheritFromTaskId) body.inheritFromTaskId = opts.inheritFromTaskId;
   if (opts?.parentId) body.parentId = opts.parentId;
   if (opts?.title !== undefined) body.title = opts.title;
+  if (typeof opts?.agentId === "string") body.agentId = opts.agentId;
   return post("/api/v1/tasks", body, clientOpId);
 }
 
@@ -143,10 +146,11 @@ export function bootstrapTask(
 
 export function clearTask(
   id: string,
-  opts?: { cwd?: string },
+  opts?: { cwd?: string; agentId?: string | null },
 ): Promise<Record<string, unknown>> {
   const body: Record<string, unknown> = {};
   if (opts?.cwd) body.cwd = opts.cwd;
+  if (typeof opts?.agentId === "string") body.agentId = opts.agentId;
   return post("/api/v1/tasks/" + id + "/clear", body);
 }
 
@@ -206,6 +210,8 @@ export function listTasks(): Promise<TaskSummary[]> {
 export function getConfig(): Promise<{
   rootTaskId: string;
   configOptions: ConfigOption[];
+  agents?: Array<{ id: string; available: boolean }>;
+  defaultAgentId?: string | null;
 }> {
   return request("/api/v1/config");
 }

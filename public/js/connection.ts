@@ -29,6 +29,8 @@ import {
   reconcileReplayedPendingTools,
 } from "./events.ts";
 import * as api from "./api.ts";
+import { installAgentDirectory } from "./agent-directory.ts";
+import { beginTaskTopologyGeneration, loadTaskList } from "./task-topology.ts";
 import { applyConnectedLogLevel, log } from "./log.ts";
 
 const clog = log.scope("sse");
@@ -287,6 +289,10 @@ async function initializeTaskAndIntent(
   const navigationGeneration = state.taskSwitchGen;
   try {
     const config = await api.getConfig();
+    // The agent directory is connection metadata, not a property of this
+    // navigation: install it before the guards so a stale navigation (or an
+    // SSE that beat this response) still leaves coordinates usable.
+    installAgentDirectory(config.agents, config.defaultAgentId);
     if (
       gen !== streamGen ||
       rootAuthorityGeneration !== state.rootTaskAuthorityGeneration ||
@@ -306,6 +312,12 @@ async function initializeTaskAndIntent(
       return;
     }
   }
+  // Establish the workspace-wide baseline independently of which task this
+  // client lands on: suppression and divergence need the whole visible set,
+  // and a hash or a reconnect may skip the task-list navigation path.
+  void loadTaskList().catch(() => {
+    // A failed baseline stays "not loaded"; nothing is claimed from it.
+  });
   await initTask(reconnectTaskId, gen, rootAuthorityGeneration);
   if (
     gen !== streamGen ||
@@ -325,7 +337,7 @@ async function resumeFromTaskList(
   isCurrent: () => boolean,
 ): Promise<boolean> {
   try {
-    const tasks = await api.listTasks();
+    const tasks = await loadTaskList();
     if (!isCurrent()) return true;
     if (state.rootTaskId === null) {
       installRootTaskId(
@@ -565,6 +577,9 @@ async function resumeAndLoad(
 
 function cleanup() {
   clearRootTaskAuthority();
+  // A dropped stream ends this connection's collection: whatever it told us
+  // must not survive as the next connection's baseline.
+  beginTaskTopologyGeneration();
   setConnectionStatus("disconnected", "disconnected");
   state.eventSource = null;
   state.clientId = null;

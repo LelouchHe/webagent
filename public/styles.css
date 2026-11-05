@@ -813,6 +813,11 @@ body {
 #status-bar .status-model {
   flex: 0 0 auto;
 }
+/* The agent segment is never truncated: at narrow widths the cwd tail is the
+   only part that may lose characters, so `agent ≠ parent` stays complete. */
+#status-bar .status-agent {
+  flex: 0 0 auto;
+}
 #status-bar .status-separator,
 #status-bar .status-usage {
   flex: 0 0 auto;

@@ -753,7 +753,10 @@ describe("connection", () => {
 
     assert.equal(state.taskId, ROOT_ID);
     assert.equal(location.hash, "");
-    assert.equal(listCalls, 0);
+    // The workspace-wide collection is rebuilt from the list on every
+    // connection: a reconnect must not reuse the previous stream's baseline.
+    // (One list per connect: the initial navigation and the reconnect.)
+    assert.equal(listCalls, 2);
   });
 
   it("uses incremental sync on reconnect when taskId matches hash", async () => {

@@ -56,6 +56,11 @@ import {
   flushStreamingRender,
 } from "./render.ts";
 import * as api from "./api.ts";
+import {
+  loadTaskList,
+  observeTaskCreated,
+  observeTaskDeleted,
+} from "./task-topology.ts";
 import { applyConnectedLogLevel } from "./log.ts";
 import { log } from "./log.ts";
 import { NOTIFY_TIP_DENIED_KEY, NOTIFY_TIP_KEY } from "./local-reset.ts";
@@ -257,7 +262,7 @@ async function fallbackToNextTaskImpl(
   state.taskSwitchGen++;
   const gen = state.taskSwitchGen;
   try {
-    const tasks = await api.listTasks();
+    const tasks = await loadTaskList();
     if (
       gen !== state.taskSwitchGen ||
       rootAuthorityGeneration !== state.rootTaskAuthorityGeneration
@@ -1944,6 +1949,23 @@ function applyLiveToolCallUpdate(
   scrollToBottom();
 }
 
+let topologyRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Complete the global collection from the authoritative list. Coalesced: a
+ * burst of creates from several clients is one read.
+ */
+function scheduleTopologyRefresh(): void {
+  if (topologyRefreshTimer !== null) return;
+  topologyRefreshTimer = setTimeout(() => {
+    topologyRefreshTimer = null;
+    void loadTaskList().catch(() => {
+      // A failed refresh leaves the previous collection in place; the next
+      // connection rebuilds it from scratch anyway.
+    });
+  }, 0);
+}
+
 export function drainNavigationEvents(taskId: string): void {
   const matching = state.pendingNavigationEvents.filter(
     (event) => "taskId" in event && event.taskId === taskId,
@@ -1958,6 +1980,22 @@ export function drainNavigationEvents(taskId: string): void {
 export function handleEvent(msg: AgentEvent) {
   if (msg.type === "connected" || msg.type === "task_created") {
     installRootTaskId(msg.rootTaskId);
+  }
+  // The global topology is consumed *before* the per-view filters below:
+  // suppression and divergence are workspace-wide facts, so another task's
+  // creation, rotation, or deletion must reach the collection even though its
+  // own events must not touch this view.
+  if (msg.type === "task_created") {
+    const known = observeTaskCreated(msg.taskId, msg.agentId ?? null);
+    // A task we have no metadata for yet (a fresh create, or another client's)
+    // has no parent link, so complete it from the authoritative list.
+    if (!known) scheduleTopologyRefresh();
+  } else if (msg.type === "task_deleted") {
+    observeTaskDeleted(msg.taskId);
+  } else if (msg.type === "task_reset") {
+    // A Root reset tombstones its descendants; the list is the authority for
+    // what remains.
+    scheduleTopologyRefresh();
   }
   if (msg.type === "inbox_count_changed") {
     updateInboxCount(msg.pendingCount);
