@@ -493,36 +493,42 @@ collection:
   binding; the row's own agent comes from the row itself.
 
 The status bar therefore keeps exactly one fact — the current task's parent
-reference (`task-topology.ts`) — not a map of tasks. Its sources, in order:
+reference (`task-topology.ts`) — not a map of tasks. It is answered by the
+smallest read that can answer it:
 
-1. **A list response.** The shared, de-duplicated `loadTaskList` supplies the
-   current task's `parentId` and, when the parent's row is there, its binding.
-   If the parent's row is missing, `GET /tasks/<parentId>` fills the binding;
-   if the current task's row is missing, `GET /tasks/<taskId>` supplies the
-   parent link first. Both reads are owned by the connection generation and the
-   task they were issued for, so a late response cannot describe a task the
-   client has since left.
-2. **Events for that parent.** `task_created` / `task_deleted` / `task_reset`
-   update the reference only when the event names the parent. Every other
-   task's events are ignored.
-3. **A task switch or a new connection** resets the reference (and a new
-   connection also clears the list-arrival flag). Until it is resolved, the
-   status bar draws no coordinate: "not looked up yet" is not "no parent".
-
-**A list only fills an unresolved reference.** Once resolved, no list
-overwrites it, so a rotation or deletion that arrived while a request was in
-flight survives structurally — there is no per-task reconciliation log because
-there is nothing for a list to reconcile. A brief window remains: a rotation of
-a task the client does not yet know is the parent cannot be attributed, and the
-first resolution may then carry the list's snapshot; the next task switch or
-reconnect resolves it again.
+1. **The activation payload usually knows the parent.** A task detail (the read
+   that activated the task on a switch, a restore, or a fallback) carries
+   `parentId`, and it is passed as a hint. A hint costs one
+   `GET /tasks/<parentId>` for the parent's binding; a hint of `null` (no
+   parent) costs nothing.
+2. **Without a hint**, `GET /tasks/<currentTaskId>` supplies the parent link and,
+   when there is one, `GET /tasks/<parentId>` follows. A 404 on the parent means
+   there is nothing to inherit (the reference falls back to the default); any
+   other failure leaves the reference unresolved, and the status bar draws no
+   coordinate rather than guessing one. Both reads are owned by the connection
+   generation and the task they were issued for, so a late response cannot
+   describe a task the client has since left.
+3. **The shared task list is never consulted for this.** `loadTaskList` exists
+   for the pickers and for the list-arrival flag only. Switching tasks
+   therefore produces no list read.
+4. **Events for that parent** (`task_created` / `task_deleted` /
+   `task_reset`) update the reference directly once its id is known. While the
+   id is still unknown the client cannot tell which event is the parent's, so a
+   bounded table (64 entries) remembers what arrived during that window;
+   resolution consults it before trusting a read that may predate the event.
+   The table is not a collection: it decides nothing on its own, it is cleared
+   as soon as the reference settles or the task/generation changes, and the cap
+   keeps a busy workspace from growing it.
+5. **A task switch or a new connection** resets the reference (a new connection
+   also clears the list-arrival flag). Until it is resolved, the status bar
+   draws no coordinate: "not looked up yet" is not "no parent".
 
 The list-arrival flag is separate and only answers "has this connection's list
 arrived yet", which is what lets a row claim that "no label means the current
 agent". `entryAgentLabel` combines it with the current task's binding; a row
-with no binding, or a connection without a list, states nothing. `/switch` rows recompute this at render time, so a menu opened after a
-switch (or after the current binding changes while it is open) uses the new
-baseline.
+with no binding, or a connection without a list, states nothing. `/switch` rows
+recompute this at render time, so a menu opened after a switch (or after the
+current binding changes while it is open) uses the new baseline.
 
 ---
 

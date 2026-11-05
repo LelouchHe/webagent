@@ -123,26 +123,35 @@ setNavigationLoadInvalidator(() => {
 
 setCreatedTaskActivator((task) => {
   if (typeof task.id !== "string") return;
-  handleEvent({
-    type: "task_created",
-    rootTaskId:
-      typeof task.rootTaskId === "string" ? task.rootTaskId : undefined,
-    taskId: task.id,
-    cwd: typeof task.cwd === "string" ? task.cwd : undefined,
-    cwdDisplay:
-      typeof task.cwdDisplay === "string" ? task.cwdDisplay : undefined,
-    title: typeof task.title === "string" ? task.title : null,
-    agentId: typeof task.agentId === "string" ? task.agentId : null,
-    configOptions: Array.isArray(task.configOptions)
-      ? (task.configOptions as ConfigOption[])
-      : [],
-    agentCommands:
-      task.agentCommands && typeof task.agentCommands === "object"
-        ? (task.agentCommands as AgentCommandSnapshot)
-        : undefined,
-    clientOpId:
-      typeof task.clientOpId === "string" ? task.clientOpId : undefined,
-  });
+  const activationParent =
+    typeof task.parentId === "string"
+      ? task.parentId
+      : task.parentId === null
+        ? null
+        : undefined;
+  handleEvent(
+    {
+      type: "task_created",
+      rootTaskId:
+        typeof task.rootTaskId === "string" ? task.rootTaskId : undefined,
+      taskId: task.id,
+      cwd: typeof task.cwd === "string" ? task.cwd : undefined,
+      cwdDisplay:
+        typeof task.cwdDisplay === "string" ? task.cwdDisplay : undefined,
+      title: typeof task.title === "string" ? task.title : null,
+      agentId: typeof task.agentId === "string" ? task.agentId : null,
+      configOptions: Array.isArray(task.configOptions)
+        ? (task.configOptions as ConfigOption[])
+        : [],
+      agentCommands:
+        task.agentCommands && typeof task.agentCommands === "object"
+          ? (task.agentCommands as AgentCommandSnapshot)
+          : undefined,
+      clientOpId:
+        typeof task.clientOpId === "string" ? task.clientOpId : undefined,
+    },
+    { parentId: activationParent },
+  );
 });
 
 /**
@@ -308,16 +317,19 @@ async function fallbackToNextTaskImpl(
         return;
       }
       if (!hydrated) throw new Error("Failed to hydrate fallback task");
-      handleEvent({
-        type: "task_created",
-        rootTaskId: task.rootTaskId,
-        taskId: task.id,
-        agentId: task.agentId ?? null,
-        cwd: task.cwd,
-        cwdDisplay: task.cwdDisplay,
-        title: task.title,
-        configOptions: task.configOptions,
-      });
+      handleEvent(
+        {
+          type: "task_created",
+          rootTaskId: task.rootTaskId,
+          taskId: task.id,
+          agentId: task.agentId ?? null,
+          cwd: task.cwd,
+          cwdDisplay: task.cwdDisplay,
+          title: task.title,
+          configOptions: task.configOptions,
+        },
+        { parentId: task.parentId ?? null },
+      );
       if (loaded) scrollToBottom(true);
       return;
     }
@@ -1951,16 +1963,6 @@ function applyLiveToolCallUpdate(
   scrollToBottom();
 }
 
-/**
- * The newly activated task's parent link comes from the shared list read; the
- * response only fills a reference that is still unresolved.
- */
-function requestParentReference(): void {
-  void loadTaskList().catch(() => {
-    // Unresolved stays unresolved: the status bar draws no coordinate.
-  });
-}
-
 export function drainNavigationEvents(taskId: string): void {
   const matching = state.pendingNavigationEvents.filter(
     (event) => "taskId" in event && event.taskId === taskId,
@@ -1971,8 +1973,14 @@ export function drainNavigationEvents(taskId: string): void {
   for (const event of matching) handleEvent(event);
 }
 
+/** Extra facts a synthetic `task_created` carries for the topology. */
+export interface TaskActivationHints {
+  /** The activated task's parent, when the payload that produced it knew it. */
+  parentId?: string | null;
+}
+
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
-export function handleEvent(msg: AgentEvent) {
+export function handleEvent(msg: AgentEvent, hints?: TaskActivationHints) {
   if (msg.type === "connected" || msg.type === "task_created") {
     installRootTaskId(msg.rootTaskId);
   }
@@ -2129,9 +2137,10 @@ export function handleEvent(msg: AgentEvent) {
       const isTaskActivation = state.taskId === null;
       installTaskAgentId(msg.taskId, msg.agentId);
       state.taskId = msg.taskId;
-      // The parent reference belongs to the previous task; a real switch asks
-      // for the new one from the shared list read.
-      if (setCurrentTask(msg.taskId)) requestParentReference();
+      // The parent reference belongs to the previous task. A task detail often
+      // carries the parent id already, so pass it as a hint; without one the
+      // module asks the task detail for the link.
+      setCurrentTask(msg.taskId, hints?.parentId);
       if (isTaskActivation) rearmHistoryObserverAfterTaskActivation();
       state.taskCwd = msg.cwd ?? state.taskCwd;
       state.taskCwdDisplay = msg.cwdDisplay ?? msg.cwd ?? state.taskCwdDisplay;

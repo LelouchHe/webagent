@@ -4,34 +4,28 @@
 // The coordinate on the cwd field answers a single question — "is this task
 // running on an agent other than the one it should have inherited?" — and the
 // expected agent is its parent's confirmed binding. That is one fact about one
-// task, not a collection: nothing here decides what any other row shows, and
-// nothing here is a baseline.
+// task, not a collection.
 //
-// Two derived flags remain:
+// Reads are chosen to answer exactly that question:
 //
-// - the resolved parent reference (`parentOf` / `isParentResolved`), which
-//   drives the status bar coordinate, and
-// - whether this connection's task list has arrived yet (`isTaskTopologyLoaded`),
-//   which only lets task-row labels claim "no label means the current agent".
+// - the parent id often arrives with the task itself (the detail read that
+//   activated the task), so only the parent's `GET /tasks/<parentId>` is
+//   needed to learn its binding;
+// - without a hint, `GET /tasks/<currentTaskId>` supplies the parent link and
+//   the parent read follows when there is one;
+// - the shared task list (`loadTaskList`) is *not* used for this. It exists for
+//   the pickers and for the "has this connection's list arrived" flag only.
 //
-// Sources, in order:
+// Ownership: every read is scoped to the connection generation and the task it
+// was issued for, so a late response cannot describe a task the client left.
 //
-// 1. The shared, de-duplicated list request (`loadTaskList`). Its response
-//    supplies the current task's parent link and, when the parent row is
-//    there, the parent's binding. It only *fills* an unresolved reference —
-//    once resolved, a list never overwrites it.
-// 2. Events for the parent (`task_created` / `task_deleted` / `task_reset`) —
-//    only when the event's task is this parent. A rotation that arrives while
-//    a list is in flight therefore survives structurally: the list has nothing
-//    to overwrite, and no reconciliation log exists to get wrong.
-// 3. A detail read (`GET /tasks/<id>`) when the list cannot answer: the
-//    current task's row is missing, or the parent's row is missing. The read is
-//    owned by the connection generation and the task it was issued for, so a
-//    late response cannot describe a task the client has since left.
-//
-// Nothing here guesses a default agent: an unresolved parent draws no prefix,
-// and an unbound parent is reported with `agentId: null` so the caller can
-// apply its own documented fallback.
+// Events for the parent update it directly once the parent id is known. While
+// the reference is still unresolved the client cannot tell which events are the
+// parent's, so a small bounded table remembers recent bindings/deletions for
+// that window; resolution consults it before trusting a read that may predate
+// the event. The table is not a collection: it never decides what anything
+// shows, it is cleared as soon as the reference settles, and it is capped so a
+// busy workspace cannot grow it without bound.
 
 import type { TaskSummary } from "../../src/types.ts";
 import * as api from "./api.ts";
@@ -55,12 +49,17 @@ type ParentRef =
       agentId: string | null;
     };
 
+/** Cap for the unresolved-window table: only the parent's entry is used. */
+const MAX_BUFFERED_FACTS = 64;
+
 let generation = 0;
 let listLoaded = false;
 let viewedTaskId: string | null = null;
 let parentRef: ParentRef | null = null;
 let pending: { generation: number; promise: Promise<TaskSummary[]> } | null =
   null;
+/** taskId -> binding (null when unbound or deleted) seen while unresolved. */
+let bufferedFacts = new Map<string, string | null>();
 
 const changeListeners: (() => void)[] = [];
 
@@ -75,8 +74,8 @@ function notifyChange(): void {
 
 /**
  * Start a new connection generation: a (re)connect or a reload. Everything
- * learned by the previous stream is dropped, including the parent reference and
- * the "list arrived" flag, so the next connection cannot flash a stale claim.
+ * learned by the previous stream is dropped, including the parent reference,
+ * the unresolved-window table, and the "list arrived" flag.
  */
 export function beginTaskTopologyGeneration(): void {
   generation += 1;
@@ -84,20 +83,43 @@ export function beginTaskTopologyGeneration(): void {
   viewedTaskId = null;
   parentRef = null;
   pending = null;
+  bufferedFacts = new Map();
   notifyChange();
 }
 
 /**
- * Tell the module which task the client is now viewing. A different task
- * invalidates the previous task's parent reference. Returns whether the
- * reference moved, so the caller knows to ask the server for the new one.
+ * Tell the module which task the client is now viewing.
+ *
+ * `parentId` is an optional hint from the payload that activated the task (its
+ * detail read): a string is the known parent, `null` is a known absence, and
+ * omitting it means the module has to ask the server for the link. A different
+ * task always resets the reference; the same task with a hint can still
+ * complete an unresolved one.
  */
-export function setCurrentTask(taskId: string | null): boolean {
-  if (taskId === viewedTaskId) return false;
+export function setCurrentTask(
+  taskId: string | null,
+  parentId?: string | null,
+): void {
+  if (taskId === viewedTaskId) {
+    if (parentId !== undefined && taskId !== null) {
+      applyParentHint(taskId, parentId);
+    }
+    return;
+  }
   viewedTaskId = taskId;
-  parentRef = taskId === null ? null : { taskId, status: "unknown" };
+  bufferedFacts = new Map();
+  if (taskId === null) {
+    parentRef = null;
+    notifyChange();
+    return;
+  }
+  parentRef = { taskId, status: "unknown" };
   notifyChange();
-  return true;
+  if (parentId === undefined) {
+    void resolveParentFromTaskDetail(generation, taskId);
+  } else {
+    applyParentHint(taskId, parentId);
+  }
 }
 
 /**
@@ -106,9 +128,9 @@ export function setCurrentTask(taskId: string | null): boolean {
  * bar must not draw a coordinate from it.
  */
 export function isParentResolved(taskId: string | null): boolean {
-  if (taskId === null || parentRef === null) return false;
-  if (parentRef.taskId !== taskId) return false;
-  return parentRef.status === "none" || parentRef.status === "known";
+  const ref = parentRef;
+  if (taskId === null || ref?.taskId !== taskId) return false;
+  return ref.status === "none" || ref.status === "known";
 }
 
 /**
@@ -124,54 +146,58 @@ export function parentOf(taskId: string | null): ParentBinding | null {
 }
 
 /**
- * Apply one `task_created`-shaped payload. Only the current task's parent is
- * tracked: any other task's events are not this module's business. A pending
- * reference is completed by the event, so a parent first seen through an event
- * needs no list.
+ * Apply one `task_created`-shaped payload.
+ *
+ * Only the current task's parent is tracked. Once the parent id is known the
+ * event updates the reference directly; while it is still unknown the fact is
+ * remembered for the unresolved window, because a rotation that arrives before
+ * the client knows which task is the parent would otherwise be lost.
  */
 export function observeTaskCreated(
   taskId: string,
   agentId: string | null | undefined,
 ): void {
-  const ref = parentRef;
-  if (ref === null || ref.status === "unknown" || ref.status === "none") return;
-  if (ref.taskId !== viewedTaskId) return;
-  if (taskId !== ref.parentId) return;
-  parentRef = {
-    taskId: ref.taskId,
-    status: "known",
-    parentId: ref.parentId,
-    agentId: agentId ?? null,
-  };
-  notifyChange();
+  observeFact(taskId, agentId ?? null);
 }
 
 /**
  * The parent was deleted: its binding is gone, so the caller falls back to its
- * own default. The reference stays resolved, which is what makes an older list
+ * own default. The reference stays resolved, which is what makes an older read
  * unable to resurrect it.
  */
 export function observeTaskDeleted(taskId: string): void {
-  const ref = parentRef;
-  if (ref === null || ref.status === "unknown" || ref.status === "none") return;
-  if (ref.taskId !== viewedTaskId) return;
-  if (taskId !== ref.parentId) return;
-  parentRef = {
-    taskId: ref.taskId,
-    status: "known",
-    parentId: ref.parentId,
-    agentId: null,
-  };
-  notifyChange();
+  observeFact(taskId, null);
 }
 
 /**
  * A Root reset retires the Root execution. When Root is the current task's
- * parent, its binding is no longer a fact to inherit — the reference falls back
- * to the caller's default.
+ * parent, its binding is no longer a fact to inherit.
  */
 export function observeTaskReset(taskId: string): void {
-  observeTaskDeleted(taskId);
+  observeFact(taskId, null);
+}
+
+function observeFact(taskId: string, agentId: string | null): void {
+  const ref = parentRef;
+  if (ref?.taskId !== viewedTaskId) return;
+  if (ref.status === "unknown") {
+    // The parent may be this task; remember it for the window, newest first,
+    // dropping the oldest id when the cap is reached.
+    if (
+      bufferedFacts.size >= MAX_BUFFERED_FACTS &&
+      !bufferedFacts.has(taskId)
+    ) {
+      const oldest = bufferedFacts.keys().next().value;
+      if (oldest !== undefined) bufferedFacts.delete(oldest);
+    }
+    bufferedFacts.delete(taskId);
+    bufferedFacts.set(taskId, agentId);
+    return;
+  }
+  if (ref.status === "none" || taskId !== ref.parentId) return;
+  parentRef = { ...ref, status: "known", agentId };
+  bufferedFacts = new Map();
+  notifyChange();
 }
 
 /**
@@ -197,83 +223,75 @@ export function entryAgentLabel(
   return entryAgentId === currentAgentId ? null : entryAgentId;
 }
 
-/**
- * Apply one list response to this generation's flags and, when it is still
- * unresolved, to the current task's parent reference.
- */
-function applyTaskList(
-  listGeneration: number,
-  tasks: readonly TaskSummary[],
-): void {
-  if (listGeneration !== generation) return;
-  listLoaded = true;
-  resolveParentFromList(tasks);
-  notifyChange();
-}
-
-/**
- * Fill the parent reference from a list response.
- *
- * Lists never overwrite a settled reference: a rotation or deletion that
- * arrived while the request was in flight is newer than the snapshot, and the
- * event path has already applied it. This is why the old collection's per-task
- * reconciliation log is not needed here.
- */
-function resolveParentFromList(tasks: readonly TaskSummary[]): void {
-  const taskId = viewedTaskId;
-  if (taskId === null || parentRef === null) return;
-  if (parentRef.taskId !== taskId) return;
-  if (parentRef.status !== "unknown") return;
-
-  const row = tasks.find((task) => task.id === taskId);
-  if (!row) {
-    // The snapshot predates this task (a fresh create) or is otherwise
-    // incomplete. Ask the detail read for its parent link rather than guessing.
-    void resolveParentFromTaskDetail(generation, taskId).catch(() => {
-      // Leave it unresolved; the status bar draws no prefix.
-    });
-    return;
-  }
-  const parentId = row.parent_id ?? null;
+/** The activation payload knew the parent: settle it without another task read. */
+function applyParentHint(taskId: string, parentId: string | null): void {
+  const ref = parentRef;
+  if (ref?.taskId !== taskId) return;
+  if (ref.status !== "unknown") return;
   if (parentId === null) {
     parentRef = { taskId, status: "none" };
+    bufferedFacts = new Map();
+    notifyChange();
     return;
   }
-  const parentRow = tasks.find((task) => task.id === parentId);
-  if (parentRow) {
-    parentRef = {
-      taskId,
-      status: "known",
-      parentId,
-      agentId: parentRow.agentId ?? null,
-    };
-    return;
-  }
-  parentRef = { taskId, status: "pending", parentId };
-  void resolveParentFromDetail(generation, taskId, parentId).catch(() => {
-    // Leave it pending; the status bar draws no prefix.
-  });
+  beginParentLookup(taskId, parentId);
 }
 
-/** Owned detail read for the current task's parent link (list row missing). */
+/** We know the parent id; only its binding is missing. */
+function beginParentLookup(taskId: string, parentId: string): void {
+  parentRef = { taskId, status: "pending", parentId };
+  notifyChange();
+  if (settleFromBuffer(taskId, parentId)) return;
+  void resolveParentFromDetail(generation, taskId, parentId);
+}
+
+/**
+ * A fact remembered during the unresolved window is newer than any read issued
+ * before it: prefer it and stop looking.
+ */
+function settleFromBuffer(taskId: string, parentId: string): boolean {
+  if (!bufferedFacts.has(parentId)) return false;
+  parentRef = {
+    taskId,
+    status: "known",
+    parentId,
+    agentId: bufferedFacts.get(parentId) ?? null,
+  };
+  bufferedFacts = new Map();
+  notifyChange();
+  return true;
+}
+
+/** Owned detail read for the current task's parent link (no hint available). */
 async function resolveParentFromTaskDetail(
   ownerGeneration: number,
   ownerTaskId: string,
 ): Promise<void> {
-  const task = await api.getTask(ownerTaskId);
-  if (ownerGeneration !== generation || ownerTaskId !== viewedTaskId) return;
-  const ref = parentRef;
-  if (ref?.taskId !== ownerTaskId) return;
-  if (ref.status !== "unknown") return;
-  const parentId = task.parentId ?? null;
-  if (parentId === null) {
-    parentRef = { taskId: ownerTaskId, status: "none" };
-    notifyChange();
-    return;
+  try {
+    const task = await api.getTask(ownerTaskId);
+    if (ownerGeneration !== generation || ownerTaskId !== viewedTaskId) return;
+    const ref = parentRef;
+    if (ref?.taskId !== ownerTaskId || ref.status !== "unknown") return;
+    const parentId = task.parentId ?? null;
+    if (parentId === null) {
+      parentRef = { taskId: ownerTaskId, status: "none" };
+      bufferedFacts = new Map();
+      notifyChange();
+      return;
+    }
+    beginParentLookup(ownerTaskId, parentId);
+  } catch (err) {
+    if (ownerGeneration !== generation || ownerTaskId !== viewedTaskId) return;
+    const ref = parentRef;
+    if (ref?.taskId !== ownerTaskId || ref.status !== "unknown") return;
+    // A definite absence means the task itself is gone: there is no parent to
+    // compare against. Any other failure stays unresolved (no prefix).
+    if (err instanceof api.ApiError && err.status === HTTP_STATUS.NOT_FOUND) {
+      parentRef = { taskId: ownerTaskId, status: "none" };
+      bufferedFacts = new Map();
+      notifyChange();
+    }
   }
-  parentRef = { taskId: ownerTaskId, status: "pending", parentId };
-  notifyChange();
-  await resolveParentFromDetail(ownerGeneration, ownerTaskId, parentId);
 }
 
 /** Owned detail read for one parent's binding. */
@@ -293,12 +311,16 @@ async function resolveParentFromDetail(
     ) {
       return;
     }
+    // The event that arrived while this read was in flight is newer than the
+    // response, so it wins.
+    if (settleFromBuffer(ownerTaskId, parentId)) return;
     parentRef = {
       taskId: ownerTaskId,
       status: "known",
       parentId,
       agentId: task.agentId ?? null,
     };
+    bufferedFacts = new Map();
     notifyChange();
   } catch (err) {
     if (ownerGeneration !== generation || ownerTaskId !== viewedTaskId) return;
@@ -310,6 +332,7 @@ async function resolveParentFromDetail(
     ) {
       return;
     }
+    if (settleFromBuffer(ownerTaskId, parentId)) return;
     // A definite absence means there is nothing to inherit; any other failure
     // leaves the reference unresolved instead of pretending it is unbound.
     if (err instanceof api.ApiError && err.status === HTTP_STATUS.NOT_FOUND) {
@@ -319,6 +342,7 @@ async function resolveParentFromDetail(
         parentId,
         agentId: null,
       };
+      bufferedFacts = new Map();
       notifyChange();
     }
   }
@@ -327,7 +351,8 @@ async function resolveParentFromDetail(
 /**
  * Fetch the task list and apply it to this generation. Concurrent callers in
  * one generation share the request; a result that resolves after a newer
- * generation started is returned to its caller but never applied.
+ * generation started is returned to its caller but never applied. The list
+ * only feeds the row-label flag here; the parent reference never comes from it.
  */
 export async function loadTaskList(): Promise<TaskSummary[]> {
   const requestGeneration = generation;
@@ -337,7 +362,10 @@ export async function loadTaskList(): Promise<TaskSummary[]> {
   const request = {
     generation: requestGeneration,
     promise: api.listTasks().then((tasks) => {
-      applyTaskList(requestGeneration, tasks);
+      if (requestGeneration === generation) {
+        listLoaded = true;
+        notifyChange();
+      }
       return tasks;
     }),
   };
@@ -356,4 +384,5 @@ export function resetTaskTopologyForTest(): void {
   viewedTaskId = null;
   parentRef = null;
   pending = null;
+  bufferedFacts = new Map();
 }

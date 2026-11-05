@@ -337,7 +337,7 @@ test("a task keeps its binding after its agent leaves the configuration", async 
   }
 });
 
-test("the collection stays unloaded until its list arrives", async ({
+test("no coordinate is guessed before the parent reference is resolved", async ({
   page,
   context,
 }) => {
@@ -346,7 +346,7 @@ test("the collection stays unloaded until its list arrives", async ({
     { extra: secondAgent() },
     async ({ origin, dir }) => {
       await openPrivate(page, origin);
-      await createChild(page, origin, "work", `mock:${dir}`);
+      const workId = await createChild(page, origin, "work", `mock:${dir}`);
       await enterTask(page, origin, "work");
       const otherId = await createChild(page, origin, "other", `mock2:${dir}`);
       // `other` deviates from its parent (`work` on mock), so its own field
@@ -354,15 +354,16 @@ test("the collection stays unloaded until its list arrives", async ({
       await enterTask(page, origin, "other");
       await expect(cwdSegment(page)).toContainText("mock2:");
 
-      // A fresh page whose list response is genuinely held open: "not loaded"
-      // is a network fact here, not a mocked boolean.
+      // A fresh page whose parent read is genuinely held open: "not resolved"
+      // is a network fact here, not a mocked boolean. Activation does not read
+      // the list, so the parent's detail is the read that has to arrive.
       let release!: () => void;
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
       let held = 0;
       const second = await context.newPage();
-      await second.route("**/api/v1/tasks", async (route) => {
+      await second.route(`**/api/v1/tasks/${workId}`, async (route) => {
         if (route.request().method() !== "GET") {
           await route.continue();
           return;
@@ -376,7 +377,7 @@ test("the collection stays unloaded until its list arrives", async ({
       await expect(second.locator("#input")).toBeEnabled();
       await expect(second.locator("#status-bar .status-cwd")).toHaveCount(1);
       expect(held).toBeGreaterThan(0);
-      // The reference needs the parent's binding, which the delayed list has
+      // The reference needs the parent's binding, which the delayed read has
       // not delivered yet: no prefix is guessed.
       await expect(cwdSegment(second)).not.toContainText("mock2:");
 

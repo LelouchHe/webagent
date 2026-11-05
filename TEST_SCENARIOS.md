@@ -130,19 +130,18 @@ spot gaps, and decide what still needs to be added without reading every spec.
     back to the configured default, and yields nothing when none is left
 
 - `test/task-topology.test.ts` (the current task's parent reference)
-  - a fresh task claims nothing until the list response resolves its parent;
-    no parent, a parent without a binding, and "not looked up yet" are three
+  - a known parent id costs one read (`GET /tasks/<parentId>`); no hint costs
+    the task's own link read first; a known absence costs nothing. The shared
+    list is never read for this, so activation adds no list request
+  - a rotation or deletion of the parent that arrives before the parent id is
+    known is remembered in a bounded table and wins over the read; the table is
+    capped, so an early fact beyond the last 64 ids is evicted and the read
+    decides instead
+  - a settled parent is updated directly by its events, and a read that
+    resolves later cannot roll it back; a read issued for a task the client has
+    left cannot fill the new task's reference
+  - no parent, a parent without a binding, and "not looked up yet" are three
     distinct answers
-  - a rotation or deletion of the parent that arrives while a list request is
-    in flight survives the response: a list only fills an unresolved reference
-    and never overwrites a settled one, so no reconciliation is involved
-  - a pending parent is completed by its own event; a later detail read cannot
-    describe a reference that is already settled
-  - when the list lacks the parent row the detail read fills the binding, and
-    when it lacks the current task's row the detail read supplies the parent
-    link first; a detail issued for a task the client has left cannot fill the
-    new task's reference
-  - events for any task other than the parent change nothing
   - the list-arrival flag still distinguishes not-loaded from loaded-and-empty
     for row labels; a list from an older connection generation is discarded
   - entry labels are baseline-relative to the current task (same agent → none,
@@ -156,9 +155,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     differs from the parent's binding; the title names both, and the coordinate
     prefix stays outside the truncating tail
   - a task without a parent (or with an unbound one) is compared against the
-    configured default and says so in the title; a task whose row is missing
-    from the list resolves its parent link from the detail read; a task
-    matching a non-default parent still draws nothing
+    configured default and says so in the title; when the activation carried no
+    parent hint the task's own link read supplies it; a task matching a
+    non-default parent still draws nothing
   - an unbound current task draws nothing; a parent rotation repaints without
     navigation and removes the coordinate once the parent matches
 
@@ -1134,8 +1133,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the same database restarted without that agent still states the task's
     confirmed binding, proving the field follows task facts rather than the
     configuration
-  - the initial list response is genuinely held open: no prefix is guessed
-    before it resolves, and the coordinate appears afterwards
+  - the parent's detail read is genuinely held open: no prefix is guessed
+    before it resolves, and the coordinate appears afterwards (activation
+    itself reads no list)
   - `/switch` rows state an agent only for rows whose agent differs from the
     current task's; a menu reopened after a switch uses the new baseline, and
     an already-open menu re-renders when the current binding changes

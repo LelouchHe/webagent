@@ -224,26 +224,26 @@ describe("events", () => {
           assert.equal(state.taskId, null);
           assert.equal(observers.length, 1);
 
-          const historyCalls = () =>
-            fetchCalls.filter((call) => call.url.includes("/events"));
-
           observers[0].callback([{ isIntersecting: true }]);
           await Promise.resolve();
-          assert.equal(historyCalls().length, 1);
+          assert.equal(fetchCalls.length, 1);
 
           state.pendingNavigationTaskId = "s1";
-          events.handleEvent({
-            type: "task_created",
-            taskId: "s1",
-            configOptions: [],
-          });
+          events.handleEvent(
+            {
+              type: "task_created",
+              taskId: "s1",
+              configOptions: [],
+            },
+            { parentId: null },
+          );
 
           assert.equal(observers.length, 2);
           observers[1].callback([{ isIntersecting: true }]);
           await Promise.resolve();
           await Promise.resolve();
-          assert.equal(historyCalls().length, 2);
-          assert.ok(historyCalls()[1].url.includes("before=5"));
+          assert.equal(fetchCalls.length, 2);
+          assert.ok(fetchCalls[1].url.includes("before=5"));
         } finally {
           (globalThis as any).IntersectionObserver =
             originalIntersectionObserver;
@@ -1964,9 +1964,8 @@ describe("events", () => {
         );
         await Promise.all([httpNavigation, sseNavigation]);
 
-        // One shared read for the deduplicated navigation plus the activated
-        // task's parent read. Dedupe breaking would make this three.
-        assert.equal(listCalls, 2);
+        // The two navigations share one list read; activation adds none.
+        assert.equal(listCalls, 1);
         assert.equal(state.taskId, "parent-dedupe");
       });
 
