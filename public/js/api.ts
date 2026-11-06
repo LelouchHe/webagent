@@ -254,7 +254,9 @@ export function listTasks(): Promise<TaskSummary[]> {
 export function getConfig(): Promise<{
   rootTaskId: string;
   configOptions: ConfigOption[];
-  agents?: Array<{ id: string; available: boolean }>;
+  /** Configured agents, in configuration order. Ids only: the directory is a
+   *  configuration fact and carries no liveness (see `agent-directory.ts`). */
+  agents?: Array<{ id: string }>;
   defaultAgentId?: string | null;
 }> {
   return request("/api/v1/config");
