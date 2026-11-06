@@ -1,6 +1,5 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { checkAgentAvailability } from "../src/agent-availability.ts";
 import {
   AGENT_A,
   AGENT_B,
@@ -9,30 +8,18 @@ import {
 
 /**
  * A client cannot offer "create this task on agent X" without knowing which
- * agents exist, what the server's default is, and which of them could start.
- * That directory is a configuration fact, so it belongs to the metadata read
- * face — and taking it must never resolve or start an agent.
+ * agents exist and what the server's default is. That directory is a
+ * configuration fact, so it belongs to the metadata read face — and taking it
+ * must never resolve or start an agent.
+ *
+ * The directory carries no liveness: it used to report a startup PATH probe as
+ * `available`, which is stale as soon as a CLI is installed and silent about
+ * handshake or authentication failures. Whether an agent can really run is
+ * decided when one is started.
  */
 describe("configured agent directory", () => {
-  it("appears on the config read face with PATH availability and the default agent", async () => {
-    // Availability comes from the real PATH with two controlled commands: one
-    // binary that exists (this test runner's runtime) and one that cannot. The
-    // expectation is built from those facts, not from the response under test.
-    const snapshot = checkAgentAvailability({
-      [AGENT_A]: { cmd: "node --acp" },
-      [AGENT_B]: { cmd: "webagent-definitely-missing-agent --acp" },
-    });
-    assert.deepEqual(
-      snapshot.map(({ id, available }) => ({ id, available })),
-      [
-        { id: AGENT_A, available: true },
-        { id: AGENT_B, available: false },
-      ],
-      "the controlled PATH must produce one available and one missing agent",
-    );
-
+  it("appears on the config read face as configuration order and ids only", async () => {
     const harness = await startHarness({
-      agentAvailability: snapshot,
       // No transport is bound, so an adapter can only appear if the directory
       // read resolved an agent to answer.
       started: [],
@@ -40,16 +27,14 @@ describe("configured agent directory", () => {
     try {
       const config = await harness.request("GET", "/api/v1/config");
       assert.equal(config.status, 200);
-      assert.deepEqual(config.json.agents, [
-        { id: AGENT_A, available: true },
-        { id: AGENT_B, available: false },
-      ]);
+      assert.deepEqual(config.json.agents, [{ id: AGENT_A }, { id: AGENT_B }]);
       assert.equal(config.json.defaultAgentId, AGENT_A);
-      // The directory is id + availability: launch detail stays server-side.
+      // The entry is an id and nothing else: launch detail and PATH state stay
+      // server-side.
       for (const entry of config.json.agents as Array<
         Record<string, unknown>
       >) {
-        assert.deepEqual(Object.keys(entry).sort(), ["available", "id"]);
+        assert.deepEqual(Object.keys(entry), ["id"]);
       }
       // Taking the directory created no adapter and no ACP session.
       assert.equal(harness.env().existing(AGENT_A), undefined);
@@ -61,12 +46,24 @@ describe("configured agent directory", () => {
     }
   });
 
+  it("lists an agent whose launch command is missing, because configuration is the fact", async () => {
+    // The B command does not exist; that changes nothing about the directory,
+    // so the client can still name it (and gets the real 503 if it tries).
+    const harness = await startHarness({ configured: ["a", "b"], started: [] });
+    try {
+      const config = await harness.request("GET", "/api/v1/config");
+      assert.equal(config.status, 200);
+      assert.deepEqual(
+        (config.json.agents as Array<{ id: string }>).map(({ id }) => id),
+        [AGENT_A, AGENT_B],
+      );
+    } finally {
+      await harness.close();
+    }
+  });
+
   it("carries the same directory on every bootstrap response", async () => {
-    const snapshot = checkAgentAvailability({
-      [AGENT_A]: { cmd: "node --acp" },
-      [AGENT_B]: { cmd: "webagent-definitely-missing-agent --acp" },
-    });
-    const harness = await startHarness({ agentAvailability: snapshot });
+    const harness = await startHarness();
     try {
       // A fresh workspace: bootstrap materializes Root, which is a real
       // creation and therefore really starts the default agent.
@@ -74,10 +71,7 @@ describe("configured agent directory", () => {
       assert.equal(first.status, 200);
       assert.equal(first.json.id, harness.store.rootTaskId);
       assert.equal(first.json.created, true);
-      assert.deepEqual(first.json.agents, [
-        { id: AGENT_A, available: true },
-        { id: AGENT_B, available: false },
-      ]);
+      assert.deepEqual(first.json.agents, [{ id: AGENT_A }, { id: AGENT_B }]);
       assert.equal(first.json.defaultAgentId, AGENT_A);
       assert.equal(harness.agents.a.newSessions.length, 1);
       // Reporting the directory never starts the other agent.

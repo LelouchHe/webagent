@@ -1,28 +1,26 @@
 // The configured agent directory, as the server reports it on the metadata
 // read face (`GET /config`, `POST /tasks/bootstrap`).
 //
-// Two different sets exist in this client and must not be merged:
+// It answers exactly one question: which agents may a create target, and which
+// one is the configured default. It carries no liveness — whether an agent can
+// really start is decided when one is started (503 with the real reason), and a
+// startup PATH probe stopped travelling with it.
 //
-// - this directory: what the configuration offers. It answers "which agents
-//   can a create target?" and therefore drives coordinate parsing and (later)
-//   the completion menu.
-// - the agents of visible tasks (`task-topology.ts`): what is actually being
-//   carried right now. That one supplies the parent binding a task's coordinate
-//   is compared against, and the list-row baseline.
-//
-// `available` only means the launch command was found in PATH at startup. It
-// says nothing about a process starting, handshaking, or being authenticated,
-// so nothing may treat it as runtime health.
+// The other agent set in this client is different and must not be merged: the
+// agents of visible tasks (`task-topology.ts`) carry the parent binding a
+// task's own coordinate is compared against, and the list-row baseline.
 
-export interface AgentDirectoryEntry {
-  id: string;
-  available: boolean;
+export interface AgentDirectory {
+  /** Configured agent ids, in configuration order. */
+  ids: string[];
+  defaultAgentId: string | null;
 }
 
-let directory: AgentDirectoryEntry[] = [];
-let defaultAgentId: string | null = null;
+const EMPTY: AgentDirectory = { ids: [], defaultAgentId: null };
 
-function isEntry(value: unknown): value is { id: string; available?: unknown } {
+let directory: AgentDirectory = EMPTY;
+
+function isEntry(value: unknown): value is { id: string } {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -40,43 +38,40 @@ export function installAgentDirectory(
   defaultAgent: unknown,
 ): void {
   if (!Array.isArray(agents)) return;
-  const next: AgentDirectoryEntry[] = [];
+  const ids: string[] = [];
   const seen = new Set<string>();
   for (const raw of agents) {
     if (!isEntry(raw)) continue;
     if (seen.has(raw.id)) continue;
     seen.add(raw.id);
-    next.push({ id: raw.id, available: raw.available === true });
+    ids.push(raw.id);
   }
-  directory = next;
-  defaultAgentId =
-    typeof defaultAgent === "string" && defaultAgent.length > 0
-      ? defaultAgent
-      : null;
+  directory = {
+    ids,
+    defaultAgentId:
+      typeof defaultAgent === "string" && defaultAgent.length > 0
+        ? defaultAgent
+        : null,
+  };
 }
 
-export function getAgentDirectory(): readonly AgentDirectoryEntry[] {
+export function getAgentDirectory(): AgentDirectory {
   return directory;
 }
 
+/** Configured ids in configuration order (the shape a parse takes). */
 export function configuredAgentIds(): string[] {
-  return directory.map((entry) => entry.id);
+  return directory.ids;
 }
 
 export function isConfiguredAgent(id: string): boolean {
-  return directory.some((entry) => entry.id === id);
+  return directory.ids.includes(id);
 }
 
 export function getDefaultAgentId(): string | null {
-  return defaultAgentId;
-}
-
-/** Ids whose launch command existed at startup, in configuration order. */
-export function availableAgentIds(): string[] {
-  return directory.filter((entry) => entry.available).map((entry) => entry.id);
+  return directory.defaultAgentId;
 }
 
 export function resetAgentDirectoryForTest(): void {
-  directory = [];
-  defaultAgentId = null;
+  directory = EMPTY;
 }

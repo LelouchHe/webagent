@@ -33,8 +33,8 @@ import {
   resolveCreateCwd,
   taskAgentFailureLines,
 } from "./create-command.ts";
-import { getAgentDirectory } from "./agent-directory.ts";
-import { coordinateField } from "./agent-suggestions.ts";
+import { configuredAgentIds } from "./agent-directory.ts";
+import { agentHintRow } from "./agent-hint.ts";
 import type { TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import { entryAgentLabel, loadTaskList } from "./task-topology.ts";
@@ -400,7 +400,7 @@ export async function submitCreateField(raw: string): Promise<void> {
     addSystem("err: No active task");
     return;
   }
-  const coordinate = parseCoordinate(raw, getAgentDirectory());
+  const coordinate = parseCoordinate(raw, configuredAgentIds());
   let agentId: string | null = null;
   let cwd: string | undefined;
   if (coordinate.agentId !== null) {
@@ -445,7 +445,7 @@ export async function submitCreateField(raw: string): Promise<void> {
  * historical pass-through (the server expands `~` and validates it).
  */
 export async function submitClearField(raw: string): Promise<void> {
-  const coordinate = parseCoordinate(raw, getAgentDirectory());
+  const coordinate = parseCoordinate(raw, configuredAgentIds());
   if (coordinate.agentId !== null) {
     const target = await resolveCoordinateTarget({
       agentId: coordinate.agentId,
@@ -471,7 +471,7 @@ export async function submitClearField(raw: string): Promise<void> {
 
 /** Preview one cwd field the way both create entries render it. */
 function fieldPreview(raw: string): string {
-  return previewValue(previewCreateCwd(raw.trim(), getAgentDirectory()));
+  return previewValue(previewCreateCwd(raw.trim(), configuredAgentIds()));
 }
 
 /** Act on one recent path from `/clear`; a settled coordinate's agent travels
@@ -488,34 +488,34 @@ function createAtPath(item: PathItem, agentId: string | null): void {
 /**
  * The `<agent>:<cwd>` argument field of `/clear` and `/new`.
  *
- * Rows come from the same reading `+` uses (`coordinateField`), so the three
- * entries cannot offer different agents for the same prefix. Once a coordinate
- * is settled the fetched rows are decorated: they filter on the suffix and
- * their selection keeps the prefix the user already typed.
+ * The field is read once with `parseCoordinate` (the same entry submission
+ * uses): a settled coordinate makes its suffix the filter, keeps `:<suffix>`
+ * byte for byte, and makes a picked path row submit that agent. The menu ends
+ * with the shared hint line; no agent rows are ever offered.
  */
 function pathFieldView(
   rawRemainder: string,
   pick: (item: PathItem, agentId: string | null) => void,
 ): FieldView {
-  const field = coordinateField(
+  const coordinate = parseCoordinate(rawRemainder, configuredAgentIds());
+  const agentId = coordinate.agentId;
+  const hint = agentHintRow(
     rawRemainder,
-    getAgentDirectory(),
+    configuredAgentIds(),
     state.taskAgentId,
-    (agentId) => `${agentId}:`,
   );
-  const coordinate = field.coordinate;
   return {
     raw: rawRemainder,
-    filter: field.pathInput,
-    lead: field.rows,
+    filter: coordinate.cwd,
+    trail: hint === null ? [] : [hint],
     decorate:
-      coordinate === null
+      agentId === null
         ? undefined
         : (spec, item) => ({
             ...spec,
-            primary: `${coordinate.agentId}:${spec.primary}`,
+            primary: `${agentId}:${spec.primary}`,
             onSelect: () => {
-              pick(item as PathItem, coordinate.agentId);
+              pick(item as PathItem, agentId);
             },
           }),
   };
@@ -551,7 +551,7 @@ export const ROOT: CmdNode = {
         const trimmed = q.trim();
         if (!trimmed) return null;
         const coordinate =
-          parseCoordinate(trimmed, getAgentDirectory()).agentId !== null;
+          parseCoordinate(trimmed, configuredAgentIds()).agentId !== null;
         return {
           // A coordinate previews as one `<agent>:<cwd>` field, exactly what
           // the same text submits as; a plain path keeps its raw wording.

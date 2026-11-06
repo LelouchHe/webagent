@@ -75,9 +75,11 @@ test("a configured agent that cannot start reports why and names a live one", as
     const config = await page.request.get(`${server.origin}/api/v1/config`);
     expect(config.ok()).toBeTruthy();
     const directory = (await config.json()) as {
-      agents: Array<{ id: string; available: boolean }>;
+      agents: Array<Record<string, unknown>>;
     };
-    expect(directory.agents).toContainEqual({ id: "dead", available: true });
+    // `dead` is configured, so it is listed; the directory makes no claim about
+    // whether its process starts.
+    expect(directory.agents).toContainEqual({ id: "dead" });
 
     // Rotating onto it fails at start, not at validation.
     await submit(page, "/clear dead:");

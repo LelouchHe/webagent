@@ -38,11 +38,7 @@ describe("status bar agent coordinate", () => {
   beforeEach(() => {
     resetState(state, dom);
     directory.installAgentDirectory(
-      [
-        { id: "pi", available: true },
-        { id: "copilot", available: true },
-        { id: "mock3", available: true },
-      ],
+      [{ id: "pi" }, { id: "copilot" }, { id: "mock3" }],
       "pi",
     );
     state.configOptions = [

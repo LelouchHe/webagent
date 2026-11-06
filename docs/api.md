@@ -290,7 +290,7 @@ the same WebAgent task ID.
   "source": "auto",
   "configOptions": [],
   "created": true,
-  "agents": [{ "id": "pi", "available": true }],
+  "agents": [{ "id": "pi" }],
   "defaultAgentId": "pi"
 }
 ```
@@ -778,10 +778,7 @@ Get server configuration and available config options.
   "configOptions": [...],
   "cancelTimeout": 10000,
   "recentPathsLimit": 10,
-  "agents": [
-    { "id": "pi", "available": true },
-    { "id": "copilot", "available": false }
-  ],
+  "agents": [{ "id": "pi" }, { "id": "copilot" }],
   "defaultAgentId": "pi"
 }
 ```
@@ -792,11 +789,13 @@ Get server configuration and available config options.
 | `configOptions`    | `ConfigOption[]` | Available config options from the default agent's live execution (empty until it has one)  |
 | `cancelTimeout`    | number           | Cancel timeout in ms (from `limits.cancel_timeout` config). `0` = disabled                  |
 | `recentPathsLimit` | number           | Max recent paths to show in the `/new` / `+` path pickers (from `limits.recent_paths` config). `0` = show all |
-| `agents`           | `{ id, available }[]` | Every configured agent, in configuration order. `available` is the startup PATH snapshot for its launch command: `true` means the command exists, **not** that the process starts, handshakes, or authenticates. Reporting the directory never resolves or starts an agent |
+| `agents`           | `{ id }[]` | Every configured agent, in configuration order, and nothing else. The directory carries no liveness: whether an agent can start is decided when one is started (503 with the real reason). Reporting it never resolves or starts an agent |
 | `defaultAgentId` | string         | The configured `default_agent`: the agent a task targets when it has no binding to inherit from. Clients must read it instead of assuming the first `agents` entry |
 
-The directory is a configuration fact, not a runtime one: it is available on a
+The directory is a configuration fact, not a runtime one: it is listed on a
 cold workspace (`configOptions: []`), while the default agent is not running.
+It also lists an agent whose launch command is missing from PATH — that is a
+start-time failure, reported with its real reason when the agent is used.
 
 ---
 

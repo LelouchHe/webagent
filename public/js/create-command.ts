@@ -11,26 +11,11 @@ import { resolveViewPath } from "./file-browser.ts";
 import * as api from "./api.ts";
 import { loadTaskList } from "./task-topology.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import { availableAgentIds, getDefaultAgentId } from "./agent-directory.ts";
-
-/** The only thing coordinate parsing needs from a configured agent. */
-export interface ConfiguredAgentRef {
-  readonly id: string;
-}
+import { getDefaultAgentId } from "./agent-directory.ts";
 
 export type ParsedCoordinate =
   | { agentId: null; cwd: string }
   | { agentId: string; cwd: string };
-
-export interface CoordinateSuggestion {
-  /** First-token text the completion would replace wholesale; "" = nothing
-   *  typed yet. null when no agent row applies. */
-  agentPrefix: { text: string } | null;
-  /** Set once the input is a coordinate; the suffix is byte-preserved. */
-  coordinate: { agentId: string; rawSuffix: string } | null;
-  /** The only input path completion and submission may consume. */
-  pathInput: string;
-}
 
 /**
  * Locate the first token of a raw remainder without touching anything after
@@ -59,7 +44,7 @@ function firstToken(
  */
 export function parseCoordinate(
   rawRemainder: string,
-  agents: readonly ConfiguredAgentRef[],
+  agents: readonly string[],
 ): ParsedCoordinate {
   const token = firstToken(rawRemainder);
   if (!token) return { agentId: null, cwd: rawRemainder };
@@ -67,57 +52,12 @@ export function parseCoordinate(
   const colon = token.text.indexOf(":");
   if (colon === -1) return { agentId: null, cwd: rawRemainder };
   const candidate = token.text.slice(0, colon);
-  if (!agents.some((agent) => agent.id === candidate)) {
+  if (!agents.includes(candidate)) {
     return { agentId: null, cwd: rawRemainder };
   }
   return {
     agentId: candidate,
     cwd: rawRemainder.slice(token.start + colon + 1),
-  };
-}
-
-/**
- * Decide whether the input is still inside an agent-id prefix, and what the
- * settled coordinate (if any) is. Completion consumes this so it can never
- * disagree with `parseCoordinate` about the same text.
- *
- * The two answers are different dimensions, not two states of one machine:
- * `co` both suggests agents and keeps offering path rows, `co ` (first token
- * already ended by whitespace) suggests none, and `copilot:~/a  b` is settled
- * with no agent suggestion. `baselineAgentId` is deliberately not an input to
- * the parse: the current binding only decides which row the menu marks.
- */
-export function suggestCoordinatePrefix(
-  rawRemainder: string,
-  agents: readonly ConfiguredAgentRef[],
-  _baselineAgentId: string | null = null,
-): CoordinateSuggestion {
-  const coordinate = parseCoordinate(rawRemainder, agents);
-  if (coordinate.agentId !== null) {
-    return {
-      agentPrefix: null,
-      coordinate: { agentId: coordinate.agentId, rawSuffix: coordinate.cwd },
-      pathInput: coordinate.cwd,
-    };
-  }
-  const token = firstToken(rawRemainder);
-  if (!token) {
-    return {
-      agentPrefix: { text: "" },
-      coordinate: null,
-      pathInput: rawRemainder,
-    };
-  }
-  const endedByWhitespace = token.end < rawRemainder.length;
-  const eligible =
-    !endedByWhitespace &&
-    !token.text.startsWith("./") &&
-    !token.text.includes(":") &&
-    agents.some((agent) => agent.id.startsWith(token.text));
-  return {
-    agentPrefix: eligible ? { text: token.text } : null,
-    coordinate: null,
-    pathInput: rawRemainder,
   };
 }
 
@@ -156,7 +96,7 @@ export async function resolveCoordinateTarget(coordinate: {
  */
 export function previewCreateCwd(
   rawRemainder: string,
-  agents: readonly ConfiguredAgentRef[],
+  agents: readonly string[],
 ): string {
   const coordinate = parseCoordinate(rawRemainder, agents);
   if (coordinate.agentId === null) return previewCwdDisplay(rawRemainder);
@@ -166,25 +106,19 @@ export function previewCreateCwd(
 }
 
 /**
- * The one-line rescue for an agent that is configured but would not start:
- * name an agent other than the one that just failed, preferring one whose
- * command exists at startup and falling back to the configured default. The
- * cwd is the raw task path, and the whole line is plain copyable text.
+ * The one-line rescue for an agent that is configured but would not start: name
+ * the configured default, unless that is the agent that just failed. Nothing is
+ * ranked by PATH presence — a command that exists can still fail to handshake
+ * or authenticate, so a "more likely to work" candidate would be false
+ * precision. The cwd is the raw task path and the line is plain copyable text.
  */
 export function agentRescueCommand(
   failedAgentId: string | null,
   cwd: string,
 ): string | null {
-  const available = availableAgentIds().filter((id) => id !== failedAgentId);
   const fallback = getDefaultAgentId();
-  const live =
-    available.length > 0
-      ? available[0]
-      : fallback !== null && fallback !== failedAgentId
-        ? fallback
-        : null;
-  if (live === null) return null;
-  return `/clear ${live}:${cwd}`;
+  if (fallback === null || fallback === failedAgentId) return null;
+  return `/clear ${fallback}:${cwd}`;
 }
 
 /**

@@ -65,8 +65,9 @@ setLogLevel(config.debug.level);
 await runStartupChecks(config);
 
 // One startup snapshot of which configured agents have a launch command on
-// PATH. It is reported verbatim by the metadata read face; asking which agents
-// exist must never resolve or start one.
+// PATH. It only feeds the operator warning below: the client-facing directory
+// is a configuration fact, and liveness is decided when an agent is really
+// started (503 with the real reason).
 const agentAvailability = checkAgentAvailability(config.agents);
 for (const line of formatAvailabilityWarnings(
   agentAvailability,
@@ -263,7 +264,7 @@ const requestHandler = createRequestHandler({
   publicDir: PUBLIC_DIR,
   dataDir: config.data_dir,
   limits: config.limits,
-  agentAvailability,
+  agentIds: Object.keys(config.agents),
   pushService,
   serverVersion: PKG_VERSION,
   debugLevel: config.debug.level,

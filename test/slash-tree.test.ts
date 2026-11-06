@@ -4,6 +4,7 @@ import {
   resolvePath,
   buildCandidates,
   type CmdNode,
+  type FetchData,
 } from "../public/js/slash-tree.ts";
 
 // Build a representative tree for tests (mirrors the planned production tree
@@ -460,5 +461,43 @@ describe("slash-tree — buildCandidates", () => {
     const c = buildCandidates(rename, "newtitle");
     assert.equal(c.length, 1);
     assert.equal(c[0].kind, "freeform");
+  });
+
+  it("appends a field's trailing row last, except under a placeholder", () => {
+    const trail = [
+      {
+        spec: { primary: "hint" },
+        prefix: "" as const,
+        kind: "placeholder" as const,
+      },
+    ];
+    const view = (filter: string) => ({ filter, raw: filter, trail });
+    const field = (
+      data: unknown[],
+    ): CmdNode & { field: () => ReturnType<typeof view> } => ({
+      name: "field",
+      fetch: () => data,
+      toSpec: (item: unknown) => ({ primary: String(item) }),
+      field: () => view(""),
+    });
+    const primaries = (node: CmdNode, data: FetchData) =>
+      buildCandidates(node, "", data, node.field!("")).map(
+        (candidate) => candidate.spec.primary,
+      );
+
+    // A settled list: the trailing row is the very last one.
+    assert.deepEqual(primaries(field(["a"]), ["a"]), ["a", "hint"]);
+    // Every placeholder state already explains the empty list.
+    assert.deepEqual(primaries(field([]), []), ["(none)"]);
+    assert.deepEqual(primaries(field(["a"]), "loading"), ["(loading...)"]);
+    assert.deepEqual(primaries(field(["a"]), { error: "boom" }), ["(boom)"]);
+    assert.deepEqual(
+      buildCandidates(field(["a"]), "zz", ["a"], {
+        filter: "zz",
+        raw: "zz",
+        trail,
+      }).map((candidate) => candidate.spec.primary),
+      ["(no match)"],
+    );
   });
 });

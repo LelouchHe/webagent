@@ -11,7 +11,7 @@ import { setupDOM, teardownDOM } from "./frontend-setup.ts";
  * disambiguation for a directory that looks like a coordinate is `./`.
  */
 
-const AGENTS = [{ id: "pi" }, { id: "copilot" }, { id: "notes" }];
+const AGENTS = ["pi", "copilot", "notes"];
 
 describe("coordinate parsing", () => {
   let mod: any;
@@ -72,7 +72,7 @@ describe("coordinate parsing", () => {
       cwd: "./copilot:repo",
     });
     // An unknown prefix is a path, not a "not configured agent" error.
-    assert.deepEqual(parse("notes:2026", [{ id: "pi" }, { id: "copilot" }]), {
+    assert.deepEqual(parse("notes:2026", ["pi", "copilot"]), {
       agentId: null,
       cwd: "notes:2026",
     });
@@ -96,80 +96,6 @@ describe("coordinate parsing", () => {
     });
   });
 
-  it("suggests an agent prefix only while the first token is still open", () => {
-    const suggest = (raw: string) => mod.suggestCoordinatePrefix(raw, AGENTS);
-
-    assert.deepEqual(suggest(""), {
-      agentPrefix: { text: "" },
-      coordinate: null,
-      pathInput: "",
-    });
-    assert.deepEqual(suggest("co"), {
-      agentPrefix: { text: "co" },
-      coordinate: null,
-      pathInput: "co",
-    });
-    // The first token is already ended by whitespace: no agent row, and the
-    // whole input is still the path.
-    assert.deepEqual(suggest("co "), {
-      agentPrefix: null,
-      coordinate: null,
-      pathInput: "co ",
-    });
-    assert.deepEqual(suggest("co /tmp"), {
-      agentPrefix: null,
-      coordinate: null,
-      pathInput: "co /tmp",
-    });
-    assert.deepEqual(suggest("./co"), {
-      agentPrefix: null,
-      coordinate: null,
-      pathInput: "./co",
-    });
-    assert.deepEqual(suggest(":"), {
-      agentPrefix: null,
-      coordinate: null,
-      pathInput: ":",
-    });
-    assert.deepEqual(suggest("xyz"), {
-      agentPrefix: null,
-      coordinate: null,
-      pathInput: "xyz",
-    });
-  });
-
-  it("turns a settled coordinate into a suffix-only path input", () => {
-    const suggest = (raw: string) => mod.suggestCoordinatePrefix(raw, AGENTS);
-
-    assert.deepEqual(suggest("copilot:"), {
-      agentPrefix: null,
-      coordinate: { agentId: "copilot", rawSuffix: "" },
-      pathInput: "",
-    });
-    assert.deepEqual(suggest("copilot:~/re"), {
-      agentPrefix: null,
-      coordinate: { agentId: "copilot", rawSuffix: "~/re" },
-      pathInput: "~/re",
-    });
-    // A whitespace-bearing suffix is settled, not reopened: completion acts on
-    // the suffix and never rewrites the prefix.
-    assert.deepEqual(suggest("copilot:~/a  b"), {
-      agentPrefix: null,
-      coordinate: { agentId: "copilot", rawSuffix: "~/a  b" },
-      pathInput: "~/a  b",
-    });
-  });
-
-  it("does not let the baseline agent change the parse", () => {
-    for (const raw of ["", "co", "co ", "copilot:~/a  b", "notes:2026"]) {
-      assert.deepEqual(
-        mod.suggestCoordinatePrefix(raw, AGENTS, "copilot"),
-        mod.suggestCoordinatePrefix(raw, AGENTS, null),
-        raw,
-      );
-    }
-  });
-
   it("previews a coordinate without a space that could split the pair", () => {
     assert.equal(mod.previewCreateCwd("copilot:", AGENTS), "copilot:");
     assert.equal(
@@ -179,30 +105,23 @@ describe("coordinate parsing", () => {
   });
 
   it("picks a rescue agent other than the one that just failed", () => {
-    directory.installAgentDirectory(
-      [
-        { id: "pi", available: true },
-        { id: "copilot", available: true },
-      ],
-      "pi",
-    );
+    // The rescue names the configured default; PATH presence is not consulted,
+    // because a command that exists can still fail to handshake or
+    // authenticate.
+    directory.installAgentDirectory([{ id: "pi" }, { id: "copilot" }], "pi");
     assert.equal(
-      mod.agentRescueCommand("pi", "/work/a b"),
-      "/clear copilot:/work/a b",
+      mod.agentRescueCommand("copilot", "/work/a b"),
+      "/clear pi:/work/a b",
+      "the configured default is named when it is not the failed target",
     );
+    // Nothing is ranked by PATH presence, so an available *other* agent is not
+    // a substitute when the default itself just failed.
+    assert.equal(mod.agentRescueCommand("pi", "/work"), null);
 
-    // No other available agent: the configured default is the second choice.
-    directory.installAgentDirectory(
-      [
-        { id: "pi", available: false },
-        { id: "copilot", available: true },
-      ],
-      "pi",
-    );
-    assert.equal(mod.agentRescueCommand("copilot", "/work"), "/clear pi:/work");
-
-    // Nothing left to name: report only.
-    directory.installAgentDirectory([{ id: "pi", available: false }], "pi");
+    // The default is the failed target, or there is no default: report only.
+    directory.installAgentDirectory([{ id: "pi" }], "pi");
+    assert.equal(mod.agentRescueCommand("pi", "/work"), null);
+    directory.installAgentDirectory([{ id: "pi" }, { id: "copilot" }], null);
     assert.equal(mod.agentRescueCommand("pi", "/work"), null);
     directory.installAgentDirectory([], null);
     assert.equal(mod.agentRescueCommand(null, "/work"), null);

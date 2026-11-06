@@ -43,13 +43,12 @@ test("the metadata read face names both configured agents", async ({
   const config = await request.get("/api/v1/config");
   expect(config.ok()).toBeTruthy();
   const body = (await config.json()) as {
-    agents: Array<{ id: string; available: boolean }>;
+    agents: Array<Record<string, unknown>>;
     defaultAgentId: string;
   };
-  expect(body.agents).toEqual([
-    { id: "mock", available: true },
-    { id: "mock2", available: true },
-  ]);
+  // The directory is configuration: ids, in configuration order, and nothing
+  // about liveness (a PATH snapshot is neither current nor a start promise).
+  expect(body.agents).toEqual([{ id: "mock" }, { id: "mock2" }]);
   expect(body.defaultAgentId).toBe("mock");
 
   const boot = await request.post("/api/v1/tasks/bootstrap");

@@ -50,13 +50,7 @@ describe("coordinate entries", () => {
     resetState(state, dom);
     commands.__resetCommandsForTest();
     directory.resetAgentDirectoryForTest();
-    directory.installAgentDirectory(
-      [
-        { id: "pi", available: true },
-        { id: "copilot", available: true },
-      ],
-      "pi",
-    );
+    directory.installAgentDirectory([{ id: "pi" }, { id: "copilot" }], "pi");
     state.clientId = "cl-1";
     state.taskId = "old-1";
     state.taskAgentId = "pi";
@@ -297,13 +291,7 @@ describe("coordinate entries", () => {
   });
 
   it("reads the same text as a coordinate once that agent exists", async () => {
-    directory.installAgentDirectory(
-      [
-        { id: "pi", available: true },
-        { id: "notes", available: true },
-      ],
-      "pi",
-    );
+    directory.installAgentDirectory([{ id: "pi" }, { id: "notes" }], "pi");
     await commands.handleSlashCommand("/new notes:2026");
     await settle();
     const body = bodyOf("POST", "/api/v1/tasks");
@@ -338,10 +326,7 @@ describe("coordinate entries", () => {
   });
 
   it("does not install a superseded bootstrap's agent directory", async () => {
-    directory.installAgentDirectory(
-      [{ id: "current", available: true }],
-      "current",
-    );
+    directory.installAgentDirectory([{ id: "current" }], "current");
     let releaseBootstrap!: (response: Response) => void;
     handler = (url, init) => {
       if (url === "/api/v1/tasks/bootstrap" && init?.method === "POST") {
@@ -365,14 +350,14 @@ describe("coordinate entries", () => {
         rootTaskId: "root",
         cwd: "/work",
         configOptions: [],
-        agents: [{ id: "ghost", available: true }],
+        agents: [{ id: "ghost" }],
         defaultAgentId: "ghost",
       }),
     );
     await pending;
 
     assert.deepEqual(
-      directory.getAgentDirectory().map((entry: { id: string }) => entry.id),
+      directory.getAgentDirectory().ids,
       ["current"],
       "a superseded request must not install metadata",
     );
@@ -381,10 +366,7 @@ describe("coordinate entries", () => {
 
   it("reports a late create failure with the submitting agent and directory", async () => {
     directory.installAgentDirectory(
-      [
-        { id: "mock", available: true },
-        { id: "copilot", available: true },
-      ],
+      [{ id: "mock" }, { id: "copilot" }],
       "mock",
     );
     state.taskAgentId = "mock";
@@ -398,31 +380,31 @@ describe("coordinate entries", () => {
       return defaultHandler(url, init);
     };
 
+    // The submitting task runs on copilot; the configured default (mock) is a
+    // different agent, so it is the rescue's only candidate.
+    state.taskAgentId = "copilot";
     const pending = taskCommand.executeTaskCommand("+t");
     await settle();
     // The view moves to another task while the create is still in flight.
     state.taskId = "other";
-    state.taskAgentId = "copilot";
+    state.taskAgentId = "mock";
     state.taskCwd = "/other";
-    releaseCreate(json({ error: "Agent mock is not available: nope" }, 503));
+    releaseCreate(json({ error: "Agent copilot is not available: nope" }, 503));
     await pending;
 
     const text = lines().join("\n");
     assert.match(
       text,
-      /err: create failed — Agent mock is not available: nope/,
+      /err: create failed — Agent copilot is not available: nope/,
     );
     // Submission-time agent (excluded from the rescue) and directory.
-    assert.match(text, /\/clear copilot:\/work/);
+    assert.match(text, /\/clear mock:\/work/);
     assert.doesNotMatch(text, /\/other/);
   });
 
   it("reports a late clear failure with the submitting agent and directory", async () => {
     directory.installAgentDirectory(
-      [
-        { id: "mock", available: true },
-        { id: "copilot", available: true },
-      ],
+      [{ id: "mock" }, { id: "copilot" }],
       "mock",
     );
     state.taskAgentId = "mock";
@@ -436,20 +418,20 @@ describe("coordinate entries", () => {
       return defaultHandler(url, init);
     };
 
-    const pending = commands.handleSlashCommand("/clear");
+    const pending = commands.handleSlashCommand("/clear copilot:");
     await settle();
     state.taskId = "other";
-    state.taskAgentId = "copilot";
+    state.taskAgentId = "mock";
     state.taskCwd = "/other";
-    releaseClear(json({ error: "Agent mock is not available: nope" }, 503));
+    releaseClear(json({ error: "Agent copilot is not available: nope" }, 503));
     await pending;
 
     const text = lines().join("\n");
     assert.match(
       text,
-      /Failed to clear task — Agent mock is not available: nope/,
+      /Failed to clear task — Agent copilot is not available: nope/,
     );
-    assert.match(text, /\/clear copilot:\/work/);
+    assert.match(text, /\/clear mock:\/work/);
     assert.doesNotMatch(text, /\/other/);
   });
 
@@ -493,14 +475,8 @@ describe("coordinate entries", () => {
     assert.match(text, /\/clear pi:\/work/);
   });
 
-  it("names the configured default when nothing else is available", async () => {
-    directory.installAgentDirectory(
-      [
-        { id: "pi", available: false },
-        { id: "copilot", available: true },
-      ],
-      "pi",
-    );
+  it("names the configured default when the target fails", async () => {
+    directory.installAgentDirectory([{ id: "pi" }, { id: "copilot" }], "pi");
     handler = (url, init) => {
       if (url.endsWith("/clear") && init?.method === "POST") {
         return json({ error: "Agent copilot is not available: nope" }, 503);
@@ -512,7 +488,7 @@ describe("coordinate entries", () => {
   });
 
   it("reports only the reason when there is nothing to rescue to", async () => {
-    directory.installAgentDirectory([{ id: "pi", available: false }], "pi");
+    directory.installAgentDirectory([{ id: "pi" }], "pi");
     handler = (url, init) => {
       if (url.endsWith("/clear") && init?.method === "POST") {
         return json({ error: "Agent pi is not available: nope" }, 503);
@@ -535,13 +511,7 @@ describe("coordinate entries", () => {
       }
       return defaultHandler(url, init);
     };
-    directory.installAgentDirectory(
-      [
-        { id: "pi", available: true },
-        { id: "ghost", available: true },
-      ],
-      "pi",
-    );
+    directory.installAgentDirectory([{ id: "pi" }, { id: "ghost" }], "pi");
     await commands.handleSlashCommand("/clear ghost:");
     const text = lines().join("\n");
     assert.match(text, /Agent ghost is not configured/);

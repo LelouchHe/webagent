@@ -33,10 +33,10 @@ export interface CmdNode {
   /** Freeform fallback entry. Returns spec or null (null = no freeform row). */
   freeform?: (query: string) => SlashItemSpec | null;
   /** Read this node's argument field from the raw input. Present = the node
-   *  owns its data section's filter, the rows it leads with, and the text its
-   *  freeform row sees. Needed because the walker's tail query is normalized:
-   *  it drops the trailing whitespace that ends the first token, which is
-   *  exactly the boundary between "still typing an id" and "id is settled". */
+   *  owns its data section's filter, the row its freeform consumes, and the
+   *  trailing row below the list. Needed because the walker's tail query is
+   *  normalized: it re-joins tokens and trims, so a coordinate's suffix would
+   *  lose its interior spacing before path completion could use it. */
   field?: (rawRemainder: string) => FieldView;
   /** Leaf action — node selected directly executes (e.g. /notify on). */
   onSelect?: () => void | Promise<void>;
@@ -46,6 +46,9 @@ export interface CmdNode {
  *  "loading" sentinel, or an error wrapper carrying the message to display. */
 export type FetchData = unknown[] | "loading" | { error: string };
 
+/** Data states that already render a placeholder row of their own. */
+const PLACEHOLDER_STATES = new Set(["loading", "error", "empty", "no-match"]);
+
 /** What a node's own argument field contributes to one rendered menu. */
 export interface FieldView {
   /** What the node's data rows filter on. A settled coordinate's suffix is the
@@ -54,8 +57,9 @@ export interface FieldView {
   /** Raw argument text handed to `freeform`, so an action row previews and
    *  submits the same bytes Enter does. */
   raw: string;
-  /** Rows inserted at the front of the data segment, already filtered. */
-  lead: Candidate[];
+  /** Rows appended below the data section (a field's trailing explanation),
+   *  already built. Suppressed while a data placeholder is showing. */
+  trail: Candidate[];
   /** Rewrite a fetched row so acting on it keeps the field's settled parts. */
   decorate?: (spec: SlashItemSpec, item: unknown) => SlashItemSpec;
 }
@@ -258,16 +262,13 @@ export function buildCandidates(
   }
 
   // 4. Separator: only when navigate/commit group AND data section both present
-  const lead = field?.lead ?? [];
   const hasArrowGroup = subcommands.length > 0 || freeformCand !== null;
-  const hasDataSection = lead.length > 0 || dataState !== "none";
+  const hasDataSection = dataState !== "none";
   if (hasArrowGroup && hasDataSection) {
     out.push({ spec: { primary: "" }, prefix: "", kind: "separator" });
   }
 
-  // 5. Data rows: the field's own rows lead the segment, then the node's
-  // fetched rows / placeholder.
-  out.push(...lead);
+  // 5. Data rows / placeholder
   if (dataState === "loading") {
     out.push({
       spec: { primary: "(loading...)" },
@@ -297,6 +298,10 @@ export function buildCandidates(
       });
     }
   }
+
+  // 6. Trailing rows (the field's explanation line) belong at the very bottom,
+  // and only when no placeholder above already explains an empty list.
+  if (field && !PLACEHOLDER_STATES.has(dataState)) out.push(...field.trail);
 
   return out;
 }
