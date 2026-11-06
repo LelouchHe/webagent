@@ -61,6 +61,8 @@ interface AgentSpec {
   schema: ConfigOption[];
   /** Schema one 1-based session reports; defaults to `schema`. */
   newSessionSchema?: (sessionIndex: number) => ConfigOption[];
+  /** The transport starts but refuses to create a session. */
+  failNewSession?: boolean;
 }
 
 interface HarnessOptions {
@@ -101,6 +103,11 @@ async function startHarness(options: HarnessOptions): Promise<Harness> {
     agents[spec.id] = createProfiledAgent(spec.id, spec.schema, {
       newSessionSchema: spec.newSessionSchema,
     });
+    if (spec.failNewSession) {
+      agents[spec.id].bridge.newSession = async () => {
+        throw new Error("session creation refused");
+      };
+    }
   }
   const configured =
     options.configured ?? options.agents.map((spec) => spec.id);
@@ -691,6 +698,44 @@ describe("task_create with an explicit agent", () => {
       harness.store.listTasks().map((task) => task.id),
       tasksBefore,
     );
+  });
+
+  it("reports a refused session creation and leaves nothing behind", async () => {
+    harness = await startHarness({
+      agents: [
+        { id: A, schema: SCHEMA_A },
+        { id: B, schema: SCHEMA_B, failNewSession: true },
+      ],
+    });
+    const parent = await parentOnA();
+    const tasksBefore = harness.store.listTasks().map((task) => task.id);
+    const recordsBefore = createdRecords(harness.store, parent.taskId).length;
+    const mintedBefore = harness.minted.length;
+
+    const call = await callTool(harness, parent.token, "task_create", {
+      title: "no session",
+      agent: B,
+    });
+    assert.equal(toolResult(call.json).isError, true);
+    assert.match(toolErrorText(call.json), /session creation refused/);
+
+    // Starting is not creating: nothing was persisted, recorded, or left with
+    // a usable capability.
+    assert.deepEqual(
+      harness.store.listTasks().map((task) => task.id),
+      tasksBefore,
+      "a refused session must not leave a task row",
+    );
+    assert.equal(
+      createdRecords(harness.store, parent.taskId).length,
+      recordsBefore,
+      "a refused session must not write a creation record",
+    );
+    const childTokens = harness.minted.slice(mintedBefore);
+    assert.ok(childTokens.length > 0, "the failed creation minted a token");
+    for (const entry of childTokens) {
+      assert.equal(harness.capabilities.resolve(entry.token), null);
+    }
   });
 
   it("reports the real start failure and still offers omission", async () => {

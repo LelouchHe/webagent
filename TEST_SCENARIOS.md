@@ -54,6 +54,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a small candidate set is listed with the target's current value; a wide `model` list is reduced to its count and current value (and is not enumerated); a same-agent failure keeps the same error shape
   - a model override that succeeds before `thinking` fails proves the cleanup: the model write reached the target, and the task row, creation record, and capability are all gone afterwards
   - an unconfigured `agent` is refused with the omission hint and no id list (the list stays in the tool description); a configured agent that cannot start reports the transport's real reason plus the same hint
+  - a target that starts but refuses `session/new` fails as a tool error with that session's reason, and leaves no task row, creation record, or valid capability
   - the explicit-agent path keeps the authority boundary: a rotation landing inside the target's start yields `execution_replaced` with no task and no target session, a token from an older generation is refused, and unknown/revoked capabilities are still entry-level `401`
   - the per-request description lists only the configured agents (a configured-but-not-advertised agent is absent)
   - same-agent regression: inheritance still carries the parent's stored model, and same-agent validation reports its own schema's candidates
