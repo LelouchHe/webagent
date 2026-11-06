@@ -190,10 +190,13 @@ branch, which calls it once. It acts only when all three conditions hold: the
 text carries `image_id: sha256:<64 hex>`, it carries `saved_to:` with an
 absolute path, and the tool call's title is `image_generation`. Anything else is
 left as received. It **copies** (never moves or deletes) the file, requires its
-sha256 to equal the marker's hash, requires PNG/JPEG/GIF/WebP magic bytes and
-the same `limits.image_upload` ceiling, and stores identical bytes once per
-task. Any failure is "do nothing" plus a log line, so the tool call itself is
-never affected. It adds no configuration key and no path allowlist.
+sha256 to equal the marker's hash, requires the bytes to be a readable one of
+the four storable containers (PNG/JPEG/GIF/WebP, through the same
+`readImageInfo` the normal path uses — a matching signature with an unparseable
+header is refused) and the same `limits.image_upload` ceiling, and stores
+identical bytes once per task. Any failure is "do nothing" plus a log line, so
+the tool call itself is never affected. It adds no configuration key and no
+path allowlist.
 
 **Delete it when Copilot's image tool emits a real ACP image block**: delete
 `src/agent-compatibility/copilot-image-path.ts`, its import in

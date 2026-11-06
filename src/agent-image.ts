@@ -25,9 +25,9 @@ import {
   classifyKind,
   mimeToExt,
   normalizeDisplayName,
-  sniffImageMime,
 } from "./attachments.ts";
-import { readImageDimensions } from "./image-dimensions.ts";
+import { readImageInfo } from "./image-info.ts";
+import type { ImageInfo } from "./image-info.ts";
 import { log } from "./log.ts";
 import type { AttachmentRow, Store } from "./store.ts";
 import type { AgentImageAttachment } from "./types.ts";
@@ -105,6 +105,12 @@ export function attachmentDescriptor(
   };
 }
 
+/** The layout box a container reading supports, or null. */
+function layoutBox(info: ImageInfo): { width: number; height: number } | null {
+  if (info.width === null || info.height === null) return null;
+  return { width: info.width, height: info.height };
+}
+
 /**
  * Store one inline agent image, or explain why it was not stored.
  *
@@ -145,11 +151,14 @@ export function storeImageBytes(
     );
   }
   // Never trust the wire's mime: the container decides, and only containers we
-  // can store and serve inline are accepted.
-  const mime = sniffImageMime(bytes.subarray(0, 4096));
-  if (!mime) {
+  // can store and serve inline are accepted. One reading of the bytes answers
+  // both that and, when the header carries them, the pixel dimensions that
+  // reserve the thumbnail's layout box.
+  const info = readImageInfo(bytes);
+  if (!info) {
     return omitted("unrecognized image format");
   }
+  const mime = info.mime;
   if (classifyKind(mime) !== "image") {
     return omitted("not an image");
   }
@@ -180,7 +189,7 @@ export function storeImageBytes(
     return omitted("could not be stored");
   }
 
-  const dimensions = readImageDimensions(bytes);
+  const dimensions = layoutBox(info);
   const displayName =
     normalizeDisplayName(input.displayName ?? `agent-image-${index}`) ??
     "image";

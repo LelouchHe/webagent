@@ -18,16 +18,8 @@ import type { AgentEvent, ToolContentItem } from "../src/types.ts";
 
 export const LIMIT = 1024 * 1024;
 
-/** Bytes with a PNG signature: enough for the container sniff. */
-export function png(payloadBytes = 64): Buffer {
-  const signature = Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  ]);
-  return Buffer.concat([
-    signature,
-    Buffer.alloc(Math.max(0, payloadBytes - signature.length), 7),
-  ]);
-}
+/** A parseable image for the storage path; see `test/image-bytes.ts`. */
+export { png } from "./image-bytes.ts";
 
 /** A real 1x1 PNG, for a file a tool result may point at. */
 export const REAL_PNG = Buffer.from(

@@ -40,7 +40,7 @@
 // Capture rules — any failure is "do nothing" plus a log line; the tool call
 // itself is never affected:
 //   - the file's sha256 must equal the marker's hash (a mismatch is refused);
-//   - its magic bytes must be a storable image container (PNG/JPEG/GIF/WebP);
+//   - its bytes must be a storable image container (PNG/JPEG/GIF/WebP);
 //   - it must be at most `limits.image_upload` bytes;
 //   - it is COPIED, never moved or deleted: the tool's own file stays;
 //   - within one task, identical bytes are stored once (dedupe by content hash).
@@ -49,7 +49,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { attachmentDescriptor, storeImageBytes } from "../agent-image.ts";
-import { sniffImageMime } from "../attachments.ts";
+import { readImageInfo } from "../image-info.ts";
 import { log } from "../log.ts";
 import { classifyToolContentItem } from "../shared/tool-content.ts";
 import type { Store } from "../store.ts";
@@ -185,8 +185,11 @@ export function recoverCopilotImagePath(
   if (sha256Of(bytes) !== marker.sha256) {
     return ignore("saved_to does not match the marker's sha256", logFields);
   }
-  // Never trust the extension or the marker: the container decides.
-  if (!sniffImageMime(bytes.subarray(0, 4096))) {
+  // Never trust the extension or the marker: the container decides. The whole
+  // file is read: a JPEG's frame header can sit past the first 4 KB behind a
+  // large EXIF/ICC segment, and this parse has to agree with the one storage
+  // does to the same bytes.
+  if (!readImageInfo(bytes)) {
     return ignore("saved_to is not a storable image", logFields);
   }
 

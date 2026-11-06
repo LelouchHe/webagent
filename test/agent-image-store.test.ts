@@ -15,6 +15,7 @@ import { Store } from "../src/store.ts";
 import { storeAgentImage } from "../src/agent-image.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { waitFor } from "./fixtures.ts";
+import { jpeg, png, webp } from "./image-bytes.ts";
 
 /**
  * An agent's image becomes an ordinary attachment: the same
@@ -25,36 +26,6 @@ import { waitFor } from "./fixtures.ts";
  */
 
 const LIMIT = 1024 * 1024;
-
-/** A real PNG of the given pixel size? No: any bytes with a PNG signature. */
-function png(payloadBytes = 64): Buffer {
-  const signature = Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  ]);
-  const rest = Buffer.alloc(Math.max(0, payloadBytes - signature.length), 7);
-  return Buffer.concat([signature, rest]);
-}
-
-/** WebP bytes: RIFF....WEBP, a container we store but cannot measure. */
-function webp(payloadBytes = 64): Buffer {
-  const head = Buffer.concat([
-    Buffer.from("RIFF", "latin1"),
-    Buffer.from([0x24, 0x00, 0x00, 0x00]),
-    Buffer.from("WEBPVP8 ", "latin1"),
-  ]);
-  return Buffer.concat([
-    head,
-    Buffer.alloc(Math.max(0, payloadBytes - head.length), 1),
-  ]);
-}
-
-function jpeg(payloadBytes = 64): Buffer {
-  const signature = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
-  return Buffer.concat([
-    signature,
-    Buffer.alloc(Math.max(0, payloadBytes - signature.length), 3),
-  ]);
-}
 
 describe("storing an inline agent image", () => {
   let dir: string;
@@ -109,10 +80,15 @@ describe("storing an inline agent image", () => {
     assert.equal(result.stored.path.includes("?"), false);
     assert.equal(result.stored.mimeType, "image/png");
     assert.equal(result.stored.displayName, "agent-image-1");
+    // Dimensions come from the header, so the thumbnail reserves its box
+    // before the bytes finish loading.
+    assert.equal(row.width, 320);
+    assert.equal(row.height, 240);
+    assert.equal(result.stored.width, 320);
+    assert.equal(result.stored.height, 240);
   });
 
-  it("stores a WebP without dimensions, so no layout box is reserved", () => {
-    // A storable container with no dimension parser: no size is recorded.
+  it("stores a WebP with its dimensions, so the layout box is reserved", () => {
     const result = storeAgentImage({
       store,
       dataDir: dir,
@@ -125,10 +101,10 @@ describe("storing an inline agent image", () => {
     assert.equal(result.stored.mimeType, "image/webp");
     const row = store.getAttachment("t1", result.stored.attachmentId);
     assert.ok(row);
-    assert.equal(row.width, null);
-    assert.equal(row.height, null);
-    assert.equal("width" in result.stored, false);
-    assert.equal("height" in result.stored, false);
+    assert.equal(row.width, 320);
+    assert.equal(row.height, 240);
+    assert.equal(result.stored.width, 320);
+    assert.equal(result.stored.height, 240);
   });
 
   it("disappears with its task, like any other attachment row and file", async () => {
@@ -177,6 +153,8 @@ describe("storing an inline agent image", () => {
     assert.ok("stored" in result);
     assert.equal(result.stored.mimeType, "image/jpeg");
     assert.ok(result.stored.path.endsWith(".jpg"));
+    assert.equal(result.stored.width, 320);
+    assert.equal(result.stored.height, 240);
   });
 
   it("reports an image above the ceiling without writing anything", () => {

@@ -71,6 +71,7 @@
     "dompurify": "^3.4.1",
     "file-type": "^22.0.1",
     "highlight.js": "^11.11.1",
+    "image-size": "^2.0.4",
     "marked": "^18.0.2",
     "proper-lockfile": "^4.1.2",
     "smol-toml": "^1.6.0",

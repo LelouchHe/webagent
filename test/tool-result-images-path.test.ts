@@ -81,6 +81,11 @@ describe("tool-result images: a named image file", () => {
     assert.ok(existsSync(imagePath));
     assert.deepEqual(readFileSync(row.realpath), REAL_PNG);
     assert.notEqual(row.realpath, imagePath);
+    // `REAL_PNG` is a real 1x1 PNG, so the recovered row is measured too.
+    assert.equal(row.width, 1);
+    assert.equal(row.height, 1);
+    assert.equal(descriptor.width, 1);
+    assert.equal(descriptor.height, 1);
     // The descriptor is a reference, and the persisted row never carries the
     // file's actual payload. Compute the expectation from the fixture bytes:
     // checking for the literal string "base64" would pass on any payload.

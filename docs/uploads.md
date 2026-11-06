@@ -346,10 +346,17 @@ arrives with the agent's stream instead of an upload request.
   atomically through a `.tmp` rename, extension from the sniffed MIME. The
   `display_name` is server-generated (`agent-image-N`); the agent sends no
   filename.
-- **MIME** — never the wire's claim. The bytes are checked for the PNG / JPEG /
-  GIF / WebP signatures, and only those containers are accepted: they are the
-  ones this app both stores and serves inline. Anything else (an SVG, say) is
-  reported instead of stored.
+- **MIME** — never the wire's claim. One reading of the bytes (`readImageInfo`,
+  backed by `image-size`) names the container and, when the header carries it,
+  the pixel size. Only PNG, JPEG, GIF and WebP get a MIME — they are the ones
+  this app both stores and serves inline — so a format the library measures but
+  this app does not serve (BMP, TIFF, AVIF/HEIC, SVG, ...) is reported instead
+  of stored. The container also has to be readable: a PNG without its IHDR, a
+  JPEG without a SOF0/1/2 frame (lossless SOF3/5–15 included), or a GIF/WebP
+  with a truncated header is refused the same way even though its signature
+  matches, because the browser cannot decode it either. Signatures admit
+  nothing on their own; every refusal is visible `[image omitted: unrecognized
+  image format]` text.
 - **Ceiling** — `limits.image_upload`, the same knob as a user upload. An image
   above it is not written at all; the transcript gets
   `[image omitted: 12.3 MB > 10 MB limit]` in the image's place. A write or DB
@@ -377,6 +384,7 @@ would let a later text flush land ahead of the image.
 | Layer        | Test                                            | Pins                                                                            |
 | ------------ | ----------------------------------------------- | ------------------------------------------------------------------------------- |
 | Server unit  | `test/attachments-mime.test.ts`                 | `sniffMime` magic-byte detection, `mimeToExt` disk-extension mapping            |
+| Server unit  | `test/image-info.test.ts`                      | container → MIME mapping for PNG/JPEG/GIF/WebP (all three WebP chunk layouts), dimensions, the formats the library measures but we refuse, and the headers too broken to parse (PNG without IHDR, lossless SOF3 JPEG) |
 | Server unit  | `test/store-attachments.test.ts`                | DB row insert / lookup / `ON DELETE CASCADE`                                     |
 | Server unit  | `test/attachment-dispatch.test.ts`              | ref → ACP block conversion, fallback paths, anchor check, cross-task reject |
 | Server unit  | `test/attachment-interceptor.test.ts`           | F1–F7 auto-approve defenses                                                     |

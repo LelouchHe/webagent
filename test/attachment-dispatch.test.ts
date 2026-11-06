@@ -6,12 +6,16 @@ import { join } from "node:path";
 import { Store } from "../src/store.ts";
 import { AttachmentDispatcher } from "../src/attachment-dispatch.ts";
 import { resolveTasksAnchor } from "../src/tasks-anchor.ts";
+import { png } from "./image-bytes.ts";
 
 let dataDir: string;
 let store: Store;
 let anchor: string;
 let dispatcher: AttachmentDispatcher;
 const warnings: string[] = [];
+
+/** A parseable PNG: this file is served back verbatim, never decoded here. */
+const PNG_BYTES = png(64);
 
 /** 24-byte ISO-BMFF `ftypheic` header — enough for magic-byte sniffing. */
 const HEIC_HEAD = Buffer.from(
@@ -35,14 +39,14 @@ before(() => {
     const dir = join(anchor, sid, "attachments");
     mkdirSync(dir, { recursive: true });
     const realpath = join(dir, `${sid}-img.png`);
-    writeFileSync(realpath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    writeFileSync(realpath, PNG_BYTES);
     store.insertAttachment({
       id: `${sid}-img`,
       taskId: sid,
       kind: "image",
       name: "tiny.png",
       mime: "image/png",
-      size: 4,
+      size: PNG_BYTES.length,
       realpath,
     });
     const filePath = join(dir, `${sid}-doc.pdf`);
@@ -88,7 +92,7 @@ describe("AttachmentDispatcher", () => {
     assert.deepEqual(blocks, [
       {
         type: "image",
-        data: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString("base64"),
+        data: PNG_BYTES.toString("base64"),
         mimeType: "image/png",
       },
     ]);
@@ -157,7 +161,7 @@ describe("AttachmentDispatcher", () => {
     assert.deepEqual(blocks, [
       {
         type: "image",
-        data: Buffer.from([0x89, 0x50, 0x4e, 0x47]).toString("base64"),
+        data: PNG_BYTES.toString("base64"),
         mimeType: "image/png",
       },
     ]);

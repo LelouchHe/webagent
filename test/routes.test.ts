@@ -10,6 +10,7 @@ import type { TaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { PushService } from "../src/push-service.ts";
 import { ClientRegistry } from "../src/client-registry.ts";
+import { jpeg } from "./image-bytes.ts";
 
 function makeRequest(
   port: number,
@@ -705,20 +706,16 @@ describe("Image upload", () => {
   });
 
   it("normalizes jpeg extension to jpg", async () => {
-    // Real JPEG magic bytes (SOI marker + APP0/JFIF) so the sniffer
-    // identifies it as image/jpeg.
-    const jpgBody = Buffer.concat([
-      Buffer.from([
-        0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
-        0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
-      ]),
-      Buffer.alloc(32),
-    ]);
+    // A real JPEG header (SOI + APP0 + SOF0), so both the sniffer and the
+    // dimension parser have something to read.
+    const jpgBody = jpeg(52);
     const res = await uploadFile("s1", "snap.jpeg", "image/jpeg", jpgBody);
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
     // The file on disk uses .jpg even though the client sent .jpeg.
     assert.ok(body.path.endsWith(".jpg"));
+    assert.equal(body.width, 320);
+    assert.equal(body.height, 240);
   });
 });
 

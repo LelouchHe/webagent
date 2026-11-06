@@ -8,6 +8,7 @@ import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
 import type { AgentEvent } from "../src/types.ts";
+import { png } from "./image-bytes.ts";
 
 /**
  * Every event row must persist a correct `from_ref`. These integration
@@ -95,11 +96,8 @@ describe("event writers populate from_ref correctly", () => {
     assert.equal(done?.from_ref, "agent");
   });
 
-  /** PNG-signature bytes, so the content sniffer accepts the payload. */
-  const AGENT_PNG = Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    Buffer.alloc(64, 7),
-  ]);
+  /** A parseable PNG, so the content pipeline accepts the payload. */
+  const AGENT_PNG = png(72);
 
   it("agent_image stores an attachment and keeps its place among the text", () => {
     const base64 = AGENT_PNG.toString("base64");

@@ -217,15 +217,28 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/agent-image-store.test.ts`
   - an inline image is written to the shared attachment layout with a row and an unsigned base path; the wire's mime claim is ignored in favour of the content
-  - dimensions come from the bytes, the row goes with the task, and a second image is named in sequence
-  - a WebP is stored but carries no dimensions (no parser), so no layout box is reserved — pinned so a future parser is a deliberate change
+  - dimensions come from the bytes (PNG, GIF, JPEG and WebP alike), the row goes
+    with the task, and a second image is named in sequence
+  - a WebP is stored with its dimensions, so the thumbnail reserves its layout
+    box before the bytes load
   - an image above `limits.image_upload`, a payload that is not a storable image container, an empty/malformed payload, and a file-write failure each become visible `[image omitted: …]` text with no file and no row
+
+- `test/image-info.test.ts`
+  - one byte reading yields both facts: PNG, GIF, JPEG (baseline and progressive
+    SOF2) and all three WebP chunk layouts (`VP8 `, `VP8L`, `VP8X`) return their
+    MIME and pixel size; a zero-sized header keeps the MIME and drops the size
+  - formats the library measures but this app does not serve (BMP, AVIF, SVG
+    text) return null, as do bytes no container claims
+  - a matching signature is not enough: a PNG without IHDR, a lossless JPEG
+    (SOF3, which no browser renders) and a bare two-byte JPEG SOI prefix all
+    return null, so nothing is stored for a picture the client cannot decode
 
 - `test/tool-result-images.test.ts` (the normal ACP path)
   - an image content block in a `tool_call_update` (bare or wrapped in
-    `content`) is written to the shared attachment layout with a row and an
-    unsigned descriptor; the persisted event and the live broadcast carry no
-    base64 and keep the surrounding text; the wire's mime claim is ignored
+    `content`) is written to the shared attachment layout with a row, its
+    server-measured dimensions, and an unsigned descriptor; the persisted event
+    and the live broadcast carry no base64 and keep the surrounding text; the
+    wire's mime claim is ignored
   - an image that exists only in `_meta` is not stored: no row, no payload in
     the row, and `_meta` itself is dropped from the stored item
   - a `_meta` nested 2000 and 5000 levels deep does not cost the event: it is

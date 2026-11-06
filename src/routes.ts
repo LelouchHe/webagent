@@ -154,7 +154,7 @@ import {
   normalizeDisplayName,
   sniffMime,
 } from "./attachments.ts";
-import { readImageDimensions } from "./image-dimensions.ts";
+import { readImageInfo } from "./image-info.ts";
 import { HTTP_STATUS } from "./http-status.ts";
 
 const IS_WIN = process.platform === "win32";
@@ -617,8 +617,9 @@ async function handleAttachmentUpload(
               finalPath = join(dir, `${uploadId}.${fileExt}`);
             }
           }
-          const imageDimensions =
-            kind === "image" ? readImageDimensions(head) : null;
+          // The same bytes answer the mime question above and, for an image,
+          // the pixel dimensions stored on the row.
+          const imageInfo = kind === "image" ? readImageInfo(head) : null;
           await rename(tmpPath, finalPath);
           const rp = await realpath(finalPath);
           const row = store.insertAttachment({
@@ -629,8 +630,8 @@ async function handleAttachmentUpload(
             mime: fileMime,
             size: bytesWritten,
             realpath: rp,
-            width: imageDimensions?.width ?? null,
-            height: imageDimensions?.height ?? null,
+            width: imageInfo?.width ?? null,
+            height: imageInfo?.height ?? null,
           });
           // Invalidate the per-task attachment label cache so the
           // next egress (SSE broadcast or replay) sees this new row.

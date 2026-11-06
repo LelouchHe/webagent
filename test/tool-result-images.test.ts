@@ -16,6 +16,7 @@ import {
   textOf,
   type ToolResultImageHarness,
 } from "./tool-result-images-harness.ts";
+import { jpeg } from "./image-bytes.ts";
 
 /**
  * The normal path: an ACP image block inside a `tool_call_update`.
@@ -64,6 +65,12 @@ describe("tool-result images: ACP image blocks", () => {
     assert.ok(row, "an attachments row must exist");
     assert.ok(existsSync(row.realpath));
     assert.equal(readFileSync(row.realpath).length, 200);
+    // The header is parseable, so the thumbnail knows its box before the bytes
+    // arrive — the fixture is a real container, not a bare signature.
+    assert.equal(row.width, 320);
+    assert.equal(row.height, 240);
+    assert.equal(descriptor.width, 320);
+    assert.equal(descriptor.height, 240);
 
     // Neither the stored rows nor the live broadcast carries the bytes, and
     // the text block keeps its place.
@@ -113,10 +120,8 @@ describe("tool-result images: ACP image blocks", () => {
   });
 
   it("accepts the wrapped block shape too, and ignores the claimed mime", () => {
-    const bytes = Buffer.concat([
-      Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
-      Buffer.alloc(120, 3),
-    ]);
+    // A real JPEG header (SOI + APP0 + SOF0) that the block mislabels as PNG.
+    const bytes = jpeg(124);
     harness.toolCall("t1", "Screenshot");
     harness.emit(
       harness.update("t1", [
@@ -137,6 +142,8 @@ describe("tool-result images: ACP image blocks", () => {
     assert.ok(descriptor);
     assert.equal(descriptor.mimeType, "image/jpeg");
     assert.match(String(descriptor.path), /\.jpg$/);
+    assert.equal(descriptor.width, 320);
+    assert.equal(descriptor.height, 240);
   });
 
   it("replaces an oversized image with visible text and writes nothing", () => {
