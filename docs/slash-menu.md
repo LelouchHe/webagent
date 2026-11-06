@@ -10,8 +10,10 @@ input starts with `/`. It is the only surface for slash-style commands; both
 > `task-command.ts` parses them with their own grammar and builds the same
 > `Candidate` list directly, without the `CmdNode` walker. They do share this
 > menu's rendering and key handling — one `renderItem`, one Tab/Enter/Click
-> contract in `commands.ts` — so a change here can reach them too. Their user
-> contract lives in [Task UX](task-ux.md).
+> contract in `commands.ts` — so a change here can reach them too, and they
+> consume the same argument semantics (`raw` bytes, coordinate-aware filtering)
+> that `field` gives walker nodes. Their user contract lives in
+> [Task UX](task-ux.md).
 
 ## Goals
 
@@ -43,31 +45,67 @@ The thin driver [`commands.ts`](../public/js/commands.ts) glues them: input → 
 interface CmdNode {
   name: string; // '/foo' at root, 'bar' for children
   desc?: string; // shown as secondary in the parent menu
+  help?: string; // fuller one-line description shown by /help
   children?: CmdNode[]; // subcommands, walker prefixes them with ›
-  fetch?: () => unknown[] | Promise<unknown[]>; // sync OR async data
+  fetch?: (query: string) => unknown[] | Promise<unknown[]>; // sync OR async data
+  fetchKey?: (query: string) => string; // cache partition; same key = no refetch
   toSpec?: (item: unknown) => SlashItemSpec;
   matches?: (item: unknown, q: string) => boolean; // optional non-primary filter
   freeform?: (q: string) => SlashItemSpec | null; // "create on the fly" row
+  field?: (rawRemainder: string) => FieldView; // this node's argument field
   onSelect?: () => void | Promise<void>; // leaf action
 }
 ```
 
 Field absence = capability not present. A node with only `children` is a pure submenu; a node with only `fetch + toSpec` is a pure list (e.g. `/mode`); a node with `freeform` plus `fetch` is a list-with-create (e.g. `/token`).
 
+`fetchKey` is what keeps a scoped list from re-fetching on every keystroke: the controller re-fetches only when the key changes and otherwise filters the cached items locally (`/view` keys on the directory).
+
+## FieldView — a node's own argument field
+
+`field` is how a node takes responsibility for its **arguments**, which the walker's normalised `tailQuery` cannot express:
+
+```ts
+interface FieldView {
+  filter: string; // what the data rows filter on
+  raw: string; // raw text handed to `freeform`
+  trail: Candidate[]; // rows appended below the data section
+  decorate?: (spec: SlashItemSpec, item: unknown) => SlashItemSpec;
+}
+```
+
+Why it exists: `tailQuery` is rebuilt by splitting on whitespace, dropping empty tokens and re-joining — so it loses trailing whitespace (the difference between "still typing a token" and "token finished") and collapses interior runs such as `~/a  b`. Anything that must see the argument byte for byte has to read `rawRemainder`.
+
+Today three nodes provide a field, all through one helper in `slash-commands.ts`:
+
+| Member | What it buys |
+|---|---|
+| `filter` | With a settled `<agent>:` coordinate, path completion filters on the suffix only |
+| `raw` | The action row previews and submits exactly the bytes Enter would |
+| `trail` | A row appended *below* the list (the agent hint line), never above it |
+| `decorate` | Acting on a fetched row keeps the field's settled parts (the coordinate's agent) |
+
+`trail` rows are dropped while the data section is showing a placeholder: a menu that is already saying `(no match)` should not also carry an explanation of an empty list.
+
+
 ## Walker contract (frozen)
 
-`resolvePath(input, root)` → `{ node, pathPrefix, tailQuery }`
+`resolvePath(input, root)` → `{ node, pathPrefix, tailQuery, rawRemainder }`
 
 - A trailing space in the input promotes the last token to a "completed" segment — the walker descends into it.
 - Without trailing space, the last token is the `tailQuery` (filter target).
 - On any token mismatch the walker degrades to the deepest matched node and rolls leftover tokens into `tailQuery`.
+- `rawRemainder` is everything after the consumed command path, byte for byte (leading separator removed). It is sliced by token offset, never re-joined, which is why it can carry the argument to `field` intact.
 
-`buildCandidates(node, tailQuery, data?)` returns `Candidate[]`, ordered:
+`buildCandidates(node, tailQuery, data?, field?)` returns `Candidate[]`, ordered:
 
 1. **Subcommands** (`›` prefix, hierarchical drill-in)
-2. **Freeform** (`›` prefix, suppressed when the query matches a primary case-insensitively)
-3. **Separator** (only when both a `›` group and a data section are present)
+2. **Freeform** (`↵` prefix, suppressed when the query matches a primary case-insensitively)
+3. **Separator** (only when both a `›`/`↵` group and a data section are present)
 4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`
+5. **`field.trail` rows** (only when a `field` supplied them, and never beside a placeholder)
+
+`Candidate.kind` (`subcommand` / `freeform` / `data` / `placeholder` / `separator`) is what dispatches selection and clicks; `placeholder` and `separator` are never selectable and are skipped by arrow keys.
 
 ## Visual template (`renderItem`)
 
@@ -89,9 +127,11 @@ There is exactly one renderer. Adding visual variants means extending `SlashItem
 | ----------------------------- | ----------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------- |
 | Subcommand with more under it | Fill `<path> <name> ` (trailing space; menu re-walks) | Fill + drill in                                        | Ignores menu; raw text → `handleSlashCommand` |
 | Pure-leaf subcommand          | Fill `<path> <name>`                                  | Run `onSelect`, close menu                             | Same as above                                 |
-| Data row                      | Fill `<path> <primary>`                               | Run `onSelect` (or system message if read-only), close | Same                                          |
-| Freeform                      | No-op (input already represents the freeform)         | Run `freeform.onSelect`, close                         | Same                                          |
+| Data row                      | Fill `<path> <fill ?? primary>`                       | Run `onSelect` (or system message if read-only), close | Same                                          |
+| Freeform                      | No-op unless `spec.continueOnFill`                      | Run `freeform.onSelect`, close                         | Same                                          |
 | Placeholder / separator       | No-op                                                 | No-op                                                  | —                                             |
+
+A data row that sets `spec.continueOnFill` keeps the menu open after filling, which is how a drill-in path (fill the coordinate prefix, then complete the suffix) is expressed without a new key binding.
 
 Enter **never** consumes the highlighted menu item. This keeps "type the full command" and "pick from the menu" as cleanly separated workflows; users who memorize commands are never surprised by the cursor jumping into the menu.
 
@@ -103,6 +143,7 @@ Enter **never** consumes the highlighted menu item. This keeps "type the full co
    - Has a "create on the fly" path? Add `freeform`.
    - Has subcommands like `/x ack` or `/x rev`? Add `children`.
 2. If the menu's filter should look at fields not shown in `primary` (e.g. id prefix for `/switch`), add `matches`.
+3. If the command's argument is more than "a filter string" — it needs raw bytes, its own row ordering, or rows that keep state when acted on — add `field` and build a `FieldView`. Do not widen `SlashItemSpec` for it, and do not append rows above the data section: `trail` is the only supported position.
 3. Add a case to `slash-exec.ts` for the Enter path. Aim to call the same helper that `onSelect` calls — duplication of parsing logic is fine, duplication of side-effects is not.
 4. Tests: add a unit test in `test/slash-tree.test.ts` if the tree shape itself is novel; add an E2E spec under `test/e2e/slash-menu-*.spec.ts` for the user-visible flow.
 
