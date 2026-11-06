@@ -30,7 +30,7 @@
     "config.toml"
   ],
   "scripts": {
-    "compile": "tsc -p tsconfig.build.json",
+    "compile": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "create-token": "node --experimental-strip-types scripts/create-token.ts",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run compile && npm run build",
