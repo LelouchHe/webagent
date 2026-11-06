@@ -59,6 +59,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the per-request description lists only the configured agents (a configured-but-not-advertised agent is absent)
   - same-agent regression: inheritance still carries the parent's stored model, and same-agent validation reports its own schema's candidates
 
+- `test/mcp-create-errors.test.ts` (pure builders and the shared composer)
+  - a 900-character id is dropped whole (no pseudo-id fragment) while the failure category and the `agent` omission hint survive
+  - a start reason with embedded newlines is flattened into one line, so the message stays at two lines instead of eight
+  - an over-long start reason / requested value / current value is dropped whole; the guidance and the target id remain
+  - a message of exactly the 400-character ceiling keeps the reason, and a composer of exactly six lines keeps all six
+  - the line budget counts real line breaks, not parts: a three-line variant consumes three lines
+  - a small candidate set is listed with the current value, a wide one becomes its count, and an unreported option offers no values at all
+
 - `test/mcp-task-create-description.test.ts`
   - a single-agent deployment keeps the plain description (no cross-agent wording, no id list)
   - every configured id is listed whole when it fits; duplicates collapse; the whole description stays within 1024 characters
