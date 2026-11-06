@@ -538,9 +538,10 @@ export function refreshSlashMenuRows(): void {
 }
 
 /**
- * Repaint an open `+`/`@` menu when the current binding changes: its agent rows
- * star the current binding, and a binding that only arrives after the first
- * paint must not leave a stale star (or a stale absence of one) on screen.
+ * Repaint an open `+`/`@` menu when the current binding changes: the agent hint
+ * names an agent the task is *not* running on, so a binding that arrives (or
+ * changes) after the first paint would otherwise leave the hint pointing at the
+ * current agent, which demonstrates nothing.
  */
 function refreshTaskCommandMenu(): void {
   if (!dom.slashMenu.classList.contains("active")) return;

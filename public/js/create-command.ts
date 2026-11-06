@@ -142,7 +142,11 @@ export function taskAgentFailureLines(
     err instanceof api.ApiError &&
     err.status === HTTP_STATUS.SERVICE_UNAVAILABLE
   ) {
-    const rescue = agentRescueCommand(failedAgentId, cwd ?? "");
+    // The server names the agent it really tried: an inherited target can be
+    // the default rather than the binding this client submitted against, and
+    // rescuing onto the agent that just failed is the one wrong answer.
+    const attempted = err.agentId ?? failedAgentId;
+    const rescue = agentRescueCommand(attempted, cwd ?? "");
     if (rescue !== null) lines.push(rescue);
   }
   return lines;

@@ -521,6 +521,45 @@ describe("api module", () => {
     );
   });
 
+  it("lifts the agent a failed start named out of the error body", async () => {
+    fetchResponse = {
+      status: 503,
+      ok: false,
+      json: () =>
+        Promise.resolve({
+          error: "Agent copilot is not available: spawn failed",
+          agentId: "copilot",
+        }),
+      text: () => Promise.resolve(""),
+    };
+    await assert.rejects(
+      () => api.clearTask("s1", { agentId: "copilot" }),
+      (err: any) => {
+        assert.equal(err.status, 503);
+        // The server's own target: an inherited one may differ from the
+        // agent the caller submitted against.
+        assert.equal(err.agentId, "copilot");
+        return true;
+      },
+    );
+  });
+
+  it("leaves the agent unset when the error body does not name one", async () => {
+    fetchResponse = {
+      status: 503,
+      ok: false,
+      json: () => Promise.resolve({ error: "agent not ready" }),
+      text: () => Promise.resolve(""),
+    };
+    await assert.rejects(
+      () => api.deleteTask("s1"),
+      (err: any) => {
+        assert.equal(err.agentId, null);
+        return true;
+      },
+    );
+  });
+
   it("handles non-JSON error responses gracefully", async () => {
     fetchResponse = {
       status: 500,

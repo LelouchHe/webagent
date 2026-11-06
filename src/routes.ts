@@ -2554,6 +2554,10 @@ export function createRequestHandler(
         } catch (err) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: `Agent ${targetAgentId} is not available: ${errorMessage(err)}`,
+            // The target was chosen by the server (explicit, bound, or
+            // default), so the caller cannot always know which agent it tried.
+            // Naming it lets a rescue exclude the agent that just failed.
+            agentId: targetAgentId,
           });
           return;
         }
@@ -2852,6 +2856,10 @@ export function createRequestHandler(
               err instanceof AgentUnavailableError
                 ? `Agent ${targetAgentId} is not available: ${errorMessage(err)}`
                 : errorMessage(err),
+            // The create target may be inherited (parent binding, else the
+            // default): name what was really attempted so a rescue can exclude
+            // it instead of guessing.
+            agentId: targetAgentId,
           });
           return;
         }

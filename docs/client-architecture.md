@@ -511,10 +511,14 @@ are an open set that must be completed. Therefore no menu offers agent rows:
   through `CmdNode.field`. That raw text is the field's filter, the freeform
   action row's input, and the hint's input, so the preview, the request body,
   and the hint cannot disagree about the same bytes.
-- **Picking a path after a coordinate.** When a coordinate is settled, fetched
-  path rows are decorated: they filter on the suffix, display `<agent>:<cwd>`,
-  and their selection submits that agent with the directory (`/clear <id>:`
-  sends no `cwd`; `/new <id>:` uses the server default directory).
+- **Picking a path after a coordinate.** For the two walker entries
+  (`/clear`, `/new`), a settled coordinate decorates the fetched path rows: they
+  filter on the suffix, display `<agent>:<cwd>`, and their selection submits
+  that agent with the directory (`/clear <id>:` sends no `cwd`; `/new <id>:`
+  uses the server default directory). `+` builds its own rows instead: its path
+  rows keep the plain directory label, and the settled `<agent>:` lives in the
+  fill value (so completing a path keeps the prefix without relabelling the
+  row).
 
 ### Parent Reference and Agent Coordinates
 

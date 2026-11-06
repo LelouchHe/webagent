@@ -435,6 +435,81 @@ describe("coordinate entries", () => {
     assert.doesNotMatch(text, /\/other/);
   });
 
+  it("does not rescue onto the agent the server actually tried", async () => {
+    // An implicit target is chosen by the server: an unbound task, or one whose
+    // binding left the configuration, resolves to the configured default. The
+    // client's submission-time guess is null/removed, so a rescue built from it
+    // would point straight back at the agent that just failed.
+    const failure = (agentId: string) =>
+      json(
+        { error: `Agent ${agentId} is not available: spawn failed`, agentId },
+        503,
+      );
+
+    // `/new` from a task with no binding.
+    state.taskAgentId = null;
+    handler = (url, init) =>
+      url === "/api/v1/tasks" && init?.method === "POST"
+        ? failure("pi")
+        : defaultHandler(url, init);
+    await commands.handleSlashCommand("/new");
+    await settle();
+    let text = lines().join("\n");
+    assert.match(text, /err: create failed — Agent pi is not available/);
+    assert.doesNotMatch(
+      text,
+      /\/clear pi:/,
+      "not back onto the failed default",
+    );
+
+    // `+` from a task whose binding is no longer configured.
+    calls = [];
+    state.taskId = "old-1";
+    state.taskAgentId = "removed";
+    handler = (url, init) =>
+      url === "/api/v1/tasks" && init?.method === "POST"
+        ? failure("pi")
+        : defaultHandler(url, init);
+    await taskCommand.executeTaskCommand("+next");
+    await settle();
+    text = lines().join("\n");
+    assert.match(text, /Agent pi is not available/);
+    assert.doesNotMatch(text, /\/clear pi:/);
+
+    // `/clear` with the same removed binding.
+    calls = [];
+    state.taskId = "old-1";
+    state.taskAgentId = "removed";
+    handler = (url, init) =>
+      url.endsWith("/clear") && init?.method === "POST"
+        ? failure("pi")
+        : defaultHandler(url, init);
+    await commands.handleSlashCommand("/clear");
+    await settle();
+    text = lines().join("\n");
+    assert.match(text, /Failed to clear task — Agent pi is not available/);
+    assert.doesNotMatch(text, /\/clear pi:/);
+  });
+
+  it("keeps the rescue when the failed target is not the default", async () => {
+    // The server's agent id is also what makes the *explicit* paths safe: the
+    // default is a different agent, so the one-line rescue still appears.
+    handler = (url, init) =>
+      url.endsWith("/clear") && init?.method === "POST"
+        ? json(
+            {
+              error: "Agent copilot is not available: handshake failed",
+              agentId: "copilot",
+            },
+            503,
+          )
+        : defaultHandler(url, init);
+    await commands.handleSlashCommand("/clear copilot:");
+    const text = lines().join("\n");
+    assert.match(text, /Failed to clear task — Agent copilot is not available/);
+    assert.match(text, /\/clear pi:\/work/);
+  });
+
   it("offers a rescue line when the named agent will not start", async () => {
     handler = (url, init) => {
       if (url.endsWith("/clear") && init?.method === "POST") {

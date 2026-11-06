@@ -46,9 +46,11 @@ describe("configured agent directory", () => {
     }
   });
 
-  it("lists an agent whose launch command is missing, because configuration is the fact", async () => {
-    // The B command does not exist; that changes nothing about the directory,
-    // so the client can still name it (and gets the real 503 if it tries).
+  it("lists a configured agent that has no started transport", async () => {
+    // Configuration is the fact, not whether a transport is bound: nothing is
+    // started here, and both agents are listed anyway. (A configured agent
+    // whose launch command is missing is covered where that condition is really
+    // established: the `ghost` case in `test/e2e/agent-hint.spec.ts`.)
     const harness = await startHarness({ configured: ["a", "b"], started: [] });
     try {
       const config = await harness.request("GET", "/api/v1/config");

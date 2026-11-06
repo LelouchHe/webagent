@@ -361,9 +361,51 @@ describe("agent hint", () => {
   it("keeps a coordinate's raw suffix byte for byte", async () => {
     const list = await open("/new copilot:~/a  b");
     assert.equal(list[0].primary, "create task at 'copilot:~/a  b'");
-    // The suffix with a TAB is the filter, not a separator.
-    const tabbed = await open("/clear copilot:~/work\trel");
-    assert.equal(tabbed[0].primary, "clear and start at 'copilot:~/work\trel'");
+  });
+
+  it("filters on the suffix's exact bytes, not a flattened form", async () => {
+    // Four candidates that differ only in the *kind* of internal whitespace.
+    // A completion layer that normalizes its filter word would show all of them
+    // for any one query, and the user would act on the wrong directory.
+    recents = [
+      { cwd: "/work/a  b", cwdDisplay: "~/a  b", last_used_at: "2026-01-01" },
+      { cwd: "/work/a b", cwdDisplay: "~/a b", last_used_at: "2026-01-01" },
+      { cwd: "/work/a\tb", cwdDisplay: "~/a\tb", last_used_at: "2026-01-01" },
+      {
+        cwd: "/work/a\u3000b",
+        cwdDisplay: "~/a\u3000b",
+        last_used_at: "2026-01-01",
+      },
+      {
+        cwd: "/work/rel",
+        cwdDisplay: "~/work/rel",
+        last_used_at: "2026-01-01",
+      },
+    ];
+    const cases = [
+      { suffix: "~/a  b", cwd: "/work/a  b" },
+      { suffix: "~/a b", cwd: "/work/a b" },
+      { suffix: "~/a\tb", cwd: "/work/a\tb" },
+      { suffix: "~/a\u3000b", cwd: "/work/a\u3000b" },
+    ];
+    for (const testCase of cases) {
+      calls = [];
+      const list = await open(`/clear copilot:${testCase.suffix}`);
+      const rowsWithPrefix = labels(list).filter((primary) =>
+        primary.startsWith("copilot:"),
+      );
+      assert.deepEqual(
+        rowsWithPrefix,
+        [`copilot:${testCase.suffix}`],
+        `exactly one candidate for ${JSON.stringify(testCase.suffix)}`,
+      );
+      await click(`copilot:${testCase.suffix}`, list);
+      // ...and the request carries the bytes that row showed.
+      assert.deepEqual(bodyOf("POST", "/clear"), {
+        cwd: testCase.cwd,
+        agentId: "copilot",
+      });
+    }
   });
 
   // --- one line, and not a value ---

@@ -295,6 +295,10 @@ describe("creating a task for a named agent", () => {
         String(created.json.error),
         /spawn failed: ENOENT \/opt\/webagent\/agent-b/,
       );
+      // The response names the agent it really tried, because a create target
+      // can be inherited: the client cannot always know it to exclude it from a
+      // rescue.
+      assert.equal(created.json.agentId, AGENT_B);
       // No silent substitution onto the parent's agent.
       assert.equal(harness.agents.a.newSessions.length, sessionCount);
       assert.deepEqual(
@@ -320,6 +324,7 @@ describe("creating a task for a named agent", () => {
         String(inherited.json.error),
         /spawn failed: ENOENT \/opt\/webagent\/agent-b/,
       );
+      assert.equal(inherited.json.agentId, AGENT_B);
     } finally {
       await harness.close();
     }

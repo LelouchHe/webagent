@@ -216,14 +216,27 @@ yet, so it is legal even when the parent runs on another agent; the parent's
 binding is never changed. It is checked before anything starts: an
 unconfigured or non-string value is refused with `400`. A configured agent that
 cannot start is a `503` that keeps the real failure reason, and the task is not
-silently created on the parent's agent instead.
+silently created on the parent's agent instead. That `503` body also names the
+agent it actually tried:
+
+```json
+{
+  "error": "Agent copilot is not available: spawn failed: ENOENT",
+  "agentId": "copilot"
+}
+```
+
+The target can be inherited (parent binding, else `default_agent`), so a caller
+cannot always know it; naming it lets a rescue exclude the agent that just
+failed instead of pointing at it again.
 
 Execution config does not cross agents: a new task created for a different agent
 than `inheritFromTaskId`'s does not inherit that task's `model` or
 `reasoning_effort`. A same-agent creation keeps inheriting them.
 
 **Errors:** `400` (directory doesn't exist, `agentId` not configured or not a
-string), `503` (the target agent could not be started)
+string), `503` (the target agent could not be started; the body carries `error`
+plus `agentId`, the agent really attempted)
 
 **Side effects:**
 
@@ -395,7 +408,8 @@ task's runtime metadata.
 
 **Errors:** `400` (invalid cwd, an `agentId` that is not configured, or a
 replacement failure), `404` (task not found), `409` (task is busy), `503` (the
-target agent could not be started)
+target agent could not be started; the body carries `error` plus `agentId`, the
+agent really attempted — the target is inherited when the request names none)
 
 ---
 

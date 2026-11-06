@@ -62,7 +62,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/multi-agent-create.test.ts` (HTTP + direct runtime)
   - creating for a named agent binds it with exactly one session on that agent, none on the parent's agent, and leaves no rotation record; the parent's binding is untouched
   - a same-agent create still inherits the source task's model and reasoning effort; a cross-agent create sends the source's values nowhere and reports the target's own schema
-  - an unconfigured or non-string `agentId` is refused with `400` before anything starts, and a configured agent that cannot start returns `503` with its real reason (no silent substitution)
+  - an unconfigured or non-string `agentId` is refused with `400` before anything starts, and a configured agent that cannot start returns `503` with its real reason plus the agent it tried (`agentId`), for an explicit target and for an inherited one (no silent substitution)
   - the parent-binding guard still refuses a child built through another agent's transport unless that caller named the target
 
 - `test/multi-agent-execution-config.test.ts` (HTTP + direct runtime; two agents with distinguishable schemas)
@@ -106,6 +106,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/multi-agent-clear.test.ts` (HTTP)
   - `/clear { agentId }` moves a task off a removed agent, records `explicit_clear`, preserves history, and creates exactly one session on the configured agent
   - an unconfigured `agentId`, a non-string `agentId`, and the default-to-binding path
+  - a configured agent whose transport cannot be created answers `503` naming that agent (`agentId`), because a clear without `agentId` inherits its target
 
 - `test/multi-agent-server.test.ts` (black-box: real server process + two mock agents)
   - boot starts zero agents; the first task starts only the default agent
@@ -193,6 +194,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
     default unless it is the failed target (then nothing, and never a PATH-based
     next-best), keeping spaces in the cwd; a 400 unconfigured agent appends
     nothing
+  - the exclusion uses the agent the server says it tried (`agentId` in the 503
+    body), not the caller's guess: an unbound task, a task whose binding left the
+    configuration, and an explicit coordinate all pointed at the default failing
+    (`agentId: pi`) produce no rescue onto `pi`; a failing non-default target
+    (`agentId: copilot`) still produces `/clear pi:<cwd>`
+  - `ApiError` lifts that `agentId` out of the body (and leaves it `null` when
+    the body names none)
   - the picker's action row and Enter submit the same `(agent, cwd)` projection
     for `/new` and `/clear`; `/clear <agent>:` sends no `cwd` field at all
   - the fidelity boundary: `copilot:~/a ` equals `copilot:~/a`, `copilot: `
@@ -1014,10 +1022,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and
     attaches it under the launching task (`/exit` returns there)
-  - the `/new` picker leads with the `create task` action row, then the agent
-    rows, then the current cwd — marked `*` on that row itself — and only then
-    other recent directories (a second recent directory makes the order real,
-    not vacuous)
+  - the `/new` picker leads with the `create task` action row, then the current
+    cwd — marked `*` on that row itself — and only then other recent
+    directories (a second recent directory makes the order real, not vacuous)
   - `/new <relative>` resolves against the current task cwd on both Enter and
     the picker action row, and the preview names the resolved directory
   - `+<title>` creates a titled child without switching; `@<title> <body>` then

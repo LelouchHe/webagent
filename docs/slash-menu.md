@@ -76,7 +76,7 @@ interface FieldView {
 
 Why it exists: `tailQuery` is rebuilt by splitting on whitespace, dropping empty tokens and re-joining — so it loses trailing whitespace (the difference between "still typing a token" and "token finished") and collapses interior runs such as `~/a  b`. Anything that must see the argument byte for byte has to read `rawRemainder`.
 
-Today three nodes provide a field, all through one helper in `slash-commands.ts`:
+Today two walker nodes provide a field (`/clear` and `/new`), both through one helper in `slash-commands.ts`. `+` does not go through `CmdNode` at all — it assembles its own candidates — but reads the same `parseCoordinate` result and builds the same hint row, so the three entries share one semantic, not one code path.
 
 | Member | What it buys |
 |---|---|

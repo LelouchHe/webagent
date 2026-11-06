@@ -6,9 +6,14 @@ import type { ConfigOption, TaskDetail, TaskSummary } from "../../src/types.ts";
 export class ApiError extends Error {
   name = "ApiError";
   status: number;
-  constructor(status: number, message: string) {
+  /** The agent the server actually tried to start, when the failure names one.
+   *  A create/clear target can be inherited, so the caller's submission-time
+   *  guess may be wrong; this is the server's own answer. */
+  agentId: string | null;
+  constructor(status: number, message: string, agentId: string | null = null) {
     super(message);
     this.status = status;
+    this.agentId = agentId;
   }
 }
 
@@ -92,6 +97,7 @@ async function request<T = unknown>(
     const res = await fetch(url, signal ? { ...init, signal } : init);
     if (!res.ok) {
       let message = `HTTP ${res.status}`;
+      let agentId: string | null = null;
       try {
         const body = (await res.json()) as Record<string, unknown>;
         if (body.error)
@@ -99,10 +105,13 @@ async function request<T = unknown>(
             typeof body.error === "string"
               ? body.error
               : JSON.stringify(body.error);
+        // Only this one field is lifted out of the body: a failed start names
+        // its real target, everything else stays a message.
+        if (typeof body.agentId === "string") agentId = body.agentId;
       } catch {
         /* non-JSON error body */
       }
-      throw new ApiError(res.status, message);
+      throw new ApiError(res.status, message, agentId);
     }
     const text = await res.text();
     if (!text) return undefined as T;
