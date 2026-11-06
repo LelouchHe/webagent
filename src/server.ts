@@ -31,10 +31,6 @@ import { join as pathJoin } from "node:path";
 import { resolveTasksAnchor } from "./tasks-anchor.ts";
 import { runStartupChecks } from "./startup-checks.ts";
 import { startE2EHeartbeatWatchdog } from "./e2e-watchdog.ts";
-import {
-  checkAgentAvailability,
-  formatAvailabilityWarnings,
-} from "./agent-availability.ts";
 import { AttachmentDispatcher } from "./attachment-dispatch.ts";
 import { buildBridgeEventHandlerConfig as _buildBridgeEventHandlerConfig } from "./bridge-event-config.ts";
 import {
@@ -60,21 +56,10 @@ setLogLevel(config.debug.level);
 // Unified startup gate: preflight (node, data_dir, port) + auth bootstrap
 // (mint or refuse). Skipped via WEBAGENT_STARTUP_CHECKED=1 when a parent
 // process (daemon supervisor) already ran the gate in the operator's
-// foreground TTY before forking. Agent CLI availability is deliberately not
-// part of this gate.
+// foreground TTY before forking. Agents are deliberately not part of this
+// gate: they start on demand, and an agent that cannot start says so with the
+// real reason on first use (503).
 await runStartupChecks(config);
-
-// One startup snapshot of which configured agents have a launch command on
-// PATH. It only feeds the operator warning below: the client-facing directory
-// is a configuration fact, and liveness is decided when an agent is really
-// started (503 with the real reason).
-const agentAvailability = checkAgentAvailability(config.agents);
-for (const line of formatAvailabilityWarnings(
-  agentAvailability,
-  config.default_agent,
-)) {
-  console.warn(line);
-}
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "..", config.public_dir);

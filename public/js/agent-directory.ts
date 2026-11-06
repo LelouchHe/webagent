@@ -3,8 +3,8 @@
 //
 // It answers exactly one question: which agents may a create target, and which
 // one is the configured default. It carries no liveness — whether an agent can
-// really start is decided when one is started (503 with the real reason), and a
-// startup PATH probe stopped travelling with it.
+// really start is decided when one is started (503 with the real reason), and
+// nothing probes PATH at startup.
 //
 // The other agent set in this client is different and must not be merged: the
 // agents of visible tasks (`task-topology.ts`) carry the parent binding a

@@ -170,8 +170,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
     entries; path rows keep their order and the submit row its default selection
   - all three end with one non-selectable hint line naming the configured
     agents and the syntax once; the example is an agent the task is not running
-    on (first configured when the binding is unknown), and the line degrades to
-    `type "id:"` when it would not fit
+    on (first configured when the binding is unknown)
   - the hint disappears once a coordinate is typed, with a single configured
     agent (menu byte-identical to before), and under a `(none)` placeholder
   - `buildCandidates` appends a field's trailing row last, except under a
@@ -771,13 +770,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/config.test.ts`
   - multi-agent TOML parsing, `default_agent` membership, lenient root/nested tables, strict agent-entry keys
   - rejects empty `agents`, empty `cmd`, invalid ids, unknown `default_agent`, and a leftover `agent_cmd` (before any startup side effect)
-- `test/agent-availability.test.ts`
-  - missing binaries are reported as per-agent runtime availability, not startup failures; warning names the default agent and states that its tasks are read-only with no execution available
 - `test/legacy-database.test.ts`
   - read-only refusal of tasks without a literal `root` / command-path `agent_key`s with the database bytes and directory unchanged
   - accepts a migrated DB (literal `root`, including a removed-but-valid agent id), ordinary prefix-shaped ids such as `root-forged` / `root-2f3a9c`, and a fresh DB
 - `test/server-bootstrap.test.ts`
-  - a missing default-agent binary still starts the service and emits a prominent warning
+  - a missing default-agent binary still starts the service: nothing probes PATH at boot, so the failure is the first use's 503 rather than a startup warning
 
 - `test/e2e-watchdog.test.ts` (injected clock, schedule, and stat)
   - without `E2E_RUN_DIR` (unset or empty) no timer is scheduled and no file is
@@ -1206,8 +1203,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the reloaded task is usable afterwards, with its history intact
 
 - `multi-agent-task.spec.ts` (suite server, two configured agents)
-  - `GET /config` and bootstrap name both agents with PATH availability and the
-    default agent
+  - `GET /config` and bootstrap name both agents as ids only, with the default
+    agent
   - a task created with `agentId: mock2` reports mock2's own defaults (never the
     first option of its lists) and carries no rotation record
   - clearing onto the other agent starts from that agent's environment, and

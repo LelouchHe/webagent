@@ -305,18 +305,6 @@ describe("agent hint", () => {
     assert.equal(hint(list), undefined);
   });
 
-  it("degrades to the short form when the line would not fit", async () => {
-    directory.resetAgentDirectoryForTest();
-    directory.installAgentDirectory(
-      [{ id: "alpha-agent" }, { id: "beta-agent" }, { id: "gamma-agent" }],
-      "alpha-agent",
-    );
-    assert.equal(
-      hint(await open("+api-fix "))?.primary,
-      'agents: alpha-agent, beta-agent, gamma-agent · type "id:"',
-    );
-  });
-
   // --- how the hint's example behaves when it is actually typed ---
 
   it("shows an example the submit chain accepts as a coordinate", async () => {

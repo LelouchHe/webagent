@@ -502,10 +502,10 @@ are an open set that must be completed. Therefore no menu offers agent rows:
   while the field is not already a coordinate, and never underneath a `(none)` /
   `(no match)` / loading / error placeholder — there the list itself already
   explains the empty result. The example names an agent the task is not
-  running on; when the line would exceed its budget it degrades to
-  `agents: pi, copilot · type "id:"` (the line must stay on one line at 390px).
-  It carries no availability: a startup PATH snapshot is neither current nor a
-  promise that the agent starts.
+  running on, and the line stays on one line at 390px (a `.slash-primary`
+  neither wraps nor scrolls by design).
+  It carries no availability: whether an agent can start is decided when it is
+  used, with the real reason.
 - **Raw input.** The walker's tail query is normalized (tokens re-joined and
   trimmed), so a node that owns a field reads `resolvePath(...).rawRemainder`
   through `CmdNode.field`. That raw text is the field's filter, the freeform

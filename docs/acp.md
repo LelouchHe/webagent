@@ -74,10 +74,10 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
   no value for. A read never takes a task over from an agent that left the
   configuration — that stays an operation's job — because a read has to answer
   while the agent is gone.
-- The configured agent directory (id + startup PATH availability) is reported
-  by `GET /api/v1/config` and bootstrap. It is a configuration fact: taking it
-  resolves and starts nothing, and `available: true` means the launch command
-  exists on PATH — not that the process can start, handshake, or authenticate.
+- The configured agent directory (ids only) is reported by `GET /api/v1/config`
+  and bootstrap. It is a configuration fact: taking it resolves and starts
+  nothing, and it says nothing about whether an agent can start, handshake, or
+  authenticate — that is decided when the agent is used.
 - The agent `connected` event names its agent (`agentId`) so a client can tell
   one agent coming up from another. The SSE connection handshake is a different
   event and carries no agent.
