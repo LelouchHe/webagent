@@ -96,9 +96,10 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`attachments.ts`**       | Attach (click/drag/paste) for images and files, preview, upload to server                          | `renderAttachPreview()`                                                                         |
 | **`render.ts`**            | DOM helpers: add messages, streaming markdown render, theme, scroll, diff HTML generation           | `addMessage()`, `addSystem()`, `scrollToBottom()`, `updateMarkdownStream()`, `resetMarkdownStream()` |
 | **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createTask()`, `sendMessage()`, `cancelTask()`, etc.                                     |
-| **`agent-directory.ts`**   | The configured agent directory from `GET /config` / bootstrap; PATH availability, default agent      | `installAgentDirectory()`, `getAgentDirectory()`, `availableAgentIds()`                          |
+| **`agent-directory.ts`**   | The configured agent directory from `GET /config` / bootstrap: ids in configuration order, default agent (no liveness) | `installAgentDirectory()`, `configuredAgentIds()`, `getDefaultAgentId()`                          |
 | **`task-topology.ts`**     | The current task's parent reference and the list-arrival flag          | `loadTaskList()`, `setCurrentTask()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
-| **`create-command.ts`**    | Shared `+` / `/new` / `/clear` helpers: coordinate parsing, cwd resolution, preview, failure rescue   | `parseCoordinate()`, `suggestCoordinatePrefix()`, `resolveCreateCwd()`, `agentRescueCommand()`    |
+| **`create-command.ts`**    | Shared `+` / `/new` / `/clear` helpers: coordinate parsing, cwd resolution, preview, failure rescue   | `parseCoordinate()`, `resolveCreateCwd()`, `agentRescueCommand()`                                |
+| **`agent-hint.ts`**        | The menus' one-line agent hint (non-selectable): configured agents and the coordinate syntax once    | `agentHintRow()`                                                                                 |
 
 **Dependency graph** (arrows = imports):
 
@@ -477,9 +478,47 @@ directory exists and fails as a directory error when it does not. `./` is the
   failure's rescue line cannot disagree between click and keyboard.
 - **Failure rescue.** When a configured agent cannot start (503), the client
   reports the server's reason and appends one plain, copyable line:
-  `/clear <live-agent>:<raw-cwd>`. `<live-agent>` is an available agent other
-  than the one that just failed, falling back to the configured default;
-  `<raw-cwd>` is the task's raw cwd. An unconfigured agent (400) gets no rescue.
+  `/clear <live-agent>:<raw-cwd>`. `<live-agent>` is the configured default
+  unless that is the agent that just failed, in which case no rescue is offered;
+  nothing is ranked by PATH presence. `<raw-cwd>` is the task's raw cwd. An
+  unconfigured agent (400) gets no rescue.
+
+#### Coordinate completion
+
+Agents are typed, paths are completed. Agent ids are a small closed set with
+short, constrained ids (`^[a-z0-9][a-z0-9-]*$`), so a user can name one; paths
+are an open set that must be completed. Therefore no menu offers agent rows:
+`+`, `/new`, and `/clear` end with one non-selectable hint line instead.
+
+- **One read, one meaning.** `parseCoordinate` is the only entry: a settled
+  coordinate makes its suffix (`cwd`) the completion filter and the request's
+  cwd, and its `<agent>:` is never rewritten or re-completed. `copilot:`,
+  `copilot:~/re`, and `copilot:~/a  b` all keep the suffix byte for byte.
+- **The hint (discovery).** A `placeholder` row at the very bottom, styled by
+  the existing `.slash-placeholder` (italic, dim, unselectable, no hover): the
+  configured agents and the syntax once, e.g.
+  `agents: pi, copilot · type "copilot:"`. It appears only when at least two
+  agents are configured (a single-agent menu is byte-for-byte unchanged), only
+  while the field is not already a coordinate, and never underneath a `(none)` /
+  `(no match)` / loading / error placeholder — there the list itself already
+  explains the empty result. The example names an agent the task is not
+  running on, and the line stays on one line at 390px (a `.slash-primary`
+  neither wraps nor scrolls by design).
+  It carries no availability: whether an agent can start is decided when it is
+  used, with the real reason.
+- **Raw input.** The walker's tail query is normalized (tokens re-joined and
+  trimmed), so a node that owns a field reads `resolvePath(...).rawRemainder`
+  through `CmdNode.field`. That raw text is the field's filter, the freeform
+  action row's input, and the hint's input, so the preview, the request body,
+  and the hint cannot disagree about the same bytes.
+- **Picking a path after a coordinate.** For the two walker entries
+  (`/clear`, `/new`), a settled coordinate decorates the fetched path rows: they
+  filter on the suffix, display `<agent>:<cwd>`, and their selection submits
+  that agent with the directory (`/clear <id>:` sends no `cwd`; `/new <id>:`
+  uses the server default directory). `+` builds its own rows instead: its path
+  rows keep the plain directory label, and the settled `<agent>:` lives in the
+  fill value (so completing a path keeps the prefix without relabelling the
+  row).
 
 ### Parent Reference and Agent Coordinates
 

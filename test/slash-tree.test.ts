@@ -4,6 +4,7 @@ import {
   resolvePath,
   buildCandidates,
   type CmdNode,
+  type FetchData,
 } from "../public/js/slash-tree.ts";
 
 // Build a representative tree for tests (mirrors the planned production tree
@@ -156,6 +157,23 @@ describe("slash-tree — resolvePath", () => {
     // We descended to dismiss, and 'stuff and more' is the tail
     assert.equal(r.node.name, "dismiss");
     assert.equal(r.tailQuery, "stuff and more");
+  });
+
+  it("keeps the raw remainder byte for byte next to the normalized tail", () => {
+    const root = makeRoot();
+    // Pathed commands consume a command token; everything after it is raw.
+    const field = (input: string) => resolvePath(input, root).rawRemainder;
+    assert.equal(field("/inbox"), "/inbox");
+    assert.equal(field("/inbox "), "");
+    assert.equal(field("/inbox co "), "co ");
+    assert.equal(field("/inbox co\t"), "co\t");
+    assert.equal(field("/inbox a  b"), "a  b");
+    assert.equal(field("/inbox a\u3000b"), "a\u3000b");
+    assert.equal(field("/inbox   two"), "two");
+    // A degraded token is still part of the raw remainder.
+    assert.equal(field("/inbox co\tx"), "co\tx");
+    // The normalized tail loses exactly what the raw remainder keeps.
+    assert.equal(resolvePath("/inbox a  b", root).tailQuery, "a b");
   });
 });
 
@@ -443,5 +461,43 @@ describe("slash-tree — buildCandidates", () => {
     const c = buildCandidates(rename, "newtitle");
     assert.equal(c.length, 1);
     assert.equal(c[0].kind, "freeform");
+  });
+
+  it("appends a field's trailing row last, except under a placeholder", () => {
+    const trail = [
+      {
+        spec: { primary: "hint" },
+        prefix: "" as const,
+        kind: "placeholder" as const,
+      },
+    ];
+    const view = (filter: string) => ({ filter, raw: filter, trail });
+    const field = (
+      data: unknown[],
+    ): CmdNode & { field: () => ReturnType<typeof view> } => ({
+      name: "field",
+      fetch: () => data,
+      toSpec: (item: unknown) => ({ primary: String(item) }),
+      field: () => view(""),
+    });
+    const primaries = (node: CmdNode, data: FetchData) =>
+      buildCandidates(node, "", data, node.field!("")).map(
+        (candidate) => candidate.spec.primary,
+      );
+
+    // A settled list: the trailing row is the very last one.
+    assert.deepEqual(primaries(field(["a"]), ["a"]), ["a", "hint"]);
+    // Every placeholder state already explains the empty list.
+    assert.deepEqual(primaries(field([]), []), ["(none)"]);
+    assert.deepEqual(primaries(field(["a"]), "loading"), ["(loading...)"]);
+    assert.deepEqual(primaries(field(["a"]), { error: "boom" }), ["(boom)"]);
+    assert.deepEqual(
+      buildCandidates(field(["a"]), "zz", ["a"], {
+        filter: "zz",
+        raw: "zz",
+        trail,
+      }).map((candidate) => candidate.spec.primary),
+      ["(no match)"],
+    );
   });
 });

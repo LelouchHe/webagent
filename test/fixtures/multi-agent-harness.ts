@@ -16,7 +16,6 @@ import {
 } from "../../src/agent-registry.ts";
 import { TaskManager } from "../../src/task-manager.ts";
 import { createRequestHandler } from "../../src/routes.ts";
-import type { AgentAvailability } from "../../src/agent-availability.ts";
 import type { ConfigOption } from "../../src/types.ts";
 import {
   createProfiledAgent,
@@ -65,8 +64,6 @@ export const A_CHOICES = {
 } as const;
 
 export interface HarnessOptions {
-  /** Startup PATH snapshot reported by `GET /api/v1/config`. */
-  agentAvailability?: AgentAvailability[];
   /** Agents present in configuration. Default: both. */
   configured?: AgentKey[];
   /** Agents whose transport is bound (i.e. startable). Default: configured. */
@@ -194,7 +191,9 @@ export async function startHarness(
       publicDir: join(dir, "public"),
       dataDir: dir,
       limits: { bash_output: 1024, image_upload: 1024 },
-      agentAvailability: configuration.agentAvailability,
+      agentIds: (configuration.configured ?? ["a", "b"]).map(
+        (key) => agents[key].agentId,
+      ),
     });
   let handler = makeHandler();
 

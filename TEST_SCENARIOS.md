@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-11-04
+Last updated: 2026-11-05
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -56,13 +56,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - `shutdownAll` reaches a transport whose adapter was already unbound
 
 - `test/multi-agent-directory.test.ts` (HTTP; two configured agents)
-  - `GET /config` and every bootstrap branch carry `agents` + `defaultAgentId`; each entry is exactly `id` + `available`, built from a controlled PATH (one real binary, one missing) rather than from the response
+  - `GET /config` and every bootstrap branch carry `agents` + `defaultAgentId`; each entry is exactly `id` (no PATH or liveness field), and an agent whose command is missing is still listed because configuration is the fact
   - taking the directory creates no adapter and no ACP session; bootstrap starts only the agent it materializes
 
 - `test/multi-agent-create.test.ts` (HTTP + direct runtime)
   - creating for a named agent binds it with exactly one session on that agent, none on the parent's agent, and leaves no rotation record; the parent's binding is untouched
   - a same-agent create still inherits the source task's model and reasoning effort; a cross-agent create sends the source's values nowhere and reports the target's own schema
-  - an unconfigured or non-string `agentId` is refused with `400` before anything starts, and a configured agent that cannot start returns `503` with its real reason (no silent substitution)
+  - an unconfigured or non-string `agentId` is refused with `400` before anything starts, and a configured agent that cannot start returns `503` with its real reason plus the agent it tried (`agentId`), for an explicit target and for an inherited one (no silent substitution)
   - the parent-binding guard still refuses a child built through another agent's transport unless that caller named the target
 
 - `test/multi-agent-execution-config.test.ts` (HTTP + direct runtime; two agents with distinguishable schemas)
@@ -106,6 +106,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/multi-agent-clear.test.ts` (HTTP)
   - `/clear { agentId }` moves a task off a removed agent, records `explicit_clear`, preserves history, and creates exactly one session on the configured agent
   - an unconfigured `agentId`, a non-string `agentId`, and the default-to-binding path
+  - a configured agent whose transport cannot be created answers `503` naming that agent (`agentId`), because a clear without `agentId` inherits its target
 
 - `test/multi-agent-server.test.ts` (black-box: real server process + two mock agents)
   - boot starts zero agents; the first task starts only the default agent
@@ -116,18 +117,16 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 ### Agent coordinates and labels
 
-- `test/agent-coordinate.test.ts` (pure parse + suggestion, no server)
+- `test/agent-coordinate.test.ts` (pure parse and rescue, no server)
   - the colon is the only marker: a configured prefix is a coordinate and the
     suffix keeps consecutive spaces, TAB, full-width spaces, a trailing space,
     and a literal backslash; `~/repo`, `/tmp/a:b`, `:~/repo`, `./agent:x`, an
     unknown prefix, and a case variant are one path
   - `notes:2026` is a path until an agent named `notes` exists, then a
     coordinate; `./notes:2026` stays a path either way
-  - `suggestCoordinatePrefix`: `""`/`co` suggest an agent, `co ` and `co /tmp`
-    do not, a settled coordinate re-targets completion at its suffix only, and
-    the baseline agent does not change the parse
-  - the rescue prefers an available agent other than the failed target, falls
-    back to the configured default, and yields nothing when none is left
+  - the rescue names the configured default unless it is the failed target, and
+    yields nothing when the default is absent or failed (PATH presence is never
+    consulted)
 
 - `test/task-topology.test.ts` (the current task's parent reference)
   - an activation hint (parent id + its binding, or a known absence) settles
@@ -148,6 +147,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - `createTask`/`clearTask` send a named `agentId`, omit it for `null` or an
     omitted option, and refuse an empty string locally before any request
 
+- `test/slash-tree.test.ts` (`resolvePath` raw remainder)
+  - `rawRemainder` keeps the argument byte for byte (trailing space, TAB,
+    interior double spaces, full-width space, a degraded token) while
+    `tailQuery` stays token-joined: the two answer different questions and a
+    node's field reads only the raw one
+
 - `test/agent-status-bar.test.ts` (DOM cwd field)
   - no prefix while the parent reference is unresolved, and none for a
     single-agent deployment (byte-identical text and tooltip, no agent node)
@@ -161,6 +166,21 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - an unbound current task draws nothing; a parent rotation repaints without
     navigation and removes the coordinate once the parent matches
 
+- `test/agent-hint.test.ts` (real menu pipeline for `+`, `/new`, `/clear`)
+  - no input produces an agent row (a bare `<id>:` label) on any of the three
+    entries; path rows keep their order and the submit row its default selection
+  - all three end with one non-selectable hint line naming the configured
+    agents and the syntax once; the example is an agent the task is not running
+    on (first configured when the binding is unknown)
+  - the hint disappears once a coordinate is typed, with a single configured
+    agent (menu byte-identical to before), and under a `(none)` placeholder
+  - `buildCandidates` appends a field's trailing row last, except under a
+    loading/error/`(none)`/`(no match)` placeholder
+  - the hint's example, typed verbatim, previews as that coordinate and the
+    request binds that agent; `/clear` and `/new` filter recent paths by the
+    coordinate's suffix and send the agent with the directory; a suffix with a
+    TAB or double space keeps its bytes
+
 - `test/agent-coordinate-entries.test.ts` (`+`, `/new`, `/clear` payloads)
   - `/clear` sends the coordinate's agent and raw cwd; `/new` omits the cwd for
     an empty suffix (server default) and sends the raw cwd otherwise; `+` sends
@@ -170,10 +190,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - an unconfigured prefix carries no `agentId` and resolves as a path; a
     configured `notes` prefix reads as a coordinate; a missing directory reports
     the raw value and never claims "not configured"
-  - a 503 start failure appends `/clear <live-agent>:<raw-cwd>` (excluding the
-    failed target, preferring available agents then the default, keeping spaces
-    in the cwd); a 400 unconfigured agent and an exhausted candidate list append
+  - a 503 start failure appends `/clear <default>:<raw-cwd>` — the configured
+    default unless it is the failed target (then nothing, and never a PATH-based
+    next-best), keeping spaces in the cwd; a 400 unconfigured agent appends
     nothing
+  - the exclusion uses the agent the server says it tried (`agentId` in the 503
+    body), not the caller's guess: an unbound task, a task whose binding left the
+    configuration, and an explicit coordinate all pointed at the default failing
+    (`agentId: pi`) produce no rescue onto `pi`; a failing non-default target
+    (`agentId: copilot`) still produces `/clear pi:<cwd>`
+  - `ApiError` lifts that `agentId` out of the body (and leaves it `null` when
+    the body names none)
   - the picker's action row and Enter submit the same `(agent, cwd)` projection
     for `/new` and `/clear`; `/clear <agent>:` sends no `cwd` field at all
   - the fidelity boundary: `copilot:~/a ` equals `copilot:~/a`, `copilot: `
@@ -751,13 +778,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/config.test.ts`
   - multi-agent TOML parsing, `default_agent` membership, lenient root/nested tables, strict agent-entry keys
   - rejects empty `agents`, empty `cmd`, invalid ids, unknown `default_agent`, and a leftover `agent_cmd` (before any startup side effect)
-- `test/agent-availability.test.ts`
-  - missing binaries are reported as per-agent runtime availability, not startup failures; warning names the default agent and states that its tasks are read-only with no execution available
 - `test/legacy-database.test.ts`
   - read-only refusal of tasks without a literal `root` / command-path `agent_key`s with the database bytes and directory unchanged
   - accepts a migrated DB (literal `root`, including a removed-but-valid agent id), ordinary prefix-shaped ids such as `root-forged` / `root-2f3a9c`, and a fresh DB
 - `test/server-bootstrap.test.ts`
-  - a missing default-agent binary still starts the service and emits a prominent warning
+  - a missing default-agent binary still starts the service: nothing probes PATH at boot, so the failure is the first use's 503 rather than a startup warning
 
 - `test/e2e-watchdog.test.ts` (injected clock, schedule, and stat)
   - without `E2E_RUN_DIR` (unset or empty) no timer is scheduled and no file is
@@ -997,8 +1022,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and
     attaches it under the launching task (`/exit` returns there)
-  - the `/new` picker leads with the `create task` action row and marks the
-    current cwd first with `*`, ahead of the recent paths
+  - the `/new` picker leads with the `create task` action row, then the current
+    cwd — marked `*` on that row itself — and only then other recent
+    directories (a second recent directory makes the order real, not vacuous)
   - `/new <relative>` resolves against the current task cwd on both Enter and
     the picker action row, and the preview names the resolved directory
   - `+<title>` creates a titled child without switching; `@<title> <body>` then
@@ -1143,12 +1169,32 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a cross-agent `/clear` repaints the new agent's own model and coordinate,
     and the detail read agrees; clearing back removes the coordinate
 
+- `agent-hint.spec.ts` (private servers; real menus, real submissions)
+  - no menu shows an agent row for any input (`+` empty/prefix/`./`/closed
+    token/settled coordinate, `/new`, `/clear`); the submit row leads, the
+    current cwd is the only `*`, and the hint is the last row
+  - the hint's example, typed exactly as shown, submits through the real chain
+    and the request + stored task bind that agent
+  - a typed coordinate keeps its prefix through suffix completion: picking the
+    current-cwd path row on `/new mock2:` creates for mock2, and a decorated
+    `/clear mock:~/` row sends `agentId` with the directory
+  - single-agent template (`config.single-agent.toml`): the three menus carry
+    no hint, and `+` is exactly its action row plus the current cwd (API golden)
+  - the directory on `/config` is `[{ id }]` only; an agent whose launch command
+    is missing from PATH is listed like any other, the menu makes no availability
+    claim, and naming it produces the real failure with its own `agentId`
+  - menus are asserted only after their settled (non-loading) rows, so a
+    negative assertion cannot pass on a placeholder or an older generation
+  - at 390px the hint is one line — its first and last characters share a line
+    box — and neither the menu nor the page scrolls sideways; the full form
+    with its example still fits
+
 - `agent-rescue.spec.ts` (private server, an agent whose command exists in PATH
   but whose process exits immediately)
   - `/clear dead:` and `+nope dead:<dir>` report the real 503 reason and append
     one copyable `/clear mock:<raw cwd>` line (spaces preserved), never a button
-  - the directory confirms `dead` as available, so the failure is a real start
-    failure rather than a faked flag
+  - the failure is a real start failure (the command exists on PATH, the process
+    exits), not a faked flag
   - an unconfigured agent through the API is a 400 "not configured"
 
 ### Multi-agent runtime
@@ -1164,8 +1210,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the reloaded task is usable afterwards, with its history intact
 
 - `multi-agent-task.spec.ts` (suite server, two configured agents)
-  - `GET /config` and bootstrap name both agents with PATH availability and the
-    default agent
+  - `GET /config` and bootstrap name both agents as ids only, with the default
+    agent
   - a task created with `agentId: mock2` reports mock2's own defaults (never the
     first option of its lists) and carries no rotation record
   - clearing onto the other agent starts from that agent's environment, and

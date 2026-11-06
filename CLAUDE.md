@@ -72,6 +72,7 @@ Locate and read only the sections relevant to the task.
 | Detailed runtime, security, protocol, frontend, browser, and platform invariants | [`docs/implementation-invariants.md`](./docs/implementation-invariants.md) |
 | REST/SSE behavior and database API | [`docs/api.md`](./docs/api.md) |
 | Frontend lifecycle and reconciliation | [`docs/client-architecture.md`](./docs/client-architecture.md) |
+| Slash menu framework: command tree, walker, candidate order, argument fields | [`docs/slash-menu.md`](./docs/slash-menu.md) |
 | ACP surface and agent compatibility | [`docs/acp.md`](./docs/acp.md) |
 | Upload, attachment, and signed-URL lifecycle | [`docs/uploads.md`](./docs/uploads.md) |
 | Directed-dispatch obligation mechanism | [`docs/task-obligations.md`](./docs/task-obligations.md) |

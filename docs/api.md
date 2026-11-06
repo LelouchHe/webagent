@@ -216,14 +216,27 @@ yet, so it is legal even when the parent runs on another agent; the parent's
 binding is never changed. It is checked before anything starts: an
 unconfigured or non-string value is refused with `400`. A configured agent that
 cannot start is a `503` that keeps the real failure reason, and the task is not
-silently created on the parent's agent instead.
+silently created on the parent's agent instead. That `503` body also names the
+agent it actually tried:
+
+```json
+{
+  "error": "Agent copilot is not available: spawn failed: ENOENT",
+  "agentId": "copilot"
+}
+```
+
+The target can be inherited (parent binding, else `default_agent`), so a caller
+cannot always know it; naming it lets a rescue exclude the agent that just
+failed instead of pointing at it again.
 
 Execution config does not cross agents: a new task created for a different agent
 than `inheritFromTaskId`'s does not inherit that task's `model` or
 `reasoning_effort`. A same-agent creation keeps inheriting them.
 
 **Errors:** `400` (directory doesn't exist, `agentId` not configured or not a
-string), `503` (the target agent could not be started)
+string), `503` (the target agent could not be started; the body carries `error`
+plus `agentId`, the agent really attempted)
 
 **Side effects:**
 
@@ -290,7 +303,7 @@ the same WebAgent task ID.
   "source": "auto",
   "configOptions": [],
   "created": true,
-  "agents": [{ "id": "pi", "available": true }],
+  "agents": [{ "id": "pi" }],
   "defaultAgentId": "pi"
 }
 ```
@@ -395,7 +408,8 @@ task's runtime metadata.
 
 **Errors:** `400` (invalid cwd, an `agentId` that is not configured, or a
 replacement failure), `404` (task not found), `409` (task is busy), `503` (the
-target agent could not be started)
+target agent could not be started; the body carries `error` plus `agentId`, the
+agent really attempted — the target is inherited when the request names none)
 
 ---
 
@@ -778,10 +792,7 @@ Get server configuration and available config options.
   "configOptions": [...],
   "cancelTimeout": 10000,
   "recentPathsLimit": 10,
-  "agents": [
-    { "id": "pi", "available": true },
-    { "id": "copilot", "available": false }
-  ],
+  "agents": [{ "id": "pi" }, { "id": "copilot" }],
   "defaultAgentId": "pi"
 }
 ```
@@ -792,11 +803,13 @@ Get server configuration and available config options.
 | `configOptions`    | `ConfigOption[]` | Available config options from the default agent's live execution (empty until it has one)  |
 | `cancelTimeout`    | number           | Cancel timeout in ms (from `limits.cancel_timeout` config). `0` = disabled                  |
 | `recentPathsLimit` | number           | Max recent paths to show in the `/new` / `+` path pickers (from `limits.recent_paths` config). `0` = show all |
-| `agents`           | `{ id, available }[]` | Every configured agent, in configuration order. `available` is the startup PATH snapshot for its launch command: `true` means the command exists, **not** that the process starts, handshakes, or authenticates. Reporting the directory never resolves or starts an agent |
+| `agents`           | `{ id }[]` | Every configured agent, in configuration order, and nothing else. The directory carries no liveness: whether an agent can start is decided when one is started (503 with the real reason). Reporting it never resolves or starts an agent |
 | `defaultAgentId` | string         | The configured `default_agent`: the agent a task targets when it has no binding to inherit from. Clients must read it instead of assuming the first `agents` entry |
 
-The directory is a configuration fact, not a runtime one: it is available on a
+The directory is a configuration fact, not a runtime one: it is listed on a
 cold workspace (`configOptions: []`), while the default agent is not running.
+It also lists an agent whose launch command is missing from PATH — that is a
+start-time failure, reported with its real reason when the agent is used.
 
 ---
 

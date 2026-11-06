@@ -31,7 +31,6 @@ import { handleFileRoutes } from "./files/routes.ts";
 import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
-import type { AgentAvailability } from "./agent-availability.ts";
 import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 import { isLocalCollaborationTarget } from "./task-collaboration.ts";
@@ -233,11 +232,11 @@ export interface RequestHandlerDeps {
   publicDir: string;
   dataDir: string;
   /**
-   * Startup PATH snapshot of the configured agents. It is captured once, when
-   * the process starts, and reported as-is: a metadata read must never resolve
-   * or start an agent to answer which agents exist.
+   * Ids of the configured agents, in configuration order. A metadata read must
+   * never resolve or start an agent to answer which agents exist, so this is a
+   * plain configuration fact (no PATH or process state).
    */
-  agentAvailability?: AgentAvailability[];
+  agentIds?: string[];
   limits: Pick<Config["limits"], "bash_output" | "image_upload"> &
     Partial<
       Pick<
@@ -693,17 +692,9 @@ export function createRequestHandler(
     created: boolean;
   }> | null = null;
 
-  /**
-   * The configured agents a client may target, with the availability the
-   * process saw at startup. `available` only means the launch command is on
-   * PATH: it says nothing about a process starting, handshaking, or being
-   * authenticated.
-   */
-  const agentDirectory = (): Array<{ id: string; available: boolean }> =>
-    (deps.agentAvailability ?? []).map(({ id, available }) => ({
-      id,
-      available,
-    }));
+  /** The configured agents a client may target, in configuration order. */
+  const agentDirectory = (): Array<{ id: string }> =>
+    (deps.agentIds ?? []).map((id) => ({ id }));
 
   /**
    * The fields every activation payload carries, so adding one does not mean
@@ -2563,6 +2554,10 @@ export function createRequestHandler(
         } catch (err) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: `Agent ${targetAgentId} is not available: ${errorMessage(err)}`,
+            // The target was chosen by the server (explicit, bound, or
+            // default), so the caller cannot always know which agent it tried.
+            // Naming it lets a rescue exclude the agent that just failed.
+            agentId: targetAgentId,
           });
           return;
         }
@@ -2861,6 +2856,10 @@ export function createRequestHandler(
               err instanceof AgentUnavailableError
                 ? `Agent ${targetAgentId} is not available: ${errorMessage(err)}`
                 : errorMessage(err),
+            // The create target may be inherited (parent binding, else the
+            // default): name what was really attempted so a rescue can exclude
+            // it instead of guessing.
+            agentId: targetAgentId,
           });
           return;
         }

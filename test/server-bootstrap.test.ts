@@ -76,7 +76,7 @@ describe("server first-run bootstrap (integration)", () => {
     }
   });
 
-  it("starts and warns when the default agent binary is missing", async () => {
+  it("starts when the default agent binary is missing", async () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-missing-agent-"));
     const auth = new AuthStore(join(dir, "auth.json"));
     await auth.load();
@@ -110,8 +110,10 @@ describe("server first-run bootstrap (integration)", () => {
       ) {
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
+      // No startup probe: a missing binary is a runtime condition, reported by
+      // the first operation that needs that agent, not by boot.
       assert.match(stdout, /\[server\] listening on/);
-      assert.match(stderr, /default agent "missing" is unavailable/);
+      assert.doesNotMatch(stderr, /is unavailable/);
     } finally {
       child.kill("SIGTERM");
       await new Promise<void>((resolve) => {

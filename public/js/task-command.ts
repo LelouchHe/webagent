@@ -21,7 +21,8 @@ import {
   resolveCreateCwd,
   taskAgentFailureLines,
 } from "./create-command.ts";
-import { getAgentDirectory } from "./agent-directory.ts";
+import { configuredAgentIds } from "./agent-directory.ts";
+import { agentHintRow } from "./agent-hint.ts";
 import { loadTaskList } from "./task-topology.ts";
 import { setInputValue, state } from "./state.ts";
 import { listRecentPaths } from "./slash-commands.ts";
@@ -465,14 +466,18 @@ async function buildCreateCandidates(parsed: {
   // coordinate's suffix keeps its bytes. A field with no path is the bare
   // form, which keeps the legacy "create where this task runs" behavior.
   const rawCwd = parsed.remainder.replace(/^\s+/u, "");
-  const coordinate = parseCoordinate(rawCwd, getAgentDirectory());
+  // One read of the same grammar submission uses: a settled coordinate points
+  // path completion at its suffix and keeps `<agent>:` on every fill.
+  const coordinate = parseCoordinate(rawCwd, configuredAgentIds());
+  const coordinatePrefix =
+    coordinate.agentId === null ? "" : `${coordinate.agentId}:`;
   const candidates: Candidate[] = [
     {
       spec: {
         primary:
           rawCwd === ""
             ? `create ${previewValue(title)}`
-            : `create ${previewValue(title)} at ${previewValue(previewCreateCwd(rawCwd, getAgentDirectory()))}`,
+            : `create ${previewValue(title)} at ${previewValue(previewCreateCwd(rawCwd, configuredAgentIds()))}`,
         fill: `+${quoteShellWord(title)}${parsed.remainder}`,
         onSelect: () => executeCreateTask(title, parsed.remainder),
       },
@@ -486,8 +491,6 @@ async function buildCreateCandidates(parsed: {
 
   // Once a coordinate is settled, path completion applies to its suffix and
   // every fill re-states `<agent>:` instead of dropping it.
-  const coordinatePrefix =
-    coordinate.agentId === null ? "" : `${coordinate.agentId}:`;
   const pathInput =
     coordinate.agentId === null ? rawCwd.trim() : coordinate.cwd;
   const cwdCandidates = await buildCreateCwdCandidates(
@@ -499,6 +502,10 @@ async function buildCreateCandidates(parsed: {
     candidates.push({ spec: { primary: "" }, prefix: "", kind: "separator" });
     candidates.push(...cwdCandidates);
   }
+  // The menu ends with the one-line hint: agents are typed, paths are
+  // completed, and no agent row is ever offered.
+  const hint = agentHintRow(rawCwd, configuredAgentIds(), state.taskAgentId);
+  if (hint !== null) candidates.push(hint);
   return candidates;
 }
 
@@ -778,7 +785,7 @@ async function executeCreateTask(
   }
 
   const rawCwd = remainder.replace(/^\s+/u, "");
-  const coordinate = parseCoordinate(rawCwd, getAgentDirectory());
+  const coordinate = parseCoordinate(rawCwd, configuredAgentIds());
   // Submission-time facts for a late failure. The view can move to another
   // task while the probe/POST is pending, and the rescue must name the agent
   // and directory that actually failed.

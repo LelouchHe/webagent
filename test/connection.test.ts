@@ -747,7 +747,7 @@ describe("connection", () => {
         return mockResponse({
           rootTaskId: ROOT_ID,
           configOptions: [],
-          agents: [{ id: "new", available: true }],
+          agents: [{ id: "new" }],
           defaultAgentId: "new",
         });
       }
@@ -758,7 +758,7 @@ describe("connection", () => {
           rootTaskId: ROOT_ID,
           cwd: "/tmp",
           configOptions: [],
-          agents: [{ id: "new", available: true }],
+          agents: [{ id: "new" }],
           defaultAgentId: "new",
         });
       }
@@ -772,24 +772,21 @@ describe("connection", () => {
     connection.connect();
     await flush(50);
 
-    assert.deepEqual(
-      getAgentDirectory().map((entry) => entry.id),
-      ["new"],
-    );
+    assert.deepEqual(getAgentDirectory().ids, ["new"]);
     assert.equal(getDefaultAgentId(), "new");
 
     releaseConfig(
       mockResponse({
         rootTaskId: ROOT_ID,
         configOptions: [],
-        agents: [{ id: "old", available: true }],
+        agents: [{ id: "old" }],
         defaultAgentId: "old",
       }),
     );
     await flush(20);
 
     assert.deepEqual(
-      getAgentDirectory().map((entry) => entry.id),
+      getAgentDirectory().ids,
       ["new"],
       "a superseded connection's config must not replace the directory",
     );

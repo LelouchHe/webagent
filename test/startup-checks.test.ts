@@ -21,10 +21,6 @@ import Database from "better-sqlite3";
 
 import { runStartupChecks } from "../src/startup-checks.ts";
 import { AuthStore } from "../src/auth-store.ts";
-import {
-  checkAgentAvailability,
-  formatAvailabilityWarnings,
-} from "../src/agent-availability.ts";
 import { LegacyDatabaseError } from "../src/legacy-database.ts";
 
 interface TestConfig {
@@ -151,25 +147,16 @@ describe("startup-checks", () => {
     });
   });
 
-  describe("agent availability is not a startup gate", () => {
-    it("passes preflight and auth while a configured agent binary is missing", async () => {
+  describe("agents are not a startup gate", () => {
+    it("passes preflight and auth while an agent binary is missing from PATH", async () => {
+      // Agents start on demand: a missing binary (or a config change) is a
+      // runtime condition reported on first use, never a reason for startup to
+      // refuse, spawn, or wait.
       setTTY(true);
       const cfg = makeConfig();
       const origPath = process.env.PATH;
       process.env.PATH = "/definitely-nonexistent-path-xyzzy";
       try {
-        const warnings = formatAvailabilityWarnings(
-          checkAgentAvailability({
-            missing: { cmd: "definitely-missing-agent-xyzzy --acp" },
-          }),
-          "missing",
-        );
-        assert.ok(warnings.length > 0);
-        assert.match(
-          warnings.join("\n"),
-          /default agent "missing" is unavailable/,
-        );
-
         await runStartupChecks(cfg);
         assert.equal(exited, null);
         assert.match(stdout, /\[check\] auth:/);

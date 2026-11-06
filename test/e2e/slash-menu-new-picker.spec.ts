@@ -109,8 +109,14 @@ test("/new picker leads with the action row and marks the current cwd first", as
   const rows = menu.locator(".slash-item");
   await expect(rows.nth(0)).toContainText("create task");
   await expect(rows.nth(0).locator(".slash-prefix")).toHaveText("↵");
+  // No agent rows exist any more, so the current cwd is the first data row
+  // again and `*` / `.slash-current` mean exactly one thing: this field's
+  // current value.
   await expect(rows.nth(1)).toContainText(parentCwdDisplay);
   await expect(rows.nth(1).locator(".slash-prefix")).toHaveText("*");
+  await expect(rows.nth(1).locator(".slash-primary")).toHaveClass(
+    /slash-current/,
+  );
 
   // The action row creates in the current cwd and then switches, like Enter.
   await rows.nth(0).click();
@@ -383,8 +389,11 @@ test("+ menu previews the action and lists cwd candidates after a space", async 
   await expect(menu).toContainText("*");
   await expect(menu).toContainText(currentCwd.replace(/\/$/, ""));
 
-  // Completing the current-cwd row fills the cwd and does not create.
+  // Completing the current-cwd row fills the cwd and does not create. With no
+  // agent rows there is no ambiguity left: `.slash-current` identifies the
+  // field's current value.
   const currentRow = menu.locator(".slash-item:has(.slash-current)");
+  await expect(currentRow).toHaveCount(1);
   await currentRow.first().click();
   await expect(page.locator("#input")).toHaveValue(`+${unique} ${currentCwd}`);
   await expect(page.locator("#messages")).not.toContainText(

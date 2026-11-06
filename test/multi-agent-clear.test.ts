@@ -82,14 +82,21 @@ describe("clear onto another agent", () => {
     const authority = new ExecutionAuthority();
     // Only agent-a is still configured: "agent-b" has been removed.
     registry = new AgentRegistry({
-      agents: { "agent-a": { cmd: "configured" } },
+      // "agent-dead" is configured but its transport cannot be created: a
+      // start failure after every configuration check has passed.
+      agents: {
+        "agent-a": { cmd: "configured" },
+        "agent-dead": { cmd: "dead" },
+      },
       defaultAgentId: "agent-a",
-      createTransport: (agentId) =>
-        new AgentBridge(
+      createTransport: (agentId) => {
+        if (agentId === "agent-dead") throw new Error("spawn failed: ENOENT");
+        return new AgentBridge(
           `${process.execPath} --experimental-strip-types ${FIXTURE} ${agentId}-session ${callsPath}`,
           store.sessionView(agentId),
           agentId,
-        ),
+        );
+      },
     });
     const options: TaskManagerOptions = {
       store,
@@ -258,6 +265,24 @@ describe("clear onto another agent", () => {
     );
     assert.equal(cleared.status, 400);
     assert.match(String(cleared.json.error), /agentId must be a string/);
+  });
+
+  it("names the agent it tried when the clear target cannot start", async () => {
+    store.createTask(
+      "unstartable",
+      dir,
+      "auto",
+      "agent-a",
+      "unstartable-session",
+    );
+    const res = await request(port, "POST", "/api/v1/tasks/unstartable/clear", {
+      agentId: "agent-dead",
+    });
+    assert.equal(res.status, 503);
+    assert.match(String(res.json.error), /Agent agent-dead is not available/);
+    // A caller may not know the target (a clear without `agentId` inherits),
+    // so the response names the agent it really tried.
+    assert.equal(res.json.agentId, "agent-dead");
   });
 
   it("defaults to the task's own agent when no agent id is given", async () => {

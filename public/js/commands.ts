@@ -12,6 +12,7 @@ import {
   type CmdNode,
   type Candidate,
   type FetchData,
+  type FieldView,
 } from "./slash-tree.ts";
 import { renderItem } from "./slash-render.ts";
 import { ROOT } from "./slash-commands.ts";
@@ -94,6 +95,20 @@ export function __resetCommandsForTest(): void {
   menuInputOverride = null;
 }
 
+/** Cache partition for a fetch node: the command path alone, or the path plus
+ *  a query-dependent key. Throws whatever the node's `fetchKey` throws. */
+function fetchKeyFor(
+  node: CmdNode,
+  pathPrefix: string,
+  tailQuery: string,
+): string | null {
+  // Both fields must be present for the node to have a data section at all.
+  if (!node.fetch || !node.toSpec) return null;
+  return node.fetchKey
+    ? `${pathPrefix}\0${node.fetchKey(tailQuery)}`
+    : pathPrefix;
+}
+
 // --- entry: called from input listener ---
 
 export function updateSlashMenu(): void {
@@ -125,21 +140,19 @@ export function updateSlashMenu(): void {
   }
 
   const root = rootForInput(text);
-  const { node, pathPrefix, tailQuery } = resolvePath(text, root);
+  const { node, pathPrefix, tailQuery, rawRemainder } = resolvePath(text, root);
+  // The node's own field reading (raw, unlike tailQuery) is computed once per
+  // render and travels with every rebuild of this menu.
+  const field = node.field?.(rawRemainder);
   let nextFetchKey: string | null;
   try {
-    nextFetchKey =
-      node.fetch && node.toSpec
-        ? node.fetchKey
-          ? `${pathPrefix}\0${node.fetchKey(tailQuery)}`
-          : pathPrefix
-        : null;
+    nextFetchKey = fetchKeyFor(node, pathPrefix, tailQuery);
   } catch (err) {
     currentPath = pathPrefix;
     currentFetchKey = null;
     currentNode = node;
     currentData = { error: fetchErrorMessage(err) };
-    rebuild(tailQuery, pathPrefix);
+    rebuild(tailQuery, pathPrefix, field);
     return;
   }
   const shouldFetch =
@@ -160,7 +173,7 @@ export function updateSlashMenu(): void {
         result = node.fetch(tailQuery);
       } catch (err) {
         currentData = { error: fetchErrorMessage(err) };
-        rebuild(tailQuery, pathPrefix);
+        rebuild(tailQuery, pathPrefix, field);
         return;
       }
       if (result instanceof Promise) {
@@ -176,7 +189,7 @@ export function updateSlashMenu(): void {
             )
               return;
             currentData = items;
-            rebuild(currentTailQueryFromInput(), pathPrefix);
+            rebuildFromInput(pathPrefix);
           },
           (err: unknown) => {
             if (
@@ -186,7 +199,7 @@ export function updateSlashMenu(): void {
             )
               return;
             currentData = { error: fetchErrorMessage(err) };
-            rebuild(currentTailQueryFromInput(), pathPrefix);
+            rebuildFromInput(pathPrefix);
           },
         );
       } else {
@@ -198,15 +211,15 @@ export function updateSlashMenu(): void {
     }
   }
 
-  rebuild(tailQuery, pathPrefix);
+  rebuild(tailQuery, pathPrefix, field);
 }
 
-// Re-resolve tailQuery from current input (used by async fetch callbacks
-// that may fire after input has changed but currentPath is still valid).
-function currentTailQueryFromInput(): string {
+// Re-resolve the current input (used by async fetch callbacks that may fire
+// after the input changed but currentPath is still valid).
+function rebuildFromInput(pathPrefix: string): void {
   const input = currentMenuInput();
-  const { tailQuery } = resolvePath(input, rootForInput(input));
-  return tailQuery;
+  const { tailQuery, rawRemainder } = resolvePath(input, rootForInput(input));
+  rebuild(tailQuery, pathPrefix, currentNode.field?.(rawRemainder));
 }
 
 async function updateTaskCommandMenu(text: string): Promise<void> {
@@ -263,8 +276,12 @@ function fetchErrorMessage(err: unknown): string {
   return err instanceof Error && err.message ? err.message : "fetch failed";
 }
 
-function rebuild(tailQuery: string, pathPrefix: string): void {
-  const cands = buildCandidates(currentNode, tailQuery, currentData);
+function rebuild(
+  tailQuery: string,
+  pathPrefix: string,
+  field?: FieldView,
+): void {
+  const cands = buildCandidates(currentNode, tailQuery, currentData, field);
   if (dom.input.value === "/") {
     cands.push({
       spec: { primary: "Agent commands: type //" },
@@ -512,13 +529,30 @@ export function refreshSlashMenuRows(): void {
   if (!dom.slashMenu.classList.contains("active")) return;
   if (currentNode === TASK_COMMAND_ROOT) return;
   const text = currentMenuInput();
-  const { node, pathPrefix, tailQuery } = resolvePath(text, rootForInput(text));
+  const { node, pathPrefix, tailQuery, rawRemainder } = resolvePath(
+    text,
+    rootForInput(text),
+  );
   if (node !== currentNode) return;
-  rebuild(tailQuery, pathPrefix);
+  rebuild(tailQuery, pathPrefix, node.field?.(rawRemainder));
+}
+
+/**
+ * Repaint an open `+`/`@` menu when the current binding changes: the agent hint
+ * names an agent the task is *not* running on, so a binding that arrives (or
+ * changes) after the first paint would otherwise leave the hint pointing at the
+ * current agent, which demonstrates nothing.
+ */
+function refreshTaskCommandMenu(): void {
+  if (!dom.slashMenu.classList.contains("active")) return;
+  if (currentNode !== TASK_COMMAND_ROOT) return;
+  const text = currentMenuInput();
+  if (isTaskCommand(text)) void updateTaskCommandMenu(text);
 }
 
 subscribeTaskTopology(refreshSlashMenuRows);
 onTaskAgentChanged(refreshSlashMenuRows);
+onTaskAgentChanged(refreshTaskCommandMenu);
 
 // --- DOM listeners ---
 
