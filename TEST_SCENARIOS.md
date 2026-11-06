@@ -73,6 +73,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a large deployment lists whole ids only, ends with an omitted count that accounts for every unlisted id, and never truncates an id
   - ids that cannot fit are dropped entirely, leaving the omission note and, when not even one fits, a "too long to list here" explanation
 
+- `test/multi-agent-mcp-collaboration.test.ts` (same harness: production host, endpoint, REST handler, one transport per agent)
+  - a parent on A dispatches to a child on B: the contract reaches B's own transport and never A's; the production manager's own collaboration observer is called exactly once for that message (measured by wrapping the store registration the manager makes), and exactly one obligation record exists for the edge
+  - the child's typed `task_update(done)` on B settles the record from its live turn, persists the typed update, and wakes the parent through A's transport with readable prose (`Task status: done` + the account), not JSON; the observer count grows by exactly one
+  - an unanswered dispatch sends its closing reminder to B's transport (never A's), and after the transport budget is spent the terminal `delivery_failed` notice is delivered to A's transport with the readable block, while the machine payload stays in `task_outcome_notice`
+  - a token minted for the generation that was current just before the child's execution was replaced is refused with `execution_replaced` even though the replacement owns a live, settleable turn: no settlement, no attempt spent, no re-enqueue, no account message; the current generation's token settles the same turn (control)
+
 - `test/multi-agent-pending.test.ts` (real ACP child process)
   - the agent connects to `/mcp` from inside `session/new`: the handshake succeeds, `task_list` answers `initializing`, nothing is created, and the same token works after the binding commits
 
@@ -1262,6 +1268,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
     clearing back starts from the first agent's defaults rather than restoring
     the abandoned choice
   - creating for an unconfigured agent is a `400` client error
+
+- `multi-agent-collaboration.spec.ts` (suite server, two configured agents)
+  - the mock agent creates a child on mock2 and dispatches the contract; mock2 really runs the turn and hands back a typed account, which appears in the parent's transcript live as readable collaboration text titled with the same `@reference sent @reference` form the store persisted
+  - the live row and the persisted twin share one title and one body, and a reload replays exactly the same row (the terminal-notice variant of this equality needs operator thresholds of minutes or a request-level transport failure, so it is proven at the integration layer)
 
 - `multi-agent-create.spec.ts` (suite server, two configured agents)
   - the mock agent's real `task_create({ agent: "mock2" })` lands the child on

@@ -1,31 +1,27 @@
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 
-import { CapabilityStore } from "../src/mcp/capability.ts";
-import { createMcpEndpoint } from "../src/mcp/server.ts";
-import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
-import type { McpTaskToolHost } from "../src/mcp/tools.ts";
-import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
-import { TaskStateManager } from "../src/task-state.ts";
+import { executionSchema } from "./fixtures/profiled-agent.ts";
+
 import {
-  AgentUnavailableError,
-  StaticAgentEnvironment,
-} from "../src/agent-registry.ts";
-import { ExecutionAuthority } from "../src/execution-authority.ts";
-import { Store } from "../src/store.ts";
-import { SseManager } from "../src/sse-manager.ts";
-import { createRequestHandler } from "../src/routes.ts";
-import type { ConfigOption } from "../src/types.ts";
-import {
-  createProfiledAgent,
-  executionSchema,
-  type ProfiledAgent,
-} from "./fixtures/profiled-agent.ts";
+  AGENT_A,
+  AGENT_B,
+  AGENT_C,
+  SCHEMA_A,
+  SCHEMA_B,
+  callTool,
+  createdRecords,
+  createdTaskId,
+  parentOnA as createParentOnA,
+  recordFields,
+  rpc,
+  startHarness,
+  toolErrorText,
+  toolResult,
+  type Harness,
+} from "./fixtures/mcp-multi-agent-harness.ts";
 
 /**
  * Acceptance for `task_create(agent: …)`.
@@ -37,279 +33,14 @@ import {
  * which is exactly the failure mode this file exists to catch.
  *
  * Cross-agent cases are behavioural proofs: a single-agent deployment cannot
- * reach them. The same-agent cases at the end are regression defences.
+ * reach them. The same-agent cases at the end are regression defences. The
+ * collaboration loop those children participate in is covered by
+ * `multi-agent-mcp-collaboration.test.ts`.
  */
 
-const A = "agent-a";
-const B = "agent-b";
-const C = "agent-c";
-
-const SCHEMA_A = executionSchema({
-  model: { current: "model-a", options: ["model-a", "model-a2"] },
-  mode: { current: "agent", options: ["agent", "chat#plan"] },
-  reasoning: { current: "medium", options: ["low", "medium", "high"] },
-});
-
-export const SCHEMA_B = executionSchema({
-  model: { current: "model-b2", options: ["model-a", "model-b", "model-b2"] },
-  mode: { current: "agent", options: ["agent", "chat#plan"] },
-  reasoning: { current: "high", options: ["low", "medium", "high"] },
-});
-
-interface AgentSpec {
-  id: string;
-  schema: ConfigOption[];
-  /** Schema one 1-based session reports; defaults to `schema`. */
-  newSessionSchema?: (sessionIndex: number) => ConfigOption[];
-  /** The transport starts but refuses to create a session. */
-  failNewSession?: boolean;
-}
-
-interface HarnessOptions {
-  agents: AgentSpec[];
-  /** Agents present in configuration; defaults to every spec. */
-  configured?: string[];
-  /** Configured agents whose start fails, with the reason to report. */
-  startFailures?: Record<string, string>;
-  /** Runs while one agent's transport is being resolved (a slow start). */
-  resolveHooks?: Record<string, () => Promise<void>>;
-}
-
-interface Harness {
-  dir: string;
-  store: Store;
-  capabilities: CapabilityStore;
-  tasks: TaskManager;
-  agents: Record<string, ProfiledAgent>;
-  /** Tokens minted for tasks that were being created, in order. */
-  minted: Array<{ taskId: string; token: string }>;
-  baseUrl(): string;
-  request(
-    method: string,
-    path: string,
-    body?: unknown,
-  ): Promise<{ status: number; json: Record<string, unknown> }>;
-  close(): Promise<void>;
-}
-
-async function startHarness(options: HarnessOptions): Promise<Harness> {
-  const dir = mkdtempSync(join(tmpdir(), "webagent-mcp-create-"));
-  const store = new Store(dir);
-  store.ensureRootTask(dir);
-  const capabilities = new CapabilityStore();
-  const authority = new ExecutionAuthority();
-  const agents: Record<string, ProfiledAgent> = {};
-  for (const spec of options.agents) {
-    agents[spec.id] = createProfiledAgent(spec.id, spec.schema, {
-      newSessionSchema: spec.newSessionSchema,
-    });
-    if (spec.failNewSession) {
-      agents[spec.id].bridge.newSession = async () => {
-        throw new Error("session creation refused");
-      };
-    }
-  }
-  const configured =
-    options.configured ?? options.agents.map((spec) => spec.id);
-  const env = new StaticAgentEnvironment(configured[0] ?? A, [], {
-    isConfigured: (id) => configured.includes(id),
-  });
-  if (options.startFailures || options.resolveHooks) {
-    const startFailures = options.startFailures ?? {};
-    const resolveHooks = options.resolveHooks ?? {};
-    const resolve = env.resolve.bind(env);
-    env.resolve = async (agentId) => {
-      const failure = startFailures[agentId];
-      if (failure) throw new AgentUnavailableError(agentId, failure);
-      if (Object.hasOwn(resolveHooks, agentId)) await resolveHooks[agentId]();
-      return resolve(agentId);
-    };
-  }
-  const tasks = new TaskManager({
-    store,
-    defaultCwd: dir,
-    dataDir: dir,
-    capabilities,
-    mcpBaseUrl: "http://127.0.0.1:1",
-    state: new TaskStateManager(),
-    authority,
-    agents: env,
-  });
-  for (const agent of Object.values(agents)) {
-    tasks.attachExecutionBridge(agent.bridge as unknown as DeliveryBridge);
-  }
-
-  // Observe the token the child session would receive, so "no residual
-  // capability" can be asserted instead of assumed.
-  const minted: Array<{ taskId: string; token: string }> = [];
-  const mintInitializing = capabilities.mintInitializing.bind(capabilities);
-  capabilities.mintInitializing = (taskId: string, agentId: string) => {
-    const token = mintInitializing(taskId, agentId);
-    minted.push({ taskId, token });
-    return token;
-  };
-  const mint = capabilities.mint.bind(capabilities);
-  capabilities.mint = (taskId, agentId, generation) => {
-    const token = mint(taskId, agentId, generation);
-    minted.push({ taskId, token });
-    return token;
-  };
-
-  const host: McpTaskToolHost = createMcpTaskToolHost({ store, tasks });
-  const endpoint = createMcpEndpoint({
-    capabilities,
-    isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
-    taskTools: host,
-    configuredAgentIds: configured,
-  });
-  const handler = createRequestHandler({
-    store,
-    tasks,
-    sseManager: Object.assign(new SseManager(), { broadcast() {} }),
-    publicDir: join(dir, "public"),
-    dataDir: dir,
-    limits: { bash_output: 1024, image_upload: 1024 },
-    agentIds: configured,
-    mcpEndpoint: endpoint,
-  });
-  const server = http.createServer((req, res) => handler(req, res));
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const port = (server.address() as AddressInfo).port;
-
-  return {
-    dir,
-    store,
-    capabilities,
-    tasks,
-    agents,
-    minted,
-    baseUrl: () => `http://127.0.0.1:${port}`,
-    request: (method, path, body) =>
-      new Promise((resolve, reject) => {
-        const data = body === undefined ? undefined : JSON.stringify(body);
-        const req = http.request(
-          {
-            hostname: "127.0.0.1",
-            port,
-            path,
-            method,
-            headers: data
-              ? {
-                  "Content-Type": "application/json",
-                  "Content-Length": Buffer.byteLength(data),
-                }
-              : {},
-          },
-          (res) => {
-            let text = "";
-            res.on("data", (chunk: Buffer) => {
-              text += chunk.toString();
-            });
-            res.on("end", () => {
-              resolve({
-                status: res.statusCode!,
-                json: text ? (JSON.parse(text) as Record<string, unknown>) : {},
-              });
-            });
-          },
-        );
-        req.on("error", reject);
-        if (data) req.write(data);
-        req.end();
-      }),
-    async close() {
-      tasks.dispose();
-      await new Promise<void>((resolve) => {
-        server.close(() => {
-          resolve();
-        });
-      });
-      store.close();
-      rmSync(dir, { recursive: true, force: true });
-    },
-  };
-}
-
-async function rpc(
-  harness: Harness,
-  token: string,
-  body: Record<string, unknown>,
-): Promise<{ status: number; json: Record<string, unknown> }> {
-  const response = await fetch(`${harness.baseUrl()}/mcp`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  return {
-    status: response.status,
-    json: text ? (JSON.parse(text) as Record<string, unknown>) : {},
-  };
-}
-
-async function callTool(
-  harness: Harness,
-  token: string,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<{ status: number; json: Record<string, unknown> }> {
-  return rpc(harness, token, {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "tools/call",
-    params: { name, arguments: args },
-  });
-}
-
-interface ToolResult {
-  isError?: boolean;
-  content?: Array<{ type: string; text?: string }>;
-}
-
-function toolResult(json: Record<string, unknown>): ToolResult {
-  const result = json.result;
-  return typeof result === "object" && result !== null ? result : {};
-}
-
-function toolErrorText(json: Record<string, unknown>): string {
-  const error = json.error as { message?: string } | undefined;
-  if (error?.message) return error.message;
-  return toolResult(json).content?.[0]?.text ?? "";
-}
-
-function createdTaskId(json: Record<string, unknown>): string {
-  const text = toolResult(json).content?.[0]?.text ?? "";
-  const parsed = JSON.parse(text) as { taskId?: string };
-  assert.ok(parsed.taskId, `the call must return a task id: ${text}`);
-  return parsed.taskId;
-}
-
-/** The task_created record rows a task wrote, newest last. */
-function createdRecords(
-  store: Store,
-  taskId: string,
-): Array<Record<string, unknown>> {
-  return store
-    .getEvents(taskId)
-    .filter((event) => event.type === "system_message")
-    .map((event) => JSON.parse(event.data) as Record<string, unknown>)
-    .filter((data) => data.kind === "task_created");
-}
-
-/** `key: value` lines of one creation record body. */
-function recordFields(body: string): Map<string, string> {
-  const fields = new Map<string, string>();
-  for (const line of body.split("\n")) {
-    const separator = line.indexOf(": ");
-    assert.notEqual(separator, -1, `unexpected record line: ${line}`);
-    fields.set(line.slice(0, separator), line.slice(separator + 2));
-  }
-  return fields;
-}
+const A = AGENT_A;
+const B = AGENT_B;
+const C = AGENT_C;
 
 describe("task_create with an explicit agent", () => {
   let harness: Harness;
@@ -318,32 +49,8 @@ describe("task_create with an explicit agent", () => {
     await harness.close();
   });
 
-  /** Create the parent through the runtime: it is bound to A. */
   async function parentOnA(): Promise<{ taskId: string; token: string }> {
-    const created = await harness.tasks.createTask(
-      harness.agents[A].bridge,
-      harness.dir,
-      undefined,
-      "agent",
-    );
-    const lease = harness.tasks.authority.leaseFor(created.taskId);
-    assert.ok(lease, "the parent must have a generation");
-    const token = harness.capabilities.mint(
-      created.taskId,
-      A,
-      lease.generation,
-    );
-    await rpc(harness, token, {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: "2025-06-18",
-        capabilities: {},
-        clientInfo: { name: "cross-agent-create", version: "1.0.0" },
-      },
-    });
-    return { taskId: created.taskId, token };
+    return createParentOnA(harness);
   }
 
   it("creates the child on B, sessions included, and records exactly one row", async () => {

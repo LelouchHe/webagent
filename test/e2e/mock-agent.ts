@@ -317,6 +317,37 @@ class MockAgent implements Agent {
   }
 
   /**
+   * Dispatch to a child on the second agent. The child receives the contract on
+   * its own transport, completes it, and the typed account comes back here —
+   * the full cross-agent collaboration loop in one browser step.
+   */
+  private async runMcpCrossAgentHandoffPrompt(
+    sessionId: string,
+    mcpServers: McpServer[],
+  ): Promise<PromptResponse> {
+    let text: string;
+    try {
+      const childTaskId = await this.runMcpTaskCreateAndSendRoundTrip(
+        mcpServers,
+        { title: "cross-agent-handoff", agent: "mock2" },
+      );
+      text = childTaskId
+        ? "Dispatched the review to the second agent."
+        : "E2E_MCP_CREATE_ERROR: task_create returned no task id";
+    } catch (error) {
+      text = `E2E_MCP_CREATE_ERROR: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    await this.connection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text },
+      },
+    });
+    return { stopReason: "end_turn" };
+  }
+
+  /**
    * Create a child on the second configured agent through the real MCP tool,
    * so the browser path exercises the same `agent` argument an agent uses.
    * A relative `.` cwd proves the child still resolves against this Task.
@@ -449,6 +480,7 @@ class MockAgent implements Agent {
   /** Initialize the injected MCP server, create a child, then dispatch it. */
   private async runMcpTaskCreateAndSendRoundTrip(
     mcpServers: McpServer[],
+    options: { title?: string; agent?: string; instruction?: string } = {},
   ): Promise<string | null> {
     const httpCandidate = mcpServers.find((s) => "url" in s && "headers" in s);
     if (!httpCandidate) throw new Error("no http mcp server provided");
@@ -486,7 +518,13 @@ class MockAgent implements Agent {
       jsonrpc: "2.0",
       id: 2,
       method: "tools/call",
-      params: { name: "task_create", arguments: { title: "audit-auth-flow" } },
+      params: {
+        name: "task_create",
+        arguments: {
+          title: options.title ?? "audit-auth-flow",
+          ...(options.agent ? { agent: options.agent } : {}),
+        },
+      },
     });
     const text = created.body?.result?.content
       ?.map((content: { text?: string }) => content.text ?? "")
@@ -501,7 +539,7 @@ class MockAgent implements Agent {
         name: "task_send",
         arguments: {
           target: childTaskId,
-          body: COLLABORATION_CHILD_INSTRUCTION,
+          body: options.instruction ?? COLLABORATION_CHILD_INSTRUCTION,
         },
       },
     });
@@ -740,6 +778,14 @@ class MockAgent implements Agent {
 
     if (text.startsWith("E2E_SLOW_PLAN")) {
       return await this.runSlowPlanPrompt(params.sessionId);
+    }
+
+    if (text === "E2E_MCP_CROSS_AGENT_HANDOFF") {
+      const mcpServers = this.mcpServersBySession.get(params.sessionId) ?? [];
+      return await this.runMcpCrossAgentHandoffPrompt(
+        params.sessionId,
+        mcpServers,
+      );
     }
 
     if (text === "E2E_MCP_CREATE_ON_AGENT") {
