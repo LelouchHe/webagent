@@ -201,9 +201,11 @@ test("a wide thumbnail follows the card, not a fixed ceiling", async ({
     };
   });
 
-  // Clearly wider than the old 360px ceiling, still inside the card, and still
-  // 16:9 rather than stretched to whatever the height cap allows.
-  expect(layout.imageWidth).toBeGreaterThan(600);
+  // The picture nearly fills the card: the height cap is viewport-relative, so
+  // at 1200x900 a 16:9 image is not limited by an absolute px tier any more.
+  // Still inside the card, and still 16:9 rather than stretched to whatever
+  // the height cap allows.
+  expect(layout.imageWidth).toBeGreaterThan(layout.containerWidth * 0.95);
   expect(layout.imageWidth).toBeLessThanOrEqual(layout.containerWidth + 0.5);
   expect(
     Math.abs(layout.imageWidth / layout.imageHeight - 16 / 9),

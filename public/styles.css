@@ -527,10 +527,15 @@ body {
   /* Agent images are the reply itself, so they take the width they are given:
      a fixed px ceiling left a 360px picture beside a full-width paragraph on a
      wide screen. `max-width: 100%` only shrinks, so a small picture keeps its
-     own pixels; `height: auto` keeps the aspect ratio. The height cap stops one
-     portrait picture from filling the screen. */
+     own pixels; `height: auto` keeps the aspect ratio. The height cap is what
+     stops one portrait picture from filling the screen — and it is expressed
+     against the viewport, not as an absolute px tier: at 900px tall, 70dvh is
+     630px, which lets a 16:9 picture reach the card's full width. `dvh` rather
+     than `vh` because on mobile `vh` measures the height with the address bar
+     hidden, so a portrait picture would be allowed to be too tall. */
   max-width: 100%;
-  max-height: min(70vh, 480px);
+  max-height: 70vh;
+  max-height: 70dvh;
   width: auto;
   height: auto;
   border-radius: 4px;
@@ -1282,9 +1287,12 @@ body.file-viewer-open {
 }
 .msg.assistant img.agent-image {
   /* Same rule as a tool result's thumbnail: the container decides the width, a
-     fixed ceiling would pin every reply picture to 360px. */
+     fixed ceiling would pin every reply picture to 360px. Height is capped
+     against the viewport (see `.tc-image` above) rather than by an absolute
+     px tier. */
   max-width: 100%;
-  max-height: min(70vh, 480px);
+  max-height: 70vh;
+  max-height: 70dvh;
   width: auto;
   height: auto;
   border-radius: 4px;

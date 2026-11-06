@@ -166,8 +166,9 @@ live frame instead of being stored).
 - Display size comes from the container, not a fixed ceiling: `max-width: 100%`
   with `height: auto`, so a wide card shows a wide picture, a narrow one still
   keeps it inside the card, and a small picture keeps its own pixels (nothing
-  upscales). The height is capped (`min(70vh, 480px)`) so one portrait image
-  cannot fill the screen. The `width`/`height` attributes carry the image's own
+  upscales). The height is capped against the viewport (`max-height: 70dvh`,
+  with a `70vh` fallback) so one portrait image cannot fill the screen while a
+  16:9 picture still reaches the card's full width. The `width`/`height` attributes carry the image's own
   size — they reserve a proportional box before the bytes arrive — and an
   `agent_image` bubble uses the same rule.
 
