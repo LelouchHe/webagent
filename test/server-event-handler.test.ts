@@ -112,6 +112,45 @@ function principalFor(manager: TaskManager, taskId: string) {
   };
 }
 
+/**
+ * The machine payload of a runtime notice is its `task_outcome_notice` event.
+ * The collaboration body is the readable prompt text, so machine fields are
+ * asserted here instead of by parsing that body.
+ */
+function noticeEventData(store: Store, taskId: string) {
+  const row = store
+    .getEvents(taskId)
+    .filter((event) => event.type === "task_outcome_notice")
+    .at(-1);
+  assert.ok(row, "the target must persist the notice payload");
+  return JSON.parse(row.data) as {
+    sourceTaskId: string;
+    targetTaskId: string;
+    openingMessageId: string;
+    openingDeliveryId: string;
+    reason: string;
+    message: string;
+    evidence: Record<string, unknown>;
+  };
+}
+
+/** The persisted collaboration row that belongs to one broadcast message. */
+function persistedCollaboration(
+  store: Store,
+  taskId: string,
+  messageId: string,
+): Record<string, unknown> {
+  const row = store
+    .getEvents(taskId)
+    .filter((event) => event.type === "system_message")
+    .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+    .find(
+      (data) => data.kind === "collaboration" && data.messageId === messageId,
+    );
+  assert.ok(row, "the broadcast must have a persisted twin");
+  return row;
+}
+
 /** Arm a directed obligation the way a direct parent dispatch does. */
 async function armDirectDispatch(
   store: Store,
@@ -563,7 +602,11 @@ describe("handleAgentEvent", () => {
     seedFamily();
     // Keep the task non-live so every attempt must resume, and make resume fail.
     tasks.liveTasks.delete("child");
-    const broadcasts: Array<{ body: string }> = [];
+    const broadcasts: Array<{
+      messageId: string;
+      title: string;
+      body: string;
+    }> = [];
     tasks.setCollaborationBroadcast((event) => broadcasts.push(event));
     const bridge = {
       async newSession() {
@@ -597,14 +640,30 @@ describe("handleAgentEvent", () => {
     // with no closure notice (the queued advisory is non-terminal).
     assert.equal(tasks.getObligation("parent", "child")?.state, "unresolved");
     assert.equal(broadcasts.length, 1);
-    const notice = JSON.parse(broadcasts[0].body) as {
-      reason: string;
-      message: string;
-      evidence: Record<string, unknown>;
-    };
+    // The machine payload is the event; the collaboration body is readable
+    // prose (it becomes the parent's prompt text).
+    const notice = noticeEventData(store, "child");
     assert.equal(notice.reason, "delivery_failed");
     assert.equal(notice.evidence.deliveryUnavailable, true);
     assert.match(notice.message, /could not deliver/);
+    assert.match(broadcasts[0].body, /^reason: delivery_failed$/m);
+    assert.match(broadcasts[0].body, /^message: .*could not deliver/m);
+    assert.match(broadcasts[0].body, /^openingMessageId: \S+$/m);
+    assert.ok(
+      broadcasts[0].body.includes(notice.openingMessageId),
+      "the readable block names the same opening message as the payload",
+    );
+    assert.equal(
+      broadcasts[0].body.includes('{"'),
+      false,
+      "a notice body is a readable block, not JSON",
+    );
+    // Live and replayed rows must agree: the broadcast title comes from the
+    // same formatter the persisted twin uses.
+    assert.equal(
+      broadcasts[0].title,
+      persistedCollaboration(store, "child", broadcasts[0].messageId).title,
+    );
     await flushTimers();
   });
 
@@ -630,6 +689,7 @@ describe("handleAgentEvent", () => {
       messageId: string;
       sourceTaskId: string;
       targetTaskId: string;
+      title: string;
       body: string;
     }> = [];
     tasks.setCollaborationBroadcast((event) => broadcasts.push(event));
@@ -654,15 +714,8 @@ describe("handleAgentEvent", () => {
     assert.equal(broadcasts.length, 1);
     assert.equal(broadcasts[0].sourceTaskId, "child");
     assert.equal(broadcasts[0].targetTaskId, "parent");
-    const notice = JSON.parse(broadcasts[0].body) as {
-      sourceTaskId: string;
-      targetTaskId: string;
-      openingMessageId: string;
-      openingDeliveryId: string;
-      reason: string;
-      message: string;
-      evidence: Record<string, unknown>;
-    };
+    // The durable machine fields live in the target's own notice event.
+    const notice = noticeEventData(store, "child");
     assert.equal(notice.sourceTaskId, "parent");
     assert.equal(notice.targetTaskId, "child");
     assert.ok(notice.openingMessageId);
@@ -670,6 +723,22 @@ describe("handleAgentEvent", () => {
     assert.equal(notice.reason, "delivery_failed");
     assert.equal(notice.evidence.deliveryUnavailable, true);
     assert.match(notice.message, /could not deliver/);
+
+    // The body is what the parent agent reads: the readable block, delivered
+    // verbatim between the delivery's scissor lines.
+    const parentPrompt = calls.prompts.find((call) => call.taskId === "parent");
+    assert.ok(parentPrompt, "the notice must be delivered to the parent");
+    assert.ok(
+      parentPrompt.text.includes(broadcasts[0].body),
+      "the parent receives the readable block, not the machine payload",
+    );
+    assert.match(broadcasts[0].body, /^reason: delivery_failed$/m);
+    assert.match(broadcasts[0].body, /^message: .*/m);
+    assert.equal(broadcasts[0].body.includes('{"'), false);
+    assert.equal(
+      broadcasts[0].title,
+      persistedCollaboration(store, "parent", broadcasts[0].messageId).title,
+    );
     assert.ok(
       store
         .getEvents("child")

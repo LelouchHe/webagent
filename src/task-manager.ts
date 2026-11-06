@@ -16,6 +16,7 @@ import {
   type WorkflowStatus,
 } from "./store.ts";
 import { shouldArm } from "./task-collaboration.ts";
+import { formatTaskReference } from "./shared/task-reference.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -541,6 +542,26 @@ export function createTaskManager(
     authority: new ExecutionAuthority(),
     agents: new SingleAgentEnvironment(agentId),
   });
+}
+
+/**
+ * The parent-facing text of a runtime outcome notice.
+ *
+ * A notice body is also the prompt text the source agent reads, so it is a
+ * readable `key: value` block rather than JSON. The machine payload is not
+ * lost: it remains the `task_outcome_notice` event this body accompanies, which
+ * is what audit and tooling read.
+ */
+function noticeBody(payload: {
+  reason: string;
+  message: string;
+  openingMessageId: string;
+}): string {
+  return [
+    `reason: ${payload.reason}`,
+    `message: ${payload.message}`,
+    `openingMessageId: ${payload.openingMessageId}`,
+  ].join("\n");
 }
 
 /**
@@ -3615,7 +3636,7 @@ export class TaskManager implements ObligationHost {
       message: notice.message,
       evidence: notice.evidence,
     };
-    const body = JSON.stringify(payload);
+    const body = noticeBody(payload);
     // The notice is ordinary parent-facing collaboration from the target to
     // the stored source, with a system actor. The emitter observer sees it and
     // declines to arm it (system actor), independently of direction.
@@ -3639,7 +3660,9 @@ export class TaskManager implements ObligationHost {
       messageId: created.message.id,
       sourceTaskId: obligation.targetTaskId,
       targetTaskId: obligation.sourceTaskId,
-      title: `${source?.title ?? obligation.targetTaskId.slice(0, 8)} sent ${target?.title ?? obligation.sourceTaskId.slice(0, 8)}`,
+      // Same source as the persisted twin (`createCollaborationMessage`), so a
+      // live row and its replayed copy cannot show different titles.
+      title: `${formatTaskReference(source?.title ?? obligation.targetTaskId.slice(0, 8))} sent ${formatTaskReference(target?.title ?? obligation.sourceTaskId.slice(0, 8))}`,
       body,
     });
     void this.drainCollaborationDeliveries(obligation.sourceTaskId);
