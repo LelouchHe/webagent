@@ -79,6 +79,12 @@ export interface McpEndpointOptions {
   isTaskActive?: (taskId: string) => boolean;
   /** Task control-plane operations used by the four direct tools. */
   taskTools?: McpTaskToolHost;
+  /**
+   * Configured agent ids from the startup snapshot. `task_create`'s description
+   * advertises them, which is the only always-visible discovery channel (an MCP
+   * server is rebuilt per request, so this needs no static schema).
+   */
+  configuredAgentIds?: readonly string[];
   /** Mount path; the response `true` claims that path. */
   path?: string;
 }
@@ -178,7 +184,9 @@ export function createMcpEndpoint(
       { name: MCP_SERVER_NAME, version: "0.1.0" },
       { instructions: MCP_SERVER_INSTRUCTIONS },
     );
-    registerMcpTools(server, principal, options.taskTools);
+    registerMcpTools(server, principal, options.taskTools, {
+      configuredAgentIds: options.configuredAgentIds,
+    });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       // JSON responses for POST round trips (no SSE streaming needed for the

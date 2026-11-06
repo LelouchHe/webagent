@@ -309,9 +309,52 @@ that execution has stopped.
 
 ### `task_create`
 
-Create a direct child Task immediately. The request includes a required title
-plus optional `cwd`, `model`, and `thinking` overrides. Omitted execution
-options inherit from the current Task. The result contains the new Task ID.
+Create a direct child Task immediately. The request includes a required `title`
+plus optional `agent`, `cwd`, `model`, and `thinking`.
+
+`agent` names the execution agent for the child. It is a free string, validated
+against the configured `[agents.*]` ids when the call runs: adding an agent is a
+configuration change and a restart, not a schema change. The tool description
+advertises the configured ids and is rebuilt on every request from the startup
+snapshot — the whole description stays within 1024 characters, ids are listed
+whole or omitted with a count, and an id is never truncated (a shortened id
+would look legal while naming nothing). Omitting `agent` keeps the existing
+behaviour: the child inherits the current Task's agent. A deployment with a
+single configured agent advertises no list, because there is nothing to choose
+between.
+
+The target agent is started on demand. Creating a child on another agent is a
+declared divergence, not a write through the wrong process: the caller's own
+binding is untouched, and a relative `cwd` still resolves against the current
+Task's `cwd`.
+
+**Execution config.** Omitted `model` / `thinking` inherit from the current Task
+only when the child lands on the same agent; a cross-agent child starts from the
+target's own defaults. Explicit values are passed to the target's session and
+validated against the schema that session reported — the target is the only
+authority on its own environment. On rejection the just-created task is deleted
+again (best-effort: the ACP session is retired and the capability revoked) and
+the call fails as a tool error.
+
+**Errors.** Every failure is an MCP tool error, never a silent fallback to
+another agent. Each message is bounded (400 characters / 6 lines) and never
+quotes a partial id:
+
+| Case | Reported |
+| --- | --- |
+| `agent` not configured | that the id is not configured, plus "Omit `agent` to create the Task on this Task's agent". No agent list: the description already carries it. |
+| configured but unstartable | the transport's real reason, plus the same omission hint. |
+| target refuses `model` / `thinking` | `unsupported_config:<id>` when that session did not report the option — no values offered, and **no** fallback to the cached agent-level schema, which can be an older session's list; `invalid_config_value:<id>` otherwise, listing up to five candidates with the target's current value. A wider list (the `model` normal case) becomes its count, the current value, and a "omit it or ask the user" instruction. Candidates always come from the session that rejected the value. |
+| caller's own execution replaced | the existing authority refusal (`execution_replaced`), independent of `agent`. |
+
+**Result and record.** The result contains the new Task ID. The parent's
+transcript gets exactly one `task_created` row with five fields — `Task ID`,
+`agent`, `cwd`, `model`, `thinking`. `model` and `thinking` show the values that
+took effect: the explicit value, the value inherited from a same-agent source,
+or the target session's own current value. `inherited` appears only when a value
+genuinely cannot be determined, so a cross-agent child shows the target's
+defaults instead of claiming an inheritance that did not happen.
+
 This creates an Agent-delegated Task: immediately send its first Task Contract
 with `task_send`, including the goal, scope, completion criteria, and report
 format, then end the dispatch turn without polling. Failures return an MCP tool

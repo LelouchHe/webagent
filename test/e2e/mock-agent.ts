@@ -316,6 +316,89 @@ class MockAgent implements Agent {
     }
   }
 
+  /**
+   * Create a child on the second configured agent through the real MCP tool,
+   * so the browser path exercises the same `agent` argument an agent uses.
+   * A relative `.` cwd proves the child still resolves against this Task.
+   */
+  private async runMcpTaskCreateOnAgentPrompt(
+    sessionId: string,
+    mcpServers: McpServer[],
+  ): Promise<PromptResponse> {
+    const text = await this.runMcpCreateOnAgentRoundTrip(mcpServers);
+    await this.connection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text },
+      },
+    });
+    return { stopReason: "end_turn" };
+  }
+
+  private async runMcpCreateOnAgentRoundTrip(
+    mcpServers: McpServer[],
+  ): Promise<string> {
+    const httpCandidate = mcpServers.find((s) => "url" in s && "headers" in s);
+    if (!httpCandidate) return "E2E_MCP_CREATE_ERROR: no http mcp server";
+    const entry = httpCandidate as unknown as McpServerHttp;
+    const bearer = entry.headers.find((h) => h.name === "Authorization");
+    if (!bearer) return "E2E_MCP_CREATE_ERROR: missing Authorization header";
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      Authorization: bearer.value,
+    };
+    const post = (body: unknown): Promise<any> =>
+      fetch(entry.url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      }).then(async (res) => ({
+        status: res.status,
+        body:
+          res.status === 204 || res.status === 202 ? null : await res.json(),
+      }));
+    try {
+      await post({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "mock-agent", version: "0.1.0" },
+        },
+      });
+      await post({ jsonrpc: "2.0", method: "notifications/initialized" });
+      const call = await post({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "task_create",
+          arguments: {
+            title: "cross-agent-child",
+            cwd: ".",
+            agent: "mock2",
+          },
+        },
+      });
+      const result = call.body?.result;
+      const content =
+        result?.content?.map((c: { text?: string }) => c.text ?? "").join("") ??
+        JSON.stringify(call.body);
+      if (result?.isError) return `E2E_MCP_CREATE_ERROR: ${content}`;
+      const taskId = JSON.parse(content)?.taskId;
+      if (typeof taskId !== "string") {
+        return `E2E_MCP_CREATE_ERROR: unexpected ${content}`;
+      }
+      return `E2E_MCP_CREATE_RESULT: ${taskId}`;
+    } catch (error) {
+      return `E2E_MCP_CREATE_ERROR: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
   /** Run the screenshot's realistic parent → child collaboration sequence. */
   private async runMcpTaskCollaborationPrompt(
     sessionId: string,
@@ -657,6 +740,14 @@ class MockAgent implements Agent {
 
     if (text.startsWith("E2E_SLOW_PLAN")) {
       return await this.runSlowPlanPrompt(params.sessionId);
+    }
+
+    if (text === "E2E_MCP_CREATE_ON_AGENT") {
+      const mcpServers = this.mcpServersBySession.get(params.sessionId) ?? [];
+      return await this.runMcpTaskCreateOnAgentPrompt(
+        params.sessionId,
+        mcpServers,
+      );
     }
 
     if (text.startsWith("E2E_MCP_TASK_LIST")) {

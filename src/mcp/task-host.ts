@@ -5,8 +5,14 @@ import {
   isLocalCollaborationTarget,
   collaborationRelation,
 } from "../task-collaboration.ts";
-import type { TaskManager } from "../task-manager.ts";
+import {
+  TaskConfigOverrideError,
+  reportedExecutionConfig,
+  type DeliveryBridge,
+  type TaskManager,
+} from "../task-manager.ts";
 import { expandHomePath } from "../home-path.ts";
+import { errorMessage } from "../types.ts";
 import { formatTaskReference } from "../shared/task-reference.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
@@ -24,6 +30,11 @@ import {
   projectTaskHistoryRow,
   TASK_HISTORY_LIMITS,
 } from "./task-history.ts";
+import {
+  agentStartError,
+  configOverrideError,
+  unconfiguredAgentError,
+} from "./create-errors.ts";
 
 const {
   queryBytes: QUERY_LIMIT_BYTES,
@@ -264,9 +275,33 @@ export function createMcpTaskToolHost(deps: {
     ): Promise<McpTaskCreateResult> {
       authorize(principal);
       const sourceTaskId = principal.taskId;
-      // The child runs in the source task's execution environment: a caller
-      // never chooses an agent, its own binding does.
-      const execution = await tasks.resolveTaskExecution(sourceTaskId);
+      // The child runs where the caller says, or — when it says nothing — in
+      // the source task's execution environment. Only an explicit `agent` may
+      // diverge from the caller's binding, and it is resolved *before* anything
+      // is created so an unusable target leaves no trace.
+      const requestedAgent = input.agent;
+      let targetAgentId: string;
+      let targetBridge: DeliveryBridge;
+      if (requestedAgent !== undefined) {
+        if (!tasks.isAgentConfigured(requestedAgent)) {
+          throw new Error(unconfiguredAgentError(requestedAgent));
+        }
+        try {
+          targetBridge = await tasks.resolveAgentTransport(requestedAgent);
+        } catch (error) {
+          throw new Error(
+            agentStartError(requestedAgent, errorMessage(error)),
+            {
+              cause: error,
+            },
+          );
+        }
+        targetAgentId = requestedAgent;
+      } else {
+        const execution = await tasks.resolveTaskExecution(sourceTaskId);
+        targetBridge = execution.bridge;
+        targetAgentId = execution.agentId;
+      }
       // The resolution above awaited; the caller must still own its execution
       // before anything is created.
       authorize(principal);
@@ -275,24 +310,42 @@ export function createMcpTaskToolHost(deps: {
       const cwd = isAbsolute(requestedCwd)
         ? requestedCwd
         : resolve(source.cwd, requestedCwd);
-      const created = await tasks.createTask(
-        execution.bridge,
-        cwd,
-        source.id,
-        "agent",
-        {
-          parentId: source.id,
-          title: input.title,
-          model: input.model,
-          thinking: input.thinking,
-          // Third boundary: the task is persisted only while the caller still
-          // owns its execution. `newSession` and the tree lock are awaits, and
-          // a rotation can land inside either of them.
-          assertCaller: () => {
-            authorize(principal);
+      let created: Awaited<ReturnType<TaskManager["createTask"]>>;
+      try {
+        created = await tasks.createTask(
+          targetBridge,
+          cwd,
+          source.id,
+          "agent",
+          {
+            parentId: source.id,
+            title: input.title,
+            model: input.model,
+            thinking: input.thinking,
+            // Only a caller-chosen target is declared here: inheritance keeps
+            // the parent-binding assertion in `createTask`, which is the guard
+            // that refuses a silently different execution environment.
+            ...(requestedAgent === undefined ? {} : { agentId: targetAgentId }),
+            // Third boundary: the task is persisted only while the caller still
+            // owns its execution. `newSession` and the tree lock are awaits, and
+            // a rotation can land inside either of them.
+            assertCaller: () => {
+              authorize(principal);
+            },
           },
-        },
-      );
+        );
+      } catch (error) {
+        // The target's own schema refused a requested value. The candidates
+        // must be this session's, so they travel on the error rather than
+        // being looked up in the agent-level cache after the fact.
+        if (error instanceof TaskConfigOverrideError) {
+          throw new Error(
+            configOverrideError({ ...error, agentId: targetAgentId }),
+            { cause: error },
+          );
+        }
+        throw error;
+      }
       // The child is committed and stays: it was created while the caller
       // still owned its execution. This last step writes into the *source*
       // transcript and broadcasts, and `createTask` may have awaited source
@@ -300,13 +353,18 @@ export function createMcpTaskToolHost(deps: {
       // validated again immediately before the source-side commit, with no
       // await in between.
       authorize(principal);
+      const reported = reportedExecutionConfig(created.configOptions);
       const taskCreatedMessageId = randomUUID();
       const taskCreated = buildTaskCreatedSystemMessage({
         taskId: created.taskId,
         taskTitle: input.title,
+        agentId: store.getBindingAgent(created.taskId) ?? targetAgentId,
         cwd,
-        model: input.model,
-        thinking: input.thinking,
+        // What took effect, not what was asked: an explicit value that the
+        // target accepted, the value inherited from a same-agent source, or
+        // the target session's own current value.
+        model: input.model ?? reported.model ?? null,
+        thinking: input.thinking ?? reported.reasoning_effort ?? null,
       });
       store.saveEvent(source.id, "system_message", taskCreated.data, {
         from_ref: "agent",

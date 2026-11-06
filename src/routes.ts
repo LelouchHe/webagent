@@ -23,6 +23,7 @@ import {
   TaskBusyError,
   TaskNotFoundError,
   TaskTreeBusyError,
+  reportedExecutionConfig,
 } from "./task-manager.ts";
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
@@ -2904,10 +2905,18 @@ export function createRequestHandler(
           // reference in the row always addresses the task it names.
           const createdTitle = typeof title === "string" ? title : null;
           if (createdParentId && createdTitle) {
+            // The same effective values the row and reads show: an explicit
+            // override, the value inherited from a same-agent source, or the
+            // target session's reported current value. `inherited` is reserved
+            // for a value that genuinely cannot be determined.
+            const reported = reportedExecutionConfig(configOptions);
             const taskCreated = buildTaskCreatedSystemMessage({
               taskId,
               taskTitle: createdTitle,
+              agentId: store.getBindingAgent(taskId) ?? targetAgentId,
               cwd: task?.cwd ?? body.cwd ?? process.cwd(),
+              model: reported.model ?? null,
+              thinking: reported.reasoning_effort ?? null,
             });
             store.saveEvent(
               createdParentId,

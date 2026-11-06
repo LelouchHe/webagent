@@ -215,6 +215,7 @@ describe("S3 collaboration write routes", () => {
       buildTaskCreatedSystemMessage({
         taskId: String(agentData.taskId),
         taskTitle: "agent-child",
+        agentId: "test-agent",
         cwd: tmpDir,
       }).data,
       "the agent row must be exactly what the shared builder produces",
@@ -224,6 +225,7 @@ describe("S3 collaboration write routes", () => {
       buildTaskCreatedSystemMessage({
         taskId: userTaskId,
         taskTitle: "usr-child",
+        agentId: "test-agent",
         cwd: tmpDir,
       }).data,
       "the user row must be exactly what the shared builder produces",

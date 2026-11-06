@@ -665,6 +665,7 @@ describe("createMcpEndpoint", () => {
           {
             title: "child",
             cwd: undefined,
+            agent: undefined,
             model: "model-x",
             thinking: undefined,
           },
