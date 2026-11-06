@@ -7,6 +7,7 @@ import {
   buildMcpServerEntry,
   createMcpEndpoint,
   MCP_SERVER_INSTRUCTIONS,
+  MCP_SERVER_NAME,
 } from "../src/mcp/server.ts";
 
 // Description text of a registered Task tool, or "" when the tool is absent.
@@ -190,7 +191,7 @@ describe("buildMcpServerEntry", () => {
       buildMcpServerEntry("mcp_test", "http://127.0.0.1:6800/"),
       {
         type: "http",
-        name: "webagent",
+        name: MCP_SERVER_NAME,
         url: "http://127.0.0.1:6800/mcp",
         headers: [{ name: "Authorization", value: "Bearer mcp_test" }],
         _meta: { directTools: true },
@@ -391,7 +392,7 @@ describe("createMcpEndpoint", () => {
         instructions?: string;
       };
     };
-    assert.equal(initBody.result?.serverInfo?.name, "webagent");
+    assert.equal(initBody.result?.serverInfo?.name, MCP_SERVER_NAME);
     const initResult = initBody.result;
     assert.ok(initResult);
     assert.equal(initResult.instructions, MCP_SERVER_INSTRUCTIONS);

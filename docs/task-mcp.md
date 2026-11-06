@@ -1,6 +1,8 @@
 # Task MCP Control Plane
 
-WebAgent injects a `webagent` MCP server into each compatible ACP session. It
+WebAgent injects a `lelouchhe_webagent` MCP server into each compatible ACP
+session. The name is a client-visible label (some clients namespace tools as
+`mcp__<name>__<tool>`); it is not persisted and carries no identity. It
 lets an agent inspect and coordinate with tasks in its local task family without
 granting access to unrelated tasks.
 

@@ -2,6 +2,7 @@ import { afterEach, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { AgentBridge, PromptNotDeliveredError } from "../src/bridge.ts";
+import { MCP_SERVER_NAME } from "../src/mcp/server.ts";
 
 const mappedTasks = {
   getAgentSessionId(taskId: string) {
@@ -321,7 +322,7 @@ describe("AgentBridge", () => {
     const mcpServers: import("@agentclientprotocol/sdk").McpServer[] = [
       {
         type: "http",
-        name: "webagent",
+        name: MCP_SERVER_NAME,
         url: "http://127.0.0.1:6800/mcp",
         headers: [{ name: "Authorization", value: "Bearer mcp_abc" }],
       },

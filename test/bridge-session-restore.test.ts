@@ -10,6 +10,7 @@ import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { MCP_SERVER_NAME } from "../src/mcp/server.ts";
 import { abbreviateHomePath } from "../src/home-path.ts";
 import type { AgentEvent } from "../src/types.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
@@ -113,7 +114,7 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
       assert.equal(restore.cwd, dir);
       assert.equal(restore.mcpServers.length, 1);
       assert.equal(restore.mcpServers[0].type, "http");
-      assert.equal(restore.mcpServers[0].name, "webagent");
+      assert.equal(restore.mcpServers[0].name, MCP_SERVER_NAME);
       assert.equal(restore.mcpServers[0].url, "http://127.0.0.1:6800/mcp");
       const authorization = restore.mcpServers[0].headers.find(
         (header) => header.name === "Authorization",
