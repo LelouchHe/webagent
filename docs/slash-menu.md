@@ -144,8 +144,8 @@ Enter **never** consumes the highlighted menu item. This keeps "type the full co
    - Has subcommands like `/x ack` or `/x rev`? Add `children`.
 2. If the menu's filter should look at fields not shown in `primary` (e.g. id prefix for `/switch`), add `matches`.
 3. If the command's argument is more than "a filter string" — it needs raw bytes, its own row ordering, or rows that keep state when acted on — add `field` and build a `FieldView`. Do not widen `SlashItemSpec` for it, and do not append rows above the data section: `trail` is the only supported position.
-3. Add a case to `slash-exec.ts` for the Enter path. Aim to call the same helper that `onSelect` calls — duplication of parsing logic is fine, duplication of side-effects is not.
-4. Tests: add a unit test in `test/slash-tree.test.ts` if the tree shape itself is novel; add an E2E spec under `test/e2e/slash-menu-*.spec.ts` for the user-visible flow.
+4. Add a case to `slash-exec.ts` for the Enter path. Aim to call the same helper that `onSelect` calls — duplication of parsing logic is fine, duplication of side-effects is not.
+5. Tests: add a unit test in `test/slash-tree.test.ts` if the tree shape itself is novel; add an E2E spec under `test/e2e/slash-menu-*.spec.ts` for the user-visible flow.
 
 You should never need to touch `commands.ts`, `slash-render.ts`, `styles.css`, or any keyboard-handling code.
 
