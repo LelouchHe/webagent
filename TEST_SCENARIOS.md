@@ -416,7 +416,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - awaiting_delivery → open timing, coalescing without a fresh record, +2m/+5m delivered-reminder schedule, transport-bound exhaustion, idle wait, the two-condition settlement predicate and its guards (awaiting_delivery, no active turn, terminal records), stored-source/current-parent routing, the accepted boundary, superseded-dispatch identity, abort and advisory backstops, live-turn requirement, process-local loss on reconstruction, terminal records never watched, and independent watchdog/no-account epochs
   - tri-state submission: a `deferred` outcome leaves `reminder_submitting`, keeps both counters, and retries on a growing bounded backoff; a permanently deferring transport never exhausts the record and emits no notice
   - `execution_rotated` keeps the same record (endpoints, attempts) in a waitable state and never requests a re-dispatch
-  - a pre-rotation watchdog with a live turn emits its silence notice (control), and the same steps after a rotation emit none — the stale timer is disarmed rather than only cleared from a map
+  - a pre-rotation watchdog with a live turn emits its silence notice (control), and the same steps after a rotation emit none — the rotation ends that watchdog epoch (the retained-callback case is covered by the next bullet)
+  - a retry callback that is still queued when the rotation lands is run explicitly after it (the clock keeps callbacks after `clearTimer`): it re-derives from the record, so the old body is never re-enqueued and a closing reminder for the replacement is what it submits
   - a reminder result from the replaced execution (old recovery generation) cannot settle the record, spend an attempt, or re-enqueue the dispatch
 
 - `test/task-collaboration.test.ts`

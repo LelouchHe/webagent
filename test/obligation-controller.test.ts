@@ -406,7 +406,12 @@ describe("ObligationController", () => {
     );
   });
 
-  it("does not let a pre-rotation watchdog re-arm after the rotation", async () => {
+  it("withdraws the pre-rotation watchdog epoch", async () => {
+    // What this proves: the rotation ends that watchdog epoch. A queued
+    // callback that still runs after a rotation is covered separately by
+    // "a retained pre-rotation retry callback cannot redeliver the old body",
+    // because the clock here genuinely drops cleared timers.
+    //
     // Control: without the rotation the same steps produce the silence notice,
     // so the negative assertion below is about the rotation, not about a
     // watchdog that never worked.
@@ -443,6 +448,73 @@ describe("ObligationController", () => {
       0,
       "the replaced execution's watchdog must not report on the new one",
     );
+  });
+
+  it("a retained pre-rotation retry callback cannot redeliver the old body", async () => {
+    // The interesting stale-timer case is a callback that is *already queued*
+    // when a rotation lands: clearing a timer cannot un-queue a macrotask. The
+    // clock below keeps every callback it was given (and honours clearTimer
+    // only for its own scheduling), so the pre-rotation callback can be run
+    // explicitly after the rotation.
+    let now = 1_000_000;
+    const retained: Array<() => void> = [];
+    const submissions: DirectedObligation[] = [];
+    const retries: DirectedObligation[] = [];
+    const controller = new ObligationController({
+      now: () => now,
+      setTimer: (fn, ms) => {
+        retained.push(fn);
+        return { at: now + Math.max(0, ms), fn } as unknown as TimerHandle;
+      },
+      // Deliberately a no-op: the callback stays runnable, like a timer event
+      // that was already posted to the event loop before the rotation.
+      clearTimer: () => {},
+      isAgentBusy: () => false,
+      submitReminder: async (obligation) => {
+        submissions.push(obligation);
+        return { status: "delivered" };
+      },
+      retryDispatch: (obligation) => {
+        retries.push(obligation);
+      },
+      emitNotice: () => {},
+    });
+    controller.arm({
+      sourceTaskId: "parent",
+      targetTaskId: "child",
+      messageId: "m-1",
+      deliveryId: "d-1",
+    });
+    // A rejected initial dispatch schedules the bounded re-dispatch, which is
+    // the only path that would hand the old body over again.
+    controller.markDeliveryFailed("parent", "child");
+    const retryCallback = retained.at(-1);
+    assert.ok(retryCallback, "the retry deadline must be armed");
+    assert.equal(
+      controller.getActive("parent", "child")?.state,
+      "awaiting_delivery",
+    );
+
+    // The execution is replaced, and the queued callback now runs at its old
+    // deadline (one backoff later), exactly as a posted macrotask would.
+    controller.noteExecutionRotated("child");
+    now += 1_000;
+    retryCallback();
+    await flush();
+
+    // Mutation evidence: pointing the callback at a captured fact instead of
+    // the current record (e.g. re-enqueueing `pendingDispatchRetries`) would
+    // re-dispatch here. Re-deriving from the record cannot.
+    assert.deepEqual(retries, [], "the old body is never re-enqueued");
+    const record = controller.getActive("parent", "child");
+    assert.ok(record);
+    assert.equal(record.openingMessageId, "m-1");
+    assert.notEqual(record.state, "awaiting_delivery");
+    // A fresh closing reminder for the replacement is what the record owes now.
+    assert.equal(submissions.length, 1);
+    assert.equal(record.state, "reminder_due");
+    assert.equal(record.deliveredAttempts, 1);
+    void now;
   });
 
   it("ignores an in-flight reminder result from the replaced execution", async () => {
