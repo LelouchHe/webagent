@@ -406,6 +406,72 @@ describe("ObligationController", () => {
     );
   });
 
+  it("does not let a pre-rotation watchdog re-arm after the rotation", async () => {
+    // Control: without the rotation the same steps produce the silence notice,
+    // so the negative assertion below is about the rotation, not about a
+    // watchdog that never worked.
+    const control = makeController();
+    armOpen(control);
+    await tick(control);
+    control.controller.beginTurn("child", "prompt-live");
+    control.clock.advance(SILENCE_THRESHOLD_S * 1000 + 1);
+    await flush();
+    assert.equal(
+      control.notices.filter((notice) => notice.reason === "no_activity")
+        .length,
+      1,
+      "the watchdog must fire for a live turn",
+    );
+
+    // The old timer belongs to a turn the replacement execution never ran.
+    // Advancing the clock past its deadline is the only honest proof: merely
+    // checking that the watchdog map is empty would pass even if the armed
+    // timer still fired.
+    const h = makeController();
+    armOpen(h);
+    await tick(h);
+    h.controller.beginTurn("child", "prompt-replaced");
+
+    h.controller.noteExecutionRotated("child");
+    h.clock.advance(SILENCE_THRESHOLD_S * 1000 + 1);
+    await flush();
+
+    // Mutation evidence: deleting `watchdog.delete(key)` in the rotation
+    // transition lets this stale timer emit a no_activity notice here.
+    assert.equal(
+      h.notices.filter((notice) => notice.reason === "no_activity").length,
+      0,
+      "the replaced execution's watchdog must not report on the new one",
+    );
+  });
+
+  it("ignores an in-flight reminder result from the replaced execution", async () => {
+    // The old continuation (and its recovery generation) is stale. It must not
+    // settle the record, spend an attempt, or re-enqueue the dispatch.
+    const h = makeController();
+    h.setSubmitMode("manual");
+    const obligation = armOpen(h);
+    await tick(h);
+    assert.equal(h.submissions.length, 1);
+
+    h.controller.noteExecutionRotated("child");
+    h.resolveSubmission(0, true);
+    await flush();
+
+    const record = h.controller.getActive("parent", "child");
+    assert.ok(record);
+    // A late success from the replaced execution cannot settle or advance it.
+    assert.notEqual(record.state, "settled");
+    assert.equal(record.deliveredAttempts, 0);
+    assert.equal(record.openingMessageId, obligation.openingMessageId);
+    assert.equal(h.notices.length, 0);
+    assert.equal(
+      h.dispatchRetries.length,
+      0,
+      "the stale result must not re-enqueue the old dispatch",
+    );
+  });
+
   it("waits for the target to be idle before submitting", async () => {
     const h = makeController();
     armOpen(h);

@@ -231,11 +231,85 @@ describe("implicit owner rotation", () => {
       prompts.some((text) => text.includes("OLD BODY")),
       false,
     );
+    // The queued delivery ended with the execution it belonged to: the old
+    // body is not delivered later either, and the record (the debt) stays.
+    assert.equal(
+      store.getCollaborationDelivery("implicit-rotation-delivery")?.status,
+      "failed",
+    );
+    assert.equal(
+      store.getCollaborationDelivery("implicit-rotation-delivery")
+        ?.failure_reason,
+      "cleared_before_delivery",
+    );
     const events = store
       .getEvents("child")
       .filter((event) => event.type === "system_message")
       .map((event) => JSON.parse(event.data) as Record<string, unknown>);
     assert.ok(events.some((data) => data.kind === "agent_rotation"));
+  });
+
+  it("leaves the debt and the queued delivery intact when the rotation is refused", async () => {
+    const store = openStore();
+    store.ensureRootTask(dataDir);
+    store.createTask(
+      "parent",
+      dataDir,
+      "agent",
+      "agent-b",
+      "parent-session",
+      "root",
+    );
+    store.createTask(
+      "child",
+      dataDir,
+      "agent",
+      "agent-b",
+      "child-session",
+      "parent",
+    );
+    const tasks = makeManager(store, "agent-b", ["agent-b"]);
+    const { bridge } = bridgeRecorder();
+    tasks.attachExecutionBridge(bridge);
+    store.createCollaborationMessage({
+      id: "refused-rotation-dispatch",
+      deliveryId: "refused-rotation-delivery",
+      sourceTaskId: "parent",
+      directTargetTaskId: "child",
+      sourceActor: "agent",
+      body: "STILL PENDING",
+    });
+    const armed = tasks.getObligation("parent", "child");
+    assert.ok(armed);
+    assert.equal(
+      store.getCollaborationDelivery("refused-rotation-delivery")?.status,
+      "queued",
+    );
+
+    // The target owns a running turn, so a rotation cannot be performed now.
+    tasks.activePrompts.add("child");
+    tasks.syncBusy("child");
+    await assert.rejects(
+      () => tasks.clearTask(bridge, "child"),
+      /Cancel active work/,
+    );
+
+    // Nothing was truncated by the failed attempt: same record, same debt
+    // state, same queue, same binding.
+    const after = tasks.getObligation("parent", "child");
+    assert.equal(after, armed);
+    assert.equal(after.state, "awaiting_delivery");
+    assert.equal(
+      store.getCollaborationDelivery("refused-rotation-delivery")?.status,
+      "queued",
+    );
+    assert.equal(store.getBindingAgent("child"), "agent-b");
+    const refusedRotationEvents = store
+      .getEvents("child")
+      .filter((event) => event.type === "system_message")
+      .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+      .filter((data) => data.kind === "agent_rotation");
+    assert.deepEqual(refusedRotationEvents, []);
   });
 
   it("gives each task its own empty execution slot", async () => {
