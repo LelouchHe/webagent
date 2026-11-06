@@ -1,11 +1,27 @@
 import { test, expect } from "playwright/test";
 import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { gotoConnected } from "./helpers.ts";
 import { MAX_TEXT_PREVIEW_BYTES } from "../../src/files/limits.ts";
 
 const FIXTURE = "test/e2e/fixtures/file-viewer.md";
+
+/**
+ * The path the UI shows for an absolute one: the server abbreviates HOME at
+ * every egress point and leaves everything else absolute. Derived here rather
+ * than written as `~/…`, because a checkout outside HOME would make that
+ * literal wrong — the assertion must describe the display rule, not assume
+ * where the repository lives.
+ */
+function displayPath(absolute: string): string {
+  const home = homedir();
+  return absolute === home || absolute.startsWith(`${home}/`)
+    ? `~${absolute.slice(home.length)}`
+    : absolute;
+}
+
+const fixturesDir = join(process.cwd(), "test/e2e/fixtures");
 let downloadDir: string;
 let oversizedText: string;
 
@@ -36,7 +52,7 @@ test("mobile /view drills into a folder and opens a full-screen file", async ({
   await expect(folder).toBeVisible();
   await folder.click();
 
-  await expect(input).toHaveValue(/^\/view ~\/.*\/test\/e2e\/fixtures\/$/);
+  await expect(input).toHaveValue(`/view ${displayPath(fixturesDir)}/`);
   const file = page.locator("#slash-menu .slash-item", {
     has: page.locator(".slash-primary", { hasText: "file-viewer.md" }),
   });
@@ -46,7 +62,7 @@ test("mobile /view drills into a folder and opens a full-screen file", async ({
   const viewer = page.locator("#file-viewer");
   await expect(viewer).toBeVisible();
   await expect(page.locator("#file-viewer-path")).toHaveText(
-    /^~\/.*\/file-viewer\.md$/,
+    displayPath(join(fixturesDir, "file-viewer.md")),
   );
   await expect(viewer.locator("h1")).toHaveText("File Viewer Fixture");
 
