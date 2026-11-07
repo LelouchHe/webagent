@@ -3028,8 +3028,8 @@ describe("events", () => {
   describe("agent cancellation transcript", () => {
     /**
      * Produce a cancellation through the real MCP host, so the live and replay
-     * assertions below both fail if the producer stops writing the transcript
-     * row (or starts broadcasting the machine record).
+     * assertions below both fail if the producer stops writing the row it
+     * broadcasts.
      */
     async function produceCancellation() {
       const dir = mkdtempSync(join(tmpdir(), "webagent-cancel-test-"));
@@ -3109,13 +3109,13 @@ describe("events", () => {
       const produced = await produceCancellation();
       try {
         state.taskId = produced.taskId;
-        // The producer wrote the row it broadcasts: the live frame is the
-        // transcript record, not the machine event, and it is exactly what a
-        // reload will replay.
+        // The producer writes and broadcasts one row: the live frame is the
+        // whole cancellation, exactly what a reload will replay.
         const rows = produced.rows.filter(
           (row) => row.type === "system_message",
         );
         assert.equal(rows.length, 1);
+        assert.equal(produced.rows.length, 1);
         const row = JSON.parse(rows[0].data) as Record<string, unknown>;
         assert.deepEqual(produced.frames, [
           {
@@ -3142,15 +3142,12 @@ describe("events", () => {
       }
     });
 
-    it("renders one replayed row and ignores the machine record", async () => {
+    it("renders one replayed row from the stored system message", async () => {
       const produced = await produceCancellation();
       try {
-        // Both records are in the log; the machine one is not a transcript
-        // event, so the cancellation still shows once.
-        assert.equal(
-          produced.stored.filter((row) => row.type === "task_cancel").length,
-          1,
-        );
+        // The cancellation is one stored row, so replay shows it once.
+        assert.equal(produced.stored.length, 1);
+        assert.equal(produced.stored[0].type, "system_message");
         for (const [idx, row] of produced.stored.entries()) {
           events.replayEvent(
             row.type,

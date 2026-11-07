@@ -591,7 +591,7 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("records a cancellation as a machine event plus a system row", async () => {
+  it("records a cancellation as a single system row", async () => {
     const broadcasted: McpTaskCancelNotice[] = [];
     const host = createMcpTaskToolHost({
       store,
@@ -601,25 +601,13 @@ describe("MCP Task tool host", () => {
 
     await host.cancel(principal(), "alpha-child", "stop before start");
 
-    // One fact, two records: the machine event history projection reads, and
-    // the transcript row the conversation shows.
+    // One record for the fact: the transcript row carries the machine fields
+    // in `data` beside the readable title and body.
     const stored = store.getEvents("alpha-child");
-    const machine = stored.filter((event) => event.type === "task_cancel");
-    const rows = stored.filter(
-      (event) =>
-        event.type === "system_message" &&
-        (JSON.parse(event.data) as { kind?: string }).kind === "task_cancel",
-    );
-    assert.equal(machine.length, 1);
-    assert.equal(machine[0].from_ref, "agent");
-    assert.deepEqual(JSON.parse(machine[0].data), {
-      sourceTaskId: "alpha",
-      reason: "stop before start",
-      status: "idle",
-    });
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].from_ref, "agent");
-    assert.deepEqual(JSON.parse(rows[0].data), {
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].type, "system_message");
+    assert.equal(stored[0].from_ref, "agent");
+    assert.deepEqual(JSON.parse(stored[0].data), {
       kind: "task_cancel",
       sourceTaskId: "alpha",
       reason: "stop before start",
@@ -627,8 +615,8 @@ describe("MCP Task tool host", () => {
       title: "Cancelled by @alpha",
       body: "reason: stop before start\nstatus: idle",
     });
-    // Only the row is a wire event; the machine record is never broadcast, so
-    // an open page cannot render the same fact twice.
+    // The stored row is the whole wire event; there is no second frame to
+    // render the same fact twice.
     assert.deepEqual(broadcasted, [
       {
         type: "system_message",

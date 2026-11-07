@@ -230,9 +230,8 @@ const mcpTaskTools = createMcpTaskToolHost({
     sseManager.broadcast(buildTaskCreatedBroadcast(event));
   },
   broadcastTaskCancelNotice: (event) => {
-    // One fact, one frame: the transcript row is the visible half and rides
-    // the generic system-message path. The `task_cancel` machine record is
-    // never a wire event.
+    // One record, one frame: the transcript row is the whole cancellation and
+    // rides the generic system-message path.
     sseManager.broadcast(event);
   },
 });

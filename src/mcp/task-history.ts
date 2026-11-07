@@ -276,8 +276,6 @@ function projected(
       return { title, text: stringField(data.message), field: "message" };
     case "task_update":
       return { title, text: stringField(data.body), field: "body" };
-    case "task_cancel":
-      return { title, text: stringField(data.reason), field: "reason" };
     case "bash_command":
       return { title, text: stringField(data.command), field: "command" };
     case "prompt_done":

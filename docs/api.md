@@ -1833,13 +1833,12 @@ These events are streamed in real-time via SSE as the agent works.
 | `message_acked`         | `messageId`                                                                              | Inbox message was dismissed without consume                                                                         |
 | `inbox_count_changed`   | `pendingCount`                                                                           | Authoritative pending inbox count after a mutation or TTL cleanup. Delivered globally, including task-scoped SSE clients |
 
-An agent cancellation is two records for one fact, like every other fact with
-both machine fields and a place in the conversation: a stored `task_cancel`
-event (`sourceTaskId`, `reason`, `status`, read by history projection and
-audit) and the `system_message` row with `kind: "task_cancel"` (`Cancelled by
-@…` plus a `reason:` / `status:` body). Only the row is a wire event; the
-machine record is never broadcast and never rendered, so an open page shows the
-cancellation once.
+An MCP `task_cancel` is one record: the `system_message` row with
+`kind: "task_cancel"` (`Cancelled by @…` plus a `reason:` / `status:` body),
+whose `data` also carries `sourceTaskId`, `reason`, and `status`. It is both
+the stored log row and the wire frame, so an open page and a reload show the
+same single line. A user-initiated cancel does not write this row; it remains a
+different, deliberate flow.
 
 ### Replay-Only Events
 

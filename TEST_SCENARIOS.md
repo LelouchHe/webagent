@@ -688,11 +688,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/events.test.ts`
   - task creation / busy-state restoration
-  - an agent-issued `task_cancel` is produced as two records: the machine
-    `task_cancel` event plus one `system_message` row (`kind: "task_cancel"`,
-    `Cancelled by @<canceller>`, `reason:` / `status:` body). The live frame is
-    that row, not the machine record, and replaying the stored pair renders the
-    cancellation exactly once
+  - an agent-issued `task_cancel` is produced as one `system_message` row
+    (`kind: "task_cancel"`, `Cancelled by @<canceller>`, `reason:` / `status:`
+    body, machine fields in `data`). That row is also the only live frame, so
+    live and replay each render the cancellation exactly once
   - user / assistant / thinking rendering
   - unsolicited Main-agent text and tool calls render while the foreground turn
     stays idle without reopening busy state
@@ -742,8 +741,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - self/parent/child/sibling authorization, tombstone/nonexistent target convergence, unknown sequence rejection
   - omitting the target reads the current Task's own history
   - explicit response_too_large errors report required_bytes without partial rows
-  - a successful `task_cancel` writes the machine event and the transcript row,
-    and broadcasts only the row (target `taskId` added for SSE routing)
+  - a successful `task_cancel` writes one `system_message` row (machine fields in
+    `data`) and broadcasts that same row (target `taskId` added for SSE routing)
   - MCP registration and documentation expose task_read as the sole raw-history tool
 
 - `test/commands.test.ts`, `test/slash-menu.test.ts`

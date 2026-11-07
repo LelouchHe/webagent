@@ -61,14 +61,15 @@ export interface McpTaskCreatedEvent {
 }
 
 /**
- * The visible half of an agent-issued cancellation.
+ * The one record of an agent-issued cancellation.
  *
- * A cancellation is two records, like every other fact that has both machine
- * fields and a place in the conversation: the `task_cancel` machine event
- * (which history projection reads) and this `system_message` transcript row.
- * Only the row is a wire event; it renders through the generic system-message
- * path, so live and replay agree without a dedicated frontend branch. A
- * user-initiated cancel stays deliberately different and writes nothing here.
+ * It is a `system_message` row, the shape every task fact takes when it has a
+ * place in the conversation: the machine fields (`sourceTaskId`, `reason`,
+ * `status`) and the `kind` discriminator live in `data` beside a non-empty
+ * title and a readable body. That is also the whole wire event, so live and
+ * replay render through the generic system-message path without a dedicated
+ * frontend branch. A user-initiated cancel stays deliberately different and
+ * writes nothing here.
  */
 export type McpTaskCancelNotice = Extract<
   AgentEvent,
@@ -415,16 +416,11 @@ export function createMcpTaskToolHost(deps: {
       // The cancel awaited a transport round trip; the record of what happened
       // is only written while the caller still owns its execution.
       authorize(principal);
-      // Two records for one fact: the machine event history projection reads,
-      // then the transcript row the conversation shows. The row's title is
-      // never empty (the replay path skips an untitled system message), and
-      // its body is the readable block, not the machine payload.
-      store.saveEvent(
-        target.id,
-        "task_cancel",
-        { sourceTaskId, reason, status: result.status },
-        { from_ref: "agent" },
-      );
+      // One record: the transcript row is the whole fact. Its machine fields
+      // (`sourceTaskId`, `reason`, `status`) ride in `data` beside the readable
+      // title and body, which is how every task fact that appears in the
+      // conversation is stored. The title is never empty (the replay path skips
+      // an untitled system message).
       const title = `Cancelled by ${formatTaskReference(sourceTaskId.slice(0, 8))}`;
       const body = formatFieldBlock([
         { label: "reason", value: reason },

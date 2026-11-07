@@ -318,6 +318,11 @@ when the Agent has not acknowledged cancellation, the result remains
 `cancelling` and the runtime exposes the unconfirmed state rather than claiming
 that execution has stopped.
 
+The cancellation is recorded and broadcast as one `system_message` row
+(`kind: "task_cancel"`, `Cancelled by @<canceller>`, plus a `reason:` /
+`status:` body; the machine fields live in `data`). A user-initiated cancel does
+not write this row.
+
 ### `task_create`
 
 Create a direct child Task immediately. The request includes a required `title`

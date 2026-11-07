@@ -109,9 +109,10 @@ The operational form of that sentence:
   criterion the host can observe reliably.
   What actually constrains an unattended turn is elsewhere: the agent's own
   mode and approval configuration, how the work was described when it was
-  dispatched, `task_cancel` (which leaves a machine record and a visible system
-  row, and may be followed up with `task_query`), and the persistent audit —
-  every `permission_request` and `permission_response` is stored.
+  dispatched, `task_cancel` (which leaves one system row with the canceller,
+  reason, and status, and may be followed up with `task_query`), and the
+  persistent audit — every `permission_request` and `permission_response` is
+  stored.
   Two deployment shapes follow. A deployment already running an agent in
   autopilot mode sees no change: the mode gate was already answering those
   turns. The change lands on default-mode agents, where a dispatched turn goes
