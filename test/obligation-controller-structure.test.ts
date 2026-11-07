@@ -77,6 +77,10 @@ describe("obligation controller structure", () => {
       "exhaust",
       "emitSilence",
       "startWatchdog",
+      // Effect helper called only from the cancellation rows of the transition
+      // graph; it writes the quiet state the same way `exhaust` writes terminal
+      // state.
+      "suspend",
     ]);
     // Derive the field list from the record type so a field added later is
     // covered without touching this test.

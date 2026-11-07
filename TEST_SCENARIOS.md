@@ -433,6 +433,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a pre-rotation watchdog with a live turn emits its silence notice (control), and the same steps after a rotation emit none — the rotation ends that watchdog epoch (the retained-callback case is covered by the next bullet)
   - a retry callback that is still queued when the rotation lands is run explicitly after it (the clock keeps callbacks after `clearTimer`): it re-derives from the record, so the old body is never re-enqueued and a closing reminder for the replacement is what it submits
   - a reminder result from the replaced execution (old recovery generation) cannot settle the record, spend an attempt, or re-enqueue the dispatch
+  - a cancelled boundary quiets the edge and nothing gets through: hours later there is no closing reminder, no `still_waiting` advisory (neither the queued-dispatch nor the age form), no notice, and no armed deadline at all; a timer that was already armed is dropped at dispatch time, and a rotation is not new work (no timer, no sound)
+  - new work on the same edge lifts the silence and restarts the clocks: a fresh dispatch arm + hand-off produces the age advisory only after a full `AGE_ADVISORY_MS` from that arrival, and its closing reminder follows once the target is idle; another task's edge is unaffected and keeps its own reminder
+  - a quiet record still settles on a late typed account, then stays silent
 
 - `test/turn-slot.test.ts`
   - one turn slot per task, and every real submission assigns its own origin: the interactive route, `/compact`, and the beta quick prompt are `interactive`; a collaboration drain is `delegated` for an all-agent/system batch and `interactive` for a batch containing one user message; a closing reminder is `delegated`. Nothing inherits the previous turn's value
