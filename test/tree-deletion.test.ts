@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
+import { AgentUnavailableError } from "../src/agent-registry.ts";
 import { TaskBusyError, TaskManager } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { ExecutionAdapter } from "../src/execution-adapter.ts";
@@ -144,6 +145,55 @@ describe("task-tree deletion across agents", () => {
     assert.deepEqual(retiredA, []);
     assert.deepEqual(retiredB, []);
     assert.ok(store.getTaskIncludingDeleted("child"));
+  });
+
+  it("leaves Root live and idle when the exit returns, like a created task", async () => {
+    seedCrossAgentTree();
+    const exitBridge = {
+      ...bridgeA,
+      async newSession() {
+        return { sessionId: "rebuilt-session", configOptions: [] };
+      },
+    };
+
+    const result = await tasks.resetRootTask(exitBridge);
+
+    assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
+      "child",
+      "parent",
+    ]);
+    // The exit owns the wake-up: a client that reads Root after this response
+    // must find the task it would have found had it created one instead of
+    // exiting one.
+    assert.ok(
+      tasks.liveTasks.has("root"),
+      "Root is rebuilt before the exit returns",
+    );
+    assert.equal(
+      store.getCurrentExecutionBinding("root")?.agent_session_id,
+      "rebuilt-session",
+    );
+    assert.equal(tasks.getBusyKind("root"), null);
+    assert.equal(tasks.state.getState("root").runtime.busy, null);
+  });
+
+  it("refuses the exit when Root's agent cannot start, and deletes nothing", async () => {
+    seedCrossAgentTree();
+
+    // No bridge is attached to agent-a, so resolving it fails. The exit must
+    // refuse *before* destroying anything: there is no point clearing the tree
+    // around a Root that cannot be rebuilt.
+    await assert.rejects(() => tasks.resetRootTask(), AgentUnavailableError);
+
+    assert.ok(store.getTaskIncludingDeleted("parent"), "the tree is untouched");
+    assert.ok(store.getTaskIncludingDeleted("child"));
+    assert.equal(store.getEvents("child").length, 1);
+    assert.equal(
+      store.getCurrentExecutionBinding("root")?.agent_session_id,
+      "root-session",
+    );
+    assert.deepEqual(retiredA, [], "nothing was retired");
+    assert.deepEqual(retiredB, []);
   });
 
   it("resets Root across every agent, retiring each execution once", async () => {

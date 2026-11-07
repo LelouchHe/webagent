@@ -1370,7 +1370,7 @@ describe("Task REST API", () => {
       assert.ok(mockBridge.retireCalls.includes("agent-child"));
     });
 
-    it("resets Root through the task route with no bridge (offline)", async () => {
+    it("refuses the Root reset when its agent cannot start, deleting nothing", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(rootId, "test-agent", "agent-root");
       store.createTask(
@@ -1387,6 +1387,7 @@ describe("Task REST API", () => {
         { text: "old root" },
         { from_ref: "user" },
       );
+      // No bridge is attached, so Root cannot be rebuilt.
       const handler = createRequestHandler({
         store,
         tasks: createTaskManager(store, tmpDir, tmpDir),
@@ -1406,8 +1407,10 @@ describe("Task REST API", () => {
           "DELETE",
           `/api/v1/tasks/${rootId}`,
         );
-        assert.equal(res.status, 200);
-        assert.equal(JSON.parse(res.body).reset, true);
+        // An exit that cannot rebuild Root is not an exit: the tree, the events
+        // and the binding are all still there for the caller to retry.
+        assert.equal(res.status, 503);
+        assert.match(JSON.parse(res.body).error, /cannot be rebuilt/);
       } finally {
         await new Promise<void>((resolve) =>
           offline.close(() => {
@@ -1415,10 +1418,55 @@ describe("Task REST API", () => {
           }),
         );
       }
+      assert.equal(store.getEvents(rootId).length, 1);
+      assert.ok(store.getTaskIncludingDeleted("child"));
+      assert.equal(store.getAgentSessionId(rootId), "agent-root");
+      assert.equal(store.getTask(rootId)?.parent_id, null);
+    });
+
+    it("resets Root through the task route and rebuilds it before answering", async () => {
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "agent-child",
+        rootId,
+      );
+      store.saveEvent(
+        rootId,
+        "user_message",
+        { text: "old root" },
+        { from_ref: "user" },
+      );
+      let created = 0;
+      tasks.attachExecutionBridge({
+        async newSession() {
+          created++;
+          return { sessionId: `rebuilt-${created}`, configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      });
+
+      const res = await makeRequest(port, "DELETE", `/api/v1/tasks/${rootId}`);
+
+      assert.equal(res.status, 200);
+      assert.equal(JSON.parse(res.body).reset, true);
+      // The response is the commit point: by the time it arrives, Root is a
+      // live, idle task, not one still waiting for a read to wake it up.
+      assert.equal(created, 1);
       assert.equal(store.getEvents(rootId).length, 0);
       assert.equal(store.getTaskIncludingDeleted("child"), undefined);
-      assert.equal(store.getAgentSessionId(rootId), "");
+      assert.equal(store.getAgentSessionId(rootId), "rebuilt-1");
       assert.equal(store.getTask(rootId)?.parent_id, null);
+      assert.equal(tasks.getBusyKind(rootId), null);
     });
 
     it("cascades to descendant tasks and broadcasts task_deleted per id", async () => {

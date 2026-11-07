@@ -23,6 +23,7 @@ import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
 import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
 import {
+  errorMessage,
   isTaskExecutionEvent,
   type AgentCommand,
   type AgentCommandSnapshot,
@@ -1314,11 +1315,29 @@ export class TaskManager implements ObligationHost {
     try {
       return await bridge.newSession(cwd, options);
     } catch (error) {
-      this.creatingTasks.delete(taskId);
+      this.endCreatingClaim(taskId);
       if (capabilityToken) this.capabilities?.revoke(capabilityToken);
       else this.capabilities?.revokeByTask(taskId);
       throw error;
     }
+  }
+
+  /**
+   * Release a creation claim and re-project busy.
+   *
+   * `creatingTasks` is a busy source in both faces, so a claim dropped without
+   * a projection leaves a client that read the task mid-creation looking at a
+   * spinner nothing terminates: the ledger only returns to idle on the next
+   * `syncBusy`, and no local event is guaranteed to cause one. A background
+   * materialization is exactly that shape — the task is already visible, so a
+   * read can land in the middle of it. Every release goes through here.
+   */
+  private endCreatingClaim(taskId: string): void {
+    if (!this.creatingTasks.delete(taskId)) return;
+    // A task deleted while its claim was in flight has no runtime left to
+    // correct; `syncBusy` would lazily re-create a stale ledger entry.
+    if (!this.store.getTask(taskId)) return;
+    this.syncBusy(taskId);
   }
 
   /** Default new WebAgent tasks to the reserved Root when it exists. */
@@ -1619,7 +1638,7 @@ export class TaskManager implements ObligationHost {
         error: err,
       });
       bridge.discardUnboundSession?.(agentSessionId);
-      this.creatingTasks.delete(taskId);
+      this.endCreatingClaim(taskId);
       this.capabilities?.revokeByTask(taskId);
       throw err;
     }
@@ -1655,7 +1674,7 @@ export class TaskManager implements ObligationHost {
           // The task is live but still carries the creation barrier. Drop it
           // before deleteTask checks busy state so failed overrides cannot
           // strand the persisted task and ACP execution.
-          this.creatingTasks.delete(taskId);
+          this.endCreatingClaim(taskId);
           await this.deleteTask(bridge, taskId).catch((cleanupError) => {
             slog.warn("failed to clean up task after config override failure", {
               taskId,
@@ -1672,7 +1691,7 @@ export class TaskManager implements ObligationHost {
         configOptions: task ? this.applyStoredConfig(configOptions, task) : [],
       };
     } finally {
-      this.creatingTasks.delete(taskId);
+      this.endCreatingClaim(taskId);
     }
   }
 
@@ -1842,13 +1861,13 @@ export class TaskManager implements ObligationHost {
       );
     } catch (error) {
       bridge.discardUnboundSession?.(created.sessionId);
-      this.creatingTasks.delete(taskId);
+      this.endCreatingClaim(taskId);
       if (execution?.token) this.capabilities?.revoke(execution.token);
       throw error;
     }
 
     this.liveTasks.add(taskId);
-    this.creatingTasks.delete(taskId);
+    this.endCreatingClaim(taskId);
     if (execution?.token) {
       this.capabilities?.revokeOtherTokens(taskId, execution.token);
     }
@@ -2647,12 +2666,12 @@ export class TaskManager implements ObligationHost {
       }
     } catch (error) {
       bridge.discardUnboundSession?.(created.sessionId);
-      this.creatingTasks.delete(taskId);
+      this.endCreatingClaim(taskId);
       if (execution?.token) this.capabilities?.revoke(execution.token);
       throw error;
     }
     this.liveTasks.add(taskId);
-    this.creatingTasks.delete(taskId);
+    this.endCreatingClaim(taskId);
     if (execution?.token) {
       this.capabilities?.revokeOtherTokens(taskId, execution.token);
     }
@@ -2945,15 +2964,53 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
-   * Reset Root's history and delete its entire descendant tree. Root's
-   * stable row remains as the task-tree anchor, and the reset is DB-only:
-   * the old execution is retired best-effort and a fresh ACP session is
-   * materialized lazily by the next prompt, so an offline reset succeeds
-   * without a bridge.
+   * Exit Root: reset its history, delete its entire descendant tree, and leave
+   * Root itself ready to use, exactly as creating a task leaves a task that is
+   * already idle when it first becomes visible.
+   *
+   * Root's stable row survives as the task-tree anchor, which is the one way an
+   * exit differs from every other task (they are deleted). What must *not*
+   * differ is the state the client lands in: exiting is over when it is over,
+   * not when some later read finishes waking the replacement.
+   *
+   * Prepare, then commit. The rebuild is checked *before* anything is destroyed,
+   * because a Root whose agent cannot start is not a usable Root: succeeding
+   * with the empty slot would report a completed exit while leaving a shell
+   * behind, and by then the tree is already gone. Only an agent that passes the
+   * pre-flight and still fails to open a session falls back to the slot, and
+   * that is logged rather than silently reported as success.
    */
   async resetRootTask(
     bridge?: SessionBridge,
   ): Promise<{ affected: TaskDelete[] }> {
+    if (bridge) this.attachExecutionBridge(bridge);
+    const rebuildAgentId = this.rebuildAgentFor(this.store.rootTaskId);
+    if (rebuildAgentId) {
+      try {
+        await this.agents.resolve(rebuildAgentId);
+      } catch (error) {
+        // Name what the exit actually needed, not the transport's own words:
+        // the user asked to exit and has to know the agent is the reason.
+        throw new AgentUnavailableError(
+          rebuildAgentId,
+          `Root's agent ${rebuildAgentId} could not start, so Root cannot be rebuilt: ${errorMessage(error)}`,
+        );
+      }
+    }
+    const affected = await this.resetRootTree(bridge);
+    await this.rebuildRootExecution();
+    return { affected };
+  }
+
+  /**
+   * The DB-only half of an exit: retire the old execution, wipe Root's history,
+   * and delete the tree under the exclusive Root lock.
+   *
+   * Nothing here touches the agent's transport, so the delete itself cannot
+   * fail halfway through. The empty execution slot it leaves is a legal state
+   * (the next prompt materializes it) and is what the commit phase replaces.
+   */
+  private async resetRootTree(bridge?: SessionBridge): Promise<TaskDelete[]> {
     if (bridge) this.attachExecutionBridge(bridge);
     const rootTaskId = this.store.rootTaskId;
     if (this.resettingTasks.has(rootTaskId)) {
@@ -3035,7 +3092,7 @@ export class TaskManager implements ObligationHost {
         recursive: true,
         force: true,
       }).catch(() => {});
-      return { affected: result.affected };
+      return result.affected;
     } finally {
       for (const id of protectedIds) this.resettingTasks.delete(id);
       release?.();
@@ -3044,6 +3101,49 @@ export class TaskManager implements ObligationHost {
         resolveReset();
       }
     }
+  }
+
+  /**
+   * Give Root a live execution right after its reset, so the exit owns the
+   * wake-up instead of handing it to whatever read comes next.
+   *
+   * A created task is never observed mid-creation: its id only exists once
+   * creation finished, so its `creatingTasks` claim has always been released by
+   * the time any client can read it. Root's id is known in advance and the
+   * client returns to it immediately, so handing the wake-up to that read meant
+   * handing it a task that reports busy while `session/new` runs — a busy the
+   * client could not end on its own.
+   *
+   * Runs after the reset lock is released: `session/new` is unbounded and must
+   * never sit inside the exclusive Root lock, which every descendant mutation
+   * has to wait for.
+   */
+  private async rebuildRootExecution(): Promise<void> {
+    const rootTaskId = this.store.rootTaskId;
+    // A reset that raced a delete has nothing left to rebuild.
+    if (!this.store.getTask(rootTaskId)) return;
+    try {
+      await this.warmTaskExecution(rootTaskId);
+    } catch (error) {
+      // The pre-flight passed and the tree is already gone, so there is nothing
+      // left to protect: keep the empty slot and say so, never report a rebuild
+      // that did not happen.
+      slog.warn("root rebuild failed after the exit committed", {
+        taskId: rootTaskId,
+        error: errorMessage(error),
+      });
+    }
+  }
+
+  /**
+   * The agent a reset Root will be rebuilt on, or null when Root has never been
+   * bound (its first prompt attaches one) or its owner left the configuration
+   * (an operation rotates it rather than this path).
+   */
+  private rebuildAgentFor(taskId: string): string | null {
+    const agentId = this.store.getCurrentExecutionBinding(taskId)?.agent_key;
+    if (!agentId || !this.agents.isConfigured(agentId)) return null;
+    return agentId;
   }
 
   /** Delete a task from store and clean up all state (including images).

@@ -1424,8 +1424,8 @@ describe("TaskManager", () => {
     });
   });
 
-  describe("Root reset without a live execution", () => {
-    it("resets DB-only, never creates a replacement execution, and retires the old one", async () => {
+  describe("Root reset rebuilds the execution", () => {
+    it("rebuilds Root's execution before the reset returns, retiring the old one", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(rootId, "test-agent", "agent-root");
       store.saveEvent(
@@ -1454,15 +1454,18 @@ describe("TaskManager", () => {
 
       await sm.resetRootTask(bridge);
 
-      assert.equal(newSessionCalls, 0);
+      // Exiting Root owns the rebuild: a client that reads Root next finds the
+      // state a freshly created task is in, not one a read still has to wake.
+      assert.equal(newSessionCalls, 1);
       assert.deepEqual(retired, ["agent-root"]);
       assert.equal(store.getEvents(rootId).length, 0);
-      assert.equal(store.getAgentSessionId(rootId), "");
+      assert.equal(store.getAgentSessionId(rootId), "agent-root-new");
+      assert.equal(sm.liveTasks.has(rootId), true);
       assert.equal(store.getTaskIncludingDeleted(rootId)?.parent_id, null);
       assert.equal(store.getTaskIncludingDeleted(rootId)?.cwd, tmpDir);
     });
 
-    it("succeeds offline with no bridge", async () => {
+    it("succeeds with an unbound Root and leaves it unbound", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.createTask(
         "child",
@@ -1781,11 +1784,15 @@ describe("TaskManager", () => {
 
       releaseRoot();
       await reset;
-      assert.equal(store.getAgentSessionId(rootId), "");
+      // The exit's own rebuild runs after the lock is released, so Root is
+      // live again by the time the reset resolves.
+      assert.equal(sm.liveTasks.has(rootId), true);
+      assert.notEqual(store.getAgentSessionId(rootId), "");
       assert.equal(store.getTaskIncludingDeleted(rootId)?.parent_id, null);
 
       const created = await create;
-      assert.equal(newSessionCalls, 1);
+      // One session for the rebuild, one for the created task.
+      assert.equal(newSessionCalls, 2);
       assert.equal(store.getTask(created.taskId)?.parent_id, rootId);
       assert.ok(store.getTask(created.taskId));
     });

@@ -121,6 +121,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a configuration request parked in `readBody` while the task is cleared onto another agent is refused with `409`, and no configuration request reaches the new execution
 
 - `test/runtime-warm.test.ts` (background warm-up)
+  - a read-started materialization of an unmaterialized task projects its creation claim and then re-projects busy to idle when it finishes, so a client that read mid-flight is not left with a spinner no local event can end
   - a completed warm-up publishes the restored schema and commands once per task and generation
   - concurrent reads share one restore; a failed warm-up publishes nothing
   - a warm-up that outlived a rotation publishes nothing (the guard is exercised directly: a stale generation and a moved binding are both refused)
@@ -487,6 +488,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - deleting a parent takes a foreign child with it, and each execution is retired through its own agent's adapter even when both report the same session id
   - a delete or Root reset is refused while a foreign descendant is busy, retiring nothing
   - a Root reset spans every agent and leaves one empty owner slot
+  - exiting Root rebuilds it before the request returns, so the caller lands on a live, idle task; a Root whose agent cannot start is refused before anything is destroyed, leaving the tree, the events, and the retired executions untouched
 
 - `test/runtime-authority.test.ts`
   - one `seq` source across a real A→B rotation (two Stores): the binding's agent and session both move, two client cursors accept every patch, and the post-rotation snapshot is never superseded
