@@ -6,7 +6,19 @@ export interface TaskCreatedMessageInput {
   taskId: string;
   /** Its title, used for the human-readable reference in the row. */
   taskTitle: string;
+  /**
+   * The agent the created task actually landed on. This is the only place a
+   * caller can confirm where its request (`agent` / `cwd`, either of which may
+   * have been omitted) ended up.
+   */
+  agentId: string;
   cwd: string;
+  /**
+   * The **effective** model / thinking value, not the request: an explicit
+   * override, the value inherited from a same-agent source, or the target
+   * session's own current value. Only a value that genuinely cannot be
+   * determined is left null, and that is what renders as `inherited`.
+   */
   model?: string | null;
   thinking?: string | null;
 }
@@ -29,6 +41,7 @@ export function buildTaskCreatedSystemMessage(
   const title = `Created task ${formatTaskReference(input.taskTitle)}`;
   const body = [
     `Task ID: ${input.taskId}`,
+    `agent: ${input.agentId}`,
     `cwd: ${input.cwd}`,
     input.model ? `model: ${input.model}` : "model: inherited",
     input.thinking ? `thinking: ${input.thinking}` : "thinking: inherited",
@@ -40,6 +53,7 @@ export function buildTaskCreatedSystemMessage(
       kind: "task_created",
       taskId: input.taskId,
       taskTitle: input.taskTitle,
+      agentId: input.agentId,
       cwd: input.cwd,
       model: input.model ?? null,
       thinking: input.thinking ?? null,

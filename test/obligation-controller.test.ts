@@ -406,6 +406,144 @@ describe("ObligationController", () => {
     );
   });
 
+  it("withdraws the pre-rotation watchdog epoch", async () => {
+    // What this proves: the rotation ends that watchdog epoch. A queued
+    // callback that still runs after a rotation is covered separately by
+    // "a retained pre-rotation retry callback cannot redeliver the old body",
+    // because the clock here genuinely drops cleared timers.
+    //
+    // Control: without the rotation the same steps produce the silence notice,
+    // so the negative assertion below is about the rotation, not about a
+    // watchdog that never worked.
+    const control = makeController();
+    armOpen(control);
+    await tick(control);
+    control.controller.beginTurn("child", "prompt-live");
+    control.clock.advance(SILENCE_THRESHOLD_S * 1000 + 1);
+    await flush();
+    assert.equal(
+      control.notices.filter((notice) => notice.reason === "no_activity")
+        .length,
+      1,
+      "the watchdog must fire for a live turn",
+    );
+
+    // The old timer belongs to a turn the replacement execution never ran.
+    // Advancing the clock past its deadline is the only honest proof: merely
+    // checking that the watchdog map is empty would pass even if the armed
+    // timer still fired.
+    const h = makeController();
+    armOpen(h);
+    await tick(h);
+    h.controller.beginTurn("child", "prompt-replaced");
+
+    h.controller.noteExecutionRotated("child");
+    h.clock.advance(SILENCE_THRESHOLD_S * 1000 + 1);
+    await flush();
+
+    // Mutation evidence: deleting `watchdog.delete(key)` in the rotation
+    // transition lets this stale timer emit a no_activity notice here.
+    assert.equal(
+      h.notices.filter((notice) => notice.reason === "no_activity").length,
+      0,
+      "the replaced execution's watchdog must not report on the new one",
+    );
+  });
+
+  it("a retained pre-rotation retry callback cannot redeliver the old body", async () => {
+    // The interesting stale-timer case is a callback that is *already queued*
+    // when a rotation lands: clearing a timer cannot un-queue a macrotask. The
+    // clock below keeps every callback it was given (and honours clearTimer
+    // only for its own scheduling), so the pre-rotation callback can be run
+    // explicitly after the rotation.
+    let now = 1_000_000;
+    const retained: Array<() => void> = [];
+    const submissions: DirectedObligation[] = [];
+    const retries: DirectedObligation[] = [];
+    const controller = new ObligationController({
+      now: () => now,
+      setTimer: (fn, ms) => {
+        retained.push(fn);
+        return { at: now + Math.max(0, ms), fn } as unknown as TimerHandle;
+      },
+      // Deliberately a no-op: the callback stays runnable, like a timer event
+      // that was already posted to the event loop before the rotation.
+      clearTimer: () => {},
+      isAgentBusy: () => false,
+      submitReminder: async (obligation) => {
+        submissions.push(obligation);
+        return { status: "delivered" };
+      },
+      retryDispatch: (obligation) => {
+        retries.push(obligation);
+      },
+      emitNotice: () => {},
+    });
+    controller.arm({
+      sourceTaskId: "parent",
+      targetTaskId: "child",
+      messageId: "m-1",
+      deliveryId: "d-1",
+    });
+    // A rejected initial dispatch schedules the bounded re-dispatch, which is
+    // the only path that would hand the old body over again.
+    controller.markDeliveryFailed("parent", "child");
+    const retryCallback = retained.at(-1);
+    assert.ok(retryCallback, "the retry deadline must be armed");
+    assert.equal(
+      controller.getActive("parent", "child")?.state,
+      "awaiting_delivery",
+    );
+
+    // The execution is replaced, and the queued callback now runs at its old
+    // deadline (one backoff later), exactly as a posted macrotask would.
+    controller.noteExecutionRotated("child");
+    now += 1_000;
+    retryCallback();
+    await flush();
+
+    // Mutation evidence: pointing the callback at a captured fact instead of
+    // the current record (e.g. re-enqueueing `pendingDispatchRetries`) would
+    // re-dispatch here. Re-deriving from the record cannot.
+    assert.deepEqual(retries, [], "the old body is never re-enqueued");
+    const record = controller.getActive("parent", "child");
+    assert.ok(record);
+    assert.equal(record.openingMessageId, "m-1");
+    assert.notEqual(record.state, "awaiting_delivery");
+    // A fresh closing reminder for the replacement is what the record owes now.
+    assert.equal(submissions.length, 1);
+    assert.equal(record.state, "reminder_due");
+    assert.equal(record.deliveredAttempts, 1);
+    void now;
+  });
+
+  it("ignores an in-flight reminder result from the replaced execution", async () => {
+    // The old continuation (and its recovery generation) is stale. It must not
+    // settle the record, spend an attempt, or re-enqueue the dispatch.
+    const h = makeController();
+    h.setSubmitMode("manual");
+    const obligation = armOpen(h);
+    await tick(h);
+    assert.equal(h.submissions.length, 1);
+
+    h.controller.noteExecutionRotated("child");
+    h.resolveSubmission(0, true);
+    await flush();
+
+    const record = h.controller.getActive("parent", "child");
+    assert.ok(record);
+    // A late success from the replaced execution cannot settle or advance it.
+    assert.notEqual(record.state, "settled");
+    assert.equal(record.deliveredAttempts, 0);
+    assert.equal(record.openingMessageId, obligation.openingMessageId);
+    assert.equal(h.notices.length, 0);
+    assert.equal(
+      h.dispatchRetries.length,
+      0,
+      "the stale result must not re-enqueue the old dispatch",
+    );
+  });
+
   it("waits for the target to be idle before submitting", async () => {
     const h = makeController();
     armOpen(h);

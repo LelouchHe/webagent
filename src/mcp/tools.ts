@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { McpTaskHistoryRow } from "./task-history.ts";
+import { buildTaskCreateDescription } from "./task-create-description.ts";
 
 export type McpWorkflowStatus = "running" | "idle" | "blocked" | "done";
 
@@ -79,6 +80,12 @@ export interface McpTaskCreateInput {
   cwd?: string;
   model?: string;
   thinking?: string;
+  /**
+   * The execution agent the child is created for, as configured at startup.
+   * Omitted means "this Task's agent", which is the only value the caller can
+   * always derive without knowing the deployment.
+   */
+  agent?: string;
 }
 
 export interface McpTaskCreateResult {
@@ -167,11 +174,22 @@ function unavailable(): never {
   throw new Error("Task MCP tools are not configured");
 }
 
+/** Registration inputs that come from the running deployment, not the request. */
+export interface McpToolRegistrationOptions {
+  /**
+   * Configured agent ids from the startup snapshot. The MCP server is built per
+   * request, so `task_create`'s description can be computed against the
+   * deployment that is actually running instead of a static schema.
+   */
+  configuredAgentIds?: readonly string[];
+}
+
 /** Register the Agent-facing Task control-plane tools. */
 export function registerMcpTools(
   server: McpServer,
   principal: McpCallerPrincipal,
   host?: McpTaskToolHost,
+  options: McpToolRegistrationOptions = {},
 ): void {
   /**
    * Business tools never run in the pending window, and every call re-checks
@@ -295,9 +313,7 @@ export function registerMcpTools(
   server.registerTool(
     "task_create",
     {
-      description:
-        "Create a direct child Task for independent work. " +
-        "Immediately use task_send to give it the first instruction, then end the dispatch turn without polling.",
+      description: buildTaskCreateDescription(options.configuredAgentIds ?? []),
       inputSchema: {
         title: z
           .string()
@@ -315,6 +331,15 @@ export function registerMcpTools(
           .optional()
           .describe(
             "Working directory; null or omission inherits the current Task",
+          ),
+        agent: z
+          .string()
+          .trim()
+          .min(1)
+          .nullable()
+          .optional()
+          .describe(
+            "Execution agent; null or omission inherits the current Task's agent",
           ),
         model: z
           .string()
@@ -338,12 +363,13 @@ export function registerMcpTools(
           ),
       },
     },
-    async ({ title, cwd, model, thinking }) => {
+    async ({ title, cwd, agent, model, thinking }) => {
       guard();
       return jsonContent(
         await host!.create(principal, {
           title,
           cwd: cwd ?? undefined,
+          agent: agent ?? undefined,
           model: model ?? undefined,
           thinking: thinking ?? undefined,
         }),

@@ -16,6 +16,7 @@ import {
   type WorkflowStatus,
 } from "./store.ts";
 import { shouldArm } from "./task-collaboration.ts";
+import { formatTaskReference } from "./shared/task-reference.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -182,7 +183,7 @@ type ExecutionConfigColumn = "model" | "mode" | "reasoning_effort";
  * `thought_level` and `reasoning_effort` both land on `reasoning_effort`;
  * options the task has no column for are not read.
  */
-function reportedExecutionConfig(
+export function reportedExecutionConfig(
   configOptions: ConfigOption[],
 ): Partial<Record<ExecutionConfigColumn, string>> {
   const reported: Partial<Record<ExecutionConfigColumn, string>> = {};
@@ -301,6 +302,46 @@ export class AgentNotReadyError extends Error {
   constructor(taskId: string) {
     super(`Agent is not ready for task ${taskId}`);
     this.name = "AgentNotReadyError";
+  }
+}
+
+/**
+ * A requested `model` / `thinking` value the created session's own schema
+ * refused.
+ *
+ * The message keeps the original `unsupported_config:<id>` /
+ * `invalid_config_value:<id>` form, but the fields are the point: callers relay
+ * the candidates to whoever chose the value, and the only honest candidates are
+ * the ones **this session** reported. The agent-level cache is not a substitute
+ * — it can hold a previous session's list, which is exactly the stale answer
+ * that would send the caller retrying a value the target never supported.
+ */
+export class TaskConfigOverrideError extends Error {
+  readonly logicalId: "model" | "thinking";
+  readonly requestedValue: string;
+  /** `unsupported`: this session reported no selectable option for the id. */
+  readonly reason: "unsupported" | "invalid";
+  /** This session's candidate values, in its own order; empty when unsupported. */
+  readonly supportedValues: readonly string[];
+  /** This session's current value for the option, when it reported one. */
+  readonly currentValue: string | null;
+
+  constructor(input: {
+    reason: "unsupported" | "invalid";
+    logicalId: "model" | "thinking";
+    requestedValue: string;
+    supportedValues: readonly string[];
+    currentValue: string | null;
+  }) {
+    super(
+      `${input.reason === "unsupported" ? "unsupported_config" : "invalid_config_value"}:${input.logicalId}`,
+    );
+    this.name = "TaskConfigOverrideError";
+    this.reason = input.reason;
+    this.logicalId = input.logicalId;
+    this.requestedValue = input.requestedValue;
+    this.supportedValues = input.supportedValues;
+    this.currentValue = input.currentValue;
   }
 }
 
@@ -501,6 +542,26 @@ export function createTaskManager(
     authority: new ExecutionAuthority(),
     agents: new SingleAgentEnvironment(agentId),
   });
+}
+
+/**
+ * The parent-facing text of a runtime outcome notice.
+ *
+ * A notice body is also the prompt text the source agent reads, so it is a
+ * readable `key: value` block rather than JSON. The machine payload is not
+ * lost: it remains the `task_outcome_notice` event this body accompanies, which
+ * is what audit and tooling read.
+ */
+function noticeBody(payload: {
+  reason: string;
+  message: string;
+  openingMessageId: string;
+}): string {
+  return [
+    `reason: ${payload.reason}`,
+    `message: ${payload.message}`,
+    `openingMessageId: ${payload.openingMessageId}`,
+  ].join("\n");
 }
 
 /**
@@ -1508,15 +1569,38 @@ export class TaskManager implements ObligationHost {
     for (const { logicalId, value } of requested) {
       if (!value) continue;
       const configId = configOptionId(updated, logicalId);
-      if (!configId) {
-        throw new Error(`unsupported_config:${logicalId}`);
+      const option = configId
+        ? updated.find((entry) => entry.id === configId)
+        : undefined;
+      // The candidates come from the schema this session reported
+      // (`createdConfigOptions` and its updates), never from the agent cache:
+      // a session that reports nothing would otherwise be described by an
+      // earlier session's list.
+      const supportedValues =
+        option && "options" in option
+          ? option.options.map((entry) => entry.value)
+          : [];
+      const currentValue =
+        option && typeof option.currentValue === "string"
+          ? option.currentValue
+          : null;
+      if (!option || !configId || !("options" in option)) {
+        throw new TaskConfigOverrideError({
+          reason: "unsupported",
+          logicalId,
+          requestedValue: value,
+          supportedValues: [],
+          currentValue: null,
+        });
       }
-      const option = updated.find((entry) => entry.id === configId);
-      if (!option || !("options" in option)) {
-        throw new Error(`unsupported_config:${logicalId}`);
-      }
-      if (!option.options.some((entry) => entry.value === value)) {
-        throw new Error(`invalid_config_value:${logicalId}`);
+      if (!supportedValues.some((candidate) => candidate === value)) {
+        throw new TaskConfigOverrideError({
+          reason: "invalid",
+          logicalId,
+          requestedValue: value,
+          supportedValues,
+          currentValue,
+        });
       }
       const next = await bridge.setConfigOption(taskId, configId, value);
       if (next.length > 0) {
@@ -3552,7 +3636,7 @@ export class TaskManager implements ObligationHost {
       message: notice.message,
       evidence: notice.evidence,
     };
-    const body = JSON.stringify(payload);
+    const body = noticeBody(payload);
     // The notice is ordinary parent-facing collaboration from the target to
     // the stored source, with a system actor. The emitter observer sees it and
     // declines to arm it (system actor), independently of direction.
@@ -3576,7 +3660,9 @@ export class TaskManager implements ObligationHost {
       messageId: created.message.id,
       sourceTaskId: obligation.targetTaskId,
       targetTaskId: obligation.sourceTaskId,
-      title: `${source?.title ?? obligation.targetTaskId.slice(0, 8)} sent ${target?.title ?? obligation.sourceTaskId.slice(0, 8)}`,
+      // Same source as the persisted twin (`createCollaborationMessage`), so a
+      // live row and its replayed copy cannot show different titles.
+      title: `${formatTaskReference(source?.title ?? obligation.targetTaskId.slice(0, 8))} sent ${formatTaskReference(target?.title ?? obligation.sourceTaskId.slice(0, 8))}`,
       body,
     });
     void this.drainCollaborationDeliveries(obligation.sourceTaskId);

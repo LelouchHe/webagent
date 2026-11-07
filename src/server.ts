@@ -261,6 +261,10 @@ const requestHandler = createRequestHandler({
     capabilities,
     isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
     taskTools: mcpTaskTools,
+    // Discovery for `task_create(agent: …)` comes from the running
+    // configuration, not from a static schema that would have to be rebuilt by
+    // hand whenever an agent is added.
+    configuredAgentIds: Object.keys(config.agents),
   }),
 });
 

@@ -314,7 +314,12 @@ still be live.
 A notice is a `task_outcome_notice` collaboration message with a system actor,
 routed target→stored source, carrying `sourceTaskId`, `targetTaskId`,
 `openingMessageId`, `openingDeliveryId`, `reason`, `message` (the fact, safe to
-show verbatim), and `evidence`. A notice cannot arm an obligation.
+show verbatim), and `evidence`. That payload is the `task_outcome_notice` event,
+so audit and tooling read the machine form. The collaboration body the recipient
+agent is prompted with is a readable `key: value` block of `reason`, `message`,
+and `openingMessageId`; the live broadcast title and the persisted row use the
+same `@reference sent @reference` formatter, so a reloaded copy never shows a
+different title. A notice cannot arm an obligation.
 
 | Reason | When | Evidence shape | Recipient's action |
 | --- | --- | --- | --- |

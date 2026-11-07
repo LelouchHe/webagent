@@ -245,7 +245,9 @@ plus `agentId`, the agent really attempted)
 - Records and broadcasts a `system_message` (`kind: task_created`) on the parent
   task — the same row the Agent's `task_create` tool writes, with `from_ref`
   `user` instead of `agent` — so user- and agent-created tasks look identical in
-  the task flow and survive a reload
+  the task flow and survive a reload. The row names the agent the task landed on
+  and the `model` / `thinking` values that took effect (an inherited, explicit,
+  or target-reported value; `inherited` only when none can be determined)
 - Cleans up empty tasks older than 60 seconds
 
 ---

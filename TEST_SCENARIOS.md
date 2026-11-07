@@ -46,6 +46,39 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a token whose task moved to another agent is refused; a Root reset revokes the Root token
   - unknown/revoked tokens are refused before any protocol work; the caller principal is frozen and carries `(task, agent, generation)`
 
+- `test/multi-agent-mcp-create.test.ts` (production host + endpoint + real REST handler, one distinguishable transport per configured agent)
+  - `task_create(agent: …)` creates the child on the target: exactly one new session on B, none on the parent's A, the child's binding and session belong to B, a relative `cwd` still resolves against the parent's `cwd`, and exactly one five-field creation record (`Task ID`/`agent`/`cwd`/`model`/`thinking`) is written to the parent
+  - the three argument forms resolve to three bindings: omitted (parent's A), explicit same agent (A), and a third configured agent (C, with B never started)
+  - an explicit `model` the target accepts really applies: the row, the detail read, the target mock's session values, and the creation record all agree
+  - a target session that reports no option while the agent-level cache still holds an older list fails as `unsupported_config`: the error names the missing option and never offers the cached values, and no task row, creation record, or valid capability survives
+  - a small candidate set is listed with the target's current value; a wide `model` list is reduced to its count and current value (and is not enumerated); a same-agent failure keeps the same error shape
+  - a model override that succeeds before `thinking` fails proves the cleanup: the model write reached the target, and the task row, creation record, and capability are all gone afterwards
+  - an unconfigured `agent` is refused with the omission hint and no id list (the list stays in the tool description); a configured agent that cannot start reports the transport's real reason plus the same hint
+  - a target that starts but refuses `session/new` fails as a tool error with that session's reason, and leaves no task row, creation record, or valid capability
+  - the explicit-agent path keeps the authority boundary: a rotation landing inside the target's start yields `execution_replaced` with no task and no target session, a token from an older generation is refused, and unknown/revoked capabilities are still entry-level `401`
+  - the per-request description lists only the configured agents (a configured-but-not-advertised agent is absent)
+  - same-agent regression: inheritance still carries the parent's stored model, and same-agent validation reports its own schema's candidates
+
+- `test/mcp-create-errors.test.ts` (pure builders and the shared composer)
+  - a 900-character id is dropped whole (no pseudo-id fragment) while the failure category and the `agent` omission hint survive
+  - a start reason with embedded newlines is flattened into one line, so the message stays at two lines instead of eight
+  - an over-long start reason / requested value / current value is dropped whole; the guidance and the target id remain
+  - a message of exactly the 400-character ceiling keeps the reason, and a composer of exactly six lines keeps all six
+  - the line budget counts real line breaks, not parts: a three-line variant consumes three lines
+  - a small candidate set is listed with the current value, a wide one becomes its count, and an unreported option offers no values at all
+
+- `test/mcp-task-create-description.test.ts`
+  - a single-agent deployment keeps the plain description (no cross-agent wording, no id list)
+  - every configured id is listed whole when it fits; duplicates collapse; the whole description stays within 1024 characters
+  - a large deployment lists whole ids only, ends with an omitted count that accounts for every unlisted id, and never truncates an id
+  - ids that cannot fit are dropped entirely, leaving the omission note and, when not even one fits, a "too long to list here" explanation
+
+- `test/multi-agent-mcp-collaboration.test.ts` (same harness: production host, endpoint, REST handler, one transport per agent)
+  - a parent on A dispatches to a child on B: the contract reaches B's own transport and never A's; the production manager's own collaboration observer is called exactly once for that message (measured by wrapping the store registration the manager makes), and exactly one obligation record exists for the edge
+  - the child's typed `task_update(done)` on B settles the record from its live turn, persists the typed update, and wakes the parent through A's transport with readable prose (`Task status: done` + the account), not JSON; the observer count grows by exactly one
+  - an unanswered dispatch sends its closing reminder to B's transport (never A's), and after the transport budget is spent the terminal `delivery_failed` notice is delivered to A's transport with the readable block, while the machine payload stays in `task_outcome_notice`
+  - a token minted for the generation that was current just before the child's execution was replaced is refused with `execution_replaced` even though the replacement owns a live, settleable turn: no settlement, no attempt spent, no re-enqueue, no account message; the current generation's token settles the same turn (control)
+
 - `test/multi-agent-pending.test.ts` (real ACP child process)
   - the agent connects to `/mcp` from inside `session/new`: the handshake succeeds, `task_list` answers `initializing`, nothing is created, and the same token works after the binding commits
 
@@ -376,12 +409,16 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a rejected initial dispatch is retried under the transport bound (backoff, no immediate idle re-drain) and ends in one factual `delivery_failed` notice with `delivery_unavailable` evidence; a resume that keeps failing exhausts the same budget, and a still-queued dispatch produces a non-terminal `still_waiting` advisory rather than a terminal deadline
   - a late callback from a superseded dispatch prompt identity is ignored, including a failing resume and a stale hand-off; the still-waiting and age advisories are non-terminal and cleared on terminal states; an in-flight reminder from a previous epoch is ignored after a coalescing follow-up; a runtime rotation (and bridge restart, including a draining turn) aborts the watchdog and a silence notice requires a live current turn
   - the closing reminder scopes its prohibition to the runtime-injected closing turn, resumes a non-live session before reminding, records no successful reminder on rejection, persists a bounded audit copy of the drained prompt, and logs obligation lifecycle decisions
+  - a runtime notice is delivered as a readable `reason:` / `message:` / `openingMessageId:` block (the text the parent agent actually receives, fenced verbatim), while its machine payload stays in the `task_outcome_notice` event; the live broadcast title and the persisted twin share one `messageId` and one title
   - execution write lease, fail closed: an event stamped with a replaced generation, an unknown generation, another task's lease, no lease at all, or no lease for a task with no ledger entry writes nothing — no buffer, no stored event, no broadcast, no activity timestamp
 
 - `test/obligation-controller.test.ts`
   - awaiting_delivery → open timing, coalescing without a fresh record, +2m/+5m delivered-reminder schedule, transport-bound exhaustion, idle wait, the two-condition settlement predicate and its guards (awaiting_delivery, no active turn, terminal records), stored-source/current-parent routing, the accepted boundary, superseded-dispatch identity, abort and advisory backstops, live-turn requirement, process-local loss on reconstruction, terminal records never watched, and independent watchdog/no-account epochs
   - tri-state submission: a `deferred` outcome leaves `reminder_submitting`, keeps both counters, and retries on a growing bounded backoff; a permanently deferring transport never exhausts the record and emits no notice
   - `execution_rotated` keeps the same record (endpoints, attempts) in a waitable state and never requests a re-dispatch
+  - a pre-rotation watchdog with a live turn emits its silence notice (control), and the same steps after a rotation emit none — the rotation ends that watchdog epoch (the retained-callback case is covered by the next bullet)
+  - a retry callback that is still queued when the rotation lands is run explicitly after it (the clock keeps callbacks after `clearTimer`): it re-derives from the record, so the old body is never re-enqueued and a closing reminder for the replacement is what it submits
+  - a reminder result from the replaced execution (old recovery generation) cannot settle the record, spend an attempt, or re-enqueue the dispatch
 
 - `test/task-collaboration.test.ts`
   - pure `shouldArm` policy: agent parent→child only; user, system, and non-parent relations never arm
@@ -412,7 +449,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/execution-rotation.test.ts`
   - implicit owner rotation: Root is taken over only when its owner left configuration, never from an owner that is still configured, and the takeover leaves a transcript line naming both agents
   - a taken-over empty slot materializes through an ordinary resume
-  - an implicit rotation truncates the transport and keeps the obligation
+  - an implicit rotation truncates the transport and keeps the obligation; the queued delivery row ends as failed (`cleared_before_delivery`) while the debt survives
+  - a rotation refused because the target owns a live turn leaves the record, its state, the queued delivery, and the binding untouched
   - each rotated task gets its own empty execution slot: two ordinary tasks rotated under the same agent both succeed alongside the Root's empty slot, and each materializes later
   - the empty slot is recognised by exact equality with the value generated for that task, never by the reserved prefix: a real session id that merely shares the prefix is restored (not materialized) and stays bound
   - a reserved-shape session id that is not this task's own slot is refused at the binding write (create/attach/replace), so no task or binding is stored under a shape the reader would have to guess about
@@ -1231,6 +1269,19 @@ spot gaps, and decide what still needs to be added without reading every spec.
     clearing back starts from the first agent's defaults rather than restoring
     the abandoned choice
   - creating for an unconfigured agent is a `400` client error
+
+- `multi-agent-collaboration.spec.ts` (suite server, two configured agents)
+  - the mock agent creates a child on mock2 and dispatches the contract; mock2 really runs the turn and hands back a typed account, which appears in the parent's transcript live as readable collaboration text titled with the same `@reference sent @reference` form the store persisted
+  - the live row and the persisted twin share one title and one body, and a reload replays exactly the same row (the terminal-notice variant of this equality needs operator thresholds of minutes or a request-level transport failure, so it is proven at the integration layer)
+
+- `multi-agent-create.spec.ts` (suite server, two configured agents)
+  - the mock agent's real `task_create({ agent: "mock2" })` lands the child on
+    mock2: the detail read names mock2, `mock2-model`, the parent link, and a
+    `cwd: "."` that resolved against the parent's directory while the parent
+    kept its own binding
+  - the parent transcript holds exactly one five-field creation record naming
+    mock2 and mock2's own `model`/`thinking` (not `inherited`, not mock's
+    defaults), and the live UI shows the same row without a reload
 
 ### Multi-client synchronization
 

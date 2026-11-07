@@ -625,7 +625,7 @@ describe("MCP Task tool host", () => {
         options: Record<string, unknown>,
       ) => {
         createCall = { cwd, inheritFromTaskId, source, options };
-        return { taskId: "created-child" };
+        return { taskId: "created-child", configOptions: [] };
       },
     } as unknown as TaskManager;
     const host = createMcpTaskToolHost({
