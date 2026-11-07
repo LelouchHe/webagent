@@ -24,8 +24,8 @@ function record(method: string, params: unknown): void {
   appendFileSync(callsPath, `${JSON.stringify({ method, params })}\n`);
 }
 
-const agent: acp.Agent = {
-  async initialize() {
+const handlers = {
+  async initialize(): Promise<acp.InitializeResponse> {
     record("initialize", {});
     if (initDelayMs) {
       await new Promise((done) => setTimeout(done, Number(initDelayMs)));
@@ -43,7 +43,9 @@ const agent: acp.Agent = {
       agentCapabilities: { loadSession: true },
     };
   },
-  async newSession(params) {
+  async newSession(
+    params: acp.NewSessionRequest,
+  ): Promise<acp.NewSessionResponse> {
     record("new", params);
     if (mcpProbe === "1") {
       // A real agent connects to the MCP server it was handed *inside*
@@ -96,20 +98,24 @@ const agent: acp.Agent = {
       configOptions: [],
     };
   },
-  async authenticate() {
+  async authenticate(): Promise<void> {
     record("authenticate", {});
   },
-  async loadSession(params) {
+  async loadSession(
+    params: acp.LoadSessionRequest,
+  ): Promise<acp.LoadSessionResponse> {
     record("load", params);
     return { configOptions: [] };
   },
-  async setSessionConfigOption(params) {
+  async setSessionConfigOption(
+    params: acp.SetSessionConfigOptionRequest,
+  ): Promise<acp.SetSessionConfigOptionResponse> {
     record("config", params);
     return { configOptions: [] };
   },
-  async prompt(params) {
+  async prompt(params: acp.PromptRequest): Promise<acp.PromptResponse> {
     record("prompt", params);
-    await connection.sessionUpdate({
+    await connection.notify("session/update", {
       sessionId: params.sessionId,
       update: {
         sessionUpdate: "agent_message_chunk",
@@ -118,15 +124,26 @@ const agent: acp.Agent = {
     });
     return { stopReason: "end_turn" };
   },
-  async cancel(params) {
+  async cancel(params: acp.CancelNotification): Promise<void> {
     record("cancel", params);
   },
 };
 
-const connection = new acp.AgentSideConnection(
-  () => agent,
+const app = acp.agent({ name: "multi-agent-fixture" });
+app.onRequest("initialize", () => handlers.initialize());
+app.onRequest("session/new", ({ params }) => handlers.newSession(params));
+app.onRequest("session/load", ({ params }) => handlers.loadSession(params));
+app.onRequest("session/set_config_option", ({ params }) =>
+  handlers.setSessionConfigOption(params),
+);
+app.onRequest("authenticate", () => handlers.authenticate());
+app.onRequest("session/prompt", ({ params }) => handlers.prompt(params));
+app.onNotification("session/cancel", ({ params }) => handlers.cancel(params));
+
+const streamConnection = app.connect(
   acp.ndJsonStream(
     Writable.toWeb(process.stdout),
     Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>,
   ),
 );
+const connection = streamConnection.client;

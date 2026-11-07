@@ -85,7 +85,9 @@ export class PromptNotDeliveredError extends Error {
 
 export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
-  private connection: acp.ClientSideConnection | null = null;
+  private connection: acp.ClientContext | null = null;
+  /** The app-level connection handle, kept so shutdown can close the stream. */
+  private appConnection: acp.ClientConnection | null = null;
   private readonly permissionResolvers = new Map<
     string,
     (resp: acp.RequestPermissionResponse) => void
@@ -264,20 +266,21 @@ export class AgentBridge extends EventEmitter {
       maxMessageBytes: MAX_ACP_MESSAGE_BYTES,
     });
 
-    const client: acp.Client = {
-      requestPermission: async (params: acp.RequestPermissionRequest) =>
+    const app = acp
+      .client({ name: "webagent" })
+      .onRequest("session/request_permission", async ({ params }) =>
         this.handlePermission(params),
-      sessionUpdate: async (params: acp.SessionNotification) =>
-        this.handleSessionUpdate(params),
-    };
+      )
+      .onNotification("session/update", async ({ params }) => {
+        await this.handleSessionUpdate(params);
+      });
 
     try {
-      this.connection = new acp.ClientSideConnection(
-        (_agent) => client,
-        stream,
-      );
+      const appConnection = app.connect(stream);
+      this.appConnection = appConnection;
+      this.connection = appConnection.agent;
 
-      const init = await this.connection.initialize({
+      const init = await this.connection.request("initialize", {
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: {
           fs: { readTextFile: false, writeTextFile: false },
@@ -316,7 +319,7 @@ export class AgentBridge extends EventEmitter {
     if (!this.connection) throw new Error("Not connected");
     this.pendingNewSessions++;
     try {
-      const session = await this.connection.newSession({
+      const session = await this.connection.request("session/new", {
         cwd,
         mcpServers: opts?.mcpServers ?? [],
       });
@@ -437,9 +440,9 @@ export class AgentBridge extends EventEmitter {
     const params = { sessionId: agentSessionId } as const;
     try {
       if (this.sessionCapabilities?.delete) {
-        await this.connection.deleteSession(params);
+        await this.connection.request("session/delete", params);
       } else if (this.sessionCapabilities?.close) {
-        await this.connection.closeSession(params);
+        await this.connection.request("session/close", params);
       }
     } catch (err) {
       blog.warn("failed to retire retired ACP session", {
@@ -468,9 +471,9 @@ export class AgentBridge extends EventEmitter {
         mcpServers: mcpServers ?? [],
       };
       if (this.sessionCapabilities?.resume) {
-        session = await this.connection.resumeSession(params);
+        session = await this.connection.request("session/resume", params);
       } else if (this.loadSessionSupported) {
-        session = await this.connection.loadSession(params);
+        session = await this.connection.request("session/load", params);
       } else {
         throw new Error(
           "The agent does not support restoring sessions. Use /new to start a fresh one.",
@@ -521,7 +524,7 @@ export class AgentBridge extends EventEmitter {
       value,
     );
     const codecEpoch = this.sessionCodecEpoch(agentSessionId);
-    const result = await this.connection.setSessionConfigOption({
+    const result = await this.connection.request("session/set_config_option", {
       sessionId: agentSessionId,
       configId,
       ...(typeof wireValue === "boolean"
@@ -547,7 +550,7 @@ export class AgentBridge extends EventEmitter {
       value,
     );
     const codecEpoch = this.sessionCodecEpoch(agentSessionId);
-    const result = await this.connection.setSessionConfigOption({
+    const result = await this.connection.request("session/set_config_option", {
       sessionId: agentSessionId,
       configId,
       ...(typeof wireValue === "boolean"
@@ -743,7 +746,7 @@ export class AgentBridge extends EventEmitter {
       promptParts.push({ type: "text", text });
       // Evaluate the request call before flipping the flag: a synchronous
       // throw here means the agent never received the prompt.
-      const request = this.connection.prompt({
+      const request = this.connection.request("session/prompt", {
         sessionId: agentSessionId,
         prompt: promptParts,
       });
@@ -817,11 +820,15 @@ export class AgentBridge extends EventEmitter {
         this.denyPermission(requestId);
       }
     }
-    await this.connection?.cancel({ sessionId: this.agentSessionId(taskId) });
+    await this.connection?.notify("session/cancel", {
+      sessionId: this.agentSessionId(taskId),
+    });
   }
 
   async cancelAgentSession(agentSessionId: string): Promise<void> {
-    await this.connection?.cancel({ sessionId: agentSessionId });
+    await this.connection?.notify("session/cancel", {
+      sessionId: agentSessionId,
+    });
   }
 
   /**
@@ -863,6 +870,7 @@ export class AgentBridge extends EventEmitter {
       type: "agent_disconnected",
       agentId: this.agentId,
     } satisfies AgentEvent);
+    this.appConnection = null;
     this.connection = null;
   }
 
@@ -881,7 +889,10 @@ export class AgentBridge extends EventEmitter {
     this.registerPromptAbort(sessionId, null, sessionId, abortReject);
     try {
       await Promise.race([
-        this.connection.prompt({ sessionId, prompt: [{ type: "text", text }] }),
+        this.connection.request("session/prompt", {
+          sessionId,
+          prompt: [{ type: "text", text }],
+        }),
         abortPromise,
       ]);
       return this.silentBuffers.get(sessionId) ?? "";
@@ -1054,6 +1065,8 @@ export class AgentBridge extends EventEmitter {
       });
     }
     this.proc = null;
+    this.appConnection?.close();
+    this.appConnection = null;
     this.connection = null;
   }
 

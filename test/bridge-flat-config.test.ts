@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { AgentBridge } from "../src/bridge.ts";
 import type { AgentEvent, ConfigOption } from "../src/types.ts";
+import { fakePeer } from "./fixtures/fake-peer.ts";
 
 const flatOptions: ConfigOption[] = [
   {
@@ -34,7 +35,7 @@ describe("flat model option ingress", () => {
         mapped && sessionId === "session-1" ? "task-1" : undefined,
     });
     (bridge as any).loadSessionSupported = true;
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       newSession: async () => ({
         sessionId: "session-1",
         configOptions: flatOptions,
@@ -42,7 +43,7 @@ describe("flat model option ingress", () => {
       loadSession: async () => ({ configOptions: flatOptions }),
       resumeSession: async () => ({ configOptions: flatOptions }),
       setSessionConfigOption: async () => ({ configOptions: flatOptions }),
-    };
+    });
 
     const created = await bridge.newSession("/repo");
     assertByteIdentical(created.configOptions);

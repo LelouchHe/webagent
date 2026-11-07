@@ -91,8 +91,8 @@ function optionsForSession(sessionId: string): acp.SessionConfigOption[] {
     : configOptions;
 }
 
-const agent: acp.Agent = {
-  async initialize() {
+const handlers = {
+  async initialize(): Promise<acp.InitializeResponse> {
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentInfo: { name: "session-fixture", version: "1" },
@@ -112,7 +112,9 @@ const agent: acp.Agent = {
       },
     };
   },
-  async newSession(params) {
+  async newSession(
+    params: acp.NewSessionRequest,
+  ): Promise<acp.NewSessionResponse> {
     record("new", params);
     if (isGroupedProfile()) {
       nextSession++;
@@ -127,7 +129,7 @@ const agent: acp.Agent = {
       ) {
         const updated = groupedConfigOptions(sessionId, true);
         sessionOptions.set(sessionId, updated);
-        await connection.sessionUpdate({
+        await connection.notify("session/update", {
           sessionId,
           update: {
             sessionUpdate: "config_option_update",
@@ -139,11 +141,15 @@ const agent: acp.Agent = {
     }
     return { sessionId: "unexpected-new", configOptions };
   },
-  async loadSession(params) {
+  async loadSession(
+    params: acp.LoadSessionRequest,
+  ): Promise<acp.LoadSessionResponse> {
     record("load", params);
     return { configOptions: optionsForSession(params.sessionId) };
   },
-  async resumeSession(params) {
+  async resumeSession(
+    params: acp.ResumeSessionRequest,
+  ): Promise<acp.ResumeSessionResponse> {
     record("resume", params);
     if (profile === "resume-missing") {
       throw acp.RequestError.resourceNotFound(params.sessionId);
@@ -151,7 +157,7 @@ const agent: acp.Agent = {
     if (profile === "grouped-empty-resume") {
       const updated = groupedConfigOptions(params.sessionId, true);
       sessionOptions.set(params.sessionId, updated);
-      await connection.sessionUpdate({
+      await connection.notify("session/update", {
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "config_option_update",
@@ -162,7 +168,9 @@ const agent: acp.Agent = {
     }
     return { configOptions: optionsForSession(params.sessionId) };
   },
-  async setSessionConfigOption(params) {
+  async setSessionConfigOption(
+    params: acp.SetSessionConfigOptionRequest,
+  ): Promise<acp.SetSessionConfigOptionResponse> {
     record("config", params);
     const options = optionsForSession(params.sessionId);
     const updated = options.map((option) => {
@@ -183,20 +191,24 @@ const agent: acp.Agent = {
     }
     return { configOptions: updated };
   },
-  async closeSession(params) {
+  async closeSession(
+    params: acp.CloseSessionRequest,
+  ): Promise<acp.CloseSessionResponse> {
     record("close", params);
     return {};
   },
-  async deleteSession(params) {
+  async deleteSession(
+    params: acp.DeleteSessionRequest,
+  ): Promise<acp.DeleteSessionResponse> {
     record("delete", params);
     return {};
   },
   async authenticate() {},
-  async prompt(params) {
+  async prompt(params: acp.PromptRequest): Promise<acp.PromptResponse> {
     if (profile === "grouped-silent") {
       const updated = groupedConfigOptions(params.sessionId, true);
       sessionOptions.set(params.sessionId, updated);
-      await connection.sessionUpdate({
+      await connection.notify("session/update", {
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "config_option_update",
@@ -207,7 +219,7 @@ const agent: acp.Agent = {
     if (profile === "grouped-alias") {
       const updated = groupedConfigOptions(params.sessionId);
       sessionOptions.set(params.sessionId, updated);
-      await connection.sessionUpdate({
+      await connection.notify("session/update", {
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "config_option_update",
@@ -216,7 +228,7 @@ const agent: acp.Agent = {
       });
     }
     if (profile === "large-update") {
-      await connection.sessionUpdate({
+      await connection.notify("session/update", {
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "tool_call_update",
@@ -230,10 +242,24 @@ const agent: acp.Agent = {
   async cancel() {},
 };
 
-const connection = new acp.AgentSideConnection(
-  () => agent,
+const app = acp.agent({ name: "session-fixture" });
+app.onRequest("initialize", () => handlers.initialize());
+app.onRequest("session/new", ({ params }) => handlers.newSession(params));
+app.onRequest("session/load", ({ params }) => handlers.loadSession(params));
+app.onRequest("session/resume", ({ params }) => handlers.resumeSession(params));
+app.onRequest("session/set_config_option", ({ params }) =>
+  handlers.setSessionConfigOption(params),
+);
+app.onRequest("session/close", ({ params }) => handlers.closeSession(params));
+app.onRequest("session/delete", ({ params }) => handlers.deleteSession(params));
+app.onRequest("authenticate", () => handlers.authenticate());
+app.onRequest("session/prompt", ({ params }) => handlers.prompt(params));
+app.onNotification("session/cancel", () => handlers.cancel());
+
+const streamConnection = app.connect(
   acp.ndJsonStream(
     Writable.toWeb(process.stdout),
     Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>,
   ),
 );
+const connection = streamConnection.client;

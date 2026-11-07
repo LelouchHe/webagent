@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { AgentBridge } from "../src/bridge.ts";
 import type { ConfigOption } from "../src/types.ts";
+import { fakePeer } from "./fixtures/fake-peer.ts";
 
 const wireA = JSON.stringify(["vendor-a", "one"]);
 const wireB = JSON.stringify(["vendor-b", "two"]);
@@ -36,7 +37,7 @@ function makeBridge() {
           ? "task-b"
           : undefined,
   });
-  (bridge as any).connection = {
+  (bridge as any).connection = fakePeer({
     setSessionConfigOption: async (params: {
       sessionId: string;
       configId: string;
@@ -45,7 +46,7 @@ function makeBridge() {
       sent.push(params);
       return { configOptions: currentSchemas.get(params.sessionId) ?? [] };
     },
-  };
+  });
   return {
     bridge,
     currentSchemas,

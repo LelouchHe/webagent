@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { AgentBridge } from "../src/bridge.ts";
 import type { ConfigOption } from "../src/types.ts";
+import { fakePeer } from "./fixtures/fake-peer.ts";
 
 const modelOptions: ConfigOption[] = [
   {
@@ -26,13 +27,13 @@ describe("session model codec lifecycle", () => {
       getAgentSessionId: () => "session-1",
       getTaskId: () => "task-1",
     });
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       newSession: async () => ({
         sessionId: "session-1",
         configOptions: modelOptions,
       }),
       setSessionConfigOption: async () => response,
-    };
+    });
 
     await bridge.newSession("/repo");
     const pendingSet = bridge.setConfigOption(
@@ -63,13 +64,13 @@ describe("session model codec lifecycle", () => {
       getAgentSessionId: () => "session-1",
       getTaskId: () => "task-1",
     });
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       newSession: async () => ({
         sessionId: "session-1",
         configOptions: modelOptions,
       }),
       setSessionConfigOption: async () => response,
-    };
+    });
 
     await bridge.newSession("/repo");
     const pendingSet = bridge.setConfigOption(
@@ -90,7 +91,7 @@ describe("session model codec lifecycle", () => {
       getAgentSessionId: () => undefined,
       getTaskId: () => undefined,
     });
-    (bridge as any).connection = {};
+    (bridge as any).connection = fakePeer();
     (bridge as any).silentSessions.add("session-1");
     (bridge as any).normalizeSessionConfigOptions("session-1", modelOptions);
 

@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { AgentBridge } from "../src/bridge.ts";
 import type { ConfigOption, ConfigSelectOption } from "../src/types.ts";
+import { fakePeer } from "./fixtures/fake-peer.ts";
 
 describe("model identity wire selection", () => {
   it("sends the exact wire value for each pathological advertised choice", async () => {
@@ -25,7 +26,7 @@ describe("model identity wire selection", () => {
       getAgentSessionId: () => "session-1",
       getTaskId: () => "task-1",
     });
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       newSession: async () => ({
         sessionId: "session-1",
         configOptions: options,
@@ -40,7 +41,7 @@ describe("model identity wire selection", () => {
           ),
         };
       },
-    };
+    });
 
     const created = await bridge.newSession("/repo");
     const model = created.configOptions.find(
