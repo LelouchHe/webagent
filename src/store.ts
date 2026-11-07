@@ -193,10 +193,7 @@ export class MessageNotFoundError extends Error {
 export type CollaborationActor = "user" | "agent" | "system";
 export type CollaborationProjectionRole = "source" | "target" | "supervisor";
 export type CollaborationDeliveryStatus =
-  | "queued"
-  | "draining"
-  | "delivered"
-  | "failed";
+  "queued" | "draining" | "delivered" | "failed";
 
 export interface CollaborationMessageRow {
   id: string;
@@ -672,8 +669,7 @@ export class Store {
          LIMIT 5`,
       )
       .get() as
-      | { task_id: string; seq: number; duplicate_rows: number }
-      | undefined;
+      { task_id: string; seq: number; duplicate_rows: number } | undefined;
     if (duplicateEvent) {
       throw new Error(
         `Duplicate event sequence detected: task_id=${duplicateEvent.task_id} seq=${duplicateEvent.seq} duplicate_rows=${duplicateEvent.duplicate_rows}. Resolve duplicate events before upgrading so the unique event address can be created.`,
@@ -1241,8 +1237,7 @@ export class Store {
    */
   getTaskIncludingDeleted(id: string): TaskRow | undefined {
     return this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as
-      | TaskRow
-      | undefined;
+      TaskRow | undefined;
   }
 
   /**
@@ -2292,8 +2287,7 @@ export class Store {
 
   getCollaborationMessage(id: string): CollaborationMessageRow | undefined {
     return this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as
-      | CollaborationMessageRow
-      | undefined;
+      CollaborationMessageRow | undefined;
   }
 
   listCollaborationProjections(
@@ -2316,8 +2310,7 @@ export class Store {
 
   getCollaborationDelivery(id: string): CollaborationDeliveryRow | undefined {
     return this.db.prepare("SELECT * FROM deliveries WHERE id = ?").get(id) as
-      | CollaborationDeliveryRow
-      | undefined;
+      CollaborationDeliveryRow | undefined;
   }
 
   /** Read-only queued count; lets a caller skip busy-turn churn entirely. */

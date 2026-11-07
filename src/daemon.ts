@@ -119,8 +119,7 @@ export function extractConfigPath(args: string[], cwd: string): string | null {
 const EX_CONFIG = 78;
 
 export type RestartAction =
-  | { kind: "restart"; delayMs: number }
-  | { kind: "stop"; reason: string };
+  { kind: "restart"; delayMs: number } | { kind: "stop"; reason: string };
 
 export interface RestartCtx {
   stopping: boolean;

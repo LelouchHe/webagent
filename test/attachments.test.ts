@@ -2,6 +2,37 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 
+// The decode verdict belongs to the browser, so a fake DOM has to be told what
+// it "decoded": happy-dom reports naturalWidth 0 for every image and fires the
+// load verdict itself, which would make every thumbnail look undecodable.
+// Stubbing the accessor keeps these tests about our fallback branches rather
+// than about the emulator's image pipeline.
+let restoreNaturalWidth: (() => void) | null = null;
+
+function stubIntrinsicWidth(width: number | ((src: string) => number)): void {
+  restoreNaturalWidth?.();
+  // The suite exposes only a subset of constructors on globalThis, so reach the
+  // prototype through an element instead of HTMLImageElement.
+  const proto = Object.getPrototypeOf(document.createElement("img"));
+  const original = Object.getOwnPropertyDescriptor(proto, "naturalWidth");
+  const widthFor = typeof width === "function" ? width : () => width;
+  Object.defineProperty(proto, "naturalWidth", {
+    configurable: true,
+    get(this: HTMLImageElement) {
+      return widthFor(this.src);
+    },
+  });
+  restoreNaturalWidth = () => {
+    if (original) Object.defineProperty(proto, "naturalWidth", original);
+    else Reflect.deleteProperty(proto, "naturalWidth");
+    restoreNaturalWidth = null;
+  };
+}
+
+/** Let the environment deliver the load/error verdict for a src assignment. */
+const settleImage = (): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, 0));
+
 describe("attachments", () => {
   let state: any;
   let dom: any;
@@ -34,11 +65,15 @@ describe("attachments", () => {
   });
 
   after(() => {
+    restoreNaturalWidth?.();
     teardownDOM();
   });
 
   beforeEach(() => {
     resetState(state, dom);
+    // Default premise: this environment decodes image previews. Tests that need
+    // the undecodable branch re-stub to 0.
+    stubIntrinsicWidth(120);
     clicked = 0;
     dom.input.focus = () => {
       clicked += 1;
@@ -72,7 +107,7 @@ describe("attachments", () => {
 
   // Decode probe, not a mime allow-list: iOS/macOS Safari render HEIC
   // thumbnails, desktop Chrome does not (the reported IMG_1040.HEIC bug).
-  it("degrades an undecodable image thumbnail to a file chip", () => {
+  it("degrades an undecodable image thumbnail to a file chip", async () => {
     state.pendingAttachments.push({
       kind: "image",
       file: { name: "IMG_1040.HEIC", type: "image/heic" },
@@ -82,10 +117,12 @@ describe("attachments", () => {
     });
 
     attachments.renderAttachPreview();
+    await settleImage();
     const img = dom.attachPreview.querySelector(".attach-thumb img");
     assert.ok(img, "thumbnail first — the browser gets to try decoding");
 
-    // happy-dom never decodes images, so the decode verdict is driven here.
+    // A decode failure arrives after the element exists; that branch, not the
+    // zero-size load branch, has to swap in the chip here.
     img.dispatchEvent(new globalThis.window.Event("error"));
 
     assert.equal(
@@ -107,7 +144,10 @@ describe("attachments", () => {
     assert.equal(state.pendingAttachments.length, 1);
   });
 
-  it("treats a thumbnail load with no intrinsic size as undecodable", () => {
+  it("treats a thumbnail load with no intrinsic size as undecodable", async () => {
+    // "Loaded, but the browser decoded nothing" — the verdict the chip
+    // renderer must distrust even though no error fired.
+    stubIntrinsicWidth(0);
     state.pendingAttachments.push({
       kind: "image",
       file: { name: "IMG_1040.HEIC", type: "image/heic" },
@@ -117,11 +157,7 @@ describe("attachments", () => {
     });
 
     attachments.renderAttachPreview();
-    const img = dom.attachPreview.querySelector(".attach-thumb img");
-    // happy-dom reports naturalWidth 0 for every image: the "loaded but
-    // not decodable" signal the chip renderer must distrust.
-    assert.equal(img.naturalWidth, 0);
-    img.dispatchEvent(new globalThis.window.Event("load"));
+    await settleImage();
 
     assert.equal(
       dom.attachPreview.querySelectorAll(".attach-thumb img").length,
@@ -133,7 +169,7 @@ describe("attachments", () => {
     );
   });
 
-  it("keeps the thumbnail for an image the browser can decode", () => {
+  it("keeps the thumbnail for an image the browser can decode", async () => {
     state.pendingAttachments.push({
       kind: "image",
       file: { name: "x.png", type: "image/png" },
@@ -143,12 +179,7 @@ describe("attachments", () => {
     });
 
     attachments.renderAttachPreview();
-    const img = dom.attachPreview.querySelector(".attach-thumb img");
-    Object.defineProperty(img, "naturalWidth", {
-      value: 120,
-      configurable: true,
-    });
-    img.dispatchEvent(new globalThis.window.Event("load"));
+    await settleImage();
 
     assert.equal(
       dom.attachPreview.querySelectorAll(".attach-thumb img").length,

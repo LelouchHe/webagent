@@ -214,17 +214,15 @@ export function createMcpTaskToolHost(deps: {
       const lastEventTimes = store.getLatestEventTimes(
         entries.map((entry) => entry.task.id),
       );
-      return entries.map(
-        ({ task, relation }): McpTaskListItem => ({
-          id: task.id,
-          title: task.title ?? task.id,
-          relation,
-          workflowStatus: task.workflow_status,
-          executionState: tasks.getExecutionState(task.id),
-          lastAgentActivityAt: tasks.getLastAgentActivityAt(task.id),
-          lastEventAt: isoFromMillisOrNull(lastEventTimes.get(task.id)),
-        }),
-      );
+      return entries.map(({ task, relation }): McpTaskListItem => ({
+        id: task.id,
+        title: task.title ?? task.id,
+        relation,
+        workflowStatus: task.workflow_status,
+        executionState: tasks.getExecutionState(task.id),
+        lastAgentActivityAt: tasks.getLastAgentActivityAt(task.id),
+        lastEventAt: isoFromMillisOrNull(lastEventTimes.get(task.id)),
+      }));
     },
 
     query(principal, input): McpTaskQueryResult {

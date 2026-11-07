@@ -73,12 +73,10 @@ test("a cross-agent account is readable live and identical after a reload", asyn
         data.kind === "collaboration" &&
         String(data.body ?? "").startsWith("Task status: done"),
     )
-    .map(
-      (data): Notification => ({
-        title: String(data.title),
-        body: String(data.body),
-      }),
-    );
+    .map((data): Notification => ({
+      title: String(data.title),
+      body: String(data.body),
+    }));
   expect(persisted).toHaveLength(1);
   expect(persisted[0].title).toBe(liveTitle);
   expect(persisted[0].body).toBe(liveBody);

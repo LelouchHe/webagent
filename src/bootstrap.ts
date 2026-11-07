@@ -25,9 +25,7 @@
 // existing `--create-token` flow's mental model.
 
 export type BootstrapAction =
-  | { kind: "mint" }
-  | { kind: "exit-config" }
-  | { kind: "proceed" };
+  { kind: "mint" } | { kind: "exit-config" } | { kind: "proceed" };
 
 export interface DecideInput {
   authJsonExists: boolean;

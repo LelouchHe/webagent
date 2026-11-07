@@ -14,8 +14,7 @@ import { HTTP_STATUS } from "../../src/http-status.ts";
 import { getDefaultAgentId } from "./agent-directory.ts";
 
 export type ParsedCoordinate =
-  | { agentId: null; cwd: string }
-  | { agentId: string; cwd: string };
+  { agentId: null; cwd: string } | { agentId: string; cwd: string };
 
 /**
  * Locate the first token of a raw remainder without touching anything after

@@ -109,8 +109,7 @@ function toolErrorText(json: Record<string, unknown>): string {
   const error = json.error as { message?: string } | undefined;
   if (error?.message) return error.message;
   const result = json.result as
-    | { content?: Array<{ text?: string }>; isError?: boolean }
-    | undefined;
+    { content?: Array<{ text?: string }>; isError?: boolean } | undefined;
   const text = result?.content?.[0]?.text;
   if (typeof text !== "string") return "";
   try {
@@ -132,8 +131,7 @@ interface McpEntry {
  */
 function makeBridge(
   getHook: () =>
-    | ((options?: { mcpServers?: McpEntry[] }) => Promise<void>)
-    | undefined,
+    ((options?: { mcpServers?: McpEntry[] }) => Promise<void>) | undefined,
 ): DeliveryBridge {
   let sessions = 0;
   return {
@@ -166,8 +164,7 @@ describe("mcp authority over the production host", () => {
   let host: McpTaskToolHost;
   let bridge: DeliveryBridge;
   let newSessionHook:
-    | ((options?: { mcpServers?: McpEntry[] }) => Promise<void>)
-    | undefined;
+    ((options?: { mcpServers?: McpEntry[] }) => Promise<void>) | undefined;
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "webagent-mcp-authority-"));
@@ -317,8 +314,7 @@ describe("mcp authority over the production host", () => {
 
     const refused = await pending;
     const refusedResult = refused.json.result as
-      | { isError?: boolean; content?: Array<{ text?: string }> }
-      | undefined;
+      { isError?: boolean; content?: Array<{ text?: string }> } | undefined;
     assert.equal(refused.status, 200, "the tool call itself is answered");
     assert.equal(refusedResult?.isError, true, "the tool reports an error");
     assert.match(
@@ -356,8 +352,7 @@ describe("mcp authority over the production host", () => {
     // The control asserts the effective result: a created child, not just a
     // 200 envelope.
     const allowedResult = allowed.json.result as
-      | { isError?: boolean; content?: Array<{ text?: string }> }
-      | undefined;
+      { isError?: boolean; content?: Array<{ text?: string }> } | undefined;
     assert.notEqual(allowedResult?.isError, true);
     const created = JSON.parse(allowedResult?.content?.[0]?.text ?? "{}") as {
       taskId?: string;
@@ -421,8 +416,7 @@ describe("mcp authority over the production host", () => {
 
     const refused = await pending;
     const result = refused.json.result as
-      | { isError?: boolean; content?: Array<{ text?: string }> }
-      | undefined;
+      { isError?: boolean; content?: Array<{ text?: string }> } | undefined;
     assert.ok(result);
     assert.equal(result.isError, true);
     assert.match(
@@ -473,8 +467,7 @@ describe("mcp authority over the production host", () => {
 
     const refused = await pending;
     const result = refused.json.result as
-      | { isError?: boolean; content?: Array<{ text?: string }> }
-      | undefined;
+      { isError?: boolean; content?: Array<{ text?: string }> } | undefined;
     assert.ok(result);
     assert.equal(result.isError, true);
     assert.match(result.content?.[0]?.text ?? "", /execution_replaced/);

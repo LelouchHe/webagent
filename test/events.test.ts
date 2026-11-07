@@ -3027,16 +3027,14 @@ describe("events", () => {
           "no longer needed",
         );
         const asStored = (rows: ReturnType<typeof store.getEvents>) =>
-          rows.map(
-            (row): StoredEvent => ({
-              id: row.id,
-              task_id: row.task_id,
-              seq: row.seq,
-              type: row.type,
-              data: row.data,
-              created_at: new Date(row.created_at).toISOString(),
-            }),
-          );
+          rows.map((row): StoredEvent => ({
+            id: row.id,
+            task_id: row.task_id,
+            seq: row.seq,
+            type: row.type,
+            data: row.data,
+            created_at: new Date(row.created_at).toISOString(),
+          }));
         return {
           frames,
           sourceStored: asStored(store.getEvents(source.id)),

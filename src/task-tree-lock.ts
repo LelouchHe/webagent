@@ -71,7 +71,7 @@ export class TaskTreeLock {
   }
 
   private pump(): void {
-    for (let i = 0; i < this.pending.length; ) {
+    for (let i = 0; i < this.pending.length;) {
       const candidate = this.pending[i];
       const blockedByActive = [...this.active].some((active) =>
         conflicts(candidate, active),

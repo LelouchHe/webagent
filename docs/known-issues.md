@@ -145,6 +145,19 @@ time. An entry without a "closing condition" is a wish, not an issue.
   real-device reproduction and a focus strategy that respects the platform
   gesture requirement.
 
+- **Trip-wire: happy-dom's `Node.prototype.nodeName` needs a shim.**
+  happy-dom keeps the real accessor on `Element.prototype` and leaves a stub on
+  `Node.prototype` that cannot name a node when invoked generically, which is
+  where the DOM spec puts it. DOMPurify >= 3.4.8 reads tag names through a
+  captured `Node.prototype.nodeName` getter while guarding against DOM
+  clobbering, so under the stub every element looks like a disallowed tag and is
+  unwrapped — the frontend unit suite then renders stripped markdown. Browsers
+  are correct, so this is a test-environment deviation, not a sanitizer or
+  product defect. `test/frontend-setup.ts` patches the accessor to the spec's
+  per-node-type values, and only while the deviation is present (it checks for
+  the second accessor on `Element`). *Closing:* delete the shim when
+  https://github.com/capricorn86/happy-dom/issues/2182 ships a fix.
+
 ## Deferred features (design decided, not scheduled)
 
 - **An agent's output file has no automatic channel to a person — postponed,

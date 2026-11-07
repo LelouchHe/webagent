@@ -93,10 +93,7 @@ export type ObligationState =
   | "settled";
 
 export type ObligationTimerKind =
-  | "attempt"
-  | "watchdog"
-  | "dispatch_advisory"
-  | "age_advisory";
+  "attempt" | "watchdog" | "dispatch_advisory" | "age_advisory";
 
 /**
  * Read-only projection of a live record. The mutable record type stays private
@@ -290,10 +287,7 @@ export type ObligationFact =
 export type DirectedObligation = ObligationView;
 
 export type ObligationNoticeReason =
-  | "no_account"
-  | "no_activity"
-  | "still_waiting"
-  | "delivery_failed";
+  "no_account" | "no_activity" | "still_waiting" | "delivery_failed";
 
 export interface ObligationNotice {
   reason: ObligationNoticeReason;

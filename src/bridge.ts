@@ -1226,8 +1226,7 @@ export class AgentBridge extends EventEmitter {
           id: update.toolCallId,
           status: update.status ?? "",
           content: (update.content ?? undefined) as
-            | ToolContentItem[]
-            | undefined,
+            ToolContentItem[] | undefined,
           ...(typeof update.title === "string" ? { title: update.title } : {}),
           ...(typeof update.kind === "string" ? { kind: update.kind } : {}),
           ...(update.rawInput ? { rawInput: update.rawInput as RawInput } : {}),

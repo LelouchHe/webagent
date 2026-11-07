@@ -625,8 +625,7 @@ const RAW_OUTPUT_MAX_RENDER_CHARS = 16 * 1024;
 
 type RawOutputBudget = { remaining: number };
 type NormalizedRawScalar =
-  | { handled: true; value: unknown }
-  | { handled: false };
+  { handled: true; value: unknown } | { handled: false };
 
 function normalizeRawScalar(value: unknown): NormalizedRawScalar {
   if (value === null || typeof value === "boolean" || typeof value === "number")

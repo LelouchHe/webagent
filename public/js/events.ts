@@ -579,15 +579,13 @@ function primeStreamingState(
       ) {
         const allThinking = dom.messages.querySelectorAll(".thinking");
         el = allThinking[allThinking.length - 1] as
-          | HTMLDetailsElement
-          | undefined;
+          HTMLDetailsElement | undefined;
       }
     } else {
       // No new events but still streaming — re-prime from existing DOM
       const allThinking = dom.messages.querySelectorAll(".thinking");
       el = allThinking[allThinking.length - 1] as
-        | HTMLDetailsElement
-        | undefined;
+        HTMLDetailsElement | undefined;
     }
     if (el) {
       state.currentThinkingEl = el;

@@ -71,8 +71,11 @@ export function renderAttachPreview() {
         // Preview that "loads" with no intrinsic size is undecodable too.
         if (imgEl.naturalWidth === 0) fallbackToFileChip();
       });
-      imgEl.src = att.previewUrl;
+      // Attach before assigning src: an engine that delivers the decode verdict
+      // synchronously (test DOMs do) would otherwise swap in the chip first and
+      // then have the img inserted underneath it.
       thumb.appendChild(imgEl);
+      imgEl.src = att.previewUrl;
     } else {
       appendFileChip(thumb, att.name);
     }

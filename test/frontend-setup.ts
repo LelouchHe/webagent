@@ -42,6 +42,59 @@ export function setupDOM() {
   globalThis.cancelAnimationFrame = win.cancelAnimationFrame.bind(win) as any;
   globalThis.performance = win.performance;
 
+  /*
+   * happy-dom keeps the real `nodeName` accessor on `Element.prototype` and
+   * leaves a stub on `Node.prototype` that cannot name a node when invoked
+   * generically. The DOM spec (and every browser) defines `nodeName` on `Node`,
+   * and DOMPurify >=3.4.8 reads tag names through a captured
+   * `Node.prototype.nodeName` getter when it guards against DOM clobbering —
+   * under the stub every element looks like a disallowed tag and gets
+   * unwrapped. Patch the accessor to return the spec's value so the fake DOM
+   * behaves like the real one, and skip the patch once upstream fixes it.
+   * Upstream: https://github.com/capricorn86/happy-dom/issues/2182
+   */
+  const nodeProto = win.Node.prototype as unknown as { nodeName: string };
+  const originalNodeName = Object.getOwnPropertyDescriptor(
+    nodeProto,
+    "nodeName",
+  );
+  // Browsers define `nodeName` on Node only; a second accessor on Element is
+  // the shape of the deviation, and it disappears when upstream fixes it.
+  const elementOwnNodeName = Object.getOwnPropertyDescriptor(
+    win.Element.prototype,
+    "nodeName",
+  );
+  if (originalNodeName?.get && elementOwnNodeName?.get) {
+    Object.defineProperty(nodeProto, "nodeName", {
+      configurable: true,
+      enumerable: true,
+      get(this: Node) {
+        switch (this.nodeType) {
+          case 1:
+            return (this as Element).tagName;
+          case 2:
+            return (this as Attr).name;
+          case 3:
+            return "#text";
+          case 4:
+            return "#cdata-section";
+          case 7:
+            return (this as ProcessingInstruction).target;
+          case 8:
+            return "#comment";
+          case 9:
+            return "#document";
+          case 10:
+            return (this as DocumentType).name;
+          case 11:
+            return "#document-fragment";
+          default:
+            return "";
+        }
+      },
+    });
+  }
+
   win.document.body.innerHTML = HTML;
 }
 

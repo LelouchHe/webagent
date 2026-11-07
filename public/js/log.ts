@@ -182,7 +182,7 @@ function make(parentScope?: string): Logger {
     const prefix = parentScope ? `[${parentScope}] ` : "";
     try {
       // eslint-disable-next-line no-console
-      const out = console[level] as (...a: unknown[]) => void;
+      const out = console[level].bind(console) as (...a: unknown[]) => void;
       if (fields !== undefined) {
         out(prefix + msg, fields);
       } else {

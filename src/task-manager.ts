@@ -354,10 +354,7 @@ export class TaskConfigOverrideError extends Error {
 export type RotationReason = "explicit_clear" | "owner_removed" | "compact";
 
 export type TaskCancelStatus =
-  | "idle"
-  | "cancelling"
-  | "cancelled"
-  | "superseded";
+  "idle" | "cancelling" | "cancelled" | "superseded";
 
 export interface TaskCancelResult {
   status: TaskCancelStatus;

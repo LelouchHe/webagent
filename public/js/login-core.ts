@@ -10,8 +10,7 @@ import { HTTP_STATUS } from "../../src/http-status.ts";
 export const TOKEN_STORAGE_KEY = "wa_token";
 
 export type VerifyResult =
-  | { ok: true; name: string; scope: string }
-  | { ok: false; error: string };
+  { ok: true; name: string; scope: string } | { ok: false; error: string };
 
 interface VerifyDeps {
   fetch?: typeof fetch;

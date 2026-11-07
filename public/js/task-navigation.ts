@@ -12,11 +12,7 @@ import {
 } from "./state.ts";
 
 export type NavigationResult =
-  | "switched"
-  | "unchanged"
-  | "ignored"
-  | "retryable-error"
-  | "terminal-error";
+  "switched" | "unchanged" | "ignored" | "retryable-error" | "terminal-error";
 
 export interface NotificationTarget {
   taskId?: string;

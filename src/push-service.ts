@@ -1,4 +1,9 @@
-import webpush from "web-push";
+import {
+  generateVAPIDKeys,
+  sendNotification,
+  setVapidDetails,
+  type SendResult,
+} from "web-push";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -155,7 +160,7 @@ export class PushService {
   ) {
     this.store = store;
     this.vapidKeys = this.loadOrGenerateKeys(dataDir);
-    webpush.setVapidDetails(
+    setVapidDetails(
       vapidSubject,
       this.vapidKeys.publicKey,
       this.vapidKeys.privateKey,
@@ -180,7 +185,7 @@ export class PushService {
       return keys;
     }
 
-    const keys = webpush.generateVAPIDKeys();
+    const keys = generateVAPIDKeys();
     writeFileSync(filePath, JSON.stringify(keys, null, 2) + "\n", {
       mode: 0o600,
     });
@@ -542,8 +547,8 @@ export class PushService {
     sub: { endpoint: string; keys: { auth: string; p256dh: string } },
     payload: string,
     options?: { topic?: string },
-  ): Promise<webpush.SendResult> {
-    return webpush.sendNotification(sub, payload, options);
+  ): Promise<SendResult> {
+    return sendNotification(sub, payload, options);
   }
 }
 

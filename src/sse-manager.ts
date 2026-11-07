@@ -153,8 +153,7 @@ export class SseManager {
     let outEvent = event;
     if (this.getLabelMap) {
       const sid = (event as Record<string, unknown>).taskId as
-        | string
-        | undefined;
+        string | undefined;
       if (sid) {
         const map = this.getLabelMap(sid);
         if (map.size > 0) outEvent = enrichEventForDisplay(event, map);
@@ -183,8 +182,7 @@ export class SseManager {
    */
   broadcast(event: AgentEvent): void {
     const taskId = (event as Record<string, unknown>).taskId as
-      | string
-      | undefined;
+      string | undefined;
     const snapshot = [...this.clients.values()];
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;

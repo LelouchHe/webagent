@@ -2753,8 +2753,7 @@ describe("TaskManager", () => {
       assert.ok(armed);
       assert.equal(armed.state, "awaiting_delivery");
       const retried = (sm as any).pendingDispatchRetries.get("child") as
-        | string[]
-        | undefined;
+        string[] | undefined;
       assert.ok(retried?.includes("rotation-dispatch-delivery"));
 
       // A message queued after the failed dispatch never reached the old
