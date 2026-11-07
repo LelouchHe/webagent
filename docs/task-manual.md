@@ -55,6 +55,41 @@ A child creation normally has two conceptual steps: create the Task, then give
 it its first instruction. The instruction should provide enough context for the
 child to work without repeatedly asking what it is supposed to do.
 
+### Choose where it runs
+
+A Task's agent is an execution choice, not a container. `task_create` takes an
+optional `agent`: omit it to inherit your own, or name a configured agent to
+run the child somewhere else. `model` and `thinking` are passed to that
+session and validated there — an unsupported value fails with the target's own
+candidates, and an unknown agent fails immediately. Do not guess what an agent
+supports; ask for a value you know, or let the target's default stand.
+
+Crossing agents changes nothing about coordination: the child is still your
+direct child, messages still arrive the same way, and the account still settles
+the same obligation.
+
+### Dispatched work is unattended
+
+Nobody is watching a Task's own page while you work on it, so a turn opened by
+an agent message — including your own dispatched instructions and a runtime
+reminder — answers its tool-permission requests on the host side instead of
+waiting for a person. Every answer is recorded as a `permission_response`, so
+the trail is complete even though nothing was clicked.
+
+Two consequences worth internalizing:
+
+- **Tool permission is not a decision point for you to escalate.** If you need
+  a *choice* — which behavior, which tradeoff, whether to continue — report
+  `blocked` (or send the parent a message). Asking again through a permission
+  prompt is not a path, and no one is there to answer it.
+- **A person's own turn still prompts.** When a human types in a Task, that
+  turn keeps the permission prompt and the Task's `mode`. Do not design a
+  workflow that depends on a human answering in a Task's page.
+
+To stop a child's current execution, use `task_cancel`. It preserves the Task
+and its history, records who cancelled what and why on both sides of the edge,
+and does not mark the Task `done`; a later `task_send` can hand it new work.
+
 ## The Task lifecycle
 
 A Task has two related lifecycles: execution and acceptance. The Agent owns

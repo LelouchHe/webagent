@@ -56,6 +56,54 @@
 - `/switch` lists all tasks (git-branch style, `*` marks current in green)
 - Switching tasks replays full message history
 
+## Multiple agents
+
+One server instance can drive several ACP CLIs at once — Copilot, Claude Code,
+Gemini CLI, OpenCode, and anything else that speaks ACP. Configure each as its
+own `[agents.<id>]` table and name one as `default_agent`; see
+[Configuration](configuration.md#acp-compatible-agents). The id is the display
+name: it is what you type in a coordinate and what the status bar shows.
+
+- **A Task's agent is provenance, not a scope.** There is one task tree, not one
+  per agent. Every Task records the agent it was created for, and every list,
+  search, and `@` reference spans all of them.
+- **Choose it at creation.** `/new copilot:~/repo` and `+copilot:docs` parse the
+  optional `<agent-id>:` prefix; without it a Task inherits the current Task's
+  agent. A relative or `~` path is expanded against the current Task's cwd.
+- **Rotate it in place.** `/clear copilot:` replaces the execution: the Task,
+  its history, attachments, cwd, and position in the tree stay, the new agent
+  starts a fresh ACP session, and the transcript records the rotation.
+- **Agents come and go independently.** Nothing starts at boot; an agent starts
+  on demand, and a missing CLI makes only that agent's Tasks unavailable — the
+  server, the other agents, and their Tasks keep working.
+- **Children may run elsewhere.** `task_create` accepts `agent`, so a parent on
+  one agent can dispatch to a child on another; `model` and `thinking` are
+  passed through and validated by the target session, and an unknown agent or an
+  unsupported value fails with the target's own candidates.
+
+### Unattended dispatched work
+
+A turn opened by an agent's message or by a runtime reminder is **delegated**:
+nobody is watching that Task's own page, so the host answers its tool-permission
+requests itself (`allow_once`, otherwise `allow_always`) instead of waiting for
+a click that will never come. Each answer is a stored `permission_response`, so
+the audit is complete even though nothing was asked.
+
+Your own turns are untouched: a turn you open still prompts for permissions,
+still respects the Task's `mode` (an autopilot-classified mode answers for you),
+and still pages or pushes when the tab is not focused. An agent that messages a
+Task makes that turn unattended — including a Task you are watching.
+
+Stop dispatched work with `task_cancel` (the agent-side tool) or the cancel
+button: it ends the current execution, keeps the Task and its history, and
+leaves a two-sided transcript row naming who cancelled what and why. A
+cancelled turn does not owe a closing reminder, and an edge silenced that way
+stays quiet until new work arrives on it.
+
+Only agents that consume the injected `mcpServers` entry can collaborate; one
+that ignores it still works as a chat backend, it just cannot call `task_*`
+tools. See [Task MCP Control Plane](task-mcp.md).
+
 ## Slash Commands
 
 Type `/` to trigger an autocomplete menu with arrow keys to navigate, Esc to close.
