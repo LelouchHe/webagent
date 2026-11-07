@@ -481,8 +481,13 @@ describe("mcp authority over the production host", () => {
     // The cancel reached the transport, but its record was not written under
     // the replaced authority.
     assert.equal(
-      store.getEvents(child.taskId).filter((e) => e.type === "task_cancel")
-        .length,
+      store
+        .getEvents(child.taskId)
+        .filter(
+          (e) =>
+            e.type === "system_message" &&
+            (JSON.parse(e.data) as { kind?: string }).kind === "task_cancel",
+        ).length,
       0,
       "no cancellation record was written for a replaced caller",
     );

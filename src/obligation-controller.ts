@@ -76,7 +76,13 @@ export const AGE_ADVISORY_MS = 4 * 60 * 60_000;
 export type DeliveryOutcome =
   | { status: "delivered" }
   | { status: "deferred"; reason: string }
-  | { status: "failed"; reason: string };
+  | { status: "failed"; reason: string }
+  /**
+   * The submission's turn was cancelled. Nothing was read by the target, so it
+   * is not a delivered attempt and not a failure: the record returns to `open`
+   * with no timer, and the next dispatch's boundary behaves normally.
+   */
+  | { status: "cancelled" };
 
 export type ObligationState =
   | "awaiting_delivery"
@@ -123,6 +129,12 @@ export interface ObligationView {
   readonly waitingSince?: number;
   /** True when the current wait is a busy/failure retry, not a reminder delay. */
   readonly retrying: boolean;
+  /**
+   * The edge is silent: its boundary ended in a cancellation and no new work
+   * has arrived since. A quiet record emits nothing and holds no timer, but it
+   * is not terminal and settles normally.
+   */
+  readonly quiet: boolean;
   /** Advisory receipt: the queued-dispatch advisory is no longer pending. */
   readonly dispatchAdvised: boolean;
   /** Advisory receipt: the age advisory has been emitted. */
@@ -157,6 +169,14 @@ interface ObligationRecord {
   retrying: boolean;
   dispatchAdvised: boolean;
   ageAdvised: boolean;
+  /**
+   * A cancelled boundary silenced this edge. While quiet the record still
+   * exists, still settles, and is still readable; it simply produces nothing
+   * outward — no closing reminder, no advisory, no notice — until new work
+   * arrives on the same edge (a fresh dispatch arm or hand-off), which clears
+   * it and restarts the clocks from that arrival.
+   */
+  quiet: boolean;
   observedTurnId?: string;
   advisoryFrom: number;
   noAccountNotified: boolean;
@@ -208,6 +228,12 @@ export type ObligationFact =
       type: "turn_ended";
       targetTaskId: string;
       turnId?: string;
+      /**
+       * The turn was ended by an explicit cancellation (the ACP stop reason or
+       * the busy cancel marker), not by the agent finishing. Such a boundary
+       * owes no closing reminder; see transitionTurnEnded.
+       */
+      cancelled?: boolean;
     }
   | {
       // Cleanup-scoped: the only emitter is the bridge-restart/reset path,
@@ -570,8 +596,17 @@ export class ObligationController {
     this.apply({ type: "execution_rotated", targetTaskId });
   }
 
-  onTargetTurnEnded(targetTaskId: string, turnId?: string): void {
-    this.apply({ type: "turn_ended", targetTaskId, turnId });
+  onTargetTurnEnded(
+    targetTaskId: string,
+    turnId?: string,
+    opts?: { cancelled?: boolean },
+  ): void {
+    this.apply({
+      type: "turn_ended",
+      targetTaskId,
+      turnId,
+      ...(opts?.cancelled === undefined ? {} : { cancelled: opts.cancelled }),
+    });
   }
 
   beginTurn(targetTaskId: string, promptId: string): void {
@@ -658,6 +693,9 @@ export class ObligationController {
 
   /** Every deadline a record is currently waiting on, derived from its state. */
   private pendingDeadlines(obligation: ObligationRecord): number[] {
+    // One gate for every present and future nudge: a quiet edge arms no timer,
+    // so nothing can come due for it.
+    if (obligation.quiet) return [];
     const deadlines: number[] = [];
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     const attemptDeadline = this.attemptDeadline(obligation);
@@ -746,6 +784,9 @@ export class ObligationController {
       existing.openingMessageId = fact.messageId;
       existing.openingDeliveryId = fact.deliveryId;
       existing.recoveryGeneration += 1;
+      // New work on this edge lifts the cancellation's silence and restarts
+      // every clock from this arrival.
+      existing.quiet = false;
       if (
         existing.state === "reminder_due" ||
         existing.state === "reminder_submitting"
@@ -775,6 +816,7 @@ export class ObligationController {
       ageAdvised: false,
       advisoryFrom: this.now(),
       noAccountNotified: false,
+      quiet: false,
     };
     this.active.set(key, obligation);
     this.log("obligation armed", {
@@ -799,15 +841,24 @@ export class ObligationController {
     const key = edgeKey(fact.sourceTaskId, fact.targetTaskId);
     const obligation = this.active.get(key);
     if (!obligation) return;
+    // A terminal record is never reopened by a hand-off, quiet or not.
+    if (isTerminal(obligation.state)) return;
+    // `quiet` records are accepted from any state: a hand-off is new work
+    // arriving on the edge, and a rotation leaves the record in `reminder_due`,
+    // so requiring `open` here would make the release point unreachable and
+    // silence the new work forever. Non-quiet records keep the original gate.
     if (
       obligation.state !== "awaiting_delivery" &&
-      obligation.state !== "open"
+      obligation.state !== "open" &&
+      !obligation.quiet
     ) {
       return;
     }
     if (!matchesDispatch(obligation, fact.attemptId)) return;
     if (fact.attemptId !== undefined) obligation.attemptId = fact.attemptId;
     obligation.state = "open";
+    // A hand-off is new work on the edge: it lifts any cancellation silence.
+    obligation.quiet = false;
     this.log("obligation opened", logFields(obligation));
     this.maybeRemindAtBoundary(obligation);
   }
@@ -881,6 +932,18 @@ export class ObligationController {
     obligation.observedTurnId = undefined;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.watchdog.delete(key);
+    if (fact.cancelled) {
+      // An explicit cancellation is not a missing account: the edge goes quiet.
+      // That is one rule, not a per-nudge exception: no closing reminder (the
+      // first one is armed at hand-off, so it is withdrawn here), no advisory,
+      // no notice of any kind until new work arrives on this edge. A dispatch
+      // still queued in `awaiting_delivery` has not been handed over, so it is
+      // not this boundary's work and keeps its retry and queued advisory.
+      if (obligation.state !== "awaiting_delivery") {
+        this.suspend(obligation);
+      }
+      return;
+    }
     if (obligation.state === "open") {
       this.maybeRemindAtBoundary(obligation);
       return;
@@ -987,6 +1050,19 @@ export class ObligationController {
       return;
     }
     if (obligation.recoveryGeneration !== fact.recoveryGeneration) return;
+    if (obligation.quiet) {
+      // A quiet edge spends nothing: whatever this attempt reported, it stays
+      // silent and waitable until new work arrives.
+      this.suspend(obligation);
+      return;
+    }
+    if (fact.outcome.status === "cancelled") {
+      // The reminder's own turn was cancelled: spend nothing and go quiet. The
+      // boundary usually suspended the edge already; doing it here as well
+      // keeps the rule true even if the terminal event lands later.
+      this.suspend(obligation);
+      return;
+    }
     if (fact.outcome.status === "deferred") {
       // Nothing was submitted, so nothing failed: keep both counters, leave
       // the debt waiting, and retry on a bounded deferral backoff.
@@ -1038,12 +1114,15 @@ export class ObligationController {
     const key = edgeKey(fact.sourceTaskId, fact.targetTaskId);
     const obligation = this.active.get(key);
     if (!obligation) return;
+    // Defensive counterpart to `pendingDeadlines`: a timer armed before the
+    // edge went quiet must not speak or submit. One check covers every kind.
+    if (obligation.quiet) return;
     switch (fact.kind) {
       case "dispatch_advisory": {
         if (obligation.state !== "awaiting_delivery") return;
         obligation.dispatchAdvised = true;
         this.log("obligation dispatch still queued", logFields(obligation));
-        this.opts.emitNotice(
+        this.notify(
           {
             reason: "still_waiting",
             message: `This dispatch has not been handed to the target for ${Math.round(
@@ -1064,7 +1143,7 @@ export class ObligationController {
         const lastAgentActivityAt =
           this.watchdog.get(key)?.lastAgentActivityAt ?? null;
         this.log("obligation age advisory", logFields(obligation));
-        this.opts.emitNotice(
+        this.notify(
           {
             reason: "still_waiting",
             message: `This Task has had no typed account for ${Math.round(
@@ -1232,6 +1311,44 @@ export class ObligationController {
     });
   }
 
+  /**
+   * The single outward-sound gate. Every emitter — closing reminder, dispatch
+   * advisory, age advisory, silence watchdog, exhaustion notice — goes through
+   * here, so a quiet edge can never speak and a future nudge inherits the rule
+   * instead of re-deciding it.
+   */
+  private notify(notice: ObligationNotice, obligation: ObligationRecord): void {
+    if (obligation.quiet) {
+      this.log("obligation notice suppressed while quiet", {
+        ...logFields(obligation),
+        reason: notice.reason,
+      });
+      return;
+    }
+    this.opts.emitNotice(notice, obligation);
+  }
+
+  /**
+   * Silence an edge whose boundary ended in a cancellation: keep the record,
+   * drop every timer and wait anchor, and emit nothing until new work arrives.
+   * Settlement is untouched — a late account still settles a quiet record.
+   */
+  private suspend(obligation: ObligationRecord): void {
+    // A cancellation can arrive after this edge already settled or exhausted.
+    // It means "do not nudge", never "reopen the debt": a terminal record is
+    // final, and rewriting it as `open + quiet` would let a later (unarmed) user
+    // message revive work the target has already accounted for.
+    if (isTerminal(obligation.state)) return;
+    obligation.quiet = true;
+    obligation.state = "open";
+    obligation.waitingSince = undefined;
+    obligation.retrying = false;
+    this.watchdog.delete(
+      edgeKey(obligation.sourceTaskId, obligation.targetTaskId),
+    );
+    this.log("obligation quiet after cancellation", logFields(obligation));
+  }
+
   private exhaust(
     obligation: ObligationRecord,
     reason: Extract<ObligationNoticeReason, "no_account" | "delivery_failed">,
@@ -1254,7 +1371,7 @@ export class ObligationController {
       reason === "delivery_failed"
         ? `I could not deliver this dispatch after ${obligation.consecutiveSubmissionFailures} attempts; I have stopped.`
         : `No typed done|blocked account arrived after ${obligation.deliveredAttempts} delivered reminders; the runtime has stopped its own attempts. The outcome is unknown.`;
-    this.opts.emitNotice({ reason, message, evidence }, obligation);
+    this.notify({ reason, message, evidence }, obligation);
     this.log("obligation unresolved", {
       ...logFields(obligation),
       reason,
@@ -1281,7 +1398,7 @@ export class ObligationController {
     ) {
       return;
     }
-    this.opts.emitNotice(
+    this.notify(
       {
         reason: "no_activity",
         message: `No agent activity for ${Math.round(

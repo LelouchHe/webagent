@@ -12,7 +12,8 @@ import {
   type TaskManager,
 } from "../task-manager.ts";
 import { expandHomePath } from "../home-path.ts";
-import { errorMessage } from "../types.ts";
+import { errorMessage, type AgentEvent } from "../types.ts";
+import { formatFieldBlock } from "../shared/field-block.ts";
 import { formatTaskReference } from "../shared/task-reference.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
@@ -59,6 +60,22 @@ export interface McpTaskCreatedEvent {
   body: string;
 }
 
+/**
+ * The one record of an agent-issued cancellation.
+ *
+ * It is a `system_message` row, the shape every task fact takes when it has a
+ * place in the conversation: the machine fields (`sourceTaskId`, `reason`,
+ * `status`) and the `kind` discriminator live in `data` beside a non-empty
+ * title and a readable body. That is also the whole wire event, so live and
+ * replay render through the generic system-message path without a dedicated
+ * frontend branch. A user-initiated cancel stays deliberately different and
+ * writes nothing here.
+ */
+export type McpTaskCancelNotice = Extract<
+  AgentEvent,
+  { type: "system_message" }
+>;
+
 function relationOrder(relation: McpTaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2, sibling: 3 }[relation];
 }
@@ -69,8 +86,15 @@ export function createMcpTaskToolHost(deps: {
   cancelTimeoutMs?: number;
   broadcastCollaboration?: (event: McpTaskCollaborationEvent) => void;
   broadcastTaskCreated?: (event: McpTaskCreatedEvent) => void;
+  broadcastTaskCancelNotice?: (event: McpTaskCancelNotice) => void;
 }): McpTaskToolHost {
-  const { store, tasks, broadcastCollaboration, broadcastTaskCreated } = deps;
+  const {
+    store,
+    tasks,
+    broadcastCollaboration,
+    broadcastTaskCreated,
+    broadcastTaskCancelNotice,
+  } = deps;
 
   /**
    * The single authority check for one MCP operation. It lives here because
@@ -392,12 +416,64 @@ export function createMcpTaskToolHost(deps: {
       // The cancel awaited a transport round trip; the record of what happened
       // is only written while the caller still owns its execution.
       authorize(principal);
-      store.saveEvent(
-        target.id,
-        "task_cancel",
-        { sourceTaskId, reason, status: result.status },
-        { from_ref: "agent" },
+      // One fact, two rows, one per side of the edge: the canceller reads it as
+      // an act, the cancelled task as something done to it. Both are ordinary
+      // `system_message` rows (machine fields in `data`), so each side renders
+      // through the generic path and neither title is ever empty. Titles come
+      // from the live task rows, with the same short-id fallback collaboration
+      // uses; a cancelled task may already be soft-deleted, hence
+      // `getTaskIncludingDeleted`.
+      const sourceTask = store.getTaskIncludingDeleted(sourceTaskId);
+      const targetTask = store.getTaskIncludingDeleted(target.id);
+      const sourceLabel = formatTaskReference(
+        sourceTask?.title ?? sourceTaskId.slice(0, 8),
       );
+      const targetLabel = formatTaskReference(
+        targetTask?.title ?? target.id.slice(0, 8),
+      );
+      const body = formatFieldBlock([
+        { label: "reason", value: reason },
+        { label: "status", value: result.status },
+      ]);
+      const rows = [
+        {
+          taskId: sourceTaskId,
+          role: "source" as const,
+          title: `${sourceLabel} cancelled ${targetLabel}`,
+        },
+        {
+          taskId: target.id,
+          role: "target" as const,
+          title: `Cancelled by ${sourceLabel}`,
+        },
+      ];
+      for (const row of rows) {
+        store.saveEvent(
+          row.taskId,
+          "system_message",
+          {
+            kind: "task_cancel",
+            role: row.role,
+            sourceTaskId,
+            targetTaskId: target.id,
+            reason,
+            status: result.status,
+            title: row.title,
+            body,
+          },
+          { from_ref: "agent" },
+        );
+        broadcastTaskCancelNotice?.({
+          type: "system_message",
+          taskId: row.taskId,
+          kind: "task_cancel",
+          role: row.role,
+          sourceTaskId,
+          targetTaskId: target.id,
+          title: row.title,
+          body,
+        });
+      }
       return { accepted: true, taskId: target.id, status: result.status };
     },
 

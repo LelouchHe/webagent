@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
-import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
+import {
+  createMcpTaskToolHost,
+  type McpTaskCancelNotice,
+} from "../src/mcp/task-host.ts";
 import { projectTaskHistoryRow } from "../src/mcp/task-history.ts";
 
 describe("MCP Task tool host", () => {
@@ -586,6 +589,83 @@ describe("MCP Task tool host", () => {
       () => host.cancel(principal(), "beta", "wrong scope"),
       /target_not_allowed/,
     );
+  });
+
+  it("records one cancellation row per side and broadcasts both", async () => {
+    const broadcasted: McpTaskCancelNotice[] = [];
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      broadcastTaskCancelNotice: (event) => broadcasted.push(event),
+    });
+
+    await host.cancel(principal(), "alpha-child", "stop before start");
+
+    // One fact, one row per side of the edge: the canceller reads it as an act,
+    // the cancelled task as something done to it. Machine fields ride in
+    // `data` beside each side's own wording.
+    const body = "reason: stop before start\nstatus: idle";
+    const sourceRow = store
+      .getEvents("alpha")
+      .filter(
+        (event) =>
+          event.type === "system_message" &&
+          (JSON.parse(event.data) as { kind?: string }).kind === "task_cancel",
+      );
+    const targetRow = store
+      .getEvents("alpha-child")
+      .filter(
+        (event) =>
+          event.type === "system_message" &&
+          (JSON.parse(event.data) as { kind?: string }).kind === "task_cancel",
+      );
+    assert.equal(sourceRow.length, 1);
+    assert.equal(sourceRow[0].from_ref, "agent");
+    assert.deepEqual(JSON.parse(sourceRow[0].data), {
+      kind: "task_cancel",
+      role: "source",
+      sourceTaskId: "alpha",
+      targetTaskId: "alpha-child",
+      reason: "stop before start",
+      status: "idle",
+      title: '@Alpha cancelled @"Alpha child"',
+      body,
+    });
+    assert.equal(targetRow.length, 1);
+    assert.equal(targetRow[0].from_ref, "agent");
+    assert.deepEqual(JSON.parse(targetRow[0].data), {
+      kind: "task_cancel",
+      role: "target",
+      sourceTaskId: "alpha",
+      targetTaskId: "alpha-child",
+      reason: "stop before start",
+      status: "idle",
+      title: "Cancelled by @Alpha",
+      body,
+    });
+    // Both rows are wire events, each routed to its own task.
+    assert.deepEqual(broadcasted, [
+      {
+        type: "system_message",
+        taskId: "alpha",
+        kind: "task_cancel",
+        role: "source",
+        sourceTaskId: "alpha",
+        targetTaskId: "alpha-child",
+        title: '@Alpha cancelled @"Alpha child"',
+        body,
+      },
+      {
+        type: "system_message",
+        taskId: "alpha-child",
+        kind: "task_cancel",
+        role: "target",
+        sourceTaskId: "alpha",
+        targetTaskId: "alpha-child",
+        title: "Cancelled by @Alpha",
+        body,
+      },
+    ]);
   });
 
   it("returns idle when a direct child has no active execution", async () => {

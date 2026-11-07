@@ -1820,6 +1820,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `plan`                  | `taskId`, `entries`                                                                   | Agent plan update. Each entry: `{ status, content }`                                                                |
 | `permission_request`    | `requestId`, `taskId`, `title`, `options`                                             | Agent needs permission to proceed                                                                                   |
 | `permission_response`   | `requestId`, `taskId`, `optionName`, `denied`                                         | Permission was resolved (server-generated)                                                                          |
+| `system_message`        | `taskId`, `kind`, `title`, `body?`, plus `messageId`/`sourceTaskId`/`targetTaskId`/`role` for collaboration | A projected system row: a title and a readable body. `kind` names the fact (`collaboration`, `task_created`, `task_cancel`, `agent_rotation`, `handoff_reminder`, …) and is what replay stores, so live and replay render through the same branch |
 | `prompt_done`           | `taskId`, `stopReason`, `promptId?`                                                    | Agent turn completed with a standard ACP stop reason                                                               |
 | `error`                 | `message`, `taskId?`, `promptId?`                                                      | Prompt or agent error; task-scoped errors are persisted for replay                                               |
 | `user_message`          | `taskId`, `text`, `attachments?` (array of `{kind, attachmentId, displayName, mimeType, path?, width?, height?}`) | User message broadcast (for multi-client sync)                                                                      |
@@ -1960,6 +1961,8 @@ When a task's mode includes `#autopilot`, the server auto-approves permission re
 2. Check task mode in DB
 3. If autopilot, find the `allow_once` option and resolve immediately
 4. Broadcast both `permission_request` and `permission_response` so clients can render the collapsed state
+
+`mode` is a setting a person makes for their own turn, so this branch is the human-turn rule. A request that arrives while the task's live turn is *delegated* (a collaboration delivery with no user-authored message, or a runtime reminder) is answered by the host independently of mode: `allow_once` when offered, else `allow_always`, and `cancelled` when the request offers no allow option at all (no `reject_*` option is ever selected). See the turn-authorization invariant in [Implementation Invariants](implementation-invariants.md#task-semantic-authority).
 
 ---
 

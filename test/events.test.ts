@@ -1,6 +1,16 @@
 import { describe, it, before, after, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
+import { Store } from "../src/store.ts";
+import { createTaskManager } from "../src/task-manager.ts";
+import {
+  createMcpTaskToolHost,
+  type McpTaskCancelNotice,
+} from "../src/mcp/task-host.ts";
+import type { StoredEvent } from "../src/types.ts";
 
 /* eslint-disable @typescript-eslint/no-unsafe-function-type -- Promise resolver pattern uses generic Function type */
 
@@ -2649,62 +2659,6 @@ describe("events", () => {
         );
       });
 
-      it("renders collaboration events as title and body", () => {
-        state.taskId = "s1";
-        events.handleEvent({
-          type: "collaboration_message",
-          taskId: "s1",
-          messageId: "m1",
-          sourceTaskId: "s0",
-          sourceLabel: "what",
-          targetTaskId: "s1",
-          targetLabel: "child-a",
-          role: "target",
-          body: "please review",
-        });
-        events.handleEvent({
-          type: "collaboration_message",
-          taskId: "s2",
-          messageId: "m1",
-          sourceTaskId: "s0",
-          sourceLabel: "what",
-          targetTaskId: "s1",
-          targetLabel: "child-a",
-          role: "supervisor",
-          body: "please review",
-        });
-        assert.equal(dom.messages.children.length, 1);
-        assert.equal(
-          dom.messages.querySelector("summary")?.textContent,
-          "@what sent @child-a",
-        );
-        assert.equal(
-          dom.messages.querySelector(".system-msg-body")?.textContent,
-          "please review",
-        );
-      });
-
-      it("falls back to short ids when labels are missing", () => {
-        state.taskId = "s1";
-        events.handleEvent({
-          type: "collaboration_message",
-          taskId: "s1",
-          messageId: "m1",
-          sourceTaskId: "s0",
-          targetTaskId: "s1",
-          role: "target",
-          body: "please review",
-        });
-        assert.equal(
-          dom.messages.querySelector("summary")?.textContent,
-          "@s0 sent @s1",
-        );
-        assert.equal(
-          dom.messages.querySelector(".system-msg-body")?.textContent,
-          "please review",
-        );
-      });
-
       it("replays a persisted collaboration system row", () => {
         events.replayEvent(
           "system_message",
@@ -3012,6 +2966,167 @@ describe("events", () => {
       );
       stateMod.resetTaskUI();
       assert.equal(dom.statusBar.textContent, "");
+    });
+  });
+
+  describe("agent cancellation transcript", () => {
+    /**
+     * Produce a cancellation through the real MCP host, so the live and replay
+     * assertions below both fail if the producer stops writing the row it
+     * broadcasts.
+     */
+    async function produceCancellation() {
+      const dir = mkdtempSync(join(tmpdir(), "webagent-cancel-test-"));
+      const store = new Store(dir);
+      store.attachAgentSession(
+        store.ensureRootTask(dir).id,
+        "test-agent",
+        "session-root",
+      );
+      const tasks = createTaskManager(store, dir, dir);
+      const cleanup = () => {
+        tasks.dispose();
+        store.close();
+        rmSync(dir, { recursive: true, force: true });
+      };
+      try {
+        const source = store.createTask(
+          "source",
+          dir,
+          "auto",
+          "test-agent",
+          "session-source",
+          "root",
+          { title: "Source" },
+        );
+        const child = store.createTask(
+          "child",
+          dir,
+          "auto",
+          "test-agent",
+          "session-child",
+          source.id,
+          { title: "Child" },
+        );
+        const lease = tasks.authority.leaseFor(source.id);
+        assert.ok(lease, "the source task has a generation");
+        const frames: McpTaskCancelNotice[] = [];
+        const host = createMcpTaskToolHost({
+          store,
+          tasks,
+          broadcastTaskCancelNotice: (event) => frames.push(event),
+        });
+        await host.cancel(
+          {
+            taskId: source.id,
+            agentId: "test-agent",
+            generation: lease.generation,
+            initializing: false,
+          },
+          child.id,
+          "no longer needed",
+        );
+        const asStored = (rows: ReturnType<typeof store.getEvents>) =>
+          rows.map(
+            (row): StoredEvent => ({
+              id: row.id,
+              task_id: row.task_id,
+              seq: row.seq,
+              type: row.type,
+              data: row.data,
+              created_at: new Date(row.created_at).toISOString(),
+            }),
+          );
+        return {
+          frames,
+          sourceStored: asStored(store.getEvents(source.id)),
+          targetStored: asStored(store.getEvents(child.id)),
+          sourceTaskId: source.id,
+          targetTaskId: child.id,
+          cleanup,
+        };
+      } catch (err) {
+        cleanup();
+        throw err;
+      }
+    }
+
+    it("renders each side's live row with its own wording", async () => {
+      const produced = await produceCancellation();
+      try {
+        // Two rows are written and broadcast, one per side of the edge.
+        assert.equal(produced.frames.length, 2);
+        assert.deepEqual(
+          produced.frames.map((frame) => [
+            frame.taskId,
+            frame.role,
+            frame.title,
+          ]),
+          [
+            [produced.sourceTaskId, "source", "@Source cancelled @Child"],
+            [produced.targetTaskId, "target", "Cancelled by @Source"],
+          ],
+        );
+
+        state.taskId = produced.sourceTaskId;
+        for (const frame of produced.frames) events.handleEvent(frame);
+        assert.equal(dom.messages.children.length, 1);
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "@Source cancelled @Child",
+        );
+
+        stateMod.resetTaskUI();
+        state.taskId = produced.targetTaskId;
+        for (const frame of produced.frames) events.handleEvent(frame);
+        assert.equal(dom.messages.children.length, 1);
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "Cancelled by @Source",
+        );
+        assert.equal(
+          dom.messages.querySelector(".system-msg-body")?.textContent,
+          "reason: no longer needed\nstatus: idle",
+        );
+      } finally {
+        produced.cleanup();
+      }
+    });
+
+    it("renders each side's replayed row with its own wording", async () => {
+      const produced = await produceCancellation();
+      try {
+        const replay = (stored: StoredEvent[]) => {
+          for (const [idx, row] of stored.entries()) {
+            events.replayEvent(
+              row.type,
+              JSON.parse(row.data) as Record<string, unknown>,
+              stored,
+              idx,
+            );
+          }
+        };
+
+        assert.equal(produced.sourceStored.length, 1);
+        assert.equal(produced.targetStored.length, 1);
+        replay(produced.sourceStored);
+        assert.equal(dom.messages.children.length, 1);
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "@Source cancelled @Child",
+        );
+
+        stateMod.resetTaskUI();
+        state.taskId = produced.targetTaskId;
+        replay(produced.targetStored);
+        assert.equal(dom.messages.children.length, 1);
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "Cancelled by @Source",
+        );
+      } finally {
+        produced.cleanup();
+      }
     });
   });
 

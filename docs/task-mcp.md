@@ -64,6 +64,15 @@ static MCP configuration file: the endpoint carries a capability token minted
 for one task. Which agents put the definitions to use is noted in
 [Configuration & Operations](configuration.md#acp-compatible-agents).
 
+### The server name
+
+The name on the session entry (`MCP_SERVER_NAME`, `lelouchhe_webagent`) is a
+client-visible label, not an internal id. Some clients namespace a server's
+tools by it (`mcp__<name>__<tool>`) and reject generic names — Claude Code
+refuses `webagent` — which is why the vendor prefix is spelled out. The value is
+never persisted: every session entry and every MCP `initialize` response is
+built from that constant.
+
 ## Server instructions
 
 The server advertises a short, generic usage contract through the MCP
@@ -308,6 +317,28 @@ configured cancellation safety timeout is shared with the REST cancel path;
 when the Agent has not acknowledged cancellation, the result remains
 `cancelling` and the runtime exposes the unconfirmed state rather than claiming
 that execution has stopped.
+
+The cancellation is recorded and broadcast as one `system_message` row per side
+of the edge, both `kind: "task_cancel"` with the machine fields (`sourceTaskId`,
+`targetTaskId`, `reason`, `status`) and a `role` in `data`, and both carrying the
+same `reason:` / `status:` body:
+
+| Row lands on | `role` | Title |
+| --- | --- | --- |
+| The cancelling Task | `source` | `@source cancelled @target` |
+| The cancelled Task | `target` | `Cancelled by @source` |
+
+`@X` is the Task's title, falling back to its short id, exactly like a
+collaboration row. A user-initiated cancel writes neither row.
+
+A cancelled turn does not trigger a closing reminder: the task-obligation
+controller treats the cancellation itself as the end fact (the `cancelled` stop
+reason, the intent the host stamps on the turn before the transport round trip,
+or the busy cancel marker). The edge then stays quiet — no closing reminder, no
+advisory of any kind, no notice — until new work arrives on it; a late account
+still settles. This includes a closing-reminder turn that is itself cancelled:
+that submission is fenced, so no attempt is counted, nothing is re-armed, and no
+notice is emitted.
 
 ### `task_create`
 

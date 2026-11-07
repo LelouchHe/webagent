@@ -39,7 +39,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/multi-agent-mcp.test.ts` (production host + endpoint + real store/ledger; business calls go through real HTTP `tools/call`)
   - a caller that rotates while a `task_create` waits for the tree lock is refused before the task row is written
-  - a caller that rotates while a `task_cancel` awaits the transport gets a refused tool result and no cancellation record
+  - a caller that rotates while a `task_cancel` awaits the transport gets a refused tool result and no cancellation row
   - a caller that rotates during a child's config inheritance is refused before the source transcript row is written; the already-committed child stays
   - an `initializing` capability completes the MCP handshake but every business tool returns `initializing`; after promotion the same token works
   - a request authenticated before a real rotation cannot write after it (the task-persist boundary re-checks after `newSession`), while a fresh token against the current generation succeeds; the rotated-away token is revoked
@@ -390,6 +390,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/config-model-persistence.test.ts`
   - legacy identity migration, stale-snapshot normalization, and stable repeated writes/reopen
 
+- `test/field-block.test.ts`
+  - `formatFieldBlock` keeps the caller's field order, emits values verbatim
+    (no escaping or trimming), applies a fallback only for a falsy value, and
+    keeps an empty value when a field has no fallback
+  - the task-created body renders `model` / `thinking` as `inherited` for an
+    empty or null value while its machine payload keeps `?? null` semantics
+
 - `test/server-event-handler.test.ts`
   - event routing: message_chunk, thought_chunk, tool_call, prompt_done, task_created, error
   - thinking↔assistant buffer flush transitions
@@ -398,6 +405,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - autopilot auto-approval with allow_once
   - autopilot fallback when no allow_once option exists
   - normal permission_request broadcast in non-autopilot mode
+  - turn-origin authorization: a delegated turn answers with `allow_once`, else `allow_always`, and cancels (`cancelled`, no `reject_*` selected, reason `no_allow_option` / `no_options`) when the request offers no allow option; the stored `permission_response` is `from_ref: system`
+  - the delegated condition requires a live turn, not just a recorded origin: after the turn ends, the same request prompts
+  - a human turn is unchanged: default mode prompts, and our own injected MCP tools have no privilege there
+  - the attachment-read interceptor approves only inside the turn the request arrived in; a turn that ended or was superseded before the realpath work finishes produces no `permission_response`
   - directed dispatch closure: only an agent-authored direct parent→child dispatch arms an obligation; a user send, a sibling/child message, an account, and a runtime notice do not
   - settlement predicate: a plain `task_update` settles only an `open|reminder_due|reminder_submitting` record when the target has an active current agent turn; `awaiting_delivery`, a terminal record, and no active turn do not settle and still route to the stored source
   - an `unresolved` record is settled by a late account without retracting its notice, while a `settled` record is never re-settled; with no record the report goes to the current parent and settles nothing
@@ -409,6 +420,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a rejected initial dispatch is retried under the transport bound (backoff, no immediate idle re-drain) and ends in one factual `delivery_failed` notice with `delivery_unavailable` evidence; a resume that keeps failing exhausts the same budget, and a still-queued dispatch produces a non-terminal `still_waiting` advisory rather than a terminal deadline
   - a late callback from a superseded dispatch prompt identity is ignored, including a failing resume and a stale hand-off; the still-waiting and age advisories are non-terminal and cleared on terminal states; an in-flight reminder from a previous epoch is ignored after a coalescing follow-up; a runtime rotation (and bridge restart, including a draining turn) aborts the watchdog and a silence notice requires a live current turn
   - the closing reminder scopes its prohibition to the runtime-injected closing turn, resumes a non-live session before reminding, records no successful reminder on rejection, persists a bounded audit copy of the drained prompt, and logs obligation lifecycle decisions
+  - a cancelled turn owes no closing reminder: the ACP `cancelled` stop reason, the cancel intent stamped on the turn before the transport round trip, and the busy cancel marker each end the turn without a `handoff_reminder` or `task_outcome_notice`, and the record stays `open`; a later dispatch that ends without an account still reminds
+  - the cancel intent is stamped before `bridge.cancel` awaits: a turn that finishes with an ordinary `end_turn` while the cancel is still in flight is still treated as cancelled (no reminder), and it dies with that turn — the same task's next turn is not cancelled and its unaccounted end reminds normally
+  - a closing-reminder turn that is itself cancelled is fenced: no delivered attempt is counted, nothing is re-armed, no `task_outcome_notice` is emitted, no delivered-attempt `handoff_reminder` row is written, and the record returns to `open`; a later dispatch still reminds
   - a runtime notice is delivered as a readable `reason:` / `message:` / `openingMessageId:` block (the text the parent agent actually receives, fenced verbatim), while its machine payload stays in the `task_outcome_notice` event; the live broadcast title and the persisted twin share one `messageId` and one title
   - execution write lease, fail closed: an event stamped with a replaced generation, an unknown generation, another task's lease, no lease at all, or no lease for a task with no ledger entry writes nothing — no buffer, no stored event, no broadcast, no activity timestamp
 
@@ -419,6 +433,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a pre-rotation watchdog with a live turn emits its silence notice (control), and the same steps after a rotation emit none — the rotation ends that watchdog epoch (the retained-callback case is covered by the next bullet)
   - a retry callback that is still queued when the rotation lands is run explicitly after it (the clock keeps callbacks after `clearTimer`): it re-derives from the record, so the old body is never re-enqueued and a closing reminder for the replacement is what it submits
   - a reminder result from the replaced execution (old recovery generation) cannot settle the record, spend an attempt, or re-enqueue the dispatch
+  - a cancelled boundary quiets the edge and nothing gets through: hours later there is no closing reminder, no `still_waiting` advisory (neither the queued-dispatch nor the age form), no notice, and no armed deadline at all; a timer that was already armed is dropped at dispatch time, and a rotation is not new work (no timer, no sound)
+  - new work on the same edge lifts the silence and restarts the clocks: a fresh dispatch arm + hand-off produces the age advisory only after a full `AGE_ADVISORY_MS` from that arrival, and its closing reminder follows once the target is idle; another task's edge is unaffected and keeps its own reminder
+  - a quiet record still settles on a late typed account, then stays silent
+  - a cancellation never reopens a terminal record: a settled edge stays `settled` (not `open`/quiet), and a later user message handed to it plus a normal unaccounted end produces no reminder and no notice
+  - a hand-off lifts the silence from any state, including `reminder_due` after a rotation (the reminder and the advisory run again); a rotation with no new work leaves the edge quiet with no timer
 
 - `test/turn-slot.test.ts`
   - one turn slot per task, and every real submission assigns its own origin: the interactive route, `/compact`, and the beta quick prompt are `interactive`; a collaboration drain is `delegated` for an all-agent/system batch and `interactive` for a batch containing one user message; a closing reminder is `delegated`. Nothing inherits the previous turn's value
@@ -677,6 +696,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/events.test.ts`
   - task creation / busy-state restoration
+  - an agent-issued `task_cancel` is produced as one `system_message` row per
+    side of the edge, both `kind: "task_cancel"` with `role` and the machine
+    fields in `data`, worded from that side (`@source cancelled @target` /
+    `Cancelled by @source`). Both rows are broadcast, so the cancel page and the
+    cancelled page each render exactly one line, live and from replay
   - user / assistant / thinking rendering
   - unsolicited Main-agent text and tool calls render while the foreground turn
     stays idle without reopening busy state
@@ -726,6 +750,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - self/parent/child/sibling authorization, tombstone/nonexistent target convergence, unknown sequence rejection
   - omitting the target reads the current Task's own history
   - explicit response_too_large errors report required_bytes without partial rows
+  - a successful `task_cancel` writes one `system_message` row per side (each
+    with its own `taskId`, `role`, and wording; machine fields in `data`) and
+    broadcasts both frames
   - MCP registration and documentation expose task_read as the sole raw-history tool
 
 - `test/commands.test.ts`, `test/slash-menu.test.ts`

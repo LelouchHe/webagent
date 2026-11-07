@@ -229,6 +229,11 @@ const mcpTaskTools = createMcpTaskToolHost({
   broadcastTaskCreated: (event) => {
     sseManager.broadcast(buildTaskCreatedBroadcast(event));
   },
+  broadcastTaskCancelNotice: (event) => {
+    // One record, one frame: the transcript row is the whole cancellation and
+    // rides the generic system-message path.
+    sseManager.broadcast(event);
+  },
 });
 const messageCleanup: CleanupHandle = startMessageCleanup(
   store,

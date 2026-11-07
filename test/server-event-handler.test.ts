@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
@@ -11,7 +11,8 @@ import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
 import { getLogLevel, setLogLevel, setLogSink } from "../src/log.ts";
 import type { AgentEvent } from "../src/types.ts";
 import type { DirectedObligation } from "../src/obligation-controller.ts";
-import { makeEventHandlerConfig } from "./fixtures.ts";
+import { createCounters } from "../src/attachment-interceptor.ts";
+import { makeEventHandlerConfig, waitFor } from "./fixtures.ts";
 
 function createMockSseManager() {
   const broadcasted: AgentEvent[] = [];
@@ -28,6 +29,7 @@ function createMockSseManager() {
 function createMockBridge(promptErrors: Array<Error | undefined> = []) {
   const calls = {
     resolvePermission: [] as Array<{ requestId: string; optionId: string }>,
+    denyPermission: [] as string[],
     prompts: [] as Array<{ taskId: string; text: string; promptId?: string }>,
   };
   return {
@@ -43,6 +45,9 @@ function createMockBridge(promptErrors: Array<Error | undefined> = []) {
       },
       resolvePermission(requestId: string, optionId: string) {
         calls.resolvePermission.push({ requestId, optionId });
+      },
+      denyPermission(requestId: string) {
+        calls.denyPermission.push(requestId);
       },
       prompt(
         taskId: string,
@@ -804,6 +809,129 @@ describe("handleAgentEvent", () => {
     assert.ok(payload.openingDeliveryId);
   });
 
+  it("does not remind when the turn carried our cancel request", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    // A UI cancel marks the live turn, and the agent may still finish with an
+    // ordinary stop reason; the marker is the fact, not the stop reason.
+    tasks.state.markCancelRequested("child");
+    endTurn(bridge, "child", calls.prompts[0].promptId);
+    calls.prompts[0].resolve();
+    await flushTimers();
+
+    assert.equal(calls.prompts.length, 1, "a cancelled turn owes no reminder");
+    assert.equal(tasks.getObligation("parent", "child")?.state, "open");
+  });
+
+  it("reminds again when a later dispatch after a cancellation goes unaccounted", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child", "First.");
+    endTurn(bridge, "child", calls.prompts[0].promptId, "cancelled");
+    calls.prompts[0].resolve();
+    await flushTimers();
+    assert.equal(calls.prompts.length, 1);
+
+    await armDirectDispatch(store, tasks, bridge, "parent", "child", "Second.");
+    // The cancelled intent died with the turn that carried it: the next turn on
+    // the same task is a fresh one, not a silent no-reminder turn.
+    assert.equal(tasks.getTurn("child")?.cancelRequested, false);
+    // This turn ends without an account and was not cancelled: it must remind.
+    endTurn(bridge, "child", calls.prompts[1].promptId);
+    calls.prompts[1].resolve();
+    await flushTimers();
+
+    assert.equal(calls.prompts.length, 3);
+    assert.match(calls.prompts[2].text, /task_update\(done/);
+    calls.prompts[2].resolve();
+    await flushTimers();
+  });
+
+  it("treats a turn that ends during the cancel round trip as cancelled", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+
+    // The agent finishes the turn with an ordinary stop reason while the cancel
+    // request is still on the wire: the intent stamped before the await is the
+    // only cancellation fact this boundary will ever see.
+    const cancelBridge = {
+      cancel: async () => {
+        endTurn(bridge, "child", calls.prompts[0].promptId);
+      },
+    };
+    const result = await tasks.cancelTaskExecution("child", cancelBridge, 0);
+    calls.prompts[0].resolve();
+    await flushTimers();
+
+    assert.equal(result.status, "cancelled");
+    assert.equal(
+      calls.prompts.length,
+      1,
+      "a turn ending under a cancel owes no reminder",
+    );
+    assert.equal(tasks.getObligation("parent", "child")?.state, "open");
+  });
+
+  it("fences a reminder whose own turn was cancelled", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    endTurn(bridge, "child", calls.prompts[0].promptId);
+    calls.prompts[0].resolve();
+    await flushTimers();
+    // The first closing reminder is in flight.
+    assert.equal(calls.prompts.length, 2);
+    const reminderPromptId = calls.prompts[1].promptId;
+
+    // Cancel the reminder's own turn, then let it end as a stopped turn does.
+    await tasks.cancelTaskExecution("child", { cancel: async () => {} }, 0);
+    endTurn(bridge, "child", reminderPromptId);
+    calls.prompts[1].resolve();
+    await flushTimers();
+
+    const obligation = tasks.getObligation("parent", "child");
+    assert.ok(obligation, "the record must still exist");
+    assert.equal(obligation.state, "open");
+    assert.equal(
+      obligation.deliveredAttempts,
+      0,
+      "a cancelled reminder is not a delivered attempt",
+    );
+    assert.equal(
+      calls.prompts.length,
+      2,
+      "a cancelled reminder does not re-arm another one",
+    );
+    const events = store.getEvents("child");
+    assert.equal(
+      events.some((event) => event.type === "task_outcome_notice"),
+      false,
+    );
+    assert.equal(
+      events.some(
+        (event) =>
+          event.type === "system_message" &&
+          (JSON.parse(event.data) as { kind?: string }).kind ===
+            "handoff_reminder",
+      ),
+      false,
+      "a fenced reminder writes no delivered-attempt row",
+    );
+
+    // The debt is still live: a later dispatch that ends without an account
+    // reminds again.
+    await armDirectDispatch(store, tasks, bridge, "parent", "child", "Retry.");
+    endTurn(bridge, "child", calls.prompts[2].promptId);
+    calls.prompts[2].resolve();
+    await flushTimers();
+    assert.equal(calls.prompts.length, 4);
+    assert.match(calls.prompts[3].text, /task_update\(done/);
+    calls.prompts[3].resolve();
+    await flushTimers();
+  });
+
   it("settles the record from an active current turn and routes to the stored source", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
@@ -1088,7 +1216,7 @@ describe("handleAgentEvent", () => {
     assert.equal(calls.prompts.length, 0);
   });
 
-  it("still reminds when the dispatch turn was cancelled", async () => {
+  it("does not remind when the dispatch turn was cancelled", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
     await armDirectDispatch(store, tasks, bridge, "parent", "child");
@@ -1096,16 +1224,24 @@ describe("handleAgentEvent", () => {
     calls.prompts[0].resolve();
     await flushTimers();
 
-    assert.equal(calls.prompts.length, 2);
-    // The prohibition is scoped to the runtime-injected closing turn, not to
-    // the underlying work.
-    assert.match(calls.prompts[1].text, /runtime-injected closing turn/i);
-    assert.match(
-      calls.prompts[1].text,
-      /Do not begin new work as part of this closing turn\./,
+    // A turn stopped on purpose is not a missing account: no closing reminder,
+    // no notice, and the record stays open for the next dispatch.
+    assert.equal(calls.prompts.length, 1, "a cancelled turn owes no reminder");
+    assert.equal(tasks.getObligation("parent", "child")?.state, "open");
+    const events = store.getEvents("child");
+    assert.equal(
+      events.some((event) => event.type === "task_outcome_notice"),
+      false,
     );
-    calls.prompts[1].resolve();
-    await flushTimers();
+    assert.equal(
+      events.some(
+        (event) =>
+          event.type === "system_message" &&
+          (JSON.parse(event.data) as { kind?: string }).kind ===
+            "handoff_reminder",
+      ),
+      false,
+    );
   });
 
   it("resumes a non-live session before submitting the reminder", async () => {
@@ -1928,6 +2064,360 @@ describe("handleAgentEvent", () => {
 
     // Should broadcast permission_request for manual handling
     assert.equal(broadcasted[0].type, "permission_request");
+  });
+
+  // --- Turn-origin authorization (P5-b) ---
+
+  /** Open a real turn so `getTurn` reports the origin the permission path reads. */
+  function beginTurn(
+    taskId: string,
+    origin: "delegated" | "interactive",
+  ): string {
+    tasks.beginAgentTurn(taskId, { origin });
+    const promptId = tasks.getTurn(taskId)?.promptId ?? null;
+    assert.ok(promptId, "an open turn projects a prompt id");
+    return promptId;
+  }
+
+  /** Drive one permission request through the real handler. */
+  function emitPermission(
+    event: Record<string, unknown>,
+    config = makeEventHandlerConfig(),
+  ) {
+    const { bridge, calls } = createMockBridge();
+    const { sseManager, broadcasted } = createMockSseManager();
+    handleAgentEvent(
+      withLease(event) as any,
+      tasks,
+      store,
+      bridge,
+      config,
+      sseManager as any,
+    );
+    return { calls, broadcasted };
+  }
+
+  function storedPermissionResponses(taskId: string) {
+    return store
+      .getEvents(taskId)
+      .filter((event) => event.type === "permission_response")
+      .map((event) => ({
+        from_ref: event.from_ref,
+        data: JSON.parse(event.data) as Record<string, unknown>,
+      }));
+  }
+
+  it("answers a delegated turn's request with allow_once", () => {
+    store.createTask("s1", "/tmp", "auto", "test-agent");
+    beginTurn("s1", "delegated");
+    const { calls, broadcasted } = emitPermission({
+      type: "permission_request",
+      taskId: "s1",
+      requestId: "req1",
+      title: "Run command",
+      options: [
+        { optionId: "allow_once", kind: "allow_once", label: "Allow once" },
+        {
+          optionId: "allow_always",
+          kind: "allow_always",
+          label: "Allow always",
+        },
+      ],
+    });
+
+    assert.deepEqual(calls.resolvePermission, [
+      { requestId: "req1", optionId: "allow_once" },
+    ]);
+    assert.deepEqual(calls.denyPermission, []);
+    // Same shape as the mode gate: the request is visible, then collapsed.
+    assert.deepEqual(
+      broadcasted.map((event) => event.type),
+      ["permission_request", "permission_response"],
+    );
+    assert.deepEqual(storedPermissionResponses("s1"), [
+      {
+        from_ref: "system",
+        data: {
+          requestId: "req1",
+          optionName: "Allow once",
+          denied: false,
+        },
+      },
+    ]);
+  });
+
+  it("follows the delegated answer matrix and never picks a reject option", () => {
+    store.createTask("s1", "/tmp", "auto", "test-agent");
+    beginTurn("s1", "delegated");
+    const rows: Array<{
+      name: string;
+      options: Array<{ optionId: string; kind: string; label: string }>;
+      resolved: string | null;
+      reason?: string;
+      optionName: string;
+    }> = [
+      {
+        name: "only allow_always",
+        options: [
+          {
+            optionId: "allow_always",
+            kind: "allow_always",
+            label: "Allow always",
+          },
+          { optionId: "reject_once", kind: "reject_once", label: "Reject" },
+        ],
+        resolved: "allow_always",
+        optionName: "Allow always",
+      },
+      {
+        name: "reject options only",
+        options: [
+          { optionId: "reject_once", kind: "reject_once", label: "Reject" },
+          {
+            optionId: "reject_always",
+            kind: "reject_always",
+            label: "Reject always",
+          },
+        ],
+        resolved: null,
+        reason: "no_allow_option",
+        optionName: "cancelled",
+      },
+      {
+        name: "no options at all",
+        options: [],
+        resolved: null,
+        reason: "no_options",
+        optionName: "cancelled",
+      },
+    ];
+
+    for (const [index, row] of rows.entries()) {
+      const requestId = `req_${index}`;
+      const { calls } = emitPermission({
+        type: "permission_request",
+        taskId: "s1",
+        requestId,
+        title: row.name,
+        options: row.options,
+      });
+
+      assert.deepEqual(
+        calls.resolvePermission.map((call) => call.optionId),
+        row.resolved === null ? [] : [row.resolved],
+        `${row.name}: a reject option must never be selected`,
+      );
+      assert.deepEqual(
+        calls.denyPermission,
+        row.resolved === null ? [requestId] : [],
+        `${row.name}: no allow option cancels the ACP request`,
+      );
+      const stored = storedPermissionResponses("s1").at(-1);
+      assert.ok(stored, `${row.name}: the answer must be recorded`);
+      assert.equal(stored.from_ref, "system");
+      assert.deepEqual(stored.data, {
+        requestId,
+        optionName: row.optionName,
+        denied: row.resolved === null,
+        ...(row.reason ? { reason: row.reason } : {}),
+      });
+    }
+  });
+
+  it("still prompts in a human turn's default mode", () => {
+    store.createTask("s1", "/tmp", "auto", "test-agent");
+    store.updateTaskConfig("s1", "mode", "agent");
+    beginTurn("s1", "interactive");
+    const { calls, broadcasted } = emitPermission({
+      type: "permission_request",
+      taskId: "s1",
+      requestId: "req1",
+      title: "Run command",
+      options: [
+        { optionId: "allow_once", kind: "allow_once", label: "Allow once" },
+        {
+          optionId: "allow_always",
+          kind: "allow_always",
+          label: "Allow always",
+        },
+      ],
+    });
+
+    assert.deepEqual(calls.resolvePermission, []);
+    assert.deepEqual(calls.denyPermission, []);
+    assert.deepEqual(
+      broadcasted.map((event) => event.type),
+      ["permission_request"],
+    );
+    assert.deepEqual(storedPermissionResponses("s1"), []);
+  });
+
+  it("gives our own MCP tools no privilege in a human turn", () => {
+    store.createTask("s1", "/tmp", "auto", "test-agent");
+    store.updateTaskConfig("s1", "mode", "agent");
+    beginTurn("s1", "interactive");
+    const { calls, broadcasted } = emitPermission({
+      type: "permission_request",
+      taskId: "s1",
+      requestId: "req1",
+      title: "mcp__lelouchhe_webagent__task_query",
+      toolKind: "other",
+      toolName: "mcp__lelouchhe_webagent__task_query",
+      options: [
+        { optionId: "allow_once", kind: "allow_once", label: "Allow once" },
+      ],
+    });
+
+    // A tool we injected is a tool like any other: the human turn asks.
+    assert.deepEqual(calls.resolvePermission, []);
+    assert.deepEqual(calls.denyPermission, []);
+    assert.deepEqual(
+      broadcasted.map((event) => event.type),
+      ["permission_request"],
+    );
+  });
+
+  it("requires a live turn, not a delegated origin that already ended", () => {
+    store.createTask("s1", "/tmp", "auto", "test-agent");
+    const promptId = beginTurn("s1", "delegated");
+    tasks.endTurn("s1", { promptId, recoveryOrigin: "prompt_done" });
+    const { calls, broadcasted } = emitPermission({
+      type: "permission_request",
+      taskId: "s1",
+      requestId: "req1",
+      title: "Run command",
+      options: [
+        { optionId: "allow_once", kind: "allow_once", label: "Allow once" },
+      ],
+    });
+
+    // Both halves of the condition are required: the slot is not live, so the
+    // human-turn rules apply and the request waits for a person.
+    assert.deepEqual(calls.resolvePermission, []);
+    assert.deepEqual(calls.denyPermission, []);
+    assert.deepEqual(
+      broadcasted.map((event) => event.type),
+      ["permission_request"],
+    );
+  });
+
+  describe("attachment read same-turn guard", () => {
+    function seedAttachmentRead() {
+      store.createTask("s1", "/tmp", "auto", "test-agent");
+      const path = join(tmpDir, "note.txt");
+      writeFileSync(path, "hello");
+      store.insertAttachment({
+        id: "att1",
+        taskId: "s1",
+        kind: "file",
+        name: "note.txt",
+        mime: "text/plain",
+        size: 5,
+        realpath: realpathSync(path),
+      });
+      const counters = createCounters();
+      const request = {
+        type: "permission_request",
+        taskId: "s1",
+        requestId: "req1",
+        title: "Read file",
+        toolKind: "read",
+        toolName: "view",
+        locations: [{ path }],
+        rawInput: { path },
+        options: [
+          { optionId: "allow_once", kind: "allow_once", label: "Allow once" },
+        ],
+      };
+      return {
+        counters,
+        config: makeEventHandlerConfig({
+          attachmentInterceptor: { counters },
+        }),
+        request,
+      };
+    }
+
+    it("approves inside the turn it arrived in", async () => {
+      const { counters, config, request } = seedAttachmentRead();
+      beginTurn("s1", "interactive");
+      const { calls } = emitPermission(request, config);
+
+      await waitFor(() => calls.resolvePermission.length === 1);
+      assert.deepEqual(calls.resolvePermission, [
+        { requestId: "req1", optionId: "allow_once" },
+      ]);
+      assert.equal(counters.autoAllowed, 1);
+      assert.equal(storedPermissionResponses("s1").length, 1);
+    });
+
+    it("refuses once the turn has ended", async () => {
+      const { counters, config, request } = seedAttachmentRead();
+      const promptId = beginTurn("s1", "interactive");
+      const { calls } = emitPermission(request, config);
+
+      // The realpath work is still in flight; the turn ends first.
+      tasks.endTurn("s1", { promptId, recoveryOrigin: "prompt_done" });
+      await waitFor(() => counters.autoAllowed === 1);
+      await flushTimers();
+
+      assert.deepEqual(calls.resolvePermission, []);
+      assert.deepEqual(calls.denyPermission, []);
+      assert.deepEqual(storedPermissionResponses("s1"), []);
+    });
+
+    it("refuses once the turn was superseded", async () => {
+      const { counters, config, request } = seedAttachmentRead();
+      const promptId = beginTurn("s1", "interactive");
+      const { calls } = emitPermission(request, config);
+
+      tasks.endTurn("s1", { promptId, recoveryOrigin: "prompt_done" });
+      beginTurn("s1", "interactive");
+      await waitFor(() => counters.autoAllowed === 1);
+      await flushTimers();
+
+      assert.deepEqual(calls.resolvePermission, []);
+      assert.deepEqual(storedPermissionResponses("s1"), []);
+    });
+
+    it("leaves the request for a person when no turn is live at arrival", async () => {
+      const { counters, config, request } = seedAttachmentRead();
+      // The request arrives with the task idle: there is no turn identity to
+      // re-check, and none appears before the realpath work finishes.
+      assert.equal(tasks.getTurn("s1"), null);
+      const { calls } = emitPermission(request, config);
+
+      // The realpath work really ran and matched; only the turn guard holds
+      // the answer back.
+      await waitFor(() => counters.autoAllowed === 1);
+      await flushTimers();
+
+      assert.deepEqual(calls.resolvePermission, []);
+      assert.deepEqual(calls.denyPermission, []);
+      assert.deepEqual(storedPermissionResponses("s1"), []);
+      assert.equal(
+        tasks.pendingPermissions.has("req1"),
+        true,
+        "the pending request is left for a person",
+      );
+    });
+
+    it("leaves the request for a person when the live turn has no prompt id", async () => {
+      const { counters, config, request } = seedAttachmentRead();
+      // Membership without a projected agent prompt: `getTurn` exists but
+      // carries no identity that can be compared.
+      tasks.activePrompts.add("s1");
+      assert.equal(tasks.getTurn("s1")?.promptId, null);
+      const { calls } = emitPermission(request, config);
+
+      await waitFor(() => counters.autoAllowed === 1);
+      await flushTimers();
+
+      assert.deepEqual(calls.resolvePermission, []);
+      assert.deepEqual(calls.denyPermission, []);
+      assert.deepEqual(storedPermissionResponses("s1"), []);
+      assert.equal(tasks.pendingPermissions.has("req1"), true);
+    });
   });
 
   // --- Execution write lease ---

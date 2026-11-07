@@ -86,6 +86,39 @@ The operational form of that sentence:
   the execution the restore is about to make live. A prompt is the one write
   that asks for the gate *without* the restore, because it waits for that
   restore (`ensureResumed` shares one resume per task) instead of refusing it.
+- **Turn authorization is per turn, not per task and not per mode.** Who
+  opened the turn decides a permission request. In a turn an agent or the
+  runtime opened — a collaboration delivery whose whole batch was agent/system
+  authored, a runtime notice, a closing reminder — the host answers it:
+  `allow_once` when offered, else `allow_always`, and `cancelled` when the
+  request offers no allow option at all (never a `reject_*` option, never an
+  invented `optionId`). In a turn a person opened, the request is left to the
+  person; only the mode gate's autopilot classification answers it, exactly as
+  before. The condition is the double test — the slot is live **and**
+  `origin === "delegated"` — because `state.runtime.busy` is a projection:
+  reservation, compaction and rotation report agent-busy without a live ACP
+  prompt. `origin` lives on the turn and dies with it; no authorization state
+  is stored. The attachment-read interceptor is the one human-turn exception,
+  and it re-checks the captured `promptId` before answering so a turn that
+  ended or was superseded cannot still be approved.
+  This is an availability rule, not a security boundary. It exists because an
+  unattended turn must not stop on a button nobody will see: before it, a
+  dispatched child on an agent in its default mode waited forever. It
+  deliberately does not judge the risk of an individual tool call — without
+  guessing what an agent's tools mean, "who opened this turn" is the only
+  criterion the host can observe reliably.
+  What actually constrains an unattended turn is elsewhere: the agent's own
+  mode and approval configuration, how the work was described when it was
+  dispatched, `task_cancel` (which leaves a system row on each side with the
+  canceller, reason, and status, and may be followed up with `task_query`), and
+  the persistent audit — every `permission_request` and `permission_response` is
+  stored.
+  Two deployment shapes follow. A deployment already running an agent in
+  autopilot mode sees no change: the mode gate was already answering those
+  turns. The change lands on default-mode agents, where a dispatched turn goes
+  from hanging indefinitely to running to completion. The asymmetry is
+  deliberate: an agent that sends into a task makes that turn unattended,
+  including a session a person is watching.
 - **Execution environment comes from the binding, never from the caller.** A
   request names a task; the runtime resolves which agent executes it. Five
   contexts are the deliberate exceptions and each names its own source: the

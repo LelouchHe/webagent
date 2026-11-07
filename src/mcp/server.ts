@@ -25,13 +25,9 @@ import { HTTP_STATUS } from "../http-status.ts";
  */
 
 /**
- * Name of the WebAgent MCP server appended to an ACP session's `mcpServers`.
- *
- * It is a client-visible label, not an internal id: some clients namespace a
- * server's tools by it (`mcp__<name>__<tool>`) and reject generic names —
- * Claude Code refuses `webagent`, which is why the vendor prefix is spelled out
- * here. The value is never persisted; every session entry and every MCP
- * `initialize` response is built from this constant.
+ * `mcpServers` label, not an internal id: clients namespace tools by it and
+ * Claude Code refuses the generic `webagent`, hence the vendor prefix.
+ * See `docs/task-mcp.md` → "The server name".
  */
 export const MCP_SERVER_NAME = "lelouchhe_webagent";
 

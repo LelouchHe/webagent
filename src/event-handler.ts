@@ -249,6 +249,68 @@ function performAutoApprove(
   });
 }
 
+/** The subset of a permission option the host answers with. */
+type AllowOption = { optionId: string; label?: string };
+
+function findAllowOption(
+  options: PermissionRequestEvent["options"],
+  kind: "allow_once" | "allow_always",
+): AllowOption | undefined {
+  return options.find((o: { kind?: string }) => o.kind === kind);
+}
+
+/**
+ * Answer a request that arrived inside a delegated turn.
+ *
+ * The turn was opened by the runtime or by an agent, so the host answers for
+ * it instead of asking a person who is not party to this turn: `allow_once`
+ * first (it leaves the least behind), then `allow_always`. A request that
+ * offers no allow option is *cancelled*, never answered with a `reject_*`
+ * option and never with a fabricated `optionId` — the host does not decide to
+ * refuse on the agent's behalf, it records that no allow option existed.
+ */
+function answerDelegatedPermission(
+  event: PermissionRequestEvent,
+  tasks: TaskManager,
+  store: Store,
+  bridge: AgentBridge,
+  sseManager: SseManager,
+): void {
+  const allow =
+    findAllowOption(event.options, "allow_once") ??
+    findAllowOption(event.options, "allow_always");
+  if (allow) {
+    performAutoApprove(event, allow, tasks, store, bridge, sseManager, true);
+    return;
+  }
+  // Chronological order for the transcript: the request is broadcast first,
+  // then the collapse frame that answers it, exactly like the mode gate above.
+  bridge.denyPermission(event.requestId);
+  tasks.pendingPermissions.delete(event.requestId);
+  tasks.syncPendingPermissions(event.taskId);
+  store.saveEvent(
+    event.taskId,
+    "permission_response",
+    {
+      requestId: event.requestId,
+      // The ACP outcome is `cancelled`; naming it here is what happened, not a
+      // selected option.
+      optionName: "cancelled",
+      denied: true,
+      reason: event.options.length === 0 ? "no_options" : "no_allow_option",
+    },
+    { from_ref: "system" },
+  );
+  sseManager.broadcast(withoutLease(event));
+  sseManager.broadcast({
+    type: "permission_response" as const,
+    taskId: event.taskId,
+    requestId: event.requestId,
+    optionName: "cancelled",
+    denied: true,
+  });
+}
+
 function maybeAutoApprovePermission(
   event: PermissionRequestEvent,
   tasks: TaskManager,
@@ -256,11 +318,21 @@ function maybeAutoApprovePermission(
   bridge: AgentBridge,
   sseManager: SseManager,
 ): boolean {
+  // Two independent branches. This one is the whole P5-b authorization rule:
+  // a *live* turn whose origin is `delegated` answers for itself. Both halves
+  // are required — `getTurn` returning null means no ACP prompt is live, and a
+  // reservation, compaction or rotation must not be read as one.
+  const turn = tasks.getTurn(event.taskId);
+  if (turn !== null && turn.origin === "delegated") {
+    answerDelegatedPermission(event, tasks, store, bridge, sseManager);
+    return true;
+  }
+  // The other branch is the human turn, unchanged: `mode` is the setting a
+  // person makes for their own turn, so autopilot still answers its one known
+  // option and everything else still prompts.
   const mode = store.getTask(event.taskId)?.mode ?? "";
   if (!isAutopilotMode(mode)) return false;
-  const opt = event.options.find(
-    (o: { kind?: string }) => o.kind === "allow_once",
-  ) as { optionId: string; label?: string } | undefined;
+  const opt = findAllowOption(event.options, "allow_once");
   if (!opt) return false;
   performAutoApprove(event, opt, tasks, store, bridge, sseManager, true);
   return true;
@@ -280,10 +352,20 @@ function maybeAutoApproveAttachmentRead(
   // permission_response, identical to autopilot's collapse behavior.
   const interceptor = config.attachmentInterceptor;
   if (!interceptor) return;
-  const opt = event.options.find(
-    (o: { kind?: string }) => o.kind === "allow_once",
-  ) as { optionId: string; label?: string } | undefined;
+  const opt = findAllowOption(event.options, "allow_once");
   if (!opt) return;
+  // Same-turn guard: the realpath work below may outlive the turn that
+  // delivered this request. Capture its identity by value (`getTurn` returns a
+  // fresh snapshot, so object identity proves nothing) and refuse to answer
+  // once the turn has ended, been superseded, or a new turn took its place.
+  //
+  // An arrival with no live turn, or with a live turn that projects no prompt
+  // id, has no identity to re-check; the callback fails closed for it. The
+  // pending request is left for a person on purpose: answering it would write
+  // a `permission_response` no turn can consume — a phantom audit row from the
+  // pending-permission lifecycle debt recorded in the contract, which this
+  // step does not widen.
+  const promptIdAtArrival = tasks.getTurn(event.taskId)?.promptId ?? null;
 
   void shouldAutoApproveAttachmentRead(
     {
@@ -305,6 +387,16 @@ function maybeAutoApproveAttachmentRead(
       // Race guard: the user (or another client) may have already
       // resolved the permission while we were realpath-ing.
       if (!tasks.pendingPermissions.has(event.requestId)) return;
+      // The turn this request arrived in must still be the current one. A
+      // missing identity at arrival never matches: `null` is not "the same
+      // turn", and a live turn without a prompt id cannot be proven the same
+      // one either.
+      const currentTurn = tasks.getTurn(event.taskId);
+      if (
+        promptIdAtArrival === null ||
+        currentTurn?.promptId !== promptIdAtArrival
+      )
+        return;
       performAutoApprove(event, opt, tasks, store, bridge, sseManager, false);
     },
     (err: unknown) => {
@@ -386,6 +478,15 @@ function handlePromptDone(
       stopReason: event.stopReason,
     });
   }
+  // The turn's own end fact, read before the turn is released: the ACP stop
+  // reason, the cancel intent stamped on the turn before the transport round
+  // trip, or our pending cancel marker. An obligation reads this so an explicit
+  // cancellation is not mistaken for a missing account and answered with a
+  // closing reminder.
+  const cancelledTurn =
+    event.stopReason === "cancelled" ||
+    cancelStatus !== null ||
+    tasks.getTurn(event.taskId)?.cancelRequested === true;
   // The tail this turn buffered must always land, even when the turn has
   // already been superseded — it is the only copy of that text.
   const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
@@ -398,7 +499,9 @@ function handlePromptDone(
       recoveryOrigin: "prompt_done",
     });
     tasks.recoverUnfinishedWork(bridge, event.taskId, "prompt_done");
-    tasks.onTargetTurnEnded(event.taskId, event.promptId);
+    tasks.onTargetTurnEnded(event.taskId, event.promptId, {
+      cancelled: cancelledTurn,
+    });
   } else {
     clog.info("completion from a superseded turn", {
       taskId: event.taskId.slice(0, 8),
@@ -437,13 +540,21 @@ function handleError(
     // not end the turn that replaced it. The buffered tail still flushes.
     const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
     const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
+    // A cancellation can surface as an error instead of a cancelled
+    // completion; the turn's own cancel intent (stamped before the transport
+    // round trip) and the busy cancel marker are the same fact either way.
+    const cancelledTurn =
+      (tasks.state.getState(event.taskId).runtime.busy?.cancelStatus ??
+        null) !== null || tasks.getTurn(event.taskId)?.cancelRequested === true;
     if (isCurrent) {
       tasks.endTurn(event.taskId, {
         promptId: event.promptId,
         recoveryOrigin: "error",
       });
       tasks.recoverUnfinishedWork(bridge, taskId, "error");
-      tasks.onTargetTurnEnded(taskId, event.promptId);
+      tasks.onTargetTurnEnded(taskId, event.promptId, {
+        cancelled: cancelledTurn,
+      });
     } else {
       clog.info("failure from a superseded turn", {
         taskId: event.taskId.slice(0, 8),
