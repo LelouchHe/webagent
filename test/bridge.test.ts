@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { AgentBridge, PromptNotDeliveredError } from "../src/bridge.ts";
 import { MCP_SERVER_NAME } from "../src/mcp/server.ts";
+import { fakePeer } from "./fixtures/fake-peer.ts";
 
 const mappedTasks = {
   getAgentSessionId(taskId: string) {
@@ -24,12 +25,12 @@ describe("AgentBridge", () => {
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
 
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       prompt: async (payload: any) => {
         promptCalls.push(payload);
         return { stopReason: "end_turn" };
       },
-    };
+    });
 
     // Stub dispatcher: turns refs into the same image block the old test
     // verified, without needing a real Store on disk.
@@ -75,12 +76,12 @@ describe("AgentBridge", () => {
     const calls: unknown[] = [];
     const events: unknown[] = [];
     bridge.on("event", (event) => events.push(event));
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       prompt: async (payload: unknown) => {
         calls.push(payload);
         return { stopReason: "end_turn" };
       },
-    };
+    });
 
     await bridge.prompt("web-1", "hello");
 
@@ -126,7 +127,7 @@ describe("AgentBridge", () => {
     });
     const events: unknown[] = [];
     bridge.on("event", (event) => events.push(event));
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       newSession: async () => {
         await (bridge as any).handleSessionUpdate({
           sessionId: "agent-new",
@@ -137,7 +138,7 @@ describe("AgentBridge", () => {
         });
         return { sessionId: "agent-new", configOptions: [] };
       },
-    };
+    });
 
     await bridge.newSession("/repo");
     assert.deepEqual(events, []);
@@ -186,14 +187,14 @@ describe("AgentBridge", () => {
     it("prefers task/delete when the agent advertises it", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
       const calls: string[] = [];
-      (bridge as any).connection = {
+      (bridge as any).connection = fakePeer({
         deleteSession: async (p: { sessionId: string }) => {
           calls.push(`delete:${p.sessionId}`);
         },
         closeSession: async (p: { sessionId: string }) => {
           calls.push(`close:${p.sessionId}`);
         },
-      };
+      });
       (bridge as any).sessionCapabilities = {
         delete: {},
         close: {},
@@ -207,11 +208,11 @@ describe("AgentBridge", () => {
     it("falls back to task/close when delete is not advertised", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
       const calls: string[] = [];
-      (bridge as any).connection = {
+      (bridge as any).connection = fakePeer({
         closeSession: async (p: { sessionId: string }) => {
           calls.push(`close:${p.sessionId}`);
         },
-      };
+      });
       (bridge as any).sessionCapabilities = { close: {} };
 
       await bridge.retireExecution("agent-old");
@@ -222,14 +223,14 @@ describe("AgentBridge", () => {
     it("skips silently when the agent advertises neither capability", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
       let called = false;
-      (bridge as any).connection = {
+      (bridge as any).connection = fakePeer({
         deleteSession: async () => {
           called = true;
         },
         closeSession: async () => {
           called = true;
         },
-      };
+      });
       (bridge as any).sessionCapabilities = null;
 
       await bridge.retireExecution("agent-old");
@@ -239,11 +240,11 @@ describe("AgentBridge", () => {
 
     it("swallows agent failures so rotation is never rolled back", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
-      (bridge as any).connection = {
+      (bridge as any).connection = fakePeer({
         deleteSession: async () => {
           throw new Error("agent disagrees");
         },
-      };
+      });
       (bridge as any).sessionCapabilities = { delete: {} };
 
       // Must resolve, not reject.
@@ -265,7 +266,7 @@ describe("AgentBridge", () => {
         options: [{ value: "model-1", name: "Model One" }],
       },
     ];
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       loadSession: async (payload: unknown) => {
         calls.push({ method: "load", payload });
         return { configOptions: modelOptions };
@@ -277,7 +278,7 @@ describe("AgentBridge", () => {
       cancel: async (payload: unknown) => {
         calls.push({ method: "cancel", payload });
       },
-    };
+    });
 
     await bridge.loadSession("web-1", "/repo");
     await bridge.setConfigOption("web-1", "model", "model-1");
@@ -308,7 +309,7 @@ describe("AgentBridge", () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
     (bridge as any).loadSessionSupported = true;
     const calls: Array<{ method: string; payload: unknown }> = [];
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       newSession: async (payload: unknown) => {
         calls.push({ method: "new", payload });
         return { sessionId: "agent-2", configOptions: [] };
@@ -317,7 +318,7 @@ describe("AgentBridge", () => {
         calls.push({ method: "load", payload });
         return { configOptions: [] };
       },
-    };
+    });
 
     const mcpServers: import("@agentclientprotocol/sdk").McpServer[] = [
       {
@@ -355,11 +356,11 @@ describe("AgentBridge", () => {
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
 
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       prompt: async () => {
         throw new Error("Request cancelled by user");
       },
-    };
+    });
 
     await bridge.prompt("s1", "hello");
 
@@ -377,11 +378,11 @@ describe("AgentBridge", () => {
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
 
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       prompt: async () => {
         throw new Error("boom");
       },
-    };
+    });
 
     // The request was handed over before it failed, so this is an in-turn
     // agent error, not a transport failure: it resolves.
@@ -420,7 +421,7 @@ describe("AgentBridge", () => {
     const events: any[] = [];
     bridge.on("event", (event) => events.push(event));
 
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       prompt: async ({ sessionId }: any) => {
         await (bridge as any).handleSessionUpdate({
           sessionId,
@@ -438,7 +439,7 @@ describe("AgentBridge", () => {
         });
         return { stopReason: "end_turn" };
       },
-    };
+    });
 
     const text = await bridge.promptForText("silent-1", "summarize");
 
@@ -498,11 +499,11 @@ describe("AgentBridge", () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
     const cancelCalls: any[] = [];
 
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       cancel: async (payload: any) => {
         cancelCalls.push(payload);
       },
-    };
+    });
 
     const s1Permission = (bridge as any).handlePermission({
       sessionId: "s1",
@@ -696,7 +697,7 @@ describe("AgentBridge", () => {
       },
     ];
 
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       loadSession: async () => ({ configOptions: modelOptions }),
       setSessionConfigOption: async () => ({
         configOptions: [
@@ -706,7 +707,7 @@ describe("AgentBridge", () => {
           },
         ],
       }),
-    };
+    });
 
     await bridge.loadSession("s1", "/repo");
     const result = await bridge.setConfigOption("s1", "model", "mock-model-2");
@@ -723,7 +724,7 @@ describe("AgentBridge", () => {
     const bridge = new AgentBridge("fake-agent", mappedTasks);
     let sent: unknown = null;
 
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       setSessionConfigOption: async (params: unknown) => {
         sent = params;
         return {
@@ -737,7 +738,7 @@ describe("AgentBridge", () => {
           ],
         };
       },
-    };
+    });
 
     const result = await bridge.setConfigOption("s1", "allow_all", false);
 
@@ -765,12 +766,12 @@ describe("AgentBridge", () => {
 
       let resolveConnPrompt: ((v: { stopReason: string }) => void) | null =
         null;
-      (bridge as any).connection = {
+      (bridge as any).connection = fakePeer({
         prompt: () =>
           new Promise<{ stopReason: string }>((resolve) => {
             resolveConnPrompt = resolve;
           }),
-      };
+      });
 
       const promptPromise = bridge.prompt("s1", "hello");
       // Give prompt() a turn to register its abort handler
@@ -823,9 +824,9 @@ describe("AgentBridge", () => {
 
       // Simulate start() success path
       (bridge as any).deadReason = null;
-      (bridge as any).connection = {
+      (bridge as any).connection = fakePeer({
         prompt: async () => ({ stopReason: "end_turn" }),
-      };
+      });
 
       const events: any[] = [];
       bridge.on("event", (e: any) => events.push(e));
@@ -843,11 +844,11 @@ describe("AgentBridge", () => {
           this.name = "RequestError";
         }
       }
-      (bridge as any).connection = {
+      (bridge as any).connection = fakePeer({
         loadSession: async () => {
           throw new FakeReqErr("abc-123");
         },
-      };
+      });
 
       await assert.rejects(
         () => bridge.loadSession("abc-123", "/tmp"),
@@ -997,11 +998,11 @@ describe("AgentBridge", () => {
 
       // Stub connection for cancel
       let cancelCalled = false;
-      (bridge as any).connection = {
+      (bridge as any).connection = fakePeer({
         cancel: async () => {
           cancelCalled = true;
         },
-      };
+      });
 
       const tasks = createMockTasks();
 
@@ -1009,7 +1010,7 @@ describe("AgentBridge", () => {
       let startCalls = 0;
       (bridge as any).start = async () => {
         startCalls++;
-        (bridge as any).connection = {}; // simulate connected
+        (bridge as any).connection = fakePeer(); // simulate connected
         bridge.emit("event", {
           type: "connected",
           agent: { name: "mock", version: "2.0" },
@@ -1073,14 +1074,14 @@ describe("AgentBridge", () => {
 
     it("flushes late chunks after the old process shuts down", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
-      (bridge as any).connection = { cancel: async () => {} };
+      (bridge as any).connection = fakePeer({ cancel: async () => {} });
       const tasks = createMockTasks();
 
       (bridge as any).shutdown = async () => {
         tasks.assistantBuffers.set("s1", "late chunk");
       };
       (bridge as any).start = async () => {
-        (bridge as any).connection = {};
+        (bridge as any).connection = fakePeer();
       };
 
       await bridge.restart(tasks as any);
@@ -1091,12 +1092,12 @@ describe("AgentBridge", () => {
 
     it("rejects concurrent restart calls", async () => {
       const bridge = new AgentBridge("fake-agent", mappedTasks);
-      (bridge as any).connection = { cancel: async () => {} };
+      (bridge as any).connection = fakePeer({ cancel: async () => {} });
 
       const tasks = createMockTasks();
 
       (bridge as any).start = async () => {
-        (bridge as any).connection = {};
+        (bridge as any).connection = fakePeer();
         bridge.emit("event", {
           type: "connected",
           agent: { name: "mock", version: "1.0" },
@@ -1128,7 +1129,7 @@ describe("AgentBridge", () => {
       );
 
       // Clean up: resolve the pending start
-      (bridge as any).connection = {};
+      (bridge as any).connection = fakePeer();
       resolveStart();
       await p1;
     });
@@ -1140,7 +1141,7 @@ describe("AgentBridge", () => {
         const events: any[] = [];
         bridge.on("event", (e: any) => events.push(e));
 
-        (bridge as any).connection = { cancel: async () => {} };
+        (bridge as any).connection = fakePeer({ cancel: async () => {} });
 
         const tasks = createMockTasks();
 
@@ -1148,7 +1149,7 @@ describe("AgentBridge", () => {
         (bridge as any).start = async () => {
           attempt++;
           if (attempt < 3) throw new Error(`fail-${attempt}`);
-          (bridge as any).connection = {};
+          (bridge as any).connection = fakePeer();
           bridge.emit("event", {
             type: "connected",
             agent: { name: "mock", version: "1.0" },
@@ -1177,7 +1178,7 @@ describe("AgentBridge", () => {
         const events: any[] = [];
         bridge.on("event", (e: any) => events.push(e));
 
-        (bridge as any).connection = { cancel: async () => {} };
+        (bridge as any).connection = fakePeer({ cancel: async () => {} });
 
         const tasks = createMockTasks();
 

@@ -97,9 +97,6 @@ time. An entry without a "closing condition" is a wish, not an issue.
   *Closing:* the same budgeted error rendering at the REST boundary.
 - **`configOptionsFor` caches one slot.** A second agent's snapshot can evict
   the first within a request. *Closing:* key the cache by agent.
-- **`ClientSideConnection` / `AgentSideConnection` are deprecated** in ACP SDK
-  1.7.0 in favour of the `client()` / `agent()` app API. *Closing:* migrate when
-  the deprecated path starts warning.
 - **Trip-wire: Copilot's image tool.** Once it emits a real ACP image block,
   delete `src/agent-compatibility/copilot-image-path.ts`, its import in
   `src/event-handler.ts`, and the one call in that file's `tool_call_update`
@@ -108,6 +105,31 @@ time. An entry without a "closing condition" is a wish, not an issue.
 - **Trip-wire: `loadSession` capability.** If a future SDK moves `loadSession`
   under `sessionCapabilities`, the capability read in `src/bridge.ts` must be
   revisited.
+- **Trip-wire: no handshake deadline, and a batched `initialize` no longer
+  fails fast.** `bridge.start()` awaits `initialize` with no timeout, and ACP SDK
+  2.4.0 answers a JSON-RPC batch (which ACP v1 forbids) with `-32600` *without*
+  closing the connection, where 1.7.0 closed it. *Symptom:* an agent that wraps
+  its `initialize` response in an array no longer fails the start — the start
+  flight never settles, so `resolve()` for that agent waits forever and `reload`
+  is refused as already in progress while the child stays attached. *Trigger:*
+  any peer that sends batches, i.e. non-conforming v1 traffic; conforming agents
+  are unaffected, and every other start failure still reaps the process.
+  *Closing:* give the handshake a bounded deadline in `bridge.start()`; that
+  removes this entry. Restoring the old close-on-batch behaviour is not the fix.
+
+- **Trip-wire: `stopWaitingOnCancel` is not our turn cancel.** ACP SDK 2.x
+  offers `SendRequestOptions.cancellationSignal` / `stopWaitingOnCancel`, and
+  neither replaces the bridge's `Promise.race([prompt, abortPromise])`.
+  *Symptom:* a cancelled turn reports the wrong `stopReason`, or loses the
+  agent's terminal `session/prompt` response, because `stopWaitingOnCancel`
+  governs `$/cancel_request` — a JSON-RPC request cancellation that abandons the
+  response — while ACP turn cancellation is the `session/cancel`
+  **notification**, whose `stopReason: "cancelled"` arrives on that response.
+  *Trigger:* passing a `cancellationSignal` to
+  `request("session/prompt", …)`, or "simplifying" the bridge race into a signal
+  because the SDK now documents one. *Closing:* delete this entry if a future
+  protocol makes `$/cancel_request` authoritative for turn cancellation and the
+  bridge moves to it; it does not apply while we stay on v1.
 
 ## Test and platform
 

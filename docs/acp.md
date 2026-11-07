@@ -13,6 +13,16 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
   preserve config options, stored preferences, and cache warming.
 - Execution retirement reads `agentCapabilities.sessionCapabilities` and
   best-effort prefers advertised `session/delete`, then `session/close`.
+  ACP recommends treating a `-32002` (Resource not found) answer to either as
+  success, and the 2.x SDK does that for us; `session/load` and
+  `session/resume` are *not* covered, so a restore of a session the agent has
+  forgotten still fails with the `/new` recovery message.
+- The protocol is fixed at v1. `initialize` must answer with
+  `protocolVersion === PROTOCOL_VERSION`; any other value fails the start
+  instead of running against a stream we cannot interpret, so an agent that
+  speaks only v2 is reported as unavailable rather than silently mis-rendered.
+  The 2.x SDK still ships `PROTOCOL_VERSION = 1` on its default entry point and
+  keeps v2 behind `experimental/v2`, which this build never imports.
 - WebAgent exposes its own stable task id in REST/SSE and stores the agent's
   opaque ACP session ID in an internal mapping. The binding's `agent_key` is
   the configured agent id from `[agents.<id>]`; it is no longer derived from
@@ -219,7 +229,7 @@ ACP allows the client to inject extra capabilities into the agent on top of its 
 
 ## Current Limits
 
-- Inbound ACP stdio messages are capped at 128 MiB (`MAX_ACP_MESSAGE_BYTES` in `src/bridge.ts`). SDK 1.7.0 defaults to 32 MiB, but WebAgent's default 50 MiB file-upload limit makes a larger read/tool result reachable: a measured 50 MiB text payload with 79-character lines plus newlines serializes as a 53,084,381-byte ACP update. The 128 MiB limit leaves room for ordinary JSON escaping and protocol fields while keeping a finite per-message bound. Larger local files or a user-configured upload limit above the 50 MiB default can still exceed it. An over-limit line aborts the ACP connection; the bridge then marks the agent disconnected rather than leaving a session that looks alive while every later prompt repeats the same raw error, so recovery is a restart.
+- Inbound ACP stdio messages are capped at 128 MiB (`MAX_ACP_MESSAGE_BYTES` in `src/bridge.ts`). SDK 2.4.0 defaults to 32 MiB (unchanged from 1.7.0), but WebAgent's default 50 MiB file-upload limit makes a larger read/tool result reachable: a measured 50 MiB text payload with 79-character lines plus newlines serializes as a 53,084,381-byte ACP update. The 128 MiB limit leaves room for ordinary JSON escaping and protocol fields while keeping a finite per-message bound. Larger local files or a user-configured upload limit above the 50 MiB default can still exceed it. An over-limit line aborts the ACP connection; the bridge then marks the agent disconnected rather than leaving a session that looks alive while every later prompt repeats the same raw error, so recovery is a restart.
 - The web UI does not expose native CLI command surfaces such as `/plan`, `/fleet`, `/mcp`, `/agent`, or `/skills`
 - Autopilot mode is supported: permissions are auto-approved server-side using `allow_once`
 - Event handling is intentionally narrower than a native CLI client; only selected ACP updates are rendered/persisted. The silent-session mechanism serves compact summarization.

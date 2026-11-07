@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { AgentBridge, MAX_ACP_MESSAGE_BYTES } from "../src/bridge.ts";
 import * as acp from "@agentclientprotocol/sdk";
 import type { AgentEvent } from "../src/types.ts";
+import { fakePeer } from "./fixtures/fake-peer.ts";
 
 const LARGE_RAW_OUTPUT_BYTES = 32 * 1024 * 1024;
 
@@ -60,12 +61,12 @@ describe("ACP stdio message limit", { timeout: 30_000 }, () => {
     const bridge = new AgentBridge("unused", sessionIds);
     const events: AgentEvent[] = [];
     bridge.on("event", (event: AgentEvent) => events.push(event));
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       // Rejects after hand-off: the prompt resolves, the agent must still die.
       prompt: async () => {
         throw new acp.MessageTooLargeError(MAX_ACP_MESSAGE_BYTES);
       },
-    };
+    });
 
     return bridge.prompt("web-1", "oversized tool result").then(async () => {
       assert.ok(events.some((event) => event.type === "agent_disconnected"));
@@ -83,12 +84,12 @@ describe("ACP stdio message limit", { timeout: 30_000 }, () => {
 
   it("reports the un-delivered turn when the limit trips before hand-off", async () => {
     const bridge = new AgentBridge("unused", sessionIds);
-    (bridge as any).connection = {
+    (bridge as any).connection = fakePeer({
       // Throws synchronously: the agent never received the prompt.
       prompt: () => {
         throw new acp.MessageTooLargeError(MAX_ACP_MESSAGE_BYTES);
       },
-    };
+    });
 
     await assert.rejects(
       () => bridge.prompt("web-1", "oversized tool result"),

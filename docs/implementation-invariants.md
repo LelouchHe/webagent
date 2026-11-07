@@ -217,6 +217,7 @@ The operational form of that sentence:
 ## Architecture Notes
 
 - **Single bridge**: One bridge instance per server, multiple tasks multiplexed over it.
+- **Handshake protocol version is checked**: `bridge.start()` refuses an agent whose `InitializeResponse.protocolVersion` is not exactly `PROTOCOL_VERSION`, on the same path as a refused handshake — the child process is reaped, the bridge stays not-ready, and the error names the version the agent reported. *Why:* `protocolVersion` is the only signal that says which event stream we will be reading, so an unknown version means every later render and persisted row would be an interpretation we cannot defend; a failed start is diagnosable, a silent mis-read is not. Capability gates (below) describe drift *within* v1; this refuses a different protocol.
 - **Busy→idle unfinished-work recovery**: `TaskManager.syncBusy()` is the single normal state edge for recovery. When a task transitions from busy to idle, it schedules one microtask through its private `scheduleUnfinishedWorkRecovery()` helper if queued collaboration deliveries remain; the recovery drains deliveries and never submits a handoff reminder. Per-task deduplication prevents re-entry loops, and deletion/reset/rotation guards prevent work from being started during cleanup. The condition is intentionally independent of which busy source just ended, so new busy sources cannot silently strand work. **Reload exception:** `bridge.restart()` intentionally clears busy state directly while the ACP bridge is unavailable and cancels pending submissions; it does not submit recovery during restart, and queued work waits for the next explicit interaction/drain after the bridge is ready.
 - **Directed dispatch closure**: The directed-dispatch obligation mechanism — the one-account rule, the arming predicate, the record's identities and fact vocabulary, settlement, recovery, and notices — is documented in [`task-obligations.md`](./task-obligations.md). The runtime records and reports facts and never concludes for the accountable party; see [Task semantic authority](#task-semantic-authority) above.
 - **Agent reload**: `bridge.restart()` kills and re-spawns the agent subprocess without restarting the server. Cancels active prompts, flushes buffers, cleans up state. Tasks restore lazily via `ensureResumed()`. Triggered by `/reload` slash command or `POST /api/v1/bridge/reload`. Retries start 3× with exponential backoff.
@@ -317,7 +318,7 @@ ACP `clientCapabilities` (`fs`, `terminal`) and `mcpServers` are **opt-in capabi
 
 **Extension points**:
 - To inject project-specific MCP servers from the client, populate `mcpServers` in `newSession`/`loadSession`.
-- To re-add fs handlers (for an agent that uses them), restore the `readTextFile` / `writeTextFile` entries in the `client` object in `bridge.ts` and flip the capability flags.
+- To re-add fs handlers (for an agent that uses them), register `onRequest("fs/read_text_file", …)` and `onRequest("fs/write_text_file", …)` on the `client()` app in `bridge.ts` and flip the capability flags.
 
 ## ACP Scope and Current Limits
 

@@ -16,6 +16,28 @@ import type { AgentEvent } from "../src/types.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
 import { makeEventHandlerConfig } from "./fixtures.ts";
 
+/**
+ * Replace one ACP method on the live 2.x peer for the duration of a test.
+ *
+ * 2.x collapsed the per-method surface into `request(method, params)`, so a
+ * single-method replacement now has to dispatch on the method name and fall
+ * back to the real implementation for everything else.
+ */
+function interceptPeer(
+  bridge: AgentBridge,
+  method: string,
+  replacement: (params: unknown) => Promise<unknown>,
+): void {
+  const peer = (
+    bridge as unknown as {
+      connection: { request: (method: string, params: unknown) => unknown };
+    }
+  ).connection;
+  const realRequest = peer.request.bind(peer);
+  peer.request = (called: string, params: unknown) =>
+    called === method ? replacement(params) : realRequest(called, params);
+}
+
 async function startAgent(t: TestContext, profile: string) {
   const dir = mkdtempSync(join(tmpdir(), "webagent-session-restore-"));
   const resources: {
@@ -426,19 +448,11 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
       release = resolve;
     });
     const sessions: string[] = [];
-    (
-      bridge as unknown as {
-        connection: {
-          setSessionConfigOption(params: { sessionId: string }): Promise<{
-            configOptions: unknown[];
-          }>;
-        };
-      }
-    ).connection.setSessionConfigOption = async (params) => {
-      sessions.push(params.sessionId);
+    interceptPeer(bridge, "session/set_config_option", async (params) => {
+      sessions.push((params as { sessionId: string }).sessionId);
       await gate;
       return { configOptions: modeOptions };
-    };
+    });
 
     const restoring = tasks.resumeTask(bridge, "web-1");
     const deadline = Date.now() + 5000;
@@ -490,19 +504,11 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
       release = resolve;
     });
     const sessions: string[] = [];
-    (
-      bridge as unknown as {
-        connection: {
-          setSessionConfigOption(params: { sessionId: string }): Promise<{
-            configOptions: unknown[];
-          }>;
-        };
-      }
-    ).connection.setSessionConfigOption = async (params) => {
-      sessions.push(params.sessionId);
+    interceptPeer(bridge, "session/set_config_option", async (params) => {
+      sessions.push((params as { sessionId: string }).sessionId);
       await gate;
       return { configOptions: modeOptions };
-    };
+    });
 
     // `clearTask` replaces the execution and then replays the stored config.
     const rotating = tasks.clearTask(bridge, "web-1");
@@ -533,19 +539,10 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
   it("refuses an ACP session id inside the reserved empty-execution namespace", async (t) => {
     const { bridge, store, tasks, dir } = await startAgent(t, "load-only");
     // The agent is free to return this: ACP session ids are opaque strings.
-    (
-      bridge as unknown as {
-        connection: {
-          newSession(): Promise<{
-            sessionId: string;
-            configOptions: unknown[];
-          }>;
-        };
-      }
-    ).connection.newSession = async () => ({
+    interceptPeer(bridge, "session/new", async () => ({
       sessionId: "no-execution:real-agent-session",
       configOptions: [],
-    });
+    }));
 
     await assert.rejects(
       () => tasks.createTask(bridge, dir),
