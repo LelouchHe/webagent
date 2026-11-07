@@ -390,6 +390,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/config-model-persistence.test.ts`
   - legacy identity migration, stale-snapshot normalization, and stable repeated writes/reopen
 
+- `test/field-block.test.ts`
+  - `formatFieldBlock` keeps the caller's field order, emits values verbatim
+    (no escaping or trimming), applies a fallback only for a falsy value, and
+    keeps an empty value when a field has no fallback
+  - the task-created body renders `model` / `thinking` as `inherited` for an
+    empty or null value while its machine payload keeps `?? null` semantics
+
 - `test/server-event-handler.test.ts`
   - event routing: message_chunk, thought_chunk, tool_call, prompt_done, task_created, error
   - thinking↔assistant buffer flush transitions
@@ -398,6 +405,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - autopilot auto-approval with allow_once
   - autopilot fallback when no allow_once option exists
   - normal permission_request broadcast in non-autopilot mode
+  - turn-origin authorization: a delegated turn answers with `allow_once`, else `allow_always`, and cancels (`cancelled`, no `reject_*` selected, reason `no_allow_option` / `no_options`) when the request offers no allow option; the stored `permission_response` is `from_ref: system`
+  - the delegated condition requires a live turn, not just a recorded origin: after the turn ends, the same request prompts
+  - a human turn is unchanged: default mode prompts, and our own injected MCP tools have no privilege there
+  - the attachment-read interceptor approves only inside the turn the request arrived in; a turn that ended or was superseded before the realpath work finishes produces no `permission_response`
   - directed dispatch closure: only an agent-authored direct parent→child dispatch arms an obligation; a user send, a sibling/child message, an account, and a runtime notice do not
   - settlement predicate: a plain `task_update` settles only an `open|reminder_due|reminder_submitting` record when the target has an active current agent turn; `awaiting_delivery`, a terminal record, and no active turn do not settle and still route to the stored source
   - an `unresolved` record is settled by a late account without retracting its notice, while a `settled` record is never re-settled; with no record the report goes to the current parent and settles nothing
@@ -677,6 +688,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/events.test.ts`
   - task creation / busy-state restoration
+  - an agent-issued `task_cancel` renders as a system line (`@<canceller>`, reason,
+    status) on the live path and from stored replay, and never leaks across tasks
   - user / assistant / thinking rendering
   - unsolicited Main-agent text and tool calls render while the foreground turn
     stays idle without reopening busy state
@@ -726,6 +739,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - self/parent/child/sibling authorization, tombstone/nonexistent target convergence, unknown sequence rejection
   - omitting the target reads the current Task's own history
   - explicit response_too_large errors report required_bytes without partial rows
+  - a successful `task_cancel` broadcasts the same record it stores (target
+    `taskId` plus `sourceTaskId` / `reason` / `status`)
   - MCP registration and documentation expose task_read as the sole raw-history tool
 
 - `test/commands.test.ts`, `test/slash-menu.test.ts`
