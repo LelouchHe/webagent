@@ -1820,7 +1820,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `plan`                  | `taskId`, `entries`                                                                   | Agent plan update. Each entry: `{ status, content }`                                                                |
 | `permission_request`    | `requestId`, `taskId`, `title`, `options`                                             | Agent needs permission to proceed                                                                                   |
 | `permission_response`   | `requestId`, `taskId`, `optionName`, `denied`                                         | Permission was resolved (server-generated)                                                                          |
-| `task_cancel`           | `taskId`, `sourceTaskId`, `reason`, `status`                                          | An agent stopped this task's execution through MCP `task_cancel`. The same record is stored (without the routing `taskId`) and replays from the event log |
+| `system_message`        | `taskId`, `kind`, `title`, `body?`, plus `messageId`/`sourceTaskId`/`targetTaskId`/`role` for collaboration | A projected system row: a title and a readable body. `kind` names the fact (`collaboration`, `task_created`, `task_cancel`, `agent_rotation`, `handoff_reminder`, …) and is what replay stores, so live and replay render through the same branch |
 | `prompt_done`           | `taskId`, `stopReason`, `promptId?`                                                    | Agent turn completed with a standard ACP stop reason                                                               |
 | `error`                 | `message`, `taskId?`, `promptId?`                                                      | Prompt or agent error; task-scoped errors are persisted for replay                                               |
 | `user_message`          | `taskId`, `text`, `attachments?` (array of `{kind, attachmentId, displayName, mimeType, path?, width?, height?}`) | User message broadcast (for multi-client sync)                                                                      |
@@ -1832,6 +1832,14 @@ These events are streamed in real-time via SSE as the agent works.
 | `message_consumed`      | `messageId`, `taskId`                                                                 | Inbox message was consumed (task materialized). Clients should remove inbox row and close matching notifications |
 | `message_acked`         | `messageId`                                                                              | Inbox message was dismissed without consume                                                                         |
 | `inbox_count_changed`   | `pendingCount`                                                                           | Authoritative pending inbox count after a mutation or TTL cleanup. Delivered globally, including task-scoped SSE clients |
+
+An agent cancellation is two records for one fact, like every other fact with
+both machine fields and a place in the conversation: a stored `task_cancel`
+event (`sourceTaskId`, `reason`, `status`, read by history projection and
+audit) and the `system_message` row with `kind: "task_cancel"` (`Cancelled by
+@…` plus a `reason:` / `status:` body). Only the row is a wire event; the
+machine record is never broadcast and never rendered, so an open page shows the
+cancellation once.
 
 ### Replay-Only Events
 

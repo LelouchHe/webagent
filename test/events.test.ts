@@ -1,6 +1,16 @@
 import { describe, it, before, after, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
+import { Store } from "../src/store.ts";
+import { createTaskManager } from "../src/task-manager.ts";
+import {
+  createMcpTaskToolHost,
+  type McpTaskCancelNotice,
+} from "../src/mcp/task-host.ts";
+import type { StoredEvent } from "../src/types.ts";
 
 /* eslint-disable @typescript-eslint/no-unsafe-function-type -- Promise resolver pattern uses generic Function type */
 
@@ -2649,30 +2659,6 @@ describe("events", () => {
         );
       });
 
-      it("renders an agent cancellation as a system line", () => {
-        state.taskId = "s1";
-        events.handleEvent({
-          type: "task_cancel",
-          taskId: "s1",
-          sourceTaskId: "a1b2c3d4e5f6",
-          reason: "no longer needed",
-          status: "cancelled",
-        });
-        // Another task's cancellation must not leak into this transcript.
-        events.handleEvent({
-          type: "task_cancel",
-          taskId: "s2",
-          sourceTaskId: "a1b2c3d4e5f6",
-          reason: "no longer needed",
-          status: "cancelled",
-        });
-        assert.equal(dom.messages.children.length, 1);
-        assert.equal(
-          dom.messages.querySelector(".system-msg")?.textContent,
-          "@a1b2c3d4 cancelled this task\nreason: no longer needed\nstatus: cancelled",
-        );
-      });
-
       it("renders collaboration events as title and body", () => {
         state.taskId = "s1";
         events.handleEvent({
@@ -3039,29 +3025,160 @@ describe("events", () => {
     });
   });
 
+  describe("agent cancellation transcript", () => {
+    /**
+     * Produce a cancellation through the real MCP host, so the live and replay
+     * assertions below both fail if the producer stops writing the transcript
+     * row (or starts broadcasting the machine record).
+     */
+    async function produceCancellation() {
+      const dir = mkdtempSync(join(tmpdir(), "webagent-cancel-test-"));
+      const store = new Store(dir);
+      store.attachAgentSession(
+        store.ensureRootTask(dir).id,
+        "test-agent",
+        "session-root",
+      );
+      const tasks = createTaskManager(store, dir, dir);
+      const cleanup = () => {
+        tasks.dispose();
+        store.close();
+        rmSync(dir, { recursive: true, force: true });
+      };
+      try {
+        const source = store.createTask(
+          "source",
+          dir,
+          "auto",
+          "test-agent",
+          "session-source",
+          "root",
+          { title: "Source" },
+        );
+        const child = store.createTask(
+          "child",
+          dir,
+          "auto",
+          "test-agent",
+          "session-child",
+          source.id,
+          { title: "Child" },
+        );
+        const lease = tasks.authority.leaseFor(source.id);
+        assert.ok(lease, "the source task has a generation");
+        const frames: McpTaskCancelNotice[] = [];
+        const host = createMcpTaskToolHost({
+          store,
+          tasks,
+          broadcastTaskCancelNotice: (event) => frames.push(event),
+        });
+        await host.cancel(
+          {
+            taskId: source.id,
+            agentId: "test-agent",
+            generation: lease.generation,
+            initializing: false,
+          },
+          child.id,
+          "no longer needed",
+        );
+        const rows = store.getEvents(child.id);
+        return {
+          frames,
+          rows,
+          stored: rows.map(
+            (row): StoredEvent => ({
+              id: row.id,
+              task_id: row.task_id,
+              seq: row.seq,
+              type: row.type,
+              data: row.data,
+              created_at: new Date(row.created_at).toISOString(),
+            }),
+          ),
+          taskId: child.id,
+          cleanup,
+        };
+      } catch (err) {
+        cleanup();
+        throw err;
+      }
+    }
+
+    it("renders one live row from the broadcast frame", async () => {
+      const produced = await produceCancellation();
+      try {
+        state.taskId = produced.taskId;
+        // The producer wrote the row it broadcasts: the live frame is the
+        // transcript record, not the machine event, and it is exactly what a
+        // reload will replay.
+        const rows = produced.rows.filter(
+          (row) => row.type === "system_message",
+        );
+        assert.equal(rows.length, 1);
+        const row = JSON.parse(rows[0].data) as Record<string, unknown>;
+        assert.deepEqual(produced.frames, [
+          {
+            type: "system_message",
+            taskId: produced.taskId,
+            kind: row.kind,
+            sourceTaskId: row.sourceTaskId,
+            title: row.title,
+            body: row.body,
+          },
+        ]);
+        for (const frame of produced.frames) events.handleEvent(frame);
+        assert.equal(dom.messages.children.length, 1);
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "Cancelled by @source",
+        );
+        assert.equal(
+          dom.messages.querySelector(".system-msg-body")?.textContent,
+          "reason: no longer needed\nstatus: idle",
+        );
+      } finally {
+        produced.cleanup();
+      }
+    });
+
+    it("renders one replayed row and ignores the machine record", async () => {
+      const produced = await produceCancellation();
+      try {
+        // Both records are in the log; the machine one is not a transcript
+        // event, so the cancellation still shows once.
+        assert.equal(
+          produced.stored.filter((row) => row.type === "task_cancel").length,
+          1,
+        );
+        for (const [idx, row] of produced.stored.entries()) {
+          events.replayEvent(
+            row.type,
+            JSON.parse(row.data) as Record<string, unknown>,
+            produced.stored,
+            idx,
+          );
+        }
+        assert.equal(dom.messages.children.length, 1);
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "Cancelled by @source",
+        );
+        assert.equal(
+          dom.messages.querySelector(".system-msg-body")?.textContent,
+          "reason: no longer needed\nstatus: idle",
+        );
+      } finally {
+        produced.cleanup();
+      }
+    });
+  });
+
   describe("replayEvent", () => {
     it("replays user_message", () => {
       events.replayEvent("user_message", { text: "hello" }, [], 0);
       assert.equal(dom.messages.children.length, 1);
       assert.ok(dom.messages.children[0].classList.contains("user"));
-    });
-
-    it("replays an agent cancellation as a system line", () => {
-      events.replayEvent(
-        "task_cancel",
-        {
-          sourceTaskId: "a1b2c3d4e5f6",
-          reason: "no longer needed",
-          status: "cancelled",
-        },
-        [],
-        0,
-      );
-      assert.equal(dom.messages.children.length, 1);
-      assert.equal(
-        dom.messages.querySelector(".system-msg")?.textContent,
-        "@a1b2c3d4 cancelled this task\nreason: no longer needed\nstatus: cancelled",
-      );
     });
 
     it("reconciles an optimistic user echo from replay", () => {

@@ -457,30 +457,6 @@ function collaborationTitle(msg: {
   return `${formatTaskReference(label(msg.sourceTaskId, msg.sourceLabel))} sent ${formatTaskReference(label(msg.targetTaskId, msg.targetLabel))}`;
 }
 
-/**
- * The one rendering of an agent's `task_cancel`, shared by the live and replay
- * paths so both show the same line: who cancelled, why, and what the runtime
- * answered. The record carries no display label, so the canceller is named by
- * the same short-id reference the rest of the UI falls back to.
- */
-function taskCancelNotice(msg: {
-  sourceTaskId?: unknown;
-  reason?: unknown;
-  status?: unknown;
-}): string {
-  const sourceId =
-    typeof msg.sourceTaskId === "string" && msg.sourceTaskId
-      ? msg.sourceTaskId
-      : "?";
-  const reason = typeof msg.reason === "string" ? msg.reason : "";
-  const status = typeof msg.status === "string" ? msg.status : "unknown";
-  return [
-    `${formatTaskReference(sourceId.slice(0, 8))} cancelled this task`,
-    `reason: ${reason}`,
-    `status: ${status}`,
-  ].join("\n");
-}
-
 function promptStopNotice(stopReason: unknown): string | null {
   switch (stopReason) {
     case "cancelled":
@@ -1428,9 +1404,6 @@ export function replayEvent(
           body: typeof d.body === "string" ? d.body : undefined,
         });
       }
-      break;
-    case "task_cancel":
-      addSystem(taskCancelNotice(d));
       break;
   }
 }
@@ -2649,13 +2622,6 @@ export function handleEvent(msg: AgentEvent) {
           title: collaborationTitle(msg),
           body: msg.body,
         });
-        scrollToBottom();
-      }
-      break;
-
-    case "task_cancel":
-      if (msg.taskId === state.taskId) {
-        addSystem(taskCancelNotice(msg));
         scrollToBottom();
       }
       break;

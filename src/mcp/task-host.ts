@@ -12,7 +12,8 @@ import {
   type TaskManager,
 } from "../task-manager.ts";
 import { expandHomePath } from "../home-path.ts";
-import { errorMessage } from "../types.ts";
+import { errorMessage, type AgentEvent } from "../types.ts";
+import { formatFieldBlock } from "../shared/field-block.ts";
 import { formatTaskReference } from "../shared/task-reference.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
@@ -60,21 +61,19 @@ export interface McpTaskCreatedEvent {
 }
 
 /**
- * A cancellation an agent performed through `task_cancel`, as broadcast.
+ * The visible half of an agent-issued cancellation.
  *
- * The cancellation itself is persisted by the same call; this envelope exists
- * so a client already watching the task sees it without a reload. It carries
- * the stored record verbatim (the wire needs the target `taskId` for routing)
- * and nothing display-only, so a live row and its replayed twin render alike.
- * Only the MCP path emits it — a user-initiated cancel is deliberately
- * different.
+ * A cancellation is two records, like every other fact that has both machine
+ * fields and a place in the conversation: the `task_cancel` machine event
+ * (which history projection reads) and this `system_message` transcript row.
+ * Only the row is a wire event; it renders through the generic system-message
+ * path, so live and replay agree without a dedicated frontend branch. A
+ * user-initiated cancel stays deliberately different and writes nothing here.
  */
-export interface McpTaskCancelEvent {
-  taskId: string;
-  sourceTaskId: string;
-  reason: string;
-  status: string;
-}
+export type McpTaskCancelNotice = Extract<
+  AgentEvent,
+  { type: "system_message" }
+>;
 
 function relationOrder(relation: McpTaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2, sibling: 3 }[relation];
@@ -86,14 +85,14 @@ export function createMcpTaskToolHost(deps: {
   cancelTimeoutMs?: number;
   broadcastCollaboration?: (event: McpTaskCollaborationEvent) => void;
   broadcastTaskCreated?: (event: McpTaskCreatedEvent) => void;
-  broadcastTaskCancel?: (event: McpTaskCancelEvent) => void;
+  broadcastTaskCancelNotice?: (event: McpTaskCancelNotice) => void;
 }): McpTaskToolHost {
   const {
     store,
     tasks,
     broadcastCollaboration,
     broadcastTaskCreated,
-    broadcastTaskCancel,
+    broadcastTaskCancelNotice,
   } = deps;
 
   /**
@@ -416,17 +415,41 @@ export function createMcpTaskToolHost(deps: {
       // The cancel awaited a transport round trip; the record of what happened
       // is only written while the caller still owns its execution.
       authorize(principal);
+      // Two records for one fact: the machine event history projection reads,
+      // then the transcript row the conversation shows. The row's title is
+      // never empty (the replay path skips an untitled system message), and
+      // its body is the readable block, not the machine payload.
       store.saveEvent(
         target.id,
         "task_cancel",
         { sourceTaskId, reason, status: result.status },
         { from_ref: "agent" },
       );
-      broadcastTaskCancel?.({
+      const title = `Cancelled by ${formatTaskReference(sourceTaskId.slice(0, 8))}`;
+      const body = formatFieldBlock([
+        { label: "reason", value: reason },
+        { label: "status", value: result.status },
+      ]);
+      store.saveEvent(
+        target.id,
+        "system_message",
+        {
+          kind: "task_cancel",
+          sourceTaskId,
+          reason,
+          status: result.status,
+          title,
+          body,
+        },
+        { from_ref: "agent" },
+      );
+      broadcastTaskCancelNotice?.({
+        type: "system_message",
         taskId: target.id,
+        kind: "task_cancel",
         sourceTaskId,
-        reason,
-        status: result.status,
+        title,
+        body,
       });
       return { accepted: true, taskId: target.id, status: result.status };
     },

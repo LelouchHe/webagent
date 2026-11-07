@@ -229,10 +229,11 @@ const mcpTaskTools = createMcpTaskToolHost({
   broadcastTaskCreated: (event) => {
     sseManager.broadcast(buildTaskCreatedBroadcast(event));
   },
-  broadcastTaskCancel: (event) => {
-    // Same SSE path as the record the cancel wrote: an already-open task page
-    // sees it without reloading, and replay renders the stored event.
-    sseManager.broadcast({ type: "task_cancel", ...event });
+  broadcastTaskCancelNotice: (event) => {
+    // One fact, one frame: the transcript row is the visible half and rides
+    // the generic system-message path. The `task_cancel` machine record is
+    // never a wire event.
+    sseManager.broadcast(event);
   },
 });
 const messageCleanup: CleanupHandle = startMessageCleanup(

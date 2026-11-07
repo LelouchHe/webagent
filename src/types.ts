@@ -376,14 +376,6 @@ export type AgentEvent =
       optionName: string;
       denied: boolean;
     }
-  | {
-      /** A cancellation an agent performed through `task_cancel` (MCP only). */
-      type: "task_cancel";
-      taskId: string;
-      sourceTaskId: string;
-      reason: string;
-      status: string;
-    }
   | { type: "config_set"; configId: string; value: ConfigValue }
   | { type: "bash_command"; taskId: string; command: string }
   | { type: "bash_output"; taskId: string; text: string; stream: string }

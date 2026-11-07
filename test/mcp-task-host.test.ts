@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
-import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
+import {
+  createMcpTaskToolHost,
+  type McpTaskCancelNotice,
+} from "../src/mcp/task-host.ts";
 import { projectTaskHistoryRow } from "../src/mcp/task-history.ts";
 
 describe("MCP Task tool host", () => {
@@ -588,38 +591,54 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("broadcasts the cancellation it records", async () => {
-    const broadcasted: Array<{
-      taskId: string;
-      sourceTaskId: string;
-      reason: string;
-      status: string;
-    }> = [];
+  it("records a cancellation as a machine event plus a system row", async () => {
+    const broadcasted: McpTaskCancelNotice[] = [];
     const host = createMcpTaskToolHost({
       store,
       tasks,
-      broadcastTaskCancel: (event) => broadcasted.push(event),
+      broadcastTaskCancelNotice: (event) => broadcasted.push(event),
     });
 
     await host.cancel(principal(), "alpha-child", "stop before start");
 
+    // One fact, two records: the machine event history projection reads, and
+    // the transcript row the conversation shows.
+    const stored = store.getEvents("alpha-child");
+    const machine = stored.filter((event) => event.type === "task_cancel");
+    const rows = stored.filter(
+      (event) =>
+        event.type === "system_message" &&
+        (JSON.parse(event.data) as { kind?: string }).kind === "task_cancel",
+    );
+    assert.equal(machine.length, 1);
+    assert.equal(machine[0].from_ref, "agent");
+    assert.deepEqual(JSON.parse(machine[0].data), {
+      sourceTaskId: "alpha",
+      reason: "stop before start",
+      status: "idle",
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].from_ref, "agent");
+    assert.deepEqual(JSON.parse(rows[0].data), {
+      kind: "task_cancel",
+      sourceTaskId: "alpha",
+      reason: "stop before start",
+      status: "idle",
+      title: "Cancelled by @alpha",
+      body: "reason: stop before start\nstatus: idle",
+    });
+    // Only the row is a wire event; the machine record is never broadcast, so
+    // an open page cannot render the same fact twice.
     assert.deepEqual(broadcasted, [
       {
+        type: "system_message",
         taskId: "alpha-child",
+        kind: "task_cancel",
         sourceTaskId: "alpha",
-        reason: "stop before start",
-        status: "idle",
+        title: "Cancelled by @alpha",
+        body: "reason: stop before start\nstatus: idle",
       },
     ]);
-    // The live envelope and the stored row are the same event; only the wire
-    // needs the target `taskId` for SSE routing.
-    const stored = store
-      .getEvents("alpha-child")
-      .filter((event) => event.type === "task_cancel");
-    assert.equal(stored.length, 1);
-    assert.equal(stored[0].from_ref, "agent");
-    const { taskId: _taskId, ...data } = broadcasted[0];
-    assert.deepEqual(JSON.parse(stored[0].data), data);
   });
 
   it("returns idle when a direct child has no active execution", async () => {
