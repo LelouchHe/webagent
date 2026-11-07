@@ -6,10 +6,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
-import {
-  createTaskManager,
-  turnOriginForDeliveryBatch,
-} from "../src/task-manager.ts";
+import { TaskManager as TaskManagerClass } from "../src/task-manager.ts";
+import { turnOriginForDeliveryBatch } from "../src/task-manager.ts";
+import { TaskStateManager } from "../src/task-state.ts";
+import { ExecutionAuthority } from "../src/execution-authority.ts";
+import type { AgentEnvironment } from "../src/agent-registry.ts";
+import { StaticAgentEnvironment } from "../src/agent-registry.ts";
+import type { ExecutionAdapter } from "../src/execution-adapter.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
 import type { AgentEvent } from "../src/types.ts";
@@ -64,15 +67,77 @@ function deferred(): {
   return { promise, resolve, reject };
 }
 
+/**
+ * The runtime's agent environments, with a controllable cold start.
+ *
+ * `resolve()` is the await inside `resolveDeliveryTransport`: with no transport
+ * bound yet it is where a target's agent process starts. Holding it open is how
+ * a test reproduces a submitter arriving inside that window. Everything else is
+ * the ordinary static environment.
+ */
+class GatedEnvironment implements AgentEnvironment {
+  readonly defaultAgentId: string;
+  private readonly inner: StaticAgentEnvironment;
+  /** How many of the next `resolve()` calls wait on `gate` first. */
+  holdCalls = 0;
+  gate: Promise<void> = Promise.resolve();
+  /** `resolve()` calls that reached the gate, for deterministic ordering. */
+  resolveCalls = 0;
+
+  constructor(defaultAgentId: string) {
+    this.defaultAgentId = defaultAgentId;
+    this.inner = new StaticAgentEnvironment(defaultAgentId);
+  }
+
+  isConfigured(agentId: string): boolean {
+    return this.inner.isConfigured(agentId);
+  }
+
+  existing(agentId: string): ExecutionAdapter | undefined {
+    return this.inner.existing(agentId);
+  }
+
+  listExisting(): ExecutionAdapter[] {
+    return this.inner.listExisting();
+  }
+
+  adapterFor(agentId: string): ExecutionAdapter {
+    return this.inner.adapterFor(agentId);
+  }
+
+  async resolve(agentId: string): Promise<ExecutionAdapter> {
+    this.resolveCalls += 1;
+    if (this.holdCalls > 0) {
+      this.holdCalls -= 1;
+      const gate = this.gate;
+      this.gate = Promise.resolve();
+      await gate;
+    }
+    return this.inner.resolve(agentId);
+  }
+
+  async reload(
+    agentId: string,
+    run: (adapter: ExecutionAdapter) => Promise<void>,
+  ): Promise<void> {
+    return this.inner.reload(agentId, run);
+  }
+}
+
 describe("turn slot", () => {
   let store: Store;
   let tasks: TaskManager;
   let tmpDir: string;
   let server: http.Server;
   let port: number;
-  /** Prompts the last turn opened by a route, settled by the test. */
+  let environment: GatedEnvironment;
+  /** Prompts a route or runtime submission opened, settled by the test. */
   let openPrompts: Array<ReturnType<typeof deferred>>;
-  let promptTexts: string[];
+  /**
+   * Every `bridge.prompt` the runtime really made, in order. This record — not
+   * the slot — is the source of truth for a turn's identity in these tests.
+   */
+  let promptCalls: Array<{ taskId: string; text: string; promptId?: string }>;
 
   const bridge = {
     ...mockBridgeStubs(),
@@ -83,8 +148,8 @@ describe("turn slot", () => {
     loadSession: async (taskId: string) => ({ taskId, configOptions: [] }),
     setConfigOption: async () => [],
     promptForText: async () => "summary of the current work",
-    prompt: (_taskId: string, text: string) => {
-      promptTexts.push(text);
+    prompt: (taskId: string, text: string, _a?: unknown, promptId?: string) => {
+      promptCalls.push({ taskId, text, promptId });
       return openPrompts.shift()?.promise ?? Promise.resolve();
     },
   };
@@ -95,13 +160,25 @@ describe("turn slot", () => {
     return id;
   }
 
-  /** Settle the task's open turn the way the ACP transport does. */
+  /** The identity the transport was actually handed for a task's last turn. */
+  function lastPromptCall(taskId: string) {
+    return promptCalls.filter((call) => call.taskId === taskId).at(-1);
+  }
+
+  function promptCallsFor(taskId: string) {
+    return promptCalls.filter((call) => call.taskId === taskId);
+  }
+
+  /**
+   * Settle the task's open turn the way the ACP transport does, naming the
+   * prompt identity the transport actually received.
+   */
   function finishPrompt(taskId: string): void {
     emit({
       type: "prompt_done",
       taskId,
       stopReason: "end_turn",
-      promptId: tasks.getTurn(taskId)?.promptId ?? undefined,
+      promptId: lastPromptCall(taskId)?.promptId,
     });
   }
 
@@ -118,13 +195,26 @@ describe("turn slot", () => {
     );
   }
 
+  /** Drop the transport the way a process death does, keeping the task bound. */
+  function unbindTransport(): void {
+    environment.adapterFor("test-agent").bindBridge(null);
+  }
+
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-turn-slot-"));
     store = new Store(tmpDir);
-    tasks = createTaskManager(store, tmpDir, tmpDir);
+    environment = new GatedEnvironment("test-agent");
+    tasks = new TaskManagerClass({
+      store,
+      defaultCwd: tmpDir,
+      dataDir: tmpDir,
+      state: new TaskStateManager(),
+      authority: new ExecutionAuthority(),
+      agents: environment,
+    });
     tasks.attachExecutionBridge(bridge as any);
     openPrompts = [];
-    promptTexts = [];
+    promptCalls = [];
     store.attachAgentSession(
       store.ensureRootTask(tmpDir).id,
       "test-agent",
@@ -722,14 +812,368 @@ describe("turn slot", () => {
       assert.equal(tasks.getTurn(id), null);
     });
 
-    it("mints a fresh turn identity for each real submission", async () => {
+    it("gives each real submission its own turn identity on the transport", async () => {
+      createTask("source");
       const id = createTask("identity");
-      tasks.beginAgentTurn(id, { origin: "interactive" });
-      const first = tasks.getTurn(id)?.promptId ?? undefined;
-      tasks.endTurn(id, { promptId: first });
-      tasks.beginAgentTurn(id, { origin: "interactive" });
-      const second = tasks.getTurn(id)?.promptId;
-      assert.notEqual(second, first);
+
+      // 1. the person's turn, through the route
+      const interactive = deferred();
+      openPrompts.push(interactive);
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/tasks/${id}/prompt`,
+        JSON.stringify({ text: "mine" }),
+      );
+      assert.equal(res.status, 202);
+      const firstTurn = tasks.getTurn(id);
+      assert.ok(firstTurn);
+      assert.equal(firstTurn.origin, "interactive");
+      const firstCall = lastPromptCall(id);
+      assert.ok(
+        firstCall?.promptId,
+        "the transport was handed this turn's identity",
+      );
+      assert.equal(firstCall.promptId, firstTurn.promptId);
+      const firstPromptId = firstCall.promptId;
+      interactive.resolve();
+      await waitFor(() => tasks.getTurn(id) === null);
+
+      // The dispatch is queued only now, so finishing the turn above has no
+      // delivery to recover and cannot open a turn behind the test's back.
+      store.createCollaborationMessage({
+        id: "m1",
+        deliveryId: "d1",
+        sourceTaskId: "source",
+        directTargetTaskId: id,
+        sourceActor: "agent",
+        body: "dispatch",
+        createdAt: 1,
+      });
+
+      // 2. the runtime's turn
+      const delegated = deferred();
+      openPrompts.push(delegated);
+      assert.equal(await tasks.drainCollaborationDeliveries(id), true);
+      const secondTurn = tasks.getTurn(id);
+      assert.ok(secondTurn);
+      assert.equal(
+        secondTurn.origin,
+        "delegated",
+        "a new turn assigns its own origin instead of inheriting the previous one",
+      );
+      const secondCall = lastPromptCall(id);
+      assert.ok(secondCall?.promptId);
+      assert.equal(secondCall.promptId, secondTurn.promptId);
+      assert.notEqual(
+        secondCall.promptId,
+        firstPromptId,
+        "two real prompts never share one turn identity",
+      );
+
+      delegated.resolve();
+      finishPrompt(id);
+      await waitFor(() => tasks.getTurn(id) === null);
+    });
+  });
+
+  describe("transport-await competition", () => {
+    /**
+     * Hold the next transport resolution open. With no transport bound, this is
+     * the cold start inside `resolveDeliveryTransport` — the window a first
+     * gate check cannot see.
+     */
+    function parkNextResolve(): () => void {
+      const released = deferred();
+      environment.gate = released.promise;
+      environment.holdCalls = 1;
+      return released.resolve;
+    }
+
+    it("gives up the drain when an interactive submit takes the slot while the transport resolves", async () => {
+      createTask("source");
+      const id = createTask("cold");
+      store.createCollaborationMessage({
+        id: "m1",
+        deliveryId: "d1",
+        sourceTaskId: "source",
+        directTargetTaskId: id,
+        sourceActor: "agent",
+        body: "dispatch",
+        createdAt: 1,
+      });
+      unbindTransport();
+      const releaseResolve = parkNextResolve();
+
+      // The first gate check passes (the task is idle) and the drain parks in
+      // the transport resolution.
+      const drain = tasks.drainCollaborationDeliveries(id);
+      await waitFor(
+        () => environment.resolveCalls === 1 && environment.holdCalls === 0,
+        { message: "the drain reached the transport await" },
+      );
+      assert.equal(tasks.getTurn(id), null, "the drain has not opened a turn");
+
+      // The agent finishes starting, and a person submits through the route
+      // while the drain is still resolving.
+      tasks.attachExecutionBridge(bridge);
+      const interactive = deferred();
+      openPrompts.push(interactive);
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/tasks/${id}/prompt`,
+        JSON.stringify({ text: "mine" }),
+      );
+      assert.equal(res.status, 202);
+      const interactiveTurn = tasks.getTurn(id);
+      assert.ok(interactiveTurn);
+      assert.equal(interactiveTurn.origin, "interactive");
+
+      // Only now does the drain's transport arrive.
+      releaseResolve();
+      assert.equal(
+        await drain,
+        false,
+        "the drain re-checks admission after the transport await and gives up",
+      );
+
+      assert.equal(
+        promptCallsFor(id).length,
+        1,
+        "no second real prompt reached the bridge",
+      );
+      assert.equal(
+        tasks.getTurn(id)?.origin,
+        "interactive",
+        "the winner keeps its origin",
+      );
+      assert.equal(tasks.getTurn(id)?.promptId, interactiveTurn.promptId);
+      assert.equal(
+        store.getCollaborationDelivery("d1")?.status,
+        "queued",
+        "nothing was claimed",
+      );
+      assert.equal(
+        store
+          .getEvents(id)
+          .some((event) => event.type === "collaboration_prompt"),
+        false,
+        "no prompt audit was written",
+      );
+
+      // Once the person's turn ends, the queued delivery gets its own turn.
+      const delegated = deferred();
+      openPrompts.push(delegated);
+      finishPrompt(id);
+      await waitFor(() => tasks.getTurn(id)?.origin === "delegated", {
+        message: "the queued delivery opens its own delegated turn",
+      });
+      const delegatedTurn = tasks.getTurn(id);
+      assert.ok(delegatedTurn);
+      const delegatedCall = lastPromptCall(id);
+      assert.ok(delegatedCall?.promptId);
+      assert.equal(delegatedCall.promptId, delegatedTurn.promptId);
+      assert.notEqual(
+        delegatedCall.promptId,
+        interactiveTurn.promptId,
+        "each real prompt kept its own turn identity",
+      );
+      delegated.resolve();
+      finishPrompt(id);
+      await waitFor(() => tasks.getTurn(id) === null);
+    });
+
+    it("gives up the closing reminder when a submitter takes the slot while the transport resolves", async () => {
+      const obligation = seedReminder({ live: true });
+      unbindTransport();
+      const releaseResolve = parkNextResolve();
+
+      const reminder = tasks.submitObligationReminder(obligation);
+      await waitFor(
+        () => environment.resolveCalls === 1 && environment.holdCalls === 0,
+        { message: "the reminder reached the transport await" },
+      );
+      assert.equal(
+        tasks.getTurn("child"),
+        null,
+        "the reminder has not opened a turn or taken the slot yet",
+      );
+
+      tasks.attachExecutionBridge(bridge);
+      const interactive = deferred();
+      openPrompts.push(interactive);
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks/child/prompt",
+        JSON.stringify({ text: "mine" }),
+      );
+      assert.equal(res.status, 202);
+      const interactiveTurn = tasks.getTurn("child");
+      assert.ok(interactiveTurn);
+      assert.equal(interactiveTurn.origin, "interactive");
+
+      releaseResolve();
+      assert.deepEqual(
+        await reminder,
+        { status: "deferred", reason: "busy" },
+        "the reminder defers instead of submitting alongside the person's turn",
+      );
+      assert.equal(
+        promptCallsFor("child").length,
+        1,
+        "only the person's prompt reached the bridge",
+      );
+      assert.equal(tasks.getTurn("child")?.origin, "interactive");
+
+      // Freed again, the reminder still gets its own turn. Its submission
+      // resolves at the end of that turn, so the prompt is settled first.
+      finishPrompt("child");
+      await waitFor(() => tasks.getTurn("child") === null);
+      const reminderPrompt = deferred();
+      openPrompts.push(reminderPrompt);
+      const submission = tasks.submitObligationReminder(obligation);
+      await waitFor(() => tasks.getTurn("child")?.origin === "delegated", {
+        message: "the reminder opens its own delegated turn",
+      });
+      const reminderTurn = tasks.getTurn("child");
+      assert.ok(reminderTurn);
+      const reminderCall = lastPromptCall("child");
+      assert.ok(reminderCall?.promptId);
+      assert.equal(reminderCall.promptId, reminderTurn.promptId);
+      assert.notEqual(reminderCall.promptId, interactiveTurn.promptId);
+      reminderPrompt.resolve();
+      assert.deepEqual(await submission, { status: "delivered" });
+      await waitFor(() => tasks.getTurn("child") === null);
+    });
+  });
+
+  describe("admission matrix", () => {
+    /** Every busy source, armed through its own API where one exists. */
+    function busySources(): Array<{
+      name: string;
+      arm: (taskId: string) => void;
+      disarm: (taskId: string) => void;
+    }> {
+      const reservations = new Map<string, number>();
+      return [
+        {
+          name: "a creation",
+          arm: (id) => tasks.creatingTasks.add(id),
+          disarm: (id) => tasks.creatingTasks.delete(id),
+        },
+        {
+          name: "a restore",
+          arm: (id) => tasks.restoringTasks.add(id),
+          disarm: (id) => tasks.restoringTasks.delete(id),
+        },
+        {
+          name: "a reserved submission",
+          arm: (id) => {
+            const reservation = tasks.reservePromptSubmission(id);
+            assert.notEqual(reservation, null);
+            reservations.set(id, reservation!);
+          },
+          disarm: (id) => {
+            tasks.releasePromptSubmission(id, reservations.get(id)!);
+            reservations.delete(id);
+          },
+        },
+        {
+          name: "a live turn",
+          arm: (id) => {
+            tasks.beginAgentTurn(id, { origin: "delegated" });
+          },
+          disarm: (id) => tasks.endTurn(id),
+        },
+        {
+          name: "compaction",
+          arm: (id) => tasks.compactingTasks.add(id),
+          disarm: (id) => tasks.compactingTasks.delete(id),
+        },
+        {
+          name: "a reset barrier",
+          arm: (id) => tasks.resettingTasks.add(id),
+          disarm: (id) => tasks.resettingTasks.delete(id),
+        },
+        {
+          name: "a rotation",
+          arm: (id) => tasks.rotatingTasks.add(id),
+          disarm: (id) => tasks.rotatingTasks.delete(id),
+        },
+        {
+          name: "a drain in progress",
+          arm: (id) => tasks.drainingCollaborationTasks.add(id),
+          disarm: (id) => tasks.drainingCollaborationTasks.delete(id),
+        },
+      ];
+    }
+
+    for (const source of busySources()) {
+      it(`refuses both admission routes while ${source.name} holds the task`, () => {
+        const id = createTask(`matrix-${source.name.replaceAll(" ", "-")}`);
+        source.arm(id);
+        try {
+          // The gate face: a restore is busy here but invisible to rendering.
+          assert.equal(tasks.getGateBusyKind(id), "agent");
+          assert.equal(
+            tasks.reservePromptSubmission(id),
+            null,
+            "the interactive route is refused",
+          );
+          assert.equal(
+            tasks.reservePromptSubmission(id, { allowBash: true }),
+            null,
+            "the runtime route is refused too: allowBash opens only bash",
+          );
+        } finally {
+          source.disarm(id);
+        }
+        assert.equal(
+          tasks.getGateBusyKind(id),
+          null,
+          "the source is gone again",
+        );
+      });
+    }
+
+    it("opens bash for a runtime submission and nothing else", () => {
+      const id = createTask("matrix-bash");
+      tasks.runningBashProcs.set(id, {} as unknown as never);
+      try {
+        assert.equal(tasks.getBusyKind(id), "bash");
+        assert.equal(
+          tasks.reservePromptSubmission(id),
+          null,
+          "an interactive submit still refuses a task running bash",
+        );
+        const reservation = tasks.reservePromptSubmission(id, {
+          allowBash: true,
+        });
+        assert.notEqual(reservation, null);
+        tasks.releasePromptSubmission(id, reservation!);
+      } finally {
+        tasks.runningBashProcs.delete(id);
+      }
+    });
+
+    it("waives a restore only when the caller asks for it", () => {
+      const id = createTask("matrix-restore-waived");
+      tasks.restoringTasks.add(id);
+      try {
+        assert.equal(
+          tasks.reservePromptSubmission(id, { allowBash: true }),
+          null,
+        );
+        const reservation = tasks.reservePromptSubmission(id, {
+          allowRestoring: true,
+        });
+        assert.notEqual(reservation, null);
+        tasks.releasePromptSubmission(id, reservation!);
+      } finally {
+        tasks.restoringTasks.delete(id);
+      }
     });
   });
 
@@ -779,10 +1223,10 @@ describe("turn slot", () => {
    * Seed a real directed obligation on parent→child, with the delivery row
    * already settled so the idle edge does not start a delivery drain.
    */
-  function seedReminder(): DirectedObligation {
+  function seedReminder(opts: { live?: boolean } = {}): DirectedObligation {
     store.createTask("parent", tmpDir, "auto", "test-agent", "agent-parent");
     createTask("child", "parent");
-    tasks.liveTasks.delete("child");
+    if (!opts.live) tasks.liveTasks.delete("child");
     store.createCollaborationMessage({
       id: "turn-ownership",
       deliveryId: "turn-ownership-delivery",
