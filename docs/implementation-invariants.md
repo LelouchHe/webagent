@@ -318,7 +318,7 @@ ACP `clientCapabilities` (`fs`, `terminal`) and `mcpServers` are **opt-in capabi
 
 **Extension points**:
 - To inject project-specific MCP servers from the client, populate `mcpServers` in `newSession`/`loadSession`.
-- To re-add fs handlers (for an agent that uses them), restore the `readTextFile` / `writeTextFile` entries in the `client` object in `bridge.ts` and flip the capability flags.
+- To re-add fs handlers (for an agent that uses them), register `onRequest("fs/read_text_file", …)` and `onRequest("fs/write_text_file", …)` on the `client()` app in `bridge.ts` and flip the capability flags.
 
 ## ACP Scope and Current Limits
 

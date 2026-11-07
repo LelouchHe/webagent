@@ -105,6 +105,18 @@ time. An entry without a "closing condition" is a wish, not an issue.
 - **Trip-wire: `loadSession` capability.** If a future SDK moves `loadSession`
   under `sessionCapabilities`, the capability read in `src/bridge.ts` must be
   revisited.
+- **Trip-wire: no handshake deadline, and a batched `initialize` no longer
+  fails fast.** `bridge.start()` awaits `initialize` with no timeout, and ACP SDK
+  2.4.0 answers a JSON-RPC batch (which ACP v1 forbids) with `-32600` *without*
+  closing the connection, where 1.7.0 closed it. *Symptom:* an agent that wraps
+  its `initialize` response in an array no longer fails the start — the start
+  flight never settles, so `resolve()` for that agent waits forever and `reload`
+  is refused as already in progress while the child stays attached. *Trigger:*
+  any peer that sends batches, i.e. non-conforming v1 traffic; conforming agents
+  are unaffected, and every other start failure still reaps the process.
+  *Closing:* give the handshake a bounded deadline in `bridge.start()`; that
+  removes this entry. Restoring the old close-on-batch behaviour is not the fix.
+
 - **Trip-wire: `stopWaitingOnCancel` is not our turn cancel.** ACP SDK 2.x
   offers `SendRequestOptions.cancellationSignal` / `stopWaitingOnCancel`, and
   neither replaces the bridge's `Promise.race([prompt, abortPromise])`.
