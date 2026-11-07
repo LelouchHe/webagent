@@ -1,0 +1,802 @@
+import { afterEach, beforeEach, describe, it } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { Store } from "../src/store.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import {
+  createTaskManager,
+  turnOriginForDeliveryBatch,
+} from "../src/task-manager.ts";
+import { createRequestHandler } from "../src/routes.ts";
+import { handleAgentEvent } from "../src/event-handler.ts";
+import type { AgentEvent } from "../src/types.ts";
+import type { DirectedObligation } from "../src/obligation-controller.ts";
+import {
+  makeEventHandlerConfig,
+  mockBridgeStubs,
+  waitFor,
+} from "./fixtures.ts";
+
+function makeRequest(
+  port: number,
+  method: string,
+  path: string,
+  body?: string,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method,
+        headers: { "Content-Type": "application/json" },
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (chunk: Buffer) => (data += chunk.toString()));
+        res.on("end", () => {
+          resolve({ status: res.statusCode!, body: data });
+        });
+      },
+    );
+    req.on("error", reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+/** A prompt that stays pending until the test settles it. */
+function deferred(): {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+} {
+  let resolve!: () => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("turn slot", () => {
+  let store: Store;
+  let tasks: TaskManager;
+  let tmpDir: string;
+  let server: http.Server;
+  let port: number;
+  /** Prompts the last turn opened by a route, settled by the test. */
+  let openPrompts: Array<ReturnType<typeof deferred>>;
+  let promptTexts: string[];
+
+  const bridge = {
+    ...mockBridgeStubs(),
+    newSession: async () => ({
+      sessionId: `agent-${Math.random().toString(16).slice(2)}`,
+      configOptions: [],
+    }),
+    loadSession: async (taskId: string) => ({ taskId, configOptions: [] }),
+    setConfigOption: async () => [],
+    promptForText: async () => "summary of the current work",
+    prompt: (_taskId: string, text: string) => {
+      promptTexts.push(text);
+      return openPrompts.shift()?.promise ?? Promise.resolve();
+    },
+  };
+
+  function createTask(id: string, parentId?: string, agentId = "test-agent") {
+    store.createTask(id, tmpDir, "auto", agentId, `${id}-session`, parentId);
+    tasks.liveTasks.add(id);
+    return id;
+  }
+
+  /** Settle the task's open turn the way the ACP transport does. */
+  function finishPrompt(taskId: string): void {
+    emit({
+      type: "prompt_done",
+      taskId,
+      stopReason: "end_turn",
+      promptId: tasks.getTurn(taskId)?.promptId ?? undefined,
+    });
+  }
+
+  /** Drive one protocol event with the task's current generation lease. */
+  function emit(event: AgentEvent & { taskId: string }): void {
+    const lease = tasks.authority.leaseFor(event.taskId);
+    handleAgentEvent(
+      (lease ? { ...event, executionLease: lease } : event) as any,
+      tasks,
+      store,
+      bridge as any,
+      makeEventHandlerConfig(),
+      { broadcast() {} } as any,
+    );
+  }
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "webagent-turn-slot-"));
+    store = new Store(tmpDir);
+    tasks = createTaskManager(store, tmpDir, tmpDir);
+    tasks.attachExecutionBridge(bridge as any);
+    openPrompts = [];
+    promptTexts = [];
+    store.attachAgentSession(
+      store.ensureRootTask(tmpDir).id,
+      "test-agent",
+      "agent-root",
+    );
+
+    const publicDir = join(tmpDir, "public");
+    mkdirSync(publicDir);
+    writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
+    server = http.createServer(
+      createRequestHandler({
+        store,
+        tasks,
+        publicDir,
+        dataDir: tmpDir,
+        limits: {
+          bash_output: 1_048_576,
+          image_upload: 10_485_760,
+          cancel_timeout: 10_000,
+        },
+        sseManager: { broadcast() {} } as any,
+      }),
+    );
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    port = (server.address() as { port: number }).port;
+  });
+
+  afterEach(async () => {
+    store.close();
+    await new Promise<void>((resolve) =>
+      server.close(() => {
+        resolve();
+      }),
+    );
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  describe("origin assignment", () => {
+    it("classifies a delivery batch by its own messages", () => {
+      assert.equal(
+        turnOriginForDeliveryBatch(["agent", "system"]),
+        "delegated",
+      );
+      assert.equal(
+        turnOriginForDeliveryBatch(["agent", "user"]),
+        "interactive",
+      );
+      assert.equal(turnOriginForDeliveryBatch(["user"]), "interactive");
+      assert.equal(turnOriginForDeliveryBatch(["system"]), "delegated");
+    });
+
+    it("opens the interactive route's turn as interactive", async () => {
+      const id = createTask("interactive");
+      const pending = deferred();
+      openPrompts.push(pending);
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/tasks/${id}/prompt`,
+        JSON.stringify({ text: "hi" }),
+      );
+      assert.equal(res.status, 202);
+      assert.equal(tasks.getTurn(id)?.origin, "interactive");
+      assert.equal(tasks.getTurn(id)?.kind, "agent");
+
+      pending.resolve();
+      await waitFor(() => tasks.getTurn(id) === null);
+    });
+
+    it("opens a runtime delivery's turn as delegated", async () => {
+      createTask("source");
+      createTask("target");
+      store.createCollaborationMessage({
+        id: "m1",
+        deliveryId: "d1",
+        sourceTaskId: "source",
+        directTargetTaskId: "target",
+        sourceActor: "agent",
+        body: "dispatch",
+        createdAt: 1,
+      });
+      const pending = deferred();
+      openPrompts.push(pending);
+
+      assert.equal(
+        await tasks.drainCollaborationDeliveries("target", bridge as any),
+        true,
+      );
+      assert.equal(tasks.getTurn("target")?.origin, "delegated");
+      pending.resolve();
+      await waitFor(
+        () => store.getTask("target")?.workflow_status === "running",
+      );
+      finishPrompt("target");
+      await waitFor(() => tasks.getTurn("target") === null);
+    });
+
+    it("opens a mixed or user delivery batch as interactive", async () => {
+      createTask("source");
+      createTask("target");
+      for (const [index, actor] of (["agent", "user"] as const).entries()) {
+        store.createCollaborationMessage({
+          id: `m${index}`,
+          deliveryId: `d${index}`,
+          sourceTaskId: "source",
+          directTargetTaskId: "target",
+          sourceActor: actor,
+          body: `message ${index}`,
+          createdAt: index + 1,
+        });
+      }
+      const pending = deferred();
+      openPrompts.push(pending);
+
+      assert.equal(
+        await tasks.drainCollaborationDeliveries("target", bridge as any),
+        true,
+      );
+      assert.equal(tasks.getTurn("target")?.origin, "interactive");
+      pending.resolve();
+      await waitFor(
+        () => store.getTask("target")?.workflow_status === "running",
+      );
+      finishPrompt("target");
+      await waitFor(() => tasks.getTurn("target") === null);
+    });
+
+    it("opens a closing reminder's turn as delegated", async () => {
+      const obligation = seedReminder();
+      const pending = deferred();
+      openPrompts.push(pending);
+
+      const submission = tasks.submitObligationReminder(obligation);
+      await waitFor(() => tasks.getTurn("child") !== null, {
+        message: "the reminder turn opened",
+      });
+      assert.equal(tasks.getTurn("child")?.origin, "delegated");
+
+      pending.resolve();
+      assert.deepEqual(await submission, { status: "delivered" });
+      assert.equal(tasks.getTurn("child"), null);
+    });
+
+    it("opens /compact's turn as interactive", async () => {
+      const id = createTask("compact");
+      const pending = deferred();
+      openPrompts.push(pending);
+      let releaseSummary!: () => void;
+      const summaryGate = new Promise<void>((resolve) => {
+        releaseSummary = resolve;
+      });
+      (bridge as any).promptForText = async () => {
+        await summaryGate;
+        return "summary";
+      };
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/tasks/${id}/compact`,
+        "{}",
+      );
+      assert.equal(res.status, 202);
+      assert.equal(tasks.getTurn(id)?.origin, "interactive");
+
+      releaseSummary();
+      await waitFor(() => tasks.compactingTasks.size === 0);
+      await waitFor(() => tasks.getTurn(id) === null);
+    });
+
+    it("opens a beta quick prompt's turn as interactive", async () => {
+      const pending = deferred();
+      openPrompts.push(pending);
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/beta/prompt",
+        JSON.stringify({ text: "quick question" }),
+      );
+      assert.equal(res.status, 202);
+      const taskId = JSON.parse(res.body).taskId as string;
+      assert.equal(tasks.getTurn(taskId)?.origin, "interactive");
+
+      pending.resolve();
+      await waitFor(() => tasks.getTurn(taskId) === null);
+    });
+  });
+
+  describe("release points", () => {
+    /**
+     * Every release row of the contract's end-of-turn table: run the real
+     * release path for that row, then assert nothing about the turn survives.
+     * Root reset and the GC/reap paths share `resetTaskRuntime` and
+     * `releaseTaskRuntime` with the rows below. Cancel and restore are not
+     * release points and are asserted separately.
+     */
+    const cases: Array<{
+      name: string;
+      /** Opens a turn for the path under test and returns its task id. */
+      run: () => Promise<string>;
+      /** No follow-up turn can be opened: its runtime or the task is gone. */
+      deleted?: boolean;
+    }> = [
+      {
+        name: "prompt_done",
+        run: async () => {
+          const id = createTask("done");
+          tasks.beginAgentTurn(id, { origin: "delegated" });
+          emit({ type: "prompt_done", taskId: id, stopReason: "end_turn" });
+          return id;
+        },
+      },
+      {
+        name: "agent error",
+        run: async () => {
+          const id = createTask("failed");
+          tasks.beginAgentTurn(id, { origin: "delegated" });
+          emit({ type: "error", taskId: id, message: "boom" });
+          return id;
+        },
+      },
+      {
+        name: "drain dispatchFailed",
+        run: async () => {
+          createTask("source");
+          const id = createTask("rejected");
+          store.createCollaborationMessage({
+            id: "m1",
+            deliveryId: "d1",
+            sourceTaskId: "source",
+            directTargetTaskId: id,
+            sourceActor: "agent",
+            body: "dispatch",
+            createdAt: 1,
+          });
+          const pending = deferred();
+          openPrompts.push(pending);
+          assert.equal(
+            await tasks.drainCollaborationDeliveries(id, bridge as any),
+            true,
+          );
+          pending.reject(new Error("prompt rejected"));
+          await waitFor(() => tasks.getTurn(id) === null);
+          return id;
+        },
+      },
+      {
+        name: "reminder finally",
+        run: async () => {
+          const obligation = seedReminder();
+          (bridge as any).loadSession = async () => {
+            throw new Error("load failed");
+          };
+          try {
+            assert.deepEqual(await tasks.submitObligationReminder(obligation), {
+              status: "deferred",
+              reason: "resume_failed",
+            });
+          } finally {
+            (bridge as any).loadSession = async (taskId: string) => ({
+              taskId,
+              configOptions: [],
+            });
+          }
+          return "child";
+        },
+      },
+      {
+        name: "interactive finally",
+        run: async () => {
+          const id = createTask("interactive-failed");
+          const pending = deferred();
+          openPrompts.push(pending);
+          const res = await makeRequest(
+            port,
+            "POST",
+            `/api/v1/tasks/${id}/prompt`,
+            JSON.stringify({ text: "hi" }),
+          );
+          assert.equal(res.status, 202);
+          pending.reject(new Error("prompt rejected"));
+          await waitFor(() => tasks.getTurn(id) === null);
+          return id;
+        },
+      },
+      {
+        name: "compact finally",
+        run: async () => {
+          const id = createTask("compact-failed");
+          (bridge as any).promptForText = async () => {
+            throw new Error("summary failed");
+          };
+          const res = await makeRequest(
+            port,
+            "POST",
+            `/api/v1/tasks/${id}/compact`,
+            "{}",
+          );
+          assert.equal(res.status, 202);
+          await waitFor(
+            () =>
+              tasks.compactingTasks.size === 0 && tasks.getTurn(id) === null,
+          );
+          return id;
+        },
+      },
+      {
+        name: "resetTaskRuntime (clear preserves state, not authorization)",
+        run: async () => {
+          const id = createTask("cleared");
+          tasks.beginAgentTurn(id, { origin: "delegated" });
+          // The compaction path is the one rotation that runs inside its own
+          // turn; `preserveRuntimeState` keeps the state ledger, not the turn.
+          await tasks.clearTask(bridge, id, undefined, {
+            preserveRuntimeState: true,
+            allowCompacting: true,
+          });
+          assert.equal(tasks.state.getState(id).runtime.busy, null);
+          return id;
+        },
+      },
+      {
+        name: "releaseTaskRuntime",
+        deleted: true,
+        run: async () => {
+          const id = createTask("deleted");
+          tasks.beginAgentTurn(id, { origin: "delegated" });
+          // A delete refuses a task mid-turn, so the release path itself is the
+          // subject here: whichever tree/cascade reap drops a task must drop
+          // its slot with it.
+          (tasks as any).releaseTaskRuntime(id, "soft");
+          return id;
+        },
+      },
+      {
+        name: "clearAgentRuntime",
+        run: async () => {
+          const id = createTask("reloaded");
+          tasks.beginAgentTurn(id, { origin: "delegated" });
+          tasks.clearAgentRuntime("test-agent");
+          return id;
+        },
+      },
+    ];
+
+    for (const entry of cases) {
+      it(`clears the slot after ${entry.name}`, async () => {
+        const id = await entry.run();
+
+        assert.equal(tasks.getTurn(id), null, "no live turn survives");
+        assert.equal(tasks.activePrompts.has(id), false);
+
+        if (entry.deleted) return;
+        // The next turn on this task is the user's, whatever ran before it.
+        const next = deferred();
+        openPrompts.push(next);
+        const res = await makeRequest(
+          port,
+          "POST",
+          `/api/v1/tasks/${id}/prompt`,
+          JSON.stringify({ text: "next" }),
+        );
+        assert.equal(res.status, 202);
+        assert.equal(tasks.getTurn(id)?.origin, "interactive");
+        next.resolve();
+        await waitFor(() => tasks.getTurn(id) === null);
+      });
+    }
+
+    it("does not end the turn for a cancel, which is not a terminal", async () => {
+      const id = createTask("cancel-keeps");
+      tasks.beginAgentTurn(id, { origin: "delegated" });
+      let cancels = 0;
+      (bridge as any).cancel = async () => {
+        cancels += 1;
+      };
+
+      const result = await tasks.cancelTaskExecution(id, bridge, 0);
+
+      assert.equal(cancels, 1);
+      assert.equal(result.status, "cancelling");
+      assert.equal(
+        tasks.getTurn(id)?.origin,
+        "delegated",
+        "the turn ends on its own terminal, not on the cancel request",
+      );
+
+      // The real terminal still ends it.
+      finishPrompt(id);
+      assert.equal(tasks.getTurn(id), null);
+    });
+
+    it("clears only the reloaded agent's turns", () => {
+      const mine = createTask("mine");
+      store.createTask(
+        "theirs",
+        tmpDir,
+        "auto",
+        "other-agent",
+        "theirs-session",
+      );
+      tasks.liveTasks.add("theirs");
+      tasks.beginAgentTurn(mine, { origin: "delegated" });
+      tasks.beginAgentTurn("theirs", { origin: "interactive" });
+
+      tasks.clearAgentRuntime("test-agent");
+
+      assert.equal(tasks.getTurn(mine), null);
+      assert.equal(tasks.getTurn("theirs")?.origin, "interactive");
+    });
+  });
+
+  describe("superseded turns", () => {
+    it("does not let a late finally release the turn that replaced it", () => {
+      const id = createTask("superseded");
+      tasks.beginAgentTurn(id, { origin: "delegated" });
+      const oldPromptId = tasks.getTurn(id)?.promptId;
+      assert.ok(oldPromptId);
+
+      assert.equal(tasks.endTurn(id, { promptId: oldPromptId }), true);
+      tasks.beginAgentTurn(id, { origin: "interactive" });
+      const newPromptId = tasks.getTurn(id)?.promptId ?? undefined;
+      assert.ok(newPromptId);
+      assert.notEqual(newPromptId, oldPromptId);
+
+      // The superseded turn's own terminal callback lands late.
+      assert.equal(tasks.endTurn(id, { promptId: oldPromptId }), false);
+      const turn = tasks.getTurn(id);
+      assert.ok(turn, "the replacement turn is still live");
+      assert.equal(turn.origin, "interactive");
+      assert.equal(turn.promptId, newPromptId);
+    });
+
+    it("does not let a superseded prompt_done clear the replacement turn", () => {
+      const id = createTask("late-done");
+      tasks.beginAgentTurn(id, { origin: "delegated" });
+      const oldPromptId =
+        tasks.state.getState(id).runtime.busy?.promptId ?? undefined;
+      tasks.endTurn(id, { promptId: oldPromptId });
+      tasks.beginAgentTurn(id, { origin: "interactive" });
+
+      // A completion event for the turn that already ended.
+      emit({
+        type: "prompt_done",
+        taskId: id,
+        stopReason: "end_turn",
+        promptId: oldPromptId,
+      });
+
+      assert.equal(tasks.getTurn(id)?.origin, "interactive");
+    });
+
+    it("replaces the origin of every new turn instead of inheriting it", () => {
+      const id = createTask("origin-per-turn");
+      tasks.beginAgentTurn(id, { origin: "delegated" });
+      assert.equal(tasks.getTurn(id)?.origin, "delegated");
+      tasks.endTurn(id);
+      assert.equal(tasks.getTurn(id), null);
+
+      tasks.beginAgentTurn(id, { origin: "interactive" });
+      assert.equal(tasks.getTurn(id)?.origin, "interactive");
+    });
+  });
+
+  describe("submission protocol", () => {
+    it("stops a drain while another submission holds the slot", async () => {
+      createTask("source");
+      const id = createTask("target");
+      store.createCollaborationMessage({
+        id: "m1",
+        deliveryId: "d1",
+        sourceTaskId: "source",
+        directTargetTaskId: id,
+        sourceActor: "agent",
+        body: "dispatch",
+        createdAt: 1,
+      });
+      const reservation = tasks.reservePromptSubmission(id);
+      assert.notEqual(reservation, null);
+
+      assert.equal(
+        await tasks.drainCollaborationDeliveries(id, bridge as any),
+        false,
+      );
+      assert.equal(tasks.getTurn(id), null);
+      assert.equal(store.getCollaborationDelivery("d1")?.status, "queued");
+
+      tasks.releasePromptSubmission(id, reservation!);
+      const pending = deferred();
+      openPrompts.push(pending);
+      assert.equal(
+        await tasks.drainCollaborationDeliveries(id, bridge as any),
+        true,
+      );
+      assert.equal(tasks.getTurn(id)?.origin, "delegated");
+      pending.resolve();
+      await waitFor(() => store.getTask(id)?.workflow_status === "running");
+      finishPrompt(id);
+      await waitFor(() => tasks.getTurn(id) === null);
+    });
+
+    it("refuses an interactive submission while a drain holds the slot", async () => {
+      createTask("source");
+      const id = createTask("target");
+      store.createCollaborationMessage({
+        id: "m1",
+        deliveryId: "d1",
+        sourceTaskId: "source",
+        directTargetTaskId: id,
+        sourceActor: "agent",
+        body: "dispatch",
+        createdAt: 1,
+      });
+      const pending = deferred();
+      openPrompts.push(pending);
+      assert.equal(
+        await tasks.drainCollaborationDeliveries(id, bridge as any),
+        true,
+      );
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/tasks/${id}/prompt`,
+        JSON.stringify({ text: "competing" }),
+      );
+      assert.equal(res.status, 409);
+      assert.equal(JSON.parse(res.body).busyKind, "agent");
+      assert.equal(tasks.getTurn(id)?.origin, "delegated");
+
+      pending.resolve();
+      await waitFor(() => store.getTask(id)?.workflow_status === "running");
+      finishPrompt(id);
+      await waitFor(() => tasks.getTurn(id) === null);
+    });
+
+    it("holds the slot across the resume and gives it up if it is invalidated", async () => {
+      createTask("source");
+      const id = createTask("target");
+      // Force the drain through `ensureResumed`, which is the await the slot
+      // must survive; the resume is settled by the test.
+      tasks.liveTasks.delete(id);
+      const resumeGate = deferred();
+      (bridge as any).loadSession = async (taskId: string) => {
+        await resumeGate.promise;
+        return { taskId, configOptions: [] };
+      };
+      store.createCollaborationMessage({
+        id: "m1",
+        deliveryId: "d1",
+        sourceTaskId: "source",
+        directTargetTaskId: id,
+        sourceActor: "agent",
+        body: "dispatch",
+        createdAt: 1,
+      });
+
+      const drain = tasks.drainCollaborationDeliveries(id, bridge);
+      await waitFor(() => tasks.pendingPromptSubmissions.has(id), {
+        message: "the drain took the slot before the resume",
+      });
+      assert.equal(tasks.getTurn(id), null, "the turn is not open yet");
+      assert.equal(
+        await makeRequest(
+          port,
+          "POST",
+          `/api/v1/tasks/${id}/prompt`,
+          JSON.stringify({ text: "competing" }),
+        ).then((res) => res.status),
+        409,
+        "an interactive submit waits behind the runtime reservation",
+      );
+
+      // A cancel during the resume invalidates the reservation.
+      tasks.cancelPendingPromptSubmission(id);
+      resumeGate.resolve();
+
+      assert.equal(await drain, false);
+      assert.equal(tasks.getTurn(id), null);
+      assert.equal(store.getCollaborationDelivery("d1")?.status, "queued");
+    });
+
+    it("drops a reservation once a cancel invalidates it", () => {
+      const id = createTask("cancelled");
+      const reservation = tasks.reservePromptSubmission(id);
+      assert.ok(reservation !== null);
+      assert.equal(tasks.ownsPromptReservation(id, reservation), true);
+
+      tasks.cancelPendingPromptSubmission(id);
+      assert.equal(tasks.ownsPromptReservation(id, reservation), false);
+      assert.equal(tasks.getTurn(id), null);
+    });
+
+    it("mints a fresh turn identity for each real submission", async () => {
+      const id = createTask("identity");
+      tasks.beginAgentTurn(id, { origin: "interactive" });
+      const first = tasks.getTurn(id)?.promptId ?? undefined;
+      tasks.endTurn(id, { promptId: first });
+      tasks.beginAgentTurn(id, { origin: "interactive" });
+      const second = tasks.getTurn(id)?.promptId;
+      assert.notEqual(second, first);
+    });
+  });
+
+  describe("bash is not an ACP turn", () => {
+    it("lets a delegated turn open beside a running bash command", async () => {
+      createTask("source");
+      const id = createTask("target");
+      tasks.runningBashProcs.set(id, {} as any);
+      store.createCollaborationMessage({
+        id: "m1",
+        deliveryId: "d1",
+        sourceTaskId: "source",
+        directTargetTaskId: id,
+        sourceActor: "agent",
+        body: "dispatch",
+        createdAt: 1,
+      });
+      const pending = deferred();
+      openPrompts.push(pending);
+
+      assert.equal(
+        await tasks.drainCollaborationDeliveries(id, bridge as any),
+        true,
+      );
+      assert.equal(tasks.getTurn(id)?.origin, "delegated");
+      assert.equal(tasks.getBusyKind(id), "agent");
+
+      pending.resolve();
+      await waitFor(() => store.getTask(id)?.workflow_status === "running");
+      finishPrompt(id);
+      await waitFor(() => tasks.getTurn(id) === null);
+      // Closing the ACP turn leaves only the bash run busy.
+      assert.equal(tasks.getBusyKind(id), "bash");
+    });
+
+    it("does not open a turn for a task that is only running bash", () => {
+      const id = createTask("bash-only");
+      tasks.runningBashProcs.set(id, {} as any);
+      tasks.syncBusy(id);
+
+      assert.equal(tasks.getTurn(id), null);
+      assert.equal(tasks.getBusyKind(id), "bash");
+    });
+  });
+
+  /**
+   * Seed a real directed obligation on parent→child, with the delivery row
+   * already settled so the idle edge does not start a delivery drain.
+   */
+  function seedReminder(): DirectedObligation {
+    store.createTask("parent", tmpDir, "auto", "test-agent", "agent-parent");
+    createTask("child", "parent");
+    tasks.liveTasks.delete("child");
+    store.createCollaborationMessage({
+      id: "turn-ownership",
+      deliveryId: "turn-ownership-delivery",
+      sourceTaskId: "parent",
+      directTargetTaskId: "child",
+      sourceActor: "agent",
+      body: "Dispatch.",
+    });
+    const claimed = store.claimQueuedDeliveries("child");
+    store.markCollaborationDeliveriesDelivered(
+      claimed.map((delivery) => delivery.id),
+    );
+    const obligation = tasks.getObligation("parent", "child");
+    assert.ok(obligation);
+    return obligation;
+  }
+});

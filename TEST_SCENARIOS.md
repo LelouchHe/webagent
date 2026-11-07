@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-11-05
+Last updated: 2026-11-07
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -419,6 +419,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a pre-rotation watchdog with a live turn emits its silence notice (control), and the same steps after a rotation emit none — the rotation ends that watchdog epoch (the retained-callback case is covered by the next bullet)
   - a retry callback that is still queued when the rotation lands is run explicitly after it (the clock keeps callbacks after `clearTimer`): it re-derives from the record, so the old body is never re-enqueued and a closing reminder for the replacement is what it submits
   - a reminder result from the replaced execution (old recovery generation) cannot settle the record, spend an attempt, or re-enqueue the dispatch
+
+- `test/turn-slot.test.ts`
+  - one turn slot per task, and every real submission assigns its own origin: the interactive route, `/compact`, and the beta quick prompt are `interactive`; a collaboration drain is `delegated` for an all-agent/system batch and `interactive` for a batch containing one user message; a closing reminder is `delegated`. Nothing inherits the previous turn's value
+  - every release point of the end-of-turn table closes the slot — `prompt_done`, agent error, drain rejection, reminder `finally`, interactive `finally`, `/compact` `finally`, `resetTaskRuntime` even under `preserveRuntimeState`, `releaseTaskRuntime`, and an agent-scoped `clearAgentRuntime` — and the next turn on that task is interactive again; a cancel request alone ends nothing, because only the turn's own terminal does
+  - a superseded turn's late terminal (including a late `prompt_done`) never releases or re-origins the turn that replaced it
+  - the submission protocol is shared and survives awaits: a runtime reservation blocks an interactive submit and vice versa, the slot is held across `ensureResumed`, and a reservation invalidated by a cancel during that await gives up without claiming or submitting
+  - bash is not an ACP turn: a delegated turn opens beside a running bash command, and closing it leaves only bash busy
 
 - `test/task-collaboration.test.ts`
   - pure `shouldArm` policy: agent parent→child only; user, system, and non-parent relations never arm
