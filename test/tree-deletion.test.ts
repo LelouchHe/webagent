@@ -177,6 +177,65 @@ describe("task-tree deletion across agents", () => {
     assert.equal(tasks.state.getState("root").runtime.busy, null);
   });
 
+  it("counts the rebuild as work of its own", () => {
+    seedCrossAgentTree();
+    // The claim has to stand on its own: the rebuild's first await is the
+    // agent resolution, which happens before any ACP session exists, so a
+    // rotation or a second exit arriving there must already see the task busy.
+    tasks.rebuildingTasks.add("root");
+    try {
+      assert.equal(tasks.getGateBusyKind("root"), "agent");
+      assert.equal(tasks.getBusyKind("root"), "agent");
+    } finally {
+      tasks.rebuildingTasks.delete("root");
+    }
+    assert.equal(tasks.getGateBusyKind("root"), null);
+  });
+
+  it("holds the rebuild against a clear and a second exit", async () => {
+    seedCrossAgentTree();
+    let releaseNewSession!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseNewSession = resolve;
+    });
+    let reached!: () => void;
+    const inNewSession = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const exitBridge = {
+      ...bridgeA,
+      async newSession() {
+        reached();
+        await gate;
+        return { sessionId: "rebuilt-session", configOptions: [] };
+      },
+    };
+
+    const exiting = tasks.resetRootTask(exitBridge);
+    await inNewSession;
+
+    // The rebuild owns Root's binding until it commits it. A rotation or a
+    // second exit that started here would act on the binding this rebuild is
+    // about to replace, and the binding's last writer would silently win.
+    await assert.rejects(
+      () => tasks.clearTask(exitBridge, "root"),
+      TaskBusyError,
+    );
+    await assert.rejects(() => tasks.resetRootTask(exitBridge), TaskBusyError);
+
+    releaseNewSession();
+    const result = await exiting;
+    assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
+      "child",
+      "parent",
+    ]);
+    assert.equal(
+      store.getCurrentExecutionBinding("root")?.agent_session_id,
+      "rebuilt-session",
+    );
+    assert.equal(tasks.getBusyKind("root"), null);
+  });
+
   it("refuses the exit when Root's agent cannot start, and deletes nothing", async () => {
     seedCrossAgentTree();
 

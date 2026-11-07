@@ -309,6 +309,68 @@ describe("background warm-up", () => {
    * because the claim was released without a projection, the client kept a
    * busy spinner that no local event could ever end.
    */
+  it("refuses to commit a materialization over a binding that moved", async () => {
+    let releaseNewSession!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseNewSession = resolve;
+    });
+    let reached!: () => void;
+    const inNewSession = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const discarded: string[] = [];
+    const bridge = {
+      async newSession() {
+        reached();
+        await gate;
+        return { sessionId: "late-session", configOptions: MODEL_OPTIONS };
+      },
+      async setConfigOption() {
+        return MODEL_OPTIONS;
+      },
+      async loadSession(taskId: string) {
+        return { taskId, configOptions: MODEL_OPTIONS };
+      },
+      async prompt() {},
+      async cancel() {},
+      discardUnboundSession(sessionId: string) {
+        discarded.push(sessionId);
+      },
+      resolvePermission: () => {},
+      denyPermission: () => {},
+      isAvailable: () => true,
+    } as unknown as DeliveryBridge;
+
+    store.attachAgentSession("root", "agent-a", "root-session");
+    store.resetRootTask();
+    tasks.attachExecutionBridge(bridge);
+
+    // A read starts the materialization of the empty slot.
+    tasks.warmTaskInBackground("root");
+    await inNewSession;
+    // `/clear` (or another reset) commits its own replacement while
+    // `session/new` is still in flight. Committing over it would silently undo
+    // an operation the user already saw finish.
+    store.replaceAgentSession("root", "agent-a", "cleared-session");
+    releaseNewSession();
+
+    for (let tick = 0; tick < 100 && discarded.length === 0; tick++) {
+      await new Promise<void>((done) => setTimeout(done, 0));
+    }
+    assert.deepEqual(
+      discarded,
+      ["late-session"],
+      "the refused session is dropped",
+    );
+    assert.equal(
+      store.getAgentSessionId("root"),
+      "cleared-session",
+      "the replacement that landed first stands",
+    );
+    assert.equal(tasks.liveTasks.has("root"), false);
+    assert.equal(tasks.state.getState("root").runtime.busy, null);
+  });
+
   it("ends a read-started materialization with an idle ledger", async () => {
     let releaseNewSession!: () => void;
     const gate = new Promise<void>((resolve) => {

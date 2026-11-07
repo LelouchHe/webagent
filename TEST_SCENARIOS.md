@@ -1042,7 +1042,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a share-backed survivor is tombstoned and re-parented under Root; the empty-task GC keeps a surviving child under Root
   - `getTaskPath` strips the literal Root anchor; other ids render as path segments
   - creating a task under an unknown parent is rejected with `400`
-  - generic deletion rejects the literal `root`; deleting it through the task endpoint performs a DB-only Root reset
+  - generic deletion rejects the literal `root`; deleting it through the task endpoint exits Root (reset the tree, then rebuild its execution before answering)
 
 - `task-clear-command.spec.ts`
   - `/clear` keeps the stable WebAgent task id, history, and cwd; only the

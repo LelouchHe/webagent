@@ -481,13 +481,16 @@ For the literal `root` id, Root is not deleted: the request clears Root's own
 history/resources, deletes its descendant tree, retires the old ACP execution
 best-effort, and then rebuilds Root's execution before responding, so a client
 that reads Root next finds a live, idle task instead of one that is still being
-materialized. Root's agent is resolved first: when it cannot start the request
-fails with `503` and nothing is deleted, because a Root that cannot be rebuilt
-is not usable and clearing the tree around it would report an exit that did not
-happen. A session that fails *after* that commit leaves Root's empty execution
-slot, which the next use materializes. The Root row remains as the permanent
-tree anchor and keeps `parentId = null`. Prefix-shaped ids such as
-`root-forged` are ordinary tasks.
+materialized. Root's bound agent is resolved first: when it cannot start the
+request fails with `503` and nothing is deleted, because a Root that cannot be
+rebuilt is not usable and clearing the tree around it would report an exit that
+did not happen. Two cases have no rebuild to do and answer `200` without one:
+a Root that was never bound (its first prompt attaches an execution) and a Root
+whose recorded agent is no longer configured (an operation rotates it). A
+session that fails *after* the commit leaves Root's empty execution slot, which
+the next use materializes. The Root row remains as the permanent tree anchor
+and keeps `parentId = null`. Prefix-shaped ids such as `root-forged` are
+ordinary tasks.
 The response is `200`:
 
 ```json

@@ -91,7 +91,7 @@ configured agent.
 |---|---|---|
 | `agent_key` | TEXT NOT NULL | Configured agent id from `[agents.<id>]` (not derived from the command), identifying the launch context |
 | `agent_session_id` | TEXT NOT NULL | Opaque ACP session ID, or a reserved empty execution slot (see below) |
-| `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal sessions. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support. A Root reset rebuilds the execution before it returns; the binding keeps an empty `agent_session_id` only when that rebuild failed after the commit (or the Root was never bound), so the task stays visible and the execution is materialized lazily |
+| `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal sessions. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support. A Root reset rebuilds the execution before it returns, so the binding carries a real `agent_session_id` afterwards; it keeps an empty one only when that rebuild failed after the commit, in which case the next use materializes the execution. A Root that was never bound has no binding row at all |
 | `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
 PK: `(agent_key, agent_session_id)`. A partial unique index on
