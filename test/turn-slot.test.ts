@@ -1219,6 +1219,164 @@ describe("turn slot", () => {
     });
   });
 
+  describe("deletion entries", () => {
+    /**
+     * Deletion has exactly one production entry: the REST route. It gates on
+     * the same turn facts the slot reports, so a live turn is refused rather
+     * than silently dropped, and the release paths below run on an idle tree.
+     */
+    function deleteRequest(taskId: string) {
+      return makeRequest(port, "DELETE", `/api/v1/tasks/${taskId}`);
+    }
+
+    it("refuses a REST delete during a turn, then releases the slot on the next attempt", async () => {
+      const id = createTask("busy-delete");
+      tasks.beginAgentTurn(id, { origin: "delegated" });
+      const before = tasks.getTurn(id);
+      assert.ok(before);
+
+      const refused = await deleteRequest(id);
+
+      assert.equal(refused.status, 409);
+      assert.match(JSON.parse(refused.body).error, /Cancel active work/);
+      assert.ok(store.getTask(id), "a refused delete keeps the row");
+      const after = tasks.getTurn(id);
+      assert.ok(after, "a refused delete must not release the turn");
+      assert.equal(after.origin, "delegated");
+      assert.equal(after.promptId, before.promptId);
+
+      // The turn's own terminal frees the task; the same route now goes through.
+      finishPrompt(id);
+      await waitFor(() => tasks.getTurn(id) === null);
+      const deleted = await deleteRequest(id);
+
+      assert.equal(deleted.status, 200);
+      assert.equal(JSON.parse(deleted.body).reset, false);
+      assert.equal(store.getTask(id), undefined, "the row is gone");
+      assert.equal(tasks.getTurn(id), null, "no turn survives the delete");
+      assert.equal(
+        tasks.liveTasks.has(id),
+        false,
+        "the delete released the task's runtime",
+      );
+    });
+
+    it("deletes one task without touching another task's turn", async () => {
+      const victim = createTask("delete-victim");
+      const bystander = createTask("delete-bystander");
+      tasks.beginAgentTurn(bystander, { origin: "interactive" });
+      const bystanderTurn = tasks.getTurn(bystander);
+      assert.ok(bystanderTurn);
+
+      const res = await deleteRequest(victim);
+
+      assert.equal(res.status, 200);
+      assert.equal(store.getTask(victim), undefined);
+      assert.equal(tasks.getTurn(victim), null);
+      assert.equal(tasks.liveTasks.has(victim), false);
+      const survivor = tasks.getTurn(bystander);
+      assert.ok(survivor, "another task's turn must survive the delete");
+      assert.equal(survivor.origin, "interactive");
+      assert.equal(survivor.promptId, bystanderTurn.promptId);
+    });
+
+    it("releases every task a cascading delete removes", async () => {
+      const parent = createTask("cascade-parent");
+      const child = createTask("cascade-child", parent);
+      const bystander = createTask("cascade-bystander");
+      tasks.beginAgentTurn(bystander, { origin: "interactive" });
+
+      const res = await deleteRequest(parent);
+
+      assert.equal(res.status, 200);
+      for (const id of [parent, child]) {
+        assert.equal(store.getTask(id), undefined, `${id} row is gone`);
+        assert.equal(tasks.getTurn(id), null, `${id} has no turn`);
+        assert.equal(
+          tasks.liveTasks.has(id),
+          false,
+          `${id} runtime is released`,
+        );
+      }
+      assert.equal(tasks.getTurn(bystander)?.origin, "interactive");
+    });
+
+    it("refuses a cascading delete while a descendant holds a turn", async () => {
+      const parent = createTask("cascade-busy-parent");
+      const child = createTask("cascade-busy-child", parent);
+      tasks.beginAgentTurn(child, { origin: "delegated" });
+
+      const res = await deleteRequest(parent);
+
+      assert.equal(res.status, 409);
+      assert.match(JSON.parse(res.body).error, /cascade-busy-child/);
+      assert.ok(store.getTask(parent), "the parent survives");
+      assert.ok(store.getTask(child), "the child survives");
+      assert.equal(
+        tasks.getTurn(child)?.origin,
+        "delegated",
+        "the descendant's turn is untouched",
+      );
+    });
+
+    it("releases the whole subtree through the Root reset route", async () => {
+      const first = createTask("root-reset-first");
+      const second = createTask("root-reset-second", first);
+      const rootTaskId = store.rootTaskId;
+      // A reset of the whole tree is refused while anything is busy, so this
+      // asserts the release on the runtime bookkeeping every affected task owns.
+      const res = await deleteRequest(rootTaskId);
+
+      assert.equal(res.status, 200);
+      assert.equal(JSON.parse(res.body).reset, true);
+      for (const id of [first, second]) {
+        assert.equal(store.getTask(id), undefined, `${id} row is gone`);
+        assert.equal(tasks.getTurn(id), null, `${id} has no turn`);
+        assert.equal(
+          tasks.liveTasks.has(id),
+          false,
+          `${id} runtime is released`,
+        );
+      }
+      // Root keeps its own row as the tree anchor, and loses its runtime.
+      assert.ok(store.getTask(rootTaskId), "Root survives its reset");
+      assert.equal(tasks.getTurn(rootTaskId), null);
+      assert.equal(tasks.liveTasks.has(rootTaskId), false);
+    });
+
+    it("releases a task the empty-task sweep removes", async () => {
+      // The sweep only picks tasks with zero events older than
+      // `EMPTY_TASK_MIN_AGE_S`, and the age is a module constant, so the row is
+      // aged here to reach the sweep through its real entry: the next create.
+      const swept = createTask("empty-swept");
+      tasks.beginAgentTurn(swept, { origin: "delegated" });
+      assert.equal(store.getEvents(swept).length, 0, "the task is empty");
+      (
+        store as unknown as {
+          db: { prepare(sql: string): { run(...a: unknown[]): unknown } };
+        }
+      ).db
+        .prepare("UPDATE tasks SET created_at = ? WHERE id = ?")
+        .run(Date.now() - 2 * 60 * 1000, swept);
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        JSON.stringify({ cwd: tmpDir }),
+      );
+
+      assert.equal(res.status, 201);
+      assert.equal(
+        store.getTask(swept),
+        undefined,
+        "the sweep removed the row",
+      );
+      assert.equal(tasks.getTurn(swept), null, "the sweep released the slot");
+      assert.equal(tasks.liveTasks.has(swept), false);
+    });
+  });
+
   /**
    * Seed a real directed obligation on parent→child, with the delivery row
    * already settled so the idle edge does not start a delivery drain.
