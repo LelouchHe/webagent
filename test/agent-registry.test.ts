@@ -27,7 +27,10 @@ interface Fixture {
   dir: string;
   callsPath: string;
   /** Command for the next transport this registry creates. */
-  command: (mode: { delayMs?: number; initialize?: "fail" }) => string;
+  command: (mode: {
+    delayMs?: number;
+    initialize?: "fail" | "version";
+  }) => string;
   pids: () => number[];
 }
 
@@ -92,7 +95,7 @@ describe("agent registry single-flight", () => {
       store.close();
       rmSync(fx.dir, { recursive: true, force: true });
     });
-    let mode: { delayMs?: number; initialize?: "fail" } = {};
+    let mode: { delayMs?: number; initialize?: "fail" | "version" } = {};
     const registry = new AgentRegistry({
       agents: { "agent-a": { cmd: "placeholder" } },
       defaultAgentId: "agent-a",
@@ -154,6 +157,44 @@ describe("agent registry single-flight", () => {
     assert.equal(registry.adapterFor("agent-a").isAvailable(), false);
 
     // The same agent retries successfully on a fresh process.
+    setMode({});
+    const adapter = await registry.resolve("agent-a");
+    assert.equal(adapter.isAvailable(), true);
+    assert.equal(fx.pids().length, 2);
+    assert.ok(isAlive(fx.pids()[1]));
+  });
+
+  it("refuses a live agent that answers initialize with another protocol version", async () => {
+    const fx = fixture();
+    const { registry, setMode } = makeRegistry(fx);
+    setMode({ initialize: "version" });
+
+    // The agent completed the handshake, so the failure must name the version it
+    // actually speaks; a silent mis-read of its event stream is the outcome we
+    // are buying protection against.
+    await assert.rejects(
+      () => registry.resolve("agent-a"),
+      (error: Error) => {
+        assert.equal(error.name, "AgentUnavailableError");
+        assert.match(error.message, /protocol version 2/);
+        assert.match(error.message, /version 1/);
+        return true;
+      },
+    );
+
+    // Refusing the handshake must not leave a half-alive process or a usable
+    // bridge behind, exactly like a refused initialize.
+    await waitFor(() => fx.pids().length === 1);
+    const failedPid = fx.pids()[0];
+    await waitFor(() => !isAlive(failedPid), 5000);
+    const refused = registry.adapterFor("agent-a");
+    // `isAvailable` is `ready && !dead && connection !== null`, so this also
+    // says the bridge never reached ready; `bridge === null` says the refused
+    // transport was unbound instead of staying attached half-initialized.
+    assert.equal(refused.isAvailable(), false);
+    assert.equal(refused.bridge, null, "the refused transport was unbound");
+
+    // The same agent still starts on a fresh process once it agrees on v1.
     setMode({});
     const adapter = await registry.resolve("agent-a");
     assert.equal(adapter.isAvailable(), true);

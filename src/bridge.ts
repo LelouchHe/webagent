@@ -288,6 +288,21 @@ export class AgentBridge extends EventEmitter {
         },
       });
 
+      // `InitializeResponse.protocolVersion` is the only thing that says which
+      // protocol the event stream follows, and ACP's own doc comment tells the
+      // client to disconnect when it does not support the answer. Running on a
+      // version we cannot interpret would render and persist a stream we do not
+      // understand, which is far harder to diagnose than a failed start, so a
+      // mismatch takes the same path as a refused handshake: the catch below
+      // reaps the process and leaves this bridge not-ready.
+      if (init.protocolVersion !== acp.PROTOCOL_VERSION) {
+        throw new Error(
+          `The agent answered initialize with ACP protocol version ` +
+            `${String(init.protocolVersion)}, but this build speaks ` +
+            `version ${acp.PROTOCOL_VERSION} only.`,
+        );
+      }
+
       const agentInfo = init.agentInfo;
       this.sessionCapabilities =
         init.agentCapabilities?.sessionCapabilities ?? null;

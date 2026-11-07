@@ -35,6 +35,15 @@ const handlers = {
       // the start path, not left running with a half-open connection.
       throw new Error("initialize refused by the fixture");
     }
+    if (initializeMode === "version") {
+      // A live process that completes the handshake for a protocol we cannot
+      // interpret. It must be rejected the same way a refused handshake is.
+      return {
+        protocolVersion: acp.PROTOCOL_VERSION + 1,
+        agentInfo: { name: "multi-agent-fixture", version: "1" },
+        agentCapabilities: { loadSession: true },
+      };
+    }
     return {
       protocolVersion: acp.PROTOCOL_VERSION,
       agentInfo: { name: "multi-agent-fixture", version: "1" },
