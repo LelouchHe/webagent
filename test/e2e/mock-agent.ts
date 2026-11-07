@@ -45,6 +45,12 @@ const MOCK_LOAD_DELAY_MS = Number(process.argv[4] ?? 0);
  * after the load. A test can then tell "the client already knew this" from
  * "this arrived with the completed restore".
  */
+/**
+ * Optional delay before `session/new` answers. A real agent creates the session
+ * through MCP setup and its own startup, so a materialization is observably
+ * slow; tests about what a client sees *during* one need that latency to exist.
+ */
+const MOCK_NEW_DELAY_MS = Number(process.argv[5] ?? 0);
 const WARM_ONLY_EXTRA = MOCK_LOAD_DELAY_MS > 0;
 const RESUME_ONLY = MOCK_PROFILE === "resume-only";
 
@@ -637,6 +643,9 @@ class MockAgent implements Agent {
   }
 
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
+    if (MOCK_NEW_DELAY_MS > 0) {
+      await new Promise((done) => setTimeout(done, MOCK_NEW_DELAY_MS));
+    }
     const sessionId = randomUUID();
     if (params.mcpServers.length > 0) {
       this.mcpServersBySession.set(sessionId, params.mcpServers);
