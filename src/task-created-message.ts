@@ -1,4 +1,5 @@
 import { formatTaskReference } from "./shared/task-reference.ts";
+import { formatFieldBlock } from "./shared/field-block.ts";
 import type { AgentEvent } from "./types.ts";
 
 export interface TaskCreatedMessageInput {
@@ -39,13 +40,13 @@ export function buildTaskCreatedSystemMessage(
   input: TaskCreatedMessageInput,
 ): TaskCreatedSystemMessage {
   const title = `Created task ${formatTaskReference(input.taskTitle)}`;
-  const body = [
-    `Task ID: ${input.taskId}`,
-    `agent: ${input.agentId}`,
-    `cwd: ${input.cwd}`,
-    input.model ? `model: ${input.model}` : "model: inherited",
-    input.thinking ? `thinking: ${input.thinking}` : "thinking: inherited",
-  ].join("\n");
+  const body = formatFieldBlock([
+    { label: "Task ID", value: input.taskId },
+    { label: "agent", value: input.agentId },
+    { label: "cwd", value: input.cwd },
+    { label: "model", value: input.model ?? "", fallback: "inherited" },
+    { label: "thinking", value: input.thinking ?? "", fallback: "inherited" },
+  ]);
   return {
     title,
     body,

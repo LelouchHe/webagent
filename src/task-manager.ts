@@ -17,6 +17,7 @@ import {
 } from "./store.ts";
 import { shouldArm } from "./task-collaboration.ts";
 import { formatTaskReference } from "./shared/task-reference.ts";
+import { formatFieldBlock } from "./shared/field-block.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -646,11 +647,11 @@ function noticeBody(payload: {
   message: string;
   openingMessageId: string;
 }): string {
-  return [
-    `reason: ${payload.reason}`,
-    `message: ${payload.message}`,
-    `openingMessageId: ${payload.openingMessageId}`,
-  ].join("\n");
+  return formatFieldBlock([
+    { label: "reason", value: payload.reason },
+    { label: "message", value: payload.message },
+    { label: "openingMessageId", value: payload.openingMessageId },
+  ]);
 }
 
 /**
