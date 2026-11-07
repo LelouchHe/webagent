@@ -394,6 +394,95 @@ export interface ObligationHost {
  */
 export type ObligationSubmissionOutcome = DeliveryOutcome;
 
+/**
+ * Which party opened a turn: a person at that task's own UI, or the runtime / an
+ * agent that dispatched work into it. `origin` is a per-turn fact and nothing
+ * else: it is assigned by every real submission, it disappears with the turn,
+ * and it is never consulted by the permission path in this step.
+ */
+export type TurnOrigin = "delegated" | "interactive";
+
+/**
+ * Why a busy→idle edge happened. It only labels the unfinished-work recovery
+ * that edge schedules (and the log line that explains a skipped drain), so it
+ * is a closed set of the real call sites rather than a free-form string.
+ */
+export type RecoveryOrigin = "busy_idle" | "prompt_done" | "error";
+
+/**
+ * A task's one open turn, as read back from the turn slot.
+ *
+ * `kind` names what is running. Only `kind: "agent"` occupies the slot: a bash
+ * run is app-local, keeps its own handle in `runningBashProcs`, and never ends
+ * an ACP turn or holds the ACP prompt slot. `promptId` is the projection's
+ * value (`state.runtime.busy.promptId`) rather than a second copy, so the slot
+ * and the wire state cannot disagree.
+ */
+export interface Turn {
+  kind: "agent" | "bash";
+  promptId: string | null;
+  origin: TurnOrigin;
+  submissionId?: number;
+}
+
+/**
+ * A claimed delivery batch opens a delegated turn only when nothing in it was
+ * authored by the user. Classified per batch, never inherited from the turn
+ * that ran before it.
+ */
+export function turnOriginForDeliveryBatch(
+  sourceActors: readonly string[],
+): TurnOrigin {
+  return sourceActors.some((actor) => actor === "user")
+    ? "interactive"
+    : "delegated";
+}
+
+/**
+ * The membership half of the turn slot.
+ *
+ * `Set` is what other code and tests already read (`has`, `size`, iteration),
+ * so the slot keeps that shape and hangs the turn's metadata off it. Every
+ * write goes through here, which is why an entry and its `origin` cannot
+ * disagree: dropping the member drops the metadata, and adding one without an
+ * explicit origin means the task's own turn (`interactive`).
+ *
+ * Membership means "this task's ACP prompt is live right now", so it never
+ * outlives the task: deletion, cascade and GC all reach `releaseTaskRuntime`,
+ * which ends the turn, and a hard delete drops the runtime state entirely.
+ */
+class TurnSlotSet extends Set<string> {
+  private readonly turns: Map<string, OpenTurn>;
+
+  constructor(turns: Map<string, OpenTurn>) {
+    super();
+    this.turns = turns;
+  }
+
+  override add(taskId: string): this {
+    super.add(taskId);
+    if (!this.turns.has(taskId))
+      this.turns.set(taskId, { origin: "interactive" });
+    return this;
+  }
+
+  override delete(taskId: string): boolean {
+    this.turns.delete(taskId);
+    return super.delete(taskId);
+  }
+
+  override clear(): void {
+    this.turns.clear();
+    super.clear();
+  }
+}
+
+/** The metadata half of an open turn, keyed by task like `activePrompts`. */
+interface OpenTurn {
+  origin: TurnOrigin;
+  submissionId?: number;
+}
+
 /** Build the process-local obligation controller for one task runtime. */
 export function createObligationController(
   host: ObligationHost,
@@ -575,7 +664,20 @@ export class TaskManager implements ObligationHost {
   readonly restoringTasks = new Set<string>();
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
-  readonly activePrompts = new Set<string>();
+  /**
+   * Per-turn metadata of the slot. Declared before `activePrompts` because the
+   * membership set writes through it.
+   */
+  private readonly openTurns = new Map<string, OpenTurn>();
+  /**
+   * The task's open ACP turn(s): at most one per task, by construction.
+   *
+   * Production code opens and closes turns through `beginAgentTurn` and
+   * `endTurn` only. This `Set` is the *membership* half of the slot; the
+   * `openTurns` ledger is the metadata half, and the two are kept in step by
+   * `TurnSlotSet` so a membership write and its origin cannot disagree.
+   */
+  readonly activePrompts: Set<string> = new TurnSlotSet(this.openTurns);
   /** One microtask recovery per task while an unfinished-work retry is active. */
   private readonly pendingWorkRecoveries = new Set<string>();
   /** Claimed dispatch deliveries awaiting a bounded controller retry. */
@@ -627,6 +729,12 @@ export class TaskManager implements ObligationHost {
   readonly resettingTasks = new Set<string>();
   /** Barrier covering the asynchronous ACP replacement itself. */
   readonly rotatingTasks = new Set<string>();
+  /**
+   * The submission half of the slot: at most one reserved submission per task.
+   * Interactive prompts, the collaboration drain, closing reminders, and
+   * `/compact` all take it, so none of them can start a turn while another is
+   * about to.
+   */
   readonly pendingPromptSubmissions = new Map<string, number>();
   readonly cancelledPromptSubmissions = new Set<number>();
   readonly runningBashProcs = new Map<string, ChildProcess>();
@@ -1101,7 +1209,9 @@ export class TaskManager implements ObligationHost {
       if (idSet.has(id)) this.cancelledPromptSubmissions.add(submissionId);
     }
     for (const id of idSet) {
-      this.activePrompts.delete(id);
+      // The agent's process is gone, so its turns are too. Teardown projects
+      // busy itself below, hence `sync: false`.
+      this.endTurn(id, { sync: false });
       this.pendingPromptSubmissions.delete(id);
       // A bash run is app-local but the task is losing its runtime here. Ask
       // it to stop (with a bounded escalation) and keep the handle registered:
@@ -1893,7 +2003,10 @@ export class TaskManager implements ObligationHost {
     this.publishedWarmIdentity.delete(taskId);
     this.assistantBuffers.delete(taskId);
     this.thinkingBuffers.delete(taskId);
-    this.activePrompts.delete(taskId);
+    // `preserveRuntimeState` preserves the *state* ledger, not authorization:
+    // the execution this turn ran on is being replaced, so its turn ends here
+    // whether or not the projection is kept.
+    this.endTurn(taskId, { sync: false });
     this.obligations.abortTurn(taskId);
     const pendingSubmission = this.pendingPromptSubmissions.get(taskId);
     this.pendingPromptSubmissions.delete(taskId);
@@ -2962,7 +3075,7 @@ export class TaskManager implements ObligationHost {
     this.liveTasks.delete(id);
     this.assistantBuffers.delete(id);
     this.thinkingBuffers.delete(id);
-    this.activePrompts.delete(id);
+    this.endTurn(id, { sync: false });
     this.pendingWorkRecoveries.delete(id);
     this.lastAgentActivityAt.delete(id);
     this.pendingDispatchRetries.delete(id);
@@ -3109,6 +3222,81 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
+   * The task's open turn, or null when nothing holds its ACP prompt slot.
+   *
+   * This is the authorization-side read (P5-b): live means the slot has a
+   * member, and `origin` says who opened it. It is deliberately *not* the
+   * fail-open cleanup guard (`isCurrentPrompt`).
+   */
+  getTurn(taskId: string): Turn | null {
+    const open = this.openTurns.get(taskId);
+    if (!open || !this.activePrompts.has(taskId)) return null;
+    const busy = this.state.getState(taskId).runtime.busy;
+    return {
+      kind: "agent",
+      promptId: busy?.kind === "agent" ? (busy.promptId ?? null) : null,
+      origin: open.origin,
+      ...(open.submissionId === undefined
+        ? {}
+        : { submissionId: open.submissionId }),
+    };
+  }
+
+  /** True when the task's slot holds a live agent turn. */
+  hasAgentTurn(taskId: string): boolean {
+    return this.activePrompts.has(taskId);
+  }
+
+  /**
+   * Open the task's turn with an explicitly assigned origin, then project busy.
+   *
+   * Every real ACP submission calls this with its own origin; nothing inherits
+   * the previous turn's value. The prompt id is minted by `syncBusy` as before
+   * and read back by the caller, so there is still exactly one turn identity.
+   */
+  beginAgentTurn(
+    taskId: string,
+    opts: { origin: TurnOrigin; submissionId?: number },
+  ): void {
+    this.openTurns.set(taskId, {
+      origin: opts.origin,
+      ...(opts.submissionId === undefined
+        ? {}
+        : { submissionId: opts.submissionId }),
+    });
+    this.activePrompts.add(taskId);
+    this.syncBusy(taskId);
+  }
+
+  /**
+   * Close the task's turn: drop its origin, release membership, re-project busy.
+   *
+   * This is the one exit. `promptId` is the pre-existing late-cleanup guard and
+   * keeps its exact semantics (`isCurrentPrompt`): a superseded turn whose
+   * `finally` lands after the next turn opened must not release that new turn.
+   * An absent id means "the caller knows this path is the owner" (teardowns).
+   *
+   * `sync: false` is for callers that must project busy themselves — the
+   * teardown paths reset or delete the whole runtime, and `/compact` closes its
+   * own two busy sources in one patch.
+   */
+  endTurn(
+    taskId: string,
+    opts?: {
+      promptId?: string;
+      recoveryOrigin?: RecoveryOrigin;
+      sync?: boolean;
+    },
+  ): boolean {
+    if (!this.isCurrentPrompt(taskId, opts?.promptId)) return false;
+    const wasOpen = this.activePrompts.delete(taskId);
+    if (opts?.sync !== false) {
+      this.syncBusy(taskId, undefined, opts?.recoveryOrigin ?? "busy_idle");
+    }
+    return wasOpen;
+  }
+
+  /**
    * True when `promptId` still names the task's live turn. A turn can
    * outlive its own supertask — cancelling one and immediately starting
    * another interleaves them — and its terminal work must not clear state
@@ -3125,20 +3313,38 @@ export class TaskManager implements ObligationHost {
    * Reserve the task's one prompt submission slot.
    *
    * `allowRestoring` is for the prompt route, which waits for the restore a
-   * read started instead of reporting it as busy. The slot is still exclusive:
-   * a second submission, a live turn, bash, or a rotation refuses.
+   * read started instead of reporting it as busy. `allowBash` is for the
+   * runtime submissions (collaboration drain, closing reminder), which run
+   * beside a bash command by design: bash is not an ACP turn and does not
+   * occupy the ACP prompt slot. The slot is otherwise exclusive: a second
+   * submission, a live turn, or a rotation refuses.
    */
   reservePromptSubmission(
     taskId: string,
-    opts?: { allowRestoring?: boolean },
+    opts?: { allowRestoring?: boolean; allowBash?: boolean },
   ): number | null {
     // The prompt route waits for the restore a read started, so the restore
     // alone must not refuse the slot; everything else still refuses.
     const includeRestoring = opts?.allowRestoring !== true;
-    if (this.busyKindFor(taskId, { includeRestoring }) !== null) return null;
+    const busyKind = this.busyKindFor(taskId, { includeRestoring });
+    if (busyKind !== null && !(busyKind === "bash" && opts?.allowBash)) {
+      return null;
+    }
     const submissionId = ++this.nextPromptSubmissionNumber;
     this.pendingPromptSubmissions.set(taskId, submissionId);
     return submissionId;
+  }
+
+  /**
+   * True while this submission still owns the slot it reserved. A cancel,
+   * reload, rotation, or a newer reservation drops it; a continuation that
+   * resumes after one of those must not submit.
+   */
+  ownsPromptReservation(taskId: string, submissionId: number): boolean {
+    return (
+      this.pendingPromptSubmissions.get(taskId) === submissionId &&
+      !this.cancelledPromptSubmissions.has(submissionId)
+    );
   }
 
   cancelPendingPromptSubmission(taskId: string): boolean {
@@ -3232,8 +3438,9 @@ export class TaskManager implements ObligationHost {
 
   /**
    * Recompute busy from active prompts/bash procs and patch the state manager.
-   * Call this immediately after mutating activePrompts / runningBashProcs so
-   * the frontend snapshot stays in sync via `state_patch` broadcast.
+   * Call this immediately after mutating the turn slot / runningBashProcs so
+   * the frontend snapshot stays in sync via `state_patch` broadcast. It stays a
+   * pure projection: it never decides who owns the turn.
    *
    * `promptId` attaches to an agent busy transition (ignored otherwise). If
    * omitted when staying agent-busy, the existing promptId is preserved.
@@ -3241,7 +3448,7 @@ export class TaskManager implements ObligationHost {
   syncBusy(
     taskId: string,
     promptId?: string | null,
-    recoveryOrigin = "busy_idle",
+    recoveryOrigin: RecoveryOrigin = "busy_idle",
   ): void {
     const kind = this.getBusyKind(taskId);
     const current = this.state.getState(taskId).runtime.busy;
@@ -3343,7 +3550,7 @@ export class TaskManager implements ObligationHost {
   recoverUnfinishedWork(
     bridge: DeliveryBridge,
     taskId: string,
-    origin: string,
+    origin: RecoveryOrigin,
   ): void {
     this.attachExecutionBridge(bridge);
     if (this.getGateBusyKind(taskId) === "agent") return;
@@ -3359,7 +3566,10 @@ export class TaskManager implements ObligationHost {
     this.scheduleUnfinishedWorkRecovery(taskId, origin);
   }
 
-  private scheduleUnfinishedWorkRecovery(taskId: string, origin: string): void {
+  private scheduleUnfinishedWorkRecovery(
+    taskId: string,
+    origin: RecoveryOrigin,
+  ): void {
     if (this.pendingWorkRecoveries.has(taskId)) return;
     if (
       !this.store.getTask(taskId) ||
@@ -3555,16 +3765,34 @@ export class TaskManager implements ObligationHost {
     if (!this.isExecutionAvailable(bridge)) {
       return { status: "deferred", reason: "agent_unavailable" };
     }
+    // Submission protocol: take the ACP prompt slot here, in one synchronous
+    // admission check over every busy source, so an interactive submit or a
+    // collaboration drain that raced the transport resolution above either
+    // won the slot (this reminder defers) or lost it to this reservation.
+    // bash is allowed: it does not occupy this slot.
+    const submissionId = this.reservePromptSubmission(task.id, {
+      allowBash: true,
+    });
+    if (submissionId === null) {
+      return { status: "deferred", reason: "busy" };
+    }
     const text = handoffReminderText();
-    // Single ownership of the turn: one `add`, one guarded release in
-    // `finally`. Every outcome below — resume failure, replaced execution,
-    // unavailable agent, delivered, rejected — leaves the task idle, so a
-    // deferral can never strand `busy=agent` and block later submissions.
-    this.activePrompts.add(task.id);
-    this.syncBusy(task.id);
-    const promptId =
-      this.state.getState(task.id).runtime.busy?.promptId ?? undefined;
+    let promptId: string | undefined;
+    let turnOpen = false;
     try {
+      // Single ownership of the turn: one open, one guarded close below. Every
+      // outcome — resume failure, replaced execution, unavailable agent,
+      // delivered, rejected — leaves the task idle, so a deferral can never
+      // strand `busy=agent` and block later submissions.
+      //
+      // The reservation→active transfer is synchronous: once it runs, this
+      // attempt holds the ACP prompt slot continuously instead of splitting
+      // its claim across two windows.
+      this.releasePromptSubmission(task.id, submissionId, false);
+      this.beginAgentTurn(task.id, { origin: "delegated", submissionId });
+      turnOpen = true;
+      promptId =
+        this.state.getState(task.id).runtime.busy?.promptId ?? undefined;
       try {
         await this.ensureResumed(bridge, task.id);
       } catch (error) {
@@ -3573,6 +3801,13 @@ export class TaskManager implements ObligationHost {
           error,
         });
         return { status: "deferred", reason: "resume_failed" };
+      }
+      // The slot is held across the resume, so ownership is re-checked before
+      // the one call that reaches ACP: a cancel, reload, or rotation during the
+      // await invalidates this attempt rather than letting it submit into the
+      // replacement execution.
+      if (!promptId || !this.isTurnRunning(task.id, promptId)) {
+        return { status: "deferred", reason: "turn_superseded" };
       }
       const lease = this.currentLease(task.id);
       await bridge.prompt(task.id, text, undefined, promptId);
@@ -3613,12 +3848,13 @@ export class TaskManager implements ObligationHost {
       });
       return { status: "failed", reason: "prompt_rejected" };
     } finally {
-      // Release only while this submission still owns the turn: a replacement
-      // prompt keeps its own busy marker.
-      if (this.isCurrentPrompt(task.id, promptId)) {
-        this.activePrompts.delete(task.id);
-        this.syncBusy(task.id);
-      }
+      // Release only the submission this attempt still holds; after the
+      // synchronous transfer it is already gone, and a replacement keeps its
+      // own reservation.
+      this.releasePromptSubmission(task.id, submissionId, false);
+      // Same late-cleanup guard as before: a superseded turn's failure must not
+      // close the turn that replaced it.
+      if (turnOpen) this.endTurn(task.id, { promptId });
     }
   }
 
@@ -3781,6 +4017,22 @@ export class TaskManager implements ObligationHost {
       });
       return false;
     }
+    // Submission protocol: the transport resolution above may have awaited (it
+    // can start an agent or take over a binding), so the admission check is
+    // repeated here in one synchronous step that also *takes* the ACP prompt
+    // slot. An interactive submit that raced the resolution either already
+    // holds the slot (this drain stops) or will find it taken. bash is allowed
+    // through: it runs outside the ACP session and does not occupy this slot.
+    const submissionId = this.reservePromptSubmission(taskId, {
+      allowBash: true,
+    });
+    if (submissionId === null) {
+      slog.debug("collaboration delivery skipped", {
+        taskId: taskId.slice(0, 8),
+        reason: "submission_taken",
+      });
+      return false;
+    }
     this.drainingCollaborationTasks.add(taskId);
     this.syncBusy(taskId);
     const resumeAttempt = this.beginResumeAttempt(taskId);
@@ -3789,6 +4041,16 @@ export class TaskManager implements ObligationHost {
         await this.ensureResumed(bridge, taskId);
       } catch (error) {
         this.failResumeAttempt(taskId, resumeAttempt, error);
+        return false;
+      }
+      // The slot is held across the resume; a cancel, reload, or rotation
+      // during it invalidates this attempt, so ownership is re-checked before
+      // any delivery is claimed or submitted.
+      if (!this.ownsPromptReservation(taskId, submissionId)) {
+        slog.debug("collaboration delivery skipped", {
+          taskId: taskId.slice(0, 8),
+          reason: "submission_lost",
+        });
         return false;
       }
       const deliveries = this.store.claimQueuedDeliveries(taskId);
@@ -3800,6 +4062,7 @@ export class TaskManager implements ObligationHost {
       const qualifyingSources = new Set<string>();
       const qualifyingDeliveryIds: string[] = [];
       const allDeliveryIds = deliveries.map((delivery) => delivery.id);
+      const sourceActors: string[] = [];
       const entries = deliveries.map((delivery) => {
         const message = this.store.getCollaborationMessage(delivery.message_id);
         if (!message) {
@@ -3807,6 +4070,7 @@ export class TaskManager implements ObligationHost {
             `Collaboration message missing: ${delivery.message_id}`,
           );
         }
+        sourceActors.push(message.source_actor);
         const source = this.store.getTaskIncludingDeleted(
           message.source_task_id,
         );
@@ -3836,9 +4100,17 @@ export class TaskManager implements ObligationHost {
         entries.join("\n\n"),
       );
       this.store.updateTaskWorkflowStatus(taskId, "running");
+      // The reservation→active transfer, and the claim to the prompt itself,
+      // stay in this synchronous block: no awaited step may run between them.
+      this.releasePromptSubmission(taskId, submissionId, false);
       this.drainingCollaborationTasks.delete(taskId);
-      this.activePrompts.add(taskId);
-      this.syncBusy(taskId);
+      this.beginAgentTurn(taskId, {
+        // Classified from the batch this drain actually claimed, never from the
+        // turn that ran before it: one user-authored row makes it the user's
+        // turn, and an all-agent/system batch is the runtime's own turn.
+        origin: turnOriginForDeliveryBatch(sourceActors),
+        submissionId,
+      });
       const lease = this.currentLease(taskId);
       const promptId =
         this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
@@ -3878,11 +4150,10 @@ export class TaskManager implements ObligationHost {
           this.obligations.markDeliveryFailed(sourceTaskId, taskId, promptId);
         }
         if (!this.isCurrentPrompt(taskId, promptId)) return;
-        this.activePrompts.delete(taskId);
         // Same attribution as an ACP error event: a rejected delivery prompt
         // must not leave the target marked running.
         this.store.updateTaskWorkflowStatus(taskId, "idle");
-        this.syncBusy(taskId);
+        this.endTurn(taskId, { promptId });
       };
       void promptPromise.then(() => {
         // A rotation truncated this transport; its late success must not
@@ -3908,6 +4179,9 @@ export class TaskManager implements ObligationHost {
       });
       return false;
     } finally {
+      // Release this attempt's slot before the drain marker so the busy→idle
+      // edge still schedules the bounded unfinished-work recovery exactly once.
+      this.releasePromptSubmission(taskId, submissionId, false);
       if (this.drainingCollaborationTasks.delete(taskId)) this.syncBusy(taskId);
     }
   }

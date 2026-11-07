@@ -122,6 +122,18 @@ still names the operator in share vocabulary (`owner_label`, `owner_prefs`) and
 in the ACP sense of "the agent owns this session" — a real, non-transferable
 relationship.
 
+## Turn vocabulary
+
+The runtime facts about one ACP prompt submission. These name internal
+bookkeeping and are never product copy.
+
+| Term | Means |
+|---|---|
+| **turn** | One real ACP prompt submission and the work it drives, from `bridge.prompt` to its terminator or its failed `finally`. Not a stored entity, and not a Task. |
+| **turn origin** | Who opened that turn: `interactive` (a person at this task's UI, `/compact`, the beta quick prompt) or `delegated` (an agent-authoured delivery batch, or a runtime closing reminder). It belongs to one turn and disappears with it. |
+| **turn slot** | The one place a task's open turn lives: membership plus its origin. There is at most one per task, which is why "which turn is running" is not derived from scattered sets. `state.runtime.busy` stays a projection of it. |
+| **ACP prompt slot** | The exclusive right to submit one prompt to a task's execution. Interactive prompts, the collaboration drain, the closing reminder, and `/compact` all acquire it before submitting. `bash` is not an exception to it: bash never submits a prompt at all — it is an app-local child process that runs beside the ACP session, so it neither takes nor blocks this slot. |
+
 ## Prose and UI rules
 
 - User-facing copy, slash-help text, README, and `docs/*.md` describe the

@@ -1233,7 +1233,7 @@ export function createRequestHandler(
         }
         // Cancellation addresses the task's own execution: the transport that
         // is driving its prompt, never a caller-selected process.
-        const bridge = tasks.activePrompts.has(taskId)
+        const bridge = tasks.hasAgentTurn(taskId)
           ? (tasks.existingTaskExecution(taskId)?.bridge ?? null)
           : null;
         let result;
@@ -1789,9 +1789,13 @@ export function createRequestHandler(
         sseManager.broadcast(userMsgEvent);
 
         // Fire prompt asynchronously (don't await — response is 202)
+        // The reservation→active transfer is synchronous: from here this route
+        // holds the task's ACP prompt slot until the turn ends.
         tasks.releasePromptSubmission(taskId, promptSubmissionId, false);
-        tasks.activePrompts.add(taskId);
-        tasks.syncBusy(taskId);
+        tasks.beginAgentTurn(taskId, {
+          origin: "interactive",
+          submissionId: promptSubmissionId,
+        });
         const promptId =
           tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
         const promptPromise = bridge.prompt(
@@ -1818,9 +1822,7 @@ export function createRequestHandler(
           .finally(() => {
             // A turn that outlived its own supersession must not clear the
             // busy state of the turn that replaced it.
-            if (!tasks.isCurrentPrompt(taskId, promptId)) return;
-            tasks.activePrompts.delete(taskId);
-            tasks.syncBusy(taskId);
+            tasks.endTurn(taskId, { promptId });
           });
 
         const acceptedBody = { status: "accepted" };
@@ -2393,8 +2395,20 @@ export function createRequestHandler(
 
         tasks.compactingTasks.add(taskId);
         tasks.releasePromptSubmission(taskId, submissionId, false);
-        tasks.activePrompts.add(taskId);
-        tasks.syncBusy(taskId);
+        // `/compact` reaches the same ACP prompt slot as a normal prompt because
+        // it submits a silent prompt (`promptForText`) to the task's execution,
+        // so it holds a turn of its own — and `promptForText` never emits a turn
+        // terminator, so this path must close it in its own `finally`.
+        // `/clear` is the opposite case: it submits no prompt, it replaces the
+        // execution, which *ends* the turn (`resetTaskRuntime`) instead of
+        // opening one. It still leaves a transcript record (`agent_rotation`
+        // system message, "history and outstanding work are unchanged"); the
+        // agent recovers the earlier turns through the MCP history tools, which
+        // the new session is told about at `initialize`, not through a prompt.
+        tasks.beginAgentTurn(taskId, {
+          origin: "interactive",
+          submissionId,
+        });
         const previousAgentSessionId = agentSessionId;
 
         void (async () => {
@@ -2487,7 +2501,9 @@ export function createRequestHandler(
               message,
             });
           } finally {
-            tasks.activePrompts.delete(taskId);
+            // Close the turn here: compaction's busy sources are released in one
+            // patch, so the slot itself must not re-project busy first.
+            tasks.endTurn(taskId, { sync: false });
             tasks.compactingTasks.delete(taskId);
             tasks.syncBusy(taskId);
           }
@@ -3648,17 +3664,14 @@ export function createRequestHandler(
         json(res, HTTP_STATUS.ACCEPTED, { taskId, streamUrl });
 
         // Fire-and-forget: send the prompt asynchronously, tracking busy state
-        tasks.activePrompts.add(taskId);
-        tasks.syncBusy(taskId);
+        tasks.beginAgentTurn(taskId, { origin: "interactive" });
         const betaPromptId =
           tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
         bridge
           .prompt(taskId, text, undefined, betaPromptId)
           .catch(() => {})
           .finally(() => {
-            if (!tasks.isCurrentPrompt(taskId, betaPromptId)) return;
-            tasks.activePrompts.delete(taskId);
-            tasks.syncBusy(taskId);
+            tasks.endTurn(taskId, { promptId: betaPromptId });
           });
         return;
       }

@@ -391,8 +391,12 @@ function handlePromptDone(
   const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
   const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
   if (isCurrent) {
-    tasks.activePrompts.delete(event.taskId);
-    tasks.syncBusy(event.taskId, undefined, "prompt_done");
+    // One exit for the turn: it clears the slot's origin and membership, then
+    // re-projects busy so the idle edge schedules recovery.
+    tasks.endTurn(event.taskId, {
+      promptId: event.promptId,
+      recoveryOrigin: "prompt_done",
+    });
     tasks.recoverUnfinishedWork(bridge, event.taskId, "prompt_done");
     tasks.onTargetTurnEnded(event.taskId, event.promptId);
   } else {
@@ -434,8 +438,10 @@ function handleError(
     const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
     const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
     if (isCurrent) {
-      tasks.activePrompts.delete(event.taskId);
-      tasks.syncBusy(event.taskId, undefined, "error");
+      tasks.endTurn(event.taskId, {
+        promptId: event.promptId,
+        recoveryOrigin: "error",
+      });
       tasks.recoverUnfinishedWork(bridge, taskId, "error");
       tasks.onTargetTurnEnded(taskId, event.promptId);
     } else {
