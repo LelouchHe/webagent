@@ -88,7 +88,6 @@ import type {
   StoredEvent,
   ToolContentItem,
 } from "../../src/types.ts";
-import { formatTaskReference } from "../../src/shared/task-reference.ts";
 import "./plan-panel.ts";
 import { OrphanToolUpdateCache } from "./orphan-tool-updates.ts";
 
@@ -440,21 +439,6 @@ function cancelPendingTurnUI() {
   }
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();
-}
-
-/**
- * Title for a collaboration message in any projected timeline. Labels are
- * server-enriched at creation; missing labels fall back to short ids.
- */
-function collaborationTitle(msg: {
-  sourceTaskId?: string;
-  sourceLabel?: string;
-  targetTaskId?: string;
-  targetLabel?: string;
-}): string {
-  const label = (id: string | undefined, fallback?: string) =>
-    fallback ?? (id ? id.slice(0, 8) : "?");
-  return `${formatTaskReference(label(msg.sourceTaskId, msg.sourceLabel))} sent ${formatTaskReference(label(msg.targetTaskId, msg.targetLabel))}`;
 }
 
 function promptStopNotice(stopReason: unknown): string | null {
@@ -2612,16 +2596,6 @@ export function handleEvent(msg: AgentEvent) {
     case "system_message":
       if (msg.taskId === state.taskId) {
         addSystemMessage({ title: msg.title, body: msg.body });
-        scrollToBottom();
-      }
-      break;
-
-    case "collaboration_message":
-      if (msg.taskId === state.taskId) {
-        addSystemMessage({
-          title: collaborationTitle(msg),
-          body: msg.body,
-        });
         scrollToBottom();
       }
       break;

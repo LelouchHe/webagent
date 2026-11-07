@@ -358,18 +358,6 @@ export type AgentEvent =
       role?: "source" | "target" | "supervisor";
     }
   | {
-      type: "collaboration_message";
-      taskId: string;
-      messageId: string;
-      sourceTaskId: string;
-      /** Task title at send time; short id when untitled. */
-      sourceLabel?: string;
-      targetTaskId: string;
-      targetLabel?: string;
-      role: "source" | "target" | "supervisor";
-      body: string;
-    }
-  | {
       type: "permission_response";
       taskId?: string;
       requestId: string;

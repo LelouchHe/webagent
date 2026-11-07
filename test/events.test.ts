@@ -2659,62 +2659,6 @@ describe("events", () => {
         );
       });
 
-      it("renders collaboration events as title and body", () => {
-        state.taskId = "s1";
-        events.handleEvent({
-          type: "collaboration_message",
-          taskId: "s1",
-          messageId: "m1",
-          sourceTaskId: "s0",
-          sourceLabel: "what",
-          targetTaskId: "s1",
-          targetLabel: "child-a",
-          role: "target",
-          body: "please review",
-        });
-        events.handleEvent({
-          type: "collaboration_message",
-          taskId: "s2",
-          messageId: "m1",
-          sourceTaskId: "s0",
-          sourceLabel: "what",
-          targetTaskId: "s1",
-          targetLabel: "child-a",
-          role: "supervisor",
-          body: "please review",
-        });
-        assert.equal(dom.messages.children.length, 1);
-        assert.equal(
-          dom.messages.querySelector("summary")?.textContent,
-          "@what sent @child-a",
-        );
-        assert.equal(
-          dom.messages.querySelector(".system-msg-body")?.textContent,
-          "please review",
-        );
-      });
-
-      it("falls back to short ids when labels are missing", () => {
-        state.taskId = "s1";
-        events.handleEvent({
-          type: "collaboration_message",
-          taskId: "s1",
-          messageId: "m1",
-          sourceTaskId: "s0",
-          targetTaskId: "s1",
-          role: "target",
-          body: "please review",
-        });
-        assert.equal(
-          dom.messages.querySelector("summary")?.textContent,
-          "@s0 sent @s1",
-        );
-        assert.equal(
-          dom.messages.querySelector(".system-msg-body")?.textContent,
-          "please review",
-        );
-      });
-
       it("replays a persisted collaboration system row", () => {
         events.replayEvent(
           "system_message",
