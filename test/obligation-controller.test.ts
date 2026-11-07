@@ -718,6 +718,68 @@ describe("ObligationController", () => {
     assert.deepEqual(h.notices, []);
   });
 
+  it("does not reopen a settled edge when its turn is cancelled", async () => {
+    const h = makeController();
+    const obligation = armOpen(h);
+    settleNow(h);
+    assert.equal(obligation.state, "settled");
+
+    // A cancellation after the account arrived only means "do not nudge"; it
+    // must not rewrite the terminal record as open.
+    h.controller.onTargetTurnEnded("child", undefined, { cancelled: true });
+    assert.equal(obligation.state, "settled");
+
+    // A later user message is not a new dispatch: the drain hands it to the
+    // edge, but the settled debt must not come back and be reminded for work
+    // the target already accounted for.
+    h.controller.markDelivered("parent", "child");
+    h.controller.onTargetTurnEnded("child", undefined);
+    await tick(h, AGE_ADVISORY_MS);
+
+    assert.equal(obligation.state, "settled");
+    assert.deepEqual(h.submissions, []);
+    assert.equal(h.notices.length, 0);
+  });
+
+  it("lifts the silence when a hand-off arrives after a rotation", async () => {
+    const h = makeController();
+    const obligation = armDirect(h);
+    h.controller.markDelivered("parent", "child");
+    h.controller.onTargetTurnEnded("child", undefined, { cancelled: true });
+    h.controller.noteExecutionRotated("child");
+    // The rotation keeps the silence and moves the record to `reminder_due`.
+    assert.equal(obligation.quiet, true);
+    assert.equal(obligation.state, "reminder_due");
+
+    // New work really arrives on this edge: the drain handed a message over.
+    h.controller.markDelivered("parent", "child");
+    assert.equal(obligation.quiet, false);
+    assert.equal(obligation.state, "reminder_due");
+
+    // The closing reminder and the advisory are live again.
+    await tick(h);
+    assert.equal(h.submissions.length, 1);
+    h.busy.add("child");
+    await tick(h, AGE_ADVISORY_MS);
+    assert.equal(h.notices.length, 1);
+    assert.equal(h.notices[0].reason, "still_waiting");
+  });
+
+  it("stays quiet after a rotation when no new work arrives", async () => {
+    const h = makeController();
+    const obligation = armDirect(h);
+    h.controller.markDelivered("parent", "child");
+    h.controller.onTargetTurnEnded("child", undefined, { cancelled: true });
+    h.controller.noteExecutionRotated("child");
+
+    // A rotation is not new work: the edge stays silent with no timer.
+    await tick(h, AGE_ADVISORY_MS);
+    assert.equal(obligation.quiet, true);
+    assert.deepEqual(h.submissions, []);
+    assert.equal(h.notices.length, 0);
+    assert.deepEqual(h.clock.pendingDeadlineTimes(), []);
+  });
+
   it("does not settle without an active turn", async () => {
     const h = makeController();
     const obligation = armOpen(h);

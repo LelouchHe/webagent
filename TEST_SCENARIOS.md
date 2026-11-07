@@ -436,6 +436,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a cancelled boundary quiets the edge and nothing gets through: hours later there is no closing reminder, no `still_waiting` advisory (neither the queued-dispatch nor the age form), no notice, and no armed deadline at all; a timer that was already armed is dropped at dispatch time, and a rotation is not new work (no timer, no sound)
   - new work on the same edge lifts the silence and restarts the clocks: a fresh dispatch arm + hand-off produces the age advisory only after a full `AGE_ADVISORY_MS` from that arrival, and its closing reminder follows once the target is idle; another task's edge is unaffected and keeps its own reminder
   - a quiet record still settles on a late typed account, then stays silent
+  - a cancellation never reopens a terminal record: a settled edge stays `settled` (not `open`/quiet), and a later user message handed to it plus a normal unaccounted end produces no reminder and no notice
+  - a hand-off lifts the silence from any state, including `reminder_due` after a rotation (the reminder and the advisory run again); a rotation with no new work leaves the edge quiet with no timer
 
 - `test/turn-slot.test.ts`
   - one turn slot per task, and every real submission assigns its own origin: the interactive route, `/compact`, and the beta quick prompt are `interactive`; a collaboration drain is `delegated` for an all-agent/system batch and `interactive` for a batch containing one user message; a closing reminder is `delegated`. Nothing inherits the previous turn's value

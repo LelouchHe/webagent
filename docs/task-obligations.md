@@ -297,7 +297,13 @@ Quiet is one rule for the whole edge, not one exception per nudge: a quiet
 record produces **nothing outward** — no closing reminder, no dispatch advisory,
 no age advisory, no notice of any kind — and holds **no timer**. It is not a
 terminal state: the record still settles when a typed account arrives, and
-`task_list` / `task_query` read it as usual. The rule is enforced at the three
+`task_list` / `task_query` read it as usual.
+
+Cancellation only stops nudges; it never reopens a record. `settled` and
+`unresolved` are final, so a cancellation that arrives after the account (the
+same turn, or a later interactive turn with no new dispatch) leaves the terminal
+state untouched. Rewriting it as `open` would let a later unarmed user message
+revive debt the target already accounted for. The rule is enforced at the three
 shared outlets, so a future nudge inherits it without re-deciding:
 
 - **Scheduling:** a quiet record contributes no deadline, so no timer is armed.
@@ -306,8 +312,11 @@ shared outlets, so a future nudge inherits it without re-deciding:
   quiet.
 
 New work on the same edge — a fresh dispatch arm or a hand-off — lifts the
-silence and restarts every clock from that arrival. Edges are independent: one
-edge going quiet never affects another task's edge.
+silence. A hand-off does so from **any** state, including `reminder_due` after a
+rotation: the delivery was really handed to the target, so the release point
+must be reachable, or a new delivery on a rotated quiet edge would stay silent
+forever. A fresh dispatch arm also restarts every clock from that arrival. Edges
+are independent: one edge going quiet never affects another task's edge.
 
 The rule covers a **closing-reminder turn itself**: if the turn submitting a
 reminder is cancelled, that submission is fenced as `cancelled` — it is not

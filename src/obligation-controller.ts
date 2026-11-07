@@ -129,6 +129,12 @@ export interface ObligationView {
   readonly waitingSince?: number;
   /** True when the current wait is a busy/failure retry, not a reminder delay. */
   readonly retrying: boolean;
+  /**
+   * The edge is silent: its boundary ended in a cancellation and no new work
+   * has arrived since. A quiet record emits nothing and holds no timer, but it
+   * is not terminal and settles normally.
+   */
+  readonly quiet: boolean;
   /** Advisory receipt: the queued-dispatch advisory is no longer pending. */
   readonly dispatchAdvised: boolean;
   /** Advisory receipt: the age advisory has been emitted. */
@@ -835,9 +841,16 @@ export class ObligationController {
     const key = edgeKey(fact.sourceTaskId, fact.targetTaskId);
     const obligation = this.active.get(key);
     if (!obligation) return;
+    // A terminal record is never reopened by a hand-off, quiet or not.
+    if (isTerminal(obligation.state)) return;
+    // `quiet` records are accepted from any state: a hand-off is new work
+    // arriving on the edge, and a rotation leaves the record in `reminder_due`,
+    // so requiring `open` here would make the release point unreachable and
+    // silence the new work forever. Non-quiet records keep the original gate.
     if (
       obligation.state !== "awaiting_delivery" &&
-      obligation.state !== "open"
+      obligation.state !== "open" &&
+      !obligation.quiet
     ) {
       return;
     }
@@ -1321,6 +1334,11 @@ export class ObligationController {
    * Settlement is untouched — a late account still settles a quiet record.
    */
   private suspend(obligation: ObligationRecord): void {
+    // A cancellation can arrive after this edge already settled or exhausted.
+    // It means "do not nudge", never "reopen the debt": a terminal record is
+    // final, and rewriting it as `open + quiet` would let a later (unarmed) user
+    // message revive work the target has already accounted for.
+    if (isTerminal(obligation.state)) return;
     obligation.quiet = true;
     obligation.state = "open";
     obligation.waitingSince = undefined;
