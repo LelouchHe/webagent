@@ -85,6 +85,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/agent-registry.test.ts` (real child processes with delayed / refused initialize)
   - a half-initialized bridge is not available and concurrent demand shares one process
   - a live process that refuses `initialize` is cleaned up (its pid is gone) and the same agent retries successfully
+  - a live process that answers `initialize` with another protocol version is refused with the version it reported, reaped, left not-ready, and the same agent retries successfully once it speaks v1
   - a reload beside a start is refused, a resolve during a reload waits, and one process exists throughout
   - `shutdownAll` reaches a transport whose adapter was already unbound
 
