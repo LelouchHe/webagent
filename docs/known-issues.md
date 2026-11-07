@@ -123,12 +123,31 @@ time. An entry without a "closing condition" is a wish, not an issue.
   real-device reproduction and a focus strategy that respects the platform
   gesture requirement.
 
-## Planned work recorded elsewhere
+## Deferred features (design decided, not scheduled)
 
-- **`task_attach`** — an agent's non-image output has no automatic channel to a
-  person. The contract (reuse the attachment pipeline, no path sandbox, no
-  quota, preview widened to `text/*` and Markdown, one direction only) is in the
-  private plan; it is not a defect and is not covered by this file.
+- **An agent's output file has no automatic channel to a person — postponed,
+  and the design changed.** The file-serving API already exists
+  (`GET /api/v1/files/{info,list,content}` with a signed URL and an MIME-aware
+  `Content-Disposition`: small images inline, everything else as a download),
+  and `/view` is just its UI. So copying bytes into the attachment pipeline
+  would add storage and quota pressure for a file that is already on disk.
+
+  The chosen direction is a **reference**, not a copy: make a path in the
+  transcript render as a link that opens `/view` for a preview or
+  `files/content` for a download. Two candidate entry points — (a) egress-time
+  recognition of paths in rendered text, verified with `files/info`, which needs
+  no protocol change and works for agents that ignore `mcpServers`; (b) an
+  explicit "this is my deliverable" declaration, which needs either the ACP
+  `resource_link` content block (deferred) or a **session-scoped** tool.
+
+  Recorded as a decision, not a defect: **do not** put an attach tool in the
+  `task_*` control plane — those seven tools are coordination verbs (create,
+  send, update, cancel, list, query, read), and handing a file to the person
+  watching is a session action, not a task one. Copying into attachments stays
+  as a later "save a durable snapshot" action, never the default.
+
+  *Closing:* a transcript row whose file reference previews and downloads
+  through the existing signed-URL path.
 
 ## Accepted as designed
 
