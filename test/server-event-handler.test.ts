@@ -2248,6 +2248,45 @@ describe("handleAgentEvent", () => {
       assert.deepEqual(calls.resolvePermission, []);
       assert.deepEqual(storedPermissionResponses("s1"), []);
     });
+
+    it("leaves the request for a person when no turn is live at arrival", async () => {
+      const { counters, config, request } = seedAttachmentRead();
+      // The request arrives with the task idle: there is no turn identity to
+      // re-check, and none appears before the realpath work finishes.
+      assert.equal(tasks.getTurn("s1"), null);
+      const { calls } = emitPermission(request, config);
+
+      // The realpath work really ran and matched; only the turn guard holds
+      // the answer back.
+      await waitFor(() => counters.autoAllowed === 1);
+      await flushTimers();
+
+      assert.deepEqual(calls.resolvePermission, []);
+      assert.deepEqual(calls.denyPermission, []);
+      assert.deepEqual(storedPermissionResponses("s1"), []);
+      assert.equal(
+        tasks.pendingPermissions.has("req1"),
+        true,
+        "the pending request is left for a person",
+      );
+    });
+
+    it("leaves the request for a person when the live turn has no prompt id", async () => {
+      const { counters, config, request } = seedAttachmentRead();
+      // Membership without a projected agent prompt: `getTurn` exists but
+      // carries no identity that can be compared.
+      tasks.activePrompts.add("s1");
+      assert.equal(tasks.getTurn("s1")?.promptId, null);
+      const { calls } = emitPermission(request, config);
+
+      await waitFor(() => counters.autoAllowed === 1);
+      await flushTimers();
+
+      assert.deepEqual(calls.resolvePermission, []);
+      assert.deepEqual(calls.denyPermission, []);
+      assert.deepEqual(storedPermissionResponses("s1"), []);
+      assert.equal(tasks.pendingPermissions.has("req1"), true);
+    });
   });
 
   // --- Execution write lease ---

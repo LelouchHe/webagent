@@ -358,6 +358,13 @@ function maybeAutoApproveAttachmentRead(
   // delivered this request. Capture its identity by value (`getTurn` returns a
   // fresh snapshot, so object identity proves nothing) and refuse to answer
   // once the turn has ended, been superseded, or a new turn took its place.
+  //
+  // An arrival with no live turn, or with a live turn that projects no prompt
+  // id, has no identity to re-check; the callback fails closed for it. The
+  // pending request is left for a person on purpose: answering it would write
+  // a `permission_response` no turn can consume — a phantom audit row from the
+  // pending-permission lifecycle debt recorded in the contract, which this
+  // step does not widen.
   const promptIdAtArrival = tasks.getTurn(event.taskId)?.promptId ?? null;
 
   void shouldAutoApproveAttachmentRead(
@@ -380,8 +387,15 @@ function maybeAutoApproveAttachmentRead(
       // Race guard: the user (or another client) may have already
       // resolved the permission while we were realpath-ing.
       if (!tasks.pendingPermissions.has(event.requestId)) return;
-      // The turn this request arrived in must still be the current one.
-      if ((tasks.getTurn(event.taskId)?.promptId ?? null) !== promptIdAtArrival)
+      // The turn this request arrived in must still be the current one. A
+      // missing identity at arrival never matches: `null` is not "the same
+      // turn", and a live turn without a prompt id cannot be proven the same
+      // one either.
+      const currentTurn = tasks.getTurn(event.taskId);
+      if (
+        promptIdAtArrival === null ||
+        currentTurn?.promptId !== promptIdAtArrival
+      )
         return;
       performAutoApprove(event, opt, tasks, store, bridge, sseManager, false);
     },
