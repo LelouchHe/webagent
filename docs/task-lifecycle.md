@@ -58,7 +58,7 @@ the SQL mechanics, and the debt state machine live in their own documents (see
 | Operation | Scope | What happens |
 | --- | --- | --- |
 | `/clear` | One task | Rotates the execution. Task, history, and tree position are unchanged; `model` / `mode` / `reasoning_effort` are kept only when the agent stays the same. |
-| Root reset — `/exit` on Root, or `DELETE /api/v1/tasks/root` | Root and its whole subtree | Deletes the descendant tree, clears Root's own events, attachments, client ops, compact summary, and previews, leaves the Root row with Root's empty execution slot, bumps the generation. Root's identity and `parent_id = null` survive, and the reset is DB-only, so it works with the agent offline. |
+| Root reset — `/exit` on Root, or `DELETE /api/v1/tasks/root` | Root and its whole subtree | Deletes the descendant tree, clears Root's own events, attachments, client ops, compact summary, and previews, and bumps the generation. Root's identity and `parent_id = null` survive, and it is *rebuilt* before the request returns, so the client lands on a task that is already live and idle — the same state a freshly created task is in. The bound agent is checked first: an agent that cannot start refuses the exit (`503`) with the tree untouched, because a Root that cannot be rebuilt is not a usable Root. Two roots have nothing to rebuild and legitimately stay lazy: one that was never bound (its first prompt attaches) and one whose recorded agent left the configuration (an operation rotates it). Only a session that fails *after* the commit leaves the empty execution slot, which the next use then materializes. |
 | `/exit` | The current task | Deletes that task and its subtree; on Root it is the reset above. |
 
 ## Two irregularities worth knowing

@@ -142,7 +142,8 @@ The operational form of that sentence:
 - **A read may write the execution config columns; it may not move an owner.**
   A detail or snapshot read starts a background warm, and a task whose binding
   agent is configured but whose execution slot is unmaterialized (an earlier
-  takeover, a Root reset) is materialized by that warm. The session it creates
+  takeover, or a Root reset whose rebuild failed after its commit) is
+  materialized by that warm. The session it creates
   reports its own execution config, and adoption records it for the columns the
   task has no value of its own — so a plain GET can turn `model: null` into the
   agent's reported value. The same read never takes a task over from an agent

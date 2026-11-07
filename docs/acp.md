@@ -68,8 +68,8 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
   for another agent does not inherit the source task's execution config.
 - A read can write the execution config columns. A task whose binding agent is
   still configured but whose execution slot is unmaterialized (an earlier
-  takeover, a Root reset) is materialized by the background warm a detail or
-  snapshot read starts; the session it creates reports its own `model` /
+  takeover, or a Root reset whose rebuild failed after its commit) is
+  materialized by the background warm a detail or snapshot read starts; the session it creates reports its own `model` /
   `mode` / `reasoning_effort`, and adoption fills only the columns the task has
   no value for. A read never takes a task over from an agent that left the
   configuration — that stays an operation's job — because a read has to answer

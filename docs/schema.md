@@ -91,7 +91,7 @@ configured agent.
 |---|---|---|
 | `agent_key` | TEXT NOT NULL | Configured agent id from `[agents.<id>]` (not derived from the command), identifying the launch context |
 | `agent_session_id` | TEXT NOT NULL | Opaque ACP session ID, or a reserved empty execution slot (see below) |
-| `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal sessions. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support. A DB-only Root reset keeps the binding with an empty `agent_session_id` so the task stays visible and the execution can be materialized lazily |
+| `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal sessions. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support. A Root reset rebuilds the execution before it returns, so the binding carries a real `agent_session_id` afterwards; it keeps an empty one only when that rebuild failed after the commit, in which case the next use materializes the execution. A Root that was never bound has no binding row at all |
 | `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
 PK: `(agent_key, agent_session_id)`. A partial unique index on
@@ -351,11 +351,11 @@ rules. Only a share-tombstoned descendant survives, and it is re-parented under
 the global Root unless the Root is missing or a live title collision forces
 detachment. The literal `root`
 cannot be generically deleted, garbage collected, or tombstone-reaped. Root
-reset and `/exit` are DB-only: they clear Root's own events, attachments,
-client operations, compact summary, and previews, delete its live descendants,
-preserve the anchor, and leave the binding agent with Root's empty execution
-slot (an unbound Root stays unbound) so the next use materializes a new ACP
-session. Retirement uses the `(agent id, session id)` recorded on each removed
+reset and `/exit` clear Root's own events, attachments, client operations,
+compact summary, and previews, delete its live descendants, preserve the anchor,
+and rebuild Root's execution before responding. The binding keeps an empty
+execution slot only when that rebuild failed after the commit (an unbound Root
+stays unbound), and the next use materializes a new ACP session then. Retirement uses the `(agent id, session id)` recorded on each removed
 binding, never a default adapter, so two agents sharing one session id still
 retire the right executions. Deletion cascades follow the **task
 tree**, whatever agent owns each descendant. Three rules govern any code that deletes

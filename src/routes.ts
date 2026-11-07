@@ -2710,8 +2710,11 @@ export function createRequestHandler(
                 });
                 return;
               }
-              // DB-only: an unavailable agent must not block Root reset, and
-              // retirement uses each recorded binding's own agent.
+              // Exiting Root rebuilds it, so the agent it will be rebuilt on
+              // is checked before the tree is destroyed: a Root whose agent
+              // cannot start is not a usable Root, and refusing here leaves
+              // the workspace intact instead of clearing it around a shell.
+              // Retirement still follows each recorded binding's own agent.
               const result = await tasks.resetRootTask();
               for (const entry of result.affected) {
                 sseManager.broadcast({
@@ -2761,7 +2764,9 @@ export function createRequestHandler(
                 ? HTTP_STATUS.NOT_FOUND
                 : err instanceof TaskBusyError
                   ? HTTP_STATUS.CONFLICT
-                  : HTTP_STATUS.BAD_REQUEST;
+                  : err instanceof AgentUnavailableError
+                    ? HTTP_STATUS.SERVICE_UNAVAILABLE
+                    : HTTP_STATUS.BAD_REQUEST;
             json(res, status, {
               error: err instanceof Error ? err.message : String(err),
             });

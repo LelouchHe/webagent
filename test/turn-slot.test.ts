@@ -1367,10 +1367,13 @@ describe("turn slot", () => {
           `${id} runtime is released`,
         );
       }
-      // Root keeps its own row as the tree anchor, and loses its runtime.
+      // Root keeps its own row as the tree anchor and loses the runtime the
+      // reset was made around; the exit then rebuilds it, so Root is live
+      // again when this request returns, under a session the reset created.
       assert.ok(store.getTask(rootTaskId), "Root survives its reset");
       assert.equal(tasks.getTurn(rootTaskId), null);
-      assert.equal(tasks.liveTasks.has(rootTaskId), false);
+      assert.notEqual(store.getAgentSessionId(rootTaskId), "agent-root");
+      assert.equal(tasks.liveTasks.has(rootTaskId), true);
     });
 
     it("releases a task the empty-task sweep removes", async () => {

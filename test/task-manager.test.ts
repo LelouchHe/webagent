@@ -579,6 +579,95 @@ describe("TaskManager", () => {
   });
 
   describe("createTask", () => {
+    it("deletes the failed task before releasing its creation claim", async () => {
+      // A model override that the agent refuses must roll the task back. The
+      // rollback runs while the creation claim is still standing, because
+      // releasing it first projects busy→idle, which schedules the
+      // unfinished-work recovery: a recovery that claims this task's prompt
+      // slot in that gap makes the delete refuse as busy, so the failed task
+      // survives with a prompt already submitted into it.
+      store.ensureRootTask(tmpDir);
+      sm.cachedConfigOptions = [
+        {
+          type: "select",
+          id: "model",
+          name: "Model",
+          currentValue: "mock-model",
+          options: [
+            { value: "mock-model", name: "Mock" },
+            { value: "refused-model", name: "Refused" },
+          ],
+        },
+      ];
+      let releaseOverride!: () => void;
+      const overrideGate = new Promise<void>((resolve) => {
+        releaseOverride = resolve;
+      });
+      let enteredOverride!: () => void;
+      const inOverride = new Promise<void>((resolve) => {
+        enteredOverride = resolve;
+      });
+      const prompts: string[] = [];
+      let createdTaskId: string | null = null;
+      const bridge = {
+        async newSession() {
+          return {
+            sessionId: "failed-task",
+            configOptions: sm.cachedConfigOptions,
+          };
+        },
+        async setConfigOption() {
+          // The task row already exists by now, which is exactly the window a
+          // client can read and a peer task can queue work into.
+          createdTaskId =
+            store.listTasks().find((task) => task.id !== "root")?.id ?? null;
+          assert.ok(createdTaskId, "the task is persisted before the override");
+          enteredOverride();
+          await overrideGate;
+          throw new Error("model refused");
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+        prompt(_taskId: string, text: string) {
+          prompts.push(text);
+          return Promise.resolve();
+        },
+      };
+      sm.attachExecutionBridge(bridge);
+
+      const created = sm
+        .createTask(bridge, tmpDir, undefined, "auto", {
+          parentId: "root",
+          model: "refused-model",
+        })
+        .catch((error: unknown) => error);
+
+      await inOverride;
+      assert.ok(createdTaskId);
+      // A read lands here and projects the creation claim; a peer task queues
+      // work for the task. Releasing the claim is then a busy→idle edge that
+      // retries that work.
+      sm.syncBusy(createdTaskId);
+      store.createCollaborationMessage({
+        id: "collab-1",
+        deliveryId: "delivery-1",
+        sourceTaskId: "root",
+        directTargetTaskId: createdTaskId,
+        sourceActor: "agent",
+        body: "queued for a task that is about to fail",
+      });
+      releaseOverride();
+
+      const outcome = await created;
+      assert.ok(outcome instanceof Error, "the create was refused");
+      assert.equal(store.getTask(createdTaskId), undefined);
+      assert.equal(store.getAgentSessionId(createdTaskId), undefined);
+      assert.equal(sm.liveTasks.has(createdTaskId), false);
+      assert.deepEqual(prompts, [], "nothing was submitted into the rollback");
+      assert.equal(sm.getTurn(createdTaskId), null);
+    });
+
     it("inherits config from the source task", async () => {
       store.createTask("s1", "/x", "auto", "test-agent");
       store.saveEvent(
@@ -1424,8 +1513,8 @@ describe("TaskManager", () => {
     });
   });
 
-  describe("Root reset without a live execution", () => {
-    it("resets DB-only, never creates a replacement execution, and retires the old one", async () => {
+  describe("Root reset rebuilds the execution", () => {
+    it("rebuilds Root's execution before the reset returns, retiring the old one", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(rootId, "test-agent", "agent-root");
       store.saveEvent(
@@ -1454,15 +1543,18 @@ describe("TaskManager", () => {
 
       await sm.resetRootTask(bridge);
 
-      assert.equal(newSessionCalls, 0);
+      // Exiting Root owns the rebuild: a client that reads Root next finds the
+      // state a freshly created task is in, not one a read still has to wake.
+      assert.equal(newSessionCalls, 1);
       assert.deepEqual(retired, ["agent-root"]);
       assert.equal(store.getEvents(rootId).length, 0);
-      assert.equal(store.getAgentSessionId(rootId), "");
+      assert.equal(store.getAgentSessionId(rootId), "agent-root-new");
+      assert.equal(sm.liveTasks.has(rootId), true);
       assert.equal(store.getTaskIncludingDeleted(rootId)?.parent_id, null);
       assert.equal(store.getTaskIncludingDeleted(rootId)?.cwd, tmpDir);
     });
 
-    it("succeeds offline with no bridge", async () => {
+    it("succeeds with an unbound Root and leaves it unbound", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.createTask(
         "child",
@@ -1781,11 +1873,15 @@ describe("TaskManager", () => {
 
       releaseRoot();
       await reset;
-      assert.equal(store.getAgentSessionId(rootId), "");
+      // The exit's own rebuild runs after the lock is released, so Root is
+      // live again by the time the reset resolves.
+      assert.equal(sm.liveTasks.has(rootId), true);
+      assert.notEqual(store.getAgentSessionId(rootId), "");
       assert.equal(store.getTaskIncludingDeleted(rootId)?.parent_id, null);
 
       const created = await create;
-      assert.equal(newSessionCalls, 1);
+      // One session for the rebuild, one for the created task.
+      assert.equal(newSessionCalls, 2);
       assert.equal(store.getTask(created.taskId)?.parent_id, rootId);
       assert.ok(store.getTask(created.taskId));
     });
