@@ -100,34 +100,9 @@ npm run test:e2e -- test/e2e/foo.spec.ts
 Publishing uses the `v*` tag workflow documented in
 [`docs/development.md`](./docs/development.md).
 
-## TODO
+## Known issues
 
-- Add multi-client integration coverage for task-created broadcast guards.
-- Harden `/new`'s create-failure recovery: it clears the view and drops the
-  active task before the create request, so a failed create (for example the
-  source task is deleted during the cwd probe) leaves no active task until a
-  reload. The probe's liveness guard fails open on purpose; fixing this means
-  clearing only after a successful create, or restoring the previous task on
-  failure.
-- The frontend installs the Root authority from `connected`/`task_created` with
-  the default generation, so a queued `replayQueue` event carried across a
-  generation boundary could install the previous connection's Root. Live SSE is
-  guarded by `gen !== streamGen` and any current-connection payload overwrites it.
-- `MAX_ACP_MESSAGE_BYTES` is a hardcoded 128 MiB inbound cap, not derived from
-  configured limits, so raising `file_upload` above ~120 MiB still hits it.
-- The empty-task GC (`Store.deleteEmptyTasks`) throws `FOREIGN KEY constraint
-  failed` for a zero-event task that still has a share row, and `TaskManager`
-  does not catch it, so an unrelated task creation can fail. Pre-existing:
-  `shares.task_id` is the one task FK with no `ON DELETE`, which is also what
-  makes the tombstone reap explicit instead of implicit.
-- `ClientSideConnection`/`AgentSideConnection` are `@deprecated` in ACP SDK
-  1.7.0 in favour of the `client()`/`agent()` app API; that migration is deferred.
-- Restore rejections other than `-32002` (for example `-32601`, or a cwd
-  mismatch) surface raw with no `/new` hint and no `load` fallback.
-- Trip-wire: if a future SDK moves `loadSession` under `sessionCapabilities`,
-  the capability read in `src/bridge.ts` must be revisited.
-- Trip-wire: once Copilot's image tool emits a real ACP image block, delete
-  `src/agent-compatibility/copilot-image-path.ts`, its import in
-  `src/event-handler.ts`, and the one call in that file's `tool_call_update`
-  branch. The normal path in `src/tool-result-image.ts` then covers tool result
-  pictures. See [`docs/acp.md`](./docs/acp.md).
+Deferred defects, known limits, trip-wires, and the decisions that are
+deliberately not debts live in [`docs/known-issues.md`](./docs/known-issues.md).
+Add an entry there when you knowingly leave something behind; keep this file
+free of state that goes stale.

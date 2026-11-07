@@ -27,7 +27,7 @@ The web UI is a thin wrapper: the browser client stays small because the substan
 - **Daemon mode with crash recovery** — `webagent start` runs as a background service with PID file, log rotation, and exponential-backoff restart on crash.
 - **Built-in security** — Bearer token auth, per-device tokens, signed image URLs, strict CSP, single-operator threat model.
 
-See [Features](docs/features.md) for the full tour.
+See [Features](docs/features.md) for the full tour, and [Known issues](docs/known-issues.md) for the limits and deferred defects we know about.
 
 <table>
   <tr>
