@@ -76,7 +76,13 @@ export const AGE_ADVISORY_MS = 4 * 60 * 60_000;
 export type DeliveryOutcome =
   | { status: "delivered" }
   | { status: "deferred"; reason: string }
-  | { status: "failed"; reason: string };
+  | { status: "failed"; reason: string }
+  /**
+   * The submission's turn was cancelled. Nothing was read by the target, so it
+   * is not a delivered attempt and not a failure: the record returns to `open`
+   * with no timer, and the next dispatch's boundary behaves normally.
+   */
+  | { status: "cancelled" };
 
 export type ObligationState =
   | "awaiting_delivery"
@@ -1024,6 +1030,15 @@ export class ObligationController {
       return;
     }
     if (obligation.recoveryGeneration !== fact.recoveryGeneration) return;
+    if (fact.outcome.status === "cancelled") {
+      this.log("obligation reminder cancelled with its turn", {
+        ...logFields(obligation),
+      });
+      obligation.state = "open";
+      obligation.waitingSince = undefined;
+      obligation.retrying = false;
+      return;
+    }
     if (fact.outcome.status === "deferred") {
       // Nothing was submitted, so nothing failed: keep both counters, leave
       // the debt waiting, and retry on a bounded deferral backoff.

@@ -332,9 +332,13 @@ same `reason:` / `status:` body:
 collaboration row. A user-initiated cancel writes neither row.
 
 A cancelled turn does not trigger a closing reminder: the task-obligation
-controller treats the cancellation itself (the `cancelled` stop reason or the
-busy cancel marker) as the end fact, so it neither injects a reminder nor emits
-a notice, and the obligation stays open for the next dispatch.
+controller treats the cancellation itself as the end fact (the `cancelled` stop
+reason, the intent the host stamps on the turn before the transport round trip,
+or the busy cancel marker), so it neither injects a reminder nor emits a notice,
+and the obligation stays open for the next dispatch. This includes a
+closing-reminder turn that is itself cancelled: that submission is fenced — no
+attempt is counted, nothing is re-armed, no notice is emitted — and the record
+returns to `open`.
 
 ### `task_create`
 

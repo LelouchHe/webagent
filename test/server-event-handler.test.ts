@@ -834,6 +834,9 @@ describe("handleAgentEvent", () => {
     assert.equal(calls.prompts.length, 1);
 
     await armDirectDispatch(store, tasks, bridge, "parent", "child", "Second.");
+    // The cancelled intent died with the turn that carried it: the next turn on
+    // the same task is a fresh one, not a silent no-reminder turn.
+    assert.equal(tasks.getTurn("child")?.cancelRequested, false);
     // This turn ends without an account and was not cancelled: it must remind.
     endTurn(bridge, "child", calls.prompts[1].promptId);
     calls.prompts[1].resolve();
@@ -842,6 +845,90 @@ describe("handleAgentEvent", () => {
     assert.equal(calls.prompts.length, 3);
     assert.match(calls.prompts[2].text, /task_update\(done/);
     calls.prompts[2].resolve();
+    await flushTimers();
+  });
+
+  it("treats a turn that ends during the cancel round trip as cancelled", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+
+    // The agent finishes the turn with an ordinary stop reason while the cancel
+    // request is still on the wire: the intent stamped before the await is the
+    // only cancellation fact this boundary will ever see.
+    const cancelBridge = {
+      cancel: async () => {
+        endTurn(bridge, "child", calls.prompts[0].promptId);
+      },
+    };
+    const result = await tasks.cancelTaskExecution("child", cancelBridge, 0);
+    calls.prompts[0].resolve();
+    await flushTimers();
+
+    assert.equal(result.status, "cancelled");
+    assert.equal(
+      calls.prompts.length,
+      1,
+      "a turn ending under a cancel owes no reminder",
+    );
+    assert.equal(tasks.getObligation("parent", "child")?.state, "open");
+  });
+
+  it("fences a reminder whose own turn was cancelled", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    endTurn(bridge, "child", calls.prompts[0].promptId);
+    calls.prompts[0].resolve();
+    await flushTimers();
+    // The first closing reminder is in flight.
+    assert.equal(calls.prompts.length, 2);
+    const reminderPromptId = calls.prompts[1].promptId;
+
+    // Cancel the reminder's own turn, then let it end as a stopped turn does.
+    await tasks.cancelTaskExecution("child", { cancel: async () => {} }, 0);
+    endTurn(bridge, "child", reminderPromptId);
+    calls.prompts[1].resolve();
+    await flushTimers();
+
+    const obligation = tasks.getObligation("parent", "child");
+    assert.ok(obligation, "the record must still exist");
+    assert.equal(obligation.state, "open");
+    assert.equal(
+      obligation.deliveredAttempts,
+      0,
+      "a cancelled reminder is not a delivered attempt",
+    );
+    assert.equal(
+      calls.prompts.length,
+      2,
+      "a cancelled reminder does not re-arm another one",
+    );
+    const events = store.getEvents("child");
+    assert.equal(
+      events.some((event) => event.type === "task_outcome_notice"),
+      false,
+    );
+    assert.equal(
+      events.some(
+        (event) =>
+          event.type === "system_message" &&
+          (JSON.parse(event.data) as { kind?: string }).kind ===
+            "handoff_reminder",
+      ),
+      false,
+      "a fenced reminder writes no delivered-attempt row",
+    );
+
+    // The debt is still live: a later dispatch that ends without an account
+    // reminds again.
+    await armDirectDispatch(store, tasks, bridge, "parent", "child", "Retry.");
+    endTurn(bridge, "child", calls.prompts[2].promptId);
+    calls.prompts[2].resolve();
+    await flushTimers();
+    assert.equal(calls.prompts.length, 4);
+    assert.match(calls.prompts[3].text, /task_update\(done/);
+    calls.prompts[3].resolve();
     await flushTimers();
   });
 

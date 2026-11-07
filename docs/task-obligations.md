@@ -180,6 +180,7 @@ stateDiagram-v2
     reminder_due --> reminder_submitting: target idle, closing prompt submitted
     reminder_submitting --> reminder_due: submission rejected (no delivered attempt)
     reminder_submitting --> reminder_due: submission deferred (nothing attempted)
+    reminder_submitting --> open: the reminder turn itself was cancelled
     reminder_submitting --> reminder_due: delivered attempt 1 or 2, schedule +2m / +5m
     awaiting_delivery --> reminder_due: execution replaced, debt kept, old body never re-sent
     open --> reminder_due: execution replaced, debt kept, old body never re-sent
@@ -203,7 +204,7 @@ turn, after it emits `prompt_done`, so a resolution-time open would leave the
 dispatch turn itself `awaiting_delivery` and refuse the account that turn
 produces (`src/task-manager.ts`).
 
-**Delivery outcomes.** Every submission ends in exactly one of three outcomes,
+**Delivery outcomes.** Every submission ends in exactly one of four outcomes,
 and the bookkeeping differs per outcome:
 
 | Outcome | Means | Accounting |
@@ -211,6 +212,7 @@ and the bookkeeping differs per outcome:
 | `delivered` | The prompt was handed to the target's execution. | Counts one delivered attempt; clears the submission-failure streak and the deferral backoff. |
 | `deferred` | The target could not be submitted to at all: it is rotating or resetting, the bridge is unavailable, the lease was replaced, or no execution is bound. Nothing was attempted. | Changes neither the attempt count nor the failure count. The record stays waitable and retries on a capped deferral backoff. |
 | `failed` | A submission was attempted and the agent rejected it at the request level. | Increments `consecutiveSubmissionFailures`, bounded by `MAX_REMINDER_SUBMISSION_FAILURES`. |
+| `cancelled` | The submission's own turn was explicitly cancelled while the prompt was in flight. The target resolved the prompt because it was stopped, not because it read the closing reminder. | Spends no attempt, re-arms nothing, and emits no notice: the record returns to `open` with no timer. The delivered-attempt `handoff_reminder` row is not written. |
 
 `deferred` is not a verdict about the work and must never be reported as one:
 the record keeps waiting and the age advisory keeps reporting how long it has
@@ -284,13 +286,24 @@ boundary, then delayed from the preceding **delivered** reminder. Only a resolve
 with backoff and consumes the separate transport budget instead.
 
 **A turn ended by explicit cancellation owes no closing reminder.** The end fact
-is the turn's own: the ACP `cancelled` stop reason, or the busy cancel marker a
-cancellation sets (UI or MCP — the same controller path). Stopping a turn on
-purpose is not a missing account, so that boundary emits no reminder and no
-notice, and any closing reminder already armed for it is withdrawn; the record
-stays `open` with no timer. Every other unaccounted end — the agent finishing
-with prose and no `task_update` — still reminds, and a later dispatch that ends
-without an account reminds normally.
+is the turn's own: the ACP `cancelled` stop reason, the cancel intent the host
+stamps on the turn *before* the transport round trip (so a turn that finishes
+with an ordinary stop reason while `cancel` is still awaiting is still known to
+be cancelled), or the busy cancel marker a cancellation sets. UI and MCP
+cancellation share one controller path. Stopping a turn on purpose is not a
+missing account, so that boundary emits no reminder and no notice, and any
+closing reminder already armed for it is withdrawn; the record stays `open` with
+no timer.
+
+The same rule covers a **closing-reminder turn itself**: if the turn submitting
+a reminder is cancelled, that submission is fenced as `cancelled` — it is not
+counted as a delivered attempt, no next reminder is armed, and no notice is
+emitted. Otherwise cancelling a reminder would restart unattended execution or
+exhaust the record into a `no_account` notice on a task that was explicitly
+stopped. The intent lives on the turn record, so it is released with that turn
+and can never mark the next one: every other unaccounted end — the agent
+finishing with prose and no `task_update` — still reminds, and a later dispatch
+that ends without an account reminds normally.
 
 **Advisories.** A dispatch still queued at `DISPATCH_ADVISORY_MS` and a record
 still without an account at `AGE_ADVISORY_MS` each emit one non-terminal

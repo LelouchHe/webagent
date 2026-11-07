@@ -478,11 +478,15 @@ function handlePromptDone(
       stopReason: event.stopReason,
     });
   }
-  // The turn's own end fact: the ACP stop reason or our pending cancel marker.
-  // An obligation reads this so an explicit cancellation is not mistaken for a
-  // missing account and answered with a closing reminder.
+  // The turn's own end fact, read before the turn is released: the ACP stop
+  // reason, the cancel intent stamped on the turn before the transport round
+  // trip, or our pending cancel marker. An obligation reads this so an explicit
+  // cancellation is not mistaken for a missing account and answered with a
+  // closing reminder.
   const cancelledTurn =
-    event.stopReason === "cancelled" || cancelStatus !== null;
+    event.stopReason === "cancelled" ||
+    cancelStatus !== null ||
+    tasks.getTurn(event.taskId)?.cancelRequested === true;
   // The tail this turn buffered must always land, even when the turn has
   // already been superseded — it is the only copy of that text.
   const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
@@ -537,10 +541,11 @@ function handleError(
     const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
     const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
     // A cancellation can surface as an error instead of a cancelled
-    // completion; the busy cancel marker is the same fact either way.
+    // completion; the turn's own cancel intent (stamped before the transport
+    // round trip) and the busy cancel marker are the same fact either way.
     const cancelledTurn =
       (tasks.state.getState(event.taskId).runtime.busy?.cancelStatus ??
-        null) !== null;
+        null) !== null || tasks.getTurn(event.taskId)?.cancelRequested === true;
     if (isCurrent) {
       tasks.endTurn(event.taskId, {
         promptId: event.promptId,

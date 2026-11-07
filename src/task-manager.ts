@@ -423,6 +423,13 @@ export interface Turn {
   kind: "agent" | "bash";
   promptId: string | null;
   origin: TurnOrigin;
+  /**
+   * True when a cancellation asked *this* turn to stop. It is stamped before
+   * the transport round trip (the target can finish the turn while `cancel` is
+   * still awaiting) and it lives on the turn record, so it disappears with the
+   * turn and can never mark the next one.
+   */
+  cancelRequested: boolean;
   submissionId?: number;
 }
 
@@ -482,6 +489,13 @@ class TurnSlotSet extends Set<string> {
 interface OpenTurn {
   origin: TurnOrigin;
   submissionId?: number;
+  /**
+   * A cancellation requested this turn's stop. Kept on the record itself: the
+   * same object is held by the submission that is awaiting the turn (see
+   * `submitObligationReminder`), so the fact is still readable after `endTurn`
+   * drops the map entry, and no consumer can see it for a later turn.
+   */
+  cancelRequested?: boolean;
 }
 
 /** Build the process-local obligation controller for one task runtime. */
@@ -3237,6 +3251,7 @@ export class TaskManager implements ObligationHost {
       kind: "agent",
       promptId: busy?.kind === "agent" ? (busy.promptId ?? null) : null,
       origin: open.origin,
+      cancelRequested: open.cancelRequested === true,
       ...(open.submissionId === undefined
         ? {}
         : { submissionId: open.submissionId }),
@@ -3383,6 +3398,15 @@ export class TaskManager implements ObligationHost {
     }
     if (hadAgentPrompt && !bridge) throw new AgentNotReadyError(taskId);
     if (hadAgentPrompt && bridge) {
+      // Stamp the intent on the turn *before* the transport round trip, in one
+      // synchronous block: the target may finish this turn (with an ordinary
+      // stop reason) while `cancel` is still awaiting, and both consumers — the
+      // boundary's reminder decision and the reminder submission's fence — must
+      // still see that this turn was asked to stop. The flag lives on the turn
+      // record, so it is released with the turn by `endTurn` and cannot leak
+      // into the next one.
+      const intentTurn = this.openTurns.get(taskId);
+      if (intentTurn) intentTurn.cancelRequested = true;
       await bridge.cancel(taskId);
       const busy = this.state.getState(taskId).runtime.busy;
       const stillCancellingSamePrompt =
@@ -3796,6 +3820,9 @@ export class TaskManager implements ObligationHost {
       this.releasePromptSubmission(task.id, submissionId, false);
       this.beginAgentTurn(task.id, { origin: "delegated", submissionId });
       turnOpen = true;
+      // The turn's own record, held across the prompt so a cancellation stamped
+      // onto it remains readable after `endTurn` has dropped the slot entry.
+      const reminderTurn = this.openTurns.get(task.id);
       promptId =
         this.state.getState(task.id).runtime.busy?.promptId ?? undefined;
       try {
@@ -3820,6 +3847,15 @@ export class TaskManager implements ObligationHost {
         // The prompt reached an execution that has already been replaced, so
         // it is not a delivered attempt for the task's current debt.
         return { status: "deferred", reason: "execution_replaced" };
+      }
+      // A cancelled turn is not a delivered reminder: the prompt resolved
+      // because the agent was stopped, not because it read the closing text.
+      // Fence the outcome — no attempt is spent, nothing is re-armed, and no
+      // notice is emitted — and leave the record `open` for the next dispatch.
+      // The row below is the durable evidence of a *delivered* attempt, so a
+      // fenced reminder writes none.
+      if (reminderTurn?.cancelRequested === true) {
+        return { status: "cancelled" };
       }
       // Truthful: the reminder text reached the target, so record it now. A
       // request-level failure throws `PromptNotDeliveredError` and records
