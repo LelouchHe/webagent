@@ -64,6 +64,15 @@ static MCP configuration file: the endpoint carries a capability token minted
 for one task. Which agents put the definitions to use is noted in
 [Configuration & Operations](configuration.md#acp-compatible-agents).
 
+### The server name
+
+The name on the session entry (`MCP_SERVER_NAME`, `lelouchhe_webagent`) is a
+client-visible label, not an internal id. Some clients namespace a server's
+tools by it (`mcp__<name>__<tool>`) and reject generic names — Claude Code
+refuses `webagent` — which is why the vendor prefix is spelled out. The value is
+never persisted: every session entry and every MCP `initialize` response is
+built from that constant.
+
 ## Server instructions
 
 The server advertises a short, generic usage contract through the MCP
