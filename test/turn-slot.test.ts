@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { ChildProcess } from "node:child_process";
+import type Database from "better-sqlite3";
 import http from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,13 +15,16 @@ import { ExecutionAuthority } from "../src/execution-authority.ts";
 import type { AgentEnvironment } from "../src/agent-registry.ts";
 import { StaticAgentEnvironment } from "../src/agent-registry.ts";
 import type { ExecutionAdapter } from "../src/execution-adapter.ts";
+import type { AgentBridge } from "../src/bridge.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
+import { SseManager } from "../src/sse-manager.ts";
 import type { AgentEvent } from "../src/types.ts";
 import type { DirectedObligation } from "../src/obligation-controller.ts";
 import {
   makeEventHandlerConfig,
   mockBridgeStubs,
+  type MockBridge,
   waitFor,
 } from "./fixtures.ts";
 
@@ -52,6 +57,20 @@ function makeRequest(
   });
 }
 
+/** The response fields the routes under test return. */
+interface TestResponseBody {
+  error?: string;
+  busyKind?: string;
+  reset?: boolean;
+  status?: string;
+  taskId?: string;
+}
+
+/** Parse a test response body into that shape instead of leaking `any`. */
+function bodyOf(res: { body: string }): TestResponseBody {
+  return JSON.parse(res.body) as TestResponseBody;
+}
+
 /** A prompt that stays pending until the test settles it. */
 function deferred(): {
   promise: Promise<void>;
@@ -66,6 +85,19 @@ function deferred(): {
   });
   return { promise, resolve, reject };
 }
+
+/**
+ * The one transport this harness drives.
+ *
+ * `MockBridge` is already the `AgentBridge` subset the routes and the runtime
+ * call, and it structurally satisfies `DeliveryBridge`; the only member it
+ * lacks is `promptForText`, which lives on the full class. Declaring the double
+ * as this union is what lets every drain, route, and prompt-owner call take it
+ * without a cast — and lets a test replace one method without punching a hole
+ * in the type. A fresh double per test also keeps one test's overrides from
+ * leaking into the next.
+ */
+type TestBridge = MockBridge & Pick<AgentBridge, "promptForText">;
 
 /**
  * The runtime's agent environments, with a controllable cold start.
@@ -138,21 +170,9 @@ describe("turn slot", () => {
    * the slot — is the source of truth for a turn's identity in these tests.
    */
   let promptCalls: Array<{ taskId: string; text: string; promptId?: string }>;
-
-  const bridge = {
-    ...mockBridgeStubs(),
-    newSession: async () => ({
-      sessionId: `agent-${Math.random().toString(16).slice(2)}`,
-      configOptions: [],
-    }),
-    loadSession: async (taskId: string) => ({ taskId, configOptions: [] }),
-    setConfigOption: async () => [],
-    promptForText: async () => "summary of the current work",
-    prompt: (taskId: string, text: string, _a?: unknown, promptId?: string) => {
-      promptCalls.push({ taskId, text, promptId });
-      return openPrompts.shift()?.promise ?? Promise.resolve();
-    },
-  };
+  let bridge: TestBridge;
+  /** The real broadcaster: with no connected clients every send is a no-op. */
+  let sseManager: SseManager;
 
   function createTask(id: string, parentId?: string, agentId = "test-agent") {
     store.createTask(id, tmpDir, "auto", agentId, `${id}-session`, parentId);
@@ -182,16 +202,24 @@ describe("turn slot", () => {
     });
   }
 
-  /** Drive one protocol event with the task's current generation lease. */
+  /**
+   * Drive one protocol event with the task's current generation lease.
+   *
+   * The lease rides on the event the same way the bridge stamps it
+   * (`Object.assign`), so no cast is needed to add it.
+   */
   function emit(event: AgentEvent & { taskId: string }): void {
     const lease = tasks.authority.leaseFor(event.taskId);
     handleAgentEvent(
-      (lease ? { ...event, executionLease: lease } : event) as any,
+      lease ? Object.assign({ ...event }, { executionLease: lease }) : event,
       tasks,
       store,
-      bridge as any,
+      // `handleAgentEvent` takes the concrete `AgentBridge` (connection,
+      // process, emitters), which no test double can be; this one implements
+      // every member the handler actually reaches for.
+      bridge as unknown as AgentBridge,
       makeEventHandlerConfig(),
-      { broadcast() {} } as any,
+      sseManager,
     );
   }
 
@@ -212,9 +240,24 @@ describe("turn slot", () => {
       authority: new ExecutionAuthority(),
       agents: environment,
     });
-    tasks.attachExecutionBridge(bridge as any);
     openPrompts = [];
     promptCalls = [];
+    bridge = {
+      ...mockBridgeStubs(),
+      newSession: async () => ({
+        sessionId: `agent-${Math.random().toString(16).slice(2)}`,
+        configOptions: [],
+      }),
+      loadSession: async (taskId: string) => ({ taskId, configOptions: [] }),
+      setConfigOption: async () => [],
+      promptForText: async () => "summary of the current work",
+      prompt: (taskId, text, _attachments, promptId) => {
+        promptCalls.push({ taskId, text, promptId });
+        return openPrompts.shift()?.promise ?? Promise.resolve();
+      },
+    };
+    tasks.attachExecutionBridge(bridge);
+    sseManager = new SseManager();
     store.attachAgentSession(
       store.ensureRootTask(tmpDir).id,
       "test-agent",
@@ -235,7 +278,7 @@ describe("turn slot", () => {
           image_upload: 10_485_760,
           cancel_timeout: 10_000,
         },
-        sseManager: { broadcast() {} } as any,
+        sseManager,
       }),
     );
     await new Promise<void>((resolve) =>
@@ -303,7 +346,7 @@ describe("turn slot", () => {
       openPrompts.push(pending);
 
       assert.equal(
-        await tasks.drainCollaborationDeliveries("target", bridge as any),
+        await tasks.drainCollaborationDeliveries("target", bridge),
         true,
       );
       assert.equal(tasks.getTurn("target")?.origin, "delegated");
@@ -333,7 +376,7 @@ describe("turn slot", () => {
       openPrompts.push(pending);
 
       assert.equal(
-        await tasks.drainCollaborationDeliveries("target", bridge as any),
+        await tasks.drainCollaborationDeliveries("target", bridge),
         true,
       );
       assert.equal(tasks.getTurn("target")?.origin, "interactive");
@@ -369,7 +412,7 @@ describe("turn slot", () => {
       const summaryGate = new Promise<void>((resolve) => {
         releaseSummary = resolve;
       });
-      (bridge as any).promptForText = async () => {
+      bridge.promptForText = async () => {
         await summaryGate;
         return "summary";
       };
@@ -399,7 +442,8 @@ describe("turn slot", () => {
         JSON.stringify({ text: "quick question" }),
       );
       assert.equal(res.status, 202);
-      const taskId = JSON.parse(res.body).taskId as string;
+      const taskId = bodyOf(res).taskId;
+      assert.ok(taskId, "the beta route answers with the task it created");
       assert.equal(tasks.getTurn(taskId)?.origin, "interactive");
 
       pending.resolve();
@@ -409,18 +453,20 @@ describe("turn slot", () => {
 
   describe("release points", () => {
     /**
-     * Every release row of the contract's end-of-turn table: run the real
-     * release path for that row, then assert nothing about the turn survives.
-     * Root reset and the GC/reap paths share `resetTaskRuntime` and
-     * `releaseTaskRuntime` with the rows below. Cancel and restore are not
+     * The per-path release rows of the contract's end-of-turn table: run the
+     * real release path for that row, then assert nothing about the turn
+     * survives.
+     *
+     * The "task disappears" row — delete, cascade, GC/reap, Root subtree — is
+     * deliberately absent here and covered by `describe("deletion entries")`
+     * instead, through its production entries (the REST route and the
+     * create-triggered sweep) with mutation checks. Cancel and restore are not
      * release points and are asserted separately.
      */
     const cases: Array<{
       name: string;
       /** Opens a turn for the path under test and returns its task id. */
       run: () => Promise<string>;
-      /** No follow-up turn can be opened: its runtime or the task is gone. */
-      deleted?: boolean;
     }> = [
       {
         name: "prompt_done",
@@ -457,7 +503,7 @@ describe("turn slot", () => {
           const pending = deferred();
           openPrompts.push(pending);
           assert.equal(
-            await tasks.drainCollaborationDeliveries(id, bridge as any),
+            await tasks.drainCollaborationDeliveries(id, bridge),
             true,
           );
           pending.reject(new Error("prompt rejected"));
@@ -469,20 +515,19 @@ describe("turn slot", () => {
         name: "reminder finally",
         run: async () => {
           const obligation = seedReminder();
-          (bridge as any).loadSession = async () => {
+          bridge.loadSession = async () => {
             throw new Error("load failed");
           };
-          try {
-            assert.deepEqual(await tasks.submitObligationReminder(obligation), {
-              status: "deferred",
-              reason: "resume_failed",
-            });
-          } finally {
-            (bridge as any).loadSession = async (taskId: string) => ({
-              taskId,
-              configOptions: [],
-            });
-          }
+          assert.deepEqual(await tasks.submitObligationReminder(obligation), {
+            status: "deferred",
+            reason: "resume_failed",
+          });
+          // Restored for the follow-up turn the table runs after this row: it
+          // needs a resume, and this row is the one that breaks it.
+          bridge.loadSession = async (taskId: string) => ({
+            taskId,
+            configOptions: [],
+          });
           return "child";
         },
       },
@@ -508,7 +553,7 @@ describe("turn slot", () => {
         name: "compact finally",
         run: async () => {
           const id = createTask("compact-failed");
-          (bridge as any).promptForText = async () => {
+          bridge.promptForText = async () => {
             throw new Error("summary failed");
           };
           const res = await makeRequest(
@@ -541,19 +586,6 @@ describe("turn slot", () => {
         },
       },
       {
-        name: "releaseTaskRuntime",
-        deleted: true,
-        run: async () => {
-          const id = createTask("deleted");
-          tasks.beginAgentTurn(id, { origin: "delegated" });
-          // A delete refuses a task mid-turn, so the release path itself is the
-          // subject here: whichever tree/cascade reap drops a task must drop
-          // its slot with it.
-          (tasks as any).releaseTaskRuntime(id, "soft");
-          return id;
-        },
-      },
-      {
         name: "clearAgentRuntime",
         run: async () => {
           const id = createTask("reloaded");
@@ -571,7 +603,6 @@ describe("turn slot", () => {
         assert.equal(tasks.getTurn(id), null, "no live turn survives");
         assert.equal(tasks.activePrompts.has(id), false);
 
-        if (entry.deleted) return;
         // The next turn on this task is the user's, whatever ran before it.
         const next = deferred();
         openPrompts.push(next);
@@ -592,7 +623,7 @@ describe("turn slot", () => {
       const id = createTask("cancel-keeps");
       tasks.beginAgentTurn(id, { origin: "delegated" });
       let cancels = 0;
-      (bridge as any).cancel = async () => {
+      bridge.cancel = async () => {
         cancels += 1;
       };
 
@@ -699,20 +730,14 @@ describe("turn slot", () => {
       const reservation = tasks.reservePromptSubmission(id);
       assert.notEqual(reservation, null);
 
-      assert.equal(
-        await tasks.drainCollaborationDeliveries(id, bridge as any),
-        false,
-      );
+      assert.equal(await tasks.drainCollaborationDeliveries(id, bridge), false);
       assert.equal(tasks.getTurn(id), null);
       assert.equal(store.getCollaborationDelivery("d1")?.status, "queued");
 
       tasks.releasePromptSubmission(id, reservation!);
       const pending = deferred();
       openPrompts.push(pending);
-      assert.equal(
-        await tasks.drainCollaborationDeliveries(id, bridge as any),
-        true,
-      );
+      assert.equal(await tasks.drainCollaborationDeliveries(id, bridge), true);
       assert.equal(tasks.getTurn(id)?.origin, "delegated");
       pending.resolve();
       await waitFor(() => store.getTask(id)?.workflow_status === "running");
@@ -734,10 +759,7 @@ describe("turn slot", () => {
       });
       const pending = deferred();
       openPrompts.push(pending);
-      assert.equal(
-        await tasks.drainCollaborationDeliveries(id, bridge as any),
-        true,
-      );
+      assert.equal(await tasks.drainCollaborationDeliveries(id, bridge), true);
 
       const res = await makeRequest(
         port,
@@ -746,7 +768,7 @@ describe("turn slot", () => {
         JSON.stringify({ text: "competing" }),
       );
       assert.equal(res.status, 409);
-      assert.equal(JSON.parse(res.body).busyKind, "agent");
+      assert.equal(bodyOf(res).busyKind, "agent");
       assert.equal(tasks.getTurn(id)?.origin, "delegated");
 
       pending.resolve();
@@ -762,7 +784,7 @@ describe("turn slot", () => {
       // must survive; the resume is settled by the test.
       tasks.liveTasks.delete(id);
       const resumeGate = deferred();
-      (bridge as any).loadSession = async (taskId: string) => {
+      bridge.loadSession = async (taskId: string) => {
         await resumeGate.promise;
         return { taskId, configOptions: [] };
       };
@@ -1140,7 +1162,9 @@ describe("turn slot", () => {
 
     it("opens bash for a runtime submission and nothing else", () => {
       const id = createTask("matrix-bash");
-      tasks.runningBashProcs.set(id, {} as unknown as never);
+      // Only membership in `runningBashProcs` matters here; the slot logic
+      // never touches the handle, so a bare object stands in for the process.
+      tasks.runningBashProcs.set(id, {} as unknown as ChildProcess);
       try {
         assert.equal(tasks.getBusyKind(id), "bash");
         assert.equal(
@@ -1181,7 +1205,9 @@ describe("turn slot", () => {
     it("lets a delegated turn open beside a running bash command", async () => {
       createTask("source");
       const id = createTask("target");
-      tasks.runningBashProcs.set(id, {} as any);
+      // A handle this slot logic never touches: only its presence in
+      // `runningBashProcs` matters, so a bare object is cast to the real type.
+      tasks.runningBashProcs.set(id, {} as unknown as ChildProcess);
       store.createCollaborationMessage({
         id: "m1",
         deliveryId: "d1",
@@ -1194,10 +1220,7 @@ describe("turn slot", () => {
       const pending = deferred();
       openPrompts.push(pending);
 
-      assert.equal(
-        await tasks.drainCollaborationDeliveries(id, bridge as any),
-        true,
-      );
+      assert.equal(await tasks.drainCollaborationDeliveries(id, bridge), true);
       assert.equal(tasks.getTurn(id)?.origin, "delegated");
       assert.equal(tasks.getBusyKind(id), "agent");
 
@@ -1211,7 +1234,9 @@ describe("turn slot", () => {
 
     it("does not open a turn for a task that is only running bash", () => {
       const id = createTask("bash-only");
-      tasks.runningBashProcs.set(id, {} as any);
+      // A handle this slot logic never touches: only its presence in
+      // `runningBashProcs` matters, so a bare object is cast to the real type.
+      tasks.runningBashProcs.set(id, {} as unknown as ChildProcess);
       tasks.syncBusy(id);
 
       assert.equal(tasks.getTurn(id), null);
@@ -1238,7 +1263,9 @@ describe("turn slot", () => {
       const refused = await deleteRequest(id);
 
       assert.equal(refused.status, 409);
-      assert.match(JSON.parse(refused.body).error, /Cancel active work/);
+      const refusal = bodyOf(refused).error;
+      assert.ok(refusal, "the refusal names the busy work");
+      assert.match(refusal, /Cancel active work/);
       assert.ok(store.getTask(id), "a refused delete keeps the row");
       const after = tasks.getTurn(id);
       assert.ok(after, "a refused delete must not release the turn");
@@ -1251,7 +1278,7 @@ describe("turn slot", () => {
       const deleted = await deleteRequest(id);
 
       assert.equal(deleted.status, 200);
-      assert.equal(JSON.parse(deleted.body).reset, false);
+      assert.equal(bodyOf(deleted).reset, false);
       assert.equal(store.getTask(id), undefined, "the row is gone");
       assert.equal(tasks.getTurn(id), null, "no turn survives the delete");
       assert.equal(
@@ -1309,7 +1336,9 @@ describe("turn slot", () => {
       const res = await deleteRequest(parent);
 
       assert.equal(res.status, 409);
-      assert.match(JSON.parse(res.body).error, /cascade-busy-child/);
+      const refusal = bodyOf(res).error;
+      assert.ok(refusal, "the refusal names the busy descendant");
+      assert.match(refusal, /cascade-busy-child/);
       assert.ok(store.getTask(parent), "the parent survives");
       assert.ok(store.getTask(child), "the child survives");
       assert.equal(
@@ -1328,7 +1357,7 @@ describe("turn slot", () => {
       const res = await deleteRequest(rootTaskId);
 
       assert.equal(res.status, 200);
-      assert.equal(JSON.parse(res.body).reset, true);
+      assert.equal(bodyOf(res).reset, true);
       for (const id of [first, second]) {
         assert.equal(store.getTask(id), undefined, `${id} row is gone`);
         assert.equal(tasks.getTurn(id), null, `${id} has no turn`);
@@ -1351,11 +1380,9 @@ describe("turn slot", () => {
       const swept = createTask("empty-swept");
       tasks.beginAgentTurn(swept, { origin: "delegated" });
       assert.equal(store.getEvents(swept).length, 0, "the task is empty");
-      (
-        store as unknown as {
-          db: { prepare(sql: string): { run(...a: unknown[]): unknown } };
-        }
-      ).db
+      // `db` is the store's private handle and `created_at` has no setter, so
+      // the row is aged through the real database type to reach the sweep.
+      (store as unknown as { db: Database.Database }).db
         .prepare("UPDATE tasks SET created_at = ? WHERE id = ?")
         .run(Date.now() - 2 * 60 * 1000, swept);
 
@@ -1373,6 +1400,11 @@ describe("turn slot", () => {
         "the sweep removed the row",
       );
       assert.equal(tasks.getTurn(swept), null, "the sweep released the slot");
+      assert.equal(
+        tasks.activePrompts.has(swept),
+        false,
+        "the slot's membership is released, not just its metadata",
+      );
       assert.equal(tasks.liveTasks.has(swept), false);
     });
   });
