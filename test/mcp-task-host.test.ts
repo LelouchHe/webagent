@@ -588,6 +588,40 @@ describe("MCP Task tool host", () => {
     );
   });
 
+  it("broadcasts the cancellation it records", async () => {
+    const broadcasted: Array<{
+      taskId: string;
+      sourceTaskId: string;
+      reason: string;
+      status: string;
+    }> = [];
+    const host = createMcpTaskToolHost({
+      store,
+      tasks,
+      broadcastTaskCancel: (event) => broadcasted.push(event),
+    });
+
+    await host.cancel(principal(), "alpha-child", "stop before start");
+
+    assert.deepEqual(broadcasted, [
+      {
+        taskId: "alpha-child",
+        sourceTaskId: "alpha",
+        reason: "stop before start",
+        status: "idle",
+      },
+    ]);
+    // The live envelope and the stored row are the same event; only the wire
+    // needs the target `taskId` for SSE routing.
+    const stored = store
+      .getEvents("alpha-child")
+      .filter((event) => event.type === "task_cancel");
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].from_ref, "agent");
+    const { taskId: _taskId, ...data } = broadcasted[0];
+    assert.deepEqual(JSON.parse(stored[0].data), data);
+  });
+
   it("returns idle when a direct child has no active execution", async () => {
     const host = createMcpTaskToolHost({ store, tasks });
     assert.deepEqual(

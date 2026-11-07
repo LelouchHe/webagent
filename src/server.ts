@@ -229,6 +229,11 @@ const mcpTaskTools = createMcpTaskToolHost({
   broadcastTaskCreated: (event) => {
     sseManager.broadcast(buildTaskCreatedBroadcast(event));
   },
+  broadcastTaskCancel: (event) => {
+    // Same SSE path as the record the cancel wrote: an already-open task page
+    // sees it without reloading, and replay renders the stored event.
+    sseManager.broadcast({ type: "task_cancel", ...event });
+  },
 });
 const messageCleanup: CleanupHandle = startMessageCleanup(
   store,

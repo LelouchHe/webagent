@@ -59,6 +59,23 @@ export interface McpTaskCreatedEvent {
   body: string;
 }
 
+/**
+ * A cancellation an agent performed through `task_cancel`, as broadcast.
+ *
+ * The cancellation itself is persisted by the same call; this envelope exists
+ * so a client already watching the task sees it without a reload. It carries
+ * the stored record verbatim (the wire needs the target `taskId` for routing)
+ * and nothing display-only, so a live row and its replayed twin render alike.
+ * Only the MCP path emits it — a user-initiated cancel is deliberately
+ * different.
+ */
+export interface McpTaskCancelEvent {
+  taskId: string;
+  sourceTaskId: string;
+  reason: string;
+  status: string;
+}
+
 function relationOrder(relation: McpTaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2, sibling: 3 }[relation];
 }
@@ -69,8 +86,15 @@ export function createMcpTaskToolHost(deps: {
   cancelTimeoutMs?: number;
   broadcastCollaboration?: (event: McpTaskCollaborationEvent) => void;
   broadcastTaskCreated?: (event: McpTaskCreatedEvent) => void;
+  broadcastTaskCancel?: (event: McpTaskCancelEvent) => void;
 }): McpTaskToolHost {
-  const { store, tasks, broadcastCollaboration, broadcastTaskCreated } = deps;
+  const {
+    store,
+    tasks,
+    broadcastCollaboration,
+    broadcastTaskCreated,
+    broadcastTaskCancel,
+  } = deps;
 
   /**
    * The single authority check for one MCP operation. It lives here because
@@ -398,6 +422,12 @@ export function createMcpTaskToolHost(deps: {
         { sourceTaskId, reason, status: result.status },
         { from_ref: "agent" },
       );
+      broadcastTaskCancel?.({
+        taskId: target.id,
+        sourceTaskId,
+        reason,
+        status: result.status,
+      });
       return { accepted: true, taskId: target.id, status: result.status };
     },
 

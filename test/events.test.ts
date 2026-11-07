@@ -2649,6 +2649,30 @@ describe("events", () => {
         );
       });
 
+      it("renders an agent cancellation as a system line", () => {
+        state.taskId = "s1";
+        events.handleEvent({
+          type: "task_cancel",
+          taskId: "s1",
+          sourceTaskId: "a1b2c3d4e5f6",
+          reason: "no longer needed",
+          status: "cancelled",
+        });
+        // Another task's cancellation must not leak into this transcript.
+        events.handleEvent({
+          type: "task_cancel",
+          taskId: "s2",
+          sourceTaskId: "a1b2c3d4e5f6",
+          reason: "no longer needed",
+          status: "cancelled",
+        });
+        assert.equal(dom.messages.children.length, 1);
+        assert.equal(
+          dom.messages.querySelector(".system-msg")?.textContent,
+          "@a1b2c3d4 cancelled this task\nreason: no longer needed\nstatus: cancelled",
+        );
+      });
+
       it("renders collaboration events as title and body", () => {
         state.taskId = "s1";
         events.handleEvent({
@@ -3020,6 +3044,24 @@ describe("events", () => {
       events.replayEvent("user_message", { text: "hello" }, [], 0);
       assert.equal(dom.messages.children.length, 1);
       assert.ok(dom.messages.children[0].classList.contains("user"));
+    });
+
+    it("replays an agent cancellation as a system line", () => {
+      events.replayEvent(
+        "task_cancel",
+        {
+          sourceTaskId: "a1b2c3d4e5f6",
+          reason: "no longer needed",
+          status: "cancelled",
+        },
+        [],
+        0,
+      );
+      assert.equal(dom.messages.children.length, 1);
+      assert.equal(
+        dom.messages.querySelector(".system-msg")?.textContent,
+        "@a1b2c3d4 cancelled this task\nreason: no longer needed\nstatus: cancelled",
+      );
     });
 
     it("reconciles an optimistic user echo from replay", () => {
