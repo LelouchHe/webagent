@@ -2395,8 +2395,16 @@ export function createRequestHandler(
 
         tasks.compactingTasks.add(taskId);
         tasks.releasePromptSubmission(taskId, submissionId, false);
-        // `/compact` reaches the same ACP prompt slot as a normal prompt, so it
-        // holds a turn of its own; `promptForText` never emits a turn terminator.
+        // `/compact` reaches the same ACP prompt slot as a normal prompt because
+        // it submits a silent prompt (`promptForText`) to the task's execution,
+        // so it holds a turn of its own — and `promptForText` never emits a turn
+        // terminator, so this path must close it in its own `finally`.
+        // `/clear` is the opposite case: it submits no prompt, it replaces the
+        // execution, which *ends* the turn (`resetTaskRuntime`) instead of
+        // opening one. It still leaves a transcript record (`agent_rotation`
+        // system message, "history and outstanding work are unchanged"); the
+        // agent recovers the earlier turns through the MCP history tools, which
+        // the new session is told about at `initialize`, not through a prompt.
         tasks.beginAgentTurn(taskId, {
           origin: "interactive",
           submissionId,

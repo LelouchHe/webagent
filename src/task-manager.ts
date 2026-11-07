@@ -403,6 +403,13 @@ export type ObligationSubmissionOutcome = DeliveryOutcome;
 export type TurnOrigin = "delegated" | "interactive";
 
 /**
+ * Why a busy→idle edge happened. It only labels the unfinished-work recovery
+ * that edge schedules (and the log line that explains a skipped drain), so it
+ * is a closed set of the real call sites rather than a free-form string.
+ */
+export type RecoveryOrigin = "busy_idle" | "prompt_done" | "error";
+
+/**
  * A task's one open turn, as read back from the turn slot.
  *
  * `kind` names what is running. Only `kind: "agent"` occupies the slot: a bash
@@ -439,6 +446,10 @@ export function turnOriginForDeliveryBatch(
  * write goes through here, which is why an entry and its `origin` cannot
  * disagree: dropping the member drops the metadata, and adding one without an
  * explicit origin means the task's own turn (`interactive`).
+ *
+ * Membership means "this task's ACP prompt is live right now", so it never
+ * outlives the task: deletion, cascade and GC all reach `releaseTaskRuntime`,
+ * which ends the turn, and a hard delete drops the runtime state entirely.
  */
 class TurnSlotSet extends Set<string> {
   private readonly turns: Map<string, OpenTurn>;
@@ -3271,7 +3282,11 @@ export class TaskManager implements ObligationHost {
    */
   endTurn(
     taskId: string,
-    opts?: { promptId?: string; recoveryOrigin?: string; sync?: boolean },
+    opts?: {
+      promptId?: string;
+      recoveryOrigin?: RecoveryOrigin;
+      sync?: boolean;
+    },
   ): boolean {
     if (!this.isCurrentPrompt(taskId, opts?.promptId)) return false;
     const wasOpen = this.activePrompts.delete(taskId);
@@ -3433,7 +3448,7 @@ export class TaskManager implements ObligationHost {
   syncBusy(
     taskId: string,
     promptId?: string | null,
-    recoveryOrigin = "busy_idle",
+    recoveryOrigin: RecoveryOrigin = "busy_idle",
   ): void {
     const kind = this.getBusyKind(taskId);
     const current = this.state.getState(taskId).runtime.busy;
@@ -3535,7 +3550,7 @@ export class TaskManager implements ObligationHost {
   recoverUnfinishedWork(
     bridge: DeliveryBridge,
     taskId: string,
-    origin: string,
+    origin: RecoveryOrigin,
   ): void {
     this.attachExecutionBridge(bridge);
     if (this.getGateBusyKind(taskId) === "agent") return;
@@ -3551,7 +3566,10 @@ export class TaskManager implements ObligationHost {
     this.scheduleUnfinishedWorkRecovery(taskId, origin);
   }
 
-  private scheduleUnfinishedWorkRecovery(taskId: string, origin: string): void {
+  private scheduleUnfinishedWorkRecovery(
+    taskId: string,
+    origin: RecoveryOrigin,
+  ): void {
     if (this.pendingWorkRecoveries.has(taskId)) return;
     if (
       !this.store.getTask(taskId) ||
