@@ -86,6 +86,25 @@ The operational form of that sentence:
   the execution the restore is about to make live. A prompt is the one write
   that asks for the gate *without* the restore, because it waits for that
   restore (`ensureResumed` shares one resume per task) instead of refusing it.
+- **Turn authorization is per turn, not per task and not per mode.** A
+  request that arrives while the task's live turn is `delegated` (opened by a
+  collaboration delivery whose whole batch was agent/system authored, or by an
+  obligation reminder) is answered by the host — `allow_once`, else
+  `allow_always`, else `cancelled` with no `reject_*` option selected and no
+  invented `optionId`. A request that arrives in a human turn (`interactive`) is
+  not: it prompts, paging and push included, and only the mode gate's autopilot
+  classification auto-approves it. The condition is the double test — the slot
+  is live **and** `origin === "delegated"` — because `state.runtime.busy` is a
+  projection: reservation, compaction and rotation all report agent-busy
+  without a live ACP prompt. `origin` lives on the turn and dies with it; no
+  authorization state is stored. The attachment-read interceptor is the one
+  human-turn exception, and it re-checks the captured `promptId` before
+  answering so a turn that ended or was superseded cannot still be approved.
+  *Why:* a dispatched task must not wait for a person who is not party to its
+  turn, and the human's own turns must keep the behaviour (and assertions) they
+  already have. The cost is deliberate and recorded: an agent can obtain
+  unattended execution in any task by sending to it, and an `allow_always`
+  answer lives in the agent's memory, not the host's.
 - **Execution environment comes from the binding, never from the caller.** A
   request names a task; the runtime resolves which agent executes it. Five
   contexts are the deliberate exceptions and each names its own source: the

@@ -249,6 +249,68 @@ function performAutoApprove(
   });
 }
 
+/** The subset of a permission option the host answers with. */
+type AllowOption = { optionId: string; label?: string };
+
+function findAllowOption(
+  options: PermissionRequestEvent["options"],
+  kind: "allow_once" | "allow_always",
+): AllowOption | undefined {
+  return options.find((o: { kind?: string }) => o.kind === kind);
+}
+
+/**
+ * Answer a request that arrived inside a delegated turn.
+ *
+ * The turn was opened by the runtime or by an agent, so the host answers for
+ * it instead of asking a person who is not party to this turn: `allow_once`
+ * first (it leaves the least behind), then `allow_always`. A request that
+ * offers no allow option is *cancelled*, never answered with a `reject_*`
+ * option and never with a fabricated `optionId` — the host does not decide to
+ * refuse on the agent's behalf, it records that no allow option existed.
+ */
+function answerDelegatedPermission(
+  event: PermissionRequestEvent,
+  tasks: TaskManager,
+  store: Store,
+  bridge: AgentBridge,
+  sseManager: SseManager,
+): void {
+  const allow =
+    findAllowOption(event.options, "allow_once") ??
+    findAllowOption(event.options, "allow_always");
+  if (allow) {
+    performAutoApprove(event, allow, tasks, store, bridge, sseManager, true);
+    return;
+  }
+  // Chronological order for the transcript: the request is broadcast first,
+  // then the collapse frame that answers it, exactly like the mode gate above.
+  bridge.denyPermission(event.requestId);
+  tasks.pendingPermissions.delete(event.requestId);
+  tasks.syncPendingPermissions(event.taskId);
+  store.saveEvent(
+    event.taskId,
+    "permission_response",
+    {
+      requestId: event.requestId,
+      // The ACP outcome is `cancelled`; naming it here is what happened, not a
+      // selected option.
+      optionName: "cancelled",
+      denied: true,
+      reason: event.options.length === 0 ? "no_options" : "no_allow_option",
+    },
+    { from_ref: "system" },
+  );
+  sseManager.broadcast(withoutLease(event));
+  sseManager.broadcast({
+    type: "permission_response" as const,
+    taskId: event.taskId,
+    requestId: event.requestId,
+    optionName: "cancelled",
+    denied: true,
+  });
+}
+
 function maybeAutoApprovePermission(
   event: PermissionRequestEvent,
   tasks: TaskManager,
@@ -256,11 +318,21 @@ function maybeAutoApprovePermission(
   bridge: AgentBridge,
   sseManager: SseManager,
 ): boolean {
+  // Two independent branches. This one is the whole P5-b authorization rule:
+  // a *live* turn whose origin is `delegated` answers for itself. Both halves
+  // are required — `getTurn` returning null means no ACP prompt is live, and a
+  // reservation, compaction or rotation must not be read as one.
+  const turn = tasks.getTurn(event.taskId);
+  if (turn !== null && turn.origin === "delegated") {
+    answerDelegatedPermission(event, tasks, store, bridge, sseManager);
+    return true;
+  }
+  // The other branch is the human turn, unchanged: `mode` is the setting a
+  // person makes for their own turn, so autopilot still answers its one known
+  // option and everything else still prompts.
   const mode = store.getTask(event.taskId)?.mode ?? "";
   if (!isAutopilotMode(mode)) return false;
-  const opt = event.options.find(
-    (o: { kind?: string }) => o.kind === "allow_once",
-  ) as { optionId: string; label?: string } | undefined;
+  const opt = findAllowOption(event.options, "allow_once");
   if (!opt) return false;
   performAutoApprove(event, opt, tasks, store, bridge, sseManager, true);
   return true;
@@ -280,10 +352,13 @@ function maybeAutoApproveAttachmentRead(
   // permission_response, identical to autopilot's collapse behavior.
   const interceptor = config.attachmentInterceptor;
   if (!interceptor) return;
-  const opt = event.options.find(
-    (o: { kind?: string }) => o.kind === "allow_once",
-  ) as { optionId: string; label?: string } | undefined;
+  const opt = findAllowOption(event.options, "allow_once");
   if (!opt) return;
+  // Same-turn guard: the realpath work below may outlive the turn that
+  // delivered this request. Capture its identity by value (`getTurn` returns a
+  // fresh snapshot, so object identity proves nothing) and refuse to answer
+  // once the turn has ended, been superseded, or a new turn took its place.
+  const promptIdAtArrival = tasks.getTurn(event.taskId)?.promptId ?? null;
 
   void shouldAutoApproveAttachmentRead(
     {
@@ -305,6 +380,9 @@ function maybeAutoApproveAttachmentRead(
       // Race guard: the user (or another client) may have already
       // resolved the permission while we were realpath-ing.
       if (!tasks.pendingPermissions.has(event.requestId)) return;
+      // The turn this request arrived in must still be the current one.
+      if ((tasks.getTurn(event.taskId)?.promptId ?? null) !== promptIdAtArrival)
+        return;
       performAutoApprove(event, opt, tasks, store, bridge, sseManager, false);
     },
     (err: unknown) => {
