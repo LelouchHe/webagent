@@ -208,6 +208,12 @@ export type ObligationFact =
       type: "turn_ended";
       targetTaskId: string;
       turnId?: string;
+      /**
+       * The turn was ended by an explicit cancellation (the ACP stop reason or
+       * the busy cancel marker), not by the agent finishing. Such a boundary
+       * owes no closing reminder; see transitionTurnEnded.
+       */
+      cancelled?: boolean;
     }
   | {
       // Cleanup-scoped: the only emitter is the bridge-restart/reset path,
@@ -570,8 +576,17 @@ export class ObligationController {
     this.apply({ type: "execution_rotated", targetTaskId });
   }
 
-  onTargetTurnEnded(targetTaskId: string, turnId?: string): void {
-    this.apply({ type: "turn_ended", targetTaskId, turnId });
+  onTargetTurnEnded(
+    targetTaskId: string,
+    turnId?: string,
+    opts?: { cancelled?: boolean },
+  ): void {
+    this.apply({
+      type: "turn_ended",
+      targetTaskId,
+      turnId,
+      ...(opts?.cancelled === undefined ? {} : { cancelled: opts.cancelled }),
+    });
   }
 
   beginTurn(targetTaskId: string, promptId: string): void {
@@ -881,6 +896,28 @@ export class ObligationController {
     obligation.observedTurnId = undefined;
     const key = edgeKey(obligation.sourceTaskId, obligation.targetTaskId);
     this.watchdog.delete(key);
+    if (fact.cancelled) {
+      // An explicit cancellation is not a missing account: the turn was
+      // stopped on purpose, so this boundary owes no closing reminder. The
+      // first closing reminder is armed at hand-off (it waits for the target to
+      // go idle), so withdraw that one too rather than let the scheduler fire
+      // it the moment the turn ends. The record stays `open` with no timer;
+      // every other unaccounted end still reminds, and a later dispatch that
+      // ends without an account reminds normally.
+      if (
+        obligation.state === "reminder_due" &&
+        obligation.deliveredAttempts === 0
+      ) {
+        obligation.state = "open";
+        obligation.waitingSince = undefined;
+        obligation.retrying = false;
+      }
+      this.log(
+        "obligation boundary owes no reminder after cancellation",
+        logFields(obligation),
+      );
+      return;
+    }
     if (obligation.state === "open") {
       this.maybeRemindAtBoundary(obligation);
       return;

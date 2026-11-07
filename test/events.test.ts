@@ -3026,11 +3026,8 @@ describe("events", () => {
           child.id,
           "no longer needed",
         );
-        const rows = store.getEvents(child.id);
-        return {
-          frames,
-          rows,
-          stored: rows.map(
+        const asStored = (rows: ReturnType<typeof store.getEvents>) =>
+          rows.map(
             (row): StoredEvent => ({
               id: row.id,
               task_id: row.task_id,
@@ -3039,8 +3036,13 @@ describe("events", () => {
               data: row.data,
               created_at: new Date(row.created_at).toISOString(),
             }),
-          ),
-          taskId: child.id,
+          );
+        return {
+          frames,
+          sourceStored: asStored(store.getEvents(source.id)),
+          targetStored: asStored(store.getEvents(child.id)),
+          sourceTaskId: source.id,
+          targetTaskId: child.id,
           cleanup,
         };
       } catch (err) {
@@ -3049,33 +3051,38 @@ describe("events", () => {
       }
     }
 
-    it("renders one live row from the broadcast frame", async () => {
+    it("renders each side's live row with its own wording", async () => {
       const produced = await produceCancellation();
       try {
-        state.taskId = produced.taskId;
-        // The producer writes and broadcasts one row: the live frame is the
-        // whole cancellation, exactly what a reload will replay.
-        const rows = produced.rows.filter(
-          (row) => row.type === "system_message",
+        // Two rows are written and broadcast, one per side of the edge.
+        assert.equal(produced.frames.length, 2);
+        assert.deepEqual(
+          produced.frames.map((frame) => [
+            frame.taskId,
+            frame.role,
+            frame.title,
+          ]),
+          [
+            [produced.sourceTaskId, "source", "@Source cancelled @Child"],
+            [produced.targetTaskId, "target", "Cancelled by @Source"],
+          ],
         );
-        assert.equal(rows.length, 1);
-        assert.equal(produced.rows.length, 1);
-        const row = JSON.parse(rows[0].data) as Record<string, unknown>;
-        assert.deepEqual(produced.frames, [
-          {
-            type: "system_message",
-            taskId: produced.taskId,
-            kind: row.kind,
-            sourceTaskId: row.sourceTaskId,
-            title: row.title,
-            body: row.body,
-          },
-        ]);
+
+        state.taskId = produced.sourceTaskId;
         for (const frame of produced.frames) events.handleEvent(frame);
         assert.equal(dom.messages.children.length, 1);
         assert.equal(
           dom.messages.querySelector("summary")?.textContent,
-          "Cancelled by @source",
+          "@Source cancelled @Child",
+        );
+
+        stateMod.resetTaskUI();
+        state.taskId = produced.targetTaskId;
+        for (const frame of produced.frames) events.handleEvent(frame);
+        assert.equal(dom.messages.children.length, 1);
+        assert.equal(
+          dom.messages.querySelector("summary")?.textContent,
+          "Cancelled by @Source",
         );
         assert.equal(
           dom.messages.querySelector(".system-msg-body")?.textContent,
@@ -3086,28 +3093,36 @@ describe("events", () => {
       }
     });
 
-    it("renders one replayed row from the stored system message", async () => {
+    it("renders each side's replayed row with its own wording", async () => {
       const produced = await produceCancellation();
       try {
-        // The cancellation is one stored row, so replay shows it once.
-        assert.equal(produced.stored.length, 1);
-        assert.equal(produced.stored[0].type, "system_message");
-        for (const [idx, row] of produced.stored.entries()) {
-          events.replayEvent(
-            row.type,
-            JSON.parse(row.data) as Record<string, unknown>,
-            produced.stored,
-            idx,
-          );
-        }
+        const replay = (stored: StoredEvent[]) => {
+          for (const [idx, row] of stored.entries()) {
+            events.replayEvent(
+              row.type,
+              JSON.parse(row.data) as Record<string, unknown>,
+              stored,
+              idx,
+            );
+          }
+        };
+
+        assert.equal(produced.sourceStored.length, 1);
+        assert.equal(produced.targetStored.length, 1);
+        replay(produced.sourceStored);
         assert.equal(dom.messages.children.length, 1);
         assert.equal(
           dom.messages.querySelector("summary")?.textContent,
-          "Cancelled by @source",
+          "@Source cancelled @Child",
         );
+
+        stateMod.resetTaskUI();
+        state.taskId = produced.targetTaskId;
+        replay(produced.targetStored);
+        assert.equal(dom.messages.children.length, 1);
         assert.equal(
-          dom.messages.querySelector(".system-msg-body")?.textContent,
-          "reason: no longer needed\nstatus: idle",
+          dom.messages.querySelector("summary")?.textContent,
+          "Cancelled by @Source",
         );
       } finally {
         produced.cleanup();

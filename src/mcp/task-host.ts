@@ -416,37 +416,64 @@ export function createMcpTaskToolHost(deps: {
       // The cancel awaited a transport round trip; the record of what happened
       // is only written while the caller still owns its execution.
       authorize(principal);
-      // One record: the transcript row is the whole fact. Its machine fields
-      // (`sourceTaskId`, `reason`, `status`) ride in `data` beside the readable
-      // title and body, which is how every task fact that appears in the
-      // conversation is stored. The title is never empty (the replay path skips
-      // an untitled system message).
-      const title = `Cancelled by ${formatTaskReference(sourceTaskId.slice(0, 8))}`;
+      // One fact, two rows, one per side of the edge: the canceller reads it as
+      // an act, the cancelled task as something done to it. Both are ordinary
+      // `system_message` rows (machine fields in `data`), so each side renders
+      // through the generic path and neither title is ever empty. Titles come
+      // from the live task rows, with the same short-id fallback collaboration
+      // uses; a cancelled task may already be soft-deleted, hence
+      // `getTaskIncludingDeleted`.
+      const sourceTask = store.getTaskIncludingDeleted(sourceTaskId);
+      const targetTask = store.getTaskIncludingDeleted(target.id);
+      const sourceLabel = formatTaskReference(
+        sourceTask?.title ?? sourceTaskId.slice(0, 8),
+      );
+      const targetLabel = formatTaskReference(
+        targetTask?.title ?? target.id.slice(0, 8),
+      );
       const body = formatFieldBlock([
         { label: "reason", value: reason },
         { label: "status", value: result.status },
       ]);
-      store.saveEvent(
-        target.id,
-        "system_message",
+      const rows = [
         {
-          kind: "task_cancel",
-          sourceTaskId,
-          reason,
-          status: result.status,
-          title,
-          body,
+          taskId: sourceTaskId,
+          role: "source" as const,
+          title: `${sourceLabel} cancelled ${targetLabel}`,
         },
-        { from_ref: "agent" },
-      );
-      broadcastTaskCancelNotice?.({
-        type: "system_message",
-        taskId: target.id,
-        kind: "task_cancel",
-        sourceTaskId,
-        title,
-        body,
-      });
+        {
+          taskId: target.id,
+          role: "target" as const,
+          title: `Cancelled by ${sourceLabel}`,
+        },
+      ];
+      for (const row of rows) {
+        store.saveEvent(
+          row.taskId,
+          "system_message",
+          {
+            kind: "task_cancel",
+            role: row.role,
+            sourceTaskId,
+            targetTaskId: target.id,
+            reason,
+            status: result.status,
+            title: row.title,
+            body,
+          },
+          { from_ref: "agent" },
+        );
+        broadcastTaskCancelNotice?.({
+          type: "system_message",
+          taskId: row.taskId,
+          kind: "task_cancel",
+          role: row.role,
+          sourceTaskId,
+          targetTaskId: target.id,
+          title: row.title,
+          body,
+        });
+      }
       return { accepted: true, taskId: target.id, status: result.status };
     },
 

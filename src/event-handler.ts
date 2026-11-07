@@ -478,6 +478,11 @@ function handlePromptDone(
       stopReason: event.stopReason,
     });
   }
+  // The turn's own end fact: the ACP stop reason or our pending cancel marker.
+  // An obligation reads this so an explicit cancellation is not mistaken for a
+  // missing account and answered with a closing reminder.
+  const cancelledTurn =
+    event.stopReason === "cancelled" || cancelStatus !== null;
   // The tail this turn buffered must always land, even when the turn has
   // already been superseded — it is the only copy of that text.
   const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
@@ -490,7 +495,9 @@ function handlePromptDone(
       recoveryOrigin: "prompt_done",
     });
     tasks.recoverUnfinishedWork(bridge, event.taskId, "prompt_done");
-    tasks.onTargetTurnEnded(event.taskId, event.promptId);
+    tasks.onTargetTurnEnded(event.taskId, event.promptId, {
+      cancelled: cancelledTurn,
+    });
   } else {
     clog.info("completion from a superseded turn", {
       taskId: event.taskId.slice(0, 8),
@@ -529,13 +536,20 @@ function handleError(
     // not end the turn that replaced it. The buffered tail still flushes.
     const isCurrent = tasks.isCurrentPrompt(event.taskId, event.promptId);
     const taskBeforeIdle = isCurrent ? store.getTask(event.taskId) : null;
+    // A cancellation can surface as an error instead of a cancelled
+    // completion; the busy cancel marker is the same fact either way.
+    const cancelledTurn =
+      (tasks.state.getState(event.taskId).runtime.busy?.cancelStatus ??
+        null) !== null;
     if (isCurrent) {
       tasks.endTurn(event.taskId, {
         promptId: event.promptId,
         recoveryOrigin: "error",
       });
       tasks.recoverUnfinishedWork(bridge, taskId, "error");
-      tasks.onTargetTurnEnded(taskId, event.promptId);
+      tasks.onTargetTurnEnded(taskId, event.promptId, {
+        cancelled: cancelledTurn,
+      });
     } else {
       clog.info("failure from a superseded turn", {
         taskId: event.taskId.slice(0, 8),

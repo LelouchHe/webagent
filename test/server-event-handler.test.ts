@@ -809,6 +809,42 @@ describe("handleAgentEvent", () => {
     assert.ok(payload.openingDeliveryId);
   });
 
+  it("does not remind when the turn carried our cancel request", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child");
+    // A UI cancel marks the live turn, and the agent may still finish with an
+    // ordinary stop reason; the marker is the fact, not the stop reason.
+    tasks.state.markCancelRequested("child");
+    endTurn(bridge, "child", calls.prompts[0].promptId);
+    calls.prompts[0].resolve();
+    await flushTimers();
+
+    assert.equal(calls.prompts.length, 1, "a cancelled turn owes no reminder");
+    assert.equal(tasks.getObligation("parent", "child")?.state, "open");
+  });
+
+  it("reminds again when a later dispatch after a cancellation goes unaccounted", async () => {
+    seedFamily();
+    const { bridge, calls } = createControllableBridge();
+    await armDirectDispatch(store, tasks, bridge, "parent", "child", "First.");
+    endTurn(bridge, "child", calls.prompts[0].promptId, "cancelled");
+    calls.prompts[0].resolve();
+    await flushTimers();
+    assert.equal(calls.prompts.length, 1);
+
+    await armDirectDispatch(store, tasks, bridge, "parent", "child", "Second.");
+    // This turn ends without an account and was not cancelled: it must remind.
+    endTurn(bridge, "child", calls.prompts[1].promptId);
+    calls.prompts[1].resolve();
+    await flushTimers();
+
+    assert.equal(calls.prompts.length, 3);
+    assert.match(calls.prompts[2].text, /task_update\(done/);
+    calls.prompts[2].resolve();
+    await flushTimers();
+  });
+
   it("settles the record from an active current turn and routes to the stored source", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
@@ -1093,7 +1129,7 @@ describe("handleAgentEvent", () => {
     assert.equal(calls.prompts.length, 0);
   });
 
-  it("still reminds when the dispatch turn was cancelled", async () => {
+  it("does not remind when the dispatch turn was cancelled", async () => {
     seedFamily();
     const { bridge, calls } = createControllableBridge();
     await armDirectDispatch(store, tasks, bridge, "parent", "child");
@@ -1101,16 +1137,24 @@ describe("handleAgentEvent", () => {
     calls.prompts[0].resolve();
     await flushTimers();
 
-    assert.equal(calls.prompts.length, 2);
-    // The prohibition is scoped to the runtime-injected closing turn, not to
-    // the underlying work.
-    assert.match(calls.prompts[1].text, /runtime-injected closing turn/i);
-    assert.match(
-      calls.prompts[1].text,
-      /Do not begin new work as part of this closing turn\./,
+    // A turn stopped on purpose is not a missing account: no closing reminder,
+    // no notice, and the record stays open for the next dispatch.
+    assert.equal(calls.prompts.length, 1, "a cancelled turn owes no reminder");
+    assert.equal(tasks.getObligation("parent", "child")?.state, "open");
+    const events = store.getEvents("child");
+    assert.equal(
+      events.some((event) => event.type === "task_outcome_notice"),
+      false,
     );
-    calls.prompts[1].resolve();
-    await flushTimers();
+    assert.equal(
+      events.some(
+        (event) =>
+          event.type === "system_message" &&
+          (JSON.parse(event.data) as { kind?: string }).kind ===
+            "handoff_reminder",
+      ),
+      false,
+    );
   });
 
   it("resumes a non-live session before submitting the reminder", async () => {

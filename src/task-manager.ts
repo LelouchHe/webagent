@@ -3616,8 +3616,12 @@ export class TaskManager implements ObligationHost {
   }
 
   /** A current target turn ended; the controller may enter `reminder_due`. */
-  onTargetTurnEnded(taskId: string, turnId?: string): void {
-    this.obligations.onTargetTurnEnded(taskId, turnId);
+  onTargetTurnEnded(
+    taskId: string,
+    turnId?: string,
+    opts?: { cancelled?: boolean },
+  ): void {
+    this.obligations.onTargetTurnEnded(taskId, turnId, opts);
   }
 
   /** Qualifying agent-runtime activity for the watchdog and telemetry. */

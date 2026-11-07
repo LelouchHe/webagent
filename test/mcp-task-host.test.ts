@@ -591,7 +591,7 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("records a cancellation as a single system row", async () => {
+  it("records one cancellation row per side and broadcasts both", async () => {
     const broadcasted: McpTaskCancelNotice[] = [];
     const host = createMcpTaskToolHost({
       store,
@@ -601,30 +601,69 @@ describe("MCP Task tool host", () => {
 
     await host.cancel(principal(), "alpha-child", "stop before start");
 
-    // One record for the fact: the transcript row carries the machine fields
-    // in `data` beside the readable title and body.
-    const stored = store.getEvents("alpha-child");
-    assert.equal(stored.length, 1);
-    assert.equal(stored[0].type, "system_message");
-    assert.equal(stored[0].from_ref, "agent");
-    assert.deepEqual(JSON.parse(stored[0].data), {
+    // One fact, one row per side of the edge: the canceller reads it as an act,
+    // the cancelled task as something done to it. Machine fields ride in
+    // `data` beside each side's own wording.
+    const body = "reason: stop before start\nstatus: idle";
+    const sourceRow = store
+      .getEvents("alpha")
+      .filter(
+        (event) =>
+          event.type === "system_message" &&
+          (JSON.parse(event.data) as { kind?: string }).kind === "task_cancel",
+      );
+    const targetRow = store
+      .getEvents("alpha-child")
+      .filter(
+        (event) =>
+          event.type === "system_message" &&
+          (JSON.parse(event.data) as { kind?: string }).kind === "task_cancel",
+      );
+    assert.equal(sourceRow.length, 1);
+    assert.equal(sourceRow[0].from_ref, "agent");
+    assert.deepEqual(JSON.parse(sourceRow[0].data), {
       kind: "task_cancel",
+      role: "source",
       sourceTaskId: "alpha",
+      targetTaskId: "alpha-child",
       reason: "stop before start",
       status: "idle",
-      title: "Cancelled by @alpha",
-      body: "reason: stop before start\nstatus: idle",
+      title: '@Alpha cancelled @"Alpha child"',
+      body,
     });
-    // The stored row is the whole wire event; there is no second frame to
-    // render the same fact twice.
+    assert.equal(targetRow.length, 1);
+    assert.equal(targetRow[0].from_ref, "agent");
+    assert.deepEqual(JSON.parse(targetRow[0].data), {
+      kind: "task_cancel",
+      role: "target",
+      sourceTaskId: "alpha",
+      targetTaskId: "alpha-child",
+      reason: "stop before start",
+      status: "idle",
+      title: "Cancelled by @Alpha",
+      body,
+    });
+    // Both rows are wire events, each routed to its own task.
     assert.deepEqual(broadcasted, [
+      {
+        type: "system_message",
+        taskId: "alpha",
+        kind: "task_cancel",
+        role: "source",
+        sourceTaskId: "alpha",
+        targetTaskId: "alpha-child",
+        title: '@Alpha cancelled @"Alpha child"',
+        body,
+      },
       {
         type: "system_message",
         taskId: "alpha-child",
         kind: "task_cancel",
+        role: "target",
         sourceTaskId: "alpha",
-        title: "Cancelled by @alpha",
-        body: "reason: stop before start\nstatus: idle",
+        targetTaskId: "alpha-child",
+        title: "Cancelled by @Alpha",
+        body,
       },
     ]);
   });

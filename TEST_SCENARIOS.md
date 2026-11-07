@@ -39,7 +39,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/multi-agent-mcp.test.ts` (production host + endpoint + real store/ledger; business calls go through real HTTP `tools/call`)
   - a caller that rotates while a `task_create` waits for the tree lock is refused before the task row is written
-  - a caller that rotates while a `task_cancel` awaits the transport gets a refused tool result and no cancellation record
+  - a caller that rotates while a `task_cancel` awaits the transport gets a refused tool result and no cancellation row
   - a caller that rotates during a child's config inheritance is refused before the source transcript row is written; the already-committed child stays
   - an `initializing` capability completes the MCP handshake but every business tool returns `initializing`; after promotion the same token works
   - a request authenticated before a real rotation cannot write after it (the task-persist boundary re-checks after `newSession`), while a fresh token against the current generation succeeds; the rotated-away token is revoked
@@ -420,6 +420,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a rejected initial dispatch is retried under the transport bound (backoff, no immediate idle re-drain) and ends in one factual `delivery_failed` notice with `delivery_unavailable` evidence; a resume that keeps failing exhausts the same budget, and a still-queued dispatch produces a non-terminal `still_waiting` advisory rather than a terminal deadline
   - a late callback from a superseded dispatch prompt identity is ignored, including a failing resume and a stale hand-off; the still-waiting and age advisories are non-terminal and cleared on terminal states; an in-flight reminder from a previous epoch is ignored after a coalescing follow-up; a runtime rotation (and bridge restart, including a draining turn) aborts the watchdog and a silence notice requires a live current turn
   - the closing reminder scopes its prohibition to the runtime-injected closing turn, resumes a non-live session before reminding, records no successful reminder on rejection, persists a bounded audit copy of the drained prompt, and logs obligation lifecycle decisions
+  - a cancelled turn owes no closing reminder: the ACP `cancelled` stop reason and the busy cancel marker each end the turn without a `handoff_reminder` or `task_outcome_notice`, and the record stays `open`; a later dispatch that ends without an account still reminds
   - a runtime notice is delivered as a readable `reason:` / `message:` / `openingMessageId:` block (the text the parent agent actually receives, fenced verbatim), while its machine payload stays in the `task_outcome_notice` event; the live broadcast title and the persisted twin share one `messageId` and one title
   - execution write lease, fail closed: an event stamped with a replaced generation, an unknown generation, another task's lease, no lease at all, or no lease for a task with no ledger entry writes nothing — no buffer, no stored event, no broadcast, no activity timestamp
 
@@ -688,10 +689,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/events.test.ts`
   - task creation / busy-state restoration
-  - an agent-issued `task_cancel` is produced as one `system_message` row
-    (`kind: "task_cancel"`, `Cancelled by @<canceller>`, `reason:` / `status:`
-    body, machine fields in `data`). That row is also the only live frame, so
-    live and replay each render the cancellation exactly once
+  - an agent-issued `task_cancel` is produced as one `system_message` row per
+    side of the edge, both `kind: "task_cancel"` with `role` and the machine
+    fields in `data`, worded from that side (`@source cancelled @target` /
+    `Cancelled by @source`). Both rows are broadcast, so the cancel page and the
+    cancelled page each render exactly one line, live and from replay
   - user / assistant / thinking rendering
   - unsolicited Main-agent text and tool calls render while the foreground turn
     stays idle without reopening busy state
@@ -741,8 +743,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - self/parent/child/sibling authorization, tombstone/nonexistent target convergence, unknown sequence rejection
   - omitting the target reads the current Task's own history
   - explicit response_too_large errors report required_bytes without partial rows
-  - a successful `task_cancel` writes one `system_message` row (machine fields in
-    `data`) and broadcasts that same row (target `taskId` added for SSE routing)
+  - a successful `task_cancel` writes one `system_message` row per side (each
+    with its own `taskId`, `role`, and wording; machine fields in `data`) and
+    broadcasts both frames
   - MCP registration and documentation expose task_read as the sole raw-history tool
 
 - `test/commands.test.ts`, `test/slash-menu.test.ts`

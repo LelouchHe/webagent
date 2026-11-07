@@ -146,7 +146,7 @@ vocabulary:
 | `dispatch_failed` | `attemptId` | A submission of the original dispatch was actually attempted and rejected (a request-level prompt failure, including a dead bridge). Return to `awaiting_delivery`, count one submission failure, and retry under the transport bound, or end in `unresolved`. A transport that is not available is not this fact: the retry is simply not started. |
 | `execution_rotated` | — (target-addressed by the sole record) | The target's execution was replaced. Cancel the watchdog and hand-off ownership, bump the recovery generation (invalidating any in-flight submission), keep the record and its attempts, and return to `reminder_due` so the next attempt addresses the replacement. |
 | `turn_begun` | `turnId` | Observe the target turn and start the watchdog. |
-| `turn_ended` | `turnId` (optional) | A boundary: clear the watchdog, observe the end, and schedule recovery. |
+| `turn_ended` | `turnId` (optional), `cancelled?` | A boundary: clear the watchdog, observe the end, and schedule recovery. A boundary marked `cancelled` withdraws the still-unspent closing reminder and leaves the record `open` with no timer. |
 | `turn_aborted` | — (cleanup-scoped) | Cancel the watchdog; the only emitter is the reset/restart path. |
 | `agent_activity` | — (unattributable) | Reset the watchdog's activity clock. |
 | `released` | — (lifecycle) | Purge records at either endpoint and cancel their timers. |
@@ -282,6 +282,15 @@ controller submits up to `MAX_REMINDER_ATTEMPTS` closing prompts: one at the tur
 boundary, then delayed from the preceding **delivered** reminder. Only a resolved
 `bridge.prompt` counts as a delivered attempt; a rejected submission is retried
 with backoff and consumes the separate transport budget instead.
+
+**A turn ended by explicit cancellation owes no closing reminder.** The end fact
+is the turn's own: the ACP `cancelled` stop reason, or the busy cancel marker a
+cancellation sets (UI or MCP — the same controller path). Stopping a turn on
+purpose is not a missing account, so that boundary emits no reminder and no
+notice, and any closing reminder already armed for it is withdrawn; the record
+stays `open` with no timer. Every other unaccounted end — the agent finishing
+with prose and no `task_update` — still reminds, and a later dispatch that ends
+without an account reminds normally.
 
 **Advisories.** A dispatch still queued at `DISPATCH_ADVISORY_MS` and a record
 still without an account at `AGE_ADVISORY_MS` each emit one non-terminal
