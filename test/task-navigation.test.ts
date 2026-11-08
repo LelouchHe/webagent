@@ -136,7 +136,6 @@ describe("shared task navigation", () => {
 
     assert.equal(await navigation.switchToTask(rootId), "switched");
     assert.deepEqual(observations, [`#${rootId}`]);
-    assert.equal(state.rootTaskId, rootId);
     assert.equal(location.hash, `#${rootId}`);
   });
 

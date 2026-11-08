@@ -388,20 +388,21 @@ Promise.all([api.getTask(targetId), loadHistory(targetId)]).then(
 ### Hash Routing
 
 Every Task, Root included, is identified by URL hash: `/#task-id`, so a
-reload returns to the Task that was open. Root's id is delivered by server
-authority, and the client never recognises Root by the id's value. A URL with
-no hash is not Root: it means "resume the most recent Task" (below). `GET /api/v1/tasks` returns an array; it is still
-scoped to the running agent today, and the merged workspace list is part of the
-multi-agent runtime step. The exact `rootTaskId` authority is also carried by detail,
-bootstrap/create/clear/reset responses, global/per-task `connected`,
-`task_created`, and `/api/v1/config`. On config failure, the client may
-identify the Root by the `isRoot` flag of the task list it can read. Disconnect/
-reconnect clears stored authority; only a response or event from the current
-connection generation can restore it. Per-task UI resets preserve it.
+reload returns to the Task that was open. A URL with no hash is not Root: it
+means "resume the most recent Task" (below). The client keeps no Root identity
+of its own: the one place it needs to know which Task is Root (the hashless
+fallback) reads the task list's `isRoot` flag.
+
+The client has one connection identity, the **connection epoch**
+(`state.connectionEpoch`, bumped by `beginConnectionEpoch` on every connect and
+every disconnect). Stream setup, handshake recovery, navigation, new-task
+requests, and fallbacks capture it and abandon their result if it moved, so
+work begun under one connection is never applied to the connection that
+replaced it, or to the gap after a disconnect.
 
 `switchToTask` writes the requested hash before fetching detail, and
 activation (`task_created`) writes it again for the Task it installs; the hash
-is never rewritten for Root, so neither step depends on Root authority.
+is the same for Root as for any Task.
 Hashless startup keeps the selection order: newest task with user input first,
 canonical Root second, then the first task. A reconnect needs no special case:
 activation writes every task's hash, so the reconnect resumes whatever the hash
@@ -542,8 +543,8 @@ activates a task carries the answer with it:
    settles the comparison with **no request at all**: a known parent compares
    against its binding, `parentId: null` compares against the configured
    default.
-2. **Events keep it current.** `task_created` / `task_deleted` / `task_reset`
-   update the reference directly when the event names the parent; every other
+2. **Events keep it current.** `task_created` / `task_deleted` update the
+   reference directly when the event names the parent; every other
    task's events are ignored. A rotation or deletion after activation is
    therefore reflected immediately, without navigation.
 3. **The fallback reads exist for a payload that cannot answer** (an older

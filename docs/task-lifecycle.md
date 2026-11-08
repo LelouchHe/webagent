@@ -28,16 +28,16 @@ the SQL mechanics, and the debt state machine live in their own documents (see
    live ──delete (active share)──► tombstone ──last share revoked──► hard-deleted
    live ──empty-task GC─────────────────────────► hard-deleted (children re-parented)
 
-   root anchor: never deleted; a reset clears it in place → unmaterialized
+   root anchor: never deleted on its own; an exit replaces it with a new Root
 ```
 
 | State | Means |
 | --- | --- |
 | **live** | Bound to exactly one current execution `(agentId, sessionId)`; prompts and events run against it. |
-| **unmaterialized** | The binding agent is decided and the row exists, but there is no execution yet: the binding holds the reserved empty execution slot. The next use materializes one. Only a Root that *was* bound can be in this state; a Root that never had a binding is simply unbound and attaches on first use. |
+| **unmaterialized** | The binding agent is decided and the row exists, but there is no execution yet: the binding holds the reserved empty execution slot. The next use materializes one. A Root an exit created is in this state until its execution exists; a Root that never had a binding is simply unbound and attaches on first use. |
 | **tombstone** | Soft-deleted (`deleted_at` set) because at least one active public share still points at it. Row, events, attachments, and shares survive; the binding is gone. |
 | **hard-deleted** | Rows are gone (events, attachments, binding) and the task directory on disk is removed. |
-| **root anchor** | The Root: the task the `workspace` row names (a per-database UUID). A normal task in every other respect, but never deleted or garbage collected. |
+| **root anchor** | The Root: the task the `workspace` row names (a per-database UUID). A normal task in every other respect, but never deleted or garbage collected on its own: only an exit removes it, and only by replacing it. |
 
 ## Transitions
 
@@ -58,13 +58,14 @@ the SQL mechanics, and the debt state machine live in their own documents (see
 | Operation | Scope | What happens |
 | --- | --- | --- |
 | `/clear` | One task | Rotates the execution. Task, history, and tree position are unchanged; `model` / `mode` / `reasoning_effort` are kept only when the agent stays the same. |
-| Root reset — `/exit` on Root, or `DELETE /api/v1/tasks/root` | Root and its whole subtree | Deletes the descendant tree, clears Root's own events, attachments, client ops, compact summary, and previews, and bumps the generation. Root's identity and `parent_id = null` survive, and it is *rebuilt* before the request returns, so the client lands on a task that is already live and idle — the same state a freshly created task is in. The bound agent is checked first: an agent that cannot start refuses the exit (`503`) with the tree untouched, because a Root that cannot be rebuilt is not a usable Root. Two roots have nothing to rebuild and legitimately stay lazy: one that was never bound (its first prompt attaches) and one whose recorded agent left the configuration (an operation rotates it). Only a session that fails *after* the commit leaves the empty execution slot, which the next use then materializes. |
-| `/exit` | The current task | Deletes that task and its subtree; on Root it is the reset above. |
+| Root exit — `/exit` on Root, or `DELETE /api/v1/tasks/<root id>` | Root and its whole subtree | An ordinary delete of the whole tree (the old Root included, tombstoned if shared) plus a fresh Root, in one transaction. The new Root has a new id and keeps the directory, title, saved model, and agent; it starts in agent mode with no history. Its execution is created before the request returns, so the client lands on a task that is already live and idle, the same state a freshly created task is in. The agent is checked first: one that cannot start refuses the exit (`503`) with the tree untouched. Two roots have nothing to create and stay lazy: one that was never bound (its first prompt attaches) and one whose recorded agent left the configuration (an operation rotates it). Only a session that fails *after* the commit leaves the empty execution slot, which the next use then materializes. |
+| `/exit` | The current task | Deletes that task and its subtree; on Root it is the exit above. |
 
 ## Two irregularities worth knowing
 
-- **Root is never deleted.** Generic deletion, empty-task GC, and tombstone
-  reaping all refuse the Root; only the reset clears it in place.
+- **Root is never deleted on its own.** Generic deletion, empty-task GC, and
+  tombstone reaping all refuse the Root; only an exit removes it, and always
+  together with the Root that replaces it.
 - **A tombstone exists only for an active public share.** Without one, deletion
   is immediate and complete. Survivors of a parent's deletion are therefore
   share tombstones and, for the empty-task GC only, the GC'd task's children.

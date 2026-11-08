@@ -14,7 +14,7 @@ import {
 /**
  * Exiting Root must leave nothing for a later read to wake up.
  *
- * Root is the one exit whose target survives, so the client lands back on it
+ * Exiting Root replaces it, and the client lands on the replacement
  * immediately. While the replacement execution was created lazily by whatever
  * read came next, that read found Root mid-materialization: the snapshot
  * projected the creation claim as busy, and nothing ever ended it. The spinner
@@ -67,10 +67,19 @@ test("exiting Root lands on an idle Root", async ({ page }) => {
 
     await sendPrompt(page, "/exit");
 
-    // Same task (Root is rebuilt, not replaced), cleared history, and an input
-    // that is ready — not a spinner waiting on a rebuild that already finished
+    // The exit replaces Root: the page lands on the new Root (a new id, which
+    // the server now reports as Root), with an empty history and an input that
+    // is ready — not a spinner waiting on a wake-up that already finished
     // before the DELETE answered.
-    await expect.poll(() => currentTaskId(page)).toBe(rootTaskId);
+    await expect.poll(() => currentTaskId(page)).not.toBe(rootTaskId);
+    const newRootTaskId = await currentTaskId(page);
+    const configRootId = await page.evaluate(async (token) => {
+      const response = await fetch("/api/v1/config", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return ((await response.json()) as { rootTaskId: string }).rootTaskId;
+    }, E2E_TOKEN);
+    expect(newRootTaskId).toBe(configRootId);
     await expect(page.locator("#messages")).not.toContainText("root content");
     await expect(page.locator("#send-btn")).toHaveText("↵");
 

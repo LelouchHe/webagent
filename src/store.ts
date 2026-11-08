@@ -349,7 +349,8 @@ export interface AgentSessionView {
 export class Store {
   private readonly db: Database.Database;
   private readonly dataDir: string;
-  readonly rootTaskId: string;
+  /** This database's Root; it changes only when an exit replaces the Root. */
+  private rootId = "";
   private readonly collaborationEmitter: CollaborationMessageEmitter;
   /**
    * Binding facts belong to the outermost successful commit, not to any one
@@ -362,6 +363,10 @@ export class Store {
   private readonly bindingObservers: Array<
     (changes: readonly BindingChange[]) => void
   > = [];
+
+  get rootTaskId(): string {
+    return this.rootId;
+  }
 
   /**
    * True only for this database's Root. Ordinary creation, deletion, tombstone
@@ -392,7 +397,7 @@ export class Store {
       this.dropLegacyColumns();
       this.migrateSystemMessagePayloads();
       this.canonicalizeStoredModelValues();
-      this.rootTaskId = this.resolveRootIdentity();
+      this.rootId = this.resolveRootIdentity();
     } catch (error) {
       this.db.close();
       throw error;
@@ -1200,7 +1205,7 @@ export class Store {
 
   /**
    * Remove the current binding, leaving the task unowned (tombstone) or as an
-   * empty owner slot (Root reset materializes its own empty slot instead).
+   * empty owner slot (an exit gives the replacement Root its own empty slot).
    */
   detachAgentSession(taskId: string): AgentSessionRow | undefined {
     return this.writeBindings(() => {
@@ -1217,7 +1222,7 @@ export class Store {
 
   /**
    * The single place a task/execution binding is created. Rejecting reserved
-   * shapes here covers every write path (create, attach, replace, Root reset).
+   * shapes here covers every write path (create, attach, replace, Root exit).
    */
   private insertBindingRow(
     taskId: string,
@@ -1382,72 +1387,71 @@ export class Store {
   }
 
   /**
-   * Reset Root while preserving its stable anchor row. Every descendant is
-   * deleted using the ordinary task/share lifecycle, then Root's own event
-   * history and attachments are cleared. The old execution is reported for
-   * best-effort retirement; ownership stays in the DB with an empty session
-   * id so the caller never needs a live bridge or a replacement execution.
+   * Exit the Root: replace it with a fresh Root and delete the old one's
+   * whole tree, as one transaction.
+   *
+   * The new Root keeps what describes the workspace (directory, title, saved
+   * model, and the agent it runs on, as an empty execution slot to materialize)
+   * and starts with nothing else, like any new task. The pointer moves before
+   * the old tree is deleted, so the ordinary delete applies unchanged: the old
+   * Root is no longer protected, a share-backed task in it survives as a
+   * tombstone under the *new* Root, and every removed execution is reported for
+   * retirement.
+   *
+   * `expectedRootId` is the Root the caller locked and checked. Replacing is
+   * destructive, so it never retargets: if another exit already replaced that
+   * Root, this refuses instead of deleting the Root that exit just created.
    */
-  resetRootTask(): {
+  replaceRoot(expectedRootId: string): {
+    rootTaskId: string;
     affected: TaskDelete[];
-    retired: ExecutionBinding | null;
   } {
-    const root = this.getTaskIncludingDeleted(this.rootTaskId);
-    if (!root) throw new Error("Root task not found");
-    if (this.hasActiveShare(this.rootTaskId)) {
-      throw new Error("Root task has an active share");
+    const oldId = this.rootTaskId;
+    if (oldId !== expectedRootId) {
+      throw new Error(`Root ${expectedRootId} was already replaced`);
     }
-
-    const reset = this.writeBindings(() => {
-      const affected: TaskDelete[] = [];
-      const rootBindingBefore = this.currentBinding(this.rootTaskId);
-      for (const childId of this.listChildren(this.rootTaskId)) {
-        affected.push(...this.deleteTask(childId).affected);
-      }
-      this.db
-        .prepare("DELETE FROM shares WHERE task_id = ? AND shared_at IS NULL")
-        .run(this.rootTaskId);
-      this.db
-        .prepare("DELETE FROM events WHERE task_id = ?")
-        .run(this.rootTaskId);
-      this.db
-        .prepare("DELETE FROM client_ops WHERE task_id = ?")
-        .run(this.rootTaskId);
-      this.db
-        .prepare("DELETE FROM attachments WHERE task_id = ?")
-        .run(this.rootTaskId);
-      this.db
-        .prepare("UPDATE tasks SET pending_compact_summary = NULL WHERE id = ?")
-        .run(this.rootTaskId);
-
-      // Rebuild the anchor and ownership in the DB only. The empty ACP
-      // session id is an intentional "not materialized yet" marker: Root
-      // stays visible/owned, and the next prompt creates a fresh ACP
-      // session without needing the old agent process.
-      const retiredBinding = this.currentBinding(this.rootTaskId);
-      this.db
-        .prepare("DELETE FROM agent_sessions WHERE task_id = ?")
-        .run(this.rootTaskId);
-      // Root keeps its binding agent but loses its execution: the empty session
-      // id is the "not materialized yet" marker, and the reset bumps the
-      // generation instead of clearing it. An unbound Root stays unbound.
-      if (retiredBinding) {
-        this.insertBindingRow(
-          this.rootTaskId,
-          retiredBinding.agentId,
-          emptyExecutionSlot(this.rootTaskId),
-        );
-      }
-      this.db
-        .prepare("UPDATE tasks SET parent_id = NULL WHERE id = ?")
-        .run(this.rootTaskId);
-      this.collectBindingChange(this.rootTaskId, rootBindingBefore);
-      return {
-        affected,
-        retired: retiredBinding,
-      };
-    });
-    return reset;
+    const old = this.getTaskIncludingDeleted(oldId);
+    if (!old) throw new Error("Root task not found");
+    const newId = randomUUID();
+    try {
+      const affected = this.writeBindings(() => {
+        const binding = this.currentBinding(oldId);
+        const now = Date.now();
+        this.db
+          .prepare(
+            `INSERT INTO tasks
+             (id, cwd, source, parent_id, title, model, reasoning_effort, created_at, last_active_at)
+             VALUES (?, ?, 'root', NULL, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            newId,
+            old.cwd,
+            old.title ?? "root",
+            old.model,
+            old.reasoning_effort,
+            now,
+            now,
+          );
+        if (binding) {
+          this.insertBindingRow(
+            newId,
+            binding.agentId,
+            emptyExecutionSlot(newId),
+          );
+          this.collectBindingChange(newId, null);
+        }
+        this.db
+          .prepare("UPDATE workspace SET root_task_id = ? WHERE id = 1")
+          .run(newId);
+        this.rootId = newId;
+        return this.deleteTaskInScope(oldId).affected;
+      });
+      return { rootTaskId: newId, affected };
+    } catch (error) {
+      // Nothing committed: the old Root is still the Root.
+      this.rootId = oldId;
+      throw error;
+    }
   }
 
   /**

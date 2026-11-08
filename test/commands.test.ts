@@ -690,14 +690,13 @@ describe("commands", () => {
       );
     });
 
-    it("exits Root — reloads the preserved Root task after reset", async () => {
+    it("exits Root — lands on the Root that replaced it", async () => {
+      const NEW_ROOT_ID = "9a1d3c6e-2f4b-4e8a-b7c5-0d2e4f6a8b1c";
       state.clientId = "cl-1";
       state.taskId = ROOT_ID;
-      state.rootTaskId = ROOT_ID;
       state.taskCwd = "/home";
-      const rootDetail = {
-        id: ROOT_ID,
-        rootTaskId: ROOT_ID,
+      const newRootDetail = {
+        id: NEW_ROOT_ID,
         cwd: "/home",
         title: "root",
         configOptions: [],
@@ -713,13 +712,23 @@ describe("commands", () => {
             text: async () => json,
           };
         };
+        // A more recently active task is listed first: the exit must still
+        // land on the replacement Root it was told about, not on that one.
         if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
-          return body([{ id: ROOT_ID, title: "root", isRoot: true }]);
+          return body([
+            { id: "recent-other", title: "other", isRoot: false },
+            { id: NEW_ROOT_ID, title: "root", isRoot: true },
+          ]);
         if (url === `/api/v1/tasks/${ROOT_ID}` && init?.method === "DELETE")
-          return body({ taskId: ROOT_ID, reset: true });
-        if (url === `/api/v1/tasks/${ROOT_ID}`) return body(rootDetail);
-        if (url.includes(`/api/v1/tasks/${ROOT_ID}/events`)) return body([]);
-        if (url === `/api/v1/tasks/${ROOT_ID}/snapshot`) {
+          return body({
+            taskId: ROOT_ID,
+            parentId: null,
+            replacedBy: NEW_ROOT_ID,
+          });
+        if (url === `/api/v1/tasks/${NEW_ROOT_ID}`) return body(newRootDetail);
+        if (url.includes(`/api/v1/tasks/${NEW_ROOT_ID}/events`))
+          return body([]);
+        if (url === `/api/v1/tasks/${NEW_ROOT_ID}/snapshot`) {
           return body({
             version: 1,
             seq: 0,
@@ -732,7 +741,8 @@ describe("commands", () => {
 
       await commands.handleSlashCommand("/exit");
 
-      assert.equal(state.taskId, ROOT_ID);
+      assert.equal(state.taskId, NEW_ROOT_ID);
+      assert.equal(location.hash, `#${NEW_ROOT_ID}`);
       assert.equal(state.awaitingNewTask, false);
     });
 

@@ -740,8 +740,6 @@ export class TaskManager implements ObligationHost {
   readonly drainingCollaborationTasks = new Set<string>();
   /** Tasks undergoing compact summary generation or ACP rotation. */
   readonly compactingTasks = new Set<string>();
-  /** Root reset barrier covering the asynchronous tree replacement. */
-  readonly resettingTasks = new Set<string>();
   /** Barrier covering the asynchronous ACP replacement itself. */
   readonly rotatingTasks = new Set<string>();
   /**
@@ -760,8 +758,6 @@ export class TaskManager implements ObligationHost {
   private readonly pendingResumes = new Map<string, Promise<void>>();
   /** Hierarchical lock for task-tree structure mutations. */
   private readonly treeLock = new TaskTreeLock();
-  /** Completion barrier for a Root reset requested before a create arrives. */
-  private rootResetPromise: Promise<void> | null = null;
   private nextPromptNumber = 0;
   private nextPromptSubmissionNumber = 0;
   /** Deduplicates concurrent attempts to materialize one inbox message. */
@@ -1388,7 +1384,6 @@ export class TaskManager implements ObligationHost {
       this.activePrompts.has(taskId) ||
       this.compactingTasks.has(taskId) ||
       this.rotatingTasks.has(taskId) ||
-      this.resettingTasks.has(taskId) ||
       this.runningBashProcs.has(taskId)
     );
   }
@@ -1413,9 +1408,10 @@ export class TaskManager implements ObligationHost {
     opts: { includeRestoring: boolean },
   ): "agent" | "bash" | null {
     if (this.creatingTasks.has(taskId)) return "agent";
-    // A reset Root is rebuilt for the exit itself, outside the tree lock. The
-    // claim covers resolve -> session/new -> binding commit so a `/clear` or a
-    // second exit cannot start against the binding it is about to replace.
+    // An exit's replacement Root is made live by the exit itself, outside the
+    // tree lock. The claim covers resolve -> session/new -> binding commit so a
+    // `/clear` or a second exit cannot start against the binding it is about to
+    // replace.
     if (this.rebuildingTasks.has(taskId)) return "agent";
     // Restoring is work too: `resumeTask` awaits ACP `loadSession` while the
     // task's stored binding is still the one being loaded. Leaving it out of
@@ -1431,14 +1427,6 @@ export class TaskManager implements ObligationHost {
     if (this.rotatingTasks.has(taskId)) return "agent";
     if (this.runningBashProcs.has(taskId)) return "bash";
     return null;
-  }
-
-  private async waitForRootResetIfNeeded(taskId: string): Promise<void> {
-    while (this.resettingTasks.has(taskId)) {
-      const reset = this.rootResetPromise;
-      if (!reset) throw new TaskTreeBusyError(taskId);
-      await reset;
-    }
   }
 
   private async acquireTaskTreeMutationLock(
@@ -1503,7 +1491,6 @@ export class TaskManager implements ObligationHost {
     }
     const parentId = this.resolveParentId(opts?.parentId);
     if (parentId) {
-      await this.waitForRootResetIfNeeded(parentId);
       if (!this.store.getParentTask(parentId)) {
         throw new TaskNotFoundError(parentId);
       }
@@ -1543,36 +1530,29 @@ export class TaskManager implements ObligationHost {
       assertCaller?: () => void;
     },
   ): Promise<void> {
-    for (;;) {
-      // Never await the Root reset while holding a lineage lock. A reset can
-      // be queued behind this request and waiting here would deadlock both.
-      if (parentId) await this.waitForRootResetIfNeeded(parentId);
-      const release = parentId
-        ? await this.acquireTaskTreeMutationLock(parentId)
-        : null;
-      try {
-        // The reset may have been requested after the wait but before lock
-        // acquisition. Drop the lock and wait outside it before retrying.
-        if (parentId && this.resettingTasks.has(parentId)) continue;
-        if (parentId && !this.store.getParentTask(parentId)) {
-          throw new TaskNotFoundError(parentId);
-        }
-        // Second boundary: acquiring the tree lock is an await, so the caller
-        // is validated again immediately before the row is written.
-        metadata.assertCaller?.();
-        this.store.createTask(
-          taskId,
-          taskCwd,
-          source,
-          agentId,
-          agentSessionId,
-          parentId,
-          metadata,
-        );
-        return;
-      } finally {
-        release?.();
+    const release = parentId
+      ? await this.acquireTaskTreeMutationLock(parentId)
+      : null;
+    try {
+      // The parent may have been deleted (an exit included) while this request
+      // waited for its lock; a child of a deleted task is not created.
+      if (parentId && !this.store.getParentTask(parentId)) {
+        throw new TaskNotFoundError(parentId);
       }
+      // Second boundary: acquiring the tree lock is an await, so the caller
+      // is validated again immediately before the row is written.
+      metadata.assertCaller?.();
+      this.store.createTask(
+        taskId,
+        taskCwd,
+        source,
+        agentId,
+        agentSessionId,
+        parentId,
+        metadata,
+      );
+    } finally {
+      release?.();
     }
   }
 
@@ -2267,7 +2247,7 @@ export class TaskManager implements ObligationHost {
   /**
    * Materialize the workspace's first task: the Root anchor. The row is
    * created if this database never had one, and the task's first use either
-   * attaches an execution (never bound) or materializes a reset's empty slot.
+   * attaches an execution (never bound) or materializes its empty slot.
    */
   async ensureRootLive(): Promise<TaskRow> {
     const root = this.store.ensureRootTask(this.defaultCwd);
@@ -2563,7 +2543,6 @@ export class TaskManager implements ObligationHost {
       const configOptions = this.buildConfigOptions(task);
       return {
         type: "task_created",
-        rootTaskId: this.store.rootTaskId,
         taskId,
         agentId: this.store.getBindingAgent(taskId) ?? null,
         cwd: task.cwd,
@@ -2574,9 +2553,9 @@ export class TaskManager implements ObligationHost {
       };
     }
 
-    // Restore via ACP. A DB-only Root reset leaves an empty execution id:
-    // materialize a fresh ACP session instead of trying to load one the
-    // agent has never seen.
+    // Restore via ACP. An empty execution slot (an exit's replacement Root, or
+    // a takeover) names no session: materialize a fresh ACP session instead of
+    // trying to load one the agent has never seen.
     const removedOwner = this.removedOwnerBinding(taskId);
     if (removedOwner) {
       this.applyOwnerRotation(taskId, removedOwner, "owner_removed");
@@ -2668,7 +2647,6 @@ export class TaskManager implements ObligationHost {
       slog.info("restored", { taskId: taskId.slice(0, 8) + "…" });
       return {
         type: "task_created",
-        rootTaskId: this.store.rootTaskId,
         taskId,
         agentId,
         cwd: task.cwd,
@@ -2692,8 +2670,8 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
-   * Materialize the empty execution slot left by a DB-only Root reset or a
-   * reset that never materialized. The replacement commits a new binding, so
+   * Materialize an empty execution slot (an exit's replacement Root whose
+   * rebuild did not happen, or a takeover). The replacement commits a new binding, so
    * its initialization runs under the *new* lease, not the one the restore
    * started with.
    */
@@ -2766,7 +2744,6 @@ export class TaskManager implements ObligationHost {
     }
     return {
       type: "task_created",
-      rootTaskId: this.store.rootTaskId,
       taskId,
       agentId,
       cwd: task.cwd,
@@ -3034,27 +3011,22 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
-   * Exit Root: reset its history, delete its entire descendant tree, and leave
-   * Root itself ready to use, exactly as creating a task leaves a task that is
-   * already idle when it first becomes visible.
+   * Exit Root: delete the whole workspace tree and replace Root with a fresh
+   * one that is already live and idle, exactly as creating a task leaves a task
+   * that is ready when it first becomes visible.
    *
-   * Root's stable row survives as the task-tree anchor, which is the one way an
-   * exit differs from every other task (they are deleted). What must *not*
-   * differ is the state the client lands in: exiting is over when it is over,
-   * not when some later read finishes waking the replacement.
-   *
-   * Prepare, then commit. The rebuild is checked *before* anything is destroyed,
-   * because a Root whose agent cannot start is not a usable Root: succeeding
-   * with the empty slot would report a completed exit while leaving a shell
-   * behind, and by then the tree is already gone. Only an agent that passes the
-   * pre-flight and still fails to open a session falls back to the slot, and
-   * that is logged rather than silently reported as success.
+   * It is an ordinary delete of the Root's tree (same lock, same busy gate,
+   * same retirement) plus one more task: the replacement Root. The agent the
+   * new Root runs on is checked *before* anything is destroyed, because a
+   * workspace whose Root cannot start is not usable: refusing then leaves it
+   * intact instead of clearing it around a shell.
    */
-  async resetRootTask(
+  async exitRoot(
     bridge?: SessionBridge,
-  ): Promise<{ affected: TaskDelete[] }> {
+  ): Promise<{ rootTaskId: string; affected: TaskDelete[] }> {
     if (bridge) this.attachExecutionBridge(bridge);
-    const rebuildAgentId = this.rebuildAgentFor(this.store.rootTaskId);
+    const oldRootId = this.store.rootTaskId;
+    const rebuildAgentId = this.rebuildAgentFor(oldRootId);
     if (rebuildAgentId) {
       try {
         await this.agents.resolve(rebuildAgentId);
@@ -3067,130 +3039,49 @@ export class TaskManager implements ObligationHost {
         );
       }
     }
-    const affected = await this.resetRootTree(bridge);
-    await this.rebuildRootExecution();
-    return { affected };
-  }
-
-  /**
-   * The DB-only half of an exit: retire the old execution, wipe Root's history,
-   * and delete the tree under the exclusive Root lock.
-   *
-   * Nothing here touches the agent's transport, so the delete itself cannot
-   * fail halfway through. The empty execution slot it leaves is a legal state
-   * (the next prompt materializes it) and is what the commit phase replaces.
-   */
-  private async resetRootTree(bridge?: SessionBridge): Promise<TaskDelete[]> {
-    if (bridge) this.attachExecutionBridge(bridge);
-    const rootTaskId = this.store.rootTaskId;
-    if (this.resettingTasks.has(rootTaskId)) {
-      throw new Error("Root task is already being reset");
-    }
-    if (this.store.hasActiveShare(rootTaskId)) {
-      throw new Error("Root task has an active share");
-    }
-    // Mark the currently known tree before waiting for the lock. New tasks
-    // cannot be created while the exclusive Root request is queued, because
-    // every create request takes a shared lock on its ancestors.
-    const protectedIds = [
-      rootTaskId,
-      ...this.store.getDescendantTaskIds(rootTaskId),
-    ];
-    const busyBeforeReset = protectedIds.find(
-      (id) =>
-        this.getActiveTaskWorkKind(id, { includeRestoring: true }) !== null,
-    );
-    if (busyBeforeReset) {
-      throw new TaskBusyError(
-        busyBeforeReset,
-        this.store.getTaskPath(busyBeforeReset),
-      );
-    }
-    const protectedSet = new Set(protectedIds);
-    let resolveReset!: () => void;
-    const resetCompletion = new Promise<void>((resolve) => {
-      resolveReset = resolve;
-    });
-    this.rootResetPromise = resetCompletion;
-    for (const id of protectedIds) this.resettingTasks.add(id);
-    let release: TaskTreeLockRelease | null = null;
+    const release = await this.acquireTaskTreeMutationLock(oldRootId);
+    let result: { rootTaskId: string; affected: TaskDelete[] };
     try {
-      release = await this.acquireTaskTreeMutationLock(rootTaskId);
-      // A branch mutation that was already holding its lock may have
-      // persisted a new descendant while Root was waiting. Re-snapshot after
-      // acquiring X(Root), reject any work that began on such a task, and
-      // only then extend the reset barrier before the first await.
-      const currentIds = [
-        rootTaskId,
-        ...this.store.getDescendantTaskIds(rootTaskId),
+      // Another exit may have replaced this Root while this one waited (for
+      // the agent or for the lock). A shared old Root survives as a tombstone,
+      // so its lock is still grantable; the busy check below would then look at
+      // the old tree while the replacement deleted the new one. Refuse instead.
+      if (this.store.rootTaskId !== oldRootId) {
+        throw new TaskNotFoundError(oldRootId);
+      }
+      const affectedIds = [
+        oldRootId,
+        ...this.store.getDescendantTaskIds(oldRootId),
       ];
-      const busyTask = currentIds.find(
-        (id) =>
-          this.getActiveTaskWorkKind(id, { includeRestoring: true }) !== null,
+      const busyTask = affectedIds.find(
+        (id) => this.getGateBusyKind(id) !== null,
       );
       if (busyTask) {
         throw new TaskBusyError(busyTask, this.store.getTaskPath(busyTask));
       }
-      const newIds = currentIds.filter((id) => !protectedSet.has(id));
-      for (const id of newIds) {
-        protectedSet.add(id);
-        protectedIds.push(id);
-        this.resettingTasks.add(id);
-      }
-      const result = this.store.resetRootTask();
-      // Root survives its reset, so its capability is not released by the
-      // descendant cleanup above. Revoke it here: an old token must not be
-      // usable during the window where the next session is materializing.
-      this.capabilities?.revokeByTask(rootTaskId);
-      // Retirement follows the recorded binding, never a default adapter: the
-      // Root's old execution may belong to any configured agent.
-      if (result.retired) {
-        this.retireExecution(
-          rootTaskId,
-          result.retired.agentId,
-          result.retired.sessionId,
-        );
-      }
+      result = this.store.replaceRoot(oldRootId);
       for (const entry of result.affected) {
         this.retireExecution(entry.id, entry.agentId, entry.agentSessionId);
         this.releaseTaskRuntime(entry.id, entry.mode);
       }
-      this.liveTasks.delete(rootTaskId);
-      this.resetTaskRuntime(rootTaskId);
-      this.attachmentLabelCache.delete(rootTaskId);
-      await rm(join(this.dataDir, "tasks", rootTaskId), {
-        recursive: true,
-        force: true,
-      }).catch(() => {});
-      return result.affected;
     } finally {
-      for (const id of protectedIds) this.resettingTasks.delete(id);
-      release?.();
-      if (this.rootResetPromise === resetCompletion) {
-        this.rootResetPromise = null;
-        resolveReset();
-      }
+      release();
     }
+    await this.rebuildRootExecution();
+    return result;
   }
 
   /**
-   * Give Root a live execution right after its reset, so the exit owns the
-   * wake-up instead of handing it to whatever read comes next.
+   * Give the replacement Root a live execution before the exit answers, so the
+   * exit owns the wake-up instead of handing it to whatever read comes next: a
+   * read that found Root mid-`session/new` would see a busy task the client
+   * could not end on its own.
    *
-   * A created task is never observed mid-creation: its id only exists once
-   * creation finished, so its `creatingTasks` claim has always been released by
-   * the time any client can read it. Root's id is known in advance and the
-   * client returns to it immediately, so handing the wake-up to that read meant
-   * handing it a task that reports busy while `session/new` runs — a busy the
-   * client could not end on its own.
-   *
-   * Runs after the reset lock is released: `session/new` is unbounded and must
-   * never sit inside the exclusive Root lock, which every descendant mutation
-   * has to wait for.
+   * Runs after the tree lock is released: `session/new` is unbounded and must
+   * never sit inside a lock every mutation of the new tree has to wait for.
    */
   private async rebuildRootExecution(): Promise<void> {
     const rootTaskId = this.store.rootTaskId;
-    // A reset that raced a delete has nothing left to rebuild.
     if (!this.store.getTask(rootTaskId)) return;
     // The claim covers the whole rebuild, not just the ACP call: between them,
     // `/clear` and a second exit would otherwise see an idle task and act on
@@ -3201,9 +3092,9 @@ export class TaskManager implements ObligationHost {
     try {
       await this.warmTaskExecution(rootTaskId);
     } catch (error) {
-      // The pre-flight passed and the tree is already gone, so there is nothing
-      // left to protect: keep the empty slot and say so, never report a rebuild
-      // that did not happen.
+      // The pre-flight passed and the old tree is already gone, so there is
+      // nothing left to protect: keep the empty slot and say so, never report a
+      // rebuild that did not happen.
       slog.warn("root rebuild failed after the exit committed", {
         taskId: rootTaskId,
         error: errorMessage(error),
@@ -3215,9 +3106,9 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
-   * The agent a reset Root will be rebuilt on, or null when Root has never been
-   * bound (its first prompt attaches one) or its owner left the configuration
-   * (an operation rotates it rather than this path).
+   * The agent an exit's replacement Root will run on, or null when Root has
+   * never been bound (its first prompt attaches one) or its owner left the
+   * configuration (an operation rotates it rather than this path).
    */
   private rebuildAgentFor(taskId: string): string | null {
     const agentId = this.store.getCurrentExecutionBinding(taskId)?.agent_key;
@@ -3291,7 +3182,6 @@ export class TaskManager implements ObligationHost {
     this.pendingDispatchRetries.delete(id);
     this.obligations.purgeTask(id);
     this.compactingTasks.delete(id);
-    this.resettingTasks.delete(id);
     this.rotatingTasks.delete(id);
     const pendingSubmission = this.pendingPromptSubmissions.get(id);
     this.pendingPromptSubmissions.delete(id);
@@ -3385,7 +3275,7 @@ export class TaskManager implements ObligationHost {
    * The gate face: busy sources that must block a state-changing operation,
    * *including* an in-flight restore.
    *
-   * `/clear`, delete, Root reset, rotation, sharing, and the obligation
+   * `/clear`, delete, Root exit, rotation, sharing, and the obligation
    * dispatcher ask this, because they act on or into an execution that is not
    * settled yet. A restore is invisible to the user and must not be invisible
    * to them.
@@ -3410,7 +3300,6 @@ export class TaskManager implements ObligationHost {
     if (this.pendingPromptSubmissions.has(taskId)) return "agent";
     if (this.activePrompts.has(taskId)) return "agent";
     if (this.compactingTasks.has(taskId)) return "agent";
-    if (this.resettingTasks.has(taskId)) return "agent";
     return this.getActiveTaskWorkKind(taskId, opts);
   }
 
@@ -3791,11 +3680,7 @@ export class TaskManager implements ObligationHost {
     origin: RecoveryOrigin,
   ): void {
     if (this.pendingWorkRecoveries.has(taskId)) return;
-    if (
-      !this.store.getTask(taskId) ||
-      this.resettingTasks.has(taskId) ||
-      this.rotatingTasks.has(taskId)
-    ) {
+    if (!this.store.getTask(taskId) || this.rotatingTasks.has(taskId)) {
       return;
     }
     if (this.store.countQueuedDeliveries(taskId) === 0) return;
@@ -3819,11 +3704,7 @@ export class TaskManager implements ObligationHost {
     taskId: string,
     origin: string,
   ): Promise<void> {
-    if (
-      !this.store.getTask(taskId) ||
-      this.resettingTasks.has(taskId) ||
-      this.rotatingTasks.has(taskId)
-    ) {
+    if (!this.store.getTask(taskId) || this.rotatingTasks.has(taskId)) {
       return;
     }
     const drained = await this.drainCollaborationDeliveries(taskId);
@@ -3983,7 +3864,7 @@ export class TaskManager implements ObligationHost {
       // consume the failure budget: the debt keeps waiting.
       return { status: "deferred", reason: "no_execution" };
     }
-    if (this.resettingTasks.has(task.id) || this.rotatingTasks.has(task.id)) {
+    if (this.rotatingTasks.has(task.id)) {
       return { status: "deferred", reason: "rotating" };
     }
     if (!this.isExecutionAvailable(bridge)) {

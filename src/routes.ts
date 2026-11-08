@@ -2199,7 +2199,6 @@ export function createRequestHandler(
               ...activationFields(existing, { taskId: existing.id }),
               title: existing.title,
               source: existing.source,
-              rootTaskId: store.rootTaskId,
               configOptions: [],
               agentCommands: taskManager.getAgentCommands(existing.id),
               created: false,
@@ -2230,7 +2229,6 @@ export function createRequestHandler(
                 }),
                 title: root.title,
                 source: root.source,
-                rootTaskId: store.rootTaskId,
                 configOptions: [],
                 agentCommands: taskManager.getAgentCommands(root.id),
                 created: false,
@@ -2240,15 +2238,13 @@ export function createRequestHandler(
 
           // No task for the default agent, and the Root has no execution yet:
           // the workspace's first task is the Root anchor. Its first use
-          // attaches one (never bound) or materializes a reset's empty slot.
+          // attaches one (never bound) or materializes its empty slot.
           const root = await taskManager.ensureRootLive();
-          const rootTaskId = store.rootTaskId;
           const result = {
             id: root.id,
             ...activationFields(root, { taskId: root.id }),
             title: root.title,
             source: root.source,
-            rootTaskId,
             configOptions: taskManager.applyStoredConfig(
               taskManager.configOptionsForTask(root.id),
               root,
@@ -2258,7 +2254,6 @@ export function createRequestHandler(
           };
           sseManager.broadcast({
             type: "task_created",
-            rootTaskId,
             taskId: root.id,
             cwd: result.cwd,
             cwdDisplay: result.cwdDisplay,
@@ -2464,7 +2459,6 @@ export function createRequestHandler(
             if (!fresh) throw new Error("Task disappeared during compaction");
             sseManager.broadcast({
               type: "task_created",
-              rootTaskId: store.rootTaskId,
               taskId,
               ...activationFields(fresh, { taskId }),
               title: fresh.title,
@@ -2589,7 +2583,6 @@ export function createRequestHandler(
           const fresh = store.getTask(taskId)!;
           const event = {
             type: "task_created",
-            rootTaskId: store.rootTaskId,
             taskId,
             ...activationFields(fresh, { taskId }),
             title: fresh.title,
@@ -2599,7 +2592,6 @@ export function createRequestHandler(
           sseManager.broadcast(event);
           json(res, HTTP_STATUS.OK, {
             id: taskId,
-            rootTaskId: store.rootTaskId,
             ...activationFields(fresh, { taskId }),
             title: fresh.title,
             source: fresh.source,
@@ -2655,7 +2647,6 @@ export function createRequestHandler(
             HTTP_STATUS.OK,
             {
               id: freshTask.id,
-              rootTaskId: store.rootTaskId,
               ...activationFields(freshTask, { taskId: freshTask.id }),
               title: freshTask.title,
               source: freshTask.source,
@@ -2711,31 +2702,44 @@ export function createRequestHandler(
                 });
                 return;
               }
-              // Exiting Root rebuilds it, so the agent it will be rebuilt on
-              // is checked before the tree is destroyed: a Root whose agent
-              // cannot start is not a usable Root, and refusing here leaves
-              // the workspace intact instead of clearing it around a shell.
-              // Retirement still follows each recorded binding's own agent.
-              const result = await tasks.resetRootTask();
+              // Exiting Root deletes the whole tree and replaces Root with a
+              // fresh one, made live before this answers. The agent the new
+              // Root runs on is checked before anything is destroyed (see
+              // `exitRoot`); retirement follows each removed binding's agent.
+              const result = await tasks.exitRoot();
+              const replacedBy = result.rootTaskId;
               for (const entry of result.affected) {
                 sseManager.broadcast({
                   type: "task_deleted",
                   taskId: entry.id,
                   agentId: entry.agentId,
-                  parentId: store.rootTaskId,
-                  ...(clientOpId ? { clientOpId } : {}),
+                  // Every client viewing the old Root follows to its
+                  // replacement, so the initiator's echo and its own answer
+                  // name the same next task whichever arrives first.
+                  ...(entry.id === taskId
+                    ? { parentId: null, replacedBy }
+                    : {}),
+                  ...(entry.id === taskId && clientOpId ? { clientOpId } : {}),
                 });
               }
-              sseManager.broadcast({
-                type: "task_reset",
-                rootTaskId: store.rootTaskId,
-                taskId: store.rootTaskId,
-                ...(clientOpId ? { clientOpId } : {}),
-              });
+              const root = store.getTask(replacedBy);
+              if (root) {
+                sseManager.broadcast({
+                  type: "task_created",
+                  taskId: root.id,
+                  ...activationFields(root, { taskId: root.id }),
+                  title: root.title,
+                  configOptions: tasks.applyStoredConfig(
+                    tasks.configOptionsForTask(root.id),
+                    root,
+                  ),
+                  agentCommands: tasks.getAgentCommands(root.id),
+                });
+              }
               json(res, HTTP_STATUS.OK, {
-                taskId: store.rootTaskId,
-                rootTaskId: store.rootTaskId,
-                reset: true,
+                taskId,
+                parentId: null,
+                replacedBy,
                 ...(clientOpId ? { clientOpId } : {}),
               });
               return;
@@ -2756,7 +2760,6 @@ export function createRequestHandler(
             json(res, HTTP_STATUS.OK, {
               taskId,
               parentId: task.parent_id,
-              reset: false,
               ...(clientOpId ? { clientOpId } : {}),
             });
           } catch (err) {
@@ -2903,7 +2906,6 @@ export function createRequestHandler(
           const task = store.getTask(taskId);
           const taskCreatedEvent = {
             type: "task_created",
-            rootTaskId: store.rootTaskId,
             taskId,
             ...activationFields(task, {
               taskId,
@@ -2967,7 +2969,6 @@ export function createRequestHandler(
           }
           json(res, HTTP_STATUS.CREATED, {
             id: taskId,
-            rootTaskId: store.rootTaskId,
             // The create echo installs the task's binding agent on the client,
             // exactly like the broadcast; without it the echo would downgrade
             // the agent the client already knows.
@@ -3143,7 +3144,6 @@ export function createRequestHandler(
         // Send connected event
         sseManager.sendEvent(client, {
           type: "connected",
-          rootTaskId: store.rootTaskId,
           clientId,
           debugLevel: deps.debugLevel ?? "off",
           pendingCount: store.countUnprocessed(),
@@ -3197,7 +3197,6 @@ export function createRequestHandler(
         // Send connected event
         sseManager.sendEvent(client, {
           type: "connected",
-          rootTaskId: store.rootTaskId,
           clientId,
           debugLevel: deps.debugLevel ?? "off",
           pendingCount: store.countUnprocessed(),
@@ -3659,7 +3658,6 @@ export function createRequestHandler(
 
         sseManager.broadcast({
           type: "task_created",
-          rootTaskId: store.rootTaskId,
           taskId,
           ...activationFields(task, { taskId }),
           title: task?.title,

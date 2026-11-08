@@ -10,8 +10,7 @@ import {
   clearCancelTimer,
   hydrateTaskRuntime,
   updateInboxCount,
-  installRootTaskId,
-  clearRootTaskAuthority,
+  beginConnectionEpoch,
 } from "./state.ts";
 import {
   addSystem,
@@ -79,14 +78,6 @@ const RECONNECT_DELAY_MS = 3_000;
  */
 let lastStreamActivity = 0;
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
-/**
- * Identifies the current connection attempt. Opening a stream awaits a ticket
- * mint, so without a generation the continuation of a superseded attempt would
- * happily construct a second EventSource that nothing owns or closes. An
- * orphan is not merely wasteful: its `onmessage` keeps marking activity, which
- * would make a genuinely dead current stream look alive forever.
- */
-let streamGen = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Schedule at most one pending reconnect. */
@@ -143,23 +134,24 @@ export function connect() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-  // Supersede any attempt still in flight so its continuation cannot open a
-  // stream nobody owns.
-  const gen = ++streamGen;
-  const rootAuthorityGeneration = clearRootTaskAuthority();
+  // Supersede any attempt still in flight. Opening a stream awaits a ticket
+  // mint, so without an epoch the continuation of a superseded attempt would
+  // construct a second EventSource that nothing owns or closes; an orphan's
+  // `onmessage` keeps marking activity, which would make a genuinely dead
+  // current stream look alive forever.
+  const connectionEpoch = beginConnectionEpoch();
   const activeTaskId = state.taskId;
   setConnectionStatus("connecting", "connecting");
 
   // SSE for receiving server events. EventSource cannot send Authorization,
   // so we exchange a Bearer for a single-use 60s ticket first, then open
   // the stream with ?ticket=…
-  void openStream(gen, activeTaskId, rootAuthorityGeneration);
+  void openStream(connectionEpoch, activeTaskId);
 }
 
 async function openStream(
-  gen: number,
+  connectionEpoch: number,
   activeTaskId: string | null,
-  rootAuthorityGeneration: number,
 ) {
   // Arm before the ticket mint so a stream that never opens is also covered.
   noteStreamActivity();
@@ -171,12 +163,12 @@ async function openStream(
   } catch {
     // Auth wrapper already redirects to /login on 401. For transient errors
     // schedule a retry on the same cadence as the SSE reconnect path.
-    if (gen === streamGen) scheduleReconnect();
+    if (connectionEpoch === state.connectionEpoch) scheduleReconnect();
     return;
   }
   // A newer attempt started while we were awaiting the mint; this ticket and
   // everything downstream of it belongs to a connection nobody is waiting for.
-  if (gen !== streamGen) return;
+  if (connectionEpoch !== state.connectionEpoch) return;
 
   const es = new EventSource(
     `/api/v1/events/stream?ticket=${encodeURIComponent(ticket)}`,
@@ -184,7 +176,7 @@ async function openStream(
   state.eventSource = es;
 
   es.onmessage = (e: MessageEvent) => {
-    if (gen !== streamGen) {
+    if (connectionEpoch !== state.connectionEpoch) {
       es.close();
       return;
     }
@@ -192,7 +184,6 @@ async function openStream(
     const msg = JSON.parse(e.data as string) as {
       type: string;
       clientId?: string;
-      rootTaskId?: string;
       agent?: unknown;
       debugLevel?: string;
       pendingCount?: number;
@@ -202,7 +193,7 @@ async function openStream(
       state.clientId = msg.clientId;
       if (activeTaskId && state.taskId === activeTaskId) {
         setConnectionStatus("connected", "connected");
-        void recoverAfterHandshake(activeTaskId, gen);
+        void recoverAfterHandshake(activeTaskId, connectionEpoch);
       }
       if (typeof msg.pendingCount === "number") {
         updateInboxCount(msg.pendingCount);
@@ -215,9 +206,6 @@ async function openStream(
       );
       void registerPushEndpoint(msg.clientId);
       // Bridge-originated connected events also carry agent info — pass through
-      if (typeof msg.rootTaskId === "string") {
-        installRootTaskId(msg.rootTaskId, rootAuthorityGeneration);
-      }
       if (!msg.agent) return;
     }
     handleEvent(msg as unknown as import("../../src/types.ts").AgentEvent);
@@ -225,7 +213,7 @@ async function openStream(
 
   es.onerror = () => {
     es.close();
-    if (gen !== streamGen) return; // superseded stream: close and stay quiet
+    if (connectionEpoch !== state.connectionEpoch) return; // superseded stream: close and stay quiet
     // Disarm the watchdog for the backoff window, or it would see the stale
     // timestamp and connect in parallel with the scheduled retry.
     lastStreamActivity = 0;
@@ -243,7 +231,7 @@ async function openStream(
   // listener to this specific EventSource — on reconnect the old one is
   // GC'd with its parent; we install a fresh listener on the fresh `es`.
   es.addEventListener("heartbeat", () => {
-    if (gen !== streamGen) return;
+    if (connectionEpoch !== state.connectionEpoch) return;
     noteStreamActivity();
     if (!state.clientId) return;
     if (document.hidden) return; // visibilitychange owns the hidden path
@@ -253,38 +241,45 @@ async function openStream(
   // Load task immediately via REST — parallel with SSE connection. Every
   // activated task carries its hash, so the URL alone says which task to
   // restore.
-  void initializeTaskAndIntent(gen, rootAuthorityGeneration);
+  void initializeTaskAndIntent(connectionEpoch);
 }
 
 async function recoverAfterHandshake(
   taskId: string,
-  gen: number,
+  connectionEpoch: number,
 ): Promise<void> {
   const hydrationPromise = hydrateTaskRuntime(taskId, () => {
-    return gen === streamGen && state.taskId === taskId;
+    return connectionEpoch === state.connectionEpoch && state.taskId === taskId;
   });
   await loadNewEvents(taskId);
-  if (gen !== streamGen || state.taskId !== taskId) return;
+  if (connectionEpoch !== state.connectionEpoch || state.taskId !== taskId)
+    return;
 
   // The first call may have joined a pre-handshake request. Even a successful
   // result can be stale if an event was persisted after its query but before
   // the replacement stream registered, so always follow it with a fresh load.
   await Promise.resolve();
   let loaded = await loadNewEvents(taskId);
-  if (!loaded && gen === streamGen && state.taskId === taskId) {
+  if (
+    !loaded &&
+    connectionEpoch === state.connectionEpoch &&
+    state.taskId === taskId
+  ) {
     await Promise.resolve();
     loaded = await loadNewEvents(taskId);
   }
   const hydrated = await hydrationPromise;
-  if (!hydrated || gen !== streamGen || state.taskId !== taskId) return;
+  if (
+    !hydrated ||
+    connectionEpoch !== state.connectionEpoch ||
+    state.taskId !== taskId
+  )
+    return;
   reconcileReplayedPendingTools();
   if (loaded) scrollToBottom(false);
 }
 
-async function initializeTaskAndIntent(
-  gen: number,
-  rootAuthorityGeneration: number,
-): Promise<void> {
+async function initializeTaskAndIntent(connectionEpoch: number): Promise<void> {
   const navigationGeneration = state.taskSwitchGen;
   try {
     const config = await api.getConfig();
@@ -293,21 +288,14 @@ async function initializeTaskAndIntent(
     // install a directory (and default) that let the client parse coordinates
     // against a configuration it no longer has. A stale *navigation* within
     // this same connection is fine — the directory is not navigation state.
-    if (gen !== streamGen) return;
+    if (connectionEpoch !== state.connectionEpoch) return;
     installAgentDirectory(config.agents, config.defaultAgentId);
-    if (
-      rootAuthorityGeneration !== state.rootTaskAuthorityGeneration ||
-      navigationGeneration !== state.taskSwitchGen
-    ) {
-      return;
-    }
-    installRootTaskId(config.rootTaskId, rootAuthorityGeneration);
+    if (navigationGeneration !== state.taskSwitchGen) return;
   } catch {
-    // Task-list, detail, and connected payloads remain authoritative fallback
-    // sources if config cannot be fetched during reconnect.
+    // A failed config only costs the agent directory; the task this client
+    // lands on is chosen from the hash and the task list, not from config.
     if (
-      gen !== streamGen ||
-      rootAuthorityGeneration !== state.rootTaskAuthorityGeneration ||
+      connectionEpoch !== state.connectionEpoch ||
       navigationGeneration !== state.taskSwitchGen
     ) {
       return;
@@ -320,10 +308,9 @@ async function initializeTaskAndIntent(
   void loadTaskList().catch(() => {
     // A failed baseline stays "not loaded"; nothing is claimed from it.
   });
-  await initTask(gen, rootAuthorityGeneration);
+  await initTask(connectionEpoch);
   if (
-    gen !== streamGen ||
-    rootAuthorityGeneration !== state.rootTaskAuthorityGeneration ||
+    connectionEpoch !== state.connectionEpoch ||
     navigationGeneration !== state.taskSwitchGen
   ) {
     return;
@@ -333,33 +320,20 @@ async function initializeTaskAndIntent(
 
 async function resumeFromTaskList(
   gen: number,
-  connectionGeneration: number,
-  rootAuthorityGeneration: number,
+  connectionEpoch: number,
   isCurrent: () => boolean,
 ): Promise<boolean> {
   try {
     const tasks = await loadTaskList();
     if (!isCurrent()) return true;
-    if (state.rootTaskId === null) {
-      installRootTaskId(
-        tasks.find((task) => task.isRoot)?.id,
-        rootAuthorityGeneration,
-      );
-    }
     if (tasks.length === 0) return false;
 
     const initialTask =
       tasks.find((task) => task.hasUserInput) ??
-      tasks.find((task) => task.id === state.rootTaskId) ??
+      tasks.find((task) => task.isRoot) ??
       tasks[0];
     resetTaskUI();
-    await resumeAndLoad(
-      initialTask.id,
-      false,
-      gen,
-      connectionGeneration,
-      rootAuthorityGeneration,
-    );
+    await resumeAndLoad(initialTask.id, false, gen, connectionEpoch);
     if (isCurrent()) scrollToBottom(true);
     return true;
   } catch {
@@ -367,29 +341,18 @@ async function resumeFromTaskList(
   }
 }
 
-async function initTask(
-  connectionGeneration: number,
-  rootAuthorityGeneration: number,
-) {
+async function initTask(connectionEpoch: number) {
   setConnectionStatus("connecting", "task loading");
   const gen = state.taskSwitchGen;
   const isCurrent = () =>
-    gen === state.taskSwitchGen &&
-    connectionGeneration === streamGen &&
-    rootAuthorityGeneration === state.rootTaskAuthorityGeneration;
+    gen === state.taskSwitchGen && connectionEpoch === state.connectionEpoch;
   if (!isCurrent()) return;
 
   const existingId = getHashTaskId();
 
   // Incremental reconnect: same task still in memory — skip DOM wipe
   if (existingId && existingId === state.taskId) {
-    await resumeAndLoad(
-      existingId,
-      true,
-      gen,
-      connectionGeneration,
-      rootAuthorityGeneration,
-    );
+    await resumeAndLoad(existingId, true, gen, connectionEpoch);
     if (!isCurrent()) return;
     scrollToBottom(false);
     return;
@@ -400,13 +363,7 @@ async function initTask(
     resetTaskUI({
       preserveNavigationTarget: state.pendingNavigationTaskId === existingId,
     });
-    await resumeAndLoad(
-      existingId,
-      false,
-      gen,
-      connectionGeneration,
-      rootAuthorityGeneration,
-    );
+    await resumeAndLoad(existingId, false, gen, connectionEpoch);
     if (!isCurrent()) return;
     scrollToBottom(true);
     return;
@@ -415,12 +372,7 @@ async function initTask(
   // No task in URL — resume the most recent task with user-originated input.
   // The API list is ordered by last_active_at; Root is only the fallback when
   // there is no user history to restore.
-  const resumed = await resumeFromTaskList(
-    gen,
-    connectionGeneration,
-    rootAuthorityGeneration,
-    isCurrent,
-  );
+  const resumed = await resumeFromTaskList(gen, connectionEpoch, isCurrent);
   if (!isCurrent() || resumed) return;
 
   // No previous tasks — create new
@@ -434,7 +386,6 @@ function installTaskFromDetail(task: TaskDetail): void {
   // bar's reference costs no request at all.
   handleEvent({
     type: "task_created",
-    rootTaskId: task.rootTaskId,
     taskId: task.id,
     agentId: task.agentId ?? null,
     parentId: task.parentId,
@@ -450,13 +401,10 @@ async function resumeAndLoad(
   taskId: string,
   incremental: boolean,
   gen: number,
-  connectionGeneration: number,
-  rootAuthorityGeneration: number,
+  connectionEpoch: number,
 ) {
   const isCurrent = () =>
-    gen === state.taskSwitchGen &&
-    connectionGeneration === streamGen &&
-    rootAuthorityGeneration === state.rootTaskAuthorityGeneration;
+    gen === state.taskSwitchGen && connectionEpoch === state.connectionEpoch;
   if (!isCurrent()) return;
   if (incremental) {
     // Incremental: need task details first (for config), then catch-up events
@@ -471,7 +419,7 @@ async function resumeAndLoad(
         state.taskCwd ?? undefined,
         undefined,
         undefined,
-        rootAuthorityGeneration,
+        connectionEpoch,
       );
       return;
     }
@@ -488,7 +436,7 @@ async function resumeAndLoad(
         state.taskCwd ?? undefined,
         undefined,
         undefined,
-        rootAuthorityGeneration,
+        connectionEpoch,
       );
     } else {
       reconcileReplayedPendingTools();
@@ -513,7 +461,7 @@ async function resumeAndLoad(
           state.taskCwd ?? undefined,
           undefined,
           undefined,
-          rootAuthorityGeneration,
+          connectionEpoch,
         );
         return;
       }
@@ -531,7 +479,7 @@ async function resumeAndLoad(
         state.taskCwd ?? undefined,
         undefined,
         undefined,
-        rootAuthorityGeneration,
+        connectionEpoch,
       );
       return;
     }
@@ -539,7 +487,7 @@ async function resumeAndLoad(
 }
 
 function cleanup() {
-  clearRootTaskAuthority();
+  beginConnectionEpoch();
   // A dropped stream ends this connection's collection: whatever it told us
   // must not survive as the next connection's baseline.
   beginTaskTopologyGeneration();

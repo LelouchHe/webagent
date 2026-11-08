@@ -85,10 +85,8 @@ export const state = {
   eventSource: null as EventSource | null,
   clientId: null as string | null,
   taskId: null as string | null,
-  // Canonical Root identity is backend authority, refreshed by list/detail/SSE
-  // responses and retained across per-task UI resets.
-  rootTaskId: null as string | null,
-  rootTaskAuthorityGeneration: 0,
+  // Bumped on every connect and disconnect; see `beginConnectionEpoch`.
+  connectionEpoch: 0,
   // Monotonic counter incremented by user-initiated task switches (notification
   // click, /switch). initTask() captures the value before async work and bails
   // out if it changed, preventing stale reconnects from overriding deliberate switches.
@@ -787,10 +785,10 @@ export async function createNewTaskRequest({
   state.taskSwitchGen++;
   state.messageNavigationGen++;
   const generation = state.taskSwitchGen;
-  const rootAuthorityGeneration = state.rootTaskAuthorityGeneration;
+  const connectionEpoch = state.connectionEpoch;
   const isCurrentRequest = () =>
     generation === state.taskSwitchGen &&
-    rootAuthorityGeneration === state.rootTaskAuthorityGeneration;
+    connectionEpoch === state.connectionEpoch;
   state.pendingNavigationTaskId = null;
   state.pendingNavigationEvents = [];
   state.runtimeHydrationTaskId = null;
@@ -1083,10 +1081,16 @@ export function getHashTaskId(): string | null {
   return h || null;
 }
 
-export function clearRootTaskAuthority(): number {
-  state.rootTaskId = null;
-  state.rootTaskAuthorityGeneration++;
-  return state.rootTaskAuthorityGeneration;
+/**
+ * Start a new connection epoch: on every connect and on every disconnect. It
+ * is the client's one connection identity. Work begun under an earlier epoch
+ * (a stream still minting its ticket, a handshake recovery, a navigation, a
+ * new-task request, a fallback) is abandoned rather than applied to the
+ * connection that replaced it, or to no connection at all.
+ */
+export function beginConnectionEpoch(): number {
+  state.connectionEpoch++;
+  return state.connectionEpoch;
 }
 
 /**
@@ -1131,19 +1135,6 @@ export function installTaskAgentId(
   }
   if (state.taskAgentId !== previousAgent) {
     for (const listener of taskAgentListeners) listener();
-  }
-}
-
-export function installRootTaskId(
-  rootTaskId: unknown,
-  generation: number = state.rootTaskAuthorityGeneration,
-): void {
-  if (
-    generation === state.rootTaskAuthorityGeneration &&
-    typeof rootTaskId === "string" &&
-    rootTaskId.length > 0
-  ) {
-    state.rootTaskId = rootTaskId;
   }
 }
 

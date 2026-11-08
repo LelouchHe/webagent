@@ -407,7 +407,6 @@ describe("state", () => {
         name: "x.png",
       });
       mod.state.followMessages = false;
-      mod.state.rootTaskId = "root-derived-authority";
       mod.setBusy(true);
 
       mod.resetTaskUI();
@@ -418,7 +417,6 @@ describe("state", () => {
       assert.equal(mod.state.pendingAttachments.length, 0);
       assert.equal(mod.state.followMessages, true);
       assert.equal(mod.state.busy, false);
-      assert.equal(mod.state.rootTaskId, "root-derived-authority");
     });
 
     it("re-enables input and send button after task deletion", () => {
@@ -594,7 +592,6 @@ describe("state", () => {
     it("addresses Root by its own hash, like every task", () => {
       const rootId = "6f1c2e9a-0d4b-4c8e-9a51-3b7f2d8e4c10";
       history.replaceState(null, "", "/?view=chat#old-task");
-      mod.state.rootTaskId = rootId;
 
       // A reload must return to Root, so Root keeps a stable deep link too.
       mod.setHashTaskId(rootId);

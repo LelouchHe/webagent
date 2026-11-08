@@ -35,7 +35,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - reads (task, list, events, session view, commands, permissions) work with the agent's transport gone, and no read rotates the binding
   - Root's three first-use states: unbound attaches, empty slot replaces, real binding loads; concurrent first use materializes once; each commit advances the generation
   - a reload of one agent leaves another agent's streaming, plan, usage, and busy state untouched
-  - GC and Root reset retire through the agent recorded on the binding, never a default adapter (same session id on both agents)
+  - GC and Root exit retire through the agent recorded on the binding, never a default adapter (same session id on both agents)
 
 - `test/multi-agent-mcp.test.ts` (production host + endpoint + real store/ledger; business calls go through real HTTP `tools/call`)
   - a caller that rotates while a `task_create` waits for the tree lock is refused before the task row is written
@@ -43,7 +43,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a caller that rotates during a child's config inheritance is refused before the source transcript row is written; the already-committed child stays
   - an `initializing` capability completes the MCP handshake but every business tool returns `initializing`; after promotion the same token works
   - a request authenticated before a real rotation cannot write after it (the task-persist boundary re-checks after `newSession`), while a fresh token against the current generation succeeds; the rotated-away token is revoked
-  - a token whose task moved to another agent is refused; a Root reset revokes the Root token
+  - a token whose task moved to another agent is refused; a Root exit revokes the old Root's token
   - unknown/revoked tokens are refused before any protocol work; the caller principal is frozen and carries `(task, agent, generation)`
 
 - `test/multi-agent-mcp-create.test.ts` (production host + endpoint + real REST handler, one distinguishable transport per configured agent)
@@ -454,7 +454,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a superseded turn's late terminal (including a late `prompt_done`) never releases or re-origins the turn that replaced it
   - the submission protocol is shared and survives awaits: a runtime reservation blocks an interactive submit and vice versa, the slot is held across `ensureResumed`, a submitter that wins during the transport resolution is the only one that reaches `bridge.prompt` (and the loser's delivery stays queued), and a reservation invalidated by a cancel during that await gives up without claiming or submitting
   - admission is one check over every busy source, for both the interactive and the runtime route; `allowBash` opens bash and nothing else, and only an explicit `allowRestoring` waives a restore
-  - deletion through its real entries: the REST delete refuses a task mid-turn and leaves the slot alone, a successful delete releases that task's runtime only, a cascading delete releases every removed task, the Root reset route releases the removed subtree plus Root's own runtime, and the empty-task sweep (the only deletion path with no busy gate) releases the row, the slot and the task's runtime
+  - deletion through its real entries: the REST delete refuses a task mid-turn and leaves the slot alone, a successful delete releases that task's runtime only, a cascading delete releases every removed task, the Root exit route releases the removed subtree plus Root's own runtime, and the empty-task sweep (the only deletion path with no busy gate) releases the row, the slot and the task's runtime
   - bash is not an ACP turn: a delegated turn opens beside a running bash command, and closing it leaves only bash busy
 
 - `test/task-collaboration.test.ts`
@@ -464,7 +464,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the collaboration-message emitter reports exactly one post-commit fact for both the normal and in-transaction creation entry points
 
 - `test/task-manager.test.ts`
-  - busy has two faces: a restoring task is agent-busy for the gate (`getGateBusyKind`) and idle for rendering (`getBusyKind`); a Root reset under a restoring descendant and a rotation during the restore window are both refused
+  - busy has two faces: a restoring task is agent-busy for the gate (`getGateBusyKind`) and idle for rendering (`getBusyKind`); a Root exit under a restoring descendant and a rotation during the restore window are both refused
   - a bash run that ignores `SIGINT` is escalated to `SIGKILL` and the stop waits for close; the handle stays tracked until then; a replaced run's late close is ignored; an agent teardown stops bash-only tasks
   - task title hydration
   - task deletion cleanup
@@ -477,7 +477,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - deduplicated resume (ensureResumed)
   - revisioned Agent command snapshot lifecycle and cleanup
   - authoritative snapshot waits for command discovery during warm-cache restore
-  - rotation busy gate: a restoring task is agent-busy, a `/clear` or Root reset that arrives during the restore window is refused, and a store replacement restores nothing under a lease that moved; the compaction turn keeps its controlled internal rotation path
+  - rotation busy gate: a restoring task is agent-busy, a `/clear` or Root exit that arrives during the restore window is refused, and a store replacement restores nothing under a lease that moved; the compaction turn keeps its controlled internal rotation path
   - rotation transport truncation: dispatch retry ids and unfinished delivery rows are finalized, the obligation record survives as a reminder, and the old dispatch body is never re-sent to the replacement execution
   - a closing reminder with no execution to accept it is deferred: waiting again with neither attempt nor failure consumed and no reminder event recorded
   - reminder turn ownership: a resume failure, a replaced execution and a dead agent each return the task to idle (one `activePrompts` add, one guarded release), and the controller can still submit afterwards
@@ -494,9 +494,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/tree-deletion.test.ts`
   - deleting a parent takes a foreign child with it, and each execution is retired through its own agent's adapter even when both report the same session id
-  - a delete or Root reset is refused while a foreign descendant is busy, retiring nothing
-  - a Root reset spans every agent and leaves one empty owner slot
-  - exiting Root rebuilds it before the request returns, so the caller lands on a live, idle task; a Root whose agent cannot start is refused before anything is destroyed, leaving the tree, the events, and the retired executions untouched
+  - a delete or Root exit is refused while a foreign descendant is busy, retiring nothing
+  - a Root exit spans every agent, retiring each execution once; the new Root keeps the agent as one empty owner slot
+  - exiting Root makes the replacement Root live before the request returns, so the caller lands on a live, idle task; a Root whose agent cannot start is refused before anything is destroyed, leaving the Root, the tree, the events, and the retired executions untouched
+  - a child create that was waiting for the tree lock behind an exit fails with `TaskNotFoundError`, because the parent it named (the old Root) is gone
+  - two concurrent exits of a shared Root: exactly one replaces it, the other fails with `TaskNotFoundError`, and the replacement it named still exists and was made live once
 
 - `test/runtime-authority.test.ts`
   - one `seq` source across a real A→B rotation (two Stores): the binding's agent and session both move, two client cursors accept every patch, and the post-rotation snapshot is never superseded
@@ -516,9 +518,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - delete, tombstone reap, and empty-task GC refuse the Root even when its tombstone flag is corrupted
   - `getParentTask` accepts the global Root for another agent's task
   - reset sentinels cover events, client_ops, attachments, compact summaries, previews, and descendants; Root keeps an ownership binding holding its own `no-execution:<id>` slot and reports the retired execution
-  - an active Root share blocks reset; after revoke, reset succeeds
+  - `replaceRoot` inserts a new Root (new id; same directory, title, model, and agent as an empty slot; no history), moves the `workspace` pointer durably, and deletes the old tree in one transaction; a failure while deleting the old tree (after the in-memory pointer moved) leaves the old Root, its tree, its binding, and both the in-memory and stored pointer as they were; a caller naming a Root that is no longer the Root is refused
+  - a shared Root is tombstoned and still replaced, and is reapable once no longer the Root
   - binding write authority: a foreign attach is refused with no fact emitted, detach removes the binding, the same session id from two agents is two different executions, one outermost commit emits one fact per task, and a rolled-back batch is discarded rather than leaked into the next commit
-  - deletion follows the task tree: a foreign survivor is deleted with its parent's subtree, a share-backed survivor is tombstoned and re-parented under Root with its history/share/attachment intact, and a Root reset keeps an unbound shared tombstone alive
+  - deletion follows the task tree: a foreign survivor is deleted with its parent's subtree, a share-backed survivor is tombstoned and re-parented under Root with its history/share/attachment intact, and a Root exit keeps a shared tombstone alive, re-parented under the new Root
   - the empty-task GC still re-parents a surviving child under Root instead of deleting it
   - deleteEmptyTasks age gating
   - hasInterruptedTurn detection
@@ -548,11 +551,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/tasks.test.ts`
   - task CRUD (create / get / delete / list), with server-only id assignment; the Root resolves by its id, and unknown/legacy ids (including the old literal `root`) return 404
   - an in-flight restore is rendered idle (snapshot `runtime.busy` and `/status` `busyKind` are null) while `/clear` and delete still refuse with 409
-  - task list is global (`?agent=` narrows); every list entry, task detail, snapshot, bootstrap/create/clear payload, and `task_created` broadcast carries `agentId` alongside backend Root authority
+  - task list is global (`?agent=` narrows); every list entry, task detail, snapshot, bootstrap/create/clear payload, and `task_created` broadcast carries `agentId`; only `/api/v1/config` reports `rootTaskId`, and responses and the SSE `connected` event do not repeat it
   - creating a child of a task carried by another configured agent targets that agent without rotating the parent; when the parent's agent is gone the child is created for `default_agent`
   - `POST /clear { agentId }` rescues a task onto another configured agent, leaves the `agent_rotation` record, and refuses an unconfigured / non-string `agentId`
   - REST and MCP callers cannot choose reserved task ids; bootstrap, clear, compact, and actual/synthetic task_created envelopes preserve Root identity
-  - bootstrap materializes the Root as the workspace's first task (attach on a never-bound Root, materialize on a reset slot) instead of creating an unrelated task
+  - bootstrap materializes the Root as the workspace's first task (attach on a never-bound Root, materialize an exit's empty slot) instead of creating an unrelated task
   - config update (model, mode) and broadcast
   - source filter on task list
   - parent validation: an unknown parent is 400; a parent carried by another agent keeps its own binding
@@ -647,6 +650,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - task switches require successful busy snapshot hydration; provisional hash is written before detail fetch, then Root canonicalization waits for detail authority
   - hashless startup preserves user-input-first selection and canonical Root fallback
   - Root is addressed by its own `#<id>` deep link like every task, and stays active across a reconnect, including one whose config request fails
+  - an SSE `task_deleted` for the current (old) Root follows its `replacedBy` to the new Root even when another task is more recently active (`test/events.test.ts`)
   - foreign `root-*` ids are ordinary 404s and never aliases; fallback selection uses the current connection's scoped task array
   - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
   - existing-window and cold-start service-worker routing
@@ -775,10 +779,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - version display in `?` / help command
 
 - `test/connection.test.ts`
-  - hash-based task resume, using backend Root authority before hash canonicalization
+  - hash-based task resume
   - last-task auto-resume with the Root fallback, identified by the task list's `isRoot` flag rather than by the id's value
   - new-task creation when no previous task exists
   - reconnect behavior without duplicate history replay
+  - one connection epoch, bumped on connect and on disconnect: a config response that arrives after the stream dropped (before any reconnect) installs nothing
   - incremental sync on reconnect when task matches
   - visibility-change sync (hidden→visible)
   - task-switch abort on generation change
@@ -1054,7 +1059,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a share-backed survivor is tombstoned and re-parented under Root; the empty-task GC keeps a surviving child under Root
   - `getTaskPath` strips the Root anchor; other ids render as path segments
   - creating a task under an unknown parent is rejected with `400`
-  - generic deletion rejects the Root; deleting it through the task endpoint exits Root (reset the tree, then rebuild its execution before answering)
+  - generic deletion rejects the Root; deleting it through the task endpoint exits Root: the whole tree is deleted, the answer and the old Root's `task_deleted` name the new Root as `replacedBy`, the new Root is broadcast as `task_created` and is live before the answer, and no `task_reset` exists
+  - `/exit` on Root lands on the Root named by `replacedBy`, even when another task is more recently active (`test/commands.test.ts`)
 
 - `task-clear-command.spec.ts`
   - `/clear` keeps the stable WebAgent task id, history, and cwd; only the

@@ -68,11 +68,6 @@ time. An entry without a "closing condition" is a wish, not an issue.
   `task_created` / `system_message` guards are asserted in the frontend tests,
   not against two real clients. *Closing:* a two-client integration test that
   asserts exactly one row per client.
-- **The frontend installs the Root authority with the default generation.** A
-  queued `replayQueue` event carried across an execution-generation boundary
-  could install the previous connection's Root; live SSE is guarded by
-  `gen !== streamGen` and any current-connection payload overwrites it.
-  *Closing:* carry the generation on the replay payload and drop mismatches.
 
 ## Protocol and agent compatibility
 

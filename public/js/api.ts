@@ -219,7 +219,8 @@ export function compactTask(
 export interface DeleteTaskResult {
   taskId: string;
   parentId?: string | null;
-  reset?: boolean;
+  /** The Root that replaced this one, when the deleted task was the Root. */
+  replacedBy?: string;
   clientOpId?: string;
 }
 
@@ -261,7 +262,6 @@ export function listTasks(): Promise<TaskSummary[]> {
 }
 
 export function getConfig(): Promise<{
-  rootTaskId: string;
   configOptions: ConfigOption[];
   /** Configured agents, in configuration order. Ids only: the directory is a
    *  configuration fact and carries no liveness (see `agent-directory.ts`). */

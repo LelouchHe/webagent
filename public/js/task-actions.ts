@@ -39,9 +39,9 @@ export async function exitCurrentTask(): Promise<void> {
   try {
     const result = await api.deleteTask(exitId);
     await fallbackToNextTask(
-      result?.reset ? null : exitId,
+      exitId,
       state.taskCwd ?? undefined,
-      result?.reset ? exitId : result?.parentId,
+      result?.replacedBy ?? result?.parentId,
       result?.clientOpId,
     );
   } catch (err) {

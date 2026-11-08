@@ -778,10 +778,7 @@ export function handleAgentEvent(
     });
     return;
   }
-  if (event.type === "connected") {
-    event.rootTaskId = store.rootTaskId;
-  } else if (event.type === "task_created") {
-    event.rootTaskId = store.rootTaskId;
+  if (event.type === "task_created") {
     completeParentFields(event, store);
   }
   if (isAgentActivityEvent(event) && "taskId" in event && event.taskId) {

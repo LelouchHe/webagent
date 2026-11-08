@@ -45,7 +45,7 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
   request addresses a task and the runtime resolves which agent executes it.
   Five contexts are deliberately different: the first execution of a task
   (the verified target), a replacement (`/clear`, compaction — the new
-  execution), retirement/deletion/GC/Root reset (the old binding recorded at
+  execution), retirement/deletion/GC/Root exit (the old binding recorded at
   commit time), agent events and permission responses (the source execution
   that produced them), and continuations inside one operation (the context
   captured at its start).
@@ -78,7 +78,7 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
   for another agent does not inherit the source task's execution config.
 - A read can write the execution config columns. A task whose binding agent is
   still configured but whose execution slot is unmaterialized (an earlier
-  takeover, or a Root reset whose rebuild failed after its commit) is
+  takeover, or an exit's replacement Root whose wake-up failed after its commit) is
   materialized by the background warm a detail or snapshot read starts; the session it creates reports its own `model` /
   `mode` / `reasoning_effort`, and adoption fills only the columns the task has
   no value for. A read never takes a task over from an agent that left the

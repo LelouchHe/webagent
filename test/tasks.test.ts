@@ -195,7 +195,8 @@ describe("Task REST API", () => {
       assert.equal(res.status, 201);
       const body = JSON.parse(res.body);
       assert.match(body.id, /^[0-9a-f-]{36}$/);
-      assert.equal(body.rootTaskId, store.rootTaskId);
+      // Root identity is a config fact; responses do not repeat it.
+      assert.equal("rootTaskId" in body, false);
       // The create response is an echo the client installs as the current
       // task, so it must name the binding agent just like the broadcast does.
       assert.equal(body.agentId, "test-agent");
@@ -219,7 +220,6 @@ describe("Task REST API", () => {
       assert.ok(responses.every((response) => response.status === 200));
       const bodies = responses.map((response) => JSON.parse(response.body));
       assert.equal(new Set(bodies.map((body) => body.id)).size, 1);
-      assert.ok(bodies.every((body) => body.rootTaskId === store.rootTaskId));
       // Bootstrap materialized the Root as the workspace's first task: no
       // extra task exists beside it.
       assert.deepEqual(
@@ -241,11 +241,9 @@ describe("Task REST API", () => {
       const first = await makeRequest(port, "POST", "/api/v1/tasks/bootstrap");
       const bootstrapBody = JSON.parse(first.body);
       const bootstrapId = bootstrapBody.id;
-      assert.equal(bootstrapBody.rootTaskId, store.rootTaskId);
 
       const second = await makeRequest(port, "POST", "/api/v1/tasks/bootstrap");
       assert.equal(JSON.parse(second.body).id, bootstrapId);
-      assert.equal(JSON.parse(second.body).rootTaskId, store.rootTaskId);
 
       const explicit = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       assert.notEqual(JSON.parse(explicit.body).id, bootstrapId);
@@ -587,7 +585,6 @@ describe("Task REST API", () => {
       await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const created = broadcastEvents.find((e) => e.type === "task_created");
       assert.ok(created, "should broadcast task_created");
-      assert.equal(created.rootTaskId, store.rootTaskId);
     });
 
     it("returns 400 for invalid JSON", async () => {
@@ -743,11 +740,7 @@ describe("Task REST API", () => {
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, "s1");
-      assert.equal(body.rootTaskId, store.rootTaskId);
-      const created = broadcastEvents.find(
-        (event) => event.type === "task_created",
-      );
-      assert.equal(created?.rootTaskId, store.rootTaskId);
+      assert.ok(broadcastEvents.some((event) => event.type === "task_created"));
       assert.deepEqual(
         store
           .listTasks()
@@ -893,13 +886,7 @@ describe("Task REST API", () => {
             event.text === "summary of the current work",
         ),
       );
-      assert.ok(
-        broadcastEvents.some(
-          (event) =>
-            event.type === "task_created" &&
-            event.rootTaskId === store.rootTaskId,
-        ),
-      );
+      assert.ok(broadcastEvents.some((event) => event.type === "task_created"));
       assert.equal(tasks.getBusyKind("s1"), null);
       // Compaction is a rotation: it leaves its own transcript line naming the
       // trigger, instead of being an unrecorded internal replacement.
@@ -1130,7 +1117,6 @@ describe("Task REST API", () => {
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, id);
-      assert.equal(body.rootTaskId, store.rootTaskId);
       assert.equal(body.cwd, tmpDir);
       assert.ok(Array.isArray(body.configOptions));
     });
@@ -1269,7 +1255,6 @@ describe("Task REST API", () => {
       assert.deepEqual(JSON.parse(res.body), {
         taskId: id,
         parentId: store.rootTaskId,
-        reset: false,
       });
 
       // Verify deleted from store
@@ -1304,7 +1289,6 @@ describe("Task REST API", () => {
       assert.deepEqual(JSON.parse(res.body), {
         taskId: "parent",
         parentId: rootId,
-        reset: false,
       });
     });
 
@@ -1317,7 +1301,7 @@ describe("Task REST API", () => {
       assert.equal(res.status, 404);
     });
 
-    it("resets Root, deletes its descendants, and keeps Root as the anchor", async () => {
+    it("exits Root: deletes the whole tree and answers with its replacement", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(rootId, "test-agent", "agent-root");
       store.createTask(
@@ -1346,32 +1330,51 @@ describe("Task REST API", () => {
       const res = await makeRequest(port, "DELETE", `/api/v1/tasks/${rootId}`);
 
       assert.equal(res.status, 200);
-      assert.deepEqual(JSON.parse(res.body), {
+      const body = JSON.parse(res.body) as {
+        taskId: string;
+        parentId: null;
+        replacedBy: string;
+      };
+      const newRootId = store.rootTaskId;
+      assert.notEqual(newRootId, rootId);
+      assert.deepEqual(body, {
         taskId: rootId,
-        rootTaskId: rootId,
-        reset: true,
+        parentId: null,
+        replacedBy: newRootId,
       });
-      assert.equal(store.getTask(rootId)?.id, rootId);
+      assert.equal(store.getTaskIncludingDeleted(rootId), undefined);
       assert.equal(store.getTaskIncludingDeleted("child"), undefined);
-      assert.deepEqual(store.getEvents(rootId), []);
+      assert.deepEqual(store.getEvents(newRootId), []);
       assert.ok(
         broadcastEvents.some(
           (event) => event.type === "task_deleted" && event.taskId === "child",
         ),
       );
+      // The old Root's deletion names its replacement, so every client viewing
+      // it, the initiator's echo included, follows to the same task.
       assert.ok(
         broadcastEvents.some(
           (event) =>
-            event.type === "task_reset" &&
+            event.type === "task_deleted" &&
             event.taskId === rootId &&
-            event.rootTaskId === rootId,
+            event.replacedBy === newRootId,
         ),
+      );
+      assert.ok(
+        broadcastEvents.some(
+          (event) =>
+            event.type === "task_created" && event.taskId === newRootId,
+        ),
+      );
+      assert.equal(
+        broadcastEvents.some((event) => event.type === ("task_reset" as never)),
+        false,
       );
       assert.ok(mockBridge.retireCalls.includes("agent-root"));
       assert.ok(mockBridge.retireCalls.includes("agent-child"));
     });
 
-    it("refuses the Root reset when its agent cannot start, deleting nothing", async () => {
+    it("refuses the Root exit when its agent cannot start, deleting nothing", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(rootId, "test-agent", "agent-root");
       store.createTask(
@@ -1425,7 +1428,7 @@ describe("Task REST API", () => {
       assert.equal(store.getTask(rootId)?.parent_id, null);
     });
 
-    it("resets Root through the task route and rebuilds it before answering", async () => {
+    it("exits Root through the task route and makes the new Root live before answering", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(rootId, "test-agent", "agent-root");
       store.createTask(
@@ -1459,15 +1462,18 @@ describe("Task REST API", () => {
       const res = await makeRequest(port, "DELETE", `/api/v1/tasks/${rootId}`);
 
       assert.equal(res.status, 200);
-      assert.equal(JSON.parse(res.body).reset, true);
-      // The response is the commit point: by the time it arrives, Root is a
-      // live, idle task, not one still waiting for a read to wake it up.
+      const newRootId = (JSON.parse(res.body) as { replacedBy: string })
+        .replacedBy;
+      assert.equal(newRootId, store.rootTaskId);
+      // The response is the commit point: by the time it arrives, the new Root
+      // is a live, idle task, not one still waiting for a read to wake it up.
       assert.equal(created, 1);
-      assert.equal(store.getEvents(rootId).length, 0);
+      assert.equal(store.getTaskIncludingDeleted(rootId), undefined);
       assert.equal(store.getTaskIncludingDeleted("child"), undefined);
-      assert.equal(store.getAgentSessionId(rootId), "rebuilt-1");
-      assert.equal(store.getTask(rootId)?.parent_id, null);
-      assert.equal(tasks.getBusyKind(rootId), null);
+      assert.equal(store.getEvents(newRootId).length, 0);
+      assert.equal(store.getAgentSessionId(newRootId), "rebuilt-1");
+      assert.equal(store.getTask(newRootId)?.parent_id, null);
+      assert.equal(tasks.getBusyKind(newRootId), null);
     });
 
     it("cascades to descendant tasks and broadcasts task_deleted per id", async () => {
@@ -1502,7 +1508,6 @@ describe("Task REST API", () => {
       assert.deepEqual(JSON.parse(res.body), {
         taskId: "parent",
         parentId: store.rootTaskId,
-        reset: false,
       });
       assert.ok(!tasks.liveTasks.has("child"));
     });

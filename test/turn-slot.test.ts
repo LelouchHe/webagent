@@ -61,7 +61,7 @@ function makeRequest(
 interface TestResponseBody {
   error?: string;
   busyKind?: string;
-  reset?: boolean;
+  replacedBy?: string;
   status?: string;
   taskId?: string;
 }
@@ -1115,9 +1115,9 @@ describe("turn slot", () => {
           disarm: (id) => tasks.compactingTasks.delete(id),
         },
         {
-          name: "a reset barrier",
-          arm: (id) => tasks.resettingTasks.add(id),
-          disarm: (id) => tasks.resettingTasks.delete(id),
+          name: "a Root rebuild",
+          arm: (id) => tasks.rebuildingTasks.add(id),
+          disarm: (id) => tasks.rebuildingTasks.delete(id),
         },
         {
           name: "a rotation",
@@ -1278,7 +1278,7 @@ describe("turn slot", () => {
       const deleted = await deleteRequest(id);
 
       assert.equal(deleted.status, 200);
-      assert.equal(bodyOf(deleted).reset, false);
+      assert.equal(bodyOf(deleted).replacedBy, undefined);
       assert.equal(store.getTask(id), undefined, "the row is gone");
       assert.equal(tasks.getTurn(id), null, "no turn survives the delete");
       assert.equal(
@@ -1348,16 +1348,17 @@ describe("turn slot", () => {
       );
     });
 
-    it("releases the whole subtree through the Root reset route", async () => {
+    it("releases the whole tree through the Root exit route", async () => {
       const first = createTask("root-reset-first");
       const second = createTask("root-reset-second", first);
       const rootTaskId = store.rootTaskId;
-      // A reset of the whole tree is refused while anything is busy, so this
+      // An exit of the whole tree is refused while anything is busy, so this
       // asserts the release on the runtime bookkeeping every affected task owns.
       const res = await deleteRequest(rootTaskId);
 
       assert.equal(res.status, 200);
-      assert.equal(bodyOf(res).reset, true);
+      const replacedBy = bodyOf(res).replacedBy;
+      assert.ok(replacedBy && replacedBy !== rootTaskId);
       for (const id of [first, second]) {
         assert.equal(store.getTask(id), undefined, `${id} row is gone`);
         assert.equal(tasks.getTurn(id), null, `${id} has no turn`);
@@ -1367,13 +1368,14 @@ describe("turn slot", () => {
           `${id} runtime is released`,
         );
       }
-      // Root keeps its own row as the tree anchor and loses the runtime the
-      // reset was made around; the exit then rebuilds it, so Root is live
-      // again when this request returns, under a session the reset created.
-      assert.ok(store.getTask(rootTaskId), "Root survives its reset");
-      assert.equal(tasks.getTurn(rootTaskId), null);
-      assert.notEqual(store.getAgentSessionId(rootTaskId), "agent-root");
-      assert.equal(tasks.liveTasks.has(rootTaskId), true);
+      // The old Root goes like any task; its replacement is live when this
+      // request returns, under a session the exit created.
+      assert.equal(store.getTask(rootTaskId), undefined, "old Root is gone");
+      assert.equal(tasks.liveTasks.has(rootTaskId), false);
+      assert.equal(store.rootTaskId, replacedBy);
+      assert.equal(tasks.getTurn(replacedBy), null);
+      assert.notEqual(store.getAgentSessionId(replacedBy), "agent-root");
+      assert.equal(tasks.liveTasks.has(replacedBy), true);
     });
 
     it("releases a task the empty-task sweep removes", async () => {

@@ -2025,31 +2025,36 @@ describe("events", () => {
         assert.equal(state.taskId, "parent");
       });
 
-      it("reloads the preserved Root task after a reset event", async () => {
+      it("follows the old Root's deletion to the Root that replaced it", async () => {
+        const NEW_ROOT_ID = "9a1d3c6e-2f4b-4e8a-b7c5-0d2e4f6a8b1c";
         state.taskId = ROOT_ID;
-        state.rootTaskId = ROOT_ID;
-        const rootTask = {
-          id: ROOT_ID,
-          rootTaskId: ROOT_ID,
+        const newRoot = {
+          id: NEW_ROOT_ID,
           cwd: "/tmp",
           title: "root",
           configOptions: [],
           busyKind: null,
         };
         setFetch(async (url: string, init?: any) => {
+          // A more recently active task is listed first, so a client that
+          // ignored `replacedBy` would land there instead.
           if (
             url === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return {
               ok: true,
-              text: async () => JSON.stringify([{ id: ROOT_ID, isRoot: true }]),
+              text: async () =>
+                JSON.stringify([
+                  { id: "recent-other", isRoot: false },
+                  { id: NEW_ROOT_ID, isRoot: true },
+                ]),
             };
-          if (url === `/api/v1/tasks/${ROOT_ID}`)
-            return { ok: true, text: async () => JSON.stringify(rootTask) };
-          if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
+          if (url === `/api/v1/tasks/${NEW_ROOT_ID}`)
+            return { ok: true, text: async () => JSON.stringify(newRoot) };
+          if (url.startsWith(`/api/v1/tasks/${NEW_ROOT_ID}/events`))
             return { ok: true, text: async () => "[]" };
-          if (url === `/api/v1/tasks/${ROOT_ID}/snapshot`)
+          if (url === `/api/v1/tasks/${NEW_ROOT_ID}/snapshot`)
             return {
               ok: true,
               text: async () =>
@@ -2063,10 +2068,16 @@ describe("events", () => {
           return { ok: true, text: async () => "{}" };
         });
 
-        events.handleEvent({ type: "task_reset", taskId: ROOT_ID });
+        events.handleEvent({
+          type: "task_deleted",
+          taskId: ROOT_ID,
+          parentId: null,
+          replacedBy: NEW_ROOT_ID,
+        });
         for (let i = 0; i < 30; i++) await Promise.resolve();
 
-        assert.equal(state.taskId, ROOT_ID);
+        assert.equal(state.taskId, NEW_ROOT_ID);
+        assert.equal(location.hash, `#${NEW_ROOT_ID}`);
       });
 
       it("creates new task when current is deleted and no others exist", async () => {

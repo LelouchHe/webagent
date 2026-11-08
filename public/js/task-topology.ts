@@ -174,14 +174,6 @@ export function observeTaskDeleted(taskId: string): void {
   observeFact(taskId, null);
 }
 
-/**
- * A Root reset retires the Root execution. When Root is the current task's
- * parent, its binding is no longer a fact to inherit.
- */
-export function observeTaskReset(taskId: string): void {
-  observeFact(taskId, null);
-}
-
 function observeFact(taskId: string, agentId: string | null): void {
   const ref = parentRef;
   if (ref?.taskId !== viewedTaskId) return;

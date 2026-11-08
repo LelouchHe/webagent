@@ -13,8 +13,13 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { emptyExecutionSlot, Store } from "../src/store.ts";
+import { generateShareToken } from "../src/tokens.ts";
 import type { TaskManager } from "../src/task-manager.ts";
-import { TaskBusyError, createTaskManager } from "../src/task-manager.ts";
+import {
+  TaskBusyError,
+  TaskNotFoundError,
+  createTaskManager,
+} from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
 import type { ConfigOption } from "../src/types.ts";
@@ -1401,10 +1406,10 @@ describe("TaskManager", () => {
       );
     });
 
-    it("replaces a reset Root's empty slot with a fresh session on first use", async () => {
-      const rootId = store.ensureRootTask(tmpDir).id;
-      store.attachAgentSession(rootId, "test-agent", "agent-old");
-      store.resetRootTask();
+    it("gives an exit's replacement Root a fresh session on first use", async () => {
+      const oldRootId = store.ensureRootTask(tmpDir).id;
+      store.attachAgentSession(oldRootId, "test-agent", "agent-old");
+      const rootId = store.replaceRoot(store.rootTaskId).rootTaskId;
 
       let newSessionCalls = 0;
       const bridge = {
@@ -1420,9 +1425,9 @@ describe("TaskManager", () => {
         },
       };
 
-      // A reset leaves a binding row holding its own empty execution slot,
-      // which is a distinct state from "never bound": the first use replaces
-      // the slot instead of trying to load a session the agent never saw.
+      // The replacement Root has a binding row holding its own empty execution
+      // slot, a distinct state from "never bound": the first use replaces the
+      // slot instead of trying to load a session the agent never saw.
       sm.attachExecutionBridge(bridge);
       assert.equal(store.getAgentSessionId(rootId), emptyExecutionSlot(rootId));
       await sm.ensureTaskLive(rootId);
@@ -1431,10 +1436,10 @@ describe("TaskManager", () => {
       assert.ok(sm.liveTasks.has(rootId));
     });
 
-    it("restores saved config when lazily materializing a DB-only reset", async () => {
-      const rootId = store.ensureRootTask(tmpDir).id;
-      store.attachAgentSession(rootId, "test-agent", "agent-old");
-      store.resetRootTask();
+    it("restores saved config when lazily materializing a replacement Root", async () => {
+      const oldRootId = store.ensureRootTask(tmpDir).id;
+      store.attachAgentSession(oldRootId, "test-agent", "agent-old");
+      const rootId = store.replaceRoot(store.rootTaskId).rootTaskId;
       store.updateTaskConfig(rootId, "model", "saved-model");
       store.updateTaskConfig(rootId, "mode", "saved-mode");
       store.updateTaskConfig(rootId, "reasoning_effort", "high");
@@ -1514,8 +1519,53 @@ describe("TaskManager", () => {
     });
   });
 
-  describe("Root reset rebuilds the execution", () => {
-    it("rebuilds Root's execution before the reset returns, retiring the old one", async () => {
+  describe("Root exit replaces the Root", () => {
+    it("lets only one of two concurrent exits of a shared Root replace it", async () => {
+      // A shared old Root survives its exit as a tombstone, so a second exit
+      // queued behind the first can still lock it. It must not then delete
+      // the Root the first exit just created.
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
+      const token = generateShareToken();
+      store.insertSharePreview({ token, taskId: rootId, snapshotSeq: 1 });
+      store.activateShare(token);
+      let sessions = 0;
+      const bridge = {
+        async newSession() {
+          sessions++;
+          return { sessionId: `agent-root-${sessions}`, configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+      sm.attachExecutionBridge(bridge);
+
+      const results = await Promise.allSettled([sm.exitRoot(), sm.exitRoot()]);
+
+      const fulfilled = results.filter(
+        (result) => result.status === "fulfilled",
+      );
+      const rejected = results.filter((result) => result.status === "rejected");
+      assert.equal(fulfilled.length, 1, "exactly one exit replaces the Root");
+      assert.equal(rejected.length, 1);
+      assert.equal(
+        rejected[0].reason?.name,
+        TaskNotFoundError.name,
+        "the stale exit names a Root that is no longer the Root",
+      );
+      const newRootId = (
+        fulfilled[0] as PromiseFulfilledResult<{ rootTaskId: string }>
+      ).value.rootTaskId;
+      assert.equal(store.rootTaskId, newRootId);
+      assert.ok(store.getTask(newRootId), "the replacement it named exists");
+      assert.equal(sessions, 1, "one replacement was made live, once");
+    });
+
+    it("makes the replacement Root live before the exit returns, retiring the old execution", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(rootId, "test-agent", "agent-root");
       store.saveEvent(
@@ -1542,17 +1592,22 @@ describe("TaskManager", () => {
         },
       };
 
-      await sm.resetRootTask(bridge);
+      const { rootTaskId: newRootId } = await sm.exitRoot(bridge);
 
-      // Exiting Root owns the rebuild: a client that reads Root next finds the
-      // state a freshly created task is in, not one a read still has to wake.
+      // Exiting Root owns the new Root's wake-up: a client that reads it next
+      // finds the state a freshly created task is in, not one a read still has
+      // to wake.
+      assert.notEqual(newRootId, rootId);
+      assert.equal(store.rootTaskId, newRootId);
       assert.equal(newSessionCalls, 1);
       assert.deepEqual(retired, ["agent-root"]);
-      assert.equal(store.getEvents(rootId).length, 0);
-      assert.equal(store.getAgentSessionId(rootId), "agent-root-new");
-      assert.equal(sm.liveTasks.has(rootId), true);
-      assert.equal(store.getTaskIncludingDeleted(rootId)?.parent_id, null);
-      assert.equal(store.getTaskIncludingDeleted(rootId)?.cwd, tmpDir);
+      assert.equal(store.getTaskIncludingDeleted(rootId), undefined);
+      assert.equal(sm.liveTasks.has(rootId), false);
+      assert.equal(store.getEvents(newRootId).length, 0);
+      assert.equal(store.getAgentSessionId(newRootId), "agent-root-new");
+      assert.equal(sm.liveTasks.has(newRootId), true);
+      assert.equal(store.getTask(newRootId)?.parent_id, null);
+      assert.equal(store.getTask(newRootId)?.cwd, tmpDir);
     });
 
     it("succeeds with an unbound Root and leaves it unbound", async () => {
@@ -1572,17 +1627,17 @@ describe("TaskManager", () => {
         { from_ref: "user" },
       );
 
-      const result = await sm.resetRootTask();
+      const result = await sm.exitRoot();
 
       assert.deepEqual(
-        result.affected.map((entry) => entry.id),
-        ["child"],
+        result.affected.map((entry) => entry.id).sort(),
+        ["child", rootId].sort(),
       );
-      assert.equal(store.getEvents(rootId).length, 0);
+      assert.equal(store.getTaskIncludingDeleted(rootId), undefined);
       assert.equal(store.getTaskIncludingDeleted("child"), undefined);
-      // The Root had no binding, so it stays unbound: a reset never invents an
-      // owner, and the first use will attach one.
-      assert.equal(store.getAgentSessionId(rootId), undefined);
+      // The old Root had no binding, so the new one has none either: an exit
+      // never invents an owner, and the first use will attach one.
+      assert.equal(store.getAgentSessionId(result.rootTaskId), undefined);
     });
 
     it("deletes another agent's descendant, its disk files, and its label cache", async () => {
@@ -1625,7 +1680,9 @@ describe("TaskManager", () => {
       sm.liveTasks.add("b-child");
       const bridge = {
         async newSession() {
-          throw new Error("reset must not create a replacement execution");
+          // The replacement Root's wake-up may fail; the exit has committed
+          // and says so in the log, which is not what this test is about.
+          throw new Error("no session in this test");
         },
         async setConfigOption() {
           return [];
@@ -1635,8 +1692,17 @@ describe("TaskManager", () => {
         },
       };
 
-      await sm.resetRootTask(bridge);
+      await sm.exitRoot(bridge);
 
+      // Directory removal is the ordinary delete's, which does not await the
+      // disk; wait for it rather than for a particular scheduling order.
+      for (
+        let tick = 0;
+        tick < 100 && (existsSync(rootPath) || existsSync(childPath));
+        tick++
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
       assert.equal(existsSync(rootPath), false);
       // Tree cascade: the foreign child goes with the Root, so its disk files
       // and label cache go too.
@@ -1751,7 +1817,7 @@ describe("TaskManager", () => {
       assert.equal(store.getTask(secondTask.taskId)?.parent_id, "b");
     });
 
-    it("rejects Root reset when a just-created descendant is still initializing", async () => {
+    it("rejects a Root exit while a just-created descendant is still initializing", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
       store.attachAgentSession(rootId, "test-agent", "agent-root");
@@ -1798,15 +1864,15 @@ describe("TaskManager", () => {
         parentId: "a",
       });
       await inheritanceStartedPromise;
-      const reset = sm.resetRootTask(bridge);
-      await assert.rejects(reset, { name: TaskBusyError.name });
+      const exit = sm.exitRoot(bridge);
+      await assert.rejects(exit, { name: TaskBusyError.name });
       assert.ok(store.getTaskIncludingDeleted("a"));
       releaseInheritance();
       const created = await create;
       assert.equal(store.getTask(created.taskId)?.parent_id, "a");
     });
 
-    it("rechecks work that starts while Root reset waits for its lock", async () => {
+    it("rechecks work that starts while a Root exit waits for its lock", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
       store.createTask("a", tmpDir, "auto", "test-agent", "agent-a", rootId);
@@ -1826,15 +1892,16 @@ describe("TaskManager", () => {
         },
       };
 
-      const reset = sm.resetRootTask(bridge);
+      const exit = sm.exitRoot(bridge);
       sm.activePrompts.add("a");
       releaseBranch();
-      await assert.rejects(reset, { name: TaskBusyError.name });
+      await assert.rejects(exit, { name: TaskBusyError.name });
       sm.activePrompts.delete("a");
       assert.ok(store.getTask("a"));
+      assert.equal(store.rootTaskId, rootId, "a refused exit replaces nothing");
     });
 
-    it("creates a task after a concurrent Root reset, never during it", async () => {
+    it("fails a child create that was waiting on a Root the exit deleted", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
       store.attachAgentSession(rootId, "test-agent", "agent-root");
@@ -1861,30 +1928,23 @@ describe("TaskManager", () => {
         },
       };
 
-      const reset = sm.resetRootTask(bridge);
+      const exit = sm.exitRoot(bridge);
       const create = sm.createTask(bridge, tmpDir, undefined, "auto", {
         parentId: rootId,
       });
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      assert.equal(
-        newSessionCalls,
-        0,
-        "creation must wait behind the exclusive Root reset lock",
-      );
-
       releaseRoot();
-      await reset;
-      // The exit's own rebuild runs after the lock is released, so Root is
-      // live again by the time the reset resolves.
-      assert.equal(sm.liveTasks.has(rootId), true);
-      assert.notEqual(store.getAgentSessionId(rootId), "");
-      assert.equal(store.getTaskIncludingDeleted(rootId)?.parent_id, null);
+      const { rootTaskId: newRootId } = await exit;
+      // The exit made its replacement live before resolving.
+      assert.equal(sm.liveTasks.has(newRootId), true);
+      assert.equal(store.getTask(newRootId)?.parent_id, null);
 
-      const created = await create;
-      // One session for the rebuild, one for the created task.
-      assert.equal(newSessionCalls, 2);
-      assert.equal(store.getTask(created.taskId)?.parent_id, rootId);
-      assert.ok(store.getTask(created.taskId));
+      // The create named the old Root as its parent; that task no longer
+      // exists, so the child is refused like a child of any deleted task.
+      await assert.rejects(create, { name: TaskNotFoundError.name });
+      assert.deepEqual(
+        store.listTasks().map((task) => task.id),
+        [newRootId],
+      );
     });
   });
 
@@ -3079,7 +3139,7 @@ describe("TaskManager", () => {
       };
 
       const restore = sm.resumeTask(loadingBridge, "child");
-      await assert.rejects(() => sm.resetRootTask(), TaskBusyError);
+      await assert.rejects(() => sm.exitRoot(), TaskBusyError);
 
       gate.resolve();
       await restore;
