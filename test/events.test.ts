@@ -2027,7 +2027,6 @@ describe("events", () => {
 
       it("reloads the preserved Root task after a reset event", async () => {
         state.taskId = ROOT_ID;
-        state.rootTaskId = ROOT_ID;
         const rootTask = {
           id: ROOT_ID,
           rootTaskId: ROOT_ID,

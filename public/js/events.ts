@@ -22,7 +22,6 @@ import {
   resetTaskUI,
   requestBootstrapTask,
   setHashTaskId,
-  installRootTaskId,
   installTaskAgentId,
   updateTaskInfo,
   setConnectionStatus,
@@ -124,8 +123,6 @@ setCreatedTaskActivator((task) => {
   if (typeof task.id !== "string") return;
   handleEvent({
     type: "task_created",
-    rootTaskId:
-      typeof task.rootTaskId === "string" ? task.rootTaskId : undefined,
     taskId: task.id,
     cwd: typeof task.cwd === "string" ? task.cwd : undefined,
     cwdDisplay:
@@ -239,7 +236,7 @@ export function fallbackToNextTask(
   _cwd?: string,
   preferredTaskId?: string | null,
   clientOpId?: string,
-  rootAuthorityGeneration = state.rootTaskAuthorityGeneration,
+  connectionEpoch = state.connectionEpoch,
 ): Promise<void> {
   const now = Date.now();
   for (const [key, expiresAt] of completedFallbacks) {
@@ -247,7 +244,7 @@ export function fallbackToNextTask(
   }
   const operationKey =
     clientOpId ?? `${expiredId ?? ""}\0${preferredTaskId ?? ""}`;
-  const key = `${rootAuthorityGeneration}\0${operationKey}`;
+  const key = `${connectionEpoch}\0${operationKey}`;
   if (clientOpId && completedFallbacks.has(key)) return Promise.resolve();
 
   const existing = pendingFallbacks.get(key);
@@ -256,7 +253,7 @@ export function fallbackToNextTask(
   const operation = fallbackToNextTaskImpl(
     expiredId,
     preferredTaskId,
-    rootAuthorityGeneration,
+    connectionEpoch,
   ).finally(() => {
     if (pendingFallbacks.get(key) === operation) pendingFallbacks.delete(key);
     if (clientOpId)
@@ -269,24 +266,18 @@ export function fallbackToNextTask(
 async function fallbackToNextTaskImpl(
   expiredId: string | null,
   preferredTaskId: string | null | undefined,
-  rootAuthorityGeneration: number,
+  connectionEpoch: number,
 ): Promise<void> {
-  if (rootAuthorityGeneration !== state.rootTaskAuthorityGeneration) return;
+  if (connectionEpoch !== state.connectionEpoch) return;
   state.taskSwitchGen++;
   const gen = state.taskSwitchGen;
   try {
     const tasks = await loadTaskList();
     if (
       gen !== state.taskSwitchGen ||
-      rootAuthorityGeneration !== state.rootTaskAuthorityGeneration
+      connectionEpoch !== state.connectionEpoch
     ) {
       return;
-    }
-    if (state.rootTaskId === null) {
-      installRootTaskId(
-        tasks.find((task) => task.isRoot)?.id,
-        rootAuthorityGeneration,
-      );
     }
     const next =
       (preferredTaskId
@@ -302,7 +293,7 @@ async function fallbackToNextTaskImpl(
       ]);
       if (
         gen !== state.taskSwitchGen ||
-        rootAuthorityGeneration !== state.rootTaskAuthorityGeneration
+        connectionEpoch !== state.connectionEpoch
       ) {
         return;
       }
@@ -310,18 +301,17 @@ async function fallbackToNextTaskImpl(
         next.id,
         () =>
           gen === state.taskSwitchGen &&
-          rootAuthorityGeneration === state.rootTaskAuthorityGeneration,
+          connectionEpoch === state.connectionEpoch,
       );
       if (
         gen !== state.taskSwitchGen ||
-        rootAuthorityGeneration !== state.rootTaskAuthorityGeneration
+        connectionEpoch !== state.connectionEpoch
       ) {
         return;
       }
       if (!hydrated) throw new Error("Failed to hydrate fallback task");
       handleEvent({
         type: "task_created",
-        rootTaskId: task.rootTaskId,
         taskId: task.id,
         agentId: task.agentId ?? null,
         parentId: task.parentId,
@@ -1959,9 +1949,6 @@ export function drainNavigationEvents(taskId: string): void {
 
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
 export function handleEvent(msg: AgentEvent) {
-  if (msg.type === "connected" || msg.type === "task_created") {
-    installRootTaskId(msg.rootTaskId);
-  }
   // The status bar's reference binding is consumed *before* the per-view
   // filters below: only events for the current task's parent matter, and that
   // parent is usually another task this client is not viewing.

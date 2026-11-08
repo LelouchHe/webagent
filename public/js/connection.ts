@@ -10,8 +10,7 @@ import {
   clearCancelTimer,
   hydrateTaskRuntime,
   updateInboxCount,
-  installRootTaskId,
-  clearRootTaskAuthority,
+  beginConnectionEpoch,
 } from "./state.ts";
 import {
   addSystem,
@@ -146,20 +145,20 @@ export function connect() {
   // Supersede any attempt still in flight so its continuation cannot open a
   // stream nobody owns.
   const gen = ++streamGen;
-  const rootAuthorityGeneration = clearRootTaskAuthority();
+  const connectionEpoch = beginConnectionEpoch();
   const activeTaskId = state.taskId;
   setConnectionStatus("connecting", "connecting");
 
   // SSE for receiving server events. EventSource cannot send Authorization,
   // so we exchange a Bearer for a single-use 60s ticket first, then open
   // the stream with ?ticket=…
-  void openStream(gen, activeTaskId, rootAuthorityGeneration);
+  void openStream(gen, activeTaskId, connectionEpoch);
 }
 
 async function openStream(
   gen: number,
   activeTaskId: string | null,
-  rootAuthorityGeneration: number,
+  connectionEpoch: number,
 ) {
   // Arm before the ticket mint so a stream that never opens is also covered.
   noteStreamActivity();
@@ -192,7 +191,6 @@ async function openStream(
     const msg = JSON.parse(e.data as string) as {
       type: string;
       clientId?: string;
-      rootTaskId?: string;
       agent?: unknown;
       debugLevel?: string;
       pendingCount?: number;
@@ -215,9 +213,6 @@ async function openStream(
       );
       void registerPushEndpoint(msg.clientId);
       // Bridge-originated connected events also carry agent info — pass through
-      if (typeof msg.rootTaskId === "string") {
-        installRootTaskId(msg.rootTaskId, rootAuthorityGeneration);
-      }
       if (!msg.agent) return;
     }
     handleEvent(msg as unknown as import("../../src/types.ts").AgentEvent);
@@ -253,7 +248,7 @@ async function openStream(
   // Load task immediately via REST — parallel with SSE connection. Every
   // activated task carries its hash, so the URL alone says which task to
   // restore.
-  void initializeTaskAndIntent(gen, rootAuthorityGeneration);
+  void initializeTaskAndIntent(gen, connectionEpoch);
 }
 
 async function recoverAfterHandshake(
@@ -283,7 +278,7 @@ async function recoverAfterHandshake(
 
 async function initializeTaskAndIntent(
   gen: number,
-  rootAuthorityGeneration: number,
+  connectionEpoch: number,
 ): Promise<void> {
   const navigationGeneration = state.taskSwitchGen;
   try {
@@ -296,18 +291,17 @@ async function initializeTaskAndIntent(
     if (gen !== streamGen) return;
     installAgentDirectory(config.agents, config.defaultAgentId);
     if (
-      rootAuthorityGeneration !== state.rootTaskAuthorityGeneration ||
+      connectionEpoch !== state.connectionEpoch ||
       navigationGeneration !== state.taskSwitchGen
     ) {
       return;
     }
-    installRootTaskId(config.rootTaskId, rootAuthorityGeneration);
   } catch {
-    // Task-list, detail, and connected payloads remain authoritative fallback
-    // sources if config cannot be fetched during reconnect.
+    // A failed config only costs the agent directory; the task this client
+    // lands on is chosen from the hash and the task list, not from config.
     if (
       gen !== streamGen ||
-      rootAuthorityGeneration !== state.rootTaskAuthorityGeneration ||
+      connectionEpoch !== state.connectionEpoch ||
       navigationGeneration !== state.taskSwitchGen
     ) {
       return;
@@ -320,10 +314,10 @@ async function initializeTaskAndIntent(
   void loadTaskList().catch(() => {
     // A failed baseline stays "not loaded"; nothing is claimed from it.
   });
-  await initTask(gen, rootAuthorityGeneration);
+  await initTask(gen, connectionEpoch);
   if (
     gen !== streamGen ||
-    rootAuthorityGeneration !== state.rootTaskAuthorityGeneration ||
+    connectionEpoch !== state.connectionEpoch ||
     navigationGeneration !== state.taskSwitchGen
   ) {
     return;
@@ -334,23 +328,17 @@ async function initializeTaskAndIntent(
 async function resumeFromTaskList(
   gen: number,
   connectionGeneration: number,
-  rootAuthorityGeneration: number,
+  connectionEpoch: number,
   isCurrent: () => boolean,
 ): Promise<boolean> {
   try {
     const tasks = await loadTaskList();
     if (!isCurrent()) return true;
-    if (state.rootTaskId === null) {
-      installRootTaskId(
-        tasks.find((task) => task.isRoot)?.id,
-        rootAuthorityGeneration,
-      );
-    }
     if (tasks.length === 0) return false;
 
     const initialTask =
       tasks.find((task) => task.hasUserInput) ??
-      tasks.find((task) => task.id === state.rootTaskId) ??
+      tasks.find((task) => task.isRoot) ??
       tasks[0];
     resetTaskUI();
     await resumeAndLoad(
@@ -358,7 +346,7 @@ async function resumeFromTaskList(
       false,
       gen,
       connectionGeneration,
-      rootAuthorityGeneration,
+      connectionEpoch,
     );
     if (isCurrent()) scrollToBottom(true);
     return true;
@@ -367,16 +355,13 @@ async function resumeFromTaskList(
   }
 }
 
-async function initTask(
-  connectionGeneration: number,
-  rootAuthorityGeneration: number,
-) {
+async function initTask(connectionGeneration: number, connectionEpoch: number) {
   setConnectionStatus("connecting", "task loading");
   const gen = state.taskSwitchGen;
   const isCurrent = () =>
     gen === state.taskSwitchGen &&
     connectionGeneration === streamGen &&
-    rootAuthorityGeneration === state.rootTaskAuthorityGeneration;
+    connectionEpoch === state.connectionEpoch;
   if (!isCurrent()) return;
 
   const existingId = getHashTaskId();
@@ -388,7 +373,7 @@ async function initTask(
       true,
       gen,
       connectionGeneration,
-      rootAuthorityGeneration,
+      connectionEpoch,
     );
     if (!isCurrent()) return;
     scrollToBottom(false);
@@ -405,7 +390,7 @@ async function initTask(
       false,
       gen,
       connectionGeneration,
-      rootAuthorityGeneration,
+      connectionEpoch,
     );
     if (!isCurrent()) return;
     scrollToBottom(true);
@@ -418,7 +403,7 @@ async function initTask(
   const resumed = await resumeFromTaskList(
     gen,
     connectionGeneration,
-    rootAuthorityGeneration,
+    connectionEpoch,
     isCurrent,
   );
   if (!isCurrent() || resumed) return;
@@ -434,7 +419,6 @@ function installTaskFromDetail(task: TaskDetail): void {
   // bar's reference costs no request at all.
   handleEvent({
     type: "task_created",
-    rootTaskId: task.rootTaskId,
     taskId: task.id,
     agentId: task.agentId ?? null,
     parentId: task.parentId,
@@ -451,12 +435,12 @@ async function resumeAndLoad(
   incremental: boolean,
   gen: number,
   connectionGeneration: number,
-  rootAuthorityGeneration: number,
+  connectionEpoch: number,
 ) {
   const isCurrent = () =>
     gen === state.taskSwitchGen &&
     connectionGeneration === streamGen &&
-    rootAuthorityGeneration === state.rootTaskAuthorityGeneration;
+    connectionEpoch === state.connectionEpoch;
   if (!isCurrent()) return;
   if (incremental) {
     // Incremental: need task details first (for config), then catch-up events
@@ -471,7 +455,7 @@ async function resumeAndLoad(
         state.taskCwd ?? undefined,
         undefined,
         undefined,
-        rootAuthorityGeneration,
+        connectionEpoch,
       );
       return;
     }
@@ -488,7 +472,7 @@ async function resumeAndLoad(
         state.taskCwd ?? undefined,
         undefined,
         undefined,
-        rootAuthorityGeneration,
+        connectionEpoch,
       );
     } else {
       reconcileReplayedPendingTools();
@@ -513,7 +497,7 @@ async function resumeAndLoad(
           state.taskCwd ?? undefined,
           undefined,
           undefined,
-          rootAuthorityGeneration,
+          connectionEpoch,
         );
         return;
       }
@@ -531,7 +515,7 @@ async function resumeAndLoad(
         state.taskCwd ?? undefined,
         undefined,
         undefined,
-        rootAuthorityGeneration,
+        connectionEpoch,
       );
       return;
     }
@@ -539,7 +523,7 @@ async function resumeAndLoad(
 }
 
 function cleanup() {
-  clearRootTaskAuthority();
+  beginConnectionEpoch();
   // A dropped stream ends this connection's collection: whatever it told us
   // must not survive as the next connection's baseline.
   beginTaskTopologyGeneration();

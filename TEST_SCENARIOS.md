@@ -548,7 +548,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/tasks.test.ts`
   - task CRUD (create / get / delete / list), with server-only id assignment; the Root resolves by its id, and unknown/legacy ids (including the old literal `root`) return 404
   - an in-flight restore is rendered idle (snapshot `runtime.busy` and `/status` `busyKind` are null) while `/clear` and delete still refuse with 409
-  - task list is global (`?agent=` narrows); every list entry, task detail, snapshot, bootstrap/create/clear payload, and `task_created` broadcast carries `agentId` alongside backend Root authority
+  - task list is global (`?agent=` narrows); every list entry, task detail, snapshot, bootstrap/create/clear payload, and `task_created` broadcast carries `agentId`; only `/api/v1/config` reports `rootTaskId`, and responses and the SSE `connected` event do not repeat it
   - creating a child of a task carried by another configured agent targets that agent without rotating the parent; when the parent's agent is gone the child is created for `default_agent`
   - `POST /clear { agentId }` rescues a task onto another configured agent, leaves the `agent_rotation` record, and refuses an unconfigured / non-string `agentId`
   - REST and MCP callers cannot choose reserved task ids; bootstrap, clear, compact, and actual/synthetic task_created envelopes preserve Root identity
@@ -775,7 +775,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - version display in `?` / help command
 
 - `test/connection.test.ts`
-  - hash-based task resume, using backend Root authority before hash canonicalization
+  - hash-based task resume
   - last-task auto-resume with the Root fallback, identified by the task list's `isRoot` flag rather than by the id's value
   - new-task creation when no previous task exists
   - reconnect behavior without duplicate history replay

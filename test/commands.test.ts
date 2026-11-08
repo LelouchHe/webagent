@@ -693,7 +693,6 @@ describe("commands", () => {
     it("exits Root — reloads the preserved Root task after reset", async () => {
       state.clientId = "cl-1";
       state.taskId = ROOT_ID;
-      state.rootTaskId = ROOT_ID;
       state.taskCwd = "/home";
       const rootDetail = {
         id: ROOT_ID,

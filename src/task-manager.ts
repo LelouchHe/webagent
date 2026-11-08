@@ -2563,7 +2563,6 @@ export class TaskManager implements ObligationHost {
       const configOptions = this.buildConfigOptions(task);
       return {
         type: "task_created",
-        rootTaskId: this.store.rootTaskId,
         taskId,
         agentId: this.store.getBindingAgent(taskId) ?? null,
         cwd: task.cwd,
@@ -2668,7 +2667,6 @@ export class TaskManager implements ObligationHost {
       slog.info("restored", { taskId: taskId.slice(0, 8) + "…" });
       return {
         type: "task_created",
-        rootTaskId: this.store.rootTaskId,
         taskId,
         agentId,
         cwd: task.cwd,
@@ -2766,7 +2764,6 @@ export class TaskManager implements ObligationHost {
     }
     return {
       type: "task_created",
-      rootTaskId: this.store.rootTaskId,
       taskId,
       agentId,
       cwd: task.cwd,

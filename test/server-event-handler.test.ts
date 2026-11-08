@@ -1607,8 +1607,7 @@ describe("handleAgentEvent", () => {
 
     assert.deepEqual(tasks.cachedConfigOptions, configOptions);
     assert.equal(store.getTask("s1")?.model, "gpt-4");
-    const created = broadcasted.find((event) => event.type === "task_created");
-    assert.equal(created?.rootTaskId, store.rootTaskId);
+    assert.ok(broadcasted.some((event) => event.type === "task_created"));
   });
 
   it("fills the parent binding on a task_created that omitted it", () => {

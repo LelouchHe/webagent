@@ -261,7 +261,6 @@ export function listTasks(): Promise<TaskSummary[]> {
 }
 
 export function getConfig(): Promise<{
-  rootTaskId: string;
   configOptions: ConfigOption[];
   /** Configured agents, in configuration order. Ids only: the directory is a
    *  configuration fact and carries no liveness (see `agent-directory.ts`). */

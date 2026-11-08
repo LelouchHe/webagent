@@ -195,7 +195,8 @@ describe("Task REST API", () => {
       assert.equal(res.status, 201);
       const body = JSON.parse(res.body);
       assert.match(body.id, /^[0-9a-f-]{36}$/);
-      assert.equal(body.rootTaskId, store.rootTaskId);
+      // Root identity is a config fact; responses do not repeat it.
+      assert.equal("rootTaskId" in body, false);
       // The create response is an echo the client installs as the current
       // task, so it must name the binding agent just like the broadcast does.
       assert.equal(body.agentId, "test-agent");
@@ -219,7 +220,6 @@ describe("Task REST API", () => {
       assert.ok(responses.every((response) => response.status === 200));
       const bodies = responses.map((response) => JSON.parse(response.body));
       assert.equal(new Set(bodies.map((body) => body.id)).size, 1);
-      assert.ok(bodies.every((body) => body.rootTaskId === store.rootTaskId));
       // Bootstrap materialized the Root as the workspace's first task: no
       // extra task exists beside it.
       assert.deepEqual(
@@ -241,11 +241,9 @@ describe("Task REST API", () => {
       const first = await makeRequest(port, "POST", "/api/v1/tasks/bootstrap");
       const bootstrapBody = JSON.parse(first.body);
       const bootstrapId = bootstrapBody.id;
-      assert.equal(bootstrapBody.rootTaskId, store.rootTaskId);
 
       const second = await makeRequest(port, "POST", "/api/v1/tasks/bootstrap");
       assert.equal(JSON.parse(second.body).id, bootstrapId);
-      assert.equal(JSON.parse(second.body).rootTaskId, store.rootTaskId);
 
       const explicit = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       assert.notEqual(JSON.parse(explicit.body).id, bootstrapId);
@@ -587,7 +585,6 @@ describe("Task REST API", () => {
       await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const created = broadcastEvents.find((e) => e.type === "task_created");
       assert.ok(created, "should broadcast task_created");
-      assert.equal(created.rootTaskId, store.rootTaskId);
     });
 
     it("returns 400 for invalid JSON", async () => {
@@ -743,11 +740,7 @@ describe("Task REST API", () => {
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, "s1");
-      assert.equal(body.rootTaskId, store.rootTaskId);
-      const created = broadcastEvents.find(
-        (event) => event.type === "task_created",
-      );
-      assert.equal(created?.rootTaskId, store.rootTaskId);
+      assert.ok(broadcastEvents.some((event) => event.type === "task_created"));
       assert.deepEqual(
         store
           .listTasks()
@@ -893,13 +886,7 @@ describe("Task REST API", () => {
             event.text === "summary of the current work",
         ),
       );
-      assert.ok(
-        broadcastEvents.some(
-          (event) =>
-            event.type === "task_created" &&
-            event.rootTaskId === store.rootTaskId,
-        ),
-      );
+      assert.ok(broadcastEvents.some((event) => event.type === "task_created"));
       assert.equal(tasks.getBusyKind("s1"), null);
       // Compaction is a rotation: it leaves its own transcript line naming the
       // trigger, instead of being an unrecorded internal replacement.
@@ -1130,7 +1117,6 @@ describe("Task REST API", () => {
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, id);
-      assert.equal(body.rootTaskId, store.rootTaskId);
       assert.equal(body.cwd, tmpDir);
       assert.ok(Array.isArray(body.configOptions));
     });
@@ -1348,7 +1334,6 @@ describe("Task REST API", () => {
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), {
         taskId: rootId,
-        rootTaskId: rootId,
         reset: true,
       });
       assert.equal(store.getTask(rootId)?.id, rootId);
@@ -1361,10 +1346,7 @@ describe("Task REST API", () => {
       );
       assert.ok(
         broadcastEvents.some(
-          (event) =>
-            event.type === "task_reset" &&
-            event.taskId === rootId &&
-            event.rootTaskId === rootId,
+          (event) => event.type === "task_reset" && event.taskId === rootId,
         ),
       );
       assert.ok(mockBridge.retireCalls.includes("agent-root"));

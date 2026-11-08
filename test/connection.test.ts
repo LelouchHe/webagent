@@ -329,7 +329,6 @@ describe("connection", () => {
         urls: fetchCalls.map((call) => call.url),
         messages: dom.messages.textContent,
         taskId: state.taskId,
-        rootTaskId: state.rootTaskId,
         taskSwitchGen: state.taskSwitchGen,
       }),
     );
@@ -412,7 +411,6 @@ describe("connection", () => {
     await flush(100);
 
     assert.equal(state.taskId, ROOT_ID);
-    assert.equal(state.rootTaskId, ROOT_ID);
     assert.equal(location.hash, `#${ROOT_ID}`);
     assert.ok(
       fetchCalls.some((call) => call.url === `/api/v1/tasks/${ROOT_ID}`),
@@ -550,7 +548,6 @@ describe("connection", () => {
     state.pendingPromptDone = true;
     state.lastStateSeq = 42;
     state.clientId = "cl-old";
-    state.rootTaskId = ROOT_ID;
 
     es.onerror?.();
 
@@ -563,7 +560,6 @@ describe("connection", () => {
     assert.equal(state.pendingPromptDone, false);
     assert.equal(state.lastStateSeq, 0);
     assert.equal(state.clientId, null);
-    assert.equal(state.rootTaskId, null);
     assert.equal(state.eventSource, null);
     // Filter to the reconnect cadence: request deadlines also arm timers now,
     // and this test's subject is that exactly one reconnect was scheduled.
@@ -628,47 +624,11 @@ describe("connection", () => {
     assert.equal(state.lastEventSeq, 2);
   });
 
-  it("refreshes the constant Root authority on reconnect", async () => {
-    state.rootTaskId = ROOT_ID;
-    state.taskId = ROOT_ID;
-    setFetch(async (url: string) => {
-      if (url === `/api/v1/tasks/${ROOT_ID}`)
-        return mockResponse(taskResponse(ROOT_ID));
-      if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
-        return mockResponse([]);
-      if (url === "/api/v1/tasks")
-        return mockResponse([
-          { id: ROOT_ID, hasUserInput: false, isRoot: true },
-        ]);
-      if (url === `/api/v1/tasks/${ROOT_ID}/snapshot`)
-        return mockResponse({
-          version: 1,
-          seq: 0,
-          task: {},
-          runtime: { busy: null },
-        });
-      if (url.includes("/visibility")) return mockResponse({});
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-
-    connection.connect();
-    assert.equal(state.rootTaskId, null);
-    await flush(100);
-
-    assert.equal(state.rootTaskId, ROOT_ID);
-    assert.equal(state.taskId, ROOT_ID);
-    assert.equal(location.hash, `#${ROOT_ID}`);
-    assert.ok(
-      fetchCalls.some((call) => call.url === `/api/v1/tasks/${ROOT_ID}`),
-    );
-  });
-
   it("recovers a stale ordinary root-* hash from the list when reconnect config fails", async () => {
     const oldRootId = "root-forged";
     configFailure = true;
     history.replaceState(null, "", `/#${oldRootId}`);
     state.taskId = oldRootId;
-    state.rootTaskId = oldRootId;
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
       if (url === `/api/v1/tasks/${oldRootId}`) {
@@ -694,7 +654,6 @@ describe("connection", () => {
     connection.connect();
     await flush(100);
 
-    assert.equal(state.rootTaskId, ROOT_ID);
     assert.equal(state.taskId, ROOT_ID);
     assert.equal(location.hash, `#${ROOT_ID}`);
     assert.ok(fetchCalls.some((call) => call.url === "/api/v1/tasks"));
@@ -704,7 +663,6 @@ describe("connection", () => {
     configFailure = true;
     history.replaceState(null, "", `/#${ROOT_ID}`);
     state.taskId = ROOT_ID;
-    state.rootTaskId = ROOT_ID;
     let listCalls = 0;
     setFetch(async (url: string) => {
       if (url === "/api/v1/tasks") {
@@ -725,7 +683,6 @@ describe("connection", () => {
     connection.connect();
     await flush(100);
 
-    assert.equal(state.rootTaskId, ROOT_ID);
     assert.equal(state.taskId, ROOT_ID);
     // The activation does not read the list: the parent reference comes from
     // the task detail that activated it.

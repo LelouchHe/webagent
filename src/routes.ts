@@ -2199,7 +2199,6 @@ export function createRequestHandler(
               ...activationFields(existing, { taskId: existing.id }),
               title: existing.title,
               source: existing.source,
-              rootTaskId: store.rootTaskId,
               configOptions: [],
               agentCommands: taskManager.getAgentCommands(existing.id),
               created: false,
@@ -2230,7 +2229,6 @@ export function createRequestHandler(
                 }),
                 title: root.title,
                 source: root.source,
-                rootTaskId: store.rootTaskId,
                 configOptions: [],
                 agentCommands: taskManager.getAgentCommands(root.id),
                 created: false,
@@ -2242,13 +2240,11 @@ export function createRequestHandler(
           // the workspace's first task is the Root anchor. Its first use
           // attaches one (never bound) or materializes a reset's empty slot.
           const root = await taskManager.ensureRootLive();
-          const rootTaskId = store.rootTaskId;
           const result = {
             id: root.id,
             ...activationFields(root, { taskId: root.id }),
             title: root.title,
             source: root.source,
-            rootTaskId,
             configOptions: taskManager.applyStoredConfig(
               taskManager.configOptionsForTask(root.id),
               root,
@@ -2258,7 +2254,6 @@ export function createRequestHandler(
           };
           sseManager.broadcast({
             type: "task_created",
-            rootTaskId,
             taskId: root.id,
             cwd: result.cwd,
             cwdDisplay: result.cwdDisplay,
@@ -2464,7 +2459,6 @@ export function createRequestHandler(
             if (!fresh) throw new Error("Task disappeared during compaction");
             sseManager.broadcast({
               type: "task_created",
-              rootTaskId: store.rootTaskId,
               taskId,
               ...activationFields(fresh, { taskId }),
               title: fresh.title,
@@ -2589,7 +2583,6 @@ export function createRequestHandler(
           const fresh = store.getTask(taskId)!;
           const event = {
             type: "task_created",
-            rootTaskId: store.rootTaskId,
             taskId,
             ...activationFields(fresh, { taskId }),
             title: fresh.title,
@@ -2599,7 +2592,6 @@ export function createRequestHandler(
           sseManager.broadcast(event);
           json(res, HTTP_STATUS.OK, {
             id: taskId,
-            rootTaskId: store.rootTaskId,
             ...activationFields(fresh, { taskId }),
             title: fresh.title,
             source: fresh.source,
@@ -2655,7 +2647,6 @@ export function createRequestHandler(
             HTTP_STATUS.OK,
             {
               id: freshTask.id,
-              rootTaskId: store.rootTaskId,
               ...activationFields(freshTask, { taskId: freshTask.id }),
               title: freshTask.title,
               source: freshTask.source,
@@ -2728,13 +2719,11 @@ export function createRequestHandler(
               }
               sseManager.broadcast({
                 type: "task_reset",
-                rootTaskId: store.rootTaskId,
                 taskId: store.rootTaskId,
                 ...(clientOpId ? { clientOpId } : {}),
               });
               json(res, HTTP_STATUS.OK, {
                 taskId: store.rootTaskId,
-                rootTaskId: store.rootTaskId,
                 reset: true,
                 ...(clientOpId ? { clientOpId } : {}),
               });
@@ -2903,7 +2892,6 @@ export function createRequestHandler(
           const task = store.getTask(taskId);
           const taskCreatedEvent = {
             type: "task_created",
-            rootTaskId: store.rootTaskId,
             taskId,
             ...activationFields(task, {
               taskId,
@@ -2967,7 +2955,6 @@ export function createRequestHandler(
           }
           json(res, HTTP_STATUS.CREATED, {
             id: taskId,
-            rootTaskId: store.rootTaskId,
             // The create echo installs the task's binding agent on the client,
             // exactly like the broadcast; without it the echo would downgrade
             // the agent the client already knows.
@@ -3143,7 +3130,6 @@ export function createRequestHandler(
         // Send connected event
         sseManager.sendEvent(client, {
           type: "connected",
-          rootTaskId: store.rootTaskId,
           clientId,
           debugLevel: deps.debugLevel ?? "off",
           pendingCount: store.countUnprocessed(),
@@ -3197,7 +3183,6 @@ export function createRequestHandler(
         // Send connected event
         sseManager.sendEvent(client, {
           type: "connected",
-          rootTaskId: store.rootTaskId,
           clientId,
           debugLevel: deps.debugLevel ?? "off",
           pendingCount: store.countUnprocessed(),
@@ -3659,7 +3644,6 @@ export function createRequestHandler(
 
         sseManager.broadcast({
           type: "task_created",
-          rootTaskId: store.rootTaskId,
           taskId,
           ...activationFields(task, { taskId }),
           title: task?.title,

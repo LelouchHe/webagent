@@ -181,7 +181,6 @@ describe("ACP capability-driven restore", { timeout: 20_000 }, () => {
       ]);
       assert.deepEqual(result, {
         type: "task_created",
-        rootTaskId: store.rootTaskId,
         taskId: "web-1",
         agentId: "session-fixture",
         cwd: dir,
