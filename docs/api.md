@@ -473,6 +473,13 @@ response with its SSE broadcast. The `task_deleted` SSE event for the
 requested task carries the same `parentId`, allowing clients to return to the
 authoritative parent without reconstructing the task tree locally.
 
+**Successor (`replacedBy`).** When a deleted task has a successor (a task that
+takes its place, as opposed to its parent, which is merely where to return),
+both the response and the requested task's `task_deleted` carry it as
+`replacedBy`. A client viewing the deleted task goes to `replacedBy` when it is
+present and to `parentId` otherwise. The field is not Root-specific; today the
+Root exit below is the only operation that produces a successor.
+
 For the Root, the request is an **exit**: the whole tree is deleted exactly as
 above (the Root included, tombstoned instead when it has an active share) and a
 fresh Root replaces it in the same transaction. The new Root keeps the
@@ -499,8 +506,9 @@ response names the replacement:
 ```
 
 **Side effects:** Broadcasts `task_deleted` to all SSE clients once per
-hard/soft-deleted task; the one for the old Root also carries `replacedBy`, so
-every client viewing it, the initiator included, lands on the new Root. Then
+hard/soft-deleted task; the one for the old Root also carries `replacedBy` (see
+*Successor* above), so every client viewing it, the initiator included, lands
+on the new Root. Then
 broadcasts `task_created` for the new Root. Each affected task's ACP execution
 is retired explicitly (`task/delete` or `task/close` when the agent advertises
 support).
@@ -1812,7 +1820,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `task_runtime_warmed`   | `taskId`, `agentId`, `configOptions`, `agentCommands`                                                  | A background warm-up for that task finished. Published after the read that started it already answered; a client applies it only when it is viewing that task. Server-originated, never an execution event. |
 | `connected` (agent)     | `agentId`, `agent`, `configOptions`                                                                   | One agent's process connected. Same event name as the handshake, distinguished by `agentId` + `agent`; clients only let it complete a reload of the agent carrying their current task. |
 | `task_created`       | `taskId`, `agentId`, `parentId?`, `parentAgentId?`, `cwd`, `title`, `configOptions`, `busyKind?`                                | Task created or resumed. `parentId`/`parentAgentId` are the activation facts: a client settles the status bar's reference without another read. |
-| `task_deleted`       | `taskId`, `agentId?`, `parentId?`, `replacedBy?`, `clientOpId?`                                | Task was deleted; `agentId` is the agent that carried the removed execution; `replacedBy` names the new Root when an exit deleted the Root |
+| `task_deleted`       | `taskId`, `agentId?`, `parentId?`, `replacedBy?`, `clientOpId?`                                | Task was deleted; `agentId` is the agent that carried the removed execution; `replacedBy` is its successor when it has one (today only a Root exit), which a client viewing it follows before `parentId` |
 | `task_title_updated` | `taskId`, `title`                                                                     | Task title set (explicit or id-default)                                                                            |
 | `task_expired`       | `taskId`                                                                              | Task expired in the ACP agent                                                                                    |
 | `config_option_update`  | `taskId`, `configOptions`                                                             | Config options changed (model switch, mode change, etc.)                                                            |
