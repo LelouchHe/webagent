@@ -274,7 +274,11 @@ test("menus never offer agent rows and end with one hint line", async ({
       expect(hintRow(settled)).toBeUndefined();
       expect(agentLabels(settled)).toEqual([]);
       // ...and completion acts on the suffix, never rewriting the prefix.
-      expect(settled[0].primary).toBe("create 'work' at 'mock2:'");
+      // An empty suffix is this task's directory, so the preview names it
+      // instead of showing a coordinate that pictures no directory at all.
+      expect(settled[0].primary).toBe(
+        `create 'work' at 'mock2:${currentCwd?.primary ?? ""}'`,
+      );
       const cwdRow = settled[1];
       await clickRow(page, cwdRow.primary);
       await expect(page.locator("#input")).toHaveValue(
@@ -294,7 +298,11 @@ test("menus never offer agent rows and end with one hint line", async ({
       );
       expect(bodies.creates.at(-1)?.agentId).toBe(exampleAgent);
       const hinted = await taskIdByTitle(page, origin, "hinted");
-      expect((await detail(page, origin, hinted)).agentId).toBe(exampleAgent);
+      const hintedDetail = await detail(page, origin, hinted);
+      expect(hintedDetail.agentId).toBe(exampleAgent);
+      // The agent changed; the directory did not.
+      const parentId = await taskIdByTitle(page, origin, "parent");
+      expect(hintedDetail.cwd).toBe((await detail(page, origin, parentId)).cwd);
     },
   );
 });

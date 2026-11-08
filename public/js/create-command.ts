@@ -61,12 +61,25 @@ export function parseCoordinate(
 }
 
 /** A settled coordinate resolved to the wire shape. `cwd: null` means the
- *  field is omitted, so each entry keeps its own documented meaning for that
- *  omission (server default on create, task directory on clear). */
+ *  field is omitted; only `/clear` sends that, where the omission keeps the
+ *  task's own directory and the server owns the value. */
 export interface CoordinateTarget {
   agentId: string;
   cwd: string | null;
 }
+
+/**
+ * What an empty coordinate suffix means on the entry that submits it.
+ *
+ * `"task-cwd"` (both create entries) is the directory the submitting task runs
+ * in — the same thing a create with no path at all does. `"omit"` (`/clear`)
+ * leaves the field out, which the server reads as "keep the directory as it
+ * is". The two describe the same directory but are not the same request, and
+ * only the create side must state it: an omitted `cwd` on create means the
+ * server's default directory, so a bare `copilot:` would silently move the new
+ * task out of the directory every other unnamed create stays in.
+ */
+export type EmptySuffixMeaning = "task-cwd" | "omit";
 
 /**
  * Resolve a settled coordinate's suffix for a request.
@@ -77,12 +90,20 @@ export interface CoordinateTarget {
  * same request. The parser itself still reports the raw text; trimming happens
  * here, after parsing and before the request.
  */
-export async function resolveCoordinateTarget(coordinate: {
-  agentId: string;
-  rawSuffix: string;
-}): Promise<CoordinateTarget | { error: string }> {
+export async function resolveCoordinateTarget(
+  coordinate: { agentId: string; rawSuffix: string },
+  emptySuffix: EmptySuffixMeaning,
+): Promise<CoordinateTarget | { error: string }> {
   const suffix = coordinate.rawSuffix.trim();
-  if (suffix === "") return { agentId: coordinate.agentId, cwd: null };
+  if (suffix === "") {
+    if (emptySuffix === "omit")
+      return { agentId: coordinate.agentId, cwd: null };
+    // Empty is the current task directory, probed like any other create path so
+    // the request states the directory it will actually use.
+    const here = await resolveCreateCwd("");
+    if ("error" in here) return here;
+    return { agentId: coordinate.agentId, cwd: here.cwd };
+  }
   const resolved = await resolveCreateCwd(suffix);
   if ("error" in resolved) return resolved;
   return { agentId: coordinate.agentId, cwd: resolved.cwd };
@@ -92,6 +113,10 @@ export async function resolveCoordinateTarget(coordinate: {
  * Display form of a create cwd field. A settled coordinate keeps `<agent>:`
  * glued to its cwd (no space that could be read as a different pair); an
  * unsettled field is the plain path preview.
+ *
+ * An empty suffix previews the task directory, not a bare `<agent>:`, because
+ * that is the directory both entries act in: a preview must never hide the
+ * directory a submission chooses.
  */
 export function previewCreateCwd(
   rawRemainder: string,
@@ -99,9 +124,7 @@ export function previewCreateCwd(
 ): string {
   const coordinate = parseCoordinate(rawRemainder, agents);
   if (coordinate.agentId === null) return previewCwdDisplay(rawRemainder);
-  const display =
-    coordinate.cwd === "" ? "" : previewCwdDisplay(coordinate.cwd);
-  return `${coordinate.agentId}:${display}`;
+  return `${coordinate.agentId}:${previewCwdDisplay(coordinate.cwd)}`;
 }
 
 /**

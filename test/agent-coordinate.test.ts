@@ -16,11 +16,13 @@ const AGENTS = ["pi", "copilot", "notes"];
 describe("coordinate parsing", () => {
   let mod: any;
   let directory: any;
+  let state: any;
 
   before(async () => {
     setupDOM();
     mod = await import("../public/js/create-command.ts");
     directory = await import("../public/js/agent-directory.ts");
+    state = (await import("../public/js/state.ts")).state;
   });
 
   after(() => {
@@ -97,11 +99,19 @@ describe("coordinate parsing", () => {
   });
 
   it("previews a coordinate without a space that could split the pair", () => {
-    assert.equal(mod.previewCreateCwd("copilot:", AGENTS), "copilot:");
     assert.equal(
       mod.previewCreateCwd("copilot:~/a  b", AGENTS),
       "copilot:~/a  b",
     );
+  });
+
+  it("previews an empty suffix as the task directory both entries use", () => {
+    state.taskCwd = "/work";
+    state.taskCwdDisplay = "~/work";
+    // The bare form and the coordinate form act in the same directory, so they
+    // preview it the same way instead of leaving the choice implicit.
+    assert.equal(mod.previewCreateCwd("", AGENTS), "~/work");
+    assert.equal(mod.previewCreateCwd("copilot:", AGENTS), "copilot:~/work");
   });
 
   it("picks a rescue agent other than the one that just failed", () => {

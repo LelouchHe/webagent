@@ -199,7 +199,7 @@ test("an unknown prefix is a path, never an agent", async ({ page }) => {
   await expect(transcript).not.toContainText("not configured");
 });
 
-test("omitted cwd keeps clear and create apart, and the entries agree", async ({
+test("an empty coordinate suffix stays in the task directory", async ({
   page,
 }) => {
   const bodies = captureBodies(page);
@@ -210,16 +210,16 @@ test("omitted cwd keeps clear and create apart, and the entries agree", async ({
   await createChild(page, "wire", `mock:${work}`);
   await enterTask(page, "wire");
 
-  // Create: `mock2:` omits the cwd, so the task lands on the server default,
-  // not on the directory this task runs in.
+  // Create: `mock2:` states the directory this task runs in, exactly like the
+  // bare `/new` does, so changing the agent never moves the new task.
   await submit(page, "/new mock2:");
   await expect
     .poll(async () => (await detail(page, await currentTaskId(page))).agentId)
     .toBe("mock2");
   const createdId = await currentTaskId(page);
   const created = await detail(page, createdId);
-  expect(created.cwd).not.toBe(work);
-  expect(created.cwd).toBe(process.env.E2E_DEFAULT_CWD ?? process.cwd());
+  expect(created.cwd).toBe(work);
+  expect(bodies.creates.at(-1)).toMatchObject({ agentId: "mock2", cwd: work });
 
   // Clear: the same coordinate keeps the task directory, and it really sends
   // no cwd field (the server owns the directory at handling time).

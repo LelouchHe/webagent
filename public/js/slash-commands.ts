@@ -390,9 +390,9 @@ function startChildTask(
  * action row both call this — one parse, one wire meaning, one failure report.
  *
  * The field is read byte for byte: a coordinate's suffix keeps its interior
- * bytes, its outer whitespace is only the separator (an empty suffix omits the
- * cwd so the server uses its default), and a plain path resolves against the
- * task directory as before.
+ * bytes, its outer whitespace is only the separator (an empty suffix is the
+ * directory this task runs in, the same as an unnamed create), and a plain path
+ * resolves against the task directory as before.
  */
 export async function submitCreateField(raw: string): Promise<void> {
   const source = submissionSource();
@@ -404,10 +404,13 @@ export async function submitCreateField(raw: string): Promise<void> {
   let agentId: string | null = null;
   let cwd: string | undefined;
   if (coordinate.agentId !== null) {
-    const target = await resolveCoordinateTarget({
-      agentId: coordinate.agentId,
-      rawSuffix: coordinate.cwd,
-    });
+    const target = await resolveCoordinateTarget(
+      {
+        agentId: coordinate.agentId,
+        rawSuffix: coordinate.cwd,
+      },
+      "task-cwd",
+    );
     if ("error" in target) {
       addSystem(`err: create failed — ${target.error}`);
       return;
@@ -447,10 +450,13 @@ export async function submitCreateField(raw: string): Promise<void> {
 export async function submitClearField(raw: string): Promise<void> {
   const coordinate = parseCoordinate(raw, configuredAgentIds());
   if (coordinate.agentId !== null) {
-    const target = await resolveCoordinateTarget({
-      agentId: coordinate.agentId,
-      rawSuffix: coordinate.cwd,
-    });
+    const target = await resolveCoordinateTarget(
+      {
+        agentId: coordinate.agentId,
+        rawSuffix: coordinate.cwd,
+      },
+      "omit",
+    );
     if ("error" in target) {
       addSystem(`err: Failed to clear task — ${target.error}`);
       return;

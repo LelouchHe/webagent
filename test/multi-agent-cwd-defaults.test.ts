@@ -5,11 +5,12 @@ import { join } from "node:path";
 import { AGENT_A, startHarness } from "./fixtures/multi-agent-harness.ts";
 
 /**
- * Omitting a working directory means two different things on the two creation
- * entries: `/clear` keeps the task where it runs, `/new` uses the server
- * default. Callers must not be able to conflate them, and the parser/
- * interaction layer that will build `copilot:` coordinates relies on the
- * distinction being unchanged.
+ * Omitting a working directory means two different things at the API level:
+ * `/clear` keeps the task where it runs, `POST /tasks` uses the server default.
+ * Callers must not be able to conflate them. The client's create entries stay
+ * out of this distinction deliberately — they state the task directory instead
+ * of omitting the field — so a `copilot:` create cannot borrow "the server
+ * default" by accident.
  */
 describe("cwd defaults are not interchangeable", () => {
   it("keeps the task directory on clear and uses the server default on create", async () => {

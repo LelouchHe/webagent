@@ -67,9 +67,11 @@ name: it is what you type in a coordinate and what the status bar shows.
 - **A Task's agent is provenance, not a scope.** There is one task tree, not one
   per agent. Every Task records the agent it was created for, and every list,
   search, and `@` reference spans all of them.
-- **Choose it at creation.** `/new copilot:~/repo` and `+copilot:docs` parse the
-  optional `<agent-id>:` prefix; without it a Task inherits the current Task's
-  agent. A relative or `~` path is expanded against the current Task's cwd.
+- **Choose it at creation.** `/new copilot:~/repo` and `+docs copilot:~/repo`
+  parse the optional `<agent-id>:` prefix; without it a Task inherits the current
+  Task's agent. A relative or `~` path is expanded against the current Task's
+  cwd, and a coordinate with no path starts in that same cwd — choosing a
+  different agent never moves the new Task.
 - **Rotate it in place.** `/clear copilot:` replaces the execution: the Task,
   its history, attachments, cwd, and position in the tree stay, the new agent
   starts a fresh ACP session, and the transcript records the rotation.

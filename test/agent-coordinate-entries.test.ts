@@ -6,10 +6,11 @@ import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
  * The three entries that accept a coordinate — `+`, `/new`, `/clear` — share
  * one parse and one set of wire semantics.
  *
- * `+` and `/new` are creates: an empty suffix omits the cwd, which the server
- * reads as "the default directory". `/clear` keeps the task directory instead.
- * The two omissions are deliberately not interchangeable, so the entries must
- * agree on everything else and differ only where the wire contract says so.
+ * An empty suffix means the directory the submitting task runs in on every
+ * entry: the creates state it on the wire (`+` and `/new` send the cwd), and
+ * `/clear` omits the field, which the server reads as "keep the directory".
+ * The directory is one value; only the request shape differs, because an
+ * omitted `cwd` on create would mean the server default instead.
  */
 
 interface Call {
@@ -160,18 +161,29 @@ describe("coordinate entries", () => {
     assert.equal(body.cwd, "~/a  b", "interior whitespace survives the entry");
   });
 
-  it("/new omits the cwd for an empty suffix", async () => {
+  it("/new creates in the task directory for an empty suffix", async () => {
     await commands.handleSlashCommand("/new copilot:");
     await settle();
     const body = bodyOf("POST", "/api/v1/tasks");
     assert.equal(body.agentId, "copilot");
-    assert.equal(
-      "cwd" in body,
-      false,
-      "an omitted cwd means the server default",
-    );
+    // Same directory as `/new` with no path at all: the coordinate changes the
+    // agent, never where the task runs.
+    assert.equal(body.cwd, "/work");
     assert.equal(body.parentId, "old-1");
     assert.equal(body.inheritFromTaskId, "old-1");
+  });
+
+  it("a coordinate create and a bare create state the same directory", async () => {
+    await commands.handleSlashCommand("/new");
+    await settle();
+    const bare = bodyOf("POST", "/api/v1/tasks", true);
+
+    calls = [];
+    await commands.handleSlashCommand("/new copilot:");
+    await settle();
+    const coordinate = bodyOf("POST", "/api/v1/tasks", true);
+
+    assert.equal(coordinate.cwd, bare.cwd);
   });
 
   it("/new passes the coordinate's raw cwd", async () => {
@@ -198,6 +210,9 @@ describe("coordinate entries", () => {
       { command: "/clear copilot:rel", cwd: "/work/rel" },
       { command: "/new copilot:rel", cwd: "/work/rel" },
       { command: "+fix copilot:rel", cwd: "/work/rel" },
+      { command: "/clear copilot:", cwd: null },
+      { command: "/new copilot:", cwd: "/work" },
+      { command: "+fix copilot:", cwd: "/work" },
       { command: "/clear copilot:~/a  b", cwd: "~/a  b" },
       { command: "/new copilot:~/a  b", cwd: "~/a  b" },
       { command: "+fix copilot:~/a  b", cwd: "~/a  b" },
@@ -217,7 +232,13 @@ describe("coordinate entries", () => {
       const clear = calls.find((call) => call.url.endsWith("/clear"));
       const body = JSON.parse((create ?? clear)!.init!.body ?? "{}");
       assert.equal(body.agentId, "copilot", input.command);
-      assert.equal(body.cwd, input.cwd, input.command);
+      if (input.cwd === null) {
+        // `/clear` keeps the directory by omitting the field; the creates say
+        // the same directory explicitly.
+        assert.equal("cwd" in body, false, `${input.command} omits the field`);
+      } else {
+        assert.equal(body.cwd, input.cwd, input.command);
+      }
     }
   });
 
@@ -273,13 +294,13 @@ describe("coordinate entries", () => {
     await settle();
     assert.equal(bodyOf("POST", "/api/v1/tasks", true).cwd, "~/a");
 
-    // `copilot: ` is the same request as `copilot:`: the field is omitted.
+    // `copilot: ` is the same request as `copilot:`: the suffix is empty.
     calls = [];
     await commands.handleSlashCommand("/new copilot: ");
     await settle();
     const body = bodyOf("POST", "/api/v1/tasks", true);
     assert.equal(body.agentId, "copilot");
-    assert.equal("cwd" in body, false);
+    assert.equal(body.cwd, "/work");
   });
 
   it("treats an unconfigured prefix as a path", async () => {

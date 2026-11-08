@@ -463,8 +463,8 @@ async function buildCreateCandidates(parsed: {
   }
 
   // The raw cwd field: only the separator after the title is removed, so a
-  // coordinate's suffix keeps its bytes. A field with no path is the bare
-  // form, which keeps the legacy "create where this task runs" behavior.
+  // coordinate's suffix keeps its bytes. A field with no path creates where
+  // this task runs, and so does an empty coordinate suffix.
   const rawCwd = parsed.remainder.replace(/^\s+/u, "");
   // One read of the same grammar submission uses: a settled coordinate points
   // path completion at its suffix and keeps `<agent>:` on every fill.
@@ -794,10 +794,13 @@ async function executeCreateTask(
   let agentId: string | undefined;
   let cwd: string | undefined;
   if (coordinate.agentId !== null) {
-    const resolved = await resolveCoordinateTarget({
-      agentId: coordinate.agentId,
-      rawSuffix: coordinate.cwd,
-    });
+    const resolved = await resolveCoordinateTarget(
+      {
+        agentId: coordinate.agentId,
+        rawSuffix: coordinate.cwd,
+      },
+      "task-cwd",
+    );
     if ("error" in resolved) {
       addSystem(`err: create failed — ${resolved.error}`);
       return;

@@ -83,8 +83,9 @@ Tasks follow the lifecycle handoff contract described in the [Task Manual](task-
 
 Autocomplete serves the second field. Once a title is present the menu leads
 with the action row for the current input — `↵ create 'api-fix'`, extended to
-`create 'api-fix' at '/tmp/repo'` only when a cwd is given explicitly — so what
-Enter will do is visible. The default cwd is implicit and is not echoed back. A
+`create 'api-fix' at '/tmp/repo'` once a path or `<agent>:<path>` is typed — so
+what Enter will do is visible. The create cwd defaults to the directory this
+Task runs in and is not echoed back while the field is empty. A
 space then lists cwd candidates: the current cwd marked `*`, the recent paths,
 and, once a path prefix is typed, the real directory layer to drill into.
 
@@ -96,7 +97,9 @@ child of the current Task without a title (the task id stands in), optionally
 in another cwd, and switches to it. A relative `cwd` resolves against the
 current Task cwd, `~` expands on the server, and the directory must already
 exist; both the picker action row and Enter send that resolved path, so the
-preview names the directory that is actually created. Use `+` when the child
+preview names the directory that is actually created. An `<agent-id>:` prefix
+(`/new copilot:`) switches the agent without moving the Task: the same
+directory the bare form uses is sent explicitly. Use `+` when the child
 needs a name that other Tasks can address. Its picker mirrors `+`: the action
 row `create task` (extended to `create task at '<cwd>'` once a path is typed)
 leads, and the current cwd is listed first with `*`, ahead of the recent paths.

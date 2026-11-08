@@ -116,7 +116,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - control: an unreporting replacement still has the old value cleared and adopts its snapshot default, so the zeroing itself is not disabled
 
 - `test/multi-agent-cwd-defaults.test.ts`
-  - an omitted `cwd` on `/clear` keeps the task's own directory while an omitted `cwd` on create uses the server default, even for a child of a task that runs elsewhere
+  - an omitted `cwd` on `/clear` keeps the task's own directory while an omitted
+    `cwd` on create uses the server default, even for a child of a task that
+    runs elsewhere (API contract; the client's create entries state the
+directory instead of relying on it)
 
 - `test/multi-agent-config-race.test.ts` (HTTP)
   - a configuration request parked in `readBody` while the task is cleared onto another agent is refused with `409`, and no configuration request reaches the new execution
@@ -159,6 +162,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     unknown prefix, and a case variant are one path
   - `notes:2026` is a path until an agent named `notes` exists, then a
     coordinate; `./notes:2026` stays a path either way
+  - an empty coordinate suffix previews the task directory (`copilot:~/work`),
+    the same directory the bare preview shows, so the preview never hides the
+    directory a submission chooses
   - the rescue names the configured default unless it is the failed target, and
     yields nothing when the default is absent or failed (PATH presence is never
     consulted)
@@ -217,11 +223,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
     TAB or double space keeps its bytes
 
 - `test/agent-coordinate-entries.test.ts` (`+`, `/new`, `/clear` payloads)
-  - `/clear` sends the coordinate's agent and raw cwd; `/new` omits the cwd for
-    an empty suffix (server default) and sends the raw cwd otherwise; `+` sends
-    title, agent, and raw cwd
-  - all three project the same `(agent, cwd)` for the same coordinate, while
-    `/clear <agent>:` and `/new <agent>:` stay different by contract
+  - `/clear` sends the coordinate's agent and raw cwd; `/new` and `+` send the
+    task directory for an empty suffix (the same directory a bare create uses)
+    and the raw cwd otherwise
+  - all three project the same `(agent, cwd)` for the same coordinate; only the
+    wire shape of an empty suffix differs (`/clear` omits the field, the creates
+    state the directory)
   - an unconfigured prefix carries no `agentId` and resolves as a path; a
     configured `notes` prefix reads as a coordinate; a missing directory reports
     the raw value and never claims "not configured"
@@ -239,7 +246,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the picker's action row and Enter submit the same `(agent, cwd)` projection
     for `/new` and `/clear`; `/clear <agent>:` sends no `cwd` field at all
   - the fidelity boundary: `copilot:~/a ` equals `copilot:~/a`, `copilot: `
-    equals `copilot:` (omitted), and interior double spaces survive
+    equals `copilot:`, and interior double spaces survive
   - a late 503 reports the agent and directory captured at submission, not the
     task the view moved to while the request was pending
   - a superseded bootstrap response installs no agent directory
@@ -1227,9 +1234,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - an unconfigured `notes:2026` / `copliot:repo` is a path, with no `agentId`
     on the wire, when the directory exists; a missing one fails as a directory
     error and never as an unconfigured agent
-  - `mock2:` on `/new` lands on the server default, on `/clear` keeps the task
-    directory, and an explicit cwd on create lands there; all three entries
-    agree on the semantic `(agent, cwd)` projection
+  - `mock2:` on `/new` stays in the task directory (and the request states it),
+    on `/clear` it keeps the same directory by omitting the field, and an
+    explicit cwd on create lands there; all three entries agree on the semantic
+    `(agent, cwd)` projection
   - a child created for `mock2` is bound to it at creation and carries no
     rotation record, while the parent keeps its own binding
 

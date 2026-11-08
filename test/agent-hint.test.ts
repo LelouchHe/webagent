@@ -322,8 +322,10 @@ describe("agent hint", () => {
     assert.equal(hint(list), undefined);
     assert.equal(
       labels(list)[0],
-      `create 'hinted' at '${sample}'`,
-      "the preview echoes the coordinate the example showed",
+      `create 'hinted' at '${sample}~/work'`,
+      // The empty suffix is this task's directory, so the preview names it
+      // instead of showing a coordinate that pictures no directory at all.
+      "the preview states the directory the example will create in",
     );
     // The action row submits exactly that agent.
     await click(labels(list)[0], list);
@@ -335,7 +337,7 @@ describe("agent hint", () => {
   it("completes a settled coordinate's suffix without rewriting the prefix", async () => {
     const list = await open("+api-fix copilot:");
     assert.deepEqual(labels(list), [
-      "create 'api-fix' at 'copilot:'",
+      "create 'api-fix' at 'copilot:~/work'",
       "~/work",
       "~/work/rel",
     ]);
