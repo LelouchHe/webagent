@@ -42,16 +42,16 @@ function printFail(c: CheckFail): void {
 
 function checkNodeVersion(): CheckResult {
   const v = process.versions.node;
-  const [maj, min] = v.split(".").map((n) => parseInt(n, 10));
-  // package.json declares engines.node >= 22.6.0; mirror that here so the
+  const [maj] = v.split(".").map((n) => parseInt(n, 10));
+  // package.json declares engines.node >= 24.0.0; mirror that here so the
   // diagnostic is friendly rather than a stack trace from a missing API.
-  const ok = maj > 22 || (maj === 22 && min >= 6);
+  const ok = maj >= 24;
   if (ok) return { ok: true, name: "node", detail: `v${v}` };
   return {
     ok: false,
     name: "node",
     detail: `v${v}`,
-    hint: "webagent requires Node.js v22.6.0 or newer (for --experimental-strip-types).\nInstall via: nvm install 22 && nvm use 22",
+    hint: "webagent requires Node.js v24.0.0 or newer (the LTS baseline we test).\nInstall via: nvm install 24 && nvm use 24",
   };
 }
 

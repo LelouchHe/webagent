@@ -77,7 +77,7 @@ See [Features](docs/features.md) for the full tour, and [Known issues](docs/know
 
 ## Quick Start
 
-**Prerequisites:** Node.js 22.6+, an ACP-compatible agent installed and authenticated (Copilot CLI, Claude Code adapter, Gemini CLI, etc.).
+**Prerequisites:** Node.js 24+, an ACP-compatible agent installed and authenticated (Copilot CLI, Claude Code adapter, Gemini CLI, etc.).
 
 ```bash
 npm install -g @lelouchhe/webagent

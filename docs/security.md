@@ -20,7 +20,7 @@ When `data/auth.json` does **not** exist AND stdin is a TTY (i.e. you launched `
 2. Prints it as part of the startup-doctor stream:
 
    ```
-   [check] node: v22.6.0                      ✓
+   [check] node: v24.0.0                      ✓
    [check] data_dir: /path/to/data            ✓
    [check] acp agent: copilot --acp           ✓
    [check] auth: minted first-run admin token  ✓
