@@ -515,7 +515,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - ordinary creation of the Root id is rejected; prefix-shaped ids are ordinary tasks
   - delete, tombstone reap, and empty-task GC refuse the Root even when its tombstone flag is corrupted
   - `getParentTask` accepts the global Root for another agent's task
-  - reset sentinels cover events, client_ops, attachments, compact summaries, previews, and descendants; Root keeps an ownership binding with an empty execution id and reports the retired execution
+  - reset sentinels cover events, client_ops, attachments, compact summaries, previews, and descendants; Root keeps an ownership binding holding its own `no-execution:<id>` slot and reports the retired execution
   - an active Root share blocks reset; after revoke, reset succeeds
   - binding write authority: a foreign attach is refused with no fact emitted, detach removes the binding, the same session id from two agents is two different executions, one outermost commit emits one fact per task, and a rolled-back batch is discarded rather than leaked into the next commit
   - deletion follows the task tree: a foreign survivor is deleted with its parent's subtree, a share-backed survivor is tombstoned and re-parented under Root with its history/share/attachment intact, and a Root reset keeps an unbound shared tombstone alive

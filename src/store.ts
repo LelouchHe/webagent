@@ -19,23 +19,54 @@ import {
   type ExecutionBinding,
 } from "./execution-authority.ts";
 
+/** Namespace WebAgent reserves for the per-task empty execution slot. */
+const EMPTY_EXECUTION_PREFIX = "no-execution:";
+
 /**
  * Session id used for "this task keeps its owner but has no execution yet".
  *
- * The Root's empty string is its long-standing lazy-materialization marker.
- * Ordinary tasks cannot share it: `agent_sessions` is keyed by
- * `(agent_key, agent_session_id)`, so a common sentinel collides with the Root
- * row and with every other task rotated by the same agent. Each ordinary task
- * therefore gets its own token, which keeps `(agent_key, task_id)` the only
- * uniqueness an ordinary task relies on.
- *
- * Which task is the Root is a fact of one database, so the slot is read
- * through `Store.emptyExecutionSlot`, never computed from a task id alone.
+ * `agent_sessions` is keyed by `(agent_key, agent_session_id)`, so a common
+ * sentinel would collide across every task rotated by the same agent. Each
+ * task, Root included, therefore gets its own token, which keeps
+ * `(agent_key, task_id)` the only uniqueness a task relies on.
  */
-export const ROOT_EMPTY_EXECUTION_SLOT = "";
+export function emptyExecutionSlot(taskId: string): string {
+  return `${EMPTY_EXECUTION_PREFIX}${taskId}`;
+}
 
-/** Namespace WebAgent reserves for the per-task empty execution slot. */
-const EMPTY_EXECUTION_PREFIX = "no-execution:";
+/**
+ * True when this task's binding holds *its own* empty execution slot.
+ *
+ * Exact equality, not a prefix test: ACP session ids are an opaque
+ * `z.string()`, so `no-execution:anything` may be a perfectly real session id.
+ * "No execution" is only a fact about this task's own reserved value.
+ */
+export function isEmptyExecutionSlot(
+  taskId: string,
+  agentSessionId: string | null | undefined,
+): boolean {
+  if (agentSessionId === null || agentSessionId === undefined) return false;
+  return agentSessionId === emptyExecutionSlot(taskId);
+}
+
+/**
+ * Reject an ACP session id that lands in the reserved namespace without being
+ * this task's own slot. Refusing at the write boundary is what makes the exact
+ * classification above sound: a real session can never be stored in a shape
+ * that the reader would have to guess about.
+ */
+function assertStorableExecutionId(
+  taskId: string,
+  agentSessionId: string,
+): void {
+  if (agentSessionId === emptyExecutionSlot(taskId)) return;
+  if (agentSessionId.startsWith(EMPTY_EXECUTION_PREFIX)) {
+    throw new Error(
+      `Refused ACP session id "${agentSessionId}" for task ${taskId}: ` +
+        `it is in WebAgent's reserved empty-execution namespace`,
+    );
+  }
+}
 
 /** One task removed by a delete (the requested id or a cascaded descendant). */
 export interface TaskDelete {
@@ -338,50 +369,6 @@ export class Store {
    */
   isRootTaskId(taskId: string): boolean {
     return taskId === this.rootTaskId;
-  }
-
-  /** The reserved "no execution yet" session id for one task. */
-  emptyExecutionSlot(taskId: string): string {
-    return this.isRootTaskId(taskId)
-      ? ROOT_EMPTY_EXECUTION_SLOT
-      : `${EMPTY_EXECUTION_PREFIX}${taskId}`;
-  }
-
-  /**
-   * True when this task's binding holds *its own* empty execution slot.
-   *
-   * Exact equality, not a prefix test: ACP session ids are an opaque
-   * `z.string()`, so `no-execution:anything` may be a perfectly real session
-   * id. "No execution" is only a fact about this task's own reserved value.
-   */
-  isEmptyExecutionSlot(
-    taskId: string,
-    agentSessionId: string | null | undefined,
-  ): boolean {
-    if (agentSessionId === null || agentSessionId === undefined) return false;
-    return agentSessionId === this.emptyExecutionSlot(taskId);
-  }
-
-  /**
-   * Reject an ACP session id that lands in the reserved namespace without
-   * being this task's own slot. Refusing at the write boundary is what makes
-   * the exact classification above sound: a real session can never be stored
-   * in a shape that the reader would have to guess about.
-   */
-  private assertStorableExecutionId(
-    taskId: string,
-    agentSessionId: string,
-  ): void {
-    if (agentSessionId === this.emptyExecutionSlot(taskId)) return;
-    if (
-      agentSessionId === ROOT_EMPTY_EXECUTION_SLOT ||
-      agentSessionId.startsWith(EMPTY_EXECUTION_PREFIX)
-    ) {
-      throw new Error(
-        `Refused ACP session id "${agentSessionId}" for task ${taskId}: ` +
-          `it is in WebAgent's reserved empty-execution namespace`,
-      );
-    }
   }
 
   constructor(dataDir: string) {
@@ -1237,7 +1224,7 @@ export class Store {
     agentId: string,
     agentSessionId: string,
   ): void {
-    this.assertStorableExecutionId(taskId, agentSessionId);
+    assertStorableExecutionId(taskId, agentSessionId);
     this.db
       .prepare(
         "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
@@ -1448,7 +1435,7 @@ export class Store {
         this.insertBindingRow(
           this.rootTaskId,
           retiredBinding.agentId,
-          this.emptyExecutionSlot(this.rootTaskId),
+          emptyExecutionSlot(this.rootTaskId),
         );
       }
       this.db

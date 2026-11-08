@@ -12,7 +12,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { Store } from "../src/store.ts";
+import { emptyExecutionSlot, Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { TaskBusyError, createTaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
@@ -1424,7 +1424,7 @@ describe("TaskManager", () => {
       // which is a distinct state from "never bound": the first use replaces
       // the slot instead of trying to load a session the agent never saw.
       sm.attachExecutionBridge(bridge);
-      assert.equal(store.getAgentSessionId(rootId), "");
+      assert.equal(store.getAgentSessionId(rootId), emptyExecutionSlot(rootId));
       await sm.ensureTaskLive(rootId);
       assert.equal(newSessionCalls, 1);
       assert.equal(store.getAgentSessionId(rootId), "agent-materialized");

@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ConfigOption } from "../src/types.ts";
-import { Store } from "../src/store.ts";
+import { emptyExecutionSlot, Store } from "../src/store.ts";
 import {
   createTaskManager,
   type DeliveryBridge,
@@ -406,7 +406,7 @@ describe("background warm-up", () => {
     store.resetRootTask();
     assert.equal(
       store.getCurrentExecutionBinding(store.rootTaskId)?.agent_session_id,
-      "",
+      emptyExecutionSlot(store.rootTaskId),
       "the reset leaves the empty slot in place",
     );
 

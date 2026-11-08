@@ -4,7 +4,11 @@ import { join, extname, basename } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import busboy from "busboy";
-import { type PendingCompactSummary, type Store } from "./store.ts";
+import {
+  isEmptyExecutionSlot,
+  type PendingCompactSummary,
+  type Store,
+} from "./store.ts";
 import type { TaskManager } from "./task-manager.ts";
 import { AgentUnavailableError } from "./agent-registry.ts";
 import type { SseManager } from "./sse-manager.ts";
@@ -2211,7 +2215,7 @@ export function createRequestHandler(
           );
           const rootMaterialized =
             rootBinding !== undefined &&
-            !store.isEmptyExecutionSlot(
+            !isEmptyExecutionSlot(
               store.rootTaskId,
               rootBinding.agent_session_id,
             );
@@ -2381,10 +2385,7 @@ export function createRequestHandler(
           execution.agentId,
         );
         // A placeholder slot is not an execution, even though it is a row.
-        if (
-          !agentSessionId ||
-          store.isEmptyExecutionSlot(taskId, agentSessionId)
-        ) {
+        if (!agentSessionId || isEmptyExecutionSlot(taskId, agentSessionId)) {
           tasks.releasePromptSubmission(taskId, submissionId);
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task is not available for the current agent",

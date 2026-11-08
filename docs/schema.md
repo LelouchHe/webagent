@@ -93,7 +93,7 @@ configured agent.
 |---|---|---|
 | `agent_key` | TEXT NOT NULL | Configured agent id from `[agents.<id>]` (not derived from the command), identifying the launch context |
 | `agent_session_id` | TEXT NOT NULL | Opaque ACP session ID, or a reserved empty execution slot (see below) |
-| `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal sessions. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support. A Root reset rebuilds the execution before it returns, so the binding carries a real `agent_session_id` afterwards; it keeps an empty one only when that rebuild failed after the commit, in which case the next use materializes the execution. A Root that was never bound has no binding row at all |
+| `task_id` | TEXT REFERENCES `tasks(id)` ON DELETE CASCADE | Current WebAgent Task ID; `NULL` for internal sessions. Retired ACP executions (rotated or deleted) have their binding row removed and are explicitly retired via `task/delete`/`task/close` when the agent advertises support. A Root reset rebuilds the execution before it returns, so the binding carries a real `agent_session_id` afterwards; it keeps its empty execution slot only when that rebuild failed after the commit, in which case the next use materializes the execution. A Root that was never bound has no binding row at all |
 | `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
 PK: `(agent_key, agent_session_id)`. A partial unique index on
@@ -116,12 +116,9 @@ different agent. The single Root is shared and must keep `parent_id = NULL`.
 
 **Empty execution slot.** `agent_session_id` also carries a reserved
 placeholder meaning "this task has an owner but no execution yet, materialize
-lazily":
-
-| Task | Placeholder | Why |
-| --- | --- | --- |
-| Root | the empty string | its long-standing lazy-materialization marker |
-| any ordinary task | `no-execution:<taskId>` | must be unique per task: the PK is `(agent_key, agent_session_id)`, so a shared sentinel would collide with Root and with every other task rotated by the same agent |
+lazily": `no-execution:<taskId>` for every task, Root included. It must be
+unique per task: the PK is `(agent_key, agent_session_id)`, so a shared
+sentinel would collide across every task rotated by the same agent.
 
 A binding holding it reads as "no execution", by **exact equality** with the
 value generated for that task — never by prefix. ACP session ids are opaque

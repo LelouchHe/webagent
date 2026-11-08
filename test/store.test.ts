@@ -4,7 +4,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { Store } from "../src/store.ts";
+import {
+  emptyExecutionSlot,
+  isEmptyExecutionSlot,
+  Store,
+} from "../src/store.ts";
 import { generateShareToken } from "../src/tokens.ts";
 
 describe("Store", () => {
@@ -841,26 +845,17 @@ describe("Store", () => {
       // ACP session ids are opaque strings, so the reserved prefix is not a
       // namespace claim: classification is exact equality with the value
       // generated for this task.
+      assert.equal(isEmptyExecutionSlot("a", emptyExecutionSlot("a")), true);
       assert.equal(
-        store.isEmptyExecutionSlot("a", store.emptyExecutionSlot("a")),
-        true,
-      );
-      assert.equal(
-        store.isEmptyExecutionSlot(
+        isEmptyExecutionSlot(
           store.rootTaskId,
-          store.emptyExecutionSlot(store.rootTaskId),
+          emptyExecutionSlot(store.rootTaskId),
         ),
         true,
       );
-      assert.equal(
-        store.isEmptyExecutionSlot("a", store.emptyExecutionSlot("b")),
-        false,
-      );
-      assert.equal(
-        store.isEmptyExecutionSlot("a", "no-execution:real-agent"),
-        false,
-      );
-      assert.equal(store.isEmptyExecutionSlot("a", ""), false);
+      assert.equal(isEmptyExecutionSlot("a", emptyExecutionSlot("b")), false);
+      assert.equal(isEmptyExecutionSlot("a", "no-execution:real-agent"), false);
+      assert.equal(isEmptyExecutionSlot("a", ""), false);
     });
 
     it("refuses to store a reserved-shape session id for another task", () => {
@@ -869,8 +864,17 @@ describe("Store", () => {
           store.createTask("t1", "/a", "auto", "test-agent", "no-execution:t2"),
         /reserved empty-execution namespace/,
       );
+      // Root's slot is its own too: another task cannot take it.
+      store.ensureRootTask("/root");
       assert.throws(
-        () => store.createTask("t2", "/a", "auto", "test-agent", ""),
+        () =>
+          store.createTask(
+            "t2",
+            "/a",
+            "auto",
+            "test-agent",
+            emptyExecutionSlot(store.rootTaskId),
+          ),
         /reserved empty-execution namespace/,
       );
       // Nothing was stored, not even the task row.
@@ -885,15 +889,8 @@ describe("Store", () => {
       );
       assert.equal(store.getAgentSessionId("t3"), "real-session");
       // A task's own slot is still writable (rotation and Root reset need it).
-      store.replaceAgentSession(
-        "t3",
-        "test-agent",
-        store.emptyExecutionSlot("t3"),
-      );
-      assert.equal(
-        store.getAgentSessionId("t3"),
-        store.emptyExecutionSlot("t3"),
-      );
+      store.replaceAgentSession("t3", "test-agent", emptyExecutionSlot("t3"));
+      assert.equal(store.getAgentSessionId("t3"), emptyExecutionSlot("t3"));
     });
   });
 
@@ -980,7 +977,7 @@ describe("Store", () => {
       assert.equal(rootFacts.length, 1);
       assert.equal(
         store.getCurrentExecutionBinding(store.rootTaskId)?.agent_session_id,
-        "",
+        emptyExecutionSlot(store.rootTaskId),
       );
     });
 
@@ -1290,7 +1287,10 @@ describe("Store", () => {
       // execution id as the lazy-materialization marker.
       const after = store.getTask(root.id)!;
       assert.equal(after.parent_id, null);
-      assert.equal(store.getAgentSessionId(root.id), "");
+      assert.equal(
+        store.getAgentSessionId(root.id),
+        emptyExecutionSlot(root.id),
+      );
       assert.equal(store.getBindingAgent(root.id), "test-agent");
     });
 

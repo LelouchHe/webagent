@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Store } from "../src/store.ts";
+import { emptyExecutionSlot, Store } from "../src/store.ts";
 import { AgentUnavailableError } from "../src/agent-registry.ts";
 import { TaskBusyError, TaskManager } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
@@ -271,6 +271,6 @@ describe("task-tree deletion across agents", () => {
     const root = store.getCurrentExecutionBinding(store.rootTaskId);
     assert.ok(root, "the Root keeps an empty owner slot");
     assert.equal(root.agent_key, "agent-a");
-    assert.equal(root.agent_session_id, "");
+    assert.equal(root.agent_session_id, emptyExecutionSlot(store.rootTaskId));
   });
 });

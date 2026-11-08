@@ -8,7 +8,7 @@ import { AgentBridge } from "../src/bridge.ts";
 import { AgentRegistry } from "../src/agent-registry.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
-import { Store } from "../src/store.ts";
+import { emptyExecutionSlot, Store } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { TaskManager } from "../src/task-manager.ts";
 
@@ -423,7 +423,7 @@ describe("root first-use states", () => {
       local.store.resetRootTask();
       assert.equal(
         local.store.getAgentSessionId(rootId),
-        local.store.emptyExecutionSlot(rootId),
+        emptyExecutionSlot(rootId),
       );
       local.tasks.liveTasks.delete(rootId);
       const afterReset = local.authority.generationOf(rootId);
@@ -722,7 +722,7 @@ describe("retirement follows the recorded binding", () => {
       );
       assert.equal(
         store.getAgentSessionId(store.rootTaskId),
-        store.emptyExecutionSlot(store.rootTaskId),
+        emptyExecutionSlot(store.rootTaskId),
       );
     } finally {
       tasks.dispose();

@@ -6,6 +6,8 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   MessageNotFoundError,
+  emptyExecutionSlot,
+  isEmptyExecutionSlot,
   type CollaborationDeliveryRow,
   type CollaborationMessageRow,
   type TaskDelete,
@@ -969,7 +971,7 @@ export class TaskManager implements ObligationHost {
     if (!agentId || !agentSessionId) return;
     // This task's own empty slot is not an execution; there is nothing to
     // retire. Exact equality: a real session id may share the namespace prefix.
-    if (this.store.isEmptyExecutionSlot(taskId, agentSessionId)) return;
+    if (isEmptyExecutionSlot(taskId, agentSessionId)) return;
     const adapter = this.agents.existing(agentId);
     if (!adapter) {
       slog.warn("no adapter for retired execution", {
@@ -1046,11 +1048,7 @@ export class TaskManager implements ObligationHost {
   ): void {
     const task = this.store.getTaskIncludingDeleted(taskId);
     const toAgent = this.agents.defaultAgentId;
-    this.store.replaceAgentSession(
-      taskId,
-      toAgent,
-      this.store.emptyExecutionSlot(taskId),
-    );
+    this.store.replaceAgentSession(taskId, toAgent, emptyExecutionSlot(taskId));
     // The takeover is a change of execution environment even though it does
     // not run through `clearTask`: what the removed agent's tasks stored for
     // model / mode / reasoning does not describe the agent taking over. The
@@ -2078,8 +2076,7 @@ export class TaskManager implements ObligationHost {
     replacementAgentId: string,
   ): void {
     if (!retired) return;
-    if (this.store.isEmptyExecutionSlot(taskId, retired.agent_session_id))
-      return;
+    if (isEmptyExecutionSlot(taskId, retired.agent_session_id)) return;
     const moved =
       retired.agent_key !== replacementAgentId ||
       retired.agent_session_id !== replacementSessionId;
@@ -2611,7 +2608,7 @@ export class TaskManager implements ObligationHost {
     try {
       if (
         !existingSessionId ||
-        this.store.isEmptyExecutionSlot(taskId, existingSessionId)
+        isEmptyExecutionSlot(taskId, existingSessionId)
       ) {
         return await this.materializeRestoredTask(
           bridge,
