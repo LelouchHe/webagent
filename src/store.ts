@@ -386,7 +386,7 @@ export class Store {
 
   constructor(dataDir: string) {
     this.dataDir = dataDir;
-    // Refuse the pre-multi-agent shape read-only, before mkdir/SQLite open
+    // Refuse an old-format database read-only, before mkdir/SQLite open
     // can write anything (including -wal/-shm side files).
     assertNotLegacyDatabase(dataDir);
     mkdirSync(dataDir, { recursive: true });

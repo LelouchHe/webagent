@@ -177,7 +177,7 @@ describe("startup-checks", () => {
         () => runStartupChecks(cfg),
         (error: unknown) => {
           assert.ok(error instanceof LegacyDatabaseError);
-          assert.match(error.message, /pre-multi-agent/);
+          assert.match(error.message, /older WebAgent/);
           return true;
         },
       );

@@ -100,10 +100,12 @@ describe("legacy database refusal", () => {
         () => new Store(dir),
         (error: unknown) => {
           assert.ok(error instanceof LegacyDatabaseError);
-          assert.match(error.message, /pre-multi-agent/);
-          assert.match(error.message, /but no Root/);
+          assert.match(error.message, /older WebAgent/);
+          // The message tells the operator what to do, not which signal fired.
+          assert.doesNotMatch(error.message, /Root|agent key/);
+          assert.equal(error.report.hasRoot, false);
           assert.match(error.message, /back up/i);
-          assert.match(error.message, /re-initialize/);
+          assert.match(error.message, /remove webagent\.db/);
           assert.doesNotMatch(error.message, /migrate/);
           return true;
         },
@@ -135,7 +137,7 @@ describe("legacy database refusal", () => {
         db.close();
       }
       const beforeHash = sha256(dbPath);
-      assert.throws(() => new Store(dir), /but no Root/);
+      assert.throws(() => new Store(dir), /older WebAgent/);
       assert.equal(sha256(dbPath), beforeHash);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -164,7 +166,7 @@ describe("legacy database refusal", () => {
         db.close();
       }
       const beforeHash = sha256(dbPath);
-      assert.throws(() => new Store(dir), /pre-multi-agent/);
+      assert.throws(() => new Store(dir), /older WebAgent/);
       assert.equal(sha256(dbPath), beforeHash);
     } finally {
       rmSync(dir, { recursive: true, force: true });

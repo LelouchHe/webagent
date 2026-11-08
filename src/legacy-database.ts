@@ -22,22 +22,13 @@ export class LegacyDatabaseError extends Error {
   readonly report: LegacyDatabaseReport;
 
   constructor(report: LegacyDatabaseReport) {
-    const details = [
-      report.taskCount > 0 && !report.hasRoot
-        ? `${report.taskCount} task(s) but no Root`
-        : null,
-      report.pathLikeAgentKeys.length > 0
-        ? `command-path agent key(s): ${report.pathLikeAgentKeys.slice(0, 5).join(", ")}`
-        : null,
-    ]
-      .filter(Boolean)
-      .join("; ");
+    // The message says what to do, not which signal fired: the operator's
+    // action is the same either way. The signals stay on `report`.
     super(
-      `This database uses the pre-multi-agent shape (${details}). ` +
-        "Refusing to start before modifying it. This is a declared breaking " +
-        "change: back up the data directory, then explicitly re-initialize " +
-        "it by removing the old webagent.db (or the whole data directory) " +
-        "and restarting to create the single-Root schema.",
+      "This database was created by an older WebAgent and cannot be used by " +
+        "this version; nothing in it was changed. Back up the data " +
+        "directory, then remove webagent.db (or the whole data directory) " +
+        "and restart to create a new one.",
     );
     this.name = "LegacyDatabaseError";
     this.report = report;
