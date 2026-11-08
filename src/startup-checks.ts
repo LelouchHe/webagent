@@ -53,7 +53,7 @@ export async function runStartupChecks(
     return;
   }
 
-  // 0. Refuse the pre-multi-agent database read-only, before preflight can
+  // 0. Refuse an old-format database read-only, before preflight can
   //    create the data directory or auth handling can mint auth.json. Store
   //    keeps its own defensive pre-open check for non-server callers.
   assertNotLegacyDatabase(config.data_dir);

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Store, emptyExecutionSlot } from "../src/store.ts";
+import { emptyExecutionSlot, Store } from "../src/store.ts";
 import { TaskManager } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { ExecutionAdapter } from "../src/execution-adapter.ts";
@@ -138,7 +138,10 @@ describe("implicit owner rotation", () => {
     const binding = rootBinding(store);
     assert.ok(binding, "the takeover binds the configured agent");
     assert.equal(binding.agent_key, "agent-b");
-    assert.equal(binding.agent_session_id, "");
+    assert.equal(
+      binding.agent_session_id,
+      emptyExecutionSlot(store.rootTaskId),
+    );
     assert.ok(
       (tasks.authority.generationOf(store.rootTaskId) ?? 0) >
         (generationBefore ?? 0),
@@ -177,7 +180,7 @@ describe("implicit owner rotation", () => {
       "agent",
       "agent-b",
       "parent-session",
-      "root",
+      store.rootTaskId,
     );
     store.createTask(
       "child",
@@ -258,7 +261,7 @@ describe("implicit owner rotation", () => {
       "agent",
       "agent-b",
       "parent-session",
-      "root",
+      store.rootTaskId,
     );
     store.createTask(
       "child",
@@ -325,7 +328,10 @@ describe("implicit owner rotation", () => {
     await tasks.resolveTaskExecution(store.rootTaskId);
     const rootSlot = store.getCurrentExecutionBinding(store.rootTaskId);
     assert.ok(rootSlot);
-    assert.equal(rootSlot.agent_session_id, emptyExecutionSlot("root"));
+    assert.equal(
+      rootSlot.agent_session_id,
+      emptyExecutionSlot(store.rootTaskId),
+    );
 
     // Both ordinary tasks are owned by the agent that just disappeared.
     const owner = openStore();

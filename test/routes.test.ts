@@ -250,6 +250,18 @@ describe("HTTP routes", () => {
     assert.equal(task.hasUserInput, true);
   });
 
+  it("GET /api/v1/tasks flags only the Root, from the store's identity", async () => {
+    store.ensureRootTask("/x");
+    store.createTask("s1", "/x", "auto", "test-agent");
+    const res = await makeRequest(port, "GET", "/api/v1/tasks");
+    const list = JSON.parse(res.body) as Array<{ id: string; isRoot: boolean }>;
+    assert.deepEqual(
+      list.filter((entry) => entry.isRoot).map((entry) => entry.id),
+      [store.rootTaskId],
+    );
+    assert.equal(list.find((entry) => entry.id === "s1")?.isRoot, false);
+  });
+
   it("lists and reads a task carried by another agent", async () => {
     const other = new Store(tmpDir);
     other.createTask(

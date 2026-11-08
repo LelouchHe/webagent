@@ -508,14 +508,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - an agent image is stored as an attachment (file + row) and referenced by its own `agent_image` record between the surrounding text blocks; the persisted row carries no base64, the live broadcast is the same reference, and an oversized image becomes visible text with no row
   - title persistence
   - unix-millisecond `last_active_at` for stable ordering
-  - the single literal `root` anchor persists across reopen and agent keys, keeps `parent_id = NULL`, preserves a renamed title, and is never adopted into a parent
-  - `createTask` creates the literal Root on the first direct write when absent; omitted/null `parentId` attaches to `root`, and creation only ever produces the Root parentless (a delete may detach a collision survivor to `NULL`)
+  - each database gets its own UUID Root, stable across reopen and agent keys; it keeps `parent_id = NULL`, preserves a renamed title, and is never adopted into a parent
+  - `createTask` creates the Root on the first direct write when absent; omitted/null `parentId` attaches to the Root, and creation only ever produces the Root parentless (a delete may detach a collision survivor to `NULL`)
   - a second agent cannot attach another binding to the shared Root; ownership moves only through the replace path, and `ensureRootTask` is idempotent
   - ensure and rotate leave the Root anchor and cwd stable without ownership assertions
-  - ordinary creation of the exact literal `root` is rejected; prefix-shaped ids are ordinary tasks
-  - delete, tombstone reap, and empty-task GC refuse the literal `root` even when its tombstone flag is corrupted
+  - ordinary creation of the Root id is rejected; prefix-shaped ids are ordinary tasks
+  - delete, tombstone reap, and empty-task GC refuse the Root even when its tombstone flag is corrupted
   - `getParentTask` accepts the global Root for another agent's task
-  - reset sentinels cover events, client_ops, attachments, compact summaries, previews, and descendants; Root keeps an ownership binding with an empty execution id and reports the retired execution
+  - reset sentinels cover events, client_ops, attachments, compact summaries, previews, and descendants; Root keeps an ownership binding holding its own `no-execution:<id>` slot and reports the retired execution
   - an active Root share blocks reset; after revoke, reset succeeds
   - binding write authority: a foreign attach is refused with no fact emitted, detach removes the binding, the same session id from two agents is two different executions, one outermost commit emits one fact per task, and a rolled-back batch is discarded rather than leaked into the next commit
   - deletion follows the task tree: a foreign survivor is deleted with its parent's subtree, a share-backed survivor is tombstoned and re-parented under Root with its history/share/attachment intact, and a Root reset keeps an unbound shared tombstone alive
@@ -546,7 +546,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 ### REST API layer
 
 - `test/tasks.test.ts`
-  - task CRUD (create / get / delete / list), with server-only id assignment; the literal `root` resolves like a task and unknown/legacy ids return 404
+  - task CRUD (create / get / delete / list), with server-only id assignment; the Root resolves by its id, and unknown/legacy ids (including the old literal `root`) return 404
   - an in-flight restore is rendered idle (snapshot `runtime.busy` and `/status` `busyKind` are null) while `/clear` and delete still refuse with 409
   - task list is global (`?agent=` narrows); every list entry, task detail, snapshot, bootstrap/create/clear payload, and `task_created` broadcast carries `agentId` alongside backend Root authority
   - creating a child of a task carried by another configured agent targets that agent without rotating the parent; when the parent's agent is gone the child is created for `default_agent`
@@ -645,8 +645,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - Inbox notification consume reuses the current task as inheritance source
   - direct task targets take priority over unresolved message targets
   - task switches require successful busy snapshot hydration; provisional hash is written before detail fetch, then Root canonicalization waits for detail authority
-  - hashless startup preserves user-input-first selection and canonical Root fallback; same-task hashless reconnect skips list rescan
-  - `#root` is a normal deep link; a hashless reconnect to Root without config authority consults the task list to restore that authority
+  - hashless startup preserves user-input-first selection and canonical Root fallback
+  - Root is addressed by its own `#<id>` deep link like every task, and stays active across a reconnect, including one whose config request fails
   - foreign `root-*` ids are ordinary 404s and never aliases; fallback selection uses the current connection's scoped task array
   - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
   - existing-window and cold-start service-worker routing
@@ -776,7 +776,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/connection.test.ts`
   - hash-based task resume, using backend Root authority before hash canonicalization
-  - last-task auto-resume with the literal Root fallback
+  - last-task auto-resume with the Root fallback, identified by the task list's `isRoot` flag rather than by the id's value
   - new-task creation when no previous task exists
   - reconnect behavior without duplicate history replay
   - incremental sync on reconnect when task matches
@@ -786,12 +786,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 ### Supporting frontend / backend modules
 
+- `test/root-identity-structure.test.ts`
+  - no runtime code under `src/` or `public/js/` compares a task id with the literal `root`
+  - no SQL under `src/` matches a task row by the literal `root`
+
 - `test/routes-images-signed.test.ts`
   - signed upload and image retrieval
   - owner Root event history refreshes an expired attachment URL against the current derived task path
 
 - `test/routes.test.ts`
   - static file / API route basics
+  - task list flags exactly the store's Root with `isRoot`
   - events endpoint: limit/before pagination, backward-compat without limit
   - attachment upload (`POST /api/v1/tasks/:sid/attachments`): valid PNG, file (non-image) accepted, size limit enforcement, invalid task, JPEG normalization, UTF-8 filename round-trip (busboy `defParamCharset: utf8`), Content-Disposition emitted on download
   - push API routes (`/api/beta/push/*`): VAPID key, subscribe, unsubscribe, validation, no-push-service fallback
@@ -876,8 +881,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - multi-agent TOML parsing, `default_agent` membership, lenient root/nested tables, strict agent-entry keys
   - rejects empty `agents`, empty `cmd`, invalid ids, unknown `default_agent`, and a leftover `agent_cmd` (before any startup side effect)
 - `test/legacy-database.test.ts`
-  - read-only refusal of tasks without a literal `root` / command-path `agent_key`s with the database bytes and directory unchanged
-  - accepts a migrated DB (literal `root`, including a removed-but-valid agent id), ordinary prefix-shaped ids such as `root-forged` / `root-2f3a9c`, and a fresh DB
+  - read-only refusal of tasks without the Root `workspace` names (including a pre-UUID literal `root` database) / command-path `agent_key`s with the database bytes and directory unchanged
+  - accepts a migrated DB (UUID Root, including a removed-but-valid agent id), ordinary prefix-shaped ids such as `root-forged` / `root-2f3a9c`, and a fresh DB
 - `test/server-bootstrap.test.ts`
   - a missing default-agent binary still starts the service: nothing probes PATH at boot, so the failure is the first use's 503 rather than a startup warning
 
@@ -961,8 +966,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 ### Basic task and messaging flow
 
 - `task-bootstrap.spec.ts`
-  - app boots into the canonical Root task (clean URL, no hash) and is
-    ready for input
+  - app boots into the canonical Root task and is ready for input
 
 - `bootstrap-concurrency.spec.ts`
   - concurrent clients on the root path converge on this backend's derived
@@ -1048,9 +1052,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - deleting a task cascades to every descendant regardless of owner, retires each affected
     ACP execution through that agent's adapter, and broadcasts one `task_deleted` per removed task
   - a share-backed survivor is tombstoned and re-parented under Root; the empty-task GC keeps a surviving child under Root
-  - `getTaskPath` strips the literal Root anchor; other ids render as path segments
+  - `getTaskPath` strips the Root anchor; other ids render as path segments
   - creating a task under an unknown parent is rejected with `400`
-  - generic deletion rejects the literal `root`; deleting it through the task endpoint exits Root (reset the tree, then rebuild its execution before answering)
+  - generic deletion rejects the Root; deleting it through the task endpoint exits Root (reset the tree, then rebuild its execution before answering)
 
 - `task-clear-command.spec.ts`
   - `/clear` keeps the stable WebAgent task id, history, and cwd; only the
@@ -1065,7 +1069,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 ### Resume / reconnect / restart recovery
 
 - `auto-resume-last-task.spec.ts`
-  - hashless startup opens the newest task with user input first, then falls back to the literal Root; existing tasks stay reachable through their stable hash
+  - hashless startup opens the newest task with user input first, then falls back to the Root; existing tasks stay reachable through their stable hash
 
 - `sse-reconnect-recovery.spec.ts`
   - SSE reconnect restores the active task without duplicate replay

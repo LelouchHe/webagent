@@ -19,35 +19,19 @@ import {
   type ExecutionBinding,
 } from "./execution-authority.ts";
 
-/**
- * The workspace has exactly one Root, identified by this literal task id.
- * It is reserved: ordinary creation/deletion/reaping/GC must refuse it.
- */
-export const ROOT_TASK_ID = "root";
-
-export function isReservedRootTaskId(taskId: string): boolean {
-  return taskId === ROOT_TASK_ID;
-}
+/** Namespace WebAgent reserves for the per-task empty execution slot. */
+const EMPTY_EXECUTION_PREFIX = "no-execution:";
 
 /**
  * Session id used for "this task keeps its owner but has no execution yet".
  *
- * The Root's empty string is its long-standing lazy-materialization marker.
- * Ordinary tasks cannot share it: `agent_sessions` is keyed by
- * `(agent_key, agent_session_id)`, so a common sentinel collides with the Root
- * row and with every other task rotated by the same agent. Each ordinary task
- * therefore gets its own token, which keeps `(agent_key, task_id)` the only
- * uniqueness an ordinary task relies on.
+ * `agent_sessions` is keyed by `(agent_key, agent_session_id)`, so a common
+ * sentinel would collide across every task rotated by the same agent. Each
+ * task, Root included, therefore gets its own token, which keeps
+ * `(agent_key, task_id)` the only uniqueness a task relies on.
  */
-export const ROOT_EMPTY_EXECUTION_SLOT = "";
-
-/** Namespace WebAgent reserves for the per-task empty execution slot. */
-const EMPTY_EXECUTION_PREFIX = "no-execution:";
-
 export function emptyExecutionSlot(taskId: string): string {
-  return isReservedRootTaskId(taskId)
-    ? ROOT_EMPTY_EXECUTION_SLOT
-    : `${EMPTY_EXECUTION_PREFIX}${taskId}`;
+  return `${EMPTY_EXECUTION_PREFIX}${taskId}`;
 }
 
 /**
@@ -76,10 +60,7 @@ function assertStorableExecutionId(
   agentSessionId: string,
 ): void {
   if (agentSessionId === emptyExecutionSlot(taskId)) return;
-  if (
-    agentSessionId === ROOT_EMPTY_EXECUTION_SLOT ||
-    agentSessionId.startsWith(EMPTY_EXECUTION_PREFIX)
-  ) {
+  if (agentSessionId.startsWith(EMPTY_EXECUTION_PREFIX)) {
     throw new Error(
       `Refused ACP session id "${agentSessionId}" for task ${taskId}: ` +
         `it is in WebAgent's reserved empty-execution namespace`,
@@ -382,10 +363,17 @@ export class Store {
     (changes: readonly BindingChange[]) => void
   > = [];
 
+  /**
+   * True only for this database's Root. Ordinary creation, deletion, tombstone
+   * reaping, and GC must refuse it; only the reset clears it in place.
+   */
+  isRootTaskId(taskId: string): boolean {
+    return taskId === this.rootTaskId;
+  }
+
   constructor(dataDir: string) {
-    this.rootTaskId = ROOT_TASK_ID;
     this.dataDir = dataDir;
-    // Refuse the pre-multi-agent shape read-only, before mkdir/SQLite open
+    // Refuse an old-format database read-only, before mkdir/SQLite open
     // can write anything (including -wal/-shm side files).
     assertNotLegacyDatabase(dataDir);
     mkdirSync(dataDir, { recursive: true });
@@ -404,10 +392,27 @@ export class Store {
       this.dropLegacyColumns();
       this.migrateSystemMessagePayloads();
       this.canonicalizeStoredModelValues();
+      this.rootTaskId = this.resolveRootIdentity();
     } catch (error) {
       this.db.close();
       throw error;
     }
+  }
+
+  /**
+   * Read this database's Root id, giving a fresh database one. The Root row
+   * itself is created on first use, as before; only its id is decided here.
+   */
+  private resolveRootIdentity(): string {
+    const stored = this.db
+      .prepare("SELECT root_task_id AS id FROM workspace WHERE id = 1")
+      .get() as { id: string } | undefined;
+    if (stored) return stored.id;
+    const rootTaskId = randomUUID();
+    this.db
+      .prepare("INSERT INTO workspace (id, root_task_id) VALUES (1, ?)")
+      .run(rootTaskId);
+    return rootTaskId;
   }
 
   /**
@@ -830,6 +835,15 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_attachments_task ON attachments(task_id);
     `);
 
+    // workspace — one row naming this database's Root. Root identity is a
+    // fact of the database, not a constant: see `resolveRootIdentity`.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS workspace (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        root_task_id TEXT NOT NULL
+      );
+    `);
+
     // owner_prefs — key-value store for owner-scoped defaults (display_name,
     // last /by selection, etc). Single-user model = single owner scope.
     // Stored as plain key/value so we don't grow a new table per pref.
@@ -940,7 +954,7 @@ export class Store {
       workflowStatus?: WorkflowStatus;
     } = {},
   ): TaskRow {
-    if (isReservedRootTaskId(id)) {
+    if (this.isRootTaskId(id)) {
       throw new Error(
         `Reserved Root id cannot be created as an ordinary task: ${id}`,
       );
@@ -1305,7 +1319,7 @@ export class Store {
     );
     const root = this.getTaskIncludingDeleted(this.rootTaskId);
     for (const child of children) {
-      if (!root || isReservedRootTaskId(child.id)) {
+      if (!root || this.isRootTaskId(child.id)) {
         detach.run(child.id, parentId);
         continue;
       }
@@ -1453,7 +1467,7 @@ export class Store {
     mode: "hard" | "soft";
     affected: TaskDelete[];
   } {
-    if (isReservedRootTaskId(id)) {
+    if (this.isRootTaskId(id)) {
       throw new Error("Root task cannot be deleted");
     }
     return this.writeBindings(() => this.deleteTaskInScope(id));
@@ -1463,7 +1477,7 @@ export class Store {
     mode: "hard" | "soft";
     affected: TaskDelete[];
   } {
-    if (isReservedRootTaskId(id)) {
+    if (this.isRootTaskId(id)) {
       throw new Error("Root task cannot be deleted");
     }
     const affected: TaskDelete[] = [];
@@ -1533,7 +1547,7 @@ export class Store {
    * Returns true if a tombstone was reaped.
    */
   reapTombstoneIfOrphaned(taskId: string): boolean {
-    if (isReservedRootTaskId(taskId)) return false;
+    if (this.isRootTaskId(taskId)) return false;
     const row = this.db
       .prepare("SELECT id FROM tasks WHERE id = ? AND deleted_at IS NOT NULL")
       .get(taskId) as { id: string } | undefined;

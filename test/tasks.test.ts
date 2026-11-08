@@ -1135,14 +1135,15 @@ describe("Task REST API", () => {
       assert.ok(Array.isArray(body.configOptions));
     });
 
-    it("resolves the literal `root` and 404s unknown/legacy ids", async () => {
+    it("resolves the Root by its id and 404s unknown/legacy ids", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(rootId, "test-agent", "agent-root");
       const rootRes = await makeRequest(port, "GET", `/api/v1/tasks/${rootId}`);
       assert.equal(rootRes.status, 200);
-      assert.equal(JSON.parse(rootRes.body).id, "root");
+      assert.equal(JSON.parse(rootRes.body).id, rootId);
 
-      for (const id of ["nonexistent", "root-foreign-derived-id"]) {
+      // `root` is no longer a Root address: it is an unknown id like any other.
+      for (const id of ["nonexistent", "root-foreign-derived-id", "root"]) {
         const res = await makeRequest(port, "GET", `/api/v1/tasks/${id}`);
         assert.equal(res.status, 404, `${id} must not alias the Root`);
       }
@@ -1163,7 +1164,7 @@ describe("Task REST API", () => {
       const res = await makeRequest(port, "GET", "/api/v1/tasks/child");
 
       assert.equal(res.status, 200);
-      assert.equal(JSON.parse(res.body).parentId, "root");
+      assert.equal(JSON.parse(res.body).parentId, store.rootTaskId);
     });
 
     it("auto-resumes a non-live task", async () => {
@@ -1267,7 +1268,7 @@ describe("Task REST API", () => {
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), {
         taskId: id,
-        parentId: "root",
+        parentId: store.rootTaskId,
         reset: false,
       });
 
@@ -1500,7 +1501,7 @@ describe("Task REST API", () => {
       ]);
       assert.deepEqual(JSON.parse(res.body), {
         taskId: "parent",
-        parentId: "root",
+        parentId: store.rootTaskId,
         reset: false,
       });
       assert.ok(!tasks.liveTasks.has("child"));

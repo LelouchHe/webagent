@@ -1147,13 +1147,12 @@ export function installRootTaskId(
   }
 }
 
+/**
+ * Address the active task in the URL. Every task, Root included, is a stable
+ * `#<id>` deep link, so a reload returns to the task that was open. Only a URL
+ * with no hash at all means "resume the most recent task".
+ */
 export function setHashTaskId(id: string) {
-  if (state.rootTaskId !== null && id === state.rootTaskId) {
-    const url = new URL(location.href);
-    url.hash = "";
-    history.replaceState(null, "", `${url.pathname}${url.search}`);
-    return;
-  }
   history.replaceState(null, "", `#${id}`);
 }
 

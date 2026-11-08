@@ -24,7 +24,7 @@ describe("Store collaboration records", () => {
       "auto",
       "test-agent",
       "agent-parent",
-      "root",
+      store.rootTaskId,
     );
     store.createTask(
       "a1",

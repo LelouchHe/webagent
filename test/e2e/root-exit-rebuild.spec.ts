@@ -56,7 +56,11 @@ test("exiting Root lands on an idle Root", async ({ page }) => {
     );
     await gotoConnected(page, `${origin}/`);
 
-    expect(await currentTaskId(page)).toBe("root");
+    // A fresh workspace opens on Root; like every task it is addressed by its
+    // own per-database id in the hash.
+    const rootTaskId = await currentTaskId(page);
+    expect(rootTaskId).toBeTruthy();
+    expect(new URL(page.url()).hash).toBe(`#${rootTaskId}`);
     await sendPrompt(page, "root content");
     await expect(page.locator("#messages")).toContainText("root content");
     await expect(page.locator("#send-btn")).toHaveText("↵");
@@ -66,7 +70,7 @@ test("exiting Root lands on an idle Root", async ({ page }) => {
     // Same task (Root is rebuilt, not replaced), cleared history, and an input
     // that is ready — not a spinner waiting on a rebuild that already finished
     // before the DELETE answered.
-    await expect.poll(() => currentTaskId(page)).toBe("root");
+    await expect.poll(() => currentTaskId(page)).toBe(rootTaskId);
     await expect(page.locator("#messages")).not.toContainText("root content");
     await expect(page.locator("#send-btn")).toHaveText("↵");
 

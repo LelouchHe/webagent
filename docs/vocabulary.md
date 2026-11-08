@@ -30,8 +30,9 @@ session (execution layer, internal)
 ```
 
 - `task` never disappears because of `clear`, execution rotation, or server
-  restart. The workspace has exactly one reserved Root task, with the literal
-  id `root` and `parent_id = NULL`. That id is hashless in the URL.
+  restart. The workspace has exactly one reserved Root task, with a
+  per-database UUID (named by the `workspace` row) and `parent_id = NULL`. Like
+  every task it is addressed as `#<task-id>` in the URL.
 - `session` is an implementation detail. It is never user-visible and never
   leaks into product vocabulary, UI copy, or the public API naming.
 
@@ -52,7 +53,7 @@ The historical term "WebAgent Session" is **obsolete**; it means `task`.
 | REST | API | `/api/v1/sessions` family | `/api/v1/tasks` family |
 | SSE | product events | `session_created`, `session_deleted`, `session_busy`, `session_expired`, `session_title_updated`, `session_not_found`, `session_manager_unavailable` | `task_*` equivalents |
 | SSE | payload field | payload `session_id` identifying the product entity | `task_id` |
-| Frontend | URL hash | `#<task-id>` (current backend Root: no hash) | unchanged — the hash carries only the id, so bookmarks and deep links survive |
+| Frontend | URL hash | `#<task-id>` (Root included) | unchanged — the hash carries only the id, so bookmarks and deep links survive |
 | Frontend | modules | `session-actions.ts`, `session-navigation.ts`, `session-state.ts`, `sessions-anchor.ts` | `task-actions.ts`, `task-navigation.ts`, `task-state.ts`, `tasks-anchor.ts` |
 | Backend | module | `src/session-manager.ts` | `src/task-manager.ts` (class `SessionManager` → `TaskManager`) |
 | Backend | identifiers | `clearSession`, `loadSession`, `deleteEmptySessions`, `session title generation` | `clearTask`, `loadTask`, `deleteEmptyTasks`, `silent compact summary` |
@@ -110,7 +111,7 @@ All three are internal: none of them is product copy, UI wording, or API naming.
 |---|---|
 | **generation** | The integer a task records for "which generation of writes I currently accept". Advanced by exactly one per committed binding change and never persisted — a restart kills every execution, so there is no earlier generation whose late writes could arrive. |
 | **lease** | `{taskId, generation}`, captured when an operation starts and validated at the write boundaries (event entry, and before each synchronous commit). A missing or unknown generation is refused rather than filled in with the current one. |
-| **empty execution slot** | A reserved placeholder session id meaning "the binding agent is decided, the execution is still to be materialized": the empty string for Root, `no-execution:<taskId>` for an ordinary task. See [`schema.md`](./schema.md#agent_sessions). |
+| **empty execution slot** | A reserved placeholder session id meaning "the binding agent is decided, the execution is still to be materialized": `no-execution:<taskId>` for every task, Root included. See [`schema.md`](./schema.md#agent_sessions). |
 | **current execution binding** | The one `(agent id, ACP session id)` pair that currently executes a task. A task has at most one, globally. |
 | **binding agent** | The configured agent of that binding. Public fields call it `agentId`. It is *not* an owner of the task: the task is the product entity and survives every rotation. |
 | **execution environment** | One configured agent's process and the state that dies with it (cached config schema, reported identity, command snapshots). One per agent, started on demand. |
@@ -173,19 +174,23 @@ bookkeeping and are never product copy.
 The rename is a mechanical-but-wide refactor (DB → backend → frontend →
 docs → tests). When executing it:
 
-- The single literal `root` Root is an intentional pre-1.0 incompatible
-  change. A pre-multi-agent database is refused at startup. There is no
-  automatic or in-place conversion: back up the data directory, then
+- The single Root is an intentional pre-1.0 incompatible change. A
+  pre-multi-agent database is refused at startup; there is no automatic or
+  in-place conversion from that shape: back up the data directory, then
   explicitly re-initialize it by removing the old database and restarting.
-  Startup never rewrites an old database in place.
+  The Root was introduced with the literal id `root` and later became a
+  per-database UUID; that change is breaking in the same way, with no in-place
+  rename (see `docs/schema.md`).
 - The REST and SSE rename is a hard break with **no alias** (pre-1.0; the
   frontend and API move together). Route docs are validated by
   `test/doc-coverage.test.ts`, so `docs/api.md` must move in the same
   commit as `src/routes.ts`.
-- URL hashes stay `#<task-id>` / hashless Root. Root identity is delivered by
-  detail/create/clear/reset/bootstrap/SSE/config payloads; clients compare
-  against the literal id `root`, never a prefix. `#root` is a normal deep link
-  to that task.
+- URL hashes stay `#<task-id>`, Root included; a hashless URL resumes the most
+  recent task. Root identity is delivered by
+  detail/create/clear/reset/bootstrap/SSE/config payloads and the task list's
+  `isRoot` flag; clients compare against that delivered id, never against a
+  literal value or a prefix. Server code asks `Store.isRootTaskId` instead of
+  comparing with the constant.
 - Sweep: `docs/schema.md`, `docs/api.md`, `docs/share.md`, `docs/features.md`,
   `docs/client-architecture.md`, `docs/performance.md`, `README.md`,
   `CLAUDE.md`, `TEST_SCENARIOS.md`, and the unit/e2e suites.

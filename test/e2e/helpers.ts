@@ -20,25 +20,14 @@ export async function gotoConnected(page: Page, path = "/"): Promise<void> {
   await expect(page.locator("#input")).toBeEnabled();
 }
 
-const rootTaskIds = new WeakMap<Page, Promise<string>>();
-
+/**
+ * The task the page is showing. Activation writes every task's hash, Root
+ * included, so the hash is the answer once it is there; wait for it rather than
+ * guessing which task an unaddressed page means.
+ */
 export async function currentTaskId(page: Page): Promise<string> {
-  const hash = await page.evaluate(() => location.hash.slice(1));
-  if (hash) return hash;
-
-  // Root is the canonical clean URL. Resolve it from backend authority rather
-  // than assuming a literal id so E2E helpers follow per-agent Root identity.
-  let rootTaskId = rootTaskIds.get(page);
-  if (!rootTaskId) {
-    rootTaskId = page.evaluate(async () => {
-      const response = await fetch("/api/v1/config");
-      if (!response.ok) throw new Error("Could not load canonical Root id");
-      const config = (await response.json()) as { rootTaskId: string };
-      return config.rootTaskId;
-    });
-    rootTaskIds.set(page, rootTaskId);
-  }
-  return rootTaskId;
+  const handle = await page.waitForFunction(() => location.hash.slice(1));
+  return (await handle.jsonValue()) as string;
 }
 
 export async function createNewTask(page: Page): Promise<string> {

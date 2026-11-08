@@ -714,7 +714,7 @@ describe("commands", () => {
           };
         };
         if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
-          return body([{ id: ROOT_ID, title: "root" }]);
+          return body([{ id: ROOT_ID, title: "root", isRoot: true }]);
         if (url === `/api/v1/tasks/${ROOT_ID}` && init?.method === "DELETE")
           return body({ taskId: ROOT_ID, reset: true });
         if (url === `/api/v1/tasks/${ROOT_ID}`) return body(rootDetail);

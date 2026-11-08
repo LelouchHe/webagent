@@ -133,13 +133,13 @@ its rows, events, and attachments stay so public viewers keep resolving, and
 the directory is kept. Revoking the last share reaps the tombstone with the
 same cascade and disk removal as a hard delete.
 
-When `:id` is the literal Root id `root`, that Root row remains as the tree
+When `:id` is the Root, that Root row remains as the tree
 anchor. Its events and attachment rows are cleared, its attachment directory is
 removed, and its descendant tree is deleted with the same rules as any other
 delete (a share-tombstoned descendant survives and is re-parented). See
 [Task Lifecycle](task-lifecycle.md#transitions) for the transition set. The
-literal `root` is protected from generic deletion and GC; prefix-shaped ids are
-ordinary tasks.
+Root is protected from generic deletion and GC; prefix-shaped ids are ordinary
+tasks.
 
 ### Orphaned `.tmp` files
 
@@ -263,7 +263,7 @@ Stored event JSON in SQLite carries the **unsigned base path**
 (`/api/v1/tasks/<task-id>/attachments/<file>`); re-sign happens at egress using
 the task id already in that owner event. Thus history is re-issued under the
 stable task path (`/api/v1/tasks/<task-id>/attachments/...`), including the
-literal Root's `root` path.
+Root's.
 Two consequences:
 
 - DB rows don't expire — moving the data dir, restoring a backup, or

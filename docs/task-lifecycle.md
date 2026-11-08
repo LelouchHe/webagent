@@ -37,7 +37,7 @@ the SQL mechanics, and the debt state machine live in their own documents (see
 | **unmaterialized** | The binding agent is decided and the row exists, but there is no execution yet: the binding holds the reserved empty execution slot. The next use materializes one. Only a Root that *was* bound can be in this state; a Root that never had a binding is simply unbound and attaches on first use. |
 | **tombstone** | Soft-deleted (`deleted_at` set) because at least one active public share still points at it. Row, events, attachments, and shares survive; the binding is gone. |
 | **hard-deleted** | Rows are gone (events, attachments, binding) and the task directory on disk is removed. |
-| **root anchor** | The literal `root`. A normal task in every other respect, but never deleted or garbage collected. |
+| **root anchor** | The Root: the task the `workspace` row names (a per-database UUID). A normal task in every other respect, but never deleted or garbage collected. |
 
 ## Transitions
 
@@ -45,7 +45,7 @@ the SQL mechanics, and the debt state machine live in their own documents (see
 | --- | --- | --- |
 | **Birth** — `POST /api/v1/tasks`, MCP `task_create` | — | Mints the task's MCP capability *before* `newSession`, then writes the task row and its binding in one transaction. A failure past minting discards the unbound ACP session and revokes the token; a persistence failure rolls the row back. |
 | **Rotation** — `/clear` (optionally naming a configured `agentId`), `/compact`, implicit takeover when the binding agent left configuration | Task id, `parent_id`, events, attachments, shares, runtime `seq`, the obligation record with its attempts, stored config (only when the agent stays the same; another agent's execution starts from its own defaults), cwd unless a new one is given | Runtime state resets; the old transport is truncated (claimed dispatch retries, unfinished delivery rows); generation +1; the displaced execution is retired through the agent recorded on the old binding; an `agent_rotation` transcript line records the trigger. A pending compact handoff survives `/compact` and is cleared by a plain `/clear`. |
-| **Implicit takeover** — the binding agent is no longer in configuration | Everything a rotation keeps | The binding moves to `default_agent`'s reserved empty slot (Root: `""`, ordinary task: `no-execution:<taskId>`), leaving the task **unmaterialized**. A configured agent that is merely not running, dead, or unavailable is *not* a trigger; only removing it from configuration is. |
+| **Implicit takeover** — the binding agent is no longer in configuration | Everything a rotation keeps | The binding moves to `default_agent`'s reserved empty slot (`no-execution:<taskId>`, Root included), leaving the task **unmaterialized**. A configured agent that is merely not running, dead, or unavailable is *not* a trigger; only removing it from configuration is. |
 | **Materialization** — first use (resume, prompt, explicit clear) of an unmaterialized task | Everything | A fresh ACP session replaces the empty slot. All first-use paths share the same per-task single-flight. |
 | **Delete** — `DELETE /api/v1/tasks/:id`, `/exit` off Root | Nothing | The **whole task tree**, whatever agent owns each descendant: rows gone, executions retired through each agent's adapter, directories removed. |
 | **Delete with an active share** | Row, events, attachments, shares | Soft delete: `deleted_at` set, binding removed, re-parented under Root (detached when Root is missing or a live sibling-title collision exists). |
@@ -64,7 +64,7 @@ the SQL mechanics, and the debt state machine live in their own documents (see
 ## Two irregularities worth knowing
 
 - **Root is never deleted.** Generic deletion, empty-task GC, and tombstone
-  reaping all refuse the literal `root`; only the reset clears it in place.
+  reaping all refuse the Root; only the reset clears it in place.
 - **A tombstone exists only for an active public share.** Without one, deletion
   is immediate and complete. Survivors of a parent's deletion are therefore
   share tombstones and, for the empty-task GC only, the GC'd task's children.

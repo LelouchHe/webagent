@@ -161,7 +161,7 @@ describe("connection", () => {
     return es;
   }
 
-  const ROOT_ID = "root";
+  const ROOT_ID = "6f1c2e9a-0d4b-4c8e-9a51-3b7f2d8e4c10";
 
   function listResponse(tasks: unknown[]) {
     return tasks;
@@ -342,7 +342,7 @@ describe("connection", () => {
         return mockResponse(
           listResponse([
             { id: "recent-task", hasUserInput: true },
-            { id: ROOT_ID, hasUserInput: false },
+            { id: ROOT_ID, hasUserInput: false, isRoot: true },
           ]),
         );
       if (url === "/api/v1/tasks/recent-task")
@@ -373,7 +373,7 @@ describe("connection", () => {
         return mockResponse(
           listResponse([
             { id: "recent-task", hasUserInput: false },
-            { id: ROOT_ID, hasUserInput: false },
+            { id: ROOT_ID, hasUserInput: false, isRoot: true },
           ]),
         );
       if (url === `/api/v1/tasks/${ROOT_ID}`)
@@ -387,18 +387,18 @@ describe("connection", () => {
     await flush(100);
 
     assert.equal(state.taskId, ROOT_ID);
-    assert.equal(location.hash, "");
+    assert.equal(location.hash, `#${ROOT_ID}`);
   });
 
-  it("navigates to the literal #root", async () => {
-    history.replaceState(null, "", "/#root");
+  it("navigates to the Root's own #<id> deep link", async () => {
+    history.replaceState(null, "", `/#${ROOT_ID}`);
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks/root")
-        return mockResponse(taskResponse("root"));
-      if (url.startsWith("/api/v1/tasks/root/events"))
+      if (url === `/api/v1/tasks/${ROOT_ID}`)
+        return mockResponse(taskResponse(ROOT_ID));
+      if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
         return mockResponse({ events: [], streaming: {} });
-      if (url === "/api/v1/tasks/root/snapshot")
+      if (url === `/api/v1/tasks/${ROOT_ID}/snapshot`)
         return mockResponse({
           version: 1,
           seq: 0,
@@ -411,10 +411,12 @@ describe("connection", () => {
     connection.connect();
     await flush(100);
 
-    assert.equal(state.taskId, "root");
-    assert.equal(state.rootTaskId, "root");
-    assert.equal(location.hash, "");
-    assert.ok(fetchCalls.some((call) => call.url === "/api/v1/tasks/root"));
+    assert.equal(state.taskId, ROOT_ID);
+    assert.equal(state.rootTaskId, ROOT_ID);
+    assert.equal(location.hash, `#${ROOT_ID}`);
+    assert.ok(
+      fetchCalls.some((call) => call.url === `/api/v1/tasks/${ROOT_ID}`),
+    );
   });
 
   it("404s a missing ordinary root-* task then falls back to a listed task", async () => {
@@ -635,7 +637,9 @@ describe("connection", () => {
       if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
         return mockResponse([]);
       if (url === "/api/v1/tasks")
-        return mockResponse([{ id: ROOT_ID, hasUserInput: false }]);
+        return mockResponse([
+          { id: ROOT_ID, hasUserInput: false, isRoot: true },
+        ]);
       if (url === `/api/v1/tasks/${ROOT_ID}/snapshot`)
         return mockResponse({
           version: 1,
@@ -653,7 +657,7 @@ describe("connection", () => {
 
     assert.equal(state.rootTaskId, ROOT_ID);
     assert.equal(state.taskId, ROOT_ID);
-    assert.equal(location.hash, "");
+    assert.equal(location.hash, `#${ROOT_ID}`);
     assert.ok(
       fetchCalls.some((call) => call.url === `/api/v1/tasks/${ROOT_ID}`),
     );
@@ -677,7 +681,9 @@ describe("connection", () => {
       if (url.startsWith(`/api/v1/tasks/${oldRootId}/events`))
         return mockResponse({ events: [], streaming: {} });
       if (url === "/api/v1/tasks")
-        return mockResponse([{ id: ROOT_ID, hasUserInput: false }]);
+        return mockResponse([
+          { id: ROOT_ID, hasUserInput: false, isRoot: true },
+        ]);
       if (url === `/api/v1/tasks/${ROOT_ID}`)
         return mockResponse(taskResponse(ROOT_ID));
       if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
@@ -690,12 +696,13 @@ describe("connection", () => {
 
     assert.equal(state.rootTaskId, ROOT_ID);
     assert.equal(state.taskId, ROOT_ID);
-    assert.equal(location.hash, "");
+    assert.equal(location.hash, `#${ROOT_ID}`);
     assert.ok(fetchCalls.some((call) => call.url === "/api/v1/tasks"));
   });
 
-  it("keeps hashless Root active when reconnect config fails but the scoped list contains it", async () => {
+  it("keeps Root active when reconnect config fails", async () => {
     configFailure = true;
+    history.replaceState(null, "", `/#${ROOT_ID}`);
     state.taskId = ROOT_ID;
     state.rootTaskId = ROOT_ID;
     let listCalls = 0;
@@ -703,7 +710,7 @@ describe("connection", () => {
       if (url === "/api/v1/tasks") {
         listCalls++;
         return mockResponse([
-          { id: ROOT_ID, hasUserInput: false },
+          { id: ROOT_ID, hasUserInput: false, isRoot: true },
           { id: "recent-child", hasUserInput: true },
         ]);
       }
@@ -793,7 +800,8 @@ describe("connection", () => {
     assert.equal(getDefaultAgentId(), "new");
   });
 
-  it("keeps hashless Root active across SSE reconnect", async () => {
+  it("keeps Root active across SSE reconnect", async () => {
+    history.replaceState(null, "", `/#${ROOT_ID}`);
     state.taskId = ROOT_ID;
     let listCalls = 0;
     setFetch(async (url: string) => {
@@ -822,7 +830,7 @@ describe("connection", () => {
     await flush(30);
 
     assert.equal(state.taskId, ROOT_ID);
-    assert.equal(location.hash, "");
+    assert.equal(location.hash, `#${ROOT_ID}`);
     // The workspace-wide collection is rebuilt from the list on every
     // connection: a reconnect must not reuse the previous stream's baseline.
     // (One list per connect: the initial navigation and the reconnect.)

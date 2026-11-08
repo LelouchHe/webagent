@@ -250,10 +250,10 @@ async function openStream(
     void api.postVisibility(state.clientId, true, state.taskId ?? undefined);
   });
 
-  // Load task immediately via REST — parallel with SSE connection. Pass the
-  // task that was active when this connection attempt began so a hashless
-  // Root reconnect cannot be mistaken for a fresh startup.
-  void initializeTaskAndIntent(activeTaskId, gen, rootAuthorityGeneration);
+  // Load task immediately via REST — parallel with SSE connection. Every
+  // activated task carries its hash, so the URL alone says which task to
+  // restore.
+  void initializeTaskAndIntent(gen, rootAuthorityGeneration);
 }
 
 async function recoverAfterHandshake(
@@ -282,7 +282,6 @@ async function recoverAfterHandshake(
 }
 
 async function initializeTaskAndIntent(
-  reconnectTaskId: string | null,
   gen: number,
   rootAuthorityGeneration: number,
 ): Promise<void> {
@@ -321,7 +320,7 @@ async function initializeTaskAndIntent(
   void loadTaskList().catch(() => {
     // A failed baseline stays "not loaded"; nothing is claimed from it.
   });
-  await initTask(reconnectTaskId, gen, rootAuthorityGeneration);
+  await initTask(gen, rootAuthorityGeneration);
   if (
     gen !== streamGen ||
     rootAuthorityGeneration !== state.rootTaskAuthorityGeneration ||
@@ -333,7 +332,6 @@ async function initializeTaskAndIntent(
 }
 
 async function resumeFromTaskList(
-  reconnectTaskId: string | null,
   gen: number,
   connectionGeneration: number,
   rootAuthorityGeneration: number,
@@ -344,24 +342,9 @@ async function resumeFromTaskList(
     if (!isCurrent()) return true;
     if (state.rootTaskId === null) {
       installRootTaskId(
-        tasks.find((task) => task.id === "root")?.id,
+        tasks.find((task) => task.isRoot)?.id,
         rootAuthorityGeneration,
       );
-    }
-    if (
-      reconnectTaskId &&
-      state.taskId === reconnectTaskId &&
-      reconnectTaskId === state.rootTaskId
-    ) {
-      await resumeAndLoad(
-        reconnectTaskId,
-        true,
-        gen,
-        connectionGeneration,
-        rootAuthorityGeneration,
-      );
-      if (isCurrent()) scrollToBottom(false);
-      return true;
     }
     if (tasks.length === 0) return false;
 
@@ -385,7 +368,6 @@ async function resumeFromTaskList(
 }
 
 async function initTask(
-  reconnectTaskId: string | null,
   connectionGeneration: number,
   rootAuthorityGeneration: number,
 ) {
@@ -403,31 +385,6 @@ async function initTask(
   if (existingId && existingId === state.taskId) {
     await resumeAndLoad(
       existingId,
-      true,
-      gen,
-      connectionGeneration,
-      rootAuthorityGeneration,
-    );
-    if (!isCurrent()) return;
-    scrollToBottom(false);
-    return;
-  }
-
-  // A hashless reconnect must keep the task already shown in the browser.
-  // Root intentionally has no hash, so this guard must precede hashless
-  // recent-task selection. When config failed, Root's authority is not yet
-  // installed: fall through to the task list so it can restore the literal
-  // Root instead of keeping a reconnect target with no Root authority.
-  const rootAuthorityMissing =
-    reconnectTaskId === "root" && state.rootTaskId === null;
-  if (
-    !existingId &&
-    reconnectTaskId &&
-    state.taskId === reconnectTaskId &&
-    !rootAuthorityMissing
-  ) {
-    await resumeAndLoad(
-      reconnectTaskId,
       true,
       gen,
       connectionGeneration,
@@ -459,7 +416,6 @@ async function initTask(
   // The API list is ordered by last_active_at; Root is only the fallback when
   // there is no user history to restore.
   const resumed = await resumeFromTaskList(
-    reconnectTaskId,
     gen,
     connectionGeneration,
     rootAuthorityGeneration,

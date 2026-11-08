@@ -28,7 +28,7 @@ describe("TaskManager collaboration delivery drain", () => {
       "auto",
       "test-agent",
       "agent-source",
-      "root",
+      store.rootTaskId,
     );
     store.createTask(
       "target",
@@ -36,7 +36,7 @@ describe("TaskManager collaboration delivery drain", () => {
       "auto",
       "test-agent",
       "agent-target",
-      "root",
+      store.rootTaskId,
     );
     store.updateTaskTitle("source", "source");
     store.updateTaskTitle("target", "target");

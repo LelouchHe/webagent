@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { ConfigOption } from "../src/types.ts";
-import { Store } from "../src/store.ts";
+import { emptyExecutionSlot, Store } from "../src/store.ts";
 import {
   createTaskManager,
   type DeliveryBridge,
@@ -341,17 +341,17 @@ describe("background warm-up", () => {
       isAvailable: () => true,
     } as unknown as DeliveryBridge;
 
-    store.attachAgentSession("root", "agent-a", "root-session");
+    store.attachAgentSession(store.rootTaskId, "agent-a", "root-session");
     store.resetRootTask();
     tasks.attachExecutionBridge(bridge);
 
     // A read starts the materialization of the empty slot.
-    tasks.warmTaskInBackground("root");
+    tasks.warmTaskInBackground(store.rootTaskId);
     await inNewSession;
     // `/clear` (or another reset) commits its own replacement while
     // `session/new` is still in flight. Committing over it would silently undo
     // an operation the user already saw finish.
-    store.replaceAgentSession("root", "agent-a", "cleared-session");
+    store.replaceAgentSession(store.rootTaskId, "agent-a", "cleared-session");
     releaseNewSession();
 
     for (let tick = 0; tick < 100 && discarded.length === 0; tick++) {
@@ -363,12 +363,12 @@ describe("background warm-up", () => {
       "the refused session is dropped",
     );
     assert.equal(
-      store.getAgentSessionId("root"),
+      store.getAgentSessionId(store.rootTaskId),
       "cleared-session",
       "the replacement that landed first stands",
     );
-    assert.equal(tasks.liveTasks.has("root"), false);
-    assert.equal(tasks.state.getState("root").runtime.busy, null);
+    assert.equal(tasks.liveTasks.has(store.rootTaskId), false);
+    assert.equal(tasks.state.getState(store.rootTaskId).runtime.busy, null);
   });
 
   it("ends a read-started materialization with an idle ledger", async () => {
@@ -402,38 +402,45 @@ describe("background warm-up", () => {
     // The state a read has to cope with after a reset: Root holds the empty
     // execution slot. Simulated at the store (the manager now owns the rebuild,
     // so its own exit would replace it before returning).
-    store.attachAgentSession("root", "agent-a", "root-session");
+    store.attachAgentSession(store.rootTaskId, "agent-a", "root-session");
     store.resetRootTask();
     assert.equal(
-      store.getCurrentExecutionBinding("root")?.agent_session_id,
-      "",
+      store.getCurrentExecutionBinding(store.rootTaskId)?.agent_session_id,
+      emptyExecutionSlot(store.rootTaskId),
       "the reset leaves the empty slot in place",
     );
 
     // Exactly what `GET /tasks/:id/snapshot` does: warm in the background,
     // then project the current claims into the ledger.
     tasks.attachExecutionBridge(bridge);
-    tasks.warmTaskInBackground("root");
+    tasks.warmTaskInBackground(store.rootTaskId);
     await inNewSession;
-    tasks.syncBusy("root");
+    tasks.syncBusy(store.rootTaskId);
     assert.equal(
-      tasks.state.getState("root").runtime.busy?.kind,
+      tasks.state.getState(store.rootTaskId).runtime.busy?.kind,
       "agent",
       "a read that lands mid-materialization sees the creating claim",
     );
 
     releaseNewSession();
-    for (let tick = 0; tick < 100 && !tasks.liveTasks.has("root"); tick++) {
+    for (
+      let tick = 0;
+      tick < 100 && !tasks.liveTasks.has(store.rootTaskId);
+      tick++
+    ) {
       await new Promise<void>((done) => setTimeout(done, 0));
     }
-    assert.ok(tasks.liveTasks.has("root"), "the materialization completed");
+    assert.ok(
+      tasks.liveTasks.has(store.rootTaskId),
+      "the materialization completed",
+    );
     await new Promise<void>((done) => setTimeout(done, 0));
 
     assert.equal(
-      tasks.state.getState("root").runtime.busy,
+      tasks.state.getState(store.rootTaskId).runtime.busy,
       null,
       "releasing the claim re-projects busy, with no extra snapshot",
     );
-    assert.equal(tasks.getBusyKind("root"), null);
+    assert.equal(tasks.getBusyKind(store.rootTaskId), null);
   });
 });

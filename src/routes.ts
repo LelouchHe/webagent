@@ -851,6 +851,7 @@ export function createRequestHandler(
               deleted_at: isoFromMillisOrNull(task.deleted_at),
               cwdDisplay: abbreviateHomePath(task.cwd),
               hasUserInput: Boolean(hasUserInput),
+              isRoot: store.isRootTaskId(task.id),
             };
           });
         res.end(JSON.stringify(publicTasks));
