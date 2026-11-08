@@ -645,8 +645,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - Inbox notification consume reuses the current task as inheritance source
   - direct task targets take priority over unresolved message targets
   - task switches require successful busy snapshot hydration; provisional hash is written before detail fetch, then Root canonicalization waits for detail authority
-  - hashless startup preserves user-input-first selection and canonical Root fallback; same-task hashless reconnect skips list rescan
-  - Root is addressed by its own `#<id>` deep link like every task; a hashless reconnect without config authority consults the task list to restore that authority
+  - hashless startup preserves user-input-first selection and canonical Root fallback
+  - Root is addressed by its own `#<id>` deep link like every task, and stays active across a reconnect, including one whose config request fails
   - foreign `root-*` ids are ordinary 404s and never aliases; fallback selection uses the current connection's scoped task array
   - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
   - existing-window and cold-start service-worker routing

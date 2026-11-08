@@ -397,17 +397,15 @@ bootstrap/create/clear/reset responses, global/per-task `connected`,
 `task_created`, and `/api/v1/config`. On config failure, the client may
 identify the Root by the `isRoot` flag of the task list it can read. Disconnect/
 reconnect clears stored authority; only a response or event from the current
-connection generation can restore it. Per-task UI resets preserve it, except a
-hashless reconnect without authority deliberately asks the list first: every
-activation writes the hash, so a Task shown without one had not finished
-activating and cannot be kept as-is.
+connection generation can restore it. Per-task UI resets preserve it.
 
 `switchToTask` writes the requested hash before fetching detail, and
 activation (`task_created`) writes it again for the Task it installs; the hash
 is never rewritten for Root, so neither step depends on Root authority.
 Hashless startup keeps the selection order: newest task with user input first,
-canonical Root second, then the first task. A hashless same-task reconnect
-still resumes the current task without rescanning the list.
+canonical Root second, then the first task. A reconnect needs no special case:
+activation writes every task's hash, so the reconnect resumes whatever the hash
+names, incrementally when it is the task already shown.
 
 This enables:
 

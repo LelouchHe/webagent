@@ -700,8 +700,9 @@ describe("connection", () => {
     assert.ok(fetchCalls.some((call) => call.url === "/api/v1/tasks"));
   });
 
-  it("keeps hashless Root active when reconnect config fails but the scoped list contains it", async () => {
+  it("keeps Root active when reconnect config fails", async () => {
     configFailure = true;
+    history.replaceState(null, "", `/#${ROOT_ID}`);
     state.taskId = ROOT_ID;
     state.rootTaskId = ROOT_ID;
     let listCalls = 0;
@@ -800,6 +801,7 @@ describe("connection", () => {
   });
 
   it("keeps Root active across SSE reconnect", async () => {
+    history.replaceState(null, "", `/#${ROOT_ID}`);
     state.taskId = ROOT_ID;
     let listCalls = 0;
     setFetch(async (url: string) => {
