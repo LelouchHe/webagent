@@ -13,6 +13,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { emptyExecutionSlot, Store } from "../src/store.ts";
+import { generateShareToken } from "../src/tokens.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import {
   TaskBusyError,
@@ -1408,7 +1409,7 @@ describe("TaskManager", () => {
     it("gives an exit's replacement Root a fresh session on first use", async () => {
       const oldRootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(oldRootId, "test-agent", "agent-old");
-      const rootId = store.replaceRoot().rootTaskId;
+      const rootId = store.replaceRoot(store.rootTaskId).rootTaskId;
 
       let newSessionCalls = 0;
       const bridge = {
@@ -1438,7 +1439,7 @@ describe("TaskManager", () => {
     it("restores saved config when lazily materializing a replacement Root", async () => {
       const oldRootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(oldRootId, "test-agent", "agent-old");
-      const rootId = store.replaceRoot().rootTaskId;
+      const rootId = store.replaceRoot(store.rootTaskId).rootTaskId;
       store.updateTaskConfig(rootId, "model", "saved-model");
       store.updateTaskConfig(rootId, "mode", "saved-mode");
       store.updateTaskConfig(rootId, "reasoning_effort", "high");
@@ -1519,6 +1520,51 @@ describe("TaskManager", () => {
   });
 
   describe("Root exit replaces the Root", () => {
+    it("lets only one of two concurrent exits of a shared Root replace it", async () => {
+      // A shared old Root survives its exit as a tombstone, so a second exit
+      // queued behind the first can still lock it. It must not then delete
+      // the Root the first exit just created.
+      const rootId = store.ensureRootTask(tmpDir).id;
+      store.attachAgentSession(rootId, "test-agent", "agent-root");
+      const token = generateShareToken();
+      store.insertSharePreview({ token, taskId: rootId, snapshotSeq: 1 });
+      store.activateShare(token);
+      let sessions = 0;
+      const bridge = {
+        async newSession() {
+          sessions++;
+          return { sessionId: `agent-root-${sessions}`, configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession() {
+          throw new Error("loadSession should not be called");
+        },
+      };
+      sm.attachExecutionBridge(bridge);
+
+      const results = await Promise.allSettled([sm.exitRoot(), sm.exitRoot()]);
+
+      const fulfilled = results.filter(
+        (result) => result.status === "fulfilled",
+      );
+      const rejected = results.filter((result) => result.status === "rejected");
+      assert.equal(fulfilled.length, 1, "exactly one exit replaces the Root");
+      assert.equal(rejected.length, 1);
+      assert.equal(
+        rejected[0].reason?.name,
+        TaskNotFoundError.name,
+        "the stale exit names a Root that is no longer the Root",
+      );
+      const newRootId = (
+        fulfilled[0] as PromiseFulfilledResult<{ rootTaskId: string }>
+      ).value.rootTaskId;
+      assert.equal(store.rootTaskId, newRootId);
+      assert.ok(store.getTask(newRootId), "the replacement it named exists");
+      assert.equal(sessions, 1, "one replacement was made live, once");
+    });
+
     it("makes the replacement Root live before the exit returns, retiring the old execution", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(rootId, "test-agent", "agent-root");

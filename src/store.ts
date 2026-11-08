@@ -1397,9 +1397,19 @@ export class Store {
    * Root is no longer protected, a share-backed task in it survives as a
    * tombstone under the *new* Root, and every removed execution is reported for
    * retirement.
+   *
+   * `expectedRootId` is the Root the caller locked and checked. Replacing is
+   * destructive, so it never retargets: if another exit already replaced that
+   * Root, this refuses instead of deleting the Root that exit just created.
    */
-  replaceRoot(): { rootTaskId: string; affected: TaskDelete[] } {
+  replaceRoot(expectedRootId: string): {
+    rootTaskId: string;
+    affected: TaskDelete[];
+  } {
     const oldId = this.rootTaskId;
+    if (oldId !== expectedRootId) {
+      throw new Error(`Root ${expectedRootId} was already replaced`);
+    }
     const old = this.getTaskIncludingDeleted(oldId);
     if (!old) throw new Error("Root task not found");
     const newId = randomUUID();

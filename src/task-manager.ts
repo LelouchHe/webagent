@@ -3042,6 +3042,13 @@ export class TaskManager implements ObligationHost {
     const release = await this.acquireTaskTreeMutationLock(oldRootId);
     let result: { rootTaskId: string; affected: TaskDelete[] };
     try {
+      // Another exit may have replaced this Root while this one waited (for
+      // the agent or for the lock). A shared old Root survives as a tombstone,
+      // so its lock is still grantable; the busy check below would then look at
+      // the old tree while the replacement deleted the new one. Refuse instead.
+      if (this.store.rootTaskId !== oldRootId) {
+        throw new TaskNotFoundError(oldRootId);
+      }
       const affectedIds = [
         oldRootId,
         ...this.store.getDescendantTaskIds(oldRootId),
@@ -3052,7 +3059,7 @@ export class TaskManager implements ObligationHost {
       if (busyTask) {
         throw new TaskBusyError(busyTask, this.store.getTaskPath(busyTask));
       }
-      result = this.store.replaceRoot();
+      result = this.store.replaceRoot(oldRootId);
       for (const entry of result.affected) {
         this.retireExecution(entry.id, entry.agentId, entry.agentSessionId);
         this.releaseTaskRuntime(entry.id, entry.mode);

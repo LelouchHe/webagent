@@ -420,7 +420,7 @@ describe("root first-use states", () => {
       const oldRootId = local.store.rootTaskId;
       // Build the empty-slot state first: one real execution, then an exit.
       await local.tasks.ensureTaskLive(oldRootId);
-      const rootId = local.store.replaceRoot().rootTaskId;
+      const rootId = local.store.replaceRoot(local.store.rootTaskId).rootTaskId;
       assert.equal(
         local.store.getAgentSessionId(rootId),
         emptyExecutionSlot(rootId),

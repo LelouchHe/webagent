@@ -486,7 +486,9 @@ Two cases have no execution to create and answer `200` without one: a Root that
 was never bound (the new Root's first prompt attaches an execution) and a Root
 whose recorded agent is no longer configured (an operation rotates it). A
 session that fails *after* the commit leaves the new Root's empty execution
-slot, which the next use materializes. The response names the replacement:
+slot, which the next use materializes. An exit of a Root that another exit has
+already replaced answers `404`: the exit never retargets to the new Root. The
+response names the replacement:
 
 ```json
 {

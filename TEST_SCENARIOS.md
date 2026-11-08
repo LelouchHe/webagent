@@ -498,6 +498,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a Root exit spans every agent, retiring each execution once; the new Root keeps the agent as one empty owner slot
   - exiting Root makes the replacement Root live before the request returns, so the caller lands on a live, idle task; a Root whose agent cannot start is refused before anything is destroyed, leaving the Root, the tree, the events, and the retired executions untouched
   - a child create that was waiting for the tree lock behind an exit fails with `TaskNotFoundError`, because the parent it named (the old Root) is gone
+  - two concurrent exits of a shared Root: exactly one replaces it, the other fails with `TaskNotFoundError`, and the replacement it named still exists and was made live once
 
 - `test/runtime-authority.test.ts`
   - one `seq` source across a real A→B rotation (two Stores): the binding's agent and session both move, two client cursors accept every patch, and the post-rotation snapshot is never superseded
@@ -517,7 +518,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - delete, tombstone reap, and empty-task GC refuse the Root even when its tombstone flag is corrupted
   - `getParentTask` accepts the global Root for another agent's task
   - reset sentinels cover events, client_ops, attachments, compact summaries, previews, and descendants; Root keeps an ownership binding holding its own `no-execution:<id>` slot and reports the retired execution
-  - `replaceRoot` inserts a new Root (new id; same directory, title, model, and agent as an empty slot; no history), moves the `workspace` pointer durably, and deletes the old tree in one transaction; a failure part-way leaves the old Root, its tree, and its binding as they were
+  - `replaceRoot` inserts a new Root (new id; same directory, title, model, and agent as an empty slot; no history), moves the `workspace` pointer durably, and deletes the old tree in one transaction; a failure while deleting the old tree (after the in-memory pointer moved) leaves the old Root, its tree, its binding, and both the in-memory and stored pointer as they were; a caller naming a Root that is no longer the Root is refused
   - a shared Root is tombstoned and still replaced, and is reapable once no longer the Root
   - binding write authority: a foreign attach is refused with no fact emitted, detach removes the binding, the same session id from two agents is two different executions, one outermost commit emits one fact per task, and a rolled-back batch is discarded rather than leaked into the next commit
   - deletion follows the task tree: a foreign survivor is deleted with its parent's subtree, a share-backed survivor is tombstoned and re-parented under Root with its history/share/attachment intact, and a Root exit keeps a shared tombstone alive, re-parented under the new Root
@@ -649,6 +650,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - task switches require successful busy snapshot hydration; provisional hash is written before detail fetch, then Root canonicalization waits for detail authority
   - hashless startup preserves user-input-first selection and canonical Root fallback
   - Root is addressed by its own `#<id>` deep link like every task, and stays active across a reconnect, including one whose config request fails
+  - an SSE `task_deleted` for the current (old) Root follows its `replacedBy` to the new Root even when another task is more recently active (`test/events.test.ts`)
   - foreign `root-*` ids are ordinary 404s and never aliases; fallback selection uses the current connection's scoped task array
   - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
   - existing-window and cold-start service-worker routing

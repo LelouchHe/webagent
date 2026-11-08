@@ -967,7 +967,7 @@ describe("Store", () => {
       // An exit replaces Root and deletes the old tree in one outermost
       // transaction: one batch, one fact per task.
       const oldRootId = store.rootTaskId;
-      const { rootTaskId: newRootId } = store.replaceRoot();
+      const { rootTaskId: newRootId } = store.replaceRoot(store.rootTaskId);
 
       assert.deepEqual(batches.slice(0, 2), [[oldRootId], ["child"]]);
       assert.equal(batches.length, 3);
@@ -1267,7 +1267,7 @@ describe("Store", () => {
         root.id,
       );
 
-      const result = store.replaceRoot();
+      const result = store.replaceRoot(store.rootTaskId);
       const newRootId = result.rootTaskId;
       assert.notEqual(newRootId, root.id);
       assert.equal(store.rootTaskId, newRootId);
@@ -1320,7 +1320,7 @@ describe("Store", () => {
       store.insertSharePreview({ token, taskId: rootId, snapshotSeq: 1 });
       store.activateShare(token);
 
-      const result = store.replaceRoot();
+      const result = store.replaceRoot(store.rootTaskId);
       assert.deepEqual(result.affected, [
         { id: rootId, mode: "soft", agentSessionId: null, agentId: null },
       ]);
@@ -1350,7 +1350,9 @@ describe("Store", () => {
       store.activateShare(token);
       assert.equal(store.deleteTask("orphan").mode, "soft");
 
-      const { rootTaskId: newRootId, affected } = store.replaceRoot();
+      const { rootTaskId: newRootId, affected } = store.replaceRoot(
+        store.rootTaskId,
+      );
       assert.deepEqual(
         affected.map((entry) => entry.id).sort(),
         ["a-task", "orphan", rootId].sort(),
@@ -1366,17 +1368,37 @@ describe("Store", () => {
       const rootId = store.ensureRootTask("/root").id;
       store.attachAgentSession(rootId, "test-agent", "root-session");
       store.createTask("a-task", "/a", "auto", "test-agent", "agent-a", rootId);
+      // Fail while deleting the old tree: after the new Root row is written
+      // *and* the in-memory pointer has moved, so both the SQL rollback and
+      // the pointer's restoration are exercised.
       store["db"].exec(
-        `CREATE TRIGGER refuse_new_root BEFORE UPDATE ON workspace
+        `CREATE TRIGGER refuse_delete BEFORE DELETE ON tasks
          BEGIN SELECT RAISE(ABORT, 'refused'); END`,
       );
 
-      assert.throws(() => store.replaceRoot(), /refused/);
-      assert.equal(store.rootTaskId, rootId);
+      assert.throws(() => store.replaceRoot(rootId), /refused/);
+      assert.equal(store.rootTaskId, rootId, "the in-memory pointer is back");
       assert.ok(store.getTask(rootId));
       assert.ok(store.getTask("a-task"));
       assert.equal(store.getAgentSessionId(rootId), "root-session");
-      assert.equal(store.listTasks().length, 2);
+      assert.equal(store.listTasks().length, 2, "no new Root row survived");
+      store["db"].exec("DROP TRIGGER refuse_delete");
+      const reopened = new Store(tmpDir);
+      try {
+        assert.equal(reopened.rootTaskId, rootId, "the stored pointer is back");
+      } finally {
+        reopened.close();
+      }
+    });
+
+    it("refuses to replace a Root that is no longer the Root", () => {
+      const rootId = store.ensureRootTask("/root").id;
+      const { rootTaskId: newRootId } = store.replaceRoot(rootId);
+      // A second, stale caller names the old Root: it must not delete the
+      // Root the first replacement created.
+      assert.throws(() => store.replaceRoot(rootId), /already replaced/);
+      assert.equal(store.rootTaskId, newRootId);
+      assert.ok(store.getTask(newRootId));
     });
 
     it("deletes a foreign survivor under the global Root", () => {

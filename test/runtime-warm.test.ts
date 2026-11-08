@@ -342,7 +342,7 @@ describe("background warm-up", () => {
     } as unknown as DeliveryBridge;
 
     store.attachAgentSession(store.rootTaskId, "agent-a", "root-session");
-    store.replaceRoot();
+    store.replaceRoot(store.rootTaskId);
     tasks.attachExecutionBridge(bridge);
 
     // A read starts the materialization of the empty slot.
@@ -403,7 +403,7 @@ describe("background warm-up", () => {
     // happen: the new Root holds the empty execution slot. Simulated at the
     // store (the manager's own exit would make it live before returning).
     store.attachAgentSession(store.rootTaskId, "agent-a", "root-session");
-    store.replaceRoot();
+    store.replaceRoot(store.rootTaskId);
     assert.equal(
       store.getCurrentExecutionBinding(store.rootTaskId)?.agent_session_id,
       emptyExecutionSlot(store.rootTaskId),
