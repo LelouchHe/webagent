@@ -7,6 +7,13 @@ A task-first web UI for [ACP](https://agentclientprotocol.com/)-compatible agent
 
 The web UI is a thin wrapper: the browser client stays small because the substance lives in the server behind it, where work is organized as **Tasks** — durable units with their own history, attachments, working directory, lifecycle, and parent/child tree. Each Task is bound to an ACP session that executes it, so a Task survives its session being resumed, rotated (`/clear`), or replaced, and Tasks work with each other by creating children, sending durable messages, and handing work back. One instance can drive **several named ACP agents** at once: the agent a Task runs on is provenance you pick at creation or rotate later, never a separate scope, so a parent on one agent can dispatch to a child on another and still supervise it through the same tree. The same model is served as a documented REST + SSE API, so anything else you build can drive it too. Nothing leaves your machine.
 
+> **Status: pre-1.0.** WebAgent is under active development, so breaking changes
+> ship whenever the contract needs them: configuration settings, REST/SSE fields
+> and events, MCP tool names, and sometimes the database schema, which is not
+> migrated before 1.0 — back up and reset `./data/` when a release says so. Each
+> release's [changelog](CHANGELOG.md) lists its breaking changes first, and the
+> [pre-1.0 reset policy](docs/schema.md#pre-10-reset-policy) covers the data side.
+
 ## Highlights
 
 - **Task-first, thin client** — the browser is a thin wrapper over a server that treats the Task as the durable unit of work: `+api-fix` creates a named child Task, `@api-fix` opens it or sends it a message, and each Task keeps its history, working directory, and place in the tree while its agent session can be resumed, rotated, or replaced.
