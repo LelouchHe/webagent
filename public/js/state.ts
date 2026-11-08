@@ -1082,9 +1082,11 @@ export function getHashTaskId(): string | null {
 }
 
 /**
- * Start a new connection epoch. Work begun under an earlier epoch (a
- * navigation, a new-task request, a fallback) is abandoned rather than applied
- * to the connection that replaced it.
+ * Start a new connection epoch: on every connect and on every disconnect. It
+ * is the client's one connection identity. Work begun under an earlier epoch
+ * (a stream still minting its ticket, a handshake recovery, a navigation, a
+ * new-task request, a fallback) is abandoned rather than applied to the
+ * connection that replaced it, or to no connection at all.
  */
 export function beginConnectionEpoch(): number {
   state.connectionEpoch++;

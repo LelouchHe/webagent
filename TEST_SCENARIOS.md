@@ -781,6 +781,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - last-task auto-resume with the Root fallback, identified by the task list's `isRoot` flag rather than by the id's value
   - new-task creation when no previous task exists
   - reconnect behavior without duplicate history replay
+  - one connection epoch, bumped on connect and on disconnect: a config response that arrives after the stream dropped (before any reconnect) installs nothing
   - incremental sync on reconnect when task matches
   - visibility-change sync (hidden→visible)
   - task-switch abort on generation change

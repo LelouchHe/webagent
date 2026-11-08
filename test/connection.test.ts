@@ -693,6 +693,44 @@ describe("connection", () => {
     );
   });
 
+  it("abandons a connection's config once it disconnects, before any reconnect", async () => {
+    let releaseConfig!: (response: MockResponse) => void;
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      fetchCalls.push({ url, init });
+      if (url === "/api/v1/sse-ticket" && init?.method === "POST") {
+        return mockResponse({ ticket: "tkt-test", expiresIn: 60 });
+      }
+      if (url === "/api/v1/config") {
+        return new Promise<MockResponse>((resolve) => {
+          releaseConfig = resolve;
+        });
+      }
+      if (url.includes("/visibility")) return mockResponse({});
+      return mockResponse([]);
+    }) as unknown as typeof fetch;
+
+    connection.connect();
+    const es = await latestES();
+    // The stream drops while its config is still in flight. The reconnect is
+    // only scheduled (its timer is not run here), so no connection exists.
+    es.onerror?.();
+
+    releaseConfig(
+      mockResponse({
+        configOptions: [],
+        agents: [{ id: "stale" }],
+        defaultAgentId: "stale",
+      }),
+    );
+    await flush(20);
+
+    assert.deepEqual(
+      getAgentDirectory().ids,
+      [],
+      "a disconnected connection's config must not install a directory",
+    );
+  });
+
   it("does not install an agent directory from a superseded connection", async () => {
     let releaseConfig!: (response: MockResponse) => void;
     let configCalls = 0;

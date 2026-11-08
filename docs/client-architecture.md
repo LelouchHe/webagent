@@ -393,10 +393,12 @@ means "resume the most recent Task" (below). The client keeps no Root identity
 of its own: the one place it needs to know which Task is Root (the hashless
 fallback) reads the task list's `isRoot` flag.
 
-Navigation, new-task requests, and fallbacks capture the **connection epoch**
+The client has one connection identity, the **connection epoch**
 (`state.connectionEpoch`, bumped by `beginConnectionEpoch` on every connect and
-disconnect) and abandon their result if it moved, so work begun under one
-connection is never applied to the connection that replaced it.
+every disconnect). Stream setup, handshake recovery, navigation, new-task
+requests, and fallbacks capture it and abandon their result if it moved, so
+work begun under one connection is never applied to the connection that
+replaced it, or to the gap after a disconnect.
 
 `switchToTask` writes the requested hash before fetching detail, and
 activation (`task_created`) writes it again for the Task it installs; the hash
