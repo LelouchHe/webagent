@@ -158,6 +158,22 @@ time. An entry without a "closing condition" is a wish, not an issue.
   the second accessor on `Element`). *Closing:* delete the shim when
   https://github.com/capricorn86/happy-dom/issues/2182 ships a fix.
 
+- **Trip-wire: `typescript` stops at 6.0.3 while 7.x is published.** TS 7 is
+  the native (Go) rewrite: the package root exports only
+  `{ version, versionMajorMinor }`, `tsc` becomes a launcher for a bundled
+  binary, and the compiler API moved to `typescript/unstable/ast` plus
+  `unstable/ast/is` — entrypoints that are themselves marked unstable.
+  typescript-eslint refuses to load on any compiler with major version >= 7
+  (it throws from its entrypoint; support for >= 7.1 is tracked in
+  typescript-eslint#10940), and `test/http-status.test.ts` consumes the old
+  surface (`ts.Expression`, `ts.isIdentifier`, `ts.isPropertyAccessExpression`),
+  which on 7.0.2 fails to typecheck against `lib/version`. 6.0.x is the bridge
+  release both consume. *Closing:* raise to 7.x once typescript-eslint supports
+  it, then either move the http-status test to `typescript/unstable/ast` /
+  `unstable/ast/is` or drop its AST dependency. Running TS 7 side-by-side behind
+  a `typescript-native` alias is the only interim route and is not worth the
+  ~1s it saves on a 2.2s typecheck.
+
 ## Deferred features (design decided, not scheduled)
 
 - **An agent's output file has no automatic channel to a person — postponed,
