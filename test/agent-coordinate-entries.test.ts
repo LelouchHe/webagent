@@ -6,11 +6,11 @@ import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
  * The three entries that accept a coordinate — `+`, `/new`, `/clear` — share
  * one parse and one set of wire semantics.
  *
- * An empty suffix means the directory the submitting task runs in on every
- * entry: the creates state it on the wire (`+` and `/new` send the cwd), and
- * `/clear` omits the field, which the server reads as "keep the directory".
- * The directory is one value; only the request shape differs, because an
- * omitted `cwd` on create would mean the server default instead.
+ * An empty suffix means the directory the submitting task runs in, on every
+ * entry, and all three state it on the wire: the agent is the only thing a bare
+ * `copilot:` changes. Omitting the field instead would mean the server default
+ * on a create and "keep the directory" on a clear, which is one input with two
+ * meanings.
  */
 
 interface Call {
@@ -210,7 +210,7 @@ describe("coordinate entries", () => {
       { command: "/clear copilot:rel", cwd: "/work/rel" },
       { command: "/new copilot:rel", cwd: "/work/rel" },
       { command: "+fix copilot:rel", cwd: "/work/rel" },
-      { command: "/clear copilot:", cwd: null },
+      { command: "/clear copilot:", cwd: "/work" },
       { command: "/new copilot:", cwd: "/work" },
       { command: "+fix copilot:", cwd: "/work" },
       { command: "/clear copilot:~/a  b", cwd: "~/a  b" },
@@ -232,13 +232,7 @@ describe("coordinate entries", () => {
       const clear = calls.find((call) => call.url.endsWith("/clear"));
       const body = JSON.parse((create ?? clear)!.init!.body ?? "{}");
       assert.equal(body.agentId, "copilot", input.command);
-      if (input.cwd === null) {
-        // `/clear` keeps the directory by omitting the field; the creates say
-        // the same directory explicitly.
-        assert.equal("cwd" in body, false, `${input.command} omits the field`);
-      } else {
-        assert.equal(body.cwd, input.cwd, input.command);
-      }
+      assert.equal(body.cwd, input.cwd, input.command);
     }
   });
 
@@ -275,11 +269,11 @@ describe("coordinate entries", () => {
     });
   });
 
-  it("/clear with an empty coordinate suffix sends no cwd at all", async () => {
+  it("/clear with an empty coordinate suffix states the task directory", async () => {
     await commands.handleSlashCommand("/clear copilot:");
     const body = bodyOf("POST", "/clear");
     assert.equal(body.agentId, "copilot");
-    assert.equal("cwd" in body, false, "the server owns the task directory");
+    assert.equal(body.cwd, "/work");
   });
 
   it("treats outer whitespace as the separator, never as a path byte", async () => {

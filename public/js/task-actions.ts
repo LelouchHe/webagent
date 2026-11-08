@@ -84,10 +84,8 @@ export async function replaceCurrentTask({
   showCwd = false,
   agentId = null,
 }: {
-  /** `null` = omit the field, so the server keeps the task directory as it is
-   *  when it handles the rotation. `undefined` keeps the legacy behavior of
-   *  sending the directory this client currently believes in. */
-  cwd?: string | null;
+  /** Omitted means "the directory this client currently believes in". */
+  cwd?: string;
   showCwd?: boolean;
   agentId?: string | null;
 } = {}): Promise<void> {
@@ -96,7 +94,7 @@ export async function replaceCurrentTask({
     return;
   }
   const oldId = state.taskId;
-  const nextCwd = cwd === null ? null : (cwd ?? state.taskCwd ?? undefined);
+  const nextCwd = cwd ?? state.taskCwd ?? undefined;
   // Submission-time facts for a late failure: the view can move elsewhere
   // while the rotation is pending, and the rescue must not borrow the new
   // task's agent or directory.
@@ -113,7 +111,7 @@ export async function replaceCurrentTask({
   );
   try {
     const result = (await api.clearTask(oldId, {
-      ...(nextCwd === null ? {} : { cwd: nextCwd }),
+      ...(nextCwd === undefined ? {} : { cwd: nextCwd }),
       agentId,
     })) as unknown as ClearTaskResult;
     resetClearedExecution();

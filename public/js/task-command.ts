@@ -792,21 +792,18 @@ async function executeCreateTask(
   const failedAgentId = coordinate.agentId ?? state.taskAgentId;
   const failedCwd = state.taskCwd;
   let agentId: string | undefined;
-  let cwd: string | undefined;
+  let cwd: string;
   if (coordinate.agentId !== null) {
-    const resolved = await resolveCoordinateTarget(
-      {
-        agentId: coordinate.agentId,
-        rawSuffix: coordinate.cwd,
-      },
-      "task-cwd",
-    );
+    const resolved = await resolveCoordinateTarget({
+      agentId: coordinate.agentId,
+      rawSuffix: coordinate.cwd,
+    });
     if ("error" in resolved) {
       addSystem(`err: create failed — ${resolved.error}`);
       return;
     }
     agentId = resolved.agentId;
-    cwd = resolved.cwd ?? undefined;
+    cwd = resolved.cwd;
   } else {
     const resolved = await resolveCreateCwd(rawCwd.trim());
     if ("error" in resolved) {
@@ -820,7 +817,7 @@ async function executeCreateTask(
   // first instruction follows as a separate `@<title> <body>` send.
   const body = {
     parentId: currentTaskId,
-    ...(cwd !== undefined ? { cwd } : {}),
+    cwd,
     title,
     inheritFromTaskId: currentTaskId,
     ...(agentId !== undefined ? { agentId } : {}),

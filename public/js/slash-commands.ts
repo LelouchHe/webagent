@@ -404,19 +404,16 @@ export async function submitCreateField(raw: string): Promise<void> {
   let agentId: string | null = null;
   let cwd: string | undefined;
   if (coordinate.agentId !== null) {
-    const target = await resolveCoordinateTarget(
-      {
-        agentId: coordinate.agentId,
-        rawSuffix: coordinate.cwd,
-      },
-      "task-cwd",
-    );
+    const target = await resolveCoordinateTarget({
+      agentId: coordinate.agentId,
+      rawSuffix: coordinate.cwd,
+    });
     if ("error" in target) {
       addSystem(`err: create failed — ${target.error}`);
       return;
     }
     agentId = target.agentId;
-    cwd = target.cwd ?? undefined;
+    cwd = target.cwd;
   } else {
     const path = raw.trim();
     if (path === "") {
@@ -443,27 +440,23 @@ export async function submitCreateField(raw: string): Promise<void> {
  * Turn a raw `/clear` cwd field into the rotation request. Enter and the
  * picker's action row both call this.
  *
- * A coordinate's empty suffix omits the cwd so the server keeps the task
- * directory as it is when it handles the rotation. A plain path keeps the
- * historical pass-through (the server expands `~` and validates it).
+ * A coordinate resolves exactly like it does on create: an empty suffix is the
+ * directory this task runs in. A plain path keeps the historical pass-through
+ * (the server expands `~` and validates it).
  */
 export async function submitClearField(raw: string): Promise<void> {
   const coordinate = parseCoordinate(raw, configuredAgentIds());
   if (coordinate.agentId !== null) {
-    const target = await resolveCoordinateTarget(
-      {
-        agentId: coordinate.agentId,
-        rawSuffix: coordinate.cwd,
-      },
-      "omit",
-    );
+    const target = await resolveCoordinateTarget({
+      agentId: coordinate.agentId,
+      rawSuffix: coordinate.cwd,
+    });
     if ("error" in target) {
       addSystem(`err: Failed to clear task — ${target.error}`);
       return;
     }
     await replaceCurrentTask({
       cwd: target.cwd,
-      showCwd: target.cwd !== null,
       agentId: target.agentId,
     });
     return;

@@ -60,26 +60,12 @@ export function parseCoordinate(
   };
 }
 
-/** A settled coordinate resolved to the wire shape. `cwd: null` means the
- *  field is omitted; only `/clear` sends that, where the omission keeps the
- *  task's own directory and the server owns the value. */
+/** A settled coordinate resolved to the wire shape. Both entries state the
+ *  directory, so the server never has to infer it from the request shape. */
 export interface CoordinateTarget {
   agentId: string;
-  cwd: string | null;
+  cwd: string;
 }
-
-/**
- * What an empty coordinate suffix means on the entry that submits it.
- *
- * `"task-cwd"` (both create entries) is the directory the submitting task runs
- * in — the same thing a create with no path at all does. `"omit"` (`/clear`)
- * leaves the field out, which the server reads as "keep the directory as it
- * is". The two describe the same directory but are not the same request, and
- * only the create side must state it: an omitted `cwd` on create means the
- * server's default directory, so a bare `copilot:` would silently move the new
- * task out of the directory every other unnamed create stays in.
- */
-export type EmptySuffixMeaning = "task-cwd" | "omit";
 
 /**
  * Resolve a settled coordinate's suffix for a request.
@@ -89,22 +75,17 @@ export type EmptySuffixMeaning = "task-cwd" | "omit";
  * suffix test runs on the trimmed value, so `copilot: ` and `copilot:` are the
  * same request. The parser itself still reports the raw text; trimming happens
  * here, after parsing and before the request.
+ *
+ * An empty suffix is the directory the submitting task runs in, the same thing a
+ * create with no path at all does, so the agent is the only thing a bare
+ * `copilot:` changes. `resolveCreateCwd("")` also probes that directory, like
+ * any other path.
  */
-export async function resolveCoordinateTarget(
-  coordinate: { agentId: string; rawSuffix: string },
-  emptySuffix: EmptySuffixMeaning,
-): Promise<CoordinateTarget | { error: string }> {
-  const suffix = coordinate.rawSuffix.trim();
-  if (suffix === "") {
-    if (emptySuffix === "omit")
-      return { agentId: coordinate.agentId, cwd: null };
-    // Empty is the current task directory, probed like any other create path so
-    // the request states the directory it will actually use.
-    const here = await resolveCreateCwd("");
-    if ("error" in here) return here;
-    return { agentId: coordinate.agentId, cwd: here.cwd };
-  }
-  const resolved = await resolveCreateCwd(suffix);
+export async function resolveCoordinateTarget(coordinate: {
+  agentId: string;
+  rawSuffix: string;
+}): Promise<CoordinateTarget | { error: string }> {
+  const resolved = await resolveCreateCwd(coordinate.rawSuffix.trim());
   if ("error" in resolved) return resolved;
   return { agentId: coordinate.agentId, cwd: resolved.cwd };
 }

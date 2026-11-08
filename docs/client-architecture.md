@@ -462,13 +462,12 @@ directory exists and fails as a directory error when it does not. `./` is the
   still show the raw text. A `rawSlashArgument` helper keeps the raw remainder
   available because the normalized `arg` used by the other slash commands
   cannot represent it.
-- **An empty suffix means the submitting task's own directory.** The creates
-  (`+`, `/new`) send that directory explicitly, so `copilot:` and a bare
-  `/new` land in the same place and only the agent differs. `/clear` omits the
-  `cwd` field instead, which the server reads as "keep the directory as it is".
-  The directory is one value even though the two requests differ in shape: an
-  omitted `cwd` on create would mean the *server's* default directory, which
-  would move a plain `copilot:` out of the directory every other unnamed create
+- **An empty suffix means the submitting task's own directory.** All three
+  entries state that directory on the wire, so `copilot:` and a bare `/new` act
+  in the same place and only the agent differs. This is one rule, not two: the
+  alternative — omitting the field — means the *server's* default directory on a
+  create and "keep the directory" on a clear, i.e. one input with two meanings,
+  and a create that silently leaves the directory every other unnamed create
   stays in.
 - **The preview never hides the choice.** A settled coordinate previews as one
   `previewValue` field, `<agent>:<cwd>` with no whitespace between them, so it
@@ -517,9 +516,8 @@ are an open set that must be completed. Therefore no menu offers agent rows:
 - **Picking a path after a coordinate.** For the two walker entries
   (`/clear`, `/new`), a settled coordinate decorates the fetched path rows: they
   filter on the suffix, display `<agent>:<cwd>`, and their selection submits
-  that agent with the directory (`/clear <id>:` sends no `cwd`; `/new <id>:`, or
-  the bare form, states the directory the task already runs in). `+` builds its
-  own rows instead: its path
+  that agent with the directory (`/clear <id>:` and `/new <id>:` both state the
+  directory the task already runs in). `+` builds its own rows instead: its path
   rows keep the plain directory label, and the settled `<agent>:` lives in the
   fill value (so completing a path keeps the prefix without relabelling the
   row).

@@ -118,8 +118,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/multi-agent-cwd-defaults.test.ts`
   - an omitted `cwd` on `/clear` keeps the task's own directory while an omitted
     `cwd` on create uses the server default, even for a child of a task that
-    runs elsewhere (API contract; the client's create entries state the
-directory instead of relying on it)
+    runs elsewhere (API contract; no client entry relies on it — see
+    `agent-coordinate-entries.test.ts`)
 
 - `test/multi-agent-config-race.test.ts` (HTTP)
   - a configuration request parked in `readBody` while the task is cleared onto another agent is refused with `409`, and no configuration request reaches the new execution
@@ -226,9 +226,9 @@ directory instead of relying on it)
   - `/clear` sends the coordinate's agent and raw cwd; `/new` and `+` send the
     task directory for an empty suffix (the same directory a bare create uses)
     and the raw cwd otherwise
-  - all three project the same `(agent, cwd)` for the same coordinate; only the
-    wire shape of an empty suffix differs (`/clear` omits the field, the creates
-    state the directory)
+  - all three project the same `(agent, cwd)` for the same coordinate, including
+    an empty suffix: the directory the task runs in, stated on the wire by every
+    entry
   - an unconfigured prefix carries no `agentId` and resolves as a path; a
     configured `notes` prefix reads as a coordinate; a missing directory reports
     the raw value and never claims "not configured"
@@ -244,7 +244,7 @@ directory instead of relying on it)
   - `ApiError` lifts that `agentId` out of the body (and leaves it `null` when
     the body names none)
   - the picker's action row and Enter submit the same `(agent, cwd)` projection
-    for `/new` and `/clear`; `/clear <agent>:` sends no `cwd` field at all
+    for `/new` and `/clear`; `/clear <agent>:` states the task directory
   - the fidelity boundary: `copilot:~/a ` equals `copilot:~/a`, `copilot: `
     equals `copilot:`, and interior double spaces survive
   - a late 503 reports the agent and directory captured at submission, not the
@@ -1235,8 +1235,8 @@ directory instead of relying on it)
     on the wire, when the directory exists; a missing one fails as a directory
     error and never as an unconfigured agent
   - `mock2:` on `/new` stays in the task directory (and the request states it),
-    on `/clear` it keeps the same directory by omitting the field, and an
-    explicit cwd on create lands there; all three entries agree on the semantic
+    on `/clear` it keeps the same directory and states it too, and an explicit
+    cwd on create lands there; all three entries agree on the semantic
     `(agent, cwd)` projection
   - a child created for `mock2` is bound to it at creation and carries no
     rotation record, while the parent keeps its own binding

@@ -221,15 +221,15 @@ test("an empty coordinate suffix stays in the task directory", async ({
   expect(created.cwd).toBe(work);
   expect(bodies.creates.at(-1)).toMatchObject({ agentId: "mock2", cwd: work });
 
-  // Clear: the same coordinate keeps the task directory, and it really sends
-  // no cwd field (the server owns the directory at handling time).
+  // Clear: the same coordinate keeps the task directory, and states it like a
+  // create does — one rule for the empty suffix, no second wire shape.
   const clearsBefore = bodies.clears.length;
   await submit(page, "/clear mock2:");
+  await expect.poll(() => bodies.clears.length).toBeGreaterThan(clearsBefore);
+  expect(bodies.clears.at(-1)).toMatchObject({ agentId: "mock2", cwd: work });
   await expect
     .poll(async () => (await detail(page, createdId)).cwd)
     .toBe(created.cwd);
-  expect(bodies.clears.length).toBeGreaterThan(clearsBefore);
-  expect(bodies.clears.at(-1)).not.toHaveProperty("cwd");
 
   // Explicit cwd on create lands where it says.
   await submit(page, `/new mock2:${work}`);
