@@ -284,7 +284,7 @@ async function fallbackToNextTaskImpl(
     }
     if (state.rootTaskId === null) {
       installRootTaskId(
-        tasks.find((task) => task.id === "root")?.id,
+        tasks.find((task) => task.isRoot === true)?.id,
         rootAuthorityGeneration,
       );
     }

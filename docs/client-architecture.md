@@ -388,16 +388,19 @@ Promise.all([api.getTask(targetId), loadHistory(targetId)]).then(
 ### Hash Routing
 
 Child Tasks are identified by URL hash: `/#task-id`. The workspace's canonical
-Root omits the hash; it is the literal id `root` delivered by server authority.
-`#root` is a normal deep link. `GET /api/v1/tasks` returns an array; it is still
+Root omits the hash; its id is delivered by server authority, and the client
+never recognises Root by the id's value. `#root` is a normal deep link while
+the stored Root id is `root`. `GET /api/v1/tasks` returns an array; it is still
 scoped to the running agent today, and the merged workspace list is part of the
 multi-agent runtime step. The exact `rootTaskId` authority is also carried by detail,
 bootstrap/create/clear/reset responses, global/per-task `connected`,
 `task_created`, and `/api/v1/config`. On config failure, the client may
-identify the Root by its literal id in the task list it can read. Disconnect/
+identify the Root by the `isRoot` flag of the task list it can read. Disconnect/
 reconnect clears stored authority; only a response or event from the current
 connection generation can restore it. Per-task UI resets preserve it, except a
-hashless reconnect to `root` without authority deliberately asks the list first.
+hashless reconnect without authority deliberately asks the list first: only a
+known Root drops its hash, so a hashless display with no authority cannot be
+kept as-is.
 
 The client canonicalizes hashes only with authority for the current
 connection. `switchToTask` writes the requested hash before fetching detail; if

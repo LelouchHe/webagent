@@ -4,13 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import {
-  emptyExecutionSlot,
-  isEmptyExecutionSlot,
-  isReservedRootTaskId,
-  ROOT_TASK_ID,
-  Store,
-} from "../src/store.ts";
+import { ROOT_TASK_ID, Store } from "../src/store.ts";
 import { generateShareToken } from "../src/tokens.ts";
 
 describe("Store", () => {
@@ -501,11 +495,11 @@ describe("Store", () => {
       assert.equal(store.rootTaskId, "root");
     });
 
-    it("reserves only the exact literal id", () => {
-      assert.equal(isReservedRootTaskId("root"), true);
-      assert.equal(isReservedRootTaskId("root-2f3a"), false);
-      assert.equal(isReservedRootTaskId("root-forged"), false);
-      assert.equal(isReservedRootTaskId("Root"), false);
+    it("reserves only this database's exact Root id", () => {
+      assert.equal(store.isRootTaskId(store.rootTaskId), true);
+      assert.equal(store.isRootTaskId("root-2f3a"), false);
+      assert.equal(store.isRootTaskId("root-forged"), false);
+      assert.equal(store.isRootTaskId("Root"), false);
     });
 
     it("rejects only the exact literal Root as ordinary creation", () => {
@@ -804,14 +798,26 @@ describe("Store", () => {
       // ACP session ids are opaque strings, so the reserved prefix is not a
       // namespace claim: classification is exact equality with the value
       // generated for this task.
-      assert.equal(isEmptyExecutionSlot("a", emptyExecutionSlot("a")), true);
       assert.equal(
-        isEmptyExecutionSlot("root", emptyExecutionSlot("root")),
+        store.isEmptyExecutionSlot("a", store.emptyExecutionSlot("a")),
         true,
       );
-      assert.equal(isEmptyExecutionSlot("a", emptyExecutionSlot("b")), false);
-      assert.equal(isEmptyExecutionSlot("a", "no-execution:real-agent"), false);
-      assert.equal(isEmptyExecutionSlot("a", ""), false);
+      assert.equal(
+        store.isEmptyExecutionSlot(
+          store.rootTaskId,
+          store.emptyExecutionSlot(store.rootTaskId),
+        ),
+        true,
+      );
+      assert.equal(
+        store.isEmptyExecutionSlot("a", store.emptyExecutionSlot("b")),
+        false,
+      );
+      assert.equal(
+        store.isEmptyExecutionSlot("a", "no-execution:real-agent"),
+        false,
+      );
+      assert.equal(store.isEmptyExecutionSlot("a", ""), false);
     });
 
     it("refuses to store a reserved-shape session id for another task", () => {
@@ -836,8 +842,15 @@ describe("Store", () => {
       );
       assert.equal(store.getAgentSessionId("t3"), "real-session");
       // A task's own slot is still writable (rotation and Root reset need it).
-      store.replaceAgentSession("t3", "test-agent", emptyExecutionSlot("t3"));
-      assert.equal(store.getAgentSessionId("t3"), emptyExecutionSlot("t3"));
+      store.replaceAgentSession(
+        "t3",
+        "test-agent",
+        store.emptyExecutionSlot("t3"),
+      );
+      assert.equal(
+        store.getAgentSessionId("t3"),
+        store.emptyExecutionSlot("t3"),
+      );
     });
   });
 

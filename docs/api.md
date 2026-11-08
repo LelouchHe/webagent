@@ -152,10 +152,12 @@ already active in the browser.
 
 **Response** `200`: Array of `TaskSummary` (defined in `src/types.ts`). Each
 entry carries `agentId`: the agent of the task's current execution binding, or
-`null` when the task is unbound. `created_at` and `last_active_at` are rendered
-ISO-8601 UTC with `Z` (see [Timestamps](#timestamps)). Root identity is
-supplied additively by `/api/v1/config`, task detail/bootstrap/create/clear/reset
-responses, and SSE authority fields.
+`null` when the task is unbound, and `isRoot`: `true` only for the workspace
+Root, so a client never has to recognise Root by its id. `created_at` and
+`last_active_at` are rendered ISO-8601 UTC with `Z` (see
+[Timestamps](#timestamps)). The Root id itself is supplied additively by
+`/api/v1/config`, task detail/bootstrap/create/clear/reset responses, and SSE
+authority fields.
 
 ```json
 [
@@ -171,7 +173,8 @@ responses, and SSE authority fields.
       "created_at": "2025-01-15T10:30:00.123Z",
       "last_active_at": "2025-01-15T11:45:22.456Z",
       "workflow_status": "idle",
-    "hasUserInput": true
+    "hasUserInput": true,
+    "isRoot": false
   }
 ]
 ```

@@ -183,9 +183,10 @@ docs → tests). When executing it:
   `test/doc-coverage.test.ts`, so `docs/api.md` must move in the same
   commit as `src/routes.ts`.
 - URL hashes stay `#<task-id>` / hashless Root. Root identity is delivered by
-  detail/create/clear/reset/bootstrap/SSE/config payloads; clients compare
-  against the literal id `root`, never a prefix. `#root` is a normal deep link
-  to that task.
+  detail/create/clear/reset/bootstrap/SSE/config payloads and the task list's
+  `isRoot` flag; clients compare against that delivered id, never against a
+  literal value or a prefix. Server code asks `Store.isRootTaskId` instead of
+  comparing with the constant. `#root` is a normal deep link to that task.
 - Sweep: `docs/schema.md`, `docs/api.md`, `docs/share.md`, `docs/features.md`,
   `docs/client-architecture.md`, `docs/performance.md`, `README.md`,
   `CLAUDE.md`, `TEST_SCENARIOS.md`, and the unit/e2e suites.

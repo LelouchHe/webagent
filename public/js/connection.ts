@@ -344,7 +344,7 @@ async function resumeFromTaskList(
     if (!isCurrent()) return true;
     if (state.rootTaskId === null) {
       installRootTaskId(
-        tasks.find((task) => task.id === "root")?.id,
+        tasks.find((task) => task.isRoot === true)?.id,
         rootAuthorityGeneration,
       );
     }
@@ -416,10 +416,12 @@ async function initTask(
   // A hashless reconnect must keep the task already shown in the browser.
   // Root intentionally has no hash, so this guard must precede hashless
   // recent-task selection. When config failed, Root's authority is not yet
-  // installed: fall through to the task list so it can restore the literal
-  // Root instead of keeping a reconnect target with no Root authority.
-  const rootAuthorityMissing =
-    reconnectTaskId === "root" && state.rootTaskId === null;
+  // installed: fall through to the task list so it can restore Root instead of
+  // keeping a reconnect target with no Root authority. Without that authority
+  // the client cannot tell whether the hashless task is Root, and it must not
+  // guess from the id: `setHashTaskId` only drops the hash for a known Root, so
+  // a hashless display with no authority is never safe to keep as-is.
+  const rootAuthorityMissing = state.rootTaskId === null;
   if (
     !existingId &&
     reconnectTaskId &&

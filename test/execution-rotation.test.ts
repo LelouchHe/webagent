@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Store, emptyExecutionSlot } from "../src/store.ts";
+import { Store } from "../src/store.ts";
 import { TaskManager } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { ExecutionAdapter } from "../src/execution-adapter.ts";
@@ -325,7 +325,10 @@ describe("implicit owner rotation", () => {
     await tasks.resolveTaskExecution(store.rootTaskId);
     const rootSlot = store.getCurrentExecutionBinding(store.rootTaskId);
     assert.ok(rootSlot);
-    assert.equal(rootSlot.agent_session_id, emptyExecutionSlot("root"));
+    assert.equal(
+      rootSlot.agent_session_id,
+      store.emptyExecutionSlot(store.rootTaskId),
+    );
 
     // Both ordinary tasks are owned by the agent that just disappeared.
     const owner = openStore();
@@ -349,8 +352,8 @@ describe("implicit owner rotation", () => {
     assert.ok(second);
     assert.equal(first.agent_key, "agent-b");
     assert.equal(second.agent_key, "agent-b");
-    assert.equal(first.agent_session_id, emptyExecutionSlot("t1"));
-    assert.equal(second.agent_session_id, emptyExecutionSlot("t2"));
+    assert.equal(first.agent_session_id, store.emptyExecutionSlot("t1"));
+    assert.equal(second.agent_session_id, store.emptyExecutionSlot("t2"));
     assert.notEqual(first.agent_session_id, second.agent_session_id);
 
     // Both rotations are real: each task was taken over and can materialize.

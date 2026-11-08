@@ -776,7 +776,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/connection.test.ts`
   - hash-based task resume, using backend Root authority before hash canonicalization
-  - last-task auto-resume with the literal Root fallback
+  - last-task auto-resume with the Root fallback, identified by the task list's `isRoot` flag rather than by the id's value
   - new-task creation when no previous task exists
   - reconnect behavior without duplicate history replay
   - incremental sync on reconnect when task matches
@@ -786,12 +786,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 ### Supporting frontend / backend modules
 
+- `test/root-identity-structure.test.ts`
+  - no runtime code under `src/` or `public/js/` compares a task id with the literal Root value (the Store and the legacy-database guard own it)
+  - `ROOT_TASK_ID` is read only inside the Store: its declaration and the assignment that seeds `rootTaskId`
+
 - `test/routes-images-signed.test.ts`
   - signed upload and image retrieval
   - owner Root event history refreshes an expired attachment URL against the current derived task path
 
 - `test/routes.test.ts`
   - static file / API route basics
+  - task list flags exactly the store's Root with `isRoot`
   - events endpoint: limit/before pagination, backward-compat without limit
   - attachment upload (`POST /api/v1/tasks/:sid/attachments`): valid PNG, file (non-image) accepted, size limit enforcement, invalid task, JPEG normalization, UTF-8 filename round-trip (busboy `defParamCharset: utf8`), Content-Disposition emitted on download
   - push API routes (`/api/beta/push/*`): VAPID key, subscribe, unsubscribe, validation, no-push-service fallback

@@ -342,7 +342,7 @@ describe("connection", () => {
         return mockResponse(
           listResponse([
             { id: "recent-task", hasUserInput: true },
-            { id: ROOT_ID, hasUserInput: false },
+            { id: ROOT_ID, hasUserInput: false, isRoot: true },
           ]),
         );
       if (url === "/api/v1/tasks/recent-task")
@@ -373,7 +373,7 @@ describe("connection", () => {
         return mockResponse(
           listResponse([
             { id: "recent-task", hasUserInput: false },
-            { id: ROOT_ID, hasUserInput: false },
+            { id: ROOT_ID, hasUserInput: false, isRoot: true },
           ]),
         );
       if (url === `/api/v1/tasks/${ROOT_ID}`)
@@ -635,7 +635,9 @@ describe("connection", () => {
       if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
         return mockResponse([]);
       if (url === "/api/v1/tasks")
-        return mockResponse([{ id: ROOT_ID, hasUserInput: false }]);
+        return mockResponse([
+          { id: ROOT_ID, hasUserInput: false, isRoot: true },
+        ]);
       if (url === `/api/v1/tasks/${ROOT_ID}/snapshot`)
         return mockResponse({
           version: 1,
@@ -677,7 +679,9 @@ describe("connection", () => {
       if (url.startsWith(`/api/v1/tasks/${oldRootId}/events`))
         return mockResponse({ events: [], streaming: {} });
       if (url === "/api/v1/tasks")
-        return mockResponse([{ id: ROOT_ID, hasUserInput: false }]);
+        return mockResponse([
+          { id: ROOT_ID, hasUserInput: false, isRoot: true },
+        ]);
       if (url === `/api/v1/tasks/${ROOT_ID}`)
         return mockResponse(taskResponse(ROOT_ID));
       if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
@@ -703,7 +707,7 @@ describe("connection", () => {
       if (url === "/api/v1/tasks") {
         listCalls++;
         return mockResponse([
-          { id: ROOT_ID, hasUserInput: false },
+          { id: ROOT_ID, hasUserInput: false, isRoot: true },
           { id: "recent-child", hasUserInput: true },
         ]);
       }

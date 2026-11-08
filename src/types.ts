@@ -126,6 +126,11 @@ export interface TaskSummary {
   hasUserInput?: boolean;
   /** Agent that carries this task's current execution; null when unbound. */
   agentId?: string | null;
+  /**
+   * True for this workspace's Root. Computed at egress from the server's Root
+   * identity, so a client never has to recognise Root by its id.
+   */
+  isRoot?: boolean;
 }
 
 /** Detailed task record returned by GET /api/v1/tasks/:id. */

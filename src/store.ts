@@ -20,14 +20,14 @@ import {
 } from "./execution-authority.ts";
 
 /**
- * The workspace has exactly one Root, identified by this literal task id.
- * It is reserved: ordinary creation/deletion/reaping/GC must refuse it.
+ * The id a new database gives its Root.
+ *
+ * Root *identity* is a fact of one database, not a constant: runtime code reads
+ * `Store.rootTaskId` (and the client reads the `rootTaskId` it is sent), never
+ * this value. It is exported only for the Store itself and for tests that
+ * assert what a fresh database looks like.
  */
 export const ROOT_TASK_ID = "root";
-
-export function isReservedRootTaskId(taskId: string): boolean {
-  return taskId === ROOT_TASK_ID;
-}
 
 /**
  * Session id used for "this task keeps its owner but has no execution yet".
@@ -38,54 +38,14 @@ export function isReservedRootTaskId(taskId: string): boolean {
  * row and with every other task rotated by the same agent. Each ordinary task
  * therefore gets its own token, which keeps `(agent_key, task_id)` the only
  * uniqueness an ordinary task relies on.
+ *
+ * Which task is the Root is a fact of one database, so the slot is read
+ * through `Store.emptyExecutionSlot`, never computed from a task id alone.
  */
 export const ROOT_EMPTY_EXECUTION_SLOT = "";
 
 /** Namespace WebAgent reserves for the per-task empty execution slot. */
 const EMPTY_EXECUTION_PREFIX = "no-execution:";
-
-export function emptyExecutionSlot(taskId: string): string {
-  return isReservedRootTaskId(taskId)
-    ? ROOT_EMPTY_EXECUTION_SLOT
-    : `${EMPTY_EXECUTION_PREFIX}${taskId}`;
-}
-
-/**
- * True when this task's binding holds *its own* empty execution slot.
- *
- * Exact equality, not a prefix test: ACP session ids are an opaque
- * `z.string()`, so `no-execution:anything` may be a perfectly real session id.
- * "No execution" is only a fact about this task's own reserved value.
- */
-export function isEmptyExecutionSlot(
-  taskId: string,
-  agentSessionId: string | null | undefined,
-): boolean {
-  if (agentSessionId === null || agentSessionId === undefined) return false;
-  return agentSessionId === emptyExecutionSlot(taskId);
-}
-
-/**
- * Reject an ACP session id that lands in the reserved namespace without being
- * this task's own slot. Refusing at the write boundary is what makes the exact
- * classification above sound: a real session can never be stored in a shape
- * that the reader would have to guess about.
- */
-function assertStorableExecutionId(
-  taskId: string,
-  agentSessionId: string,
-): void {
-  if (agentSessionId === emptyExecutionSlot(taskId)) return;
-  if (
-    agentSessionId === ROOT_EMPTY_EXECUTION_SLOT ||
-    agentSessionId.startsWith(EMPTY_EXECUTION_PREFIX)
-  ) {
-    throw new Error(
-      `Refused ACP session id "${agentSessionId}" for task ${taskId}: ` +
-        `it is in WebAgent's reserved empty-execution namespace`,
-    );
-  }
-}
 
 /** One task removed by a delete (the requested id or a cascaded descendant). */
 export interface TaskDelete {
@@ -381,6 +341,58 @@ export class Store {
   private readonly bindingObservers: Array<
     (changes: readonly BindingChange[]) => void
   > = [];
+
+  /**
+   * True only for this database's Root. Ordinary creation, deletion, tombstone
+   * reaping, and GC must refuse it; only the reset clears it in place.
+   */
+  isRootTaskId(taskId: string): boolean {
+    return taskId === this.rootTaskId;
+  }
+
+  /** The reserved "no execution yet" session id for one task. */
+  emptyExecutionSlot(taskId: string): string {
+    return this.isRootTaskId(taskId)
+      ? ROOT_EMPTY_EXECUTION_SLOT
+      : `${EMPTY_EXECUTION_PREFIX}${taskId}`;
+  }
+
+  /**
+   * True when this task's binding holds *its own* empty execution slot.
+   *
+   * Exact equality, not a prefix test: ACP session ids are an opaque
+   * `z.string()`, so `no-execution:anything` may be a perfectly real session
+   * id. "No execution" is only a fact about this task's own reserved value.
+   */
+  isEmptyExecutionSlot(
+    taskId: string,
+    agentSessionId: string | null | undefined,
+  ): boolean {
+    if (agentSessionId === null || agentSessionId === undefined) return false;
+    return agentSessionId === this.emptyExecutionSlot(taskId);
+  }
+
+  /**
+   * Reject an ACP session id that lands in the reserved namespace without
+   * being this task's own slot. Refusing at the write boundary is what makes
+   * the exact classification above sound: a real session can never be stored
+   * in a shape that the reader would have to guess about.
+   */
+  private assertStorableExecutionId(
+    taskId: string,
+    agentSessionId: string,
+  ): void {
+    if (agentSessionId === this.emptyExecutionSlot(taskId)) return;
+    if (
+      agentSessionId === ROOT_EMPTY_EXECUTION_SLOT ||
+      agentSessionId.startsWith(EMPTY_EXECUTION_PREFIX)
+    ) {
+      throw new Error(
+        `Refused ACP session id "${agentSessionId}" for task ${taskId}: ` +
+          `it is in WebAgent's reserved empty-execution namespace`,
+      );
+    }
+  }
 
   constructor(dataDir: string) {
     this.rootTaskId = ROOT_TASK_ID;
@@ -940,7 +952,7 @@ export class Store {
       workflowStatus?: WorkflowStatus;
     } = {},
   ): TaskRow {
-    if (isReservedRootTaskId(id)) {
+    if (this.isRootTaskId(id)) {
       throw new Error(
         `Reserved Root id cannot be created as an ordinary task: ${id}`,
       );
@@ -1210,7 +1222,7 @@ export class Store {
     agentId: string,
     agentSessionId: string,
   ): void {
-    assertStorableExecutionId(taskId, agentSessionId);
+    this.assertStorableExecutionId(taskId, agentSessionId);
     this.db
       .prepare(
         "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
@@ -1305,7 +1317,7 @@ export class Store {
     );
     const root = this.getTaskIncludingDeleted(this.rootTaskId);
     for (const child of children) {
-      if (!root || isReservedRootTaskId(child.id)) {
+      if (!root || this.isRootTaskId(child.id)) {
         detach.run(child.id, parentId);
         continue;
       }
@@ -1421,7 +1433,7 @@ export class Store {
         this.insertBindingRow(
           this.rootTaskId,
           retiredBinding.agentId,
-          emptyExecutionSlot(this.rootTaskId),
+          this.emptyExecutionSlot(this.rootTaskId),
         );
       }
       this.db
@@ -1453,7 +1465,7 @@ export class Store {
     mode: "hard" | "soft";
     affected: TaskDelete[];
   } {
-    if (isReservedRootTaskId(id)) {
+    if (this.isRootTaskId(id)) {
       throw new Error("Root task cannot be deleted");
     }
     return this.writeBindings(() => this.deleteTaskInScope(id));
@@ -1463,7 +1475,7 @@ export class Store {
     mode: "hard" | "soft";
     affected: TaskDelete[];
   } {
-    if (isReservedRootTaskId(id)) {
+    if (this.isRootTaskId(id)) {
       throw new Error("Root task cannot be deleted");
     }
     const affected: TaskDelete[] = [];
@@ -1533,7 +1545,7 @@ export class Store {
    * Returns true if a tombstone was reaped.
    */
   reapTombstoneIfOrphaned(taskId: string): boolean {
-    if (isReservedRootTaskId(taskId)) return false;
+    if (this.isRootTaskId(taskId)) return false;
     const row = this.db
       .prepare("SELECT id FROM tasks WHERE id = ? AND deleted_at IS NOT NULL")
       .get(taskId) as { id: string } | undefined;

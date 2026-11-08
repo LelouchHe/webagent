@@ -2043,7 +2043,7 @@ describe("events", () => {
           )
             return {
               ok: true,
-              text: async () => JSON.stringify([{ id: ROOT_ID }]),
+              text: async () => JSON.stringify([{ id: ROOT_ID, isRoot: true }]),
             };
           if (url === `/api/v1/tasks/${ROOT_ID}`)
             return { ok: true, text: async () => JSON.stringify(rootTask) };
