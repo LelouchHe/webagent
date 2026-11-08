@@ -964,20 +964,20 @@ describe("Store", () => {
         store.rootTaskId,
       );
 
-      // Root reset replaces Root's execution and deletes the child in one
-      // outermost transaction: one batch, one fact per task.
-      store.resetRootTask();
+      // An exit replaces Root and deletes the old tree in one outermost
+      // transaction: one batch, one fact per task.
+      const oldRootId = store.rootTaskId;
+      const { rootTaskId: newRootId } = store.replaceRoot();
 
-      assert.deepEqual(batches, [
-        [store.rootTaskId],
-        ["child"],
-        ["child", store.rootTaskId],
-      ]);
-      const rootFacts = batches[2].filter((id) => id === store.rootTaskId);
-      assert.equal(rootFacts.length, 1);
+      assert.deepEqual(batches.slice(0, 2), [[oldRootId], ["child"]]);
+      assert.equal(batches.length, 3);
+      assert.deepEqual(
+        [...batches[2]].sort(),
+        [newRootId, "child", oldRootId].sort(),
+      );
       assert.equal(
-        store.getCurrentExecutionBinding(store.rootTaskId)?.agent_session_id,
-        emptyExecutionSlot(store.rootTaskId),
+        store.getCurrentExecutionBinding(newRootId)?.agent_session_id,
+        emptyExecutionSlot(newRootId),
       );
     });
 
@@ -1229,9 +1229,11 @@ describe("Store", () => {
     });
   });
 
-  describe("Root reset and deletion", () => {
-    it("clears Root history, resources, and descendants, leaving lazy ownership", () => {
+  describe("Root exit and deletion", () => {
+    it("replaces Root with a fresh one and deletes the old tree", () => {
       const root = store.ensureRootTask("/root");
+      store.updateTaskTitle(root.id, "home");
+      store.updateTaskConfig(root.id, "model", "saved-model");
       store.attachAgentSession(root.id, "test-agent", "root-session");
       store.saveEvent(
         root.id,
@@ -1264,53 +1266,77 @@ describe("Store", () => {
         "agent-a",
         root.id,
       );
-      store.saveEvent(
-        "a-task",
-        "user_message",
-        { text: "a" },
-        { from_ref: "user" },
-      );
 
-      const result = store.resetRootTask();
+      const result = store.replaceRoot();
+      const newRootId = result.rootTaskId;
+      assert.notEqual(newRootId, root.id);
+      assert.equal(store.rootTaskId, newRootId);
       assert.deepEqual(
-        result.affected.map((entry) => entry.id),
-        ["a-task"],
+        result.affected.map((entry) => [entry.id, entry.mode]).sort(),
+        [
+          ["a-task", "hard"],
+          [root.id, "hard"],
+        ].sort(),
       );
-      assert.equal(result.retired?.sessionId, "root-session");
+      const oldRoot = result.affected.find((entry) => entry.id === root.id);
+      assert.equal(oldRoot?.agentSessionId, "root-session");
+
+      // The old Root is gone with everything it owned.
+      assert.equal(store.getTaskIncludingDeleted(root.id), undefined);
+      assert.equal(store.getTaskIncludingDeleted("a-task"), undefined);
       assert.equal(store.getEvents(root.id).length, 0);
-      assert.equal(store.getPendingCompactSummary(root.id), null);
       assert.equal(store.getClientOp(root.id, "op-a"), null);
       assert.deepEqual(store.listAttachmentRealpaths(root.id), []);
       assert.equal(store.getShareByToken(preview), undefined);
-      assert.equal(store.getTaskIncludingDeleted("a-task"), undefined);
-      // DB-only reset keeps the anchor visible and owned, with an empty
-      // execution id as the lazy-materialization marker.
-      const after = store.getTask(root.id)!;
-      assert.equal(after.parent_id, null);
+
+      // The new Root describes the same workspace and starts with nothing
+      // else: same directory, title, model, and agent, as an empty slot.
+      const next = store.getTask(newRootId)!;
+      assert.equal(next.parent_id, null);
+      assert.equal(next.cwd, "/root");
+      assert.equal(next.title, "home");
+      assert.equal(next.model, "saved-model");
+      assert.equal(next.mode, null);
+      assert.equal(store.getEvents(newRootId).length, 0);
+      assert.equal(store.getPendingCompactSummary(newRootId), null);
+      assert.equal(store.getBindingAgent(newRootId), "test-agent");
       assert.equal(
-        store.getAgentSessionId(root.id),
-        emptyExecutionSlot(root.id),
+        store.getAgentSessionId(newRootId),
+        emptyExecutionSlot(newRootId),
       );
-      assert.equal(store.getBindingAgent(root.id), "test-agent");
+
+      // The replacement is durable.
+      const reopened = new Store(tmpDir);
+      try {
+        assert.equal(reopened.rootTaskId, newRootId);
+      } finally {
+        reopened.close();
+      }
     });
 
-    it("blocks reset while Root has an active share", () => {
+    it("keeps a shared Root as a tombstone and still replaces it", () => {
       const rootId = store.ensureRootTask("/root").id;
       const token = generateShareToken();
       store.insertSharePreview({ token, taskId: rootId, snapshotSeq: 1 });
       store.activateShare(token);
 
-      assert.throws(() => store.resetRootTask(), /active share/);
+      const result = store.replaceRoot();
+      assert.deepEqual(result.affected, [
+        { id: rootId, mode: "soft", agentSessionId: null, agentId: null },
+      ]);
+      assert.notEqual(store.getTaskIncludingDeleted(rootId)?.deleted_at, null);
+      assert.equal(store.isRootTaskId(rootId), false);
+      assert.equal(store.isRootTaskId(result.rootTaskId), true);
+      // No longer the Root, the tombstone is reaped like any other once its
+      // last share goes.
       assert.equal(store.revokeShare(token), true);
-      assert.deepEqual(store.resetRootTask().affected, []);
+      assert.equal(store.reapTombstoneIfOrphaned(rootId), true);
     });
 
-    it("keeps an unbound shared tombstone alive through a Root reset", () => {
+    it("moves a shared tombstone from the old Root to the new one", () => {
       const rootId = store.ensureRootTask("/root").id;
       store.attachAgentSession(rootId, "test-agent", "root-session");
       store.createTask("a-task", "/a", "auto", "test-agent", "agent-a", rootId);
-      // A share tombstone under Root: the row survives, its binding is gone,
-      // so no agent owns it.
       store.createTask(
         "orphan",
         "/o",
@@ -1324,16 +1350,33 @@ describe("Store", () => {
       store.activateShare(token);
       assert.equal(store.deleteTask("orphan").mode, "soft");
 
-      const result = store.resetRootTask();
-      // The reset walks every child of Root, owned or not; the tombstone is
-      // re-processed as a tombstone and still survives for its share.
-      assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
-        "a-task",
-        "orphan",
-      ]);
+      const { rootTaskId: newRootId, affected } = store.replaceRoot();
+      assert.deepEqual(
+        affected.map((entry) => entry.id).sort(),
+        ["a-task", "orphan", rootId].sort(),
+      );
       const orphan = store.getTaskIncludingDeleted("orphan")!;
-      assert.equal(orphan.id, "orphan");
       assert.notEqual(orphan.deleted_at, null);
+      // The pointer moved before the old tree was deleted, so the survivor
+      // lands under the new Root rather than becoming a parentless row.
+      assert.equal(orphan.parent_id, newRootId);
+    });
+
+    it("leaves everything as it was when the replacement fails", () => {
+      const rootId = store.ensureRootTask("/root").id;
+      store.attachAgentSession(rootId, "test-agent", "root-session");
+      store.createTask("a-task", "/a", "auto", "test-agent", "agent-a", rootId);
+      store["db"].exec(
+        `CREATE TRIGGER refuse_new_root BEFORE UPDATE ON workspace
+         BEGIN SELECT RAISE(ABORT, 'refused'); END`,
+      );
+
+      assert.throws(() => store.replaceRoot(), /refused/);
+      assert.equal(store.rootTaskId, rootId);
+      assert.ok(store.getTask(rootId));
+      assert.ok(store.getTask("a-task"));
+      assert.equal(store.getAgentSessionId(rootId), "root-session");
+      assert.equal(store.listTasks().length, 2);
     });
 
     it("deletes a foreign survivor under the global Root", () => {

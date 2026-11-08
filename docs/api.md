@@ -289,8 +289,8 @@ Message, source/target/LCA projections, and a queued Delivery.
 
 Return the most recent task carried by the default agent, materializing the
 workspace Root as the first task when there is none. The Root's first use is
-also its first execution: an unbound Root attaches one, and a Root left as an
-empty slot by a reset materializes it. The request has no body. Concurrent
+also its first execution: an unbound Root attaches one, and a Root left with
+an empty slot (an exit whose wake-up failed) materializes it. The request has no body. Concurrent
 bootstrap requests are coalesced, so multiple clients starting together receive
 the same WebAgent task ID.
 
@@ -463,7 +463,7 @@ is the authority for the whole transition set.
 For a non-Root task, the response is `200`:
 
 ```json
-{ "taskId": "abc-123", "parentId": "root", "reset": false }
+{ "taskId": "abc-123", "parentId": "4f0c8a52-3b1e-4d7a-9c2e-8b5d1f6a0e37" }
 ```
 
 The `parentId` is the parent of the requested task, not of every cascaded
@@ -473,33 +473,35 @@ response with its SSE broadcast. The `task_deleted` SSE event for the
 requested task carries the same `parentId`, allowing clients to return to the
 authoritative parent without reconstructing the task tree locally.
 
-For the Root, Root is not deleted: the request clears Root's own
-history/resources, deletes its descendant tree, retires the old ACP execution
-best-effort, and then rebuilds Root's execution before responding, so a client
-that reads Root next finds a live, idle task instead of one that is still being
-materialized. Root's bound agent is resolved first: when it cannot start the
-request fails with `503` and nothing is deleted, because a Root that cannot be
-rebuilt is not usable and clearing the tree around it would report an exit that
-did not happen. Two cases have no rebuild to do and answer `200` without one:
-a Root that was never bound (its first prompt attaches an execution) and a Root
+For the Root, the request is an **exit**: the whole tree is deleted exactly as
+above (the Root included, tombstoned instead when it has an active share) and a
+fresh Root replaces it in the same transaction. The new Root keeps the
+workspace's directory, title, saved model, and the agent Root ran on, starts in
+agent mode with no history, and becomes the task `GET /api/v1/config` reports.
+Its execution is created before the response, so a client that opens it next
+finds a live, idle task instead of one that is still being materialized. The
+agent is resolved first: when it cannot start the request fails with `503` and
+nothing is deleted, because a workspace whose Root cannot start is not usable.
+Two cases have no execution to create and answer `200` without one: a Root that
+was never bound (the new Root's first prompt attaches an execution) and a Root
 whose recorded agent is no longer configured (an operation rotates it). A
-session that fails *after* the commit leaves Root's empty execution slot, which
-the next use materializes. The Root row remains as the permanent tree anchor
-and keeps `parentId = null`. Prefix-shaped ids such as `root-forged` are
-ordinary tasks.
-The response is `200`:
+session that fails *after* the commit leaves the new Root's empty execution
+slot, which the next use materializes. The response names the replacement:
 
 ```json
 {
-  "taskId": "root",
-  "reset": true
+  "taskId": "4f0c8a52-3b1e-4d7a-9c2e-8b5d1f6a0e37",
+  "parentId": null,
+  "replacedBy": "9a1d3c6e-2f4b-4e8a-b7c5-0d2e4f6a8b1c"
 }
 ```
 
 **Side effects:** Broadcasts `task_deleted` to all SSE clients once per
-hard/soft-deleted descendant and broadcasts `task_reset` for Root. Each
-affected task's ACP execution is retired explicitly (`task/delete` or
-`task/close` when the agent advertises support).
+hard/soft-deleted task; the one for the old Root also carries `replacedBy`, so
+every client viewing it, the initiator included, lands on the new Root. Then
+broadcasts `task_created` for the new Root. Each affected task's ACP execution
+is retired explicitly (`task/delete` or `task/close` when the agent advertises
+support).
 
 ---
 
@@ -603,7 +605,7 @@ that same restore instead of failing with `409 Task is busy`: the restore is
 shared (`ensureResumed` keeps one resume per task), so the write arrives after
 it, not on top of it. A failed restore answers `500` with `Failed to resume
 task: …`, never a busy conflict. Destructive operations (`POST /clear`, delete,
-Root reset) still answer `409` while the task is restoring, because they would
+Root exit) still answer `409` while the task is restoring, because they would
 replace the execution being loaded.
 
 Use `GET /events` for message history (rendering only) and `GET /snapshot` for runtime state (`busy`, `pendingPermissions`, `streaming`). The two are decoupled — `/events` never mutates runtime state in the frontend.
@@ -1808,8 +1810,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `task_runtime_warmed`   | `taskId`, `agentId`, `configOptions`, `agentCommands`                                                  | A background warm-up for that task finished. Published after the read that started it already answered; a client applies it only when it is viewing that task. Server-originated, never an execution event. |
 | `connected` (agent)     | `agentId`, `agent`, `configOptions`                                                                   | One agent's process connected. Same event name as the handshake, distinguished by `agentId` + `agent`; clients only let it complete a reload of the agent carrying their current task. |
 | `task_created`       | `taskId`, `agentId`, `parentId?`, `parentAgentId?`, `cwd`, `title`, `configOptions`, `busyKind?`                                | Task created or resumed. `parentId`/`parentAgentId` are the activation facts: a client settles the status bar's reference without another read. |
-| `task_deleted`       | `taskId`, `agentId?`, `parentId?`, `clientOpId?`                                        | Task was deleted; `agentId` is the agent that carried the removed execution                                    |
-| `task_reset`         | `taskId`, `clientOpId?`                                                                | Root task was reset; the task row remains                                                                         |
+| `task_deleted`       | `taskId`, `agentId?`, `parentId?`, `replacedBy?`, `clientOpId?`                                | Task was deleted; `agentId` is the agent that carried the removed execution; `replacedBy` names the new Root when an exit deleted the Root |
 | `task_title_updated` | `taskId`, `title`                                                                     | Task title set (explicit or id-default)                                                                            |
 | `task_expired`       | `taskId`                                                                              | Task expired in the ACP agent                                                                                    |
 | `config_option_update`  | `taskId`, `configOptions`                                                             | Config options changed (model switch, mode change, etc.)                                                            |

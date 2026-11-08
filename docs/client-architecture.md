@@ -541,8 +541,8 @@ activates a task carries the answer with it:
    settles the comparison with **no request at all**: a known parent compares
    against its binding, `parentId: null` compares against the configured
    default.
-2. **Events keep it current.** `task_created` / `task_deleted` / `task_reset`
-   update the reference directly when the event names the parent; every other
+2. **Events keep it current.** `task_created` / `task_deleted` update the
+   reference directly when the event names the parent; every other
    task's events are ignored. A rotation or deletion after activation is
    therefore reflected immediately, without navigation.
 3. **The fallback reads exist for a payload that cannot answer** (an older

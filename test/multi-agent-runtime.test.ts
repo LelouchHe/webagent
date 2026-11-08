@@ -412,15 +412,15 @@ describe("root first-use states", () => {
     }
   });
 
-  it("materializes the empty slot left by a reset (separate database)", async () => {
+  it("materializes the empty slot an exit leaves on the new Root (separate database)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-root-slot-"));
     const fixture = agentFixture(dir, "root");
     const local = createHarness(dir, { "agent-a": fixture }, "agent-a");
     try {
-      const rootId = local.store.rootTaskId;
-      // Build the empty-slot state first: one real execution, then a reset.
-      await local.tasks.ensureTaskLive(rootId);
-      local.store.resetRootTask();
+      const oldRootId = local.store.rootTaskId;
+      // Build the empty-slot state first: one real execution, then an exit.
+      await local.tasks.ensureTaskLive(oldRootId);
+      const rootId = local.store.replaceRoot().rootTaskId;
       assert.equal(
         local.store.getAgentSessionId(rootId),
         emptyExecutionSlot(rootId),
@@ -703,13 +703,13 @@ describe("retirement follows the recorded binding", () => {
         false,
       );
 
-      // Root reset retires Root's own execution. Bind the Root to B — the
-      // non-default agent — using the same session id the A task had.
+      // A Root exit retires the old Root's own execution. Bind the Root to B —
+      // the non-default agent — using the same session id the A task had.
       store.deleteTask("b-peer");
       store.attachAgentSession(store.rootTaskId, "agent-b", "same-sid");
       retired.length = 0;
-      await tasks.resetRootTask();
-      // Root itself is retired first, through B; the task the GC trigger
+      await tasks.exitRoot();
+      // The old Root is retired first, through B; the task the GC trigger
       // created is a Root child, so it is retired through A afterwards.
       assert.deepEqual(retired[0], {
         agentId: "agent-b",

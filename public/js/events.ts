@@ -59,7 +59,6 @@ import {
   loadTaskList,
   observeTaskCreated,
   observeTaskDeleted,
-  observeTaskReset,
   setCurrentTask,
 } from "./task-topology.ts";
 import { applyConnectedLogLevel } from "./log.ts";
@@ -1956,8 +1955,6 @@ export function handleEvent(msg: AgentEvent) {
     observeTaskCreated(msg.taskId, msg.agentId ?? null);
   } else if (msg.type === "task_deleted") {
     observeTaskDeleted(msg.taskId);
-  } else if (msg.type === "task_reset") {
-    observeTaskReset(msg.taskId);
   }
   if (msg.type === "inbox_count_changed") {
     updateInboxCount(msg.pendingCount);
@@ -2470,18 +2467,7 @@ export function handleEvent(msg: AgentEvent) {
         void fallbackToNextTask(
           msg.taskId,
           state.taskCwd ?? undefined,
-          msg.parentId,
-          msg.clientOpId,
-        );
-      }
-      break;
-
-    case "task_reset":
-      if (msg.taskId === state.taskId) {
-        void fallbackToNextTask(
-          null,
-          state.taskCwd ?? undefined,
-          msg.taskId,
+          msg.replacedBy ?? msg.parentId,
           msg.clientOpId,
         );
       }

@@ -137,11 +137,11 @@ describe("task-tree deletion across agents", () => {
     assert.ok(store.getTaskIncludingDeleted("child"));
   });
 
-  it("refuses a Root reset while a foreign descendant is busy", async () => {
+  it("refuses a Root exit while a foreign descendant is busy", async () => {
     seedCrossAgentTree();
     tasks.activePrompts.add("child");
 
-    await assert.rejects(() => tasks.resetRootTask(bridgeA), TaskBusyError);
+    await assert.rejects(() => tasks.exitRoot(bridgeA), TaskBusyError);
     assert.deepEqual(retiredA, []);
     assert.deepEqual(retiredB, []);
     assert.ok(store.getTaskIncludingDeleted("child"));
@@ -156,12 +156,14 @@ describe("task-tree deletion across agents", () => {
       },
     };
 
-    const result = await tasks.resetRootTask(exitBridge);
+    const oldRootId = store.rootTaskId;
+    const result = await tasks.exitRoot(exitBridge);
 
-    assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
-      "child",
-      "parent",
-    ]);
+    assert.deepEqual(
+      result.affected.map((entry) => entry.id).sort(),
+      ["child", "parent", oldRootId].sort(),
+    );
+    assert.equal(store.rootTaskId, result.rootTaskId);
     // The exit owns the wake-up: a client that reads Root after this response
     // must find the task it would have found had it created one instead of
     // exiting one.
@@ -211,7 +213,8 @@ describe("task-tree deletion across agents", () => {
       },
     };
 
-    const exiting = tasks.resetRootTask(exitBridge);
+    const oldRootId = store.rootTaskId;
+    const exiting = tasks.exitRoot(exitBridge);
     await inNewSession;
 
     // The rebuild owns Root's binding until it commits it. A rotation or a
@@ -221,14 +224,14 @@ describe("task-tree deletion across agents", () => {
       () => tasks.clearTask(exitBridge, store.rootTaskId),
       TaskBusyError,
     );
-    await assert.rejects(() => tasks.resetRootTask(exitBridge), TaskBusyError);
+    await assert.rejects(() => tasks.exitRoot(exitBridge), TaskBusyError);
 
     releaseNewSession();
     const result = await exiting;
-    assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
-      "child",
-      "parent",
-    ]);
+    assert.deepEqual(
+      result.affected.map((entry) => entry.id).sort(),
+      ["child", "parent", oldRootId].sort(),
+    );
     assert.equal(
       store.getCurrentExecutionBinding(store.rootTaskId)?.agent_session_id,
       "rebuilt-session",
@@ -242,7 +245,9 @@ describe("task-tree deletion across agents", () => {
     // No bridge is attached to agent-a, so resolving it fails. The exit must
     // refuse *before* destroying anything: there is no point clearing the tree
     // around a Root that cannot be rebuilt.
-    await assert.rejects(() => tasks.resetRootTask(), AgentUnavailableError);
+    const rootTaskId = store.rootTaskId;
+    await assert.rejects(() => tasks.exitRoot(), AgentUnavailableError);
+    assert.equal(store.rootTaskId, rootTaskId, "Root was not replaced");
 
     assert.ok(store.getTaskIncludingDeleted("parent"), "the tree is untouched");
     assert.ok(store.getTaskIncludingDeleted("child"));
@@ -255,21 +260,22 @@ describe("task-tree deletion across agents", () => {
     assert.deepEqual(retiredB, []);
   });
 
-  it("resets Root across every agent, retiring each execution once", async () => {
+  it("exits Root across every agent, retiring each execution once", async () => {
     seedCrossAgentTree();
 
-    const result = await tasks.resetRootTask(bridgeA);
+    const oldRootId = store.rootTaskId;
+    const result = await tasks.exitRoot(bridgeA);
 
-    assert.deepEqual(result.affected.map((entry) => entry.id).sort(), [
-      "child",
-      "parent",
-    ]);
-    // Root's own execution is retired through its recorded agent, then the
-    // descendants'.
+    assert.deepEqual(
+      result.affected.map((entry) => entry.id).sort(),
+      ["child", "parent", oldRootId].sort(),
+    );
+    // The old Root's execution is retired through its recorded agent, and so
+    // are the descendants'.
     assert.deepEqual(retiredA.sort(), ["root-session", "same-sid"]);
     assert.deepEqual(retiredB, ["same-sid"]);
     const root = store.getCurrentExecutionBinding(store.rootTaskId);
-    assert.ok(root, "the Root keeps an empty owner slot");
+    assert.ok(root, "the new Root keeps the agent as an empty owner slot");
     assert.equal(root.agent_key, "agent-a");
     assert.equal(root.agent_session_id, emptyExecutionSlot(store.rootTaskId));
   });

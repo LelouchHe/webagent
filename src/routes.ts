@@ -2238,7 +2238,7 @@ export function createRequestHandler(
 
           // No task for the default agent, and the Root has no execution yet:
           // the workspace's first task is the Root anchor. Its first use
-          // attaches one (never bound) or materializes a reset's empty slot.
+          // attaches one (never bound) or materializes its empty slot.
           const root = await taskManager.ensureRootLive();
           const result = {
             id: root.id,
@@ -2702,29 +2702,44 @@ export function createRequestHandler(
                 });
                 return;
               }
-              // Exiting Root rebuilds it, so the agent it will be rebuilt on
-              // is checked before the tree is destroyed: a Root whose agent
-              // cannot start is not a usable Root, and refusing here leaves
-              // the workspace intact instead of clearing it around a shell.
-              // Retirement still follows each recorded binding's own agent.
-              const result = await tasks.resetRootTask();
+              // Exiting Root deletes the whole tree and replaces Root with a
+              // fresh one, made live before this answers. The agent the new
+              // Root runs on is checked before anything is destroyed (see
+              // `exitRoot`); retirement follows each removed binding's agent.
+              const result = await tasks.exitRoot();
+              const replacedBy = result.rootTaskId;
               for (const entry of result.affected) {
                 sseManager.broadcast({
                   type: "task_deleted",
                   taskId: entry.id,
                   agentId: entry.agentId,
-                  parentId: store.rootTaskId,
-                  ...(clientOpId ? { clientOpId } : {}),
+                  // Every client viewing the old Root follows to its
+                  // replacement, so the initiator's echo and its own answer
+                  // name the same next task whichever arrives first.
+                  ...(entry.id === taskId
+                    ? { parentId: null, replacedBy }
+                    : {}),
+                  ...(entry.id === taskId && clientOpId ? { clientOpId } : {}),
                 });
               }
-              sseManager.broadcast({
-                type: "task_reset",
-                taskId: store.rootTaskId,
-                ...(clientOpId ? { clientOpId } : {}),
-              });
+              const root = store.getTask(replacedBy);
+              if (root) {
+                sseManager.broadcast({
+                  type: "task_created",
+                  taskId: root.id,
+                  ...activationFields(root, { taskId: root.id }),
+                  title: root.title,
+                  configOptions: tasks.applyStoredConfig(
+                    tasks.configOptionsForTask(root.id),
+                    root,
+                  ),
+                  agentCommands: tasks.getAgentCommands(root.id),
+                });
+              }
               json(res, HTTP_STATUS.OK, {
-                taskId: store.rootTaskId,
-                reset: true,
+                taskId,
+                parentId: null,
+                replacedBy,
                 ...(clientOpId ? { clientOpId } : {}),
               });
               return;
@@ -2745,7 +2760,6 @@ export function createRequestHandler(
             json(res, HTTP_STATUS.OK, {
               taskId,
               parentId: task.parent_id,
-              reset: false,
               ...(clientOpId ? { clientOpId } : {}),
             });
           } catch (err) {

@@ -305,12 +305,8 @@ export type AgentEvent =
       agentId?: string | null;
       /** Parent of the requested task, when the server can provide it. */
       parentId?: string | null;
-      /** Correlates the initiating HTTP action with its SSE echo. */
-      clientOpId?: string;
-    }
-  | {
-      type: "task_reset";
-      taskId: string;
+      /** The Root that replaced this one, when an exit deleted the Root. */
+      replacedBy?: string;
       /** Correlates the initiating HTTP action with its SSE echo. */
       clientOpId?: string;
     }

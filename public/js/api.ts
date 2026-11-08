@@ -219,7 +219,8 @@ export function compactTask(
 export interface DeleteTaskResult {
   taskId: string;
   parentId?: string | null;
-  reset?: boolean;
+  /** The Root that replaced this one, when the deleted task was the Root. */
+  replacedBy?: string;
   clientOpId?: string;
 }
 

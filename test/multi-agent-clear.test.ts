@@ -213,8 +213,9 @@ describe("clear onto another agent", () => {
     assert.equal(store.getBindingAgent(store.rootTaskId), "agent-b");
     assert.equal(store.getAgentSessionId(store.rootTaskId), "b-root-session");
 
-    // A reset leaves an empty slot, which *is* a materialization request.
-    store.resetRootTask();
+    // An exit's replacement Root holds an empty slot, which *is* a
+    // materialization request.
+    store.replaceRoot();
     const afterReset = await request(port, "POST", "/api/v1/tasks/bootstrap");
     assert.equal(afterReset.status, 200);
     assert.equal(store.getBindingAgent(store.rootTaskId), "agent-a");

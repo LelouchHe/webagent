@@ -6,7 +6,7 @@ import {
   isParentResolved,
   loadTaskList,
   observeTaskCreated,
-  observeTaskReset,
+  observeTaskDeleted,
   parentOf,
   resetTaskTopologyForTest,
   setCurrentTask,
@@ -208,7 +208,7 @@ describe("parent reference", () => {
         parentId: "parent",
         agentId: "mock3",
       });
-      observeTaskReset("parent");
+      observeTaskDeleted("parent");
       assert.deepEqual(parentOf("child"), {
         parentId: "parent",
         agentId: null,

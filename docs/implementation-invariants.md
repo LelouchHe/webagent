@@ -65,7 +65,7 @@ The operational form of that sentence:
   against their own last `seq`; a restart makes every post-rotation snapshot
   look superseded, and the client drops them and desyncs (typically stuck
   busy).
-- **Explicit task deletion and Root reset cascade over the task tree, whatever
+- **Explicit task deletion and Root exit cascade over the task tree, whatever
   agent owns each descendant.** `reparentChildrenToRoot` is the deliberate
   exception and must not be narrowed: a share-backed tombstone and an
   empty-task GC's surviving children rely on it to stay reachable. *Why:*
@@ -77,12 +77,12 @@ The operational form of that sentence:
   snapshot, `state_patch`, `/tasks/:id/status`, and MCP `task_list` report. It
   **excludes** an in-flight restore. The gate face
   (`getGateBusyKind`) is the same list **plus** `restoringTasks`, and it is what
-  `/clear`, delete, Root reset, rotation, sharing, the prompt submission slot,
+  `/clear`, delete, Root exit, rotation, sharing, the prompt submission slot,
   recovery drains, and the obligation dispatcher ask. *Why:* a read answers
   immediately and restores in the background, so opening an idle task can no
   longer be assumed to finish before anything else happens. Painting that
   restore as `busy` presents a frozen input with no reason (and the client
-  cannot tell); omitting it from the gate would let `/clear` or a reset replace
+  cannot tell); omitting it from the gate would let `/clear` or an exit replace
   the execution the restore is about to make live. A prompt is the one write
   that asks for the gate *without* the restore, because it waits for that
   restore (`ensureResumed` shares one resume per task) instead of refusing it.
@@ -123,7 +123,7 @@ The operational form of that sentence:
   request names a task; the runtime resolves which agent executes it. Five
   contexts are the deliberate exceptions and each names its own source: the
   first execution of a task (the verified target), a replacement (the new
-  execution), retirement/deletion/GC/Root reset (the old binding recorded at
+  execution), retirement/deletion/GC/Root exit (the old binding recorded at
   commit), agent events and permission responses (the source execution that
   produced them), and continuations inside one operation (the context captured
   at its start). *Why:* "resolve the current binding" at each site looks
@@ -142,7 +142,7 @@ The operational form of that sentence:
 - **A read may write the execution config columns; it may not move an owner.**
   A detail or snapshot read starts a background warm, and a task whose binding
   agent is configured but whose execution slot is unmaterialized (an earlier
-  takeover, or a Root reset whose rebuild failed after its commit) is
+  takeover, or an exit's replacement Root whose wake-up failed after its commit) is
   materialized by that warm. The session it creates
   reports its own execution config, and adoption records it for the columns the
   task has no value of its own — so a plain GET can turn `model: null` into the
@@ -174,7 +174,7 @@ The operational form of that sentence:
   to another agent's process. A write that needs the execution ready *waits*
   for the warm-up/restore a read started (`ensureResumed` shares one resume per
   task) instead of reporting it as busy; only destructive operations (`/clear`,
-  delete, Root reset) refuse while restoring, because they would replace the
+  delete, Root exit) refuse while restoring, because they would replace the
   execution that is being loaded. *Why:* a real CLI replays history on restore, so any fixed wait is
   either too short (the UI stays cold forever) or too long (every read pays for
   it); and an unavailable binary must not take the user's history with it.

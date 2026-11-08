@@ -342,7 +342,7 @@ describe("background warm-up", () => {
     } as unknown as DeliveryBridge;
 
     store.attachAgentSession(store.rootTaskId, "agent-a", "root-session");
-    store.resetRootTask();
+    store.replaceRoot();
     tasks.attachExecutionBridge(bridge);
 
     // A read starts the materialization of the empty slot.
@@ -399,15 +399,15 @@ describe("background warm-up", () => {
       isAvailable: () => true,
     } as DeliveryBridge;
 
-    // The state a read has to cope with after a reset: Root holds the empty
-    // execution slot. Simulated at the store (the manager now owns the rebuild,
-    // so its own exit would replace it before returning).
+    // The state a read has to cope with after an exit whose rebuild did not
+    // happen: the new Root holds the empty execution slot. Simulated at the
+    // store (the manager's own exit would make it live before returning).
     store.attachAgentSession(store.rootTaskId, "agent-a", "root-session");
-    store.resetRootTask();
+    store.replaceRoot();
     assert.equal(
       store.getCurrentExecutionBinding(store.rootTaskId)?.agent_session_id,
       emptyExecutionSlot(store.rootTaskId),
-      "the reset leaves the empty slot in place",
+      "the replacement Root starts with the empty slot",
     );
 
     // Exactly what `GET /tasks/:id/snapshot` does: warm in the background,

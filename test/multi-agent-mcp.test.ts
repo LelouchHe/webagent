@@ -576,10 +576,9 @@ describe("mcp authority over the production host", () => {
     assert.match(toolErrorText(response.json), /execution_replaced/);
   });
 
-  it("revokes the Root token on a Root reset", async () => {
-    // Root is the one task a reset keeps, so nothing in the descendant cleanup
-    // releases its capability. Without an explicit revoke, the old token would
-    // be usable while the next session is materializing.
+  it("revokes the old Root's token on a Root exit", async () => {
+    // The exit deletes the old Root like any task, so its capability goes with
+    // it: the token must not outlive the task it was minted for.
     await tasks.ensureRootLive();
     const lease = authority.leaseFor(store.rootTaskId);
     assert.ok(lease);
@@ -590,7 +589,7 @@ describe("mcp authority over the production host", () => {
     );
     assert.equal(await initialize(endpoint.baseUrl, token), 200);
 
-    await tasks.resetRootTask();
+    await tasks.exitRoot();
 
     assert.equal(capabilities.resolve(token), null);
     assert.equal(await initialize(endpoint.baseUrl, token), 401);
