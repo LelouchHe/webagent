@@ -1,7 +1,7 @@
 {
   "name": "@lelouchhe/webagent",
   "version": "0.13.0",
-  "description": "A terminal-style web UI for ACP-compatible agents",
+  "description": "Task-first web UI for ACP-compatible agents — durable Tasks, multiple named agents, and agent-to-agent delegation.",
   "type": "module",
   "license": "MIT",
   "repository": {
