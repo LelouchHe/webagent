@@ -345,7 +345,7 @@ async function resumeFromTaskList(
     if (!isCurrent()) return true;
     if (state.rootTaskId === null) {
       installRootTaskId(
-        tasks.find((task) => task.isRoot === true)?.id,
+        tasks.find((task) => task.isRoot)?.id,
         rootAuthorityGeneration,
       );
     }

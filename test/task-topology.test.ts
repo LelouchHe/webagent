@@ -38,6 +38,7 @@ function task(id: string, agentId: string | null): TaskSummary {
     last_active_at: "2026-01-01T00:00:00.000Z",
     parent_id: null,
     agentId,
+    isRoot: false,
   };
 }
 
