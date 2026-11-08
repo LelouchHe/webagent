@@ -230,12 +230,21 @@ const pendingFallbacks = new Map<string, Promise<void>>();
 const completedFallbacks = new Map<string, number>();
 const FALLBACK_DEDUPE_MS = 30_000;
 
+/**
+ * A Root exit replaces Root instead of merely removing it: the successor keeps
+ * the old Root's title and cwd but has no history, so the landing screen is
+ * blank and the switch is otherwise invisible. Only `replacedBy` distinguishes
+ * that from an ordinary delete, which lands on the parent's own transcript.
+ */
+const ROOT_REPLACED_NOTICE = "notify: Root replaced — a fresh Root was created";
+
 export function fallbackToNextTask(
   expiredId: string | null,
   _cwd?: string,
   preferredTaskId?: string | null,
   clientOpId?: string,
   connectionEpoch = state.connectionEpoch,
+  rootReplaced = false,
 ): Promise<void> {
   const now = Date.now();
   for (const [key, expiresAt] of completedFallbacks) {
@@ -253,6 +262,7 @@ export function fallbackToNextTask(
     expiredId,
     preferredTaskId,
     connectionEpoch,
+    rootReplaced,
   ).finally(() => {
     if (pendingFallbacks.get(key) === operation) pendingFallbacks.delete(key);
     if (clientOpId)
@@ -266,6 +276,7 @@ async function fallbackToNextTaskImpl(
   expiredId: string | null,
   preferredTaskId: string | null | undefined,
   connectionEpoch: number,
+  rootReplaced: boolean,
 ): Promise<void> {
   if (connectionEpoch !== state.connectionEpoch) return;
   state.taskSwitchGen++;
@@ -321,6 +332,7 @@ async function fallbackToNextTaskImpl(
         configOptions: task.configOptions,
       });
       if (loaded) scrollToBottom(true);
+      if (rootReplaced) addSystem(ROOT_REPLACED_NOTICE);
       return;
     }
   } catch {
@@ -2469,6 +2481,8 @@ export function handleEvent(msg: AgentEvent) {
           state.taskCwd ?? undefined,
           msg.replacedBy ?? msg.parentId,
           msg.clientOpId,
+          state.connectionEpoch,
+          Boolean(msg.replacedBy),
         );
       }
       break;

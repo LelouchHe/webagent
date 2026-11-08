@@ -727,7 +727,7 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | ------------------- | ----------------------------------------------------------- | ------------------------------------ |
 | `/switch [query]`   | `api.listTasks()` + `api.getTask()` + `loadHistory()` | Switch to another task            |
 | `/new [agent:path]` | `requestNewTask()` → `api.createTask()`                  | Create an unnamed child task         |
-| `/exit`             | `api.deleteTask()` + task navigation                 | Exit task tree; prefer parent     |
+| `/exit`             | `api.deleteTask()` + task navigation                 | Exit task tree; announces the request and reports a Root replacement |
 | `/rename <title>`   | `api.setTitle(taskId, title)`                            | Rename current task               |
 | `/model [name]`     | `api.setConfig(taskId, 'model', value)`                 | Set model                           |
 | `/mode [name]`      | `api.setConfig(taskId, 'mode', value)`                  | Set mode                            |

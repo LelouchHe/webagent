@@ -45,6 +45,18 @@ time. An entry without a "closing condition" is a wish, not an issue.
 
 ## Task lifecycle and storage
 
+- **A Root replacement is announced only when the fallback lands normally.**
+  `/exit` prints its request row and the landing prints a `notify: Root replaced`
+  row, both from client memory. If the fallback's own reads fail
+  (`fallbackToNextTaskImpl`'s `loadTaskList` / `getTask` / `loadHistory` /
+  hydration) the client falls through to the create-new tail and bootstraps
+  instead, and the row is dropped: the user lands on the replacement Root with
+  nothing but the generic task-created line. That path needs a failed request
+  or a stale task list, which is why it was deferred rather than carried through
+  the bootstrap flow. *Closing:* key the notice on the replacement task id
+  (recorded from the delete response) at the activation path instead of passing
+  a flag through the fallback.
+
 - **The empty-task GC can fail a foreign key.** `Store.deleteEmptyTasks` throws
   `FOREIGN KEY constraint failed` for a zero-event task that still has a share
   row, and `TaskManager` does not catch it, so an unrelated task creation can

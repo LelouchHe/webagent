@@ -522,6 +522,7 @@ describe("commands", () => {
         configOptions,
         busyKind: null,
       };
+      let transcriptDuringDelete = "";
       setFetch(async (url: string, init?: any) => {
         const body = (data: any) => {
           const json = JSON.stringify(data);
@@ -534,8 +535,12 @@ describe("commands", () => {
         };
         if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
           return body(taskList);
-        if (url === "/api/v1/tasks/current" && init?.method === "DELETE")
+        if (url === "/api/v1/tasks/current" && init?.method === "DELETE") {
+          // The request row must already be visible while the delete is in
+          // flight: landing on the next task clears #messages.
+          transcriptDuringDelete = dom.messages.textContent ?? "";
           return body({});
+        }
         if (url === "/api/v1/tasks/mru-456") return body(mruDetail);
         if (url.includes("/api/v1/tasks/mru-456/events")) return body([]);
         if (url === "/api/v1/tasks/mru-456/snapshot") {
@@ -556,6 +561,7 @@ describe("commands", () => {
         (c) => c.url === "/api/v1/tasks/current" && c.init?.method === "DELETE",
       );
       assert.ok(deleteCall, "expected DELETE for current task");
+      assert.match(transcriptDuringDelete, /notify: exiting the task tree/);
       assert.equal(state.taskId, "mru-456");
     });
 

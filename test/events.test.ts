@@ -2023,6 +2023,12 @@ describe("events", () => {
         for (let i = 0; i < 30; i++) await Promise.resolve();
 
         assert.equal(state.taskId, "parent");
+        // Landing on the parent's own transcript is self-explanatory; the
+        // replacement notice belongs to a Root exit only.
+        assert.equal(
+          (dom.messages.textContent ?? "").includes("Root replaced"),
+          false,
+        );
       });
 
       it("follows the old Root's deletion to the Root that replaced it", async () => {
@@ -2078,6 +2084,9 @@ describe("events", () => {
 
         assert.equal(state.taskId, NEW_ROOT_ID);
         assert.equal(location.hash, `#${NEW_ROOT_ID}`);
+        // The replacement keeps the old Root's title and has no history, so
+        // this row is the only thing that says the switch happened.
+        assert.match(dom.messages.textContent ?? "", /notify: Root replaced/);
       });
 
       it("creates new task when current is deleted and no others exist", async () => {

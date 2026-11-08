@@ -11,6 +11,7 @@ import {
   finishAssistant,
   finishBash,
   finishThinking,
+  scrollToBottom,
 } from "./render.ts";
 import type { AgentCommandSnapshot, ConfigOption } from "../../src/types.ts";
 import * as api from "./api.ts";
@@ -36,6 +37,13 @@ export async function exitCurrentTask(): Promise<void> {
     return;
   }
   const exitId = state.taskId;
+  // The delete does not answer until the agent is resolved and, on Root, a
+  // replacement execution is warm — seconds during which the transcript would
+  // otherwise stay unchanged and make the request look ignored. Force the
+  // scroll: this row answers a user action, it is not streaming output the
+  // reader may have scrolled away from.
+  addSystem("notify: exiting the task tree");
+  scrollToBottom(true);
   try {
     const result = await api.deleteTask(exitId);
     await fallbackToNextTask(
@@ -43,6 +51,8 @@ export async function exitCurrentTask(): Promise<void> {
       state.taskCwd ?? undefined,
       result?.replacedBy ?? result?.parentId,
       result?.clientOpId,
+      state.connectionEpoch,
+      Boolean(result?.replacedBy),
     );
   } catch (err) {
     addSystem(`err: Failed to exit task — ${String(err)}`);
