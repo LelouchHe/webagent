@@ -38,8 +38,8 @@ test("concurrent clients converge on this backend's Root task without creating o
     Array.from({ length: 5 }, () => context.newPage()),
   );
   await Promise.all(pages.map((page) => page.goto("/")));
-  // Root carries no URL hash (canonical clean URL), so readiness is signaled by
-  // the SSE connection and enabled input, not by a hash.
+  // Readiness is signaled by the SSE connection and enabled input, not by the
+  // hash, which activation writes only once it finishes.
   await Promise.all(
     pages.map((page) => expectConnectionStatus(page, "connected")),
   );

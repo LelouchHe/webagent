@@ -387,9 +387,10 @@ Promise.all([api.getTask(targetId), loadHistory(targetId)]).then(
 
 ### Hash Routing
 
-Child Tasks are identified by URL hash: `/#task-id`. The workspace's canonical
-Root omits the hash; its id is delivered by server authority, and the client
-never recognises Root by the id's value. `GET /api/v1/tasks` returns an array; it is still
+Every Task, Root included, is identified by URL hash: `/#task-id`, so a
+reload returns to the Task that was open. Root's id is delivered by server
+authority, and the client never recognises Root by the id's value. A URL with
+no hash is not Root: it means "resume the most recent Task" (below). `GET /api/v1/tasks` returns an array; it is still
 scoped to the running agent today, and the merged workspace list is part of the
 multi-agent runtime step. The exact `rootTaskId` authority is also carried by detail,
 bootstrap/create/clear/reset responses, global/per-task `connected`,
@@ -397,16 +398,13 @@ bootstrap/create/clear/reset responses, global/per-task `connected`,
 identify the Root by the `isRoot` flag of the task list it can read. Disconnect/
 reconnect clears stored authority; only a response or event from the current
 connection generation can restore it. Per-task UI resets preserve it, except a
-hashless reconnect without authority deliberately asks the list first: only a
-known Root drops its hash, so a hashless display with no authority cannot be
-kept as-is.
+hashless reconnect without authority deliberately asks the list first: every
+activation writes the hash, so a Task shown without one had not finished
+activating and cannot be kept as-is.
 
-The client canonicalizes hashes only with authority for the current
-connection. `switchToTask` writes the requested hash before fetching detail; if
-authority is not available yet, it leaves that provisional hash alone until
-`TaskDetail` arrives, then canonicalizes using the returned `rootTaskId`.
-Synthetic and live `task_created` events install the authority before calling
-`setHashTaskId`.
+`switchToTask` writes the requested hash before fetching detail, and
+activation (`task_created`) writes it again for the Task it installs; the hash
+is never rewritten for Root, so neither step depends on Root authority.
 Hashless startup keeps the selection order: newest task with user input first,
 canonical Root second, then the first task. A hashless same-task reconnect
 still resumes the current task without rescanning the list.

@@ -99,7 +99,7 @@ describe("shared task navigation", () => {
     assert.equal(location.hash, "#message-task");
   });
 
-  it("writes the requested hash before detail fetch and defers Root normalization until authority arrives", async () => {
+  it("writes the requested hash before detail fetch and keeps it for Root", async () => {
     const rootId = "root-derived-canonical";
     const observations: string[] = [];
     globalThis.fetch = (async (url: string) => {
@@ -137,7 +137,7 @@ describe("shared task navigation", () => {
     assert.equal(await navigation.switchToTask(rootId), "switched");
     assert.deepEqual(observations, [`#${rootId}`]);
     assert.equal(state.rootTaskId, rootId);
-    assert.equal(location.hash, "");
+    assert.equal(location.hash, `#${rootId}`);
   });
 
   it("routes a task target directly without consuming a message", async () => {

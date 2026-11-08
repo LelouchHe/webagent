@@ -252,7 +252,8 @@ async function openStream(
 
   // Load task immediately via REST — parallel with SSE connection. Pass the
   // task that was active when this connection attempt began so a hashless
-  // Root reconnect cannot be mistaken for a fresh startup.
+  // reconnect (a task shown before its activation wrote the hash) cannot be
+  // mistaken for a fresh startup.
   void initializeTaskAndIntent(activeTaskId, gen, rootAuthorityGeneration);
 }
 
@@ -413,14 +414,12 @@ async function initTask(
     return;
   }
 
-  // A hashless reconnect must keep the task already shown in the browser.
-  // Root intentionally has no hash, so this guard must precede hashless
+  // A hashless reconnect must keep the task already shown in the browser:
+  // activation writes every task's hash, so a shown task without one is one
+  // whose activation had not finished yet. This guard must precede hashless
   // recent-task selection. When config failed, Root's authority is not yet
   // installed: fall through to the task list so it can restore Root instead of
-  // keeping a reconnect target with no Root authority. Without that authority
-  // the client cannot tell whether the hashless task is Root, and it must not
-  // guess from the id: `setHashTaskId` only drops the hash for a known Root, so
-  // a hashless display with no authority is never safe to keep as-is.
+  // keeping a reconnect target with no Root authority.
   const rootAuthorityMissing = state.rootTaskId === null;
   if (
     !existingId &&

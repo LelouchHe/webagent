@@ -26,8 +26,8 @@ export async function currentTaskId(page: Page): Promise<string> {
   const hash = await page.evaluate(() => location.hash.slice(1));
   if (hash) return hash;
 
-  // Root is the canonical clean URL. Resolve it from backend authority rather
-  // than assuming a literal id so E2E helpers follow per-agent Root identity.
+  // No hash yet (a page that has not finished activating): resolve Root from
+  // backend authority rather than assuming its per-database id.
   let rootTaskId = rootTaskIds.get(page);
   if (!rootTaskId) {
     rootTaskId = page.evaluate(async () => {

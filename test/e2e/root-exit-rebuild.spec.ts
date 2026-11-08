@@ -56,10 +56,11 @@ test("exiting Root lands on an idle Root", async ({ page }) => {
     );
     await gotoConnected(page, `${origin}/`);
 
-    // Root is the hashless task the server names; its id is per-database.
+    // A fresh workspace opens on Root; like every task it is addressed by its
+    // own per-database id in the hash.
     const rootTaskId = await currentTaskId(page);
     expect(rootTaskId).toBeTruthy();
-    expect(new URL(page.url()).hash).toBe("");
+    expect(new URL(page.url()).hash).toBe(`#${rootTaskId}`);
     await sendPrompt(page, "root content");
     await expect(page.locator("#messages")).toContainText("root content");
     await expect(page.locator("#send-btn")).toHaveText("↵");

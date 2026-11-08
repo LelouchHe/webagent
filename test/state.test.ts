@@ -591,17 +591,17 @@ describe("state", () => {
       assert.equal(mod.getHashTaskId(), "abc123");
     });
 
-    it("omits the Root hash and keeps ordinary ids", () => {
+    it("addresses Root by its own hash, like every task", () => {
       const rootId = "6f1c2e9a-0d4b-4c8e-9a51-3b7f2d8e4c10";
       history.replaceState(null, "", "/?view=chat#old-task");
       mod.state.rootTaskId = rootId;
 
+      // A reload must return to Root, so Root keeps a stable deep link too.
       mod.setHashTaskId(rootId);
       assert.equal(location.pathname, "/");
       assert.equal(location.search, "?view=chat");
-      assert.equal(location.hash, "");
+      assert.equal(location.hash, `#${rootId}`);
 
-      // Prefix-shaped ids are ordinary tasks now.
       mod.setHashTaskId("root-forged");
       assert.equal(location.hash, "#root-forged");
       mod.setHashTaskId("child-task");

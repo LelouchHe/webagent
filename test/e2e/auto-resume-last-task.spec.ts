@@ -25,8 +25,8 @@ test("opening the root path resumes the most recent user-input Task", async ({
     "Echo: message from the latest task",
   );
 
-  // A hashless startup resumes the most recent user-input Task. Root remains
-  // the clean URL only when Root itself is the selected Task.
+  // A hashless startup resumes the most recent user-input Task, which then
+  // shows its own hash (Root would too, if it were the one selected).
   const freshPage = await browser.newPage();
   await gotoConnected(freshPage, "/");
 

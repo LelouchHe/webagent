@@ -646,7 +646,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - direct task targets take priority over unresolved message targets
   - task switches require successful busy snapshot hydration; provisional hash is written before detail fetch, then Root canonicalization waits for detail authority
   - hashless startup preserves user-input-first selection and canonical Root fallback; same-task hashless reconnect skips list rescan
-  - `#root` is a normal deep link; a hashless reconnect to Root without config authority consults the task list to restore that authority
+  - Root is addressed by its own `#<id>` deep link like every task; a hashless reconnect without config authority consults the task list to restore that authority
   - foreign `root-*` ids are ordinary 404s and never aliases; fallback selection uses the current connection's scoped task array
   - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
   - existing-window and cold-start service-worker routing
@@ -966,8 +966,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 ### Basic task and messaging flow
 
 - `task-bootstrap.spec.ts`
-  - app boots into the canonical Root task (clean URL, no hash) and is
-    ready for input
+  - app boots into the canonical Root task and is ready for input
 
 - `bootstrap-concurrency.spec.ts`
   - concurrent clients on the root path converge on this backend's derived

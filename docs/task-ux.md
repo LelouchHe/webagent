@@ -35,8 +35,9 @@ history, deliveries, and persistence continue to use the stable `taskId`.
 A URL hash explicitly selects a Task. When the application opens without a
 hash, it resumes the most recent Task with user-originated input, using the
 Task list's `last_active_at` ordering. Root is the fallback when no Task has
-user input. Root remains the canonical clean URL (`/`); a resumed child uses
-its stable `#task-id` hash.
+user input. Whatever Task is resumed, Root included, then shows its stable
+`#task-id` hash, so a reload returns to it; only the hashless `/` keeps meaning
+"most recent".
 
 User input includes normal prompts and user-originated collaboration/create
 messages. Agent output, background deliveries, navigation, and merely viewing
