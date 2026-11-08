@@ -30,8 +30,9 @@ session (execution layer, internal)
 ```
 
 - `task` never disappears because of `clear`, execution rotation, or server
-  restart. The workspace has exactly one reserved Root task, with the literal
-  id `root` and `parent_id = NULL`. That id is hashless in the URL.
+  restart. The workspace has exactly one reserved Root task, with a
+  per-database UUID (named by the `workspace` row) and `parent_id = NULL`. Root
+  is hashless in the URL.
 - `session` is an implementation detail. It is never user-visible and never
   leaks into product vocabulary, UI copy, or the public API naming.
 
@@ -173,11 +174,13 @@ bookkeeping and are never product copy.
 The rename is a mechanical-but-wide refactor (DB → backend → frontend →
 docs → tests). When executing it:
 
-- The single literal `root` Root is an intentional pre-1.0 incompatible
-  change. A pre-multi-agent database is refused at startup. There is no
-  automatic or in-place conversion: back up the data directory, then
+- The single Root is an intentional pre-1.0 incompatible change. A
+  pre-multi-agent database is refused at startup; there is no automatic or
+  in-place conversion from that shape: back up the data directory, then
   explicitly re-initialize it by removing the old database and restarting.
-  Startup never rewrites an old database in place.
+  The Root was introduced with the literal id `root` and later became a
+  per-database UUID; that change is breaking in the same way, with no in-place
+  rename (see `docs/schema.md`).
 - The REST and SSE rename is a hard break with **no alias** (pre-1.0; the
   frontend and API move together). Route docs are validated by
   `test/doc-coverage.test.ts`, so `docs/api.md` must move in the same
@@ -186,7 +189,7 @@ docs → tests). When executing it:
   detail/create/clear/reset/bootstrap/SSE/config payloads and the task list's
   `isRoot` flag; clients compare against that delivered id, never against a
   literal value or a prefix. Server code asks `Store.isRootTaskId` instead of
-  comparing with the constant. `#root` is a normal deep link to that task.
+  comparing with the constant.
 - Sweep: `docs/schema.md`, `docs/api.md`, `docs/share.md`, `docs/features.md`,
   `docs/client-architecture.md`, `docs/performance.md`, `README.md`,
   `CLAUDE.md`, `TEST_SCENARIOS.md`, and the unit/e2e suites.

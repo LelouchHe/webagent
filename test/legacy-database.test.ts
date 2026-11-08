@@ -26,6 +26,7 @@ function makeLegacyDb(
   dir: string,
   agentKey: string,
   rootId: string | null,
+  options: { namedRoot?: boolean } = {},
 ): string {
   const dbPath = join(dir, "webagent.db");
   const db = new Database(dbPath);
@@ -56,6 +57,14 @@ function makeLegacyDb(
   db.prepare(
     "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
   ).run(agentKey, "legacy-session", rootId ?? "legacy-child", Date.now());
+  if (options.namedRoot && rootId !== null) {
+    db.exec(
+      "CREATE TABLE workspace (id INTEGER PRIMARY KEY CHECK (id = 1), root_task_id TEXT NOT NULL)",
+    );
+    db.prepare("INSERT INTO workspace (id, root_task_id) VALUES (1, ?)").run(
+      rootId,
+    );
+  }
   db.close();
   return dbPath;
 }
@@ -92,7 +101,7 @@ describe("legacy database refusal", () => {
         (error: unknown) => {
           assert.ok(error instanceof LegacyDatabaseError);
           assert.match(error.message, /pre-multi-agent/);
-          assert.match(error.message, /no literal `root`/);
+          assert.match(error.message, /but no Root/);
           assert.match(error.message, /back up/i);
           assert.match(error.message, /re-initialize/);
           assert.doesNotMatch(error.message, /migrate/);
@@ -109,13 +118,38 @@ describe("legacy database refusal", () => {
     }
   });
 
-  it("refuses command-path keys even when a literal Root exists", () => {
+  it("refuses a pre-UUID database whose Root has the literal id", () => {
+    const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-literal-"));
+    try {
+      // Nothing names this Root: the database predates `workspace`, so it is
+      // a breaking change that needs a reset, not a migration.
+      const dbPath = makeLegacyDb(dir, "pi", "root");
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const report = detectLegacyDatabase(db);
+        assert.ok(report);
+        assert.equal(report.taskCount, 2);
+        assert.equal(report.hasRoot, false);
+        assert.deepEqual(report.pathLikeAgentKeys, []);
+      } finally {
+        db.close();
+      }
+      const beforeHash = sha256(dbPath);
+      assert.throws(() => new Store(dir), /but no Root/);
+      assert.equal(sha256(dbPath), beforeHash);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses command-path keys even when a Root exists", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-key-"));
     try {
       const dbPath = makeLegacyDb(
         dir,
         "claude-agent-acp --profile work",
-        "root",
+        "named-root",
+        { namedRoot: true },
       );
       const db = new Database(dbPath, { readonly: true });
       try {
@@ -141,7 +175,7 @@ describe("legacy database refusal", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-accept-"));
     try {
       const store = new Store(dir);
-      store.ensureRootTask("/tmp/root");
+      const rootTaskId = store.ensureRootTask("/tmp/root").id;
       store.createTask("live-task", "/tmp/live", "auto", "pi", "session-live");
       store.close();
 
@@ -165,9 +199,9 @@ describe("legacy database refusal", () => {
           .listTasks()
           .map((task) => task.id)
           .sort(),
-        ["live-task", "retired-task", "root"].sort(),
+        ["live-task", "retired-task", reopened.rootTaskId].sort(),
       );
-      assert.equal(reopened.rootTaskId, "root");
+      assert.equal(reopened.rootTaskId, rootTaskId);
       reopened.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -178,8 +212,8 @@ describe("legacy database refusal", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-prefix-"));
     try {
       const store = new Store(dir);
-      store.ensureRootTask("/tmp/root");
-      store.attachAgentSession("root", "test-agent", "root-session");
+      const rootTaskId = store.ensureRootTask("/tmp/root").id;
+      store.attachAgentSession(rootTaskId, "test-agent", "root-session");
       store.createTask("root-forged", "/tmp/forged", "auto", "pi");
       store.createTask("root-2f3a9c", "/tmp/short", "auto", "pi");
       store.close();
@@ -187,7 +221,7 @@ describe("legacy database refusal", () => {
       const reopened = new Store(dir);
       assert.equal(reopened.getTask("root-forged")?.id, "root-forged");
       assert.equal(reopened.getTask("root-2f3a9c")?.id, "root-2f3a9c");
-      assert.equal(reopened.getTask("root")?.id, "root");
+      assert.equal(reopened.getTask(rootTaskId)?.id, rootTaskId);
       reopened.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -198,7 +232,7 @@ describe("legacy database refusal", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-fresh-"));
     try {
       const store = new Store(dir);
-      assert.equal(store.ensureRootTask("/tmp/root").id, "root");
+      assert.equal(store.ensureRootTask("/tmp/root").id, store.rootTaskId);
       store.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

@@ -6,10 +6,10 @@ import { fileURLToPath } from "node:url";
 
 /**
  * Structural guard for Root identity: which task is the Root is a fact of one
- * database, delivered as `Store.rootTaskId` on the server and as `rootTaskId` /
- * `isRoot` to the client. Runtime code must never recognise Root by the value
- * of its id, so a later change of that value (a UUID Root) cannot silently
- * break a comparison nobody remembered.
+ * database (a UUID the `workspace` row names), delivered as `Store.rootTaskId`
+ * on the server and as `rootTaskId` / `isRoot` to the client. Runtime code
+ * must never recognise Root by a literal value; the old literal `root` in
+ * particular must not creep back in as a comparison.
  *
  * This scans source text, so it is a smoke test over the shape, not a proof.
  */
@@ -33,13 +33,6 @@ function code(text: string): string {
 const LITERAL_COMPARISON =
   /(===|!==)\s*["'`]root["'`]|["'`]root["'`]\s*(===|!==)/;
 
-/**
- * The only places allowed to name the stored value: the Store, which owns the
- * identity, and the legacy-database guard, which inspects an old data shape
- * before any Store exists.
- */
-const IDENTITY_OWNERS = new Set(["src/store.ts", "src/legacy-database.ts"]);
-
 describe("Root identity structure", () => {
   const files = [
     ...sourceFiles(join(repoRoot, "src")),
@@ -51,22 +44,15 @@ describe("Root identity structure", () => {
 
   it("never compares a task id with the literal Root value", () => {
     const offenders = files
-      .filter(({ path }) => !IDENTITY_OWNERS.has(path))
       .filter(({ text }) => LITERAL_COMPARISON.test(text))
       .map(({ path }) => path);
     assert.deepEqual(offenders, []);
   });
 
-  it("reads ROOT_TASK_ID only inside the Store", () => {
+  it("never matches a task row by the literal Root value in SQL", () => {
     const offenders = files
-      .filter(({ path }) => path !== "src/store.ts")
-      .filter(({ text }) => /\bROOT_TASK_ID\b/.test(text))
+      .filter(({ text }) => /\b(id|task_id|parent_id)\s*=\s*'root'/.test(text))
       .map(({ path }) => path);
     assert.deepEqual(offenders, []);
-
-    const store = files.find(({ path }) => path === "src/store.ts")!.text;
-    const uses = store.match(/\bROOT_TASK_ID\b/g) ?? [];
-    // The declaration and the one assignment that seeds `rootTaskId`.
-    assert.equal(uses.length, 2);
   });
 });

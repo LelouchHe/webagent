@@ -110,7 +110,7 @@ describe("S3 collaboration write routes", () => {
       "auto",
       "test-agent",
       "agent-parent",
-      "root",
+      store.rootTaskId,
     );
     store.createTask(
       "sibling",
@@ -480,7 +480,7 @@ describe("S3 collaboration write routes", () => {
       "auto",
       "test-agent",
       "agent-other-parent",
-      "root",
+      store.rootTaskId,
     );
     store.createTask(
       "other",

@@ -166,15 +166,15 @@ describe("task-tree deletion across agents", () => {
     // must find the task it would have found had it created one instead of
     // exiting one.
     assert.ok(
-      tasks.liveTasks.has("root"),
+      tasks.liveTasks.has(store.rootTaskId),
       "Root is rebuilt before the exit returns",
     );
     assert.equal(
-      store.getCurrentExecutionBinding("root")?.agent_session_id,
+      store.getCurrentExecutionBinding(store.rootTaskId)?.agent_session_id,
       "rebuilt-session",
     );
-    assert.equal(tasks.getBusyKind("root"), null);
-    assert.equal(tasks.state.getState("root").runtime.busy, null);
+    assert.equal(tasks.getBusyKind(store.rootTaskId), null);
+    assert.equal(tasks.state.getState(store.rootTaskId).runtime.busy, null);
   });
 
   it("counts the rebuild as work of its own", () => {
@@ -182,14 +182,14 @@ describe("task-tree deletion across agents", () => {
     // The claim has to stand on its own: the rebuild's first await is the
     // agent resolution, which happens before any ACP session exists, so a
     // rotation or a second exit arriving there must already see the task busy.
-    tasks.rebuildingTasks.add("root");
+    tasks.rebuildingTasks.add(store.rootTaskId);
     try {
-      assert.equal(tasks.getGateBusyKind("root"), "agent");
-      assert.equal(tasks.getBusyKind("root"), "agent");
+      assert.equal(tasks.getGateBusyKind(store.rootTaskId), "agent");
+      assert.equal(tasks.getBusyKind(store.rootTaskId), "agent");
     } finally {
-      tasks.rebuildingTasks.delete("root");
+      tasks.rebuildingTasks.delete(store.rootTaskId);
     }
-    assert.equal(tasks.getGateBusyKind("root"), null);
+    assert.equal(tasks.getGateBusyKind(store.rootTaskId), null);
   });
 
   it("holds the rebuild against a clear and a second exit", async () => {
@@ -218,7 +218,7 @@ describe("task-tree deletion across agents", () => {
     // second exit that started here would act on the binding this rebuild is
     // about to replace, and the binding's last writer would silently win.
     await assert.rejects(
-      () => tasks.clearTask(exitBridge, "root"),
+      () => tasks.clearTask(exitBridge, store.rootTaskId),
       TaskBusyError,
     );
     await assert.rejects(() => tasks.resetRootTask(exitBridge), TaskBusyError);
@@ -230,10 +230,10 @@ describe("task-tree deletion across agents", () => {
       "parent",
     ]);
     assert.equal(
-      store.getCurrentExecutionBinding("root")?.agent_session_id,
+      store.getCurrentExecutionBinding(store.rootTaskId)?.agent_session_id,
       "rebuilt-session",
     );
-    assert.equal(tasks.getBusyKind("root"), null);
+    assert.equal(tasks.getBusyKind(store.rootTaskId), null);
   });
 
   it("refuses the exit when Root's agent cannot start, and deletes nothing", async () => {
@@ -248,7 +248,7 @@ describe("task-tree deletion across agents", () => {
     assert.ok(store.getTaskIncludingDeleted("child"));
     assert.equal(store.getEvents("child").length, 1);
     assert.equal(
-      store.getCurrentExecutionBinding("root")?.agent_session_id,
+      store.getCurrentExecutionBinding(store.rootTaskId)?.agent_session_id,
       "root-session",
     );
     assert.deepEqual(retiredA, [], "nothing was retired");
@@ -268,7 +268,7 @@ describe("task-tree deletion across agents", () => {
     // descendants'.
     assert.deepEqual(retiredA.sort(), ["root-session", "same-sid"]);
     assert.deepEqual(retiredB, ["same-sid"]);
-    const root = store.getCurrentExecutionBinding("root");
+    const root = store.getCurrentExecutionBinding(store.rootTaskId);
     assert.ok(root, "the Root keeps an empty owner slot");
     assert.equal(root.agent_key, "agent-a");
     assert.equal(root.agent_session_id, "");

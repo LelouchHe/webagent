@@ -47,7 +47,7 @@ describe("MCP Task tool host", () => {
       "auto",
       "test-agent",
       "session-alpha",
-      "root",
+      store.rootTaskId,
       {
         title: "Alpha",
       },
@@ -58,7 +58,7 @@ describe("MCP Task tool host", () => {
       "auto",
       "test-agent",
       "session-beta",
-      "root",
+      store.rootTaskId,
       {
         title: "Beta",
       },
@@ -77,7 +77,7 @@ describe("MCP Task tool host", () => {
     );
     // The tasks created above the manager would have no generation; adopt the
     // ones this harness seeded directly.
-    for (const id of ["root", "alpha", "beta"]) {
+    for (const id of [store.rootTaskId, "alpha", "beta"]) {
       tasks.authority.adopt(id);
     }
   });
@@ -89,11 +89,11 @@ describe("MCP Task tool host", () => {
   });
 
   it("lists the family with relation and status", () => {
-    store.updateTaskWorkflowStatus("root", "done");
+    store.updateTaskWorkflowStatus(store.rootTaskId, "done");
     store.updateTaskWorkflowStatus("alpha", "running");
     store.updateTaskWorkflowStatus("alpha-child", "blocked");
     const stamp = Date.UTC(2026, 8, 13, 21, 0, 1, 1);
-    for (const id of ["root", "alpha", "alpha-child"]) {
+    for (const id of [store.rootTaskId, "alpha", "alpha-child"]) {
       store.saveEvent(
         id,
         "assistant_message",
@@ -110,13 +110,13 @@ describe("MCP Task tool host", () => {
       listed.map(({ id, relation }) => ({ id, relation })),
       [
         { id: "alpha", relation: "self" },
-        { id: "root", relation: "parent" },
+        { id: store.rootTaskId, relation: "parent" },
         { id: "alpha-child", relation: "child" },
         { id: "beta", relation: "sibling" },
       ],
     );
     assert.equal(
-      listed.find((item) => item.id === "root")?.workflowStatus,
+      listed.find((item) => item.id === store.rootTaskId)?.workflowStatus,
       "done",
     );
     assert.equal(

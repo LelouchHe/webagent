@@ -389,8 +389,7 @@ Promise.all([api.getTask(targetId), loadHistory(targetId)]).then(
 
 Child Tasks are identified by URL hash: `/#task-id`. The workspace's canonical
 Root omits the hash; its id is delivered by server authority, and the client
-never recognises Root by the id's value. `#root` is a normal deep link while
-the stored Root id is `root`. `GET /api/v1/tasks` returns an array; it is still
+never recognises Root by the id's value. `GET /api/v1/tasks` returns an array; it is still
 scoped to the running agent today, and the merged workspace list is part of the
 multi-agent runtime step. The exact `rootTaskId` authority is also carried by detail,
 bootstrap/create/clear/reset responses, global/per-task `connected`,

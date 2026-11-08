@@ -2996,7 +2996,7 @@ describe("events", () => {
           "auto",
           "test-agent",
           "session-source",
-          "root",
+          store.rootTaskId,
           { title: "Source" },
         );
         const child = store.createTask(

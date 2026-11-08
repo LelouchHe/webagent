@@ -177,7 +177,7 @@ describe("implicit owner rotation", () => {
       "agent",
       "agent-b",
       "parent-session",
-      "root",
+      store.rootTaskId,
     );
     store.createTask(
       "child",
@@ -258,7 +258,7 @@ describe("implicit owner rotation", () => {
       "agent",
       "agent-b",
       "parent-session",
-      "root",
+      store.rootTaskId,
     );
     store.createTask(
       "child",

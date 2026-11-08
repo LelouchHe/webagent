@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
-import { ROOT_TASK_ID, Store } from "../src/store.ts";
+import { Store } from "../src/store.ts";
 import { generateShareToken } from "../src/tokens.ts";
 
 describe("Store", () => {
@@ -102,7 +102,7 @@ describe("Store", () => {
           .listTasks()
           .map((task) => task.id)
           .sort(),
-        ["root", "web-a", "web-b"],
+        [store.rootTaskId, "web-a", "web-b"],
       );
       assert.equal(other.getTask("web-a")?.id, "web-a");
       // Narrowing is an explicit read option, not a gate.
@@ -128,21 +128,24 @@ describe("Store", () => {
       );
     });
 
-    it("uses the literal `root` identity for every agent key", () => {
+    it("uses one Root identity for every agent key", () => {
       const root = store.ensureRootTask("/tmp/root");
-      assert.equal(root.id, "root");
+      assert.equal(root.id, store.rootTaskId);
       assert.equal(root.parent_id, null);
-      assert.equal(store.rootTaskId, "root");
+      assert.equal(store.rootTaskId, store.rootTaskId);
       store.close();
 
       store = new Store(tmpDir);
-      assert.equal(store.ensureRootTask("/tmp/changed").id, "root");
-      assert.equal(store.getTaskIncludingDeleted("root")?.cwd, "/tmp/root");
+      assert.equal(store.ensureRootTask("/tmp/changed").id, store.rootTaskId);
+      assert.equal(
+        store.getTaskIncludingDeleted(store.rootTaskId)?.cwd,
+        "/tmp/root",
+      );
       store.close();
 
       const other = new Store(tmpDir);
-      assert.equal(other.rootTaskId, "root");
-      assert.equal(other.ensureRootTask("/tmp/other").id, "root");
+      assert.equal(other.rootTaskId, store.rootTaskId);
+      assert.equal(other.ensureRootTask("/tmp/other").id, store.rootTaskId);
       other.close();
       store = new Store(tmpDir);
     });
@@ -157,20 +160,25 @@ describe("Store", () => {
 
       const other = new Store(tmpDir);
       assert.throws(
-        () => other.attachAgentSession("root", "other-agent", "session-b"),
+        () =>
+          other.attachAgentSession(
+            store.rootTaskId,
+            "other-agent",
+            "session-b",
+          ),
         /already has an execution binding/,
       );
       // The refused attach changed nothing: one global binding, still the
       // first agent's execution.
       assert.equal(
-        other.getCurrentExecutionBinding("root")?.agent_session_id,
+        other.getCurrentExecutionBinding(store.rootTaskId)?.agent_session_id,
         "session-a",
       );
-      assert.equal(other.getBindingAgent("root"), "test-agent");
+      assert.equal(other.getBindingAgent(store.rootTaskId), "test-agent");
       other.close();
 
       store = new Store(tmpDir);
-      assert.equal(store.getAgentSessionId("root"), "session-a");
+      assert.equal(store.getAgentSessionId(store.rootTaskId), "session-a");
     });
 
     it("keeps Root anchored and reparents a corrupted Root to NULL", () => {
@@ -213,11 +221,11 @@ describe("Store", () => {
         "auto",
         "test-agent",
         "agent-child",
-        "root",
+        store.rootTaskId,
       );
 
-      assert.equal(child.parent_id, "root");
-      assert.equal(store.getTask("child")?.parent_id, "root");
+      assert.equal(child.parent_id, store.rootTaskId);
+      assert.equal(store.getTask("child")?.parent_id, store.rootTaskId);
     });
 
     it("creates the Root from the first task write and keeps its cwd", () => {
@@ -232,8 +240,14 @@ describe("Store", () => {
       // The first createTask supplied the Root cwd; ensureRootTask does not
       // overwrite the existing anchor.
       assert.equal(root.cwd, "/tmp/one");
-      assert.equal(store.getTaskIncludingDeleted("old-1")?.parent_id, "root");
-      assert.equal(store.getTaskIncludingDeleted("old-2")?.parent_id, "root");
+      assert.equal(
+        store.getTaskIncludingDeleted("old-1")?.parent_id,
+        store.rootTaskId,
+      );
+      assert.equal(
+        store.getTaskIncludingDeleted("old-2")?.parent_id,
+        store.rootTaskId,
+      );
       // The Root is a live task even before it has an execution: the read面
       // must not depend on a binding row existing.
       assert.deepEqual(
@@ -248,16 +262,16 @@ describe("Store", () => {
       assert.equal(store.ensureRootTask("/tmp/other").title, "root");
     });
 
-    it("creates the literal Root on the first direct task write", () => {
+    it("creates the Root on the first direct task write", () => {
       const task = store.createTask("t1", "/tmp/x", "auto", "test-agent");
 
-      const root = store.getTaskIncludingDeleted("root")!;
-      assert.equal(root.id, "root");
+      const root = store.getTaskIncludingDeleted(store.rootTaskId)!;
+      assert.equal(root.id, store.rootTaskId);
       assert.equal(root.parent_id, null);
       assert.equal(root.source, "root");
       assert.equal(root.title, "root");
       assert.equal(root.cwd, "/tmp/x");
-      assert.equal(task.parent_id, "root");
+      assert.equal(task.parent_id, store.rootTaskId);
 
       const parentless = store["db"]
         .prepare("SELECT COUNT(*) AS n FROM tasks WHERE parent_id IS NULL")
@@ -267,8 +281,11 @@ describe("Store", () => {
       // A Store-produced database reopens without legacy refusal.
       store.close();
       store = new Store(tmpDir);
-      assert.equal(store.getTaskIncludingDeleted("root")?.id, "root");
-      assert.equal(store.getTask("t1")?.parent_id, "root");
+      assert.equal(
+        store.getTaskIncludingDeleted(store.rootTaskId)?.id,
+        store.rootTaskId,
+      );
+      assert.equal(store.getTask("t1")?.parent_id, store.rootTaskId);
     });
 
     it("keeps a user-renamed Root title across restarts", () => {
@@ -490,9 +507,25 @@ describe("Store", () => {
   });
 
   describe("reserved Root namespace and ownership", () => {
-    it("uses the literal id `root`", () => {
-      assert.equal(ROOT_TASK_ID, "root");
-      assert.equal(store.rootTaskId, "root");
+    it("gives each database its own UUID Root, stable across reopen", () => {
+      assert.match(
+        store.rootTaskId,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+      const reopened = new Store(tmpDir);
+      try {
+        assert.equal(reopened.rootTaskId, store.rootTaskId);
+      } finally {
+        reopened.close();
+      }
+      const elsewhere = mkdtempSync(join(tmpdir(), "webagent-store-other-"));
+      const other = new Store(elsewhere);
+      try {
+        assert.notEqual(other.rootTaskId, store.rootTaskId);
+      } finally {
+        other.close();
+        rmSync(elsewhere, { recursive: true, force: true });
+      }
     });
 
     it("reserves only this database's exact Root id", () => {
@@ -502,9 +535,15 @@ describe("Store", () => {
       assert.equal(store.isRootTaskId("Root"), false);
     });
 
-    it("rejects only the exact literal Root as ordinary creation", () => {
+    it("rejects the Root id as ordinary creation", () => {
       assert.throws(
-        () => store.createTask("root", "/tmp/forged", "auto", "test-agent"),
+        () =>
+          store.createTask(
+            store.rootTaskId,
+            "/tmp/forged",
+            "auto",
+            "test-agent",
+          ),
         /Reserved Root id cannot be created/,
       );
       // Prefix-shaped ids are ordinary tasks again; the reservation is exact.
@@ -514,7 +553,7 @@ describe("Store", () => {
       assert.equal(store.getTask("root-2f3a")?.id, "root-2f3a");
     });
 
-    it("refuses generic delete, reap, and GC on the literal Root", () => {
+    it("refuses generic delete, reap, and GC on the Root", () => {
       const rootId = store.ensureRootTask("/root").id;
       store.attachAgentSession(rootId, "test-agent", "root-session");
 
@@ -524,7 +563,7 @@ describe("Store", () => {
       );
       assert.equal(store.reapTombstoneIfOrphaned(rootId), false);
       assert.deepEqual(store.deleteEmptyTasks(0), []);
-      assert.equal(store.getTask(rootId)?.id, "root");
+      assert.equal(store.getTask(rootId)?.id, store.rootTaskId);
 
       // Even a corrupted tombstone flag must not let reap claim Root.
       store["db"]
@@ -537,8 +576,12 @@ describe("Store", () => {
     it("accepts the global Root as a parent for another agent's task", () => {
       store.ensureRootTask("/root");
       const other = new Store(tmpDir);
-      other.attachAgentSession("root", "test-agent", "foreign-root-session");
-      assert.equal(other.getParentTask("root")?.id, "root");
+      other.attachAgentSession(
+        store.rootTaskId,
+        "test-agent",
+        "foreign-root-session",
+      );
+      assert.equal(other.getParentTask(store.rootTaskId)?.id, store.rootTaskId);
       other.close();
     });
   });
@@ -699,7 +742,7 @@ describe("Store", () => {
       const survivor = store.getTaskIncludingDeleted("unbound-child")!;
       // An active share keeps the row alive as a tombstone, now anchored at
       // Root because its parent is gone.
-      assert.equal(survivor.parent_id, "root");
+      assert.equal(survivor.parent_id, store.rootTaskId);
       assert.notEqual(survivor.deleted_at, null);
       assert.equal(store.getEvents("unbound-child").length, 1);
       assert.equal(
@@ -914,25 +957,29 @@ describe("Store", () => {
         batches.push(changes.map((change) => change.taskId));
       });
       store.ensureRootTask("/root");
-      store.attachAgentSession("root", "test-agent", "root-session");
+      store.attachAgentSession(store.rootTaskId, "test-agent", "root-session");
       store.createTask(
         "child",
         "/c",
         "auto",
         "test-agent",
         "child-session",
-        "root",
+        store.rootTaskId,
       );
 
       // Root reset replaces Root's execution and deletes the child in one
       // outermost transaction: one batch, one fact per task.
       store.resetRootTask();
 
-      assert.deepEqual(batches, [["root"], ["child"], ["child", "root"]]);
-      const rootFacts = batches[2].filter((id) => id === "root");
+      assert.deepEqual(batches, [
+        [store.rootTaskId],
+        ["child"],
+        ["child", store.rootTaskId],
+      ]);
+      const rootFacts = batches[2].filter((id) => id === store.rootTaskId);
       assert.equal(rootFacts.length, 1);
       assert.equal(
-        store.getCurrentExecutionBinding("root")?.agent_session_id,
+        store.getCurrentExecutionBinding(store.rootTaskId)?.agent_session_id,
         "",
       );
     });
@@ -1062,7 +1109,7 @@ describe("Store", () => {
       assert.equal(result.mode, "hard");
       const child = store.getTaskIncludingDeleted("child")!;
       assert.notEqual(child.deleted_at, null); // kept for the share viewer
-      assert.equal(child.parent_id, "root"); // preserved under the global anchor
+      assert.equal(child.parent_id, store.rootTaskId); // preserved under the global anchor
       assert.equal(store.getTask("parent"), undefined);
       assert.equal(
         result.affected.find((entry) => entry.id === "child")?.agentSessionId,
@@ -1126,7 +1173,7 @@ describe("Store", () => {
 
       // The child's tombstone survives under the global Root anchor.
       const child = store.getTaskIncludingDeleted("child")!;
-      assert.equal(child.parent_id, "root");
+      assert.equal(child.parent_id, store.rootTaskId);
       assert.notEqual(child.deleted_at, null);
       assert.equal(store.getEvents("child").length, 1);
       assert.equal(

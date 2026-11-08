@@ -1,7 +1,9 @@
 // Refuse the pre-multi-agent shape before any write.
 //
-// With the single-Root invariant, every ordinary task is attached to `root`,
-// so "tasks exist but the literal Root does not" is the primary signal. A
+// With the single-Root invariant, every database that has tasks has a Root,
+// and the `workspace` row names it, so "tasks exist but no named Root does"
+// is the primary signal. That also covers a database whose Root still has the
+// pre-UUID literal id: it predates `workspace` and needs a reset too. A
 // command-path `agent_key` (not a valid configured id) is the secondary signal
 // for a hand-edited mixed database. A valid-but-removed agent id is allowed.
 
@@ -22,7 +24,7 @@ export class LegacyDatabaseError extends Error {
   constructor(report: LegacyDatabaseReport) {
     const details = [
       report.taskCount > 0 && !report.hasRoot
-        ? `${report.taskCount} task(s) but no literal \`root\``
+        ? `${report.taskCount} task(s) but no Root`
         : null,
       report.pathLikeAgentKeys.length > 0
         ? `command-path agent key(s): ${report.pathLikeAgentKeys.slice(0, 5).join(", ")}`
@@ -55,11 +57,16 @@ export function detectLegacyDatabase(
   );
   if (!tables.has("tasks")) return null;
 
-  const { taskCount, hasRoot } = db
-    .prepare(
-      "SELECT COUNT(*) AS taskCount, MAX(id = 'root') AS hasRoot FROM tasks",
-    )
-    .get() as { taskCount: number; hasRoot: number | null };
+  const { taskCount } = db
+    .prepare("SELECT COUNT(*) AS taskCount FROM tasks")
+    .get() as { taskCount: number };
+  const hasRoot =
+    tables.has("workspace") &&
+    db
+      .prepare(
+        "SELECT 1 AS present FROM workspace w JOIN tasks t ON t.id = w.root_task_id WHERE w.id = 1",
+      )
+      .get() !== undefined;
   const pathLikeAgentKeys = tables.has("agent_sessions")
     ? (
         db
@@ -74,7 +81,7 @@ export function detectLegacyDatabase(
 
   const report = {
     taskCount,
-    hasRoot: hasRoot === 1,
+    hasRoot,
     pathLikeAgentKeys,
   };
   if (report.taskCount === 0 || report.hasRoot) {

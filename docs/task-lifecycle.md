@@ -37,7 +37,7 @@ the SQL mechanics, and the debt state machine live in their own documents (see
 | **unmaterialized** | The binding agent is decided and the row exists, but there is no execution yet: the binding holds the reserved empty execution slot. The next use materializes one. Only a Root that *was* bound can be in this state; a Root that never had a binding is simply unbound and attaches on first use. |
 | **tombstone** | Soft-deleted (`deleted_at` set) because at least one active public share still points at it. Row, events, attachments, and shares survive; the binding is gone. |
 | **hard-deleted** | Rows are gone (events, attachments, binding) and the task directory on disk is removed. |
-| **root anchor** | The literal `root`. A normal task in every other respect, but never deleted or garbage collected. |
+| **root anchor** | The Root: the task the `workspace` row names (a per-database UUID). A normal task in every other respect, but never deleted or garbage collected. |
 
 ## Transitions
 
@@ -64,7 +64,7 @@ the SQL mechanics, and the debt state machine live in their own documents (see
 ## Two irregularities worth knowing
 
 - **Root is never deleted.** Generic deletion, empty-task GC, and tombstone
-  reaping all refuse the literal `root`; only the reset clears it in place.
+  reaping all refuse the Root; only the reset clears it in place.
 - **A tombstone exists only for an active public share.** Without one, deletion
   is immediate and complete. Survivors of a parent's deletion are therefore
   share tombstones and, for the empty-task GC only, the GC'd task's children.

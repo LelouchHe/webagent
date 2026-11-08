@@ -1168,7 +1168,7 @@ describe("handleAgentEvent", () => {
       "agent",
       "test-agent",
       "agent-source",
-      "root",
+      store.rootTaskId,
     );
     store.createTask(
       "target",
@@ -1176,7 +1176,7 @@ describe("handleAgentEvent", () => {
       "agent",
       "test-agent",
       "agent-target",
-      "root",
+      store.rootTaskId,
     );
     tasks.liveTasks.add("target");
     store.createCollaborationMessage({

@@ -26,9 +26,9 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
 - WebAgent exposes its own stable task id in REST/SSE and stores the agent's
   opaque ACP session ID in an internal mapping. The binding's `agent_key` is
   the configured agent id from `[agents.<id>]`; it is no longer derived from
-  the command's executable token. The workspace has exactly one Root task with
-  the literal id `root` and `parent_id = NULL`. Ordinary tasks use UUIDs;
-  ordinary creation/deletion/reaping/GC refuse the literal `root`.
+  the command's executable token. The workspace has exactly one Root task, with
+  a per-database UUID and `parent_id = NULL`. All tasks use UUIDs; ordinary
+  creation/deletion/reaping/GC refuse the Root.
 
 ### Agents, sessions, and execution identity
 

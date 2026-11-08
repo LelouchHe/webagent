@@ -33,6 +33,7 @@ or counters rather than instants (`ttl_hours`, `share_snapshot_seq`,
   - [recent_paths](#recent_paths)
   - [shares](#shares)
   - [owner_prefs](#owner_prefs)
+  - [workspace](#workspace)
 - [Indexes](#indexes)
 - [Cascade & Lifecycle](#cascade--lifecycle)
 - [Pre-1.0 reset policy](#pre-10-reset-policy)
@@ -59,15 +60,16 @@ deletion contract.
 
 WebAgent Tasks. Each row is a stable user-visible work thread created
 via `POST /api/v1/tasks`; its ACP execution can be rotated by clear. There is
-exactly one reserved Root Task row for the workspace. Its id is the literal
-`root`; it has `parent_id = NULL` and the default title `root`. The first
+exactly one reserved Root Task row for the workspace. Its id is a UUID named by
+the [`workspace`](#workspace) row; it has `parent_id = NULL` and the default
+title `root`. The first
 `Store.createTask()` inserts that row in the same transaction when absent;
 `ensureRootTask()` remains the idempotent startup path that keeps the
 configured default cwd.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | TEXT PRIMARY KEY | Ordinary tasks use UUIDs. The exact literal `root` is reserved; ordinary creation, generic delete, tombstone reaping, and empty-task GC all refuse it. Prefix-shaped ids such as `root-forged` are ordinary tasks. |
+| `id` | TEXT PRIMARY KEY | UUIDs. The Root's id is the one `workspace.root_task_id` names; ordinary creation, generic delete, tombstone reaping, and empty-task GC all refuse it. Prefix-shaped ids such as `root-forged` are ordinary tasks. |
 | `cwd` | TEXT NOT NULL | Working directory passed to the agent |
 | `title` | TEXT | Display/name title; defaults to the stable task id when creation supplies none. User/parent sets it via `+… ` or `/rename` |
 | `workflow_status` | TEXT NOT NULL DEFAULT `'idle'` | `running`, `idle`, `blocked`, or `done` |
@@ -315,6 +317,20 @@ selection, etc.). Single-user model = single owner scope.
 | `value` | TEXT NOT NULL | Free-form (typically JSON) |
 | `updated_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds; writers pass `Date.now()` explicitly |
 
+### `workspace`
+
+One row naming this database's Root. Root identity is a fact of the database,
+not a constant: `Store` reads it at open and exposes it as `rootTaskId`. A fresh
+database records a new UUID here before its Root row exists (the row is created
+on first use). A database whose Root still has the pre-UUID literal id `root`
+predates this table and is refused at startup (see
+[Pre-1.0 reset policy](#pre-10-reset-policy)).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PRIMARY KEY | Always `1` (`CHECK (id = 1)`): there is exactly one row |
+| `root_task_id` | TEXT NOT NULL | The Root's task id. No foreign key: a fresh database names its Root before the row is inserted |
+
 ---
 
 ## Indexes
@@ -349,7 +365,7 @@ deletes every descendant recursively, whatever agent owns it (immediate, no
 confirmation until a tree UI exists), each descendant following its own share
 rules. Only a share-tombstoned descendant survives, and it is re-parented under
 the global Root unless the Root is missing or a live title collision forces
-detachment. The literal `root`
+detachment. The Root
 cannot be generically deleted, garbage collected, or tombstone-reaped. Root
 reset and `/exit` clear Root's own events, attachments, client operations,
 compact summary, and previews, delete its live descendants, preserve the anchor,
@@ -494,7 +510,10 @@ an existing database on the current schema instead of requiring a reset:
   [`agent_sessions`](#agent_sessions)).
 
 The single-Root data shape is a hard break. Startup refuses a pre-multi-agent
-database read-only, before any write: tasks without a literal `root` task, or
+database read-only, before any write: tasks without the Root that `workspace`
+names (which includes a database whose Root still has the pre-UUID literal id
+`root`: Root identity became a per-database UUID as a declared breaking
+change, with no in-place rename), or
 `agent_sessions.agent_key` values that cannot be a configured agent id
 (command paths). The only upgrade path is an explicit reset: back up the data
 directory, remove the old database (or the whole data directory), and restart

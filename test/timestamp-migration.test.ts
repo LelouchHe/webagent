@@ -212,6 +212,8 @@ function createLegacyDatabase(
   });
 }
 
+const FIXTURE_ROOT_ID = "root";
+
 function buildLegacyDatabase(
   dir: string,
   transform: (table: string, sql: string) => string,
@@ -234,6 +236,11 @@ function buildLegacyDatabase(
     if (row.sql === null || row.name === "sqlite_sequence") continue;
     legacy.exec(row.type === "table" ? transform(row.name, row.sql) : row.sql);
   }
+  // These fixtures seed their Root under the id "root"; name it, as every
+  // database since Root identity became per-database does.
+  legacy
+    .prepare("INSERT INTO workspace (id, root_task_id) VALUES (1, ?)")
+    .run(FIXTURE_ROOT_ID);
   legacy.close();
   return freshSchema;
 }

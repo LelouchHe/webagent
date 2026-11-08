@@ -288,7 +288,7 @@ describe("TaskManager", () => {
         "agent",
         "test-agent",
         "agent-source",
-        "root",
+        store.rootTaskId,
       );
       store.createTask(
         "target",
@@ -620,7 +620,8 @@ describe("TaskManager", () => {
           // The task row already exists by now, which is exactly the window a
           // client can read and a peer task can queue work into.
           createdTaskId =
-            store.listTasks().find((task) => task.id !== "root")?.id ?? null;
+            store.listTasks().find((task) => task.id !== store.rootTaskId)
+              ?.id ?? null;
           assert.ok(createdTaskId, "the task is persisted before the override");
           enteredOverride();
           await overrideGate;
@@ -638,7 +639,7 @@ describe("TaskManager", () => {
 
       const created = sm
         .createTask(bridge, tmpDir, undefined, "auto", {
-          parentId: "root",
+          parentId: store.rootTaskId,
           model: "refused-model",
         })
         .catch((error: unknown) => error);
@@ -652,7 +653,7 @@ describe("TaskManager", () => {
       store.createCollaborationMessage({
         id: "collab-1",
         deliveryId: "delivery-1",
-        sourceTaskId: "root",
+        sourceTaskId: store.rootTaskId,
         directTargetTaskId: createdTaskId,
         sourceActor: "agent",
         body: "queued for a task that is about to fail",
@@ -2030,7 +2031,7 @@ describe("TaskManager", () => {
         "agent",
         "test-agent",
         "agent-source",
-        "root",
+        store.rootTaskId,
       );
       store.createTask(
         "target",
@@ -2038,7 +2039,7 @@ describe("TaskManager", () => {
         "agent",
         "test-agent",
         "agent-target",
-        "root",
+        store.rootTaskId,
       );
       sm.liveTasks.add("target");
       store.createCollaborationMessage({
@@ -2097,7 +2098,7 @@ describe("TaskManager", () => {
         "agent",
         "test-agent",
         "agent-source",
-        "root",
+        store.rootTaskId,
       );
       store.createTask(
         "child",
@@ -2105,7 +2106,7 @@ describe("TaskManager", () => {
         "agent",
         "test-agent",
         "agent-child",
-        "root",
+        store.rootTaskId,
       );
       sm.liveTasks.add("child");
       store.createCollaborationMessage({

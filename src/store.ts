@@ -20,16 +20,6 @@ import {
 } from "./execution-authority.ts";
 
 /**
- * The id a new database gives its Root.
- *
- * Root *identity* is a fact of one database, not a constant: runtime code reads
- * `Store.rootTaskId` (and the client reads the `rootTaskId` it is sent), never
- * this value. It is exported only for the Store itself and for tests that
- * assert what a fresh database looks like.
- */
-export const ROOT_TASK_ID = "root";
-
-/**
  * Session id used for "this task keeps its owner but has no execution yet".
  *
  * The Root's empty string is its long-standing lazy-materialization marker.
@@ -395,7 +385,6 @@ export class Store {
   }
 
   constructor(dataDir: string) {
-    this.rootTaskId = ROOT_TASK_ID;
     this.dataDir = dataDir;
     // Refuse the pre-multi-agent shape read-only, before mkdir/SQLite open
     // can write anything (including -wal/-shm side files).
@@ -416,10 +405,27 @@ export class Store {
       this.dropLegacyColumns();
       this.migrateSystemMessagePayloads();
       this.canonicalizeStoredModelValues();
+      this.rootTaskId = this.resolveRootIdentity();
     } catch (error) {
       this.db.close();
       throw error;
     }
+  }
+
+  /**
+   * Read this database's Root id, giving a fresh database one. The Root row
+   * itself is created on first use, as before; only its id is decided here.
+   */
+  private resolveRootIdentity(): string {
+    const stored = this.db
+      .prepare("SELECT root_task_id AS id FROM workspace WHERE id = 1")
+      .get() as { id: string } | undefined;
+    if (stored) return stored.id;
+    const rootTaskId = randomUUID();
+    this.db
+      .prepare("INSERT INTO workspace (id, root_task_id) VALUES (1, ?)")
+      .run(rootTaskId);
+    return rootTaskId;
   }
 
   /**
@@ -840,6 +846,15 @@ export class Store {
         created_at   INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS idx_attachments_task ON attachments(task_id);
+    `);
+
+    // workspace — one row naming this database's Root. Root identity is a
+    // fact of the database, not a constant: see `resolveRootIdentity`.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS workspace (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        root_task_id TEXT NOT NULL
+      );
     `);
 
     // owner_prefs — key-value store for owner-scoped defaults (display_name,

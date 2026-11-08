@@ -591,11 +591,12 @@ describe("state", () => {
       assert.equal(mod.getHashTaskId(), "abc123");
     });
 
-    it("omits the literal Root hash and keeps ordinary ids", () => {
+    it("omits the Root hash and keeps ordinary ids", () => {
+      const rootId = "6f1c2e9a-0d4b-4c8e-9a51-3b7f2d8e4c10";
       history.replaceState(null, "", "/?view=chat#old-task");
-      mod.state.rootTaskId = "root";
+      mod.state.rootTaskId = rootId;
 
-      mod.setHashTaskId("root");
+      mod.setHashTaskId(rootId);
       assert.equal(location.pathname, "/");
       assert.equal(location.search, "?view=chat");
       assert.equal(location.hash, "");
