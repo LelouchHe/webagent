@@ -189,6 +189,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     is still no claim; a failed read leaves rows unmarked
   - a listed task is marked after its `task_deleted`, and a list read issued
     before the delete cannot resurrect it
+  - a live row resolves its target from `targetTaskId` (not the row's own
+    `taskId`) and is marked when that other task is deleted while the client
+    views the parent
   - a task created after the applied snapshot (or before a later, still-older
     one) is never marked
   - a list that resolves after the connection generation changed is discarded,

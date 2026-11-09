@@ -18,6 +18,7 @@ describe("task-reference marks", () => {
   let render: typeof import("../public/js/render.ts");
   let marks: typeof import("../public/js/task-ref-marks.ts");
   let topology: typeof import("../public/js/task-topology.ts");
+  let events: typeof import("../public/js/events.ts");
 
   before(async () => {
     setupDOM();
@@ -27,6 +28,7 @@ describe("task-reference marks", () => {
     render = await import("../public/js/render.ts");
     marks = await import("../public/js/task-ref-marks.ts");
     topology = await import("../public/js/task-topology.ts");
+    events = await import("../public/js/events.ts");
   });
 
   after(() => {
@@ -89,6 +91,40 @@ describe("task-reference marks", () => {
 
     marks.applyTaskListSnapshot(["root"]);
     assert.equal(row.hasAttribute("data-exited"), true);
+  });
+
+  it("marks a live row from its target id when another task is deleted", () => {
+    // A second client watching the parent: the row and the delete both arrive
+    // over the live envelope, where `taskId` is the row's own (live) task and
+    // `targetTaskId` is the task it names.
+    state.taskId = "parent";
+    marks.applyTaskListSnapshot(["parent", "child"]);
+
+    events.handleEvent({
+      type: "system_message",
+      taskId: "parent",
+      kind: "task_created",
+      messageId: "m1",
+      sourceTaskId: "parent",
+      targetTaskId: "child",
+      role: "source",
+      title: "Created task @child",
+      body: "Task ID    child",
+    });
+    const rows = dom.messages.querySelectorAll(".system-msg");
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].hasAttribute("data-exited"), false);
+
+    // The child is deleted while this client is viewing the parent: the
+    // delete must still re-evaluate the row, and it must be resolved through
+    // `targetTaskId` (a live-task row would never be marked otherwise).
+    events.handleEvent({
+      type: "task_deleted",
+      taskId: "child",
+      agentId: null,
+    });
+    assert.equal(state.taskId, "parent");
+    assert.equal(rows[0].hasAttribute("data-exited"), true);
   });
 
   it("drops a list that resolves after the connection generation changed", async () => {
