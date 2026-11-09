@@ -77,6 +77,13 @@ the remainder is the message body.
 - the first instruction is not part of the command. Send it with
   `@<title> <message>`, or use `@<title>` alone to open the new Task.
 
+Once that Task exits, its creation row stays in the parent flow — it records
+what happened — but the reference can no longer be addressed, so the row is
+marked: the title is struck through and the row is muted. The mark is derived
+when the row renders, from the shared Task list plus the live create and delete
+events; it is never stored, so a reload re-derives it, and a failed list read
+leaves the row unmarked rather than claiming the Task is gone.
+
 A `+`-created Task is user-owned and interactive. It can receive messages and
 child results, but the runtime does not automatically require a typed
 `task_update(done|blocked)` handoff after each turn. Agent-created delegated

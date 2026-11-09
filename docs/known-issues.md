@@ -57,6 +57,13 @@ time. An entry without a "closing condition" is a wish, not an issue.
   (recorded from the delete response) at the activation path instead of passing
   a flag through the fallback.
 
+- **Only creation rows carry the exited-task mark.** A `Created task @x` row is
+  struck through once `x` is gone, but a `@a sent @b` collaboration row names
+  two Tasks in one title, so striking it would also strike the row's own Task.
+  v1 leaves those rows unmarked, and their reference to a deleted Task still
+  looks live. *Closing:* mark the target reference alone by splitting the title
+  at its two quoted references, instead of the whole title.
+
 - **The empty-task GC can fail a foreign key.** `Store.deleteEmptyTasks` throws
   `FOREIGN KEY constraint failed` for a zero-event task that still has a share
   row, and `TaskManager` does not catch it, so an unrelated task creation can
