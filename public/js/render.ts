@@ -3,6 +3,7 @@
 import { dom, state } from "./state.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
 import { parseTimestamp } from "./relative-time.ts";
+import { registerTaskRefRow } from "./task-ref-marks.ts";
 
 // Pure DOM helpers live in render-event.ts (single source for both main app
 // and share viewer). Re-exported here for callers that want them via render.ts.
@@ -42,6 +43,11 @@ export function addMessage(role: string, text: string): HTMLDivElement {
 export interface SystemMessageOptions {
   title: string;
   body?: string;
+  /**
+   * The task this row records, when the event names exactly one. Only
+   * `task_created` rows do; the row is marked when that task no longer exists.
+   */
+  taskRef?: { kind: string; taskId: string };
 }
 
 /** Render a system message. Messages with a body use the same native
@@ -50,6 +56,7 @@ export interface SystemMessageOptions {
 export function addSystemMessage({
   title,
   body,
+  taskRef,
 }: SystemMessageOptions): HTMLElement {
   const hasBody = body !== undefined && body.length > 0;
   const el = document.createElement(hasBody ? "details" : "div");
@@ -64,6 +71,13 @@ export function addSystemMessage({
     el.append(summary, content);
   } else {
     el.textContent = title;
+  }
+
+  // A `task_created` row names one task; every later collection change
+  // (list read, delete) re-evaluates the rows already rendered. The mark is
+  // egress-only: nothing about it is stored.
+  if (taskRef?.kind === "task_created") {
+    registerTaskRefRow(el, taskRef.taskId);
   }
 
   appendMessageElement(el);

@@ -61,6 +61,7 @@ import {
   observeTaskDeleted,
   setCurrentTask,
 } from "./task-topology.ts";
+import { noteTaskCreated, noteTaskDeleted } from "./task-ref-marks.ts";
 import { applyConnectedLogLevel } from "./log.ts";
 import { log } from "./log.ts";
 import { NOTIFY_TIP_DENIED_KEY, NOTIFY_TIP_KEY } from "./local-reset.ts";
@@ -1382,9 +1383,17 @@ export function replayEvent(
       break;
     case "system_message":
       if (typeof d.title === "string" && d.title.trim()) {
+        // A persisted `task_created` row carries its target in `data.taskId`
+        // (the live envelope names it `targetTaskId` instead).
+        const refKind = typeof d.kind === "string" ? d.kind : undefined;
+        const refTaskId = typeof d.taskId === "string" ? d.taskId : undefined;
         addSystemMessage({
           title: d.title,
           body: typeof d.body === "string" ? d.body : undefined,
+          taskRef:
+            refKind && refTaskId
+              ? { kind: refKind, taskId: refTaskId }
+              : undefined,
         });
       }
       break;
@@ -1965,8 +1974,12 @@ export function handleEvent(msg: AgentEvent) {
   // parent is usually another task this client is not viewing.
   if (msg.type === "task_created") {
     observeTaskCreated(msg.taskId, msg.agentId ?? null);
+    noteTaskCreated(msg.taskId);
   } else if (msg.type === "task_deleted") {
     observeTaskDeleted(msg.taskId);
+    // Before the "is this the current task" branch below: a deleted task is
+    // any row's reference task, not only this client's current one.
+    noteTaskDeleted(msg.taskId);
   }
   if (msg.type === "inbox_count_changed") {
     updateInboxCount(msg.pendingCount);
@@ -2580,7 +2593,15 @@ export function handleEvent(msg: AgentEvent) {
 
     case "system_message":
       if (msg.taskId === state.taskId) {
-        addSystemMessage({ title: msg.title, body: msg.body });
+        addSystemMessage({
+          title: msg.title,
+          body: msg.body,
+          // `msg.taskId` is the row's own task; the target it names lives in
+          // `targetTaskId`.
+          taskRef: msg.targetTaskId
+            ? { kind: msg.kind, taskId: msg.targetTaskId }
+            : undefined,
+        });
         scrollToBottom();
       }
       break;

@@ -27,6 +27,7 @@
 import type { TaskSummary } from "../../src/types.ts";
 import * as api from "./api.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
+import { applyTaskListSnapshot, resetTaskRefMarks } from "./task-ref-marks.ts";
 
 /** The confirmed parent of a task, with its binding when known. */
 export interface ParentBinding {
@@ -83,6 +84,9 @@ export function beginTaskTopologyGeneration(): void {
   viewedTaskId = null;
   parentRef = null;
   pending = null;
+  // The shared list is also the base for "which referenced tasks still
+  // exist"; a new connection re-learns it and may have missed events.
+  resetTaskRefMarks();
   notifyChange();
 }
 
@@ -316,6 +320,10 @@ export async function loadTaskList(): Promise<TaskSummary[]> {
     promise: api.listTasks().then((tasks) => {
       if (requestGeneration === generation) {
         listLoaded = true;
+        // Only a result from the current generation becomes the baseline: a
+        // list that resolves after a newer connection started may predate
+        // events already applied, and must not mark (or unmark) any row.
+        applyTaskListSnapshot(tasks.map((task) => task.id));
         notifyChange();
       }
       return tasks;
@@ -336,4 +344,5 @@ export function resetTaskTopologyForTest(): void {
   viewedTaskId = null;
   parentRef = null;
   pending = null;
+  resetTaskRefMarks();
 }

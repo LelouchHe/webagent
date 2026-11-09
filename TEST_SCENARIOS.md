@@ -184,6 +184,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
     other agent → its id, no baseline → all); a null binding never prints one
   - concurrent list callers in one generation share one request
 
+- `test/task-ref-marks.test.ts` (rows naming a deleted task)
+  - nothing is marked before a list arrives, and a delete learned without one
+    is still no claim; a failed read leaves rows unmarked
+  - a listed task is marked after its `task_deleted`, and a list read issued
+    before the delete cannot resurrect it
+  - a task created after the applied snapshot (or before a later, still-older
+    one) is never marked
+  - a list that resolves after the connection generation changed is discarded,
+    not used to mark
+  - rows rendered before the boot list read are re-evaluated when it arrives
+
 - `test/api-module.test.ts` (request building)
   - `createTask`/`clearTask` send a named `agentId`, omit it for `null` or an
     omitted option, and refuse an empty string locally before any request
@@ -1052,6 +1063,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `task-delete-command.spec.ts`
   - `/exit` deletes current task and switches to previous
+  - a `Created task @x` row is unmarked while `x` exists, marked after `/exit`
+    deletes it, and still marked after a reload (the mark is re-derived, not
+    stored)
 
 - REST delete (`test/tasks.test.ts`, `test/store.test.ts`)
   - deleting a task cascades to every descendant regardless of owner, retires each affected
