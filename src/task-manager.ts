@@ -16,7 +16,7 @@ import {
   type WorkflowStatus,
 } from "./store.ts";
 import { shouldArm } from "./task-collaboration.ts";
-import { formatTaskReference } from "./shared/task-reference.ts";
+import type { CollaborationBroadcastRequest } from "./collaboration-message.ts";
 import { formatFieldBlock } from "./shared/field-block.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
@@ -716,14 +716,7 @@ export class TaskManager implements ObligationHost {
     | null = null;
   /** SSE broadcast hook for runtime collaboration messages. */
   private collaborationBroadcast:
-    | ((event: {
-        messageId: string;
-        sourceTaskId: string;
-        targetTaskId: string;
-        title: string;
-        body: string;
-      }) => void)
-    | null = null;
+    ((event: CollaborationBroadcastRequest) => void) | null = null;
   /** Process-local directed-dispatch obligation state machine. */
   private readonly obligations: ObligationController;
   /**
@@ -3743,13 +3736,7 @@ export class TaskManager implements ObligationHost {
 
   /** Install the SSE broadcast hook for runtime collaboration messages. */
   setCollaborationBroadcast(
-    broadcast: (event: {
-      messageId: string;
-      sourceTaskId: string;
-      targetTaskId: string;
-      title: string;
-      body: string;
-    }) => void,
+    broadcast: (event: CollaborationBroadcastRequest) => void,
   ): void {
     this.collaborationBroadcast = broadcast;
   }
@@ -4013,9 +4000,10 @@ export class TaskManager implements ObligationHost {
       messageId: created.message.id,
       sourceTaskId: obligation.targetTaskId,
       targetTaskId: obligation.sourceTaskId,
-      // Same source as the persisted twin (`createCollaborationMessage`), so a
-      // live row and its replayed copy cannot show different titles.
-      title: `${formatTaskReference(source?.title ?? obligation.targetTaskId.slice(0, 8))} sent ${formatTaskReference(target?.title ?? obligation.sourceTaskId.slice(0, 8))}`,
+      // Same raw labels the persisted twin is built from, so a live row and its
+      // replayed copy cannot show different titles or unrecoverable references.
+      sourceLabel: source?.title ?? obligation.targetTaskId.slice(0, 8),
+      targetLabel: target?.title ?? obligation.sourceTaskId.slice(0, 8),
       body,
     });
     void this.drainCollaborationDeliveries(obligation.sourceTaskId);

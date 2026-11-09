@@ -12,6 +12,11 @@ import { getLogLevel, setLogLevel, setLogSink } from "../src/log.ts";
 import type { AgentEvent } from "../src/types.ts";
 import type { DirectedObligation } from "../src/obligation-controller.ts";
 import { createCounters } from "../src/attachment-interceptor.ts";
+import {
+  buildCollaborationBroadcast,
+  type CollaborationBroadcastRequest,
+  type CollaborationRole,
+} from "../src/collaboration-message.ts";
 import { makeEventHandlerConfig, waitFor } from "./fixtures.ts";
 
 function createMockSseManager() {
@@ -154,6 +159,31 @@ function persistedCollaboration(
     );
   assert.ok(row, "the broadcast must have a persisted twin");
   return row;
+}
+
+/**
+ * The runtime notice is broadcast as a request, and the server renders the
+ * envelope from it. Rebuild that envelope here and require it to match the
+ * persisted row: a dropped raw label would leave a live row unmarkable while
+ * its replayed copy still marks correctly, and nothing else would notice.
+ */
+function assertLiveEnvelopeMatchesPersisted(
+  taskId: string,
+  request: CollaborationBroadcastRequest,
+  persisted: Record<string, unknown>,
+): void {
+  const envelope = buildCollaborationBroadcast({
+    ...request,
+    taskId,
+    role: persisted.role as CollaborationRole,
+  });
+  assert.equal(envelope.title, persisted.title);
+  assert.deepEqual(
+    [envelope.sourceLabel, envelope.targetLabel],
+    [persisted.sourceLabel, persisted.targetLabel],
+    "the live envelope must carry the same raw labels as the persisted row",
+  );
+  assert.equal(envelope.body, persisted.body);
 }
 
 /** Arm a directed obligation the way a direct parent dispatch does. */
@@ -607,11 +637,7 @@ describe("handleAgentEvent", () => {
     seedFamily();
     // Keep the task non-live so every attempt must resume, and make resume fail.
     tasks.liveTasks.delete("child");
-    const broadcasts: Array<{
-      messageId: string;
-      title: string;
-      body: string;
-    }> = [];
+    const broadcasts: CollaborationBroadcastRequest[] = [];
     tasks.setCollaborationBroadcast((event) => broadcasts.push(event));
     const bridge = {
       async newSession() {
@@ -663,11 +689,13 @@ describe("handleAgentEvent", () => {
       false,
       "a notice body is a readable block, not JSON",
     );
-    // Live and replayed rows must agree: the broadcast title comes from the
-    // same formatter the persisted twin uses.
-    assert.equal(
-      broadcasts[0].title,
-      persistedCollaboration(store, "child", broadcasts[0].messageId).title,
+    // Live and replayed rows must agree: the envelope the server builds from
+    // this request carries the same title and raw labels the persisted twin
+    // was built from, so a live client can anchor the reference by task id.
+    assertLiveEnvelopeMatchesPersisted(
+      "child",
+      broadcasts[0],
+      persistedCollaboration(store, "child", broadcasts[0].messageId),
     );
     await flushTimers();
   });
@@ -690,13 +718,7 @@ describe("handleAgentEvent", () => {
 
   it("emits one delivery_failed notice when initial delivery keeps failing", async () => {
     seedFamily();
-    const broadcasts: Array<{
-      messageId: string;
-      sourceTaskId: string;
-      targetTaskId: string;
-      title: string;
-      body: string;
-    }> = [];
+    const broadcasts: CollaborationBroadcastRequest[] = [];
     tasks.setCollaborationBroadcast((event) => broadcasts.push(event));
     const { bridge, calls } = createControllableBridge();
     await armDirectDispatch(store, tasks, bridge, "parent", "child");
@@ -740,9 +762,10 @@ describe("handleAgentEvent", () => {
     assert.match(broadcasts[0].body, /^reason: delivery_failed$/m);
     assert.match(broadcasts[0].body, /^message: .*/m);
     assert.equal(broadcasts[0].body.includes('{"'), false);
-    assert.equal(
-      broadcasts[0].title,
-      persistedCollaboration(store, "parent", broadcasts[0].messageId).title,
+    assertLiveEnvelopeMatchesPersisted(
+      "parent",
+      broadcasts[0],
+      persistedCollaboration(store, "parent", broadcasts[0].messageId),
     );
     assert.ok(
       store

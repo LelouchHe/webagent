@@ -2680,20 +2680,38 @@ describe("events", () => {
       });
 
       it("replays a persisted collaboration system row", () => {
-        events.replayEvent(
-          "system_message",
-          {
+        // The row's own task comes from the stored `task_id`, not from the
+        // title: each projection of the same title anchors a different side.
+        const storedRow = (
+          id: number,
+          taskId: string,
+          role: "source" | "target",
+        ): StoredEvent => ({
+          id,
+          task_id: taskId,
+          seq: 1,
+          type: "system_message",
+          data: JSON.stringify({
             kind: "collaboration",
             messageId: "m1",
             sourceTaskId: "s0",
             sourceLabel: "what",
             targetTaskId: "s1",
             targetLabel: "child-a",
-            role: "target",
+            role,
             title: "@what sent @child-a",
             body: "please review",
-          },
-          [],
+          }),
+          created_at: new Date(0).toISOString(),
+        });
+
+        // Target-side copy: the row's own task is the target, so the marked
+        // reference is the source at the front.
+        const targetCopy = storedRow(1, "s1", "target");
+        events.replayEvent(
+          targetCopy.type,
+          JSON.parse(targetCopy.data) as Record<string, unknown>,
+          [targetCopy],
           0,
         );
         assert.equal(
@@ -2703,6 +2721,25 @@ describe("events", () => {
         assert.equal(
           dom.messages.querySelector(".system-msg-body")?.textContent,
           "please review",
+        );
+        assert.equal(
+          dom.messages.querySelector(".task-ref")?.textContent,
+          "@what",
+        );
+
+        stateMod.resetTaskUI();
+        // Source-side copy: its own task is the source, so the marked
+        // reference is the target at the end.
+        const sourceCopy = storedRow(2, "s0", "source");
+        events.replayEvent(
+          sourceCopy.type,
+          JSON.parse(sourceCopy.data) as Record<string, unknown>,
+          [sourceCopy],
+          0,
+        );
+        assert.equal(
+          dom.messages.querySelector(".task-ref")?.textContent,
+          "@child-a",
         );
       });
 
@@ -3085,6 +3122,18 @@ describe("events", () => {
             [produced.targetTaskId, "target", "Cancelled by @Source"],
           ],
         );
+        // The raw labels travel with the frame: without them a live row could
+        // not place (or strike) its reference, while its replayed copy could.
+        assert.deepEqual(
+          produced.frames.map((frame) => [
+            frame.sourceLabel,
+            frame.targetLabel,
+          ]),
+          [
+            ["Source", "Child"],
+            ["Source", "Child"],
+          ],
+        );
 
         state.taskId = produced.sourceTaskId;
         for (const frame of produced.frames) events.handleEvent(frame);
@@ -3092,6 +3141,12 @@ describe("events", () => {
         assert.equal(
           dom.messages.querySelector("summary")?.textContent,
           "@Source cancelled @Child",
+        );
+        // The row's own address is plain text; only the cancelled task's
+        // reference is its own span, so it is the only thing the mark can strike.
+        assert.equal(
+          dom.messages.querySelector(".task-ref")?.textContent,
+          "@Child",
         );
 
         stateMod.resetTaskUI();
@@ -3101,6 +3156,10 @@ describe("events", () => {
         assert.equal(
           dom.messages.querySelector("summary")?.textContent,
           "Cancelled by @Source",
+        );
+        assert.equal(
+          dom.messages.querySelector(".task-ref")?.textContent,
+          "@Source",
         );
         assert.equal(
           dom.messages.querySelector(".system-msg-body")?.textContent,
@@ -3141,6 +3200,11 @@ describe("events", () => {
         assert.equal(
           dom.messages.querySelector("summary")?.textContent,
           "Cancelled by @Source",
+        );
+        assert.equal(
+          dom.messages.querySelector(".task-ref")?.textContent,
+          "@Source",
+          "the replayed row must place the same reference the live row did",
         );
       } finally {
         produced.cleanup();

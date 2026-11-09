@@ -77,12 +77,29 @@ the remainder is the message body.
 - the first instruction is not part of the command. Send it with
   `@<title> <message>`, or use `@<title>` alone to open the new Task.
 
-Once that Task exits, its creation row stays in the parent flow — it records
-what happened — but the reference can no longer be addressed, so the row is
-marked: the title is struck through and the row is muted. The mark is derived
-when the row renders, from the shared Task list plus the live create and delete
+Once that Task exits, the rows that name it stay in the parent flow — they
+record what happened — but the reference can no longer be addressed. Two marks
+keep them apart: the row is muted, and only the reference to the exited Task is
+struck through. The row-wide mute says "this Task has exited"; the strike says
+"this address is dead". It covers the creation row (`Created task @x`), both
+sides of a collaboration row (`@a sent @b`, where the source's copy strikes
+`@b` and the target's copy strikes `@a`), and both sides of a cancellation row
+(`@a cancelled @b`, `Cancelled by @a`). The row's own address is never a
+reference span, so it cannot be struck.
+
+The reference is placed by task id, never by the shape of the title: titles
+repeat, and a title may contain quotes, spaces, or the words between two
+references. A mark is applied only when the rebuilt reference lands exactly
+where the ids say it does; a missing raw title or an unplaceable reference
+leaves the reference alone and only mutes the row. Everything is derived when
+the row renders, from the shared Task list plus the live create and delete
 events; it is never stored, so a reload re-derives it, and a failed list read
 leaves the row unmarked rather than claiming the Task is gone.
+
+One copy is out of reach: a message between Tasks under different parents is
+also projected to their common ancestor, and that `supervisor` copy names both
+sides without being either, so it stays unmarked (see
+[Known Issues](known-issues.md)).
 
 A `+`-created Task is user-owned and interactive. It can receive messages and
 child results, but the runtime does not automatically require a typed

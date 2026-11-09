@@ -197,6 +197,22 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a list that resolves after the connection generation changed is discarded,
     not used to mark
   - rows rendered before the boot list read are re-evaluated when it arrives
+  - a source-side `@a sent @b` row strikes only `@b`; the target-side copy of
+    the same title strikes only `@a`; both sides of a cancellation row strike
+    the other task; the row stays muted either way
+  - a row whose raw title is missing is muted but not struck
+  - an adversarial title matrix (equal labels, a label containing ` sent `,
+    quotes, backslashes, newlines, tabs, a full-width space, a label that is
+    `sent`/`cancelled`, ids that disagree with the title) is either placed
+    exactly at its anchored edge or not placed at all
+  - the live collaboration envelope carries the raw labels and marks its
+    reference from them
+  - a supervisor copy (the LCA projection, which is neither side of the edge)
+    claims nothing: the row is not muted and nothing is struck
+- `test/collaboration-message.test.ts` (one collaboration row, three consumers)
+  - the title is built from the raw labels, shell-quoting when needed
+  - the persisted payload and the wire envelope carry the same title, body, and
+    both raw labels, spelled out field by field
 
 - `test/api-module.test.ts` (request building)
   - `createTask`/`clearTask` send a named `agentId`, omit it for `null` or an
@@ -729,6 +745,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     fields in `data`, worded from that side (`@source cancelled @target` /
     `Cancelled by @source`). Both rows are broadcast, so the cancel page and the
     cancelled page each render exactly one line, live and from replay
+  - a replayed collaboration row anchors its reference from the stored
+    `task_id`: the target-side copy strikes the source at the front, the
+    source-side copy strikes the target at the end
   - user / assistant / thinking rendering
   - unsolicited Main-agent text and tool calls render while the foreground turn
     stays idle without reopening busy state

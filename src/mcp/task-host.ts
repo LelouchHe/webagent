@@ -48,7 +48,9 @@ export interface McpTaskCollaborationEvent {
   messageId: string;
   sourceTaskId: string;
   targetTaskId: string;
-  title: string;
+  /** Raw title of each side; the shared builder renders the title from them. */
+  sourceLabel: string;
+  targetLabel: string;
   body: string;
 }
 
@@ -56,6 +58,8 @@ export interface McpTaskCreatedEvent {
   messageId: string;
   sourceTaskId: string;
   targetTaskId: string;
+  /** Raw title of the created task; the row's reference is rebuilt from it. */
+  taskTitle: string;
   title: string;
   body: string;
 }
@@ -395,6 +399,7 @@ export function createMcpTaskToolHost(deps: {
         messageId: taskCreatedMessageId,
         sourceTaskId: source.id,
         targetTaskId: created.taskId,
+        taskTitle: input.title,
         title: taskCreated.title,
         body: taskCreated.body,
       });
@@ -423,12 +428,12 @@ export function createMcpTaskToolHost(deps: {
       // `getTaskIncludingDeleted`.
       const sourceTask = store.getTaskIncludingDeleted(sourceTaskId);
       const targetTask = store.getTaskIncludingDeleted(target.id);
-      const sourceLabel = formatTaskReference(
-        sourceTask?.title ?? sourceTaskId.slice(0, 8),
-      );
-      const targetLabel = formatTaskReference(
-        targetTask?.title ?? target.id.slice(0, 8),
-      );
+      const sourceLabel = sourceTask?.title ?? sourceTaskId.slice(0, 8);
+      const targetLabel = targetTask?.title ?? target.id.slice(0, 8);
+      // The raw labels travel with both rows: a client anchors the reference it
+      // may mark by task id, and cannot recover it from the rendered title.
+      const sourceRef = formatTaskReference(sourceLabel);
+      const targetRef = formatTaskReference(targetLabel);
       const body = formatFieldBlock([
         { label: "reason", value: reason },
         { label: "status", value: result.status },
@@ -437,12 +442,12 @@ export function createMcpTaskToolHost(deps: {
         {
           taskId: sourceTaskId,
           role: "source" as const,
-          title: `${sourceLabel} cancelled ${targetLabel}`,
+          title: `${sourceRef} cancelled ${targetRef}`,
         },
         {
           taskId: target.id,
           role: "target" as const,
-          title: `Cancelled by ${sourceLabel}`,
+          title: `Cancelled by ${sourceRef}`,
         },
       ];
       for (const row of rows) {
@@ -453,7 +458,9 @@ export function createMcpTaskToolHost(deps: {
             kind: "task_cancel",
             role: row.role,
             sourceTaskId,
+            sourceLabel,
             targetTaskId: target.id,
+            targetLabel,
             reason,
             status: result.status,
             title: row.title,
@@ -467,7 +474,9 @@ export function createMcpTaskToolHost(deps: {
           kind: "task_cancel",
           role: row.role,
           sourceTaskId,
+          sourceLabel,
           targetTaskId: target.id,
+          targetLabel,
           title: row.title,
           body,
         });
@@ -493,7 +502,8 @@ export function createMcpTaskToolHost(deps: {
         messageId: created.message.id,
         sourceTaskId,
         targetTaskId: target.id,
-        title: `${formatTaskReference(sourceLabel)} sent ${formatTaskReference(targetLabel)}`,
+        sourceLabel,
+        targetLabel,
         body: created.message.body,
       });
       void tasks.drainCollaborationDeliveries(target.id);
@@ -520,7 +530,8 @@ export function createMcpTaskToolHost(deps: {
           messageId: collaborationMessageId,
           sourceTaskId,
           targetTaskId: accountTargetTaskId,
-          title: `${formatTaskReference(source.title ?? source.id.slice(0, 8))} sent ${formatTaskReference(target.title ?? target.id.slice(0, 8))}`,
+          sourceLabel: source.title ?? source.id.slice(0, 8),
+          targetLabel: target.title ?? target.id.slice(0, 8),
           body: `Task status: ${status}\n${body}`,
         });
         void tasks.drainCollaborationDeliveries(accountTargetTaskId);

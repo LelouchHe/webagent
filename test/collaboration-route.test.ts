@@ -255,6 +255,7 @@ describe("S3 collaboration write routes", () => {
       messageId: String(userEnvelope.messageId),
       sourceTaskId: "parent",
       targetTaskId: userTaskId,
+      taskTitle: "usr-child",
       role: "source",
       title: "Created task @usr-child",
       body: String(userData.body),
@@ -266,6 +267,7 @@ describe("S3 collaboration write routes", () => {
       messageId: String(agentEnvelope.messageId),
       sourceTaskId: "parent",
       targetTaskId: String(agentData.taskId),
+      taskTitle: "agent-child",
       role: "source",
       title: "Created task @agent-child",
       body: String(agentData.body),
@@ -371,6 +373,43 @@ describe("S3 collaboration write routes", () => {
         .map((event) => event.taskId)
         .sort(),
       ["parent", "sibling"],
+    );
+    // The live envelope is built by the shared builder, so it carries the raw
+    // labels a client needs to place the reference. A hand-rolled envelope here
+    // would drop them and silently lose the live mark.
+    assert.deepEqual(
+      broadcasts
+        .filter((event) => event.kind === "collaboration")
+        .map((event) => ({ ...event, messageId: "<message>" })),
+      [
+        {
+          type: "system_message",
+          taskId: "parent",
+          kind: "collaboration",
+          messageId: "<message>",
+          sourceTaskId: "parent",
+          sourceLabel: "parent",
+          targetTaskId: "sibling",
+          targetLabel: "sibling",
+          role: "source",
+          title: "@parent sent @sibling",
+          body: "请检查接口定义",
+        },
+        {
+          type: "system_message",
+          taskId: "sibling",
+          kind: "collaboration",
+          messageId: "<message>",
+          sourceTaskId: "parent",
+          sourceLabel: "parent",
+          targetTaskId: "sibling",
+          targetLabel: "sibling",
+          role: "target",
+          title: "@parent sent @sibling",
+          body: "请检查接口定义",
+        },
+      ],
+      "both projections must announce the labels their title was built from",
     );
   });
 

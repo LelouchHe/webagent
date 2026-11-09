@@ -453,16 +453,13 @@ body {
 .system-msg a:hover {
   color: var(--text);
 }
-/* A `task_created` row whose task no longer exists. Scoped to the mark so no
-   other system row changes: the title is struck through and the row is muted,
-   while the body stays readable. */
+/* A row that names a task which no longer exists: the row is muted, and only
+   the reference that no longer resolves is struck through. The row-level mark
+   says "this task exited"; the reference mark says "this address is dead". */
 .system-msg[data-exited] {
   opacity: 0.55;
 }
-.system-msg[data-exited]:not(.expandable) {
-  text-decoration: line-through;
-}
-.system-msg[data-exited] summary {
+.task-ref[data-exited] {
   text-decoration: line-through;
 }
 

@@ -35,7 +35,7 @@ import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
 import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 import { isLocalCollaborationTarget } from "./task-collaboration.ts";
-import { formatTaskReference } from "./shared/task-reference.ts";
+import { buildCollaborationBroadcast } from "./collaboration-message.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "./shared/time.ts";
 import {
   buildTaskCreatedBroadcast,
@@ -1419,21 +1419,23 @@ export function createRequestHandler(
         // A user-originated collaboration action counts as activity on the
         // Task where the user entered it, not only on the recipient.
         store.updateTaskLastActive(sourceTaskId);
-        const collaborationTitle = `${formatTaskReference(sourceTask.title ?? sourceTask.id.slice(0, 8))} sent ${formatTaskReference(targetTask.title ?? targetTask.id.slice(0, 8))}`;
+        const sourceLabel = sourceTask.title ?? sourceTask.id.slice(0, 8);
+        const targetLabel = targetTask.title ?? targetTask.id.slice(0, 8);
         for (const projection of store.listCollaborationProjections(
           messageId,
         )) {
-          sseManager.broadcast({
-            type: "system_message",
-            taskId: projection.task_id,
-            kind: "collaboration",
-            messageId,
-            sourceTaskId,
-            targetTaskId: targetTask.id,
-            role: projection.role,
-            title: collaborationTitle,
-            body: created.message.body,
-          });
+          sseManager.broadcast(
+            buildCollaborationBroadcast({
+              messageId,
+              sourceTaskId,
+              sourceLabel,
+              targetTaskId: targetTask.id,
+              targetLabel,
+              role: projection.role,
+              taskId: projection.task_id,
+              body: created.message.body,
+            }),
+          );
         }
         const result = {
           messageId,
@@ -2953,6 +2955,7 @@ export function createRequestHandler(
                 messageId: randomUUID(),
                 sourceTaskId: createdParentId,
                 targetTaskId: taskId,
+                taskTitle: createdTitle,
                 title: taskCreated.title,
                 body: taskCreated.body,
               }),

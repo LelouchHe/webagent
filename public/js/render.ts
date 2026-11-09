@@ -3,7 +3,8 @@
 import { dom, state } from "./state.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
 import { parseTimestamp } from "./relative-time.ts";
-import { registerTaskRefRow } from "./task-ref-marks.ts";
+import { registerTaskRefRow, resolveTaskRef } from "./task-ref-marks.ts";
+import type { TaskRefRowInput } from "./task-ref-marks.ts";
 
 // Pure DOM helpers live in render-event.ts (single source for both main app
 // and share viewer). Re-exported here for callers that want them via render.ts.
@@ -44,10 +45,13 @@ export interface SystemMessageOptions {
   title: string;
   body?: string;
   /**
-   * The task this row records, when the event names exactly one. Only
-   * `task_created` rows do; the row is marked when that task no longer exists.
+   * The tasks this row names, if any, plus the ids that place them. A row's
+   * own id decides which reference belongs to the other task; the raw labels
+   * let the reference be rebuilt exactly. Only `kind` and the ids are required
+   * to mark; without a usable raw label the row is muted but not struck
+   * through (see `resolveTaskRef`).
    */
-  taskRef?: { kind: string; taskId: string };
+  taskRef?: Omit<TaskRefRowInput, "title">;
 }
 
 /** Render a system message. Messages with a body use the same native
@@ -62,26 +66,51 @@ export function addSystemMessage({
   const el = document.createElement(hasBody ? "details" : "div");
   el.className = `system-msg${hasBody ? " expandable" : ""}`;
 
+  // The visible title wraps the one reference that names another task, so a
+  // struck-through reference never strikes the row's own task. The span is
+  // created once and handed to the marker registry below.
+  const resolved = taskRef ? resolveTaskRef({ ...taskRef, title }) : null;
+  const anchor = resolved?.anchor ?? null;
+  let refSpan: HTMLElement | null;
+
   if (hasBody) {
     const summary = document.createElement("summary");
-    summary.textContent = title;
     const content = document.createElement("div");
     content.className = "system-msg-body";
     content.textContent = body;
     el.append(summary, content);
+    refSpan = fillSystemTitle(summary, title, anchor);
   } else {
-    el.textContent = title;
+    refSpan = fillSystemTitle(el, title, anchor);
   }
 
-  // A `task_created` row names one task; every later collection change
-  // (list read, delete) re-evaluates the rows already rendered. The mark is
-  // egress-only: nothing about it is stored.
-  if (taskRef?.kind === "task_created") {
-    registerTaskRefRow(el, taskRef.taskId);
-  }
+  // A naming row is re-evaluated on every later collection change (list read,
+  // delete) through the id it names. The mark is egress-only: nothing about it
+  // is stored.
+  if (resolved) registerTaskRefRow(el, resolved.taskId, refSpan);
 
   appendMessageElement(el);
   return el;
+}
+
+/**
+ * Write `title` into `target`, wrapping the anchored reference in its own span.
+ * Returns that span, or null when no reference could be placed exactly.
+ */
+function fillSystemTitle(
+  target: HTMLElement,
+  title: string,
+  anchor: { text: string; start: number; end: number } | null,
+): HTMLElement | null {
+  if (!anchor) {
+    target.textContent = title;
+    return null;
+  }
+  const span = document.createElement("span");
+  span.className = "task-ref";
+  span.textContent = anchor.text;
+  target.append(title.slice(0, anchor.start), span, title.slice(anchor.end));
+  return span;
 }
 
 export function addSystem(text: string): HTMLDivElement {

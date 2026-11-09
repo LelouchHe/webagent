@@ -353,6 +353,15 @@ export type AgentEvent =
       sourceTaskId?: string;
       targetTaskId?: string;
       role?: "source" | "target" | "supervisor";
+      /**
+       * Raw (unquoted) task titles the rendered row names. They travel with the
+       * event so a client can anchor a reference in `title` by task id instead
+       * of guessing its span from the text; the `title` stays the only
+       * canonical prose.
+       */
+      taskTitle?: string;
+      sourceLabel?: string;
+      targetLabel?: string;
     }
   | {
       type: "permission_response";

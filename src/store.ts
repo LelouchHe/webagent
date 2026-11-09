@@ -2,10 +2,11 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { formatTaskPath } from "./shared/task-reference.ts";
 import {
-  formatTaskPath,
-  formatTaskReference,
-} from "./shared/task-reference.ts";
+  buildCollaborationSystemMessage,
+  collaborationTitle,
+} from "./collaboration-message.ts";
 import {
   CollaborationMessageEmitter,
   type CollaborationMessageObserver,
@@ -319,7 +320,10 @@ function migrateSystemMessageData(raw: string): string | null {
       stringField(data, "targetLabel") ??
       stringField(data, "targetTaskId") ??
       "?";
-    migrated.title = `${formatTaskReference(source)} sent ${formatTaskReference(target)}`;
+    migrated.title = collaborationTitle({
+      sourceLabel: source,
+      targetLabel: target,
+    });
     migrated.body = messageBody;
   } else {
     migrated.title = body?.trim() ? body : "System message";
@@ -2221,22 +2225,19 @@ export class Store {
     const targetLabel =
       this.getTask(input.directTargetTaskId)?.title ??
       input.directTargetTaskId.slice(0, 8);
-    const collaborationTitle = `${formatTaskReference(sourceLabel)} sent ${formatTaskReference(targetLabel)}`;
     for (const projection of this.listCollaborationProjections(input.id)) {
       this.saveEvent(
         projection.task_id,
         "system_message",
-        {
-          kind: "collaboration",
+        buildCollaborationSystemMessage({
           messageId: input.id,
           sourceTaskId: input.sourceTaskId,
           sourceLabel,
           targetTaskId: input.directTargetTaskId,
           targetLabel,
           role: projection.role,
-          title: collaborationTitle,
           body: input.body,
-        },
+        }).data,
         { from_ref: `msg:${input.id}` },
       );
     }

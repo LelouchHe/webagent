@@ -1383,17 +1383,31 @@ export function replayEvent(
       break;
     case "system_message":
       if (typeof d.title === "string" && d.title.trim()) {
-        // A persisted `task_created` row carries its target in `data.taskId`
-        // (the live envelope names it `targetTaskId` instead).
-        const refKind = typeof d.kind === "string" ? d.kind : undefined;
-        const refTaskId = typeof d.taskId === "string" ? d.taskId : undefined;
+        // A persisted row names the tasks it refers to in `data`; a live
+        // envelope names the row's own task `taskId` and the created target
+        // `targetTaskId`. The mark compares ids, never titles.
         addSystemMessage({
           title: d.title,
           body: typeof d.body === "string" ? d.body : undefined,
-          taskRef:
-            refKind && refTaskId
-              ? { kind: refKind, taskId: refTaskId }
-              : undefined,
+          taskRef: {
+            kind: typeof d.kind === "string" ? d.kind : "",
+            // `events[idx]` is this row's own task; a direct render (tests,
+            // a synthetic row) may omit the stored row entirely.
+            ownTaskId:
+              typeof events[idx]?.task_id === "string"
+                ? events[idx].task_id
+                : null,
+            taskId: typeof d.taskId === "string" ? d.taskId : null,
+            taskTitle: typeof d.taskTitle === "string" ? d.taskTitle : null,
+            sourceTaskId:
+              typeof d.sourceTaskId === "string" ? d.sourceTaskId : null,
+            sourceLabel:
+              typeof d.sourceLabel === "string" ? d.sourceLabel : null,
+            targetTaskId:
+              typeof d.targetTaskId === "string" ? d.targetTaskId : null,
+            targetLabel:
+              typeof d.targetLabel === "string" ? d.targetLabel : null,
+          },
         });
       }
       break;
@@ -2596,11 +2610,19 @@ export function handleEvent(msg: AgentEvent) {
         addSystemMessage({
           title: msg.title,
           body: msg.body,
-          // `msg.taskId` is the row's own task; the target it names lives in
-          // `targetTaskId`.
-          taskRef: msg.targetTaskId
-            ? { kind: msg.kind, taskId: msg.targetTaskId }
-            : undefined,
+          // `msg.taskId` is the row's own task; the tasks it names travel in
+          // `targetTaskId` (created) or both ids (collaboration / cancel), and
+          // with them the raw labels the reference is rebuilt from.
+          taskRef: {
+            kind: msg.kind,
+            ownTaskId: msg.taskId,
+            taskId: msg.kind === "task_created" ? msg.targetTaskId : null,
+            taskTitle: msg.taskTitle,
+            sourceTaskId: msg.sourceTaskId,
+            sourceLabel: msg.sourceLabel,
+            targetTaskId: msg.targetTaskId,
+            targetLabel: msg.targetLabel,
+          },
         });
         scrollToBottom();
       }
