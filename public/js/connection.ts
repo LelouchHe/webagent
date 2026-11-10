@@ -32,6 +32,7 @@ import * as api from "./api.ts";
 import { installAgentDirectory } from "./agent-directory.ts";
 import {
   beginTaskTopologyGeneration,
+  loadStartupTaskList,
   loadTaskList,
   refreshTaskListBaseline,
 } from "./task-topology.ts";
@@ -324,7 +325,7 @@ async function initializeTaskAndIntent(connectionEpoch: number): Promise<void> {
   // `loadTaskList`: the handshake takes a second one (that is what makes the
   // baseline provably post-registration), and the two must not collapse into
   // a single read whose timing decides whether it counts.
-  void refreshTaskListBaseline().catch(() => {
+  void loadStartupTaskList().catch(() => {
     // A failed baseline stays "not loaded"; nothing is claimed from it.
   });
   await initTask(connectionEpoch);

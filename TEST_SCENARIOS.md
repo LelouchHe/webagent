@@ -186,10 +186,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the baseline taken after the stream handshake supersedes an in-flight
     startup read, so a task created while the stream was registering is live
     rather than exited (`test/connection.test.ts` drives the real connect)
-  - each connection takes exactly two list reads — one startup baseline and
-    one post-handshake baseline — because neither joins the other; the count is
-    pinned so a future dedupe cannot let the handshake await the read it is
-    meant to replace
+  - a connection takes a startup baseline read and a post-handshake read, each
+    its own request: neither joins the other in either order, and both orders
+    are pinned (a dedupe is exactly what made the count depend on which read
+    started first). A task-switch generation change during the config await
+    still skips the startup read, so that connection takes only the handshake
+    one
+  - a successful handshake baseline still applies when the later startup read
+    fails; the startup read does not raise the floor above it
 
 - `test/task-ref-marks.test.ts` (one reference per Task, four states)
   - a live reference is completely unmarked (no strike, no appended name, no
@@ -1355,9 +1359,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     no `GET /tasks/<parentId>` and no list read beyond the connection's own,
     whether the activation came from the task detail or from the create
     broadcast, and the coordinate is already correct (the payload carries
-    `parentId` + `parentAgentId`). A fresh connection takes two list reads —
-    the startup baseline and the post-handshake baseline — and the test pins
-    that count so an activation cannot silently add a third
+    `parentId` + `parentAgentId`). A fresh connection takes two list reads in
+    this flow — the startup baseline and the post-handshake baseline — and the
+    test pins that count so an activation cannot silently add a third
   - `/switch` rows state an agent only for rows whose agent differs from the
     current task's; a menu reopened after a switch uses the new baseline, and
     an already-open menu re-renders when the current binding changes

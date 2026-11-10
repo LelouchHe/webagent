@@ -370,28 +370,18 @@ export async function loadTaskList(): Promise<TaskSummary[]> {
 }
 
 /**
- * Take a baseline read that always issues its own request, even when one is in
- * flight, and raise the floor for what may become the baseline.
+ * Issue a baseline read that never dedupes onto an in-flight one.
  *
- * Two callers use it: the startup path, and the SSE handshake. The handshake
- * is the moment the stream is registered, so the read it starts is complete
- * with respect to creation — tasks created before registration are in the
- * list, and tasks created afterwards arrive as events on the now-registered
- * stream. The startup read runs in parallel with the registration and may
- * finish before it, which is why the handshake read exists: a task created in
- * that window would otherwise be absent from the baseline *and* its
- * `task_created` frame would never have been delivered.
+ * `loadTaskList` shares a pending request; a baseline read must not, because
+ * the caller's guarantee ("this read started at moment X") is the whole point.
+ * When the handshake and the startup read are both in flight they are two
+ * separate reads, in either order.
  *
- * Deliberately not `loadTaskList`: that dedupes onto an in-flight request, so
- * the handshake could end up awaiting the very pre-registration read it is
- * meant to replace. Issuing a separate request also makes the number of list
- * reads per connection deterministic (one per caller), which an integration
- * test pins.
+ * A caller that reports its own failure to the user still receives the tasks;
+ * only whether the result becomes the baseline depends on the request order
+ * guards above.
  */
-export async function refreshTaskListBaseline(): Promise<TaskSummary[]> {
-  // Only this read or a later one may become the baseline (see
-  // `listRequiredSeq`).
-  listRequiredSeq = listRequestSeq + 1;
+async function readBaseline(): Promise<TaskSummary[]> {
   const request = startTaskListRequest();
   pending = request;
   try {
@@ -399,6 +389,34 @@ export async function refreshTaskListBaseline(): Promise<TaskSummary[]> {
   } finally {
     if (pending === request) pending = null;
   }
+}
+
+/**
+ * The baseline taken once the stream is registered. This is the read that may
+ * speak for the collection: tasks created before registration are in the list,
+ * and tasks created afterwards arrive as events on the now-registered stream.
+ *
+ * It also raises the floor for what may become the baseline, so an earlier
+ * read — the startup one, or a menu read — cannot override it. The floor is
+ * the sequence this read is about to take, so only reads issued at or after
+ * registration can apply.
+ */
+export function refreshTaskListBaseline(): Promise<TaskSummary[]> {
+  listRequiredSeq = listRequestSeq + 1;
+  return readBaseline();
+}
+
+/**
+ * The startup baseline, issued in parallel with the stream registration.
+ *
+ * It does not raise the floor: if the handshake already happened, this read
+ * started after registration and is a valid baseline too (and remains usable
+ * when the handshake read fails). If it started before the handshake, the
+ * handshake's floor excludes it, which is what keeps a task created while
+ * registering from being marked exited.
+ */
+export function loadStartupTaskList(): Promise<TaskSummary[]> {
+  return readBaseline();
 }
 
 /** Test seam: forget everything without bumping the visible generation. */
