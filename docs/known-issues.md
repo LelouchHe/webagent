@@ -57,6 +57,20 @@ time. An entry without a "closing condition" is a wish, not an issue.
   (recorded from the delete response) at the activation path instead of passing
   a flag through the fallback.
 
+- **A rolled-back message-consume creation was announced before it was
+  discarded.** `createTask` now announces a task's existence before returning,
+  and `consumePendingMessage` creates its temporary task that way. If the
+  consume transaction then refuses (`alreadyConsumed`, a missing row, a write
+  error), `cleanupCreatedTask` deletes the row without a `task_deleted` — that
+  frame is emitted only by the delete routes — so a client keeps the id as
+  live (its reference mark and its task collection) and a client with no task
+  installed can still adopt it. Reachable through the daily pending-message
+  sweep landing between the consume path's pre-read and its transaction, or a
+  store error inside the transaction. *Closing:* announce after the consume
+  transaction commits (defer the announcement for that one caller) rather than
+  inside `createTask`, or give the manager's cleanup a deletion broadcast of
+  its own.
+
 - **The empty-task GC can fail a foreign key.** `Store.deleteEmptyTasks` throws
   `FOREIGN KEY constraint failed` for a zero-event task that still has a share
   row, and `TaskManager` does not catch it, so an unrelated task creation can

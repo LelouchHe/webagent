@@ -718,9 +718,10 @@ export class TaskManager implements ObligationHost {
   private collaborationBroadcast:
     ((event: CollaborationBroadcastRequest) => void) | null = null;
   /**
-   * SSE broadcast hook for a task that just became live. Creation is one
-   * entry point for HTTP, quick prompts, and the agent's `task_create`, so
-   * this is the one place a task's existence is announced.
+   * SSE broadcast hook for a task that just became live. Every creation that
+   * goes through `createTask` (HTTP, quick prompt, message consume, agent
+   * `task_create`) announces here; the Root-materialization paths
+   * (`ensureRootTask` / `replaceRoot`) are announced by their own callers.
    */
   private taskCreatedBroadcast:
     ((event: Extract<AgentEvent, { type: "task_created" }>) => void) | null =
@@ -1517,10 +1518,11 @@ export class TaskManager implements ObligationHost {
       source,
       { ...opts, parentId },
     );
-    // Every creation goes through here, so this is where a task's existence is
-    // announced — not in each caller's route. `createTaskImpl` throws before
-    // this point when the task was not persisted, so nothing half-made is
-    // announced; the final config values (post-inheritance) travel with it.
+    // A task created through the manager announces itself here, not in each
+    // caller's route. `createTaskImpl` throws before this point when the task
+    // was not persisted, so nothing half-made is announced; the final config
+    // values (post-inheritance) travel with it. Root materialization bypasses
+    // this method and is announced by `bootstrap` / the Root exit instead.
     this.announceTaskCreated(result, opts?.clientOpId);
     // Empty-task GC touches arbitrary branches, so run it as a short,
     // best-effort Root-exclusive operation after the task mutation is done.
