@@ -186,6 +186,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the baseline taken after the stream handshake supersedes an in-flight
     startup read, so a task created while the stream was registering is live
     rather than exited (`test/connection.test.ts` drives the real connect)
+  - each connection takes exactly two list reads — one startup baseline and
+    one post-handshake baseline — because neither joins the other; the count is
+    pinned so a future dedupe cannot let the handshake await the read it is
+    meant to replace
 
 - `test/task-ref-marks.test.ts` (one reference per Task, four states)
   - a live reference is completely unmarked (no strike, no appended name, no

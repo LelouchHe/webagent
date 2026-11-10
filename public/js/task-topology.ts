@@ -370,18 +370,23 @@ export async function loadTaskList(): Promise<TaskSummary[]> {
 }
 
 /**
- * Take a baseline that starts *after* the caller knows the stream is
- * registered, even when an earlier read is still in flight.
+ * Take a baseline read that always issues its own request, even when one is in
+ * flight, and raise the floor for what may become the baseline.
  *
- * The startup read and the SSE stream are opened in parallel, so that read can
- * finish before the server registered this client. A task created in that
- * window is then absent from the baseline *and* its `task_created` frame was
- * never delivered — the client would keep calling a live task exited until the
- * next read. Re-reading after the handshake closes that window: tasks created
- * before registration are in the list, and tasks created afterwards arrive as
- * events on the now-registered stream. The forced read supersedes an in-flight
- * one rather than joining it (`loadTaskList` would dedupe onto the old
- * promise).
+ * Two callers use it: the startup path, and the SSE handshake. The handshake
+ * is the moment the stream is registered, so the read it starts is complete
+ * with respect to creation — tasks created before registration are in the
+ * list, and tasks created afterwards arrive as events on the now-registered
+ * stream. The startup read runs in parallel with the registration and may
+ * finish before it, which is why the handshake read exists: a task created in
+ * that window would otherwise be absent from the baseline *and* its
+ * `task_created` frame would never have been delivered.
+ *
+ * Deliberately not `loadTaskList`: that dedupes onto an in-flight request, so
+ * the handshake could end up awaiting the very pre-registration read it is
+ * meant to replace. Issuing a separate request also makes the number of list
+ * reads per connection deterministic (one per caller), which an integration
+ * test pins.
  */
 export async function refreshTaskListBaseline(): Promise<TaskSummary[]> {
   // Only this read or a later one may become the baseline (see

@@ -320,8 +320,11 @@ async function initializeTaskAndIntent(connectionEpoch: number): Promise<void> {
   // Establish the workspace-wide baseline independently of which task this
   // client lands on: the status bar's reference binding and the list-row
   // baseline both need tasks this client is not viewing, and a hash or a
-  // reconnect may skip the task-list navigation path.
-  void loadTaskList().catch(() => {
+  // reconnect may skip the task-list navigation path. Its own request, not
+  // `loadTaskList`: the handshake takes a second one (that is what makes the
+  // baseline provably post-registration), and the two must not collapse into
+  // a single read whose timing decides whether it counts.
+  void refreshTaskListBaseline().catch(() => {
     // A failed baseline stays "not loaded"; nothing is claimed from it.
   });
   await initTask(connectionEpoch);

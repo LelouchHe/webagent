@@ -366,9 +366,10 @@ describe("connection", () => {
       null,
       "a task created before the stream registered is live, not exited",
     );
-    assert.ok(
-      fetchCalls.filter((call) => call.url === "/api/v1/tasks").length >= 2,
-      "the handshake forces a fresh baseline",
+    assert.equal(
+      fetchCalls.filter((call) => call.url === "/api/v1/tasks").length,
+      2,
+      "one baseline read per caller: startup and handshake",
     );
   });
 
