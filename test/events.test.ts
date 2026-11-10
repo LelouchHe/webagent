@@ -4132,6 +4132,78 @@ describe("events", () => {
       assert.equal(requests, 1);
     });
 
+    it("re-arms the sentinel after the discard so pagination recovers on its own", async () => {
+      state.taskId = "s1";
+      state.hasMoreHistory = true;
+      state.oldestLoadedSeq = 100;
+      const sentinel = document.createElement("div");
+      sentinel.id = "history-sentinel";
+      dom.messages.prepend(sentinel);
+
+      const observers: Array<{
+        callback: (entries: Array<{ isIntersecting: boolean }>) => void;
+      }> = [];
+      const originalIntersectionObserver = (globalThis as any)
+        .IntersectionObserver;
+      (globalThis as any).IntersectionObserver =
+        class MockIntersectionObserver {
+          callback: (entries: Array<{ isIntersecting: boolean }>) => void;
+          constructor(
+            callback: (entries: Array<{ isIntersecting: boolean }>) => void,
+          ) {
+            this.callback = callback;
+            observers.push(this);
+          }
+          observe() {}
+          disconnect() {}
+        };
+
+      let resolvePage!: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolvePage = resolve;
+        })) as any;
+
+      try {
+        const older = events.loadOlderEvents("s1");
+        const observersBefore = observers.length;
+
+        // Clearing the flag is not enough: the sentinel was disconnected when
+        // the load started, and nothing else re-arms it on an incremental
+        // reconnect. Without the re-arm, recovery would need a task switch.
+        stateMod.beginConnectionEpoch();
+        events.discardInFlightReplays();
+        assert.equal(
+          observers.length,
+          observersBefore + 1,
+          "the discard re-arms the sentinel observer",
+        );
+
+        let requests = 0;
+        globalThis.fetch = (async () => {
+          requests += 1;
+          return {
+            ok: true,
+            json: () => Promise.resolve({ events: [], hasMore: false }),
+            text: async () => "{}",
+          };
+        }) as any;
+        observers.at(-1)!.callback([{ isIntersecting: true }]);
+        await Promise.resolve();
+        await Promise.resolve();
+        assert.equal(requests, 1, "the re-armed sentinel starts a page read");
+
+        resolvePage({
+          ok: true,
+          json: () => Promise.resolve({ events: [], hasMore: false }),
+          text: async () => "{}",
+        });
+        assert.equal(await older, false);
+      } finally {
+        (globalThis as any).IntersectionObserver = originalIntersectionObserver;
+      }
+    });
+
     it("reconciles a newer terminal update after an older page creates its tool host", async () => {
       state.taskId = "s1";
       let request = 0;

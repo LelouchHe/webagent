@@ -186,9 +186,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the baseline taken after the stream handshake supersedes an in-flight
     startup read, so a task created while the stream was registering is live
     rather than exited (`test/connection.test.ts` drives the real connect)
-  - a failed handshake read does not fall back to the pre-registration read:
-    the client stays unloaded (no claim) instead of marking a task created
-    during registration as exited
 
 - `test/task-ref-marks.test.ts` (one reference per Task, four states)
   - a live reference is completely unmarked (no strike, no appended name, no
@@ -778,7 +775,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     generation changes before the drain, and a disconnect discards the armed
     replay gate, its queue, and any history read still in flight
   - an older-page load caught by that disconnect is released (its flag and the
-    loading indicator cleared), so pagination recovers without a task switch
+    loading indicator cleared) and the sentinel observer is re-armed, so an
+    intersecting sentinel issues a fresh page read without a task switch
   - user / assistant / thinking rendering
   - unsolicited Main-agent text and tool calls render while the foreground turn
     stays idle without reopening busy state
@@ -849,6 +847,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a live reference is not marked exited when its task was created between the
     startup list read and the stream handshake: the handshake forces a fresh
     baseline (asserted on the rendered row, not on the request alone)
+  - a failed handshake read does not fall back to the pre-registration read:
+    the client stays unloaded (no claim) instead of marking a task created
+    during registration as exited
   - hash-based task resume
   - last-task auto-resume with the Root fallback, identified by the task list's `isRoot` flag rather than by the id's value
   - new-task creation when no previous task exists
