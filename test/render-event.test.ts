@@ -965,6 +965,58 @@ describe("render-event", () => {
       assert.equal(detail.classList.contains("expanded"), false);
     });
 
+    // A result thumbnail is its own control — the lightbox delegate opens it and
+    // does not stop propagation, so the card must not treat that click as a
+    // request to flip the command's expansion on the way up.
+    it("does not flip the command's expansion when a result thumbnail is clicked", () => {
+      const tool = append(
+        mod.renderContentEvent(
+          "tool_call",
+          {
+            id: "tc-thumb",
+            kind: "execute",
+            title: "bash",
+            rawInput: { command: "shotgun" },
+          },
+          makeHooks(),
+        ),
+      )!;
+      mod.renderContentEvent(
+        "tool_call_update",
+        {
+          id: "tc-thumb",
+          status: "completed",
+          content: [
+            { type: "content", content: { type: "text", text: "taken" } },
+            {
+              type: "image",
+              attachment: {
+                kind: "image",
+                attachmentId: "att-1",
+                displayName: "shot.png",
+                mimeType: "image/png",
+                path: "/api/v1/tasks/s1/attachments/att-1.png",
+                width: 2,
+                height: 2,
+              },
+            },
+          ],
+        },
+        makeHooks({ findToolCallEl: () => tool }),
+      );
+
+      const detail = tool.querySelector(".tc-detail") as HTMLElement;
+      const thumb = tool.querySelector("img.tc-image") as HTMLElement;
+      assert.ok(thumb, "the card must hold a thumbnail");
+
+      thumb.click();
+      assert.equal(detail.classList.contains("expanded"), false);
+
+      // The rest of the card still expands.
+      (tool.querySelector(".tc-title") as HTMLElement).click();
+      assert.equal(detail.classList.contains("expanded"), true);
+    });
+
     it("keeps a descriptive Copilot title when it differs from the command", () => {
       const tool = append(
         mod.renderContentEvent(

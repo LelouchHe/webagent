@@ -597,7 +597,10 @@ function buildToolCall(data: Record<string, unknown>): HTMLElement {
   // `tool_call_update` instead of the create event. Resolving it at click time
   // keeps both creation paths interactive without re-binding per update.
   el.addEventListener("click", (e) => {
-    if ((e.target as Element).closest("details")) return;
+    const target = e.target as Element;
+    // A thumbnail is its own control (the lightbox opens it); its click must not
+    // also flip the command's expansion as the event bubbles through the card.
+    if (target.closest("details, .tc-images")) return;
     el.querySelector(".tc-detail")?.classList.toggle("expanded");
   });
   return el;
