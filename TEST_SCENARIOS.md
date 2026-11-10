@@ -184,31 +184,41 @@ spot gaps, and decide what still needs to be added without reading every spec.
     other agent → its id, no baseline → all); a null binding never prints one
   - concurrent list callers in one generation share one request
 
-- `test/task-ref-marks.test.ts` (rows naming a deleted task)
-  - nothing is marked before a list arrives, and a delete learned without one
-    is still no claim; a failed read leaves rows unmarked
+- `test/task-ref-marks.test.ts` (one reference per Task, four states)
+  - a live reference is completely unmarked (no strike, no appended name, no
+    screen-reader note), and no row ever carries a state of its own
+  - a rename strikes the name the row recorded and appends the current one,
+    with a `(renamed)` note; a rename back to the old name removes every part
+    of the mark again; several renames show only the latest name
+  - an exited reference is struck with an `(exited)` note and appends nothing;
+    an exit after a rename drops the appended name (exited wins over renamed)
+  - nothing is marked before a list arrives: the reference stays live-looking
+    (unknown), and a delete learned without a list is still no claim; a failed
+    read and a list from an older connection generation leave it unmarked
   - a listed task is marked after its `task_deleted`, and a list read issued
-    before the delete cannot resurrect it
+    before the delete cannot resurrect it; a listed task without a title is
+    neither exited nor renamed
   - a live row resolves its target from `targetTaskId` (not the row's own
     `taskId`) and is marked when that other task is deleted while the client
     views the parent
   - a task created after the applied snapshot (or before a later, still-older
-    one) is never marked
-  - a list that resolves after the connection generation changed is discarded,
-    not used to mark
+    one) is never marked; a create event without a title keeps the listed one
   - rows rendered before the boot list read are re-evaluated when it arrives
-  - a source-side `@a sent @b` row strikes only `@b`; the target-side copy of
-    the same title strikes only `@a`; both sides of a cancellation row strike
-    the other task; the row stays muted either way
-  - a row whose raw title is missing is muted but not struck
+  - `task_title_updated` refreshes a row that names a Task the client is not
+    viewing, and applies to a row rendered after it; the current Task's header
+    is untouched by another Task's rename
+  - each reference of a collaboration row is judged on its own id on every
+    copy, including the supervisor projection (the LCA, which is neither side):
+    one side's rename or exit never marks the other; the live envelope marks
+    the same references its replayed copy does
+  - both sides of a cancellation row mark the other Task, and the source side
+    marks both of its references by id
+  - a row whose raw labels are missing, or whose reference does not sit at its
+    anchored edge, is left fully unmarked rather than guessed
   - an adversarial title matrix (equal labels, a label containing ` sent `,
     quotes, backslashes, newlines, tabs, a full-width space, a label that is
     `sent`/`cancelled`, ids that disagree with the title) is either placed
     exactly at its anchored edge or not placed at all
-  - the live collaboration envelope carries the raw labels and marks its
-    reference from them
-  - a supervisor copy (the LCA projection, which is neither side of the edge)
-    claims nothing: the row is not muted and nothing is struck
 - `test/collaboration-message.test.ts` (one collaboration row, three consumers)
   - the title is built from the raw labels, shell-quoting when needed
   - the persisted payload and the wire envelope carry the same title, body, and
@@ -1085,9 +1095,15 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `task-delete-command.spec.ts`
   - `/exit` deletes current task and switches to previous
-  - a `Created task @x` row is unmarked while `x` exists, marked after `/exit`
-    deletes it, and still marked after a reload (the mark is re-derived, not
-    stored)
+  - a `Created task @x` reference is unmarked while `x` exists, struck after
+    `/exit` deletes it, and still struck after a reload (the mark is re-derived,
+    not stored); the row itself is never marked
+  - a renamed reference strikes the old name and appends the current one, then
+    drops the appended name when the renamed task exits; both states survive a
+    reload
+  - a collaboration row exposes both references; exiting the target strikes only
+    its reference and leaves the source reference unmarked, before and after a
+    reload
 
 - REST delete (`test/tasks.test.ts`, `test/store.test.ts`)
   - deleting a task cascades to every descendant regardless of owner, retires each affected

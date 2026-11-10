@@ -1,79 +1,92 @@
-// Marks references to tasks this client knows no longer exist.
+// Marks the reference a row makes to another task: whether that task still
+// exists, and whether the name the row records is still its current name.
 //
-// A row that names another task outlives it: deleting that task leaves the
-// parent's persisted row untouched, so the row would otherwise invite actions
-// (`/switch`, `@x`, the picker) that can only fail. Whether a named task still
-// exists is not stored anywhere — it is derived when the row is rendered, from
-// the shared task list (a base) plus the live `task_created` / `task_deleted`
-// events this connection has observed.
+// A row that names another task outlives both facts. The row itself is
+// history — it keeps the title it was written with, forever — so the mark is
+// derived when the row renders and never written back to the event, the
+// database, or anything else. Each reference has exactly one of four states:
 //
-// The derived set is incremental, because a list response can be older than an
-// event already applied:
+//     live      @x            the task exists and is still called x
+//     renamed   ~~@x~~ @y     the task exists and is now called y
+//     exited    ~~@x~~        the task no longer exists
+//     unknown   @x            no list yet, a failed read, or a title that
+//                             cannot be attributed
 //
-//     live = listSnapshot ∪ createdIds − deletedIds
+// Only the reference is marked. The row keeps its normal contrast: an exited
+// reference does not make the sentence around it harder to read, and opacity
+// would hide a row that is still the only record of what happened from
+// assistive technology.
 //
-// `listSnapshot` is the newest applied list read, `createdIds` only grows for
-// what this connection saw appear, and `deletedIds` is sticky and only grows
-// (task ids are UUIDs and never reused; a delete this connection missed is
-// healed by the next list response, which no longer contains it).
+// The live collection is a base plus increments, because a list response can
+// be older than an event already applied:
 //
-// Two different claims are rendered, and they fail differently:
+//     live = listSnapshot ∪ created − deleted, overlaid by title updates
 //
-//   - the row is muted when the task it names is gone (identity is a task id,
-//     never a title);
-//   - the reference inside the title is struck through only when that exact
-//     reference can be placed in the title from the raw label the event
-//     carries. A title is prose: titles repeat, contain quotes and spaces, and
-//     even contain the words between two references. Guessing a span from the
-//     text is therefore forbidden; an unplaceable reference stays undimmed and
-//     only the row is muted.
+// `listSnapshot` is the newest applied list read (ids and titles), `created`
+// only grows for what this connection saw appear, `deleted` is sticky and only
+// grows (task ids are UUIDs and never reused; a delete this connection missed
+// is healed by the next list response, which no longer contains it), and a
+// `task_title_updated` overlay outlives a list read issued before the rename.
+//
+// A reference is placed by task id, never by the shape of the title: titles
+// repeat, contain quotes and spaces, and even contain the words between two
+// references. Guessing a span from the text is therefore forbidden — a
+// reference stays unmarked unless the rebuilt text lands exactly where its id
+// says it does, beside the other reference the row names.
 //
 // Downgrade is the only acceptable failure: no list yet, a failed read, a
 // response belonging to a superseded connection generation, a missing raw
-// label, or a reference that does not sit exactly where the task ids say it
-// does leaves a row unmarked. A live task must never be labelled exited. The
-// caller that applies a list owns that generation guard (`loadTaskList`).
+// label, or an unplaceable reference leaves the reference alone. A live task
+// must never be labelled exited. The caller that applies a list owns that
+// generation guard (`loadTaskList`).
 
 import { formatTaskReference } from "../../src/shared/task-reference.ts";
 
-/** One rendered row that names another task, and the reference it carries. */
-interface RegisteredRow {
-  el: HTMLElement;
+/** One rendered reference, kept so a collection change can re-evaluate it. */
+interface RegisteredRef {
+  /** The row that carries the reference; detached rows are pruned by it. */
+  row: HTMLElement;
+  /** The reference container (`.task-ref`). */
+  ref: HTMLElement;
+  /** The child holding the row's own reference text, the strike target. */
+  name: HTMLElement;
   /** The named (other) task. */
   taskId: string;
-  /** The reference inside the title, when it could be placed exactly. */
-  ref: HTMLElement | null;
+  /** The name the row was written with; compared with the task's current one. */
+  label: string;
 }
 
-/** Rendered rows that name a task, so a collection change can re-evaluate them. */
-const rows = new Map<HTMLElement, RegisteredRow>();
+/** Rendered references, so a collection change can re-evaluate them. */
+const refs = new Map<HTMLElement, RegisteredRef>();
 
-/** Base set from the last applied task list; null until one arrives. */
-let listSnapshot: Set<string> | null = null;
-/** Tasks this connection saw created after (or before) that snapshot. */
-const createdIds = new Set<string>();
+/** Base ids and titles from the last applied task list; null until one arrives. */
+let listSnapshot: Map<string, string | null> | null = null;
+/** Tasks this connection saw created, with the title the event carried. */
+const createdTitles = new Map<string, string | null>();
+/** Titles this connection saw renamed; newer than any list read. */
+const titleUpdates = new Map<string, string>();
 /** Tasks this connection saw deleted; sticky, because ids are never reused. */
 const deletedIds = new Set<string>();
-/** Derived `live` set; null while no list has been applied. */
-let live: Set<string> | null = null;
+/** Derived `live` table; null while no list has been applied. */
+let live: Map<string, string | null> | null = null;
 
 function rebuildLive(): void {
   if (listSnapshot === null) {
     live = null;
     return;
   }
-  const next = new Set(listSnapshot);
-  for (const id of createdIds) next.add(id);
+  const next = new Map(listSnapshot);
+  for (const [id, title] of createdTitles) {
+    // A create event proves the id exists. It only speaks for the title when
+    // it carried one; otherwise a title from the list stands.
+    if (title !== null) next.set(id, title);
+    else if (!next.has(id)) next.set(id, null);
+  }
+  for (const [id, title] of titleUpdates) {
+    if (next.has(id)) next.set(id, title);
+  }
   for (const id of deletedIds) next.delete(id);
   live = next;
-}
-
-/**
- * Whether the task is known to be gone. `false` also means "unknown" — no
- * list has arrived, so nothing may be claimed about the task.
- */
-export function isTaskExited(taskId: string): boolean {
-  return live !== null && !live.has(taskId);
 }
 
 /** The task fields a system row carries; only `kind` and `title` are required. */
@@ -100,87 +113,99 @@ export interface TaskRefAnchor {
 }
 
 export interface TaskRefTarget {
-  /** The task the row names; controls whether the row is muted. */
+  /** The task the row names. */
   taskId: string;
+  /** The name the row records for it, never the task's current name. */
+  label: string;
   /**
-   * Where that task's reference sits in the title. Null when the raw label is
-   * missing or the rebuilt reference cannot be proven to land exactly there —
-   * then the row is still muted, but nothing is struck through.
+   * Where that task's reference sits in the title. Null when the rebuilt
+   * reference cannot be proven to land exactly there — then nothing is
+   * marked for this task.
    */
   anchor: TaskRefAnchor | null;
 }
 
 type RefPosition = "prefix" | "suffix";
 
+interface Candidate {
+  taskId: string;
+  label: string;
+  position: RefPosition;
+}
+
 /**
- * Resolve the one reference a row names, by comparing task ids.
+ * Resolve the references a row names, by comparing task ids.
  *
  * `task_created` names its task at the end of `Created task @x`.
- * `collaboration` names both sides in `@source sent @target`: the source-side
- * projection marks the target at the end, the target-side projection marks the
- * source at the front (the same title is projected to both sides).
- * `task_cancel` marks the other task at the end on both sides (`@a cancelled
- * @b` and `Cancelled by @a`).
  *
- * A supervisor projection names both sides without being either of them, so no
- * single reference can be attributed: it resolves to nothing.
+ * `collaboration` names both sides in `@source sent @target`, and the same
+ * title is projected to all three copies (source, target, and the supervisor
+ * that is neither). Both references are resolved on every copy: each is judged
+ * by its own id, and the reference that survives is the one that matters.
+ *
+ * `task_cancel` projects two different titles: the canceller reads
+ * `@source cancelled @target`, the cancelled task reads `Cancelled by
+ * @source`. The row's own id selects which title shape it is.
+ *
+ * A row of any other kind names nothing.
  */
-export function resolveTaskRef(input: TaskRefRowInput): TaskRefTarget | null {
-  const { kind, title } = input;
+export function resolveTaskRefs(input: TaskRefRowInput): TaskRefTarget[] {
+  const candidates = collectCandidates(input);
+  // A reference is only placable against the other reference the row names:
+  // the sibling proves the marked span cannot be a title-wide match.
+  return candidates.map((candidate) => {
+    const sibling = candidates.find((other) => other !== candidate);
+    return {
+      taskId: candidate.taskId,
+      label: candidate.label,
+      anchor: placeReference(
+        input.title,
+        candidate.label,
+        candidate.position,
+        sibling ? formatTaskReference(sibling.label) : null,
+      ),
+    };
+  });
+}
+
+/** The references a row of this kind and side can name, in title order. */
+function collectCandidates(input: TaskRefRowInput): Candidate[] {
   const own = input.ownTaskId ?? null;
   const sourceTaskId = input.sourceTaskId ?? null;
   const targetTaskId = input.targetTaskId ?? null;
-
-  let taskId: string | null;
-  let label: string | null;
-  let position: RefPosition = "suffix";
-  /**
-   * The reference on the far side of a two-reference title, when this row's
-   * title has one. It is never marked; it only proves the marked span cannot
-   * overlap it (equal source and target labels would otherwise allow a
-   * title-wide match).
-   */
-  let sibling: string | null = null;
-
-  if (kind === "task_created") {
-    taskId = input.taskId ?? null;
-    label = input.taskTitle ?? null;
-  } else if (kind === "collaboration" || kind === "task_cancel") {
-    if (own !== null && own === sourceTaskId) {
-      taskId = targetTaskId;
-      label = input.targetLabel ?? null;
-      if (kind === "collaboration" && input.sourceLabel != null) {
-        sibling = formatTaskReference(input.sourceLabel);
-      }
-    } else if (own !== null && own === targetTaskId) {
-      taskId = sourceTaskId;
-      label = input.sourceLabel ?? null;
-      // `@source sent @target` projects the target-side row with the source at
-      // the front; `Cancelled by @source` keeps it at the end.
-      if (kind === "collaboration") {
-        position = "prefix";
-        if (input.targetLabel != null) {
-          sibling = formatTaskReference(input.targetLabel);
-        }
-      }
-    } else {
-      return null;
+  const candidates: Candidate[] = [];
+  const push = (
+    taskId: string | null,
+    label: string | null | undefined,
+    position: RefPosition,
+  ) => {
+    if (taskId !== null && label != null) {
+      candidates.push({ taskId, label, position });
     }
-  } else {
-    return null;
-  }
+  };
 
-  if (taskId === null) return null;
-  return { taskId, anchor: placeReference(title, label, position, sibling) };
+  if (input.kind === "task_created") {
+    push(input.taskId ?? null, input.taskTitle, "suffix");
+  } else if (input.kind === "collaboration") {
+    push(sourceTaskId, input.sourceLabel, "prefix");
+    push(targetTaskId, input.targetLabel, "suffix");
+  } else if (input.kind === "task_cancel") {
+    if (own !== null && own === sourceTaskId) {
+      push(sourceTaskId, input.sourceLabel, "prefix");
+      push(targetTaskId, input.targetLabel, "suffix");
+    } else if (own !== null && own === targetTaskId) {
+      push(sourceTaskId, input.sourceLabel, "suffix");
+    }
+  }
+  return candidates;
 }
 
 function placeReference(
   title: string,
-  label: string | null,
+  label: string,
   position: RefPosition,
   sibling: string | null,
 ): TaskRefAnchor | null {
-  if (label === null) return null;
   const text = formatTaskReference(label);
   if (position === "prefix") {
     if (!title.startsWith(text)) return null;
@@ -202,59 +227,119 @@ function placeReference(
   return { text, start, end: start + text.length };
 }
 
-function setMark(el: HTMLElement, exited: boolean): void {
-  if (exited) el.setAttribute("data-exited", "");
-  else el.removeAttribute("data-exited");
+interface RefState {
+  state: "live" | "renamed" | "exited" | "unknown";
+  currentTitle: string | null;
 }
 
-function applyRowMark(row: RegisteredRow): void {
-  const exited = isTaskExited(row.taskId);
-  setMark(row.el, exited);
-  if (row.ref) setMark(row.ref, exited);
+function deriveState(ref: RegisteredRef): RefState {
+  if (live === null) return { state: "unknown", currentTitle: null };
+  if (!live.has(ref.taskId)) return { state: "exited", currentTitle: null };
+  const currentTitle = live.get(ref.taskId) ?? null;
+  // A listed task without a title cannot prove the recorded name is current,
+  // so it is left alone instead of being called renamed.
+  if (currentTitle === null) return { state: "unknown", currentTitle: null };
+  return {
+    state: currentTitle === ref.label ? "live" : "renamed",
+    currentTitle,
+  };
 }
 
-/** Re-evaluate every row already registered; used when the collection changes. */
+function hiddenText(text: string): HTMLElement {
+  const el = document.createElement("span");
+  el.className = "visually-hidden";
+  el.textContent = text;
+  return el;
+}
+
+function applyRef(ref: RegisteredRef): void {
+  // Rewrite from the row's own reference every time: additions and removals
+  // are then both idempotent, and a reference can move live → renamed →
+  // exited → live without leaving a stale strike, name, or screen-reader note.
+  while (ref.name.nextSibling) ref.name.nextSibling.remove();
+  ref.ref.removeAttribute("data-ref-state");
+
+  const { state, currentTitle } = deriveState(ref);
+  if (state === "exited") {
+    ref.ref.setAttribute("data-ref-state", "exited");
+    ref.ref.append(hiddenText(" (exited)"));
+  } else if (state === "renamed" && currentTitle !== null) {
+    ref.ref.setAttribute("data-ref-state", "renamed");
+    // The appended current name is only text: it says what to use now. It is
+    // not a link and it is not written back to the row.
+    const current = document.createElement("span");
+    current.className = "task-ref-current";
+    current.textContent = ` ${formatTaskReference(currentTitle)}`;
+    ref.ref.append(current, hiddenText(" (renamed)"));
+  }
+}
+
+/** Re-evaluate every reference already rendered; used when the collection moves. */
 export function refreshTaskRefMarks(): void {
-  for (const [el, row] of rows) {
+  for (const [el, ref] of refs) {
     // A row with no parent anywhere was detached and will not come back. A
     // replay row still inside its fragment has a parent, and is about to be
     // inserted, so it stays registered.
-    if (el.parentNode === null) rows.delete(el);
-    else applyRowMark(row);
+    if (ref.row.parentNode === null) refs.delete(el);
+    else applyRef(ref);
   }
 }
 
 /**
- * Register a just-rendered row that names `taskId`, and mark it from the
- * collection as it stands. Rendering is the single moment a row is evaluated
- * for the first time, so history replay, live insertion, and a back-paged
- * fragment all agree without a later pass over the DOM. `ref` is the title's
- * reference span, absent when the reference could not be placed exactly.
+ * Register a just-rendered reference that names `taskId` with the name the row
+ * recorded, and mark it from the collection as it stands. Rendering is the
+ * single moment a reference is evaluated for the first time, so history
+ * replay, live insertion, and a back-paged fragment all agree without a later
+ * pass over the DOM.
  */
 export function registerTaskRefRow(
-  el: HTMLElement,
+  row: HTMLElement,
+  ref: HTMLElement,
   taskId: string,
-  ref: HTMLElement | null,
+  label: string,
 ): void {
-  const row = { el, taskId, ref };
-  rows.set(el, row);
-  applyRowMark(row);
+  // The row's reference text becomes its own child so the strike can be
+  // scoped to it alone and the appended current name cannot inherit it.
+  const name = document.createElement("span");
+  name.className = "task-ref-name";
+  name.textContent = ref.textContent;
+  ref.replaceChildren(name);
+  const registered: RegisteredRef = { row, ref, name, taskId, label };
+  refs.set(ref, registered);
+  applyRef(registered);
 }
 
 /**
  * Apply one successful list read as the new base. Called only for a result
  * that belongs to the current connection generation.
  */
-export function applyTaskListSnapshot(taskIds: Iterable<string>): void {
-  listSnapshot = new Set(taskIds);
+export function applyTaskListSnapshot(
+  tasks: Iterable<{ id: string; title: string | null }>,
+): void {
+  const next = new Map<string, string | null>();
+  for (const task of tasks) next.set(task.id, task.title ?? null);
+  listSnapshot = next;
   rebuildLive();
   refreshTaskRefMarks();
 }
 
 /** A task appeared while this connection was open (it may postdate a read). */
-export function noteTaskCreated(taskId: string): void {
-  createdIds.add(taskId);
+export function noteTaskCreated(
+  taskId: string,
+  title: string | null = null,
+): void {
+  createdTitles.set(taskId, title);
   rebuildLive();
+  // A base that predates the create may have marked the reference exited;
+  // the event proves it exists again.
+  refreshTaskRefMarks();
+}
+
+/** A task was renamed while this connection was open. */
+export function noteTaskTitleUpdated(taskId: string, title: string): void {
+  titleUpdates.set(taskId, title);
+  rebuildLive();
+  refreshTaskRefMarks();
 }
 
 /** A task was deleted while this connection was open. */
@@ -271,7 +356,8 @@ export function noteTaskDeleted(taskId: string): void {
  */
 export function resetTaskRefMarks(): void {
   listSnapshot = null;
-  createdIds.clear();
+  createdTitles.clear();
+  titleUpdates.clear();
   deletedIds.clear();
   live = null;
   refreshTaskRefMarks();

@@ -1,4 +1,5 @@
 import { test, expect } from "playwright/test";
+import type { Locator } from "playwright/test";
 import {
   createNewTask,
   currentTaskId,
@@ -6,6 +7,11 @@ import {
   gotoConnected,
   sendPrompt,
 } from "./helpers.ts";
+
+/** The reference spans in a row, in title order. */
+function refs(row: Locator): Locator {
+  return row.locator(".task-ref");
+}
 
 test("/exit deletes current task and switches to previous", async ({
   page,
@@ -30,7 +36,7 @@ test("/exit deletes current task and switches to previous", async ({
   );
 });
 
-test("a task-created row is marked exited after its task is deleted", async ({
+test("a task-created reference is marked exited after its task is deleted", async ({
   page,
 }) => {
   await gotoConnected(page);
@@ -45,8 +51,10 @@ test("a task-created row is marked exited after its task is deleted", async ({
     hasText: `Created task @${title}`,
   });
   await expect(row).toBeVisible();
-  // The referenced task is alive: no mark.
-  expect(await row.getAttribute("data-exited")).toBeNull();
+  // The referenced task is alive: no mark, and the row itself is never marked.
+  await expect(refs(row)).toHaveCount(1);
+  await expect(refs(row)).not.toHaveAttribute("data-ref-state", "");
+  await expect(row).not.toHaveAttribute("data-exited", "");
 
   await page.locator("#input").fill(`@${title}`);
   await page.locator("#input").press("Enter");
@@ -55,21 +63,84 @@ test("a task-created row is marked exited after its task is deleted", async ({
   await sendPrompt(page, "/exit");
   await expect.poll(() => currentTaskId(page)).toBe(parentId);
 
-  // Re-rendered from the parent's history: the row now names a deleted task.
-  await expect(row).toHaveAttribute("data-exited", "");
-  // Only the reference is struck; the row's own wording stays intact.
-  await expect(row.locator(".task-ref")).toHaveText(`@${title}`);
-  await expect(row.locator(".task-ref")).toHaveAttribute("data-exited", "");
+  // Re-rendered from the parent's history: the reference now names a deleted
+  // task, so it is struck through — and only the reference is marked, the
+  // row's own wording keeps its normal contrast.
+  await expect(refs(row)).toHaveAttribute("data-ref-state", "exited");
+  await expect(refs(row).locator(".task-ref-name")).toHaveText(`@${title}`);
+  await expect(refs(row).locator(".task-ref-current")).toHaveCount(0);
+  await expect(refs(row).locator(".visually-hidden")).toHaveText(" (exited)");
+  await expect(row).not.toHaveAttribute("data-exited", "");
 
   // A reload re-derives the mark from the task list; it is not stored on the
   // row, the event, or the database.
   await page.reload();
   await expectConnectionStatus(page, "connected");
-  await expect(row).toHaveAttribute("data-exited", "");
-  await expect(row.locator(".task-ref")).toHaveAttribute("data-exited", "");
+  await expect(refs(row)).toHaveAttribute("data-ref-state", "exited");
+  await expect(row).not.toHaveAttribute("data-exited", "");
 });
 
-test("a collaboration row strikes only the exited reference", async ({
+test("a renamed reference is struck and followed by the current name", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  // A task of its own, so the row under test belongs to a fresh stream.
+  const parentId = await createNewTask(page);
+
+  const oldTitle = `e2e-renamed-ref-${Date.now().toString(36)}`;
+  await page.locator("#input").fill(`+${oldTitle}`);
+  await page.locator("#input").press("Enter");
+  await expect(page.locator("#messages")).toContainText(`@${oldTitle}`);
+
+  // Enter the child and rename it; the parent's row keeps the old name.
+  await page.locator("#input").fill(`@${oldTitle}`);
+  await page.locator("#input").press("Enter");
+  await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
+
+  const newTitle = `${oldTitle}-2`;
+  await sendPrompt(page, `/rename ${newTitle}`);
+  await expect(page.locator("#task-info")).toContainText(newTitle);
+
+  // Back on the parent, the row still reads with the old name, struck, with
+  // the current name appended as plain text. `/switch` takes the id: `@title`
+  // addresses a child, and this task is the parent.
+  await sendPrompt(page, `/switch ${parentId}`);
+  await expect.poll(() => currentTaskId(page)).toBe(parentId);
+
+  const row = page.locator(".system-msg", {
+    hasText: `Created task @${oldTitle}`,
+  });
+  await expect(row).toBeVisible();
+  const ref = refs(row);
+  await expect(ref).toHaveCount(1);
+  await expect(ref).toHaveAttribute("data-ref-state", "renamed");
+  await expect(ref.locator(".task-ref-name")).toHaveText(`@${oldTitle}`);
+  await expect(ref.locator(".task-ref-current")).toHaveText(` @${newTitle}`);
+  await expect(ref.locator(".visually-hidden")).toHaveText(" (renamed)");
+  await expect(row).not.toHaveAttribute("data-exited", "");
+
+  // Enter the renamed child by its current name and exit it: the reference is
+  // now simply dead, so the appended name disappears.
+  await page.locator("#input").fill(`@${newTitle}`);
+  await page.locator("#input").press("Enter");
+  await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
+  await sendPrompt(page, "/exit");
+  await expect.poll(() => currentTaskId(page)).toBe(parentId);
+
+  await expect(ref).toHaveAttribute("data-ref-state", "exited");
+  await expect(ref.locator(".task-ref-name")).toHaveText(`@${oldTitle}`);
+  await expect(ref.locator(".task-ref-current")).toHaveCount(0);
+  await expect(ref.locator(".visually-hidden")).toHaveText(" (exited)");
+  await expect(row).not.toHaveAttribute("data-exited", "");
+
+  // A reload re-derives both states from the list and the row's own text.
+  await page.reload();
+  await expectConnectionStatus(page, "connected");
+  await expect(ref).toHaveAttribute("data-ref-state", "exited");
+  await expect(ref.locator(".task-ref-current")).toHaveCount(0);
+});
+
+test("a collaboration row marks each reference by its own id", async ({
   page,
 }) => {
   await gotoConnected(page);
@@ -84,20 +155,21 @@ test("a collaboration row strikes only the exited reference", async ({
     `Created task @${childTitle}`,
   );
 
-  // A collaboration message stays in this task, and the source's own copy of
-  // the row names both sides: `@source sent @child`.
+  // A collaboration message stays in this task, and its row names both sides:
+  // `@source sent @child`.
   const targetRef = `@${childTitle}`;
   await page.locator("#input").fill(`${targetRef} ping`);
   await page.locator("#input").press("Enter");
 
   const row = page.locator(".system-msg", { hasText: `sent ${targetRef}` });
   await expect(row).toBeVisible();
-  // Exactly one reference is a span, and it is the other task's.
-  const struck = row.locator(".task-ref");
-  await expect(struck).toHaveText(targetRef);
-  expect(await row.locator(".task-ref").count()).toBe(1);
+  // Both references are judged on their own id; both are alive here.
+  await expect(refs(row)).toHaveCount(2);
+  await expect(refs(row).nth(0)).toHaveText(`@${sourceTitle}`);
+  await expect(refs(row).nth(1)).toHaveText(targetRef);
+  await expect(refs(row).nth(0)).not.toHaveAttribute("data-ref-state", "");
+  await expect(refs(row).nth(1)).not.toHaveAttribute("data-ref-state", "");
   await expect(row).not.toHaveAttribute("data-exited", "");
-  await expect(struck).not.toHaveAttribute("data-exited", "");
 
   // Enter the child and exit it; the parent's row now names a deleted task.
   await page.locator("#input").fill(targetRef);
@@ -106,17 +178,17 @@ test("a collaboration row strikes only the exited reference", async ({
   await sendPrompt(page, "/exit");
   await expect.poll(() => currentTaskId(page)).toBe(sourceId);
 
-  await expect(row).toHaveAttribute("data-exited", "");
-  await expect(struck).toHaveAttribute("data-exited", "");
-  await expect(struck).toHaveText(targetRef);
-  // The row's own address is plain text, not a reference span, so the mark
-  // cannot reach it.
-  await expect(row.locator("summary")).toContainText(`@${sourceTitle}`);
+  await expect(refs(row).nth(1)).toHaveAttribute("data-ref-state", "exited");
+  await expect(refs(row).nth(1).locator(".task-ref-name")).toHaveText(
+    targetRef,
+  );
+  // The source reference is untouched: the row is not a unit of state.
+  await expect(refs(row).nth(0)).not.toHaveAttribute("data-ref-state", "");
+  await expect(row).not.toHaveAttribute("data-exited", "");
 
   // A reload re-derives it from the task list, exactly as for a creation row.
   await page.reload();
   await expectConnectionStatus(page, "connected");
-  await expect(row).toHaveAttribute("data-exited", "");
-  await expect(struck).toHaveAttribute("data-exited", "");
-  await expect(struck).toHaveText(targetRef);
+  await expect(refs(row).nth(1)).toHaveAttribute("data-ref-state", "exited");
+  await expect(refs(row).nth(0)).not.toHaveAttribute("data-ref-state", "");
 });

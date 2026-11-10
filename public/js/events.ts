@@ -61,7 +61,11 @@ import {
   observeTaskDeleted,
   setCurrentTask,
 } from "./task-topology.ts";
-import { noteTaskCreated, noteTaskDeleted } from "./task-ref-marks.ts";
+import {
+  noteTaskCreated,
+  noteTaskDeleted,
+  noteTaskTitleUpdated,
+} from "./task-ref-marks.ts";
 import { applyConnectedLogLevel } from "./log.ts";
 import { log } from "./log.ts";
 import { NOTIFY_TIP_DENIED_KEY, NOTIFY_TIP_KEY } from "./local-reset.ts";
@@ -1988,12 +1992,17 @@ export function handleEvent(msg: AgentEvent) {
   // parent is usually another task this client is not viewing.
   if (msg.type === "task_created") {
     observeTaskCreated(msg.taskId, msg.agentId ?? null);
-    noteTaskCreated(msg.taskId);
+    noteTaskCreated(msg.taskId, msg.title ?? null);
   } else if (msg.type === "task_deleted") {
     observeTaskDeleted(msg.taskId);
     // Before the "is this the current task" branch below: a deleted task is
     // any row's reference task, not only this client's current one.
     noteTaskDeleted(msg.taskId);
+  } else if (msg.type === "task_title_updated") {
+    // Same reason: a row rendered in another task names this one, and the name
+    // it recorded may now be stale. Only the current task's own header below
+    // is view-scoped.
+    noteTaskTitleUpdated(msg.taskId, msg.title);
   }
   if (msg.type === "inbox_count_changed") {
     updateInboxCount(msg.pendingCount);

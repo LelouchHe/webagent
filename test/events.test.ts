@@ -2705,8 +2705,9 @@ describe("events", () => {
           created_at: new Date(0).toISOString(),
         });
 
-        // Target-side copy: the row's own task is the target, so the marked
-        // reference is the source at the front.
+        // Target-side copy: the same title is projected here, and both of its
+        // references are placed by their own ids — a reference does not belong
+        // to one side of the row.
         const targetCopy = storedRow(1, "s1", "target");
         events.replayEvent(
           targetCopy.type,
@@ -2722,14 +2723,15 @@ describe("events", () => {
           dom.messages.querySelector(".system-msg-body")?.textContent,
           "please review",
         );
-        assert.equal(
-          dom.messages.querySelector(".task-ref")?.textContent,
-          "@what",
+        assert.deepEqual(
+          [...dom.messages.querySelectorAll(".task-ref")].map(
+            (span) => span.textContent,
+          ),
+          ["@what", "@child-a"],
         );
 
         stateMod.resetTaskUI();
-        // Source-side copy: its own task is the source, so the marked
-        // reference is the target at the end.
+        // Source-side copy: the same title, the same two references.
         const sourceCopy = storedRow(2, "s0", "source");
         events.replayEvent(
           sourceCopy.type,
@@ -2737,9 +2739,11 @@ describe("events", () => {
           [sourceCopy],
           0,
         );
-        assert.equal(
-          dom.messages.querySelector(".task-ref")?.textContent,
-          "@child-a",
+        assert.deepEqual(
+          [...dom.messages.querySelectorAll(".task-ref")].map(
+            (span) => span.textContent,
+          ),
+          ["@what", "@child-a"],
         );
       });
 
@@ -3142,11 +3146,13 @@ describe("events", () => {
           dom.messages.querySelector("summary")?.textContent,
           "@Source cancelled @Child",
         );
-        // The row's own address is plain text; only the cancelled task's
-        // reference is its own span, so it is the only thing the mark can strike.
-        assert.equal(
-          dom.messages.querySelector(".task-ref")?.textContent,
-          "@Child",
+        // Both references are placed by their own ids; the cancelled task's
+        // is the one that can be struck by this row's delete.
+        assert.deepEqual(
+          [...dom.messages.querySelectorAll(".task-ref")].map(
+            (span) => span.textContent,
+          ),
+          ["@Source", "@Child"],
         );
 
         stateMod.resetTaskUI();
@@ -3201,10 +3207,12 @@ describe("events", () => {
           dom.messages.querySelector("summary")?.textContent,
           "Cancelled by @Source",
         );
-        assert.equal(
-          dom.messages.querySelector(".task-ref")?.textContent,
-          "@Source",
-          "the replayed row must place the same reference the live row did",
+        assert.deepEqual(
+          [...dom.messages.querySelectorAll(".task-ref")].map(
+            (span) => span.textContent,
+          ),
+          ["@Source"],
+          "the replayed row must place the same references the live row did",
         );
       } finally {
         produced.cleanup();

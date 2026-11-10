@@ -57,15 +57,6 @@ time. An entry without a "closing condition" is a wish, not an issue.
   (recorded from the delete response) at the activation path instead of passing
   a flag through the fallback.
 
-- **A supervisor's copy of a collaboration row stays unmarked.** A message
-  between Tasks under different parents is also projected to their lowest
-  common ancestor as a third, `role: "supervisor"` copy. That row names both
-  sides without being either of them, so a reference to an exited Task cannot
-  be attributed to one address: unlike the two endpoint copies, the row is
-  neither muted nor struck, and its references keep looking live. *Closing:*
-  register both references independently (keyed by both ids) instead of one
-  per row, or mute the supervisor row when either endpoint exits.
-
 - **The empty-task GC can fail a foreign key.** `Store.deleteEmptyTasks` throws
   `FOREIGN KEY constraint failed` for a zero-event task that still has a share
   row, and `TaskManager` does not catch it, so an unrelated task creation can

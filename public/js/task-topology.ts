@@ -323,7 +323,7 @@ export async function loadTaskList(): Promise<TaskSummary[]> {
         // Only a result from the current generation becomes the baseline: a
         // list that resolves after a newer connection started may predate
         // events already applied, and must not mark (or unmark) any row.
-        applyTaskListSnapshot(tasks.map((task) => task.id));
+        applyTaskListSnapshot(tasks);
         notifyChange();
       }
       return tasks;
