@@ -183,6 +183,62 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - entry labels are baseline-relative to the current task (same agent → none,
     other agent → its id, no baseline → all); a null binding never prints one
   - concurrent list callers in one generation share one request
+  - the baseline taken after the stream handshake supersedes an in-flight
+    startup read, so a task created while the stream was registering is live
+    rather than exited (`test/connection.test.ts` drives the real connect)
+  - a connection takes a startup baseline read and a post-handshake read, each
+    its own request: neither joins the other in either order, and both orders
+    are pinned (a dedupe is exactly what made the count depend on which read
+    started first). A task-switch generation change during the config await
+    still skips the startup read, so that connection takes only the handshake
+    one
+  - a successful handshake baseline still applies when the later startup read
+    fails; the startup read does not raise the floor above it
+
+- `test/task-ref-marks.test.ts` (one reference per Task, four states)
+  - a live reference is completely unmarked (no strike, no appended name, no
+    screen-reader note), and no row ever carries a state of its own
+  - a rename strikes the name the row recorded and appends the current one,
+    with a `(renamed)` note; a rename back to the old name removes every part
+    of the mark again; several renames show only the latest name
+  - an exited reference is struck with an `(exited)` note and appends nothing;
+    an exit after a rename drops the appended name (exited wins over renamed)
+  - nothing is marked before a list arrives: the reference stays live-looking
+    (unknown), and a delete learned without a list is still no claim; a failed
+    read and a list from an older connection generation leave it unmarked
+  - a listed task is marked after its `task_deleted`, and a list read issued
+    before the delete cannot resurrect it; a listed task without a title is
+    neither exited nor renamed
+  - a live row resolves its target from `targetTaskId` (not the row's own
+    `taskId`) and is marked when that other task is deleted while the client
+    views the parent
+  - a task this client saw created after the applied snapshot (or before a
+    later, still-older one) is never marked; a create event without a title
+    keeps the listed one, and a create announced after the list marked its
+    reference exited clears that mark again (driven through `handleEvent`,
+    the path every creation initiator now feeds)
+  - rows rendered before the boot list read are re-evaluated when it arrives
+  - `task_title_updated` refreshes a row that names a Task the client is not
+    viewing, and applies to a row rendered after it; the current Task's header
+    is untouched by another Task's rename
+  - each reference of a collaboration row is judged on its own id on every
+    copy, including the supervisor projection (the LCA, which is neither side):
+    one side's rename or exit never marks the other; the live envelope marks
+    the same references its replayed copy does
+  - both sides of a cancellation row mark the other Task, and the source side
+    marks both of its references by id
+  - a row whose raw labels are missing, or whose reference does not sit at its
+    anchored edge, is left fully unmarked rather than guessed
+  - two references that can only be placed on the same span (a title that is
+    both names) are both refused; the row renders as plain text
+  - an adversarial title matrix (equal labels, a label containing ` sent `,
+    quotes, backslashes, newlines, tabs, a full-width space, a label that is
+    `sent`/`cancelled`, ids that disagree with the title) is either placed
+    exactly at its anchored edge or not placed at all
+- `test/collaboration-message.test.ts` (one collaboration row, three consumers)
+  - the title is built from the raw labels, shell-quoting when needed
+  - the persisted payload and the wire envelope carry the same title, body, and
+    both raw labels, spelled out field by field
 
 - `test/api-module.test.ts` (request building)
   - `createTask`/`clearTask` send a named `agentId`, omit it for `null` or an
@@ -562,6 +618,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - gzip compression for events endpoint
   - streaming buffer flush on events endpoint
   - auto-resume of non-live tasks
+  - a created task is announced exactly once, by the creation itself: exactly one `task_created` for its id, carrying the request's `clientOpId` plus the title, agent, cwd, parent, and final config the response echoes
   - a `/clear` whose request body window saw a restore start is rejected by the final gate with 409, not by the early check; the test waits for the handler's body-read signal rather than a fixed sleep
   - `/compact` leaves its own rotation line (`kind: agent_rotation`, reason `compact`) before publishing the replacement execution
   - restoring an interrupted turn does not auto-continue it (recovery is user-driven)
@@ -631,6 +688,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/messages-route-actions.test.ts`, `test/messages-schema.test.ts`
   - Inbox consume creates a live ACP-backed task and never reloads it
+  - the consume carrier is an internal creation: it broadcasts no `task_created`
+    (an announcement would install it before the answer that names it, making
+    the follow-up switch skip its history)
   - Inbox-created tasks reuse `/new` model/reasoning inheritance while resetting mode
   - message cwd inheritance and configured-default fallback
   - sequential idempotency and concurrent consume deduplication
@@ -715,6 +775,16 @@ spot gaps, and decide what still needs to be added without reading every spec.
     fields in `data`, worded from that side (`@source cancelled @target` /
     `Cancelled by @source`). Both rows are broadcast, so the cancel page and the
     cancelled page each render exactly one line, live and from replay
+  - a replayed collaboration row anchors **both** of its references from the
+    stored ids, on every projection: the source reference at the front and the
+    target reference at the end of `@source sent @target`, on the source, target,
+    and supervisor copies alike
+  - live events queued during a replay are dropped when the connection
+    generation changes before the drain, and a disconnect discards the armed
+    replay gate, its queue, and any history read still in flight
+  - an older-page load caught by that disconnect is released (its flag and the
+    loading indicator cleared) and the sentinel observer is re-armed, so an
+    intersecting sentinel issues a fresh page read without a task switch
   - user / assistant / thinking rendering
   - unsolicited Main-agent text and tool calls render while the foreground turn
     stays idle without reopening busy state
@@ -767,6 +837,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a successful `task_cancel` writes one `system_message` row per side (each
     with its own `taskId`, `role`, and wording; machine fields in `data`) and
     broadcasts both frames
+  - `task_create` announces its child through the same creation broadcast as
+    every other initiator, and the envelope carries the id and the title a
+    client judges a `Created task @x` reference from
   - MCP registration and documentation expose task_read as the sole raw-history tool
 
 - `test/commands.test.ts`, `test/slash-menu.test.ts`
@@ -779,6 +852,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - version display in `?` / help command
 
 - `test/connection.test.ts`
+  - a live reference is not marked exited when its task was created between the
+    startup list read and the stream handshake: the handshake forces a fresh
+    baseline (asserted on the rendered row, not on the request alone)
+  - a failed handshake read does not fall back to the pre-registration read:
+    the client stays unloaded (no claim) instead of marking a task created
+    during registration as exited
   - hash-based task resume
   - last-task auto-resume with the Root fallback, identified by the task list's `isRoot` flag rather than by the id's value
   - new-task creation when no previous task exists
@@ -1052,6 +1131,15 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `task-delete-command.spec.ts`
   - `/exit` deletes current task and switches to previous
+  - a `Created task @x` reference is unmarked while `x` exists, struck after
+    `/exit` deletes it, and still struck after a reload (the mark is re-derived,
+    not stored); the row itself is never marked
+  - a renamed reference strikes the old name and appends the current one, then
+    drops the appended name when the renamed task exits; both states survive a
+    reload
+  - a collaboration row exposes both references; exiting the target strikes only
+    its reference and leaves the source reference unmarked, before and after a
+    reload
 
 - REST delete (`test/tasks.test.ts`, `test/store.test.ts`)
   - deleting a task cascades to every descendant regardless of owner, retires each affected
@@ -1268,9 +1356,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
     confirmed binding, proving the field follows task facts rather than the
     configuration
   - activating a task whose parent runs on another agent costs no request:
-    no `GET /tasks/<parentId>` and no extra list, whether the activation came
-    from the task detail or from the create broadcast, and the coordinate is
-    already correct (the payload carries `parentId` + `parentAgentId`)
+    no `GET /tasks/<parentId>` and no list read beyond the connection's own,
+    whether the activation came from the task detail or from the create
+    broadcast, and the coordinate is already correct (the payload carries
+    `parentId` + `parentAgentId`). A fresh connection takes two list reads in
+    this flow — the startup baseline and the post-handshake baseline — and the
+    test pins that count so an activation cannot silently add a third
   - `/switch` rows state an agent only for rows whose agent differs from the
     current task's; a menu reopened after a switch uses the new baseline, and
     an already-open menu re-renders when the current binding changes

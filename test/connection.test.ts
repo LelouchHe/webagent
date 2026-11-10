@@ -151,6 +151,20 @@ describe("connection", () => {
     }) as unknown as typeof fetch;
   }
 
+  /**
+   * Install a fetch stub that answers nothing on its own. Every URL — the SSE
+   * ticket, config, the list, history — is the handler's, which is what lets a
+   * test gate the startup read behind the handshake.
+   */
+  function setRawFetch(
+    handler: (url: string, init?: RequestInit) => Promise<MockResponse>,
+  ) {
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      fetchCalls.push({ url, init });
+      return handler(url, init);
+    }) as unknown as typeof fetch;
+  }
+
   async function latestES() {
     // connect() is now async (awaits ticket mint + opens EventSource).
     // Flush microtasks so MockEventSource has been constructed before we
@@ -300,6 +314,306 @@ describe("connection", () => {
     assert.ok(dom.messages.textContent.includes("restored"));
     assert.equal(state.lastEventSeq, 2);
     assert.equal(state.busy, true);
+  });
+
+  it("re-reads the list after the stream registers so a live reference is not marked exited", async () => {
+    history.replaceState(null, "", "/#parent");
+    let listReads = 0;
+    let releaseHistory!: () => void;
+    const historyReady = new Promise<void>((resolve) => {
+      releaseHistory = resolve;
+    });
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/tasks") {
+        listReads += 1;
+        // The startup read races the stream registration. The child is created
+        // after it and before this client is registered, so its `task_created`
+        // was never delivered on this connection.
+        return mockResponse(
+          listReads === 1
+            ? [{ id: "parent" }]
+            : [{ id: "parent" }, { id: "child" }],
+        );
+      }
+      if (url === "/api/v1/tasks/parent")
+        return mockResponse(taskResponse("parent"));
+      if (url.startsWith("/api/v1/tasks/parent/events")) {
+        await historyReady;
+        return mockResponse([
+          {
+            seq: 1,
+            task_id: "parent",
+            type: "system_message",
+            data: JSON.stringify({
+              kind: "task_created",
+              taskId: "child",
+              taskTitle: "child",
+              title: "Created task @child",
+              body: "Task ID    child",
+            }),
+          },
+        ]);
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    const es = await latestES();
+    await flush();
+    assert.equal(listReads, 1, "only the startup read has answered");
+    releaseHistory();
+    await flush();
+
+    // The row is rendered against a baseline that predates the child.
+    const ref = dom.messages.querySelector(".system-msg .task-ref");
+    assert.ok(ref, "the row carries its reference");
+
+    // The handshake is the first moment the server registered this client, so
+    // anything created before it can only be learnt from a list read taken
+    // after it.
+    fireConnected(es, "cl-baseline");
+    await flush();
+
+    assert.equal(
+      ref.getAttribute("data-ref-state"),
+      null,
+      "a task created before the stream registered is live, not exited",
+    );
+    assert.equal(
+      fetchCalls.filter((call) => call.url === "/api/v1/tasks").length,
+      2,
+      "one baseline read per caller: startup and handshake",
+    );
+  });
+
+  it("keeps the pre-registration list out of the baseline when the handshake read fails", async () => {
+    history.replaceState(null, "", "/#parent");
+    let listReads = 0;
+    let releaseStartupList!: () => void;
+    const startupListReady = new Promise<void>((resolve) => {
+      releaseStartupList = resolve;
+    });
+    let releaseHistory!: () => void;
+    const historyReady = new Promise<void>((resolve) => {
+      releaseHistory = resolve;
+    });
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/tasks") {
+        listReads += 1;
+        if (listReads === 1) {
+          // The startup read predates the stream registration; its answer is
+          // only released once the handshake read has already failed.
+          await startupListReady;
+          return mockResponse([{ id: "parent" }]);
+        }
+        return {
+          ok: false,
+          status: 503,
+          json: async () => ({ error: "unavailable" }),
+          text: async () => '{"error":"unavailable"}',
+        };
+      }
+      if (url === "/api/v1/tasks/parent")
+        return mockResponse(taskResponse("parent"));
+      if (url.startsWith("/api/v1/tasks/parent/events")) {
+        await historyReady;
+        return mockResponse([
+          {
+            seq: 1,
+            task_id: "parent",
+            type: "system_message",
+            data: JSON.stringify({
+              kind: "task_created",
+              taskId: "child",
+              taskTitle: "child",
+              title: "Created task @child",
+              body: "Task ID    child",
+            }),
+          },
+        ]);
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    const es = await latestES();
+    await flush();
+    releaseHistory();
+    await flush();
+    const ref = dom.messages.querySelector(".system-msg .task-ref");
+    assert.ok(ref, "the row carries its reference");
+
+    // The handshake read fails, so there is no post-registration baseline.
+    fireConnected(es, "cl-baseline-failed");
+    await flush();
+    // The older read answers now; applying it would claim the child does not
+    // exist even though it may have been created while registering.
+    releaseStartupList();
+    await flush();
+
+    assert.equal(
+      ref.getAttribute("data-ref-state"),
+      null,
+      "without a post-registration baseline nothing is claimed",
+    );
+  });
+
+  it("issues the startup baseline while the handshake read is still in flight", async () => {
+    // The ordering that the per-generation dedupe used to collapse: the
+    // handshake read is in flight, then the startup read is issued. Joined,
+    // that is one read; each caller taking its own is two, deterministically.
+    history.replaceState(null, "", "/#parent");
+    let releaseConfig!: () => void;
+    const configReady = new Promise<void>((resolve) => {
+      releaseConfig = resolve;
+    });
+    let releaseFirstList!: () => void;
+    const firstListReady = new Promise<void>((resolve) => {
+      releaseFirstList = resolve;
+    });
+    let listReads = 0;
+    setRawFetch(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/sse-ticket" && init?.method === "POST")
+        return mockResponse({ ticket: "tkt-test", expiresIn: 60 });
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/config") {
+        await configReady;
+        return mockResponse({ rootTaskId: ROOT_ID, configOptions: [] });
+      }
+      if (url === "/api/v1/tasks") {
+        listReads += 1;
+        if (listReads === 1) {
+          await firstListReady;
+        }
+        return mockResponse([{ id: "parent" }]);
+      }
+      if (url === "/api/v1/tasks/parent")
+        return mockResponse(taskResponse("parent"));
+      if (url.startsWith("/api/v1/tasks/parent/events"))
+        return mockResponse([]);
+      if (url.endsWith("/snapshot"))
+        return mockResponse({
+          version: 1,
+          seq: 0,
+          task: {},
+          runtime: { busy: null },
+        });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    const es = await latestES();
+    // Registered first, so the handshake read is the one in flight when the
+    // startup path (still waiting for config) issues its own.
+    fireConnected(es, "cl-order");
+    await flush();
+    assert.equal(listReads, 1, "the handshake read is in flight");
+
+    releaseConfig();
+    await flush();
+    assert.equal(
+      fetchCalls.filter((call) => call.url === "/api/v1/tasks").length,
+      2,
+      "the startup baseline does not join the handshake read",
+    );
+
+    releaseFirstList();
+    await flush();
+  });
+
+  it("keeps a successful handshake baseline when the later startup read fails", async () => {
+    // The startup read must not raise the floor above the handshake read: when
+    // the handshake came first, that read is post-registration and is the only
+    // baseline this connection has.
+    history.replaceState(null, "", "/#parent");
+    let releaseConfig!: () => void;
+    const configReady = new Promise<void>((resolve) => {
+      releaseConfig = resolve;
+    });
+    let releaseHistory!: () => void;
+    const historyReady = new Promise<void>((resolve) => {
+      releaseHistory = resolve;
+    });
+    let releaseHandshakeList!: () => void;
+    const handshakeListReady = new Promise<void>((resolve) => {
+      releaseHandshakeList = resolve;
+    });
+    let listReads = 0;
+    setRawFetch(async (url: string, init?: RequestInit) => {
+      if (url === "/api/v1/sse-ticket" && init?.method === "POST")
+        return mockResponse({ ticket: "tkt-test", expiresIn: 60 });
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/config") {
+        await configReady;
+        return mockResponse({ rootTaskId: ROOT_ID, configOptions: [] });
+      }
+      if (url === "/api/v1/tasks") {
+        listReads += 1;
+        if (listReads === 1) {
+          // Still in flight when the startup read is issued and fails, so the
+          // question is whether it may still apply afterwards.
+          await handshakeListReady;
+          return mockResponse([{ id: "parent" }]);
+        }
+        return {
+          ok: false,
+          status: 503,
+          json: async () => ({ error: "unavailable" }),
+          text: async () => '{"error":"unavailable"}',
+        };
+      }
+      if (url === "/api/v1/tasks/parent")
+        return mockResponse(taskResponse("parent"));
+      if (url.startsWith("/api/v1/tasks/parent/events")) {
+        await historyReady;
+        return mockResponse([
+          {
+            seq: 1,
+            task_id: "parent",
+            type: "system_message",
+            data: JSON.stringify({
+              kind: "task_created",
+              taskId: "child",
+              taskTitle: "child",
+              title: "Created task @child",
+              body: "Task ID    child",
+            }),
+          },
+        ]);
+      }
+      if (url.endsWith("/snapshot"))
+        return mockResponse({
+          version: 1,
+          seq: 0,
+          task: {},
+          runtime: { busy: null },
+        });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    const es = await latestES();
+    fireConnected(es, "cl-handshake-first");
+    await flush();
+
+    releaseConfig();
+    await flush();
+    // The startup read has failed; the handshake read answers now.
+    releaseHandshakeList();
+    await flush();
+    releaseHistory();
+    await flush();
+
+    assert.equal(listReads, 2, "both reads were issued");
+    const ref = dom.messages.querySelector(".system-msg .task-ref");
+    assert.ok(ref, "the row carries its reference");
+    assert.equal(
+      ref.getAttribute("data-ref-state"),
+      "exited",
+      "the handshake read still speaks for the collection",
+    );
   });
 
   it("resumes the most recent user-input task when there is no hash", async () => {

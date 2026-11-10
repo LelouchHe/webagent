@@ -151,6 +151,9 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
       broadcasts.push(ev);
       origGlobal(ev);
     };
+    // Production installs the creation hook in `src/server.ts`; the harness
+    // records it into the same stream so "no announcement" is observable.
+    tasks.setTaskCreatedBroadcast((event) => broadcasts.push(event));
 
     const handler = createRequestHandler({
       sseManager,
@@ -219,6 +222,14 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     assert.ok(msgE);
     const data = JSON.parse(msgE.data) as Record<string, unknown>;
     assert.equal(data.message_id, "m1");
+
+    // The consume carrier is an internal creation: nothing announces it, so a
+    // client cannot install it before the answer that names it (which would
+    // make the follow-up switch a no-op and leave an empty transcript).
+    assert.equal(
+      broadcasts.filter((event) => event.type === "task_created").length,
+      0,
+    );
 
     // SSE fired
     const ev = broadcasts.find((e) => e.type === "message_consumed");

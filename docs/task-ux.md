@@ -77,6 +77,41 @@ the remainder is the message body.
 - the first instruction is not part of the command. Send it with
   `@<title> <message>`, or use `@<title>` alone to open the new Task.
 
+The rows that name a Task stay in the flow after its title changes or after it
+exits — they record what happened — so each reference they carry is marked
+instead. A reference has exactly one of four states:
+
+| State | Row text | Meaning |
+|---|---|---|
+| live | `@x` | the Task exists and is still called `x` |
+| renamed | struck `@x`, then `@y` | the Task exists and is now called `y` |
+| exited | struck `@x` | the Task no longer exists |
+| unknown | `@x` | no list yet, a failed read, or an unplaceable reference |
+
+Only the reference is marked; the row is never muted. The row is history and
+keeps its normal contrast: an exited reference does not make the sentence
+around it harder to read, and opacity would hide a row that is still the record
+of what happened from assistive technology. The old name is struck through and
+a renamed reference names the Task to use now right after it, so the state does
+not depend on color alone; a screen-reader note spells out `(renamed)` or
+`(exited)`.
+
+This covers the creation row (`Created task @x`), every reference of a
+collaboration row (`@a sent @b`, including the `supervisor` copy projected to
+the common ancestor, where each reference is judged on its own id), and both
+titles a cancellation row is written as (`@a cancelled @b`, `Cancelled by @a`).
+A row written before the raw labels existed, or one whose reference cannot be
+placed, is left fully unmarked.
+
+The reference is placed by task id, never by the shape of the title: titles
+repeat, and a title may contain quotes, spaces, or the words between two
+references. A mark is applied only when the rebuilt reference lands exactly
+where the ids say it does, beside the other reference the row names. Everything
+is derived when the row renders, from the shared Task list plus the live
+create, rename, and delete events; it is never stored, so a reload re-derives
+it, and a failed list read leaves the reference unmarked rather than claiming
+the Task is gone or renamed.
+
 A `+`-created Task is user-owned and interactive. It can receive messages and
 child results, but the runtime does not automatically require a typed
 `task_update(done|blocked)` handoff after each turn. Agent-created delegated

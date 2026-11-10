@@ -453,6 +453,30 @@ body {
 .system-msg a:hover {
   color: var(--text);
 }
+/* A reference to a task whose name is no longer current (renamed) or no
+   longer resolvable (exited) is struck through; a renamed reference also
+   names the current task right after it. Only the reference carries the
+   state — the row keeps its normal contrast, because an exited reference does
+   not make the sentence around it unreadable, and opacity would hide a row
+   that is still the record of what happened from assistive technology. */
+.task-ref[data-ref-state="exited"] .task-ref-name,
+.task-ref[data-ref-state="renamed"] .task-ref-name {
+  text-decoration: line-through;
+}
+
+/* Screen-reader-only text: the non-visual carrier of a reference state. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 
 /* Tool calls */
 .tool-call {

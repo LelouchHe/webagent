@@ -16,6 +16,7 @@ function makeRequest(
   method: string,
   path: string,
   body?: string,
+  headers: Record<string, string> = {},
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -24,7 +25,7 @@ function makeRequest(
         port,
         path,
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...headers },
       },
       (res) => {
         let data = "";
@@ -128,6 +129,9 @@ describe("Task REST API", () => {
     mockBridge = createMockBridge();
     tasks.attachExecutionBridge(mockBridge);
     broadcastEvents = [];
+    // Creation announces itself from the manager (see src/server.ts), not from
+    // the route, so the harness installs the same hook production does.
+    tasks.setTaskCreatedBroadcast((event) => broadcastEvents.push(event));
     bodyReadStarted = new Promise<string>((resolve) => {
       markBodyReadStarted = resolve;
     });
@@ -585,6 +589,37 @@ describe("Task REST API", () => {
       await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const created = broadcastEvents.find((e) => e.type === "task_created");
       assert.ok(created, "should broadcast task_created");
+    });
+
+    it("announces a created task exactly once, from the creation itself", async () => {
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        JSON.stringify({ cwd: tmpDir }),
+        { "X-Client-Op-Id": "op-create-1" },
+      );
+      assert.equal(res.status, 201);
+      const body = JSON.parse(res.body);
+      // No caller publishes its own copy: one creation, one event.
+      const announced = broadcastEvents.filter(
+        (event) => event.type === "task_created" && event.taskId === body.id,
+      );
+      assert.equal(announced.length, 1);
+      const event = announced[0] as Extract<
+        AgentEvent,
+        { type: "task_created" }
+      >;
+      // The envelope is the activation payload the client installs, and it
+      // still carries the request's own operation id: a client whose create
+      // response was lost matches the task by it.
+      assert.equal(event.clientOpId, "op-create-1");
+      assert.equal(body.clientOpId, "op-create-1");
+      assert.equal(event.title, body.title);
+      assert.equal(event.agentId, body.agentId);
+      assert.equal(event.cwd, body.cwd);
+      assert.deepEqual(event.configOptions, body.configOptions);
+      assert.equal(event.parentId, body.parentId);
     });
 
     it("returns 400 for invalid JSON", async () => {

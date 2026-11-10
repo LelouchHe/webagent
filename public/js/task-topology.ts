@@ -27,6 +27,7 @@
 import type { TaskSummary } from "../../src/types.ts";
 import * as api from "./api.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
+import { applyTaskListSnapshot, resetTaskRefMarks } from "./task-ref-marks.ts";
 
 /** The confirmed parent of a task, with its binding when known. */
 export interface ParentBinding {
@@ -60,6 +61,21 @@ let viewedTaskId: string | null = null;
 let parentRef: ParentRef | null = null;
 let pending: { generation: number; promise: Promise<TaskSummary[]> } | null =
   null;
+/**
+ * Read order within one generation. Two reads can be in flight — the startup
+ * one and the one the stream handshake forces — and the older response must
+ * not overwrite the newer baseline.
+ */
+let listRequestSeq = 0;
+let listAppliedSeq = 0;
+/**
+ * The lowest request sequence that may become this generation's baseline.
+ * Raised when the handshake takes a fresh read: from then on a startup read
+ * that started before the stream registered must not apply, even if the fresh
+ * read fails. Staying unloaded claims nothing; applying the old read would
+ * claim that a task created during registration does not exist.
+ */
+let listRequiredSeq = 0;
 
 const changeListeners: (() => void)[] = [];
 
@@ -80,9 +96,13 @@ function notifyChange(): void {
 export function beginTaskTopologyGeneration(): void {
   generation += 1;
   listLoaded = false;
+  listRequiredSeq = 0;
   viewedTaskId = null;
   parentRef = null;
   pending = null;
+  // The shared list is also the base for "which referenced tasks still
+  // exist"; a new connection re-learns it and may have missed events.
+  resetTaskRefMarks();
   notifyChange();
 }
 
@@ -301,32 +321,102 @@ async function resolveParentFromDetail(
 }
 
 /**
+ * Start one read of the task list and apply it when it is still the newest.
+ *
+ * A result is applied only when it belongs to the current connection
+ * generation and no newer read has been applied: the generation guard keeps a
+ * read from a dead stream out, and the sequence guard keeps a read issued
+ * before the stream registered from overwriting the baseline taken after it.
+ */
+function startTaskListRequest(): {
+  generation: number;
+  promise: Promise<TaskSummary[]>;
+} {
+  const requestGeneration = generation;
+  const seq = ++listRequestSeq;
+  const promise = api.listTasks().then((tasks) => {
+    if (
+      requestGeneration === generation &&
+      seq > listAppliedSeq &&
+      seq >= listRequiredSeq
+    ) {
+      listAppliedSeq = seq;
+      listLoaded = true;
+      applyTaskListSnapshot(tasks);
+      notifyChange();
+    }
+    return tasks;
+  });
+  return { generation: requestGeneration, promise };
+}
+
+/**
  * Fetch the task list and apply it to this generation. Concurrent callers in
  * one generation share the request; a result that resolves after a newer
  * generation started is returned to its caller but never applied. The list
  * only feeds the row-label flag here; the parent reference never comes from it.
  */
 export async function loadTaskList(): Promise<TaskSummary[]> {
-  const requestGeneration = generation;
-  if (pending?.generation === requestGeneration) {
+  if (pending?.generation === generation) {
     return pending.promise;
   }
-  const request = {
-    generation: requestGeneration,
-    promise: api.listTasks().then((tasks) => {
-      if (requestGeneration === generation) {
-        listLoaded = true;
-        notifyChange();
-      }
-      return tasks;
-    }),
-  };
+  const request = startTaskListRequest();
   pending = request;
   try {
     return await request.promise;
   } finally {
     if (pending === request) pending = null;
   }
+}
+
+/**
+ * Issue a baseline read that never dedupes onto an in-flight one.
+ *
+ * `loadTaskList` shares a pending request; a baseline read must not, because
+ * the caller's guarantee ("this read started at moment X") is the whole point.
+ * When the handshake and the startup read are both in flight they are two
+ * separate reads, in either order.
+ *
+ * A caller that reports its own failure to the user still receives the tasks;
+ * only whether the result becomes the baseline depends on the request order
+ * guards above.
+ */
+async function readBaseline(): Promise<TaskSummary[]> {
+  const request = startTaskListRequest();
+  pending = request;
+  try {
+    return await request.promise;
+  } finally {
+    if (pending === request) pending = null;
+  }
+}
+
+/**
+ * The baseline taken once the stream is registered. This is the read that may
+ * speak for the collection: tasks created before registration are in the list,
+ * and tasks created afterwards arrive as events on the now-registered stream.
+ *
+ * It also raises the floor for what may become the baseline, so an earlier
+ * read — the startup one, or a menu read — cannot override it. The floor is
+ * the sequence this read is about to take, so only reads issued at or after
+ * registration can apply.
+ */
+export function refreshTaskListBaseline(): Promise<TaskSummary[]> {
+  listRequiredSeq = listRequestSeq + 1;
+  return readBaseline();
+}
+
+/**
+ * The startup baseline, issued in parallel with the stream registration.
+ *
+ * It does not raise the floor: if the handshake already happened, this read
+ * started after registration and is a valid baseline too (and remains usable
+ * when the handshake read fails). If it started before the handshake, the
+ * handshake's floor excludes it, which is what keeps a task created while
+ * registering from being marked exited.
+ */
+export function loadStartupTaskList(): Promise<TaskSummary[]> {
+  return readBaseline();
 }
 
 /** Test seam: forget everything without bumping the visible generation. */
@@ -336,4 +426,8 @@ export function resetTaskTopologyForTest(): void {
   viewedTaskId = null;
   parentRef = null;
   pending = null;
+  listRequestSeq = 0;
+  listAppliedSeq = 0;
+  listRequiredSeq = 0;
+  resetTaskRefMarks();
 }

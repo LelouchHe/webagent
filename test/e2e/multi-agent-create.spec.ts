@@ -85,4 +85,16 @@ test("task_create names the second agent and records where the child landed", as
     "Created task @cross-agent-child",
   );
   await expect(page.locator("#messages")).toContainText("agent: mock2");
+
+  // The parent's task list was read before this child existed, and an agent's
+  // `task_create` is the path whose creation nobody used to announce. The
+  // reference must still read as live: the child exists, so it is neither
+  // exited nor renamed.
+  const row = page.locator(".system-msg", {
+    hasText: "Created task @cross-agent-child",
+  });
+  const ref = row.locator(".task-ref");
+  await expect(ref).toHaveCount(1);
+  await expect(ref).not.toHaveAttribute("data-ref-state");
+  await expect(ref.locator(".visually-hidden")).toHaveCount(0);
 });

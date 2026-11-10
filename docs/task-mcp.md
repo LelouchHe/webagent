@@ -320,8 +320,12 @@ that execution has stopped.
 
 The cancellation is recorded and broadcast as one `system_message` row per side
 of the edge, both `kind: "task_cancel"` with the machine fields (`sourceTaskId`,
-`targetTaskId`, `reason`, `status`) and a `role` in `data`, and both carrying the
-same `reason:` / `status:` body:
+`targetTaskId`, `reason`, `status`), the raw `sourceLabel`/`targetLabel` the
+title was built from, and a `role` in `data`, and both carrying the same
+`reason:` / `status:` body. The labels are additive: a row written before they
+existed leaves its reference unmarked (it is placed by task id and never parsed
+out of the title), and the row itself is never muted — a row is history and
+keeps its normal contrast.
 
 | Row lands on | `role` | Title |
 | --- | --- | --- |

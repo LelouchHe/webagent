@@ -3,6 +3,12 @@
 import { dom, state } from "./state.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
 import { parseTimestamp } from "./relative-time.ts";
+import { registerTaskRefRow, resolveTaskRefs } from "./task-ref-marks.ts";
+import type {
+  TaskRefAnchor,
+  TaskRefRowInput,
+  TaskRefTarget,
+} from "./task-ref-marks.ts";
 
 // Pure DOM helpers live in render-event.ts (single source for both main app
 // and share viewer). Re-exported here for callers that want them via render.ts.
@@ -42,6 +48,14 @@ export function addMessage(role: string, text: string): HTMLDivElement {
 export interface SystemMessageOptions {
   title: string;
   body?: string;
+  /**
+   * The tasks this row names, if any, plus the ids that place them. A row's
+   * own id decides which title shape it has; the raw labels let each reference
+   * be rebuilt exactly. Without a usable raw label, or when a reference cannot
+   * be proven to land where its id says, nothing is marked (see
+   * `resolveTaskRefs`).
+   */
+  taskRef?: Omit<TaskRefRowInput, "title">;
 }
 
 /** Render a system message. Messages with a body use the same native
@@ -50,24 +64,76 @@ export interface SystemMessageOptions {
 export function addSystemMessage({
   title,
   body,
+  taskRef,
 }: SystemMessageOptions): HTMLElement {
   const hasBody = body !== undefined && body.length > 0;
   const el = document.createElement(hasBody ? "details" : "div");
   el.className = `system-msg${hasBody ? " expandable" : ""}`;
 
+  // The visible title wraps each reference that names another task, so a
+  // struck-through reference never strikes the row's own wording. The spans
+  // are created once and handed to the marker registry below.
+  const resolved = (
+    taskRef ? resolveTaskRefs({ ...taskRef, title }) : []
+  ).filter(
+    (target): target is TaskRefTarget & { anchor: TaskRefAnchor } =>
+      target.anchor !== null,
+  );
+  const anchors = resolved.map((target) => target.anchor);
+  let spansByAnchor: Map<TaskRefAnchor, HTMLElement>;
+
   if (hasBody) {
     const summary = document.createElement("summary");
-    summary.textContent = title;
     const content = document.createElement("div");
     content.className = "system-msg-body";
     content.textContent = body;
     el.append(summary, content);
+    spansByAnchor = fillSystemTitle(summary, title, anchors);
   } else {
-    el.textContent = title;
+    spansByAnchor = fillSystemTitle(el, title, anchors);
+  }
+
+  // A naming reference is re-evaluated on every later collection change (list
+  // read, title update, delete) through the id it names. The mark is
+  // egress-only: nothing about it is stored.
+  for (const target of resolved) {
+    const span = spansByAnchor.get(target.anchor);
+    if (span) registerTaskRefRow(el, span, target.taskId, target.label);
   }
 
   appendMessageElement(el);
   return el;
+}
+
+/**
+ * Write `title` into `target`, wrapping each anchored reference in its own
+ * span. Returns the span created for each anchor; an anchor that would overlap
+ * one already placed stays plain text, because two references that cannot be
+ * told apart must not be marked.
+ */
+function fillSystemTitle(
+  target: HTMLElement,
+  title: string,
+  anchors: TaskRefAnchor[],
+): Map<TaskRefAnchor, HTMLElement> {
+  const spans = new Map<TaskRefAnchor, HTMLElement>();
+  if (anchors.length === 0) {
+    target.textContent = title;
+    return spans;
+  }
+  let cursor = 0;
+  for (const anchor of [...anchors].sort((a, b) => a.start - b.start)) {
+    if (anchor.start < cursor || anchor.end > title.length) continue;
+    if (anchor.start > cursor) target.append(title.slice(cursor, anchor.start));
+    const span = document.createElement("span");
+    span.className = "task-ref";
+    span.textContent = anchor.text;
+    target.append(span);
+    spans.set(anchor, span);
+    cursor = anchor.end;
+  }
+  if (cursor < title.length) target.append(title.slice(cursor));
+  return spans;
 }
 
 export function addSystem(text: string): HTMLDivElement {

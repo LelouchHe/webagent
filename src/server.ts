@@ -14,6 +14,10 @@ import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
 import { createMcpTaskToolHost } from "./mcp/task-host.ts";
 import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
+import {
+  buildCollaborationBroadcast,
+  type CollaborationBroadcastRequest,
+} from "./collaboration-message.ts";
 import { createRequestHandler } from "./routes.ts";
 import { handleAgentEvent } from "./event-handler.ts";
 import { PushService } from "./push-service.ts";
@@ -188,31 +192,17 @@ tasks.state.onPatch((event) => {
   sseManager.broadcast(event);
 });
 
-const broadcastCollaboration = ({
-  messageId,
-  sourceTaskId,
-  targetTaskId,
-  title,
-  body,
-}: {
-  messageId: string;
-  sourceTaskId: string;
-  targetTaskId: string;
-  title: string;
-  body: string;
-}): void => {
-  for (const projection of store.listCollaborationProjections(messageId)) {
-    sseManager.broadcast({
-      type: "system_message",
-      taskId: projection.task_id,
-      kind: "collaboration",
-      messageId,
-      sourceTaskId,
-      targetTaskId,
-      role: projection.role,
-      title,
-      body,
-    });
+const broadcastCollaboration = (input: CollaborationBroadcastRequest): void => {
+  for (const projection of store.listCollaborationProjections(
+    input.messageId,
+  )) {
+    sseManager.broadcast(
+      buildCollaborationBroadcast({
+        ...input,
+        taskId: projection.task_id,
+        role: projection.role,
+      }),
+    );
   }
 };
 tasks.setCollaborationBroadcast(broadcastCollaboration);
@@ -220,6 +210,11 @@ tasks.setCollaborationBroadcast(broadcastCollaboration);
 // client learns the schema and commands once the restore finishes.
 tasks.setRuntimeWarmBroadcast((event) => {
   sseManager.broadcast({ type: "task_runtime_warmed", ...event });
+});
+// Creation itself announces the new task: HTTP create, the quick prompt, and
+// the agent's `task_create` all pass through the same manager entry point.
+tasks.setTaskCreatedBroadcast((event) => {
+  sseManager.broadcast(event);
 });
 const mcpTaskTools = createMcpTaskToolHost({
   store,

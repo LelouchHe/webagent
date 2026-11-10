@@ -379,10 +379,14 @@ test("activating a deviating task costs no request for the parent reference", as
       await expect(second.locator("#input")).toBeEnabled();
       await expect(cwdSegment(second)).toHaveText(/mock:/);
       expect(detailRequests).not.toContain(`/api/v1/tasks/${parentId}`);
-      // One list for the connection baseline; the activation adds none.
+      // The two list reads are the connection's own: the startup baseline and
+      // the baseline taken after the stream handshake (a task created while
+      // registering is otherwise missing from it, and its reference would be
+      // marked exited). The activation itself adds none — that is what this
+      // assertion protects, so it pins the count rather than allowing growth.
       expect(
         detailRequests.filter((path) => path === "/api/v1/tasks"),
-      ).toHaveLength(1);
+      ).toHaveLength(2);
       await second.close();
 
       // (b) Activation from the create broadcast: `/new` is accepted by the

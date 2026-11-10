@@ -26,10 +26,16 @@ import {
   loadNewEvents,
   fallbackToNextTask,
   reconcileReplayedPendingTools,
+  discardInFlightReplays,
 } from "./events.ts";
 import * as api from "./api.ts";
 import { installAgentDirectory } from "./agent-directory.ts";
-import { beginTaskTopologyGeneration, loadTaskList } from "./task-topology.ts";
+import {
+  beginTaskTopologyGeneration,
+  loadStartupTaskList,
+  loadTaskList,
+  refreshTaskListBaseline,
+} from "./task-topology.ts";
 import { applyConnectedLogLevel, log } from "./log.ts";
 
 const clog = log.scope("sse");
@@ -191,6 +197,17 @@ async function openStream(
     // SSE initial handshake: server assigns clientId (no agent field)
     if (msg.type === "connected" && msg.clientId) {
       state.clientId = msg.clientId;
+      // The stream is registered from this frame on. The startup list read ran
+      // in parallel with the registration, so a task created in that window is
+      // missing from it and its `task_created` was never delivered — the row
+      // that names it would be marked exited while the task is live. Take a
+      // baseline now: before-registration tasks are in the list, later ones
+      // arrive as events on this stream.
+      void refreshTaskListBaseline().catch(() => {
+        // A failed baseline stays "not loaded", and the pre-registration read
+        // it superseded cannot apply either: nothing is claimed from a list
+        // that may predate tasks this client was never told about.
+      });
       if (activeTaskId && state.taskId === activeTaskId) {
         setConnectionStatus("connected", "connected");
         void recoverAfterHandshake(activeTaskId, connectionEpoch);
@@ -304,8 +321,11 @@ async function initializeTaskAndIntent(connectionEpoch: number): Promise<void> {
   // Establish the workspace-wide baseline independently of which task this
   // client lands on: the status bar's reference binding and the list-row
   // baseline both need tasks this client is not viewing, and a hash or a
-  // reconnect may skip the task-list navigation path.
-  void loadTaskList().catch(() => {
+  // reconnect may skip the task-list navigation path. Its own request, not
+  // `loadTaskList`: the handshake takes a second one (that is what makes the
+  // baseline provably post-registration), and the two must not collapse into
+  // a single read whose timing decides whether it counts.
+  void loadStartupTaskList().catch(() => {
     // A failed baseline stays "not loaded"; nothing is claimed from it.
   });
   await initTask(connectionEpoch);
@@ -491,6 +511,10 @@ function cleanup() {
   // A dropped stream ends this connection's collection: whatever it told us
   // must not survive as the next connection's baseline.
   beginTaskTopologyGeneration();
+  // A replay still in flight belongs to the stream that just died. Its queued
+  // live events and its history response describe that collection, not the one
+  // the new connection is about to establish.
+  discardInFlightReplays();
   setConnectionStatus("disconnected", "disconnected");
   state.eventSource = null;
   state.clientId = null;

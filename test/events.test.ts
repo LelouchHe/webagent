@@ -2680,20 +2680,41 @@ describe("events", () => {
       });
 
       it("replays a persisted collaboration system row", () => {
-        events.replayEvent(
-          "system_message",
-          {
+        // The stored title is projected to all three copies, and both of its
+        // references are placed by their own ids: the row's own `task_id`
+        // decides only which title shape it has, not which reference is
+        // markable.
+        const storedRow = (
+          id: number,
+          taskId: string,
+          role: "source" | "target",
+        ): StoredEvent => ({
+          id,
+          task_id: taskId,
+          seq: 1,
+          type: "system_message",
+          data: JSON.stringify({
             kind: "collaboration",
             messageId: "m1",
             sourceTaskId: "s0",
             sourceLabel: "what",
             targetTaskId: "s1",
             targetLabel: "child-a",
-            role: "target",
+            role,
             title: "@what sent @child-a",
             body: "please review",
-          },
-          [],
+          }),
+          created_at: new Date(0).toISOString(),
+        });
+
+        // Target-side copy: the same title is projected here, and both of its
+        // references are placed by their own ids — a reference does not belong
+        // to one side of the row.
+        const targetCopy = storedRow(1, "s1", "target");
+        events.replayEvent(
+          targetCopy.type,
+          JSON.parse(targetCopy.data) as Record<string, unknown>,
+          [targetCopy],
           0,
         );
         assert.equal(
@@ -2703,6 +2724,28 @@ describe("events", () => {
         assert.equal(
           dom.messages.querySelector(".system-msg-body")?.textContent,
           "please review",
+        );
+        assert.deepEqual(
+          [...dom.messages.querySelectorAll(".task-ref")].map(
+            (span) => span.textContent,
+          ),
+          ["@what", "@child-a"],
+        );
+
+        stateMod.resetTaskUI();
+        // Source-side copy: the same title, the same two references.
+        const sourceCopy = storedRow(2, "s0", "source");
+        events.replayEvent(
+          sourceCopy.type,
+          JSON.parse(sourceCopy.data) as Record<string, unknown>,
+          [sourceCopy],
+          0,
+        );
+        assert.deepEqual(
+          [...dom.messages.querySelectorAll(".task-ref")].map(
+            (span) => span.textContent,
+          ),
+          ["@what", "@child-a"],
         );
       });
 
@@ -3085,6 +3128,18 @@ describe("events", () => {
             [produced.targetTaskId, "target", "Cancelled by @Source"],
           ],
         );
+        // The raw labels travel with the frame: without them a live row could
+        // not place (or strike) its reference, while its replayed copy could.
+        assert.deepEqual(
+          produced.frames.map((frame) => [
+            frame.sourceLabel,
+            frame.targetLabel,
+          ]),
+          [
+            ["Source", "Child"],
+            ["Source", "Child"],
+          ],
+        );
 
         state.taskId = produced.sourceTaskId;
         for (const frame of produced.frames) events.handleEvent(frame);
@@ -3092,6 +3147,14 @@ describe("events", () => {
         assert.equal(
           dom.messages.querySelector("summary")?.textContent,
           "@Source cancelled @Child",
+        );
+        // Both references are placed by their own ids; the cancelled task's
+        // is the one that can be struck by this row's delete.
+        assert.deepEqual(
+          [...dom.messages.querySelectorAll(".task-ref")].map(
+            (span) => span.textContent,
+          ),
+          ["@Source", "@Child"],
         );
 
         stateMod.resetTaskUI();
@@ -3101,6 +3164,10 @@ describe("events", () => {
         assert.equal(
           dom.messages.querySelector("summary")?.textContent,
           "Cancelled by @Source",
+        );
+        assert.equal(
+          dom.messages.querySelector(".task-ref")?.textContent,
+          "@Source",
         );
         assert.equal(
           dom.messages.querySelector(".system-msg-body")?.textContent,
@@ -3141,6 +3208,13 @@ describe("events", () => {
         assert.equal(
           dom.messages.querySelector("summary")?.textContent,
           "Cancelled by @Source",
+        );
+        assert.deepEqual(
+          [...dom.messages.querySelectorAll(".task-ref")].map(
+            (span) => span.textContent,
+          ),
+          ["@Source"],
+          "the replayed row must place the same references the live row did",
         );
       } finally {
         produced.cleanup();
@@ -4008,6 +4082,128 @@ describe("events", () => {
   });
 
   describe("loadOlderEvents", () => {
+    it("releases a stuck older-page load when the connection generation ends", async () => {
+      state.taskId = "s1";
+      state.hasMoreHistory = true;
+      state.oldestLoadedSeq = 100;
+      let resolvePage!: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolvePage = resolve;
+        })) as any;
+
+      const older = events.loadOlderEvents("s1");
+      assert.equal(state.loadingOlderEvents, true);
+      assert.ok(document.getElementById("history-loading"));
+
+      // The stream dies while the page fetch is in flight. Its own `finally`
+      // would clear the flag, but the generation change makes that cleanup
+      // skip — so the discard must release it.
+      stateMod.beginConnectionEpoch();
+      events.discardInFlightReplays();
+
+      assert.equal(state.loadingOlderEvents, false);
+      assert.equal(
+        document.getElementById("history-loading"),
+        null,
+        "the loading indicator must not survive the dead stream",
+      );
+
+      resolvePage({
+        ok: true,
+        json: () => Promise.resolve({ events: [], hasMore: false }),
+        text: async () => "{}",
+      });
+      assert.equal(await older, false);
+
+      // Not wedged: a later attempt takes a fresh request instead of returning
+      // early on the stale flag. Recovery used to need a task switch.
+      state.hasMoreHistory = true;
+      let requests = 0;
+      globalThis.fetch = (async () => {
+        requests += 1;
+        return {
+          ok: true,
+          json: () => Promise.resolve({ events: [], hasMore: false }),
+          text: async () => "{}",
+        };
+      }) as any;
+      assert.equal(await events.loadOlderEvents("s1"), true);
+      assert.equal(requests, 1);
+    });
+
+    it("re-arms the sentinel after the discard so pagination recovers on its own", async () => {
+      state.taskId = "s1";
+      state.hasMoreHistory = true;
+      state.oldestLoadedSeq = 100;
+      const sentinel = document.createElement("div");
+      sentinel.id = "history-sentinel";
+      dom.messages.prepend(sentinel);
+
+      const observers: Array<{
+        callback: (entries: Array<{ isIntersecting: boolean }>) => void;
+      }> = [];
+      const originalIntersectionObserver = (globalThis as any)
+        .IntersectionObserver;
+      (globalThis as any).IntersectionObserver =
+        class MockIntersectionObserver {
+          callback: (entries: Array<{ isIntersecting: boolean }>) => void;
+          constructor(
+            callback: (entries: Array<{ isIntersecting: boolean }>) => void,
+          ) {
+            this.callback = callback;
+            observers.push(this);
+          }
+          observe() {}
+          disconnect() {}
+        };
+
+      let resolvePage!: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolvePage = resolve;
+        })) as any;
+
+      try {
+        const older = events.loadOlderEvents("s1");
+        const observersBefore = observers.length;
+
+        // Clearing the flag is not enough: the sentinel was disconnected when
+        // the load started, and nothing else re-arms it on an incremental
+        // reconnect. Without the re-arm, recovery would need a task switch.
+        stateMod.beginConnectionEpoch();
+        events.discardInFlightReplays();
+        assert.equal(
+          observers.length,
+          observersBefore + 1,
+          "the discard re-arms the sentinel observer",
+        );
+
+        let requests = 0;
+        globalThis.fetch = (async () => {
+          requests += 1;
+          return {
+            ok: true,
+            json: () => Promise.resolve({ events: [], hasMore: false }),
+            text: async () => "{}",
+          };
+        }) as any;
+        observers.at(-1)!.callback([{ isIntersecting: true }]);
+        await Promise.resolve();
+        await Promise.resolve();
+        assert.equal(requests, 1, "the re-armed sentinel starts a page read");
+
+        resolvePage({
+          ok: true,
+          json: () => Promise.resolve({ events: [], hasMore: false }),
+          text: async () => "{}",
+        });
+        assert.equal(await older, false);
+      } finally {
+        (globalThis as any).IntersectionObserver = originalIntersectionObserver;
+      }
+    });
+
     it("reconciles a newer terminal update after an older page creates its tool host", async () => {
       state.taskId = "s1";
       let request = 0;
@@ -6544,6 +6740,99 @@ describe("events", () => {
 
       assert.equal(fetches, 2);
       assert.match(dom.messages.textContent ?? "", /flushed after snapshot/);
+    });
+
+    it("drops live events queued under a superseded connection generation", async () => {
+      const marks = await import("../public/js/task-ref-marks.ts");
+      const topology = await import("../public/js/task-topology.ts");
+      marks.resetTaskRefMarks();
+
+      let resolveFetch!: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+      state.taskId = "s1";
+      const historyPromise = events.loadHistory("s1");
+      assert.equal(state.replayInProgress, true);
+
+      // A task is announced on the stream this replay belongs to.
+      events.handleEvent({
+        type: "task_created",
+        taskId: "ghost",
+        title: "ghost",
+        configOptions: [],
+      });
+      assert.equal(state.replayQueue.length, 1);
+
+      // The stream dies before the replay settles: a new connection
+      // generation starts and the old collection is dropped, while the old
+      // replay is still waiting for its response.
+      stateMod.beginConnectionEpoch();
+      topology.beginTaskTopologyGeneration();
+      // The new connection takes its own baseline, with no tasks at all.
+      marks.applyTaskListSnapshot([]);
+
+      resolveFetch({
+        ok: true,
+        json: () => Promise.resolve([]),
+        text: async () => "[]",
+      });
+      await historyPromise;
+
+      // Had the stale event been drained, `ghost` would be live despite being
+      // absent from every baseline this client has. It must stay unknown.
+      const row = render.addSystemMessage({
+        title: "Created task @ghost",
+        taskRef: { kind: "task_created", taskId: "ghost", taskTitle: "ghost" },
+      });
+      assert.equal(
+        row.querySelector(".task-ref")?.getAttribute("data-ref-state"),
+        "exited",
+      );
+    });
+
+    it("drops a history read that started before the connection generation ended", async () => {
+      let resolveFetch!: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+      state.taskId = "s1";
+      const historyPromise = events.loadHistory("s1");
+      events.handleEvent({
+        type: "task_created",
+        taskId: "queued-ghost",
+        title: "queued-ghost",
+        configOptions: [],
+      });
+      assert.equal(state.replayQueue.length, 1);
+
+      // What a disconnect does: a new generation, and nothing from the old one
+      // may still be waiting to land.
+      stateMod.beginConnectionEpoch();
+      events.discardInFlightReplays();
+      assert.equal(state.replayQueue.length, 0);
+      assert.equal(state.replayInProgress, false);
+
+      resolveFetch({
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            {
+              seq: 1,
+              type: "assistant_message",
+              data: JSON.stringify({ text: "stale transcript" }),
+            },
+          ]),
+        text: async () => "[]",
+      });
+      assert.equal(await historyPromise, false);
+      assert.equal(
+        dom.messages.textContent.includes("stale transcript"),
+        false,
+        "history from the dead stream must not be appended",
+      );
     });
 
     it("queues WS events arriving during loadHistory and drains after", async () => {

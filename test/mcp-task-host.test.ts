@@ -11,6 +11,8 @@ import {
   type McpTaskCancelNotice,
 } from "../src/mcp/task-host.ts";
 import { projectTaskHistoryRow } from "../src/mcp/task-history.ts";
+import type { AgentEvent } from "../src/types.ts";
+import { mockBridgeStubs } from "./fixtures.ts";
 
 describe("MCP Task tool host", () => {
   let dir: string;
@@ -625,7 +627,9 @@ describe("MCP Task tool host", () => {
       kind: "task_cancel",
       role: "source",
       sourceTaskId: "alpha",
+      sourceLabel: "Alpha",
       targetTaskId: "alpha-child",
+      targetLabel: "Alpha child",
       reason: "stop before start",
       status: "idle",
       title: '@Alpha cancelled @"Alpha child"',
@@ -637,7 +641,9 @@ describe("MCP Task tool host", () => {
       kind: "task_cancel",
       role: "target",
       sourceTaskId: "alpha",
+      sourceLabel: "Alpha",
       targetTaskId: "alpha-child",
+      targetLabel: "Alpha child",
       reason: "stop before start",
       status: "idle",
       title: "Cancelled by @Alpha",
@@ -651,7 +657,9 @@ describe("MCP Task tool host", () => {
         kind: "task_cancel",
         role: "source",
         sourceTaskId: "alpha",
+        sourceLabel: "Alpha",
         targetTaskId: "alpha-child",
+        targetLabel: "Alpha child",
         title: '@Alpha cancelled @"Alpha child"',
         body,
       },
@@ -661,7 +669,9 @@ describe("MCP Task tool host", () => {
         kind: "task_cancel",
         role: "target",
         sourceTaskId: "alpha",
+        sourceLabel: "Alpha",
         targetTaskId: "alpha-child",
+        targetLabel: "Alpha child",
         title: "Cancelled by @Alpha",
         body,
       },
@@ -743,6 +753,49 @@ describe("MCP Task tool host", () => {
       },
     );
     assert.match(store.getEvents("alpha").at(-1)?.data ?? "", /created-child/);
+  });
+
+  it("announces the child it creates, with the id and name a client marks from", async () => {
+    // An agent's `task_create` is the creation path that used to broadcast no
+    // `task_created` at all: a client whose task list predated the child marked
+    // a live reference as exited until its next read. The announcement now
+    // belongs to the creation itself, so this path is covered by construction.
+    const bridge = {
+      ...mockBridgeStubs(),
+      newSession: async () => ({
+        sessionId: "session-agent-child",
+        configOptions: [],
+      }),
+    };
+    const announcements: AgentEvent[] = [];
+    tasks.setTaskCreatedBroadcast((event) => announcements.push(event));
+    const resolveExecution = tasks.resolveTaskExecution.bind(tasks);
+    // Only the transport resolution is doubled: the creation under test is the
+    // real one, reached through the real `createTask`.
+    tasks.resolveTaskExecution = async () => ({
+      agentId: "test-agent",
+      bridge,
+    });
+    try {
+      const host = createMcpTaskToolHost({ store, tasks });
+      const created = await host.create(principal(), {
+        title: "Agent child",
+      });
+      const announced = announcements.filter(
+        (event) => event.type === "task_created",
+      );
+      assert.equal(announced.length, 1);
+      const event = announced[0];
+      assert.equal(event.taskId, created.taskId);
+      // `noteTaskCreated(taskId, title)` needs both, or the client can only
+      // prove existence and has to leave the reference unknown.
+      assert.equal(event.title, "Agent child");
+      assert.equal(event.parentId, "alpha");
+      assert.equal(event.agentId, "test-agent");
+    } finally {
+      tasks.setTaskCreatedBroadcast(null);
+      tasks.resolveTaskExecution = resolveExecution;
+    }
   });
 
   it("queues an agent message without returning delivery metadata", async () => {

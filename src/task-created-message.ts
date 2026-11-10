@@ -68,6 +68,8 @@ export interface TaskCreatedBroadcastInput {
   messageId: string;
   sourceTaskId: string;
   targetTaskId: string;
+  /** Raw title of the created task, so a live client can rebuild its reference. */
+  taskTitle: string;
   title: string;
   body: string;
 }
@@ -86,6 +88,7 @@ export function buildTaskCreatedBroadcast(
     messageId: input.messageId,
     sourceTaskId: input.sourceTaskId,
     targetTaskId: input.targetTaskId,
+    taskTitle: input.taskTitle,
     role: "source",
     title: input.title,
     body: input.body,

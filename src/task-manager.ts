@@ -16,7 +16,7 @@ import {
   type WorkflowStatus,
 } from "./store.ts";
 import { shouldArm } from "./task-collaboration.ts";
-import { formatTaskReference } from "./shared/task-reference.ts";
+import type { CollaborationBroadcastRequest } from "./collaboration-message.ts";
 import { formatFieldBlock } from "./shared/field-block.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
@@ -716,14 +716,16 @@ export class TaskManager implements ObligationHost {
     | null = null;
   /** SSE broadcast hook for runtime collaboration messages. */
   private collaborationBroadcast:
-    | ((event: {
-        messageId: string;
-        sourceTaskId: string;
-        targetTaskId: string;
-        title: string;
-        body: string;
-      }) => void)
-    | null = null;
+    ((event: CollaborationBroadcastRequest) => void) | null = null;
+  /**
+   * SSE broadcast hook for a task that just became live. Every creation that
+   * goes through `createTask` (HTTP, quick prompt, message consume, agent
+   * `task_create`) announces here; the Root-materialization paths
+   * (`ensureRootTask` / `replaceRoot`) are announced by their own callers.
+   */
+  private taskCreatedBroadcast:
+    ((event: Extract<AgentEvent, { type: "task_created" }>) => void) | null =
+    null;
   /** Process-local directed-dispatch obligation state machine. */
   private readonly obligations: ObligationController;
   /**
@@ -1479,6 +1481,21 @@ export class TaskManager implements ObligationHost {
        * that window must leave no task behind.
        */
       assertCaller?: () => void;
+      /**
+       * The caller's own create operation. It rides the broadcast so a client
+       * whose create response was lost can match the task this event
+       * announces; it has no meaning for a creation no client requested.
+       */
+      clientOpId?: string;
+      /**
+       * Whether this creation is announced as a new task. Only a creation a
+       * caller asked for is: an internal task — the message-consume carrier —
+       * belongs to a path that answers its own caller, and an announcement
+       * would have a client install it before that answer, leaving it on an
+       * empty transcript (the switch sees the task already installed) and
+       * keeping a phantom id if the consume transaction then refuses.
+       */
+      announce?: boolean;
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const agentId = this.attachExecutionBridge(bridge);
@@ -1510,11 +1527,50 @@ export class TaskManager implements ObligationHost {
       source,
       { ...opts, parentId },
     );
+    // A task created through the manager announces itself here, not in each
+    // caller's route. `createTaskImpl` throws before this point when the task
+    // was not persisted, so nothing half-made is announced; the final config
+    // values (post-inheritance) travel with it. Root materialization bypasses
+    // this method and is announced by `bootstrap` / the Root exit instead.
+    // An internal creation opts out: its own path answers the caller, so an
+    // announcement would activate a task that answer is about to activate
+    // properly (see `announce`).
+    if (opts?.announce !== false) {
+      this.announceTaskCreated(result, opts?.clientOpId);
+    }
     // Empty-task GC touches arbitrary branches, so run it as a short,
     // best-effort Root-exclusive operation after the task mutation is done.
     // If another branch is active, skip this pass and let a later create retry.
     this.tryCleanupEmptyTasks();
     return result;
+  }
+
+  /**
+   * Publish a freshly persisted task. The envelope is the activation payload
+   * `resumeTask` also returns: cwd, parent link, and binding agent let a client
+   * install the task without a read, and the config values are the final ones
+   * after inheritance and overrides.
+   */
+  private announceTaskCreated(
+    result: { taskId: string; configOptions: ConfigOption[] },
+    clientOpId?: string,
+  ): void {
+    const publish = this.taskCreatedBroadcast;
+    if (!publish) return;
+    const task = this.store.getTask(result.taskId);
+    if (!task) return;
+    publish({
+      type: "task_created",
+      taskId: task.id,
+      agentId: this.store.getBindingAgent(task.id) ?? null,
+      cwd: task.cwd,
+      cwdDisplay: abbreviateHomePath(task.cwd),
+      title: task.title,
+      ...this.parentFields(task),
+      configOptions: result.configOptions,
+      agentCommands: this.getAgentCommands(task.id),
+      ...(clientOpId ? { clientOpId } : {}),
+    });
   }
 
   private async persistCreatedTask(
@@ -2491,7 +2547,10 @@ export class TaskManager implements ObligationHost {
       message.cwd ?? undefined,
       inheritFromTaskId,
       "message",
-      { silent: true },
+      // Internal: the consume route answers with this id, and the client
+      // switches to it. Announcing it would activate it first, and the switch
+      // would then skip the history it needs.
+      { silent: true, announce: false },
     );
 
     try {
@@ -3743,15 +3802,21 @@ export class TaskManager implements ObligationHost {
 
   /** Install the SSE broadcast hook for runtime collaboration messages. */
   setCollaborationBroadcast(
-    broadcast: (event: {
-      messageId: string;
-      sourceTaskId: string;
-      targetTaskId: string;
-      title: string;
-      body: string;
-    }) => void,
+    broadcast: (event: CollaborationBroadcastRequest) => void,
   ): void {
     this.collaborationBroadcast = broadcast;
+  }
+
+  /**
+   * Install the SSE broadcast hook for a newly created task. Every creation
+   * entry point (HTTP create, quick prompt, agent `task_create`) announces
+   * through it, so no caller publishes its own copy.
+   */
+  setTaskCreatedBroadcast(
+    broadcast:
+      ((event: Extract<AgentEvent, { type: "task_created" }>) => void) | null,
+  ): void {
+    this.taskCreatedBroadcast = broadcast;
   }
 
   /** Active directed obligation for a source→target edge, when one exists. */
@@ -4013,9 +4078,10 @@ export class TaskManager implements ObligationHost {
       messageId: created.message.id,
       sourceTaskId: obligation.targetTaskId,
       targetTaskId: obligation.sourceTaskId,
-      // Same source as the persisted twin (`createCollaborationMessage`), so a
-      // live row and its replayed copy cannot show different titles.
-      title: `${formatTaskReference(source?.title ?? obligation.targetTaskId.slice(0, 8))} sent ${formatTaskReference(target?.title ?? obligation.sourceTaskId.slice(0, 8))}`,
+      // Same raw labels the persisted twin is built from, so a live row and its
+      // replayed copy cannot show different titles or unrecoverable references.
+      sourceLabel: source?.title ?? obligation.targetTaskId.slice(0, 8),
+      targetLabel: target?.title ?? obligation.sourceTaskId.slice(0, 8),
       body,
     });
     void this.drainCollaborationDeliveries(obligation.sourceTaskId);
