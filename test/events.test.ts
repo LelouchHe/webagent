@@ -4082,6 +4082,56 @@ describe("events", () => {
   });
 
   describe("loadOlderEvents", () => {
+    it("releases a stuck older-page load when the connection generation ends", async () => {
+      state.taskId = "s1";
+      state.hasMoreHistory = true;
+      state.oldestLoadedSeq = 100;
+      let resolvePage!: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolvePage = resolve;
+        })) as any;
+
+      const older = events.loadOlderEvents("s1");
+      assert.equal(state.loadingOlderEvents, true);
+      assert.ok(document.getElementById("history-loading"));
+
+      // The stream dies while the page fetch is in flight. Its own `finally`
+      // would clear the flag, but the generation change makes that cleanup
+      // skip — so the discard must release it.
+      stateMod.beginConnectionEpoch();
+      events.discardInFlightReplays();
+
+      assert.equal(state.loadingOlderEvents, false);
+      assert.equal(
+        document.getElementById("history-loading"),
+        null,
+        "the loading indicator must not survive the dead stream",
+      );
+
+      resolvePage({
+        ok: true,
+        json: () => Promise.resolve({ events: [], hasMore: false }),
+        text: async () => "{}",
+      });
+      assert.equal(await older, false);
+
+      // Not wedged: a later attempt takes a fresh request instead of returning
+      // early on the stale flag. Recovery used to need a task switch.
+      state.hasMoreHistory = true;
+      let requests = 0;
+      globalThis.fetch = (async () => {
+        requests += 1;
+        return {
+          ok: true,
+          json: () => Promise.resolve({ events: [], hasMore: false }),
+          text: async () => "{}",
+        };
+      }) as any;
+      assert.equal(await events.loadOlderEvents("s1"), true);
+      assert.equal(requests, 1);
+    });
+
     it("reconciles a newer terminal update after an older page creates its tool host", async () => {
       state.taskId = "s1";
       let request = 0;

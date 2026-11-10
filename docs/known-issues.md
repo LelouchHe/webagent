@@ -64,10 +64,10 @@ time. An entry without a "closing condition" is a wish, not an issue.
   `listSnapshot ∪ created − deleted` over the events they received. A client
   that received the matching `task_created` therefore keeps a task that no
   longer exists as live, so a reference to it would not be marked exited and
-  the collection would not drop it until the next list read replaces the base
-  (the window is bounded by the sweep, and the message-consume carrier is no
-  longer announced, so only the GC path produces this). The error direction is
-  safe — a missing mark, never a wrong one. *Closing:* broadcast `task_deleted`
+  the collection would not drop it until the next successful list read replaces
+  the base. The consume carrier is no longer announced when it is created, but
+  a baseline read taken while it briefly exists keeps it the same way; both are
+  one class. The error direction is safe — a missing mark, never a wrong one. *Closing:* broadcast `task_deleted`
   from the manager's own deletions as well, or make the derived set subscribe
   to every deletion source instead of only the event stream.
 

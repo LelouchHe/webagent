@@ -68,6 +68,14 @@ let pending: { generation: number; promise: Promise<TaskSummary[]> } | null =
  */
 let listRequestSeq = 0;
 let listAppliedSeq = 0;
+/**
+ * The lowest request sequence that may become this generation's baseline.
+ * Raised when the handshake takes a fresh read: from then on a startup read
+ * that started before the stream registered must not apply, even if the fresh
+ * read fails. Staying unloaded claims nothing; applying the old read would
+ * claim that a task created during registration does not exist.
+ */
+let listRequiredSeq = 0;
 
 const changeListeners: (() => void)[] = [];
 
@@ -88,6 +96,7 @@ function notifyChange(): void {
 export function beginTaskTopologyGeneration(): void {
   generation += 1;
   listLoaded = false;
+  listRequiredSeq = 0;
   viewedTaskId = null;
   parentRef = null;
   pending = null;
@@ -326,7 +335,11 @@ function startTaskListRequest(): {
   const requestGeneration = generation;
   const seq = ++listRequestSeq;
   const promise = api.listTasks().then((tasks) => {
-    if (requestGeneration === generation && seq > listAppliedSeq) {
+    if (
+      requestGeneration === generation &&
+      seq > listAppliedSeq &&
+      seq >= listRequiredSeq
+    ) {
       listAppliedSeq = seq;
       listLoaded = true;
       applyTaskListSnapshot(tasks);
@@ -371,6 +384,9 @@ export async function loadTaskList(): Promise<TaskSummary[]> {
  * promise).
  */
 export async function refreshTaskListBaseline(): Promise<TaskSummary[]> {
+  // Only this read or a later one may become the baseline (see
+  // `listRequiredSeq`).
+  listRequiredSeq = listRequestSeq + 1;
   const request = startTaskListRequest();
   pending = request;
   try {
@@ -389,5 +405,6 @@ export function resetTaskTopologyForTest(): void {
   pending = null;
   listRequestSeq = 0;
   listAppliedSeq = 0;
+  listRequiredSeq = 0;
   resetTaskRefMarks();
 }

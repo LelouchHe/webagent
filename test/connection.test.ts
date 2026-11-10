@@ -372,6 +372,79 @@ describe("connection", () => {
     );
   });
 
+  it("keeps the pre-registration list out of the baseline when the handshake read fails", async () => {
+    history.replaceState(null, "", "/#parent");
+    let listReads = 0;
+    let releaseStartupList!: () => void;
+    const startupListReady = new Promise<void>((resolve) => {
+      releaseStartupList = resolve;
+    });
+    let releaseHistory!: () => void;
+    const historyReady = new Promise<void>((resolve) => {
+      releaseHistory = resolve;
+    });
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/tasks") {
+        listReads += 1;
+        if (listReads === 1) {
+          // The startup read predates the stream registration; its answer is
+          // only released once the handshake read has already failed.
+          await startupListReady;
+          return mockResponse([{ id: "parent" }]);
+        }
+        return {
+          ok: false,
+          status: 503,
+          json: async () => ({ error: "unavailable" }),
+          text: async () => '{"error":"unavailable"}',
+        };
+      }
+      if (url === "/api/v1/tasks/parent")
+        return mockResponse(taskResponse("parent"));
+      if (url.startsWith("/api/v1/tasks/parent/events")) {
+        await historyReady;
+        return mockResponse([
+          {
+            seq: 1,
+            task_id: "parent",
+            type: "system_message",
+            data: JSON.stringify({
+              kind: "task_created",
+              taskId: "child",
+              taskTitle: "child",
+              title: "Created task @child",
+              body: "Task ID    child",
+            }),
+          },
+        ]);
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    const es = await latestES();
+    await flush();
+    releaseHistory();
+    await flush();
+    const ref = dom.messages.querySelector(".system-msg .task-ref");
+    assert.ok(ref, "the row carries its reference");
+
+    // The handshake read fails, so there is no post-registration baseline.
+    fireConnected(es, "cl-baseline-failed");
+    await flush();
+    // The older read answers now; applying it would claim the child does not
+    // exist even though it may have been created while registering.
+    releaseStartupList();
+    await flush();
+
+    assert.equal(
+      ref.getAttribute("data-ref-state"),
+      null,
+      "without a post-registration baseline nothing is claimed",
+    );
+  });
+
   it("resumes the most recent user-input task when there is no hash", async () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});

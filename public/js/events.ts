@@ -949,6 +949,13 @@ export function discardInFlightReplays(): void {
   state.replayTarget = null;
   state.replayQueue = [];
   state.replayQueueEpoch = state.connectionEpoch;
+  // An older-page load is released by its own `finally`, and the token bump
+  // above makes that cleanup skip. Without this the flag would stay set and
+  // the transcript would keep "↑ loading…" at the top for the rest of the
+  // task session (an incremental reconnect does not reset the task UI).
+  state.loadingOlderEvents = false;
+  hideHistoryLoading();
+  rearmHistoryObserverAfterTaskActivation();
 }
 
 function invalidateHistoryLoads() {

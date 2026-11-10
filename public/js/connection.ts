@@ -203,7 +203,9 @@ async function openStream(
       // baseline now: before-registration tasks are in the list, later ones
       // arrive as events on this stream.
       void refreshTaskListBaseline().catch(() => {
-        // A failed baseline stays "not loaded"; nothing is claimed from it.
+        // A failed baseline stays "not loaded", and the pre-registration read
+        // it superseded cannot apply either: nothing is claimed from a list
+        // that may predate tasks this client was never told about.
       });
       if (activeTaskId && state.taskId === activeTaskId) {
         setConnectionStatus("connected", "connected");

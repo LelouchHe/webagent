@@ -186,6 +186,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the baseline taken after the stream handshake supersedes an in-flight
     startup read, so a task created while the stream was registering is live
     rather than exited (`test/connection.test.ts` drives the real connect)
+  - a failed handshake read does not fall back to the pre-registration read:
+    the client stays unloaded (no claim) instead of marking a task created
+    during registration as exited
 
 - `test/task-ref-marks.test.ts` (one reference per Task, four states)
   - a live reference is completely unmarked (no strike, no appended name, no
@@ -774,6 +777,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - live events queued during a replay are dropped when the connection
     generation changes before the drain, and a disconnect discards the armed
     replay gate, its queue, and any history read still in flight
+  - an older-page load caught by that disconnect is released (its flag and the
+    loading indicator cleared), so pagination recovers without a task switch
   - user / assistant / thinking rendering
   - unsolicited Main-agent text and tool calls render while the foreground turn
     stays idle without reopening busy state
