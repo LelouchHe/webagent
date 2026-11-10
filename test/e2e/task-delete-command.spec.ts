@@ -72,6 +72,29 @@ test("a task-created reference is marked exited after its task is deleted", asyn
   await expect(refs(row).locator(".visually-hidden")).toHaveText(" (exited)");
   await expect(row).not.toHaveAttribute("data-exited");
 
+  // The screen-reader note is hidden, not laid out. A box that escapes the
+  // transcript scroller grows the document instead, so the page scrolls and
+  // the composer floats above empty space — which happens as soon as the
+  // marked row sits below the fold, the state a real Task reaches quickly.
+  await page.evaluate(() => {
+    const list = document.querySelector("#messages")!;
+    for (let i = 0; i < 60; i++) {
+      const filler = document.createElement("div");
+      filler.className = "msg agent";
+      filler.textContent = `filler ${i}`;
+      list.prepend(filler);
+    }
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document.documentElement.scrollHeight -
+          document.documentElement.clientHeight,
+      ),
+    )
+    .toBeLessThanOrEqual(2);
+
   // A reload re-derives the mark from the task list; it is not stored on the
   // row, the event, or the database.
   await page.reload();

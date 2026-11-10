@@ -464,15 +464,17 @@ body {
   text-decoration: line-through;
 }
 
-/* Screen-reader-only text: the non-visual carrier of a reference state. */
+/* Screen-reader-only text: the non-visual carrier of a reference state.
+   Deliberately not absolute. An absolutely positioned box with no positioned
+   ancestor takes the viewport as its containing block, so it escapes the
+   transcript scroller: its static position then stretches the document, which
+   scrolls the page and floats the composer above empty space. Kept in flow at
+   1px, it is clipped by the scroller like any other row content. */
 .visually-hidden {
-  position: absolute;
+  display: inline-block;
   width: 1px;
   height: 1px;
-  margin: -1px;
-  padding: 0;
   overflow: hidden;
-  clip: rect(0 0 0 0);
   clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
