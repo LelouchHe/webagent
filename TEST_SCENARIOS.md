@@ -203,8 +203,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     views the parent
   - a task this client saw created after the applied snapshot (or before a
     later, still-older one) is never marked; a create event without a title
-    keeps the listed one. A create this client receives no event for is the
-    gap recorded in `docs/known-issues.md`
+    keeps the listed one, and a create announced after the list marked its
+    reference exited clears that mark again (driven through `handleEvent`,
+    the path every creation initiator now feeds)
   - rows rendered before the boot list read are re-evaluated when it arrives
   - `task_title_updated` refreshes a row that names a Task the client is not
     viewing, and applies to a row rendered after it; the current Task's header
@@ -604,6 +605,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - gzip compression for events endpoint
   - streaming buffer flush on events endpoint
   - auto-resume of non-live tasks
+  - a created task is announced exactly once, by the creation itself: exactly one `task_created` for its id, carrying the request's `clientOpId` plus the title, agent, cwd, parent, and final config the response echoes
   - a `/clear` whose request body window saw a restore start is rejected by the final gate with 409, not by the early check; the test waits for the handler's body-read signal rather than a fixed sleep
   - `/compact` leaves its own rotation line (`kind: agent_rotation`, reason `compact`) before publishing the replacement execution
   - restoring an interrupted turn does not auto-continue it (recovery is user-driven)
@@ -812,6 +814,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a successful `task_cancel` writes one `system_message` row per side (each
     with its own `taskId`, `role`, and wording; machine fields in `data`) and
     broadcasts both frames
+  - `task_create` announces its child through the same creation broadcast as
+    every other initiator, and the envelope carries the id and the title a
+    client judges a `Created task @x` reference from
   - MCP registration and documentation expose task_read as the sole raw-history tool
 
 - `test/commands.test.ts`, `test/slash-menu.test.ts`

@@ -316,6 +316,29 @@ describe("task-reference marks", () => {
       assertLive(refSpan(row), "@child");
     });
 
+    it("stops calling a reference exited when the missed create arrives", () => {
+      // The scenario the creation broadcast closes: a client is viewing the
+      // parent, its list predates the child, and the child is created by
+      // another initiator. Before the event the reference looks dead.
+      state.taskId = "parent";
+      state.taskTitle = "parent";
+      snapshot({ parent: "parent" });
+      const row = renderCreatedRow("child");
+      assert.equal(view(refSpan(row)).state, "exited");
+
+      // The announced creation is the client's only evidence, and it carries
+      // the id and the name the reference is judged against.
+      events.handleEvent({
+        type: "task_created",
+        taskId: "child",
+        title: "child",
+        configOptions: [],
+      });
+
+      assert.equal(state.taskId, "parent", "the client stays on its task");
+      assertLive(refSpan(row), "@child");
+    });
+
     it("judges by task id, not by the name the row shares with another task", () => {
       // Titles are unique per sibling, not globally: another live task may
       // carry the name this reference was written with. The id decides.

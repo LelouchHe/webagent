@@ -211,6 +211,11 @@ tasks.setCollaborationBroadcast(broadcastCollaboration);
 tasks.setRuntimeWarmBroadcast((event) => {
   sseManager.broadcast({ type: "task_runtime_warmed", ...event });
 });
+// Creation itself announces the new task: HTTP create, the quick prompt, and
+// the agent's `task_create` all pass through the same manager entry point.
+tasks.setTaskCreatedBroadcast((event) => {
+  sseManager.broadcast(event);
+});
 const mcpTaskTools = createMcpTaskToolHost({
   store,
   tasks,

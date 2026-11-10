@@ -57,17 +57,6 @@ time. An entry without a "closing condition" is a wish, not an issue.
   (recorded from the delete response) at the activation path instead of passing
   a flag through the fallback.
 
-- **An agent-created subtask looks exited until the next task-list read.** An
-  agent's `task_create` writes and broadcasts only the `Created task @x` system
-  row (`src/mcp/task-host.ts` → `buildTaskCreatedBroadcast`); unlike the HTTP
-  create routes it broadcasts no `task_created` event. A client whose applied
-  list predates the child derives it as exited from that row and strikes it,
-  even though the child is live, until its next `GET /api/v1/tasks`. Deletes
-  and renames through the same row family are unaffected. *Closing:* record
-  the created id and title when a `task_created` row renders (it is a create
-  this client can see), or broadcast `task_created` from the MCP path as the
-  HTTP paths do.
-
 - **The empty-task GC can fail a foreign key.** `Store.deleteEmptyTasks` throws
   `FOREIGN KEY constraint failed` for a zero-event task that still has a share
   row, and `TaskManager` does not catch it, so an unrelated task creation can

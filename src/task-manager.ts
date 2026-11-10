@@ -717,6 +717,14 @@ export class TaskManager implements ObligationHost {
   /** SSE broadcast hook for runtime collaboration messages. */
   private collaborationBroadcast:
     ((event: CollaborationBroadcastRequest) => void) | null = null;
+  /**
+   * SSE broadcast hook for a task that just became live. Creation is one
+   * entry point for HTTP, quick prompts, and the agent's `task_create`, so
+   * this is the one place a task's existence is announced.
+   */
+  private taskCreatedBroadcast:
+    ((event: Extract<AgentEvent, { type: "task_created" }>) => void) | null =
+    null;
   /** Process-local directed-dispatch obligation state machine. */
   private readonly obligations: ObligationController;
   /**
@@ -1472,6 +1480,12 @@ export class TaskManager implements ObligationHost {
        * that window must leave no task behind.
        */
       assertCaller?: () => void;
+      /**
+       * The caller's own create operation. It rides the broadcast so a client
+       * whose create response was lost can match the task this event
+       * announces; it has no meaning for a creation no client requested.
+       */
+      clientOpId?: string;
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const agentId = this.attachExecutionBridge(bridge);
@@ -1503,11 +1517,44 @@ export class TaskManager implements ObligationHost {
       source,
       { ...opts, parentId },
     );
+    // Every creation goes through here, so this is where a task's existence is
+    // announced — not in each caller's route. `createTaskImpl` throws before
+    // this point when the task was not persisted, so nothing half-made is
+    // announced; the final config values (post-inheritance) travel with it.
+    this.announceTaskCreated(result, opts?.clientOpId);
     // Empty-task GC touches arbitrary branches, so run it as a short,
     // best-effort Root-exclusive operation after the task mutation is done.
     // If another branch is active, skip this pass and let a later create retry.
     this.tryCleanupEmptyTasks();
     return result;
+  }
+
+  /**
+   * Publish a freshly persisted task. The envelope is the activation payload
+   * `resumeTask` also returns: cwd, parent link, and binding agent let a client
+   * install the task without a read, and the config values are the final ones
+   * after inheritance and overrides.
+   */
+  private announceTaskCreated(
+    result: { taskId: string; configOptions: ConfigOption[] },
+    clientOpId?: string,
+  ): void {
+    const publish = this.taskCreatedBroadcast;
+    if (!publish) return;
+    const task = this.store.getTask(result.taskId);
+    if (!task) return;
+    publish({
+      type: "task_created",
+      taskId: task.id,
+      agentId: this.store.getBindingAgent(task.id) ?? null,
+      cwd: task.cwd,
+      cwdDisplay: abbreviateHomePath(task.cwd),
+      title: task.title,
+      ...this.parentFields(task),
+      configOptions: result.configOptions,
+      agentCommands: this.getAgentCommands(task.id),
+      ...(clientOpId ? { clientOpId } : {}),
+    });
   }
 
   private async persistCreatedTask(
@@ -3739,6 +3786,18 @@ export class TaskManager implements ObligationHost {
     broadcast: (event: CollaborationBroadcastRequest) => void,
   ): void {
     this.collaborationBroadcast = broadcast;
+  }
+
+  /**
+   * Install the SSE broadcast hook for a newly created task. Every creation
+   * entry point (HTTP create, quick prompt, agent `task_create`) announces
+   * through it, so no caller publishes its own copy.
+   */
+  setTaskCreatedBroadcast(
+    broadcast:
+      ((event: Extract<AgentEvent, { type: "task_created" }>) => void) | null,
+  ): void {
+    this.taskCreatedBroadcast = broadcast;
   }
 
   /** Active directed obligation for a source→target edge, when one exists. */

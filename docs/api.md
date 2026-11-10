@@ -240,7 +240,11 @@ plus `agentId`, the agent really attempted)
 
 **Side effects:**
 
-- Broadcasts `task_created` to all SSE clients
+- Broadcasts `task_created` to all SSE clients. The event is emitted by task
+  creation itself, so the quick prompt and the Agent's `task_create` tool
+  announce the same event; a request's `X-Client-Op-Id` rides it as
+  `clientOpId`, which is how a client whose create response was lost matches
+  the task. An event names a task that now exists, nothing else
 - Broadcasts `config_option_update` if config was inherited
 - Records and broadcasts a `system_message` (`kind: task_created`) on the parent
   task — the same row the Agent's `task_create` tool writes, with `from_ref`
@@ -1265,7 +1269,7 @@ When provided, task creation uses the same inheritance rules as `POST /api/v1/ta
 { "taskId": "<uuid>", "alreadyConsumed": false }
 ```
 
-**Side effects:** broadcasts `message_consumed` SSE; triggers `pushService.sendClose(id)` to dismiss banners on other devices (stub until C11-C13).
+**Side effects:** broadcasts `task_created` for the task creation itself (every creation announces its task); broadcasts `message_consumed` SSE; triggers `pushService.sendClose(id)` to dismiss banners on other devices (stub until C11-C13).
 
 **Errors:** `400` (message cwd no longer exists), `404` (message not found), `503` (agent/task manager unavailable), `500` (agent or persistence failure). Failures before the local consume transaction completes leave the inbox row pending for retry.
 

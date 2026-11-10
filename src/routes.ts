@@ -2903,22 +2903,12 @@ export function createRequestHandler(
               title: title ?? undefined,
               workflowStatus: title ? "idle" : undefined,
               agentId: explicitAgent,
+              clientOpId: clientOpId ?? undefined,
             },
           );
           const task = store.getTask(taskId);
-          const taskCreatedEvent = {
-            type: "task_created",
-            taskId,
-            ...activationFields(task, {
-              taskId,
-              parentId: body.parentId ?? null,
-            }),
-            title: task?.title,
-            configOptions,
-            agentCommands: tasks.getAgentCommands(taskId),
-            clientOpId: clientOpId ?? undefined,
-          } as AgentEvent;
-          sseManager.broadcast(taskCreatedEvent);
+          // The creation itself broadcast `task_created` (see
+          // `TaskManager.createTask`), with this request's `clientOpId`.
           // One record shape for every initiator: the parent task's stream gets
           // the same row the agent's task_create tool writes, with the user as
           // its origin. Broadcast too, so live clients see it without a reload.
@@ -3650,24 +3640,15 @@ export function createRequestHandler(
           });
           return;
         }
-        const { taskId, configOptions } = await tasks.createTask(
+        const { taskId } = await tasks.createTask(
           bridge,
           cwd,
           undefined,
           "auto",
         );
         const streamUrl = `/api/v1/tasks/${taskId}/events/stream`;
-        const task = store.getTask(taskId);
 
-        sseManager.broadcast({
-          type: "task_created",
-          taskId,
-          ...activationFields(task, { taskId }),
-          title: task?.title,
-          configOptions,
-          agentCommands: tasks.getAgentCommands(taskId),
-        });
-
+        // `createTask` already broadcast `task_created`.
         json(res, HTTP_STATUS.ACCEPTED, { taskId, streamUrl });
 
         // Fire-and-forget: send the prompt asynchronously, tracking busy state
