@@ -1487,6 +1487,15 @@ export class TaskManager implements ObligationHost {
        * announces; it has no meaning for a creation no client requested.
        */
       clientOpId?: string;
+      /**
+       * Whether this creation is announced as a new task. Only a creation a
+       * caller asked for is: an internal task — the message-consume carrier —
+       * belongs to a path that answers its own caller, and an announcement
+       * would have a client install it before that answer, leaving it on an
+       * empty transcript (the switch sees the task already installed) and
+       * keeping a phantom id if the consume transaction then refuses.
+       */
+      announce?: boolean;
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
     const agentId = this.attachExecutionBridge(bridge);
@@ -1523,7 +1532,12 @@ export class TaskManager implements ObligationHost {
     // was not persisted, so nothing half-made is announced; the final config
     // values (post-inheritance) travel with it. Root materialization bypasses
     // this method and is announced by `bootstrap` / the Root exit instead.
-    this.announceTaskCreated(result, opts?.clientOpId);
+    // An internal creation opts out: its own path answers the caller, so an
+    // announcement would activate a task that answer is about to activate
+    // properly (see `announce`).
+    if (opts?.announce !== false) {
+      this.announceTaskCreated(result, opts?.clientOpId);
+    }
     // Empty-task GC touches arbitrary branches, so run it as a short,
     // best-effort Root-exclusive operation after the task mutation is done.
     // If another branch is active, skip this pass and let a later create retry.
@@ -2533,7 +2547,10 @@ export class TaskManager implements ObligationHost {
       message.cwd ?? undefined,
       inheritFromTaskId,
       "message",
-      { silent: true },
+      // Internal: the consume route answers with this id, and the client
+      // switches to it. Announcing it would activate it first, and the switch
+      // would then skip the history it needs.
+      { silent: true, announce: false },
     );
 
     try {

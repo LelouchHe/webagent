@@ -2680,8 +2680,10 @@ describe("events", () => {
       });
 
       it("replays a persisted collaboration system row", () => {
-        // The row's own task comes from the stored `task_id`, not from the
-        // title: each projection of the same title anchors a different side.
+        // The stored title is projected to all three copies, and both of its
+        // references are placed by their own ids: the row's own `task_id`
+        // decides only which title shape it has, not which reference is
+        // markable.
         const storedRow = (
           id: number,
           taskId: string,
@@ -6616,6 +6618,99 @@ describe("events", () => {
 
       assert.equal(fetches, 2);
       assert.match(dom.messages.textContent ?? "", /flushed after snapshot/);
+    });
+
+    it("drops live events queued under a superseded connection generation", async () => {
+      const marks = await import("../public/js/task-ref-marks.ts");
+      const topology = await import("../public/js/task-topology.ts");
+      marks.resetTaskRefMarks();
+
+      let resolveFetch!: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+      state.taskId = "s1";
+      const historyPromise = events.loadHistory("s1");
+      assert.equal(state.replayInProgress, true);
+
+      // A task is announced on the stream this replay belongs to.
+      events.handleEvent({
+        type: "task_created",
+        taskId: "ghost",
+        title: "ghost",
+        configOptions: [],
+      });
+      assert.equal(state.replayQueue.length, 1);
+
+      // The stream dies before the replay settles: a new connection
+      // generation starts and the old collection is dropped, while the old
+      // replay is still waiting for its response.
+      stateMod.beginConnectionEpoch();
+      topology.beginTaskTopologyGeneration();
+      // The new connection takes its own baseline, with no tasks at all.
+      marks.applyTaskListSnapshot([]);
+
+      resolveFetch({
+        ok: true,
+        json: () => Promise.resolve([]),
+        text: async () => "[]",
+      });
+      await historyPromise;
+
+      // Had the stale event been drained, `ghost` would be live despite being
+      // absent from every baseline this client has. It must stay unknown.
+      const row = render.addSystemMessage({
+        title: "Created task @ghost",
+        taskRef: { kind: "task_created", taskId: "ghost", taskTitle: "ghost" },
+      });
+      assert.equal(
+        row.querySelector(".task-ref")?.getAttribute("data-ref-state"),
+        "exited",
+      );
+    });
+
+    it("drops a history read that started before the connection generation ended", async () => {
+      let resolveFetch!: Function;
+      globalThis.fetch = (() =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })) as any;
+      state.taskId = "s1";
+      const historyPromise = events.loadHistory("s1");
+      events.handleEvent({
+        type: "task_created",
+        taskId: "queued-ghost",
+        title: "queued-ghost",
+        configOptions: [],
+      });
+      assert.equal(state.replayQueue.length, 1);
+
+      // What a disconnect does: a new generation, and nothing from the old one
+      // may still be waiting to land.
+      stateMod.beginConnectionEpoch();
+      events.discardInFlightReplays();
+      assert.equal(state.replayQueue.length, 0);
+      assert.equal(state.replayInProgress, false);
+
+      resolveFetch({
+        ok: true,
+        json: () =>
+          Promise.resolve([
+            {
+              seq: 1,
+              type: "assistant_message",
+              data: JSON.stringify({ text: "stale transcript" }),
+            },
+          ]),
+        text: async () => "[]",
+      });
+      assert.equal(await historyPromise, false);
+      assert.equal(
+        dom.messages.textContent.includes("stale transcript"),
+        false,
+        "history from the dead stream must not be appended",
+      );
     });
 
     it("queues WS events arriving during loadHistory and drains after", async () => {

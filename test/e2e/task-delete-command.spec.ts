@@ -119,6 +119,15 @@ test("a renamed reference is struck and followed by the current name", async ({
   await expect(ref.locator(".visually-hidden")).toHaveText(" (renamed)");
   await expect(row).not.toHaveAttribute("data-exited");
 
+  // A reload re-derives the rename from the task list; nothing about it is
+  // stored on the row.
+  await page.reload();
+  await expectConnectionStatus(page, "connected");
+  await expect(ref).toHaveAttribute("data-ref-state", "renamed");
+  await expect(ref.locator(".task-ref-name")).toHaveText(`@${oldTitle}`);
+  await expect(ref.locator(".task-ref-current")).toHaveText(` @${newTitle}`);
+  await expect(ref.locator(".visually-hidden")).toHaveText(" (renamed)");
+
   // Enter the renamed child by its current name and exit it: the reference is
   // now simply dead, so the appended name disappears.
   await page.locator("#input").fill(`@${newTitle}`);
@@ -133,7 +142,7 @@ test("a renamed reference is struck and followed by the current name", async ({
   await expect(ref.locator(".visually-hidden")).toHaveText(" (exited)");
   await expect(row).not.toHaveAttribute("data-exited");
 
-  // A reload re-derives both states from the list and the row's own text.
+  // A reload after the exit re-derives that state too.
   await page.reload();
   await expectConnectionStatus(page, "connected");
   await expect(ref).toHaveAttribute("data-ref-state", "exited");

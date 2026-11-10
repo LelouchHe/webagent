@@ -183,6 +183,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - entry labels are baseline-relative to the current task (same agent → none,
     other agent → its id, no baseline → all); a null binding never prints one
   - concurrent list callers in one generation share one request
+  - the baseline taken after the stream handshake supersedes an in-flight
+    startup read, so a task created while the stream was registering is live
+    rather than exited (`test/connection.test.ts` drives the real connect)
 
 - `test/task-ref-marks.test.ts` (one reference per Task, four states)
   - a live reference is completely unmarked (no strike, no appended name, no
@@ -218,6 +221,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     marks both of its references by id
   - a row whose raw labels are missing, or whose reference does not sit at its
     anchored edge, is left fully unmarked rather than guessed
+  - two references that can only be placed on the same span (a title that is
+    both names) are both refused; the row renders as plain text
   - an adversarial title matrix (equal labels, a label containing ` sent `,
     quotes, backslashes, newlines, tabs, a full-width space, a label that is
     `sent`/`cancelled`, ids that disagree with the title) is either placed
@@ -675,6 +680,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/messages-route-actions.test.ts`, `test/messages-schema.test.ts`
   - Inbox consume creates a live ACP-backed task and never reloads it
+  - the consume carrier is an internal creation: it broadcasts no `task_created`
+    (an announcement would install it before the answer that names it, making
+    the follow-up switch skip its history)
   - Inbox-created tasks reuse `/new` model/reasoning inheritance while resetting mode
   - message cwd inheritance and configured-default fallback
   - sequential idempotency and concurrent consume deduplication
@@ -759,9 +767,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
     fields in `data`, worded from that side (`@source cancelled @target` /
     `Cancelled by @source`). Both rows are broadcast, so the cancel page and the
     cancelled page each render exactly one line, live and from replay
-  - a replayed collaboration row anchors its reference from the stored
-    `task_id`: the target-side copy strikes the source at the front, the
-    source-side copy strikes the target at the end
+  - a replayed collaboration row anchors **both** of its references from the
+    stored ids, on every projection: the source reference at the front and the
+    target reference at the end of `@source sent @target`, on the source, target,
+    and supervisor copies alike
+  - live events queued during a replay are dropped when the connection
+    generation changes before the drain, and a disconnect discards the armed
+    replay gate, its queue, and any history read still in flight
   - user / assistant / thinking rendering
   - unsolicited Main-agent text and tool calls render while the foreground turn
     stays idle without reopening busy state
@@ -829,6 +841,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - version display in `?` / help command
 
 - `test/connection.test.ts`
+  - a live reference is not marked exited when its task was created between the
+    startup list read and the stream handshake: the handshake forces a fresh
+    baseline (asserted on the rendered row, not on the request alone)
   - hash-based task resume
   - last-task auto-resume with the Root fallback, identified by the task list's `isRoot` flag rather than by the id's value
   - new-task creation when no previous task exists

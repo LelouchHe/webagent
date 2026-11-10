@@ -57,19 +57,28 @@ time. An entry without a "closing condition" is a wish, not an issue.
   (recorded from the delete response) at the activation path instead of passing
   a flag through the fallback.
 
-- **A rolled-back message-consume creation was announced before it was
-  discarded.** `createTask` now announces a task's existence before returning,
-  and `consumePendingMessage` creates its temporary task that way. If the
-  consume transaction then refuses (`alreadyConsumed`, a missing row, a write
-  error), `cleanupCreatedTask` deletes the row without a `task_deleted` — that
-  frame is emitted only by the delete routes — so a client keeps the id as
-  live (its reference mark and its task collection) and a client with no task
-  installed can still adopt it. Reachable through the daily pending-message
-  sweep landing between the consume path's pre-read and its transaction, or a
-  store error inside the transaction. *Closing:* announce after the consume
-  transaction commits (defer the announcement for that one caller) rather than
-  inside `createTask`, or give the manager's cleanup a deletion broadcast of
-  its own.
+- **An internally deleted task leaves a ghost entry in a client's live set.**
+  Some deletions happen inside the manager and broadcast nothing: the 60s
+  empty-task sweep (`TaskManager.tryCleanupEmptyTasks`) and the consume
+  cleanup drop rows directly, while clients derive "live" from
+  `listSnapshot ∪ created − deleted` over the events they received. A client
+  that received the matching `task_created` therefore keeps a task that no
+  longer exists as live, so a reference to it would not be marked exited and
+  the collection would not drop it until the next list read replaces the base
+  (the window is bounded by the sweep, and the message-consume carrier is no
+  longer announced, so only the GC path produces this). The error direction is
+  safe — a missing mark, never a wrong one. *Closing:* broadcast `task_deleted`
+  from the manager's own deletions as well, or make the derived set subscribe
+  to every deletion source instead of only the event stream.
+
+- **A list read that fails after a baseline does not downgrade existing marks.**
+  `loadTaskList` applies only successful reads, so a later 503 leaves the last
+  baseline in place. Exits are permanent, so an exited mark cannot become
+  false; only a `renamed` reference can keep a current name that has since
+  changed, and its old-name strike was correct when it was derived. This is
+  deliberate: clearing marks on a failed read would turn "cannot check" into
+  "no claim" and lose correct information. *Closing:* none expected; treat the
+  next successful read as the correction.
 
 - **The empty-task GC can fail a foreign key.** `Store.deleteEmptyTasks` throws
   `FOREIGN KEY constraint failed` for a zero-event task that still has a share

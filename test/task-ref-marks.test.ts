@@ -777,6 +777,42 @@ describe("task-reference marks", () => {
       }
     });
 
+    it("refuses two references that can only be placed on the same span", () => {
+      // `@same` is both names and the whole title. The two references cannot
+      // be told apart, so neither is placed; without the sibling (non-overlap)
+      // condition each edge check would succeed and return the whole title
+      // twice, i.e. mark a span that is not one reference.
+      const resolved = marks.resolveTaskRefs({
+        kind: "collaboration",
+        title: "@same",
+        ownTaskId: "lca",
+        sourceTaskId: "a",
+        sourceLabel: "same",
+        targetTaskId: "b",
+        targetLabel: "same",
+      });
+      assert.deepEqual(
+        resolved.map((target) => target.anchor),
+        [null, null],
+      );
+
+      // The rendered row is plain text: no reference span at all.
+      const row = render.addSystemMessage({
+        title: "@same",
+        body: "hello",
+        taskRef: {
+          kind: "collaboration",
+          ownTaskId: "lca",
+          sourceTaskId: "a",
+          sourceLabel: "same",
+          targetTaskId: "b",
+          targetLabel: "same",
+        },
+      });
+      assert.equal(row.querySelectorAll(".task-ref").length, 0);
+      assert.equal(row.querySelector("summary")?.textContent, "@same");
+    });
+
     it("rejects a reference that does not sit at its anchored edge", () => {
       // The same words at the other end do not satisfy the anchor: placement is
       // decided by the ids, and the rebuilt text must land exactly there.

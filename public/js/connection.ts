@@ -26,10 +26,15 @@ import {
   loadNewEvents,
   fallbackToNextTask,
   reconcileReplayedPendingTools,
+  discardInFlightReplays,
 } from "./events.ts";
 import * as api from "./api.ts";
 import { installAgentDirectory } from "./agent-directory.ts";
-import { beginTaskTopologyGeneration, loadTaskList } from "./task-topology.ts";
+import {
+  beginTaskTopologyGeneration,
+  loadTaskList,
+  refreshTaskListBaseline,
+} from "./task-topology.ts";
 import { applyConnectedLogLevel, log } from "./log.ts";
 
 const clog = log.scope("sse");
@@ -191,6 +196,15 @@ async function openStream(
     // SSE initial handshake: server assigns clientId (no agent field)
     if (msg.type === "connected" && msg.clientId) {
       state.clientId = msg.clientId;
+      // The stream is registered from this frame on. The startup list read ran
+      // in parallel with the registration, so a task created in that window is
+      // missing from it and its `task_created` was never delivered — the row
+      // that names it would be marked exited while the task is live. Take a
+      // baseline now: before-registration tasks are in the list, later ones
+      // arrive as events on this stream.
+      void refreshTaskListBaseline().catch(() => {
+        // A failed baseline stays "not loaded"; nothing is claimed from it.
+      });
       if (activeTaskId && state.taskId === activeTaskId) {
         setConnectionStatus("connected", "connected");
         void recoverAfterHandshake(activeTaskId, connectionEpoch);
@@ -491,6 +505,10 @@ function cleanup() {
   // A dropped stream ends this connection's collection: whatever it told us
   // must not survive as the next connection's baseline.
   beginTaskTopologyGeneration();
+  // A replay still in flight belongs to the stream that just died. Its queued
+  // live events and its history response describe that collection, not the one
+  // the new connection is about to establish.
+  discardInFlightReplays();
   setConnectionStatus("disconnected", "disconnected");
   state.eventSource = null;
   state.clientId = null;

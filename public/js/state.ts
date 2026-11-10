@@ -172,6 +172,13 @@ export const state = {
   replayInProgress: false,
   replayTarget: null as DocumentFragment | null,
   replayQueue: [] as AgentEvent[],
+  /**
+   * The connection generation that filled `replayQueue`. Events queued under a
+   * stream that has since been replaced describe a collection that no longer
+   * exists, so a drain from that stream drops them instead of applying them to
+   * the new one.
+   */
+  replayQueueEpoch: 0,
   // Reload state is per agent: an agent's restart only marks busy when it is
   // the agent currently carrying this client's task.
   agentReloading: false,

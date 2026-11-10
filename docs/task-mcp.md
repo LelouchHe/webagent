@@ -323,8 +323,9 @@ of the edge, both `kind: "task_cancel"` with the machine fields (`sourceTaskId`,
 `targetTaskId`, `reason`, `status`), the raw `sourceLabel`/`targetLabel` the
 title was built from, and a `role` in `data`, and both carrying the same
 `reason:` / `status:` body. The labels are additive: a row written before they
-existed still mutes but cannot strike its reference, because the reference is
-placed by task id and never parsed out of the title.
+existed leaves its reference unmarked (it is placed by task id and never parsed
+out of the title), and the row itself is never muted — a row is history and
+keeps its normal contrast.
 
 | Row lands on | `role` | Title |
 | --- | --- | --- |

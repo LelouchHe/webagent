@@ -500,6 +500,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
   const replayToken = ++replayLoadToken;
   state.replayInProgress = true;
   state.replayQueue = [];
+  state.replayQueueEpoch = state.connectionEpoch;
   try {
     const body = await api.withTimeout(async (signal) => {
       const res = await fetch(
@@ -750,6 +751,7 @@ async function _loadNewEventsImpl(
   const replayToken = ++replayLoadToken;
   state.replayInProgress = true;
   state.replayQueue = [];
+  state.replayQueueEpoch = state.connectionEpoch;
   // Seal the latest buffered text before replay can revert or preserve the
   // live element. In preserve-on-empty mode there may be no DB event to
   // reconstruct this tail, so cancelling the rAF without flushing loses it.
@@ -933,6 +935,21 @@ async function _loadNewEventsImpl(
 let historySentinelObserver: IntersectionObserver | null = null;
 let historyLoadToken = 0;
 let replayLoadToken = 0;
+
+/**
+ * Drop everything a connection generation had in flight: queued live events,
+ * the armed replay gate, and any history or catch-up read still awaiting its
+ * response. A reconnect starts a new generation whose events and history must
+ * not be ordered behind, or merged with, the old stream's.
+ */
+export function discardInFlightReplays(): void {
+  replayLoadToken += 1;
+  historyLoadToken += 1;
+  state.replayInProgress = false;
+  state.replayTarget = null;
+  state.replayQueue = [];
+  state.replayQueueEpoch = state.connectionEpoch;
+}
 
 function invalidateHistoryLoads() {
   historyLoadToken++;
@@ -1751,8 +1768,14 @@ function handleReplayContentEvent(
 
 /** Process queued SSE events, skipping any that duplicate content already in the DOM. */
 function drainReplayQueue(replayedTaskId: string) {
-  const queue = state.replayQueue;
+  // A queue can outlive the stream that filled it: a replay that finishes
+  // after a reconnect would otherwise apply the old stream's events to the new
+  // connection's collection (a stale `task_created` making a deleted child
+  // look live, or a stale rename replacing the current name).
+  const queue =
+    state.replayQueueEpoch === state.connectionEpoch ? state.replayQueue : [];
   state.replayQueue = [];
+  state.replayQueueEpoch = state.connectionEpoch;
   for (const msg of queue) {
     if (isDuplicateOfReplay(msg, replayedTaskId)) {
       if (
@@ -2011,6 +2034,11 @@ export function handleEvent(msg: AgentEvent) {
 
   // Queue events that arrive while history replay is in progress to avoid duplicates
   if (state.replayInProgress) {
+    // The queue belongs to the generation that opened the replay; a first push
+    // after a reconnect stamps the new one rather than inheriting an old one.
+    if (state.replayQueue.length === 0) {
+      state.replayQueueEpoch = state.connectionEpoch;
+    }
     state.replayQueue.push(msg);
     return;
   }

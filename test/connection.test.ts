@@ -302,6 +302,76 @@ describe("connection", () => {
     assert.equal(state.busy, true);
   });
 
+  it("re-reads the list after the stream registers so a live reference is not marked exited", async () => {
+    history.replaceState(null, "", "/#parent");
+    let listReads = 0;
+    let releaseHistory!: () => void;
+    const historyReady = new Promise<void>((resolve) => {
+      releaseHistory = resolve;
+    });
+    setFetch(async (url: string) => {
+      if (url.includes("/visibility")) return mockResponse({});
+      if (url === "/api/v1/tasks") {
+        listReads += 1;
+        // The startup read races the stream registration. The child is created
+        // after it and before this client is registered, so its `task_created`
+        // was never delivered on this connection.
+        return mockResponse(
+          listReads === 1
+            ? [{ id: "parent" }]
+            : [{ id: "parent" }, { id: "child" }],
+        );
+      }
+      if (url === "/api/v1/tasks/parent")
+        return mockResponse(taskResponse("parent"));
+      if (url.startsWith("/api/v1/tasks/parent/events")) {
+        await historyReady;
+        return mockResponse([
+          {
+            seq: 1,
+            task_id: "parent",
+            type: "system_message",
+            data: JSON.stringify({
+              kind: "task_created",
+              taskId: "child",
+              taskTitle: "child",
+              title: "Created task @child",
+              body: "Task ID    child",
+            }),
+          },
+        ]);
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    connection.connect();
+    const es = await latestES();
+    await flush();
+    assert.equal(listReads, 1, "only the startup read has answered");
+    releaseHistory();
+    await flush();
+
+    // The row is rendered against a baseline that predates the child.
+    const ref = dom.messages.querySelector(".system-msg .task-ref");
+    assert.ok(ref, "the row carries its reference");
+
+    // The handshake is the first moment the server registered this client, so
+    // anything created before it can only be learnt from a list read taken
+    // after it.
+    fireConnected(es, "cl-baseline");
+    await flush();
+
+    assert.equal(
+      ref.getAttribute("data-ref-state"),
+      null,
+      "a task created before the stream registered is live, not exited",
+    );
+    assert.ok(
+      fetchCalls.filter((call) => call.url === "/api/v1/tasks").length >= 2,
+      "the handshake forces a fresh baseline",
+    );
+  });
+
   it("resumes the most recent user-input task when there is no hash", async () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
