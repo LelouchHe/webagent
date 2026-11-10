@@ -55,6 +55,7 @@
 - Task history persisted in SQLite, survives restarts
 - `/switch` lists all tasks (git-branch style, `*` marks current in green)
 - Switching tasks replays full message history
+- Rows that name another task mark each reference: struck through once that task exits, struck and followed by its current name once it is renamed. See [Task UX](task-ux.md#task-paths)
 
 ## Multiple agents
 
