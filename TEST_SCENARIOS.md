@@ -1348,9 +1348,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
     confirmed binding, proving the field follows task facts rather than the
     configuration
   - activating a task whose parent runs on another agent costs no request:
-    no `GET /tasks/<parentId>` and no extra list, whether the activation came
-    from the task detail or from the create broadcast, and the coordinate is
-    already correct (the payload carries `parentId` + `parentAgentId`)
+    no `GET /tasks/<parentId>` and no list read beyond the connection's own,
+    whether the activation came from the task detail or from the create
+    broadcast, and the coordinate is already correct (the payload carries
+    `parentId` + `parentAgentId`). A fresh connection takes two list reads —
+    the startup baseline and the post-handshake baseline — and the test pins
+    that count so an activation cannot silently add a third
   - `/switch` rows state an agent only for rows whose agent differs from the
     current task's; a menu reopened after a switch uses the new baseline, and
     an already-open menu re-renders when the current binding changes
