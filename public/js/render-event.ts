@@ -592,13 +592,14 @@ function buildToolCall(data: Record<string, unknown>): HTMLElement {
     }
   }
   applyToolCallSource(el, tc.code);
-  const detail = el.querySelector(".tc-detail");
-  if (detail) {
-    el.addEventListener("click", (e) => {
-      if ((e.target as Element).closest("details")) return;
-      detail.classList.toggle("expanded");
-    });
-  }
+  // Click-to-expand lives on the card, not on the detail node: the detail can be
+  // born later, in `applyToolCallMetadata`, when an agent sends the command on a
+  // `tool_call_update` instead of the create event. Resolving it at click time
+  // keeps both creation paths interactive without re-binding per update.
+  el.addEventListener("click", (e) => {
+    if ((e.target as Element).closest("details")) return;
+    el.querySelector(".tc-detail")?.classList.toggle("expanded");
+  });
   return el;
 }
 

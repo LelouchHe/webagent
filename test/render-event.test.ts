@@ -912,6 +912,59 @@ describe("render-event", () => {
       assert.equal(tool.dataset.kind, "execute");
     });
 
+    // Claude reports `rawInput: {}` on the create event and sends the command
+    // on a later update. The detail node is therefore born outside
+    // `buildToolCall`, and click-to-expand must not depend on where it was
+    // created — otherwise the truncated command can never be opened.
+    it("expands a detail whose command arrives only on a tool_call_update", () => {
+      const tool = append(
+        mod.renderContentEvent(
+          "tool_call",
+          { id: "tc-claude", title: "Terminal", kind: "execute", rawInput: {} },
+          makeHooks(),
+        ),
+      )!;
+      assert.equal(tool.querySelector(".tc-detail"), null);
+
+      const command =
+        'cd /Users/lelouch/mine/space; grep -ril "skill-eval" --include=*.md . | head -20';
+      for (const status of ["", "", "completed"]) {
+        mod.renderContentEvent(
+          "tool_call_update",
+          { id: "tc-claude", status, rawInput: { command } },
+          makeHooks({ findToolCallEl: () => tool }),
+        );
+      }
+
+      const detail = tool.querySelector(".tc-detail") as HTMLElement;
+      assert.equal(detail.textContent, `$ ${command}`);
+      assert.equal(detail.classList.contains("expanded"), false);
+
+      // Clicking the card body expands, exactly once — repeated updates must not
+      // stack listeners and cancel each other out.
+      (tool.querySelector(".tc-title") as HTMLElement).click();
+      assert.equal(detail.classList.contains("expanded"), true);
+      assert.equal(tool.querySelectorAll(".tc-detail").length, 1);
+
+      // A disclosure's own click stays its own.
+      mod.renderContentEvent(
+        "tool_call_update",
+        {
+          id: "tc-claude",
+          content: [
+            { type: "content", content: { type: "text", text: "OUT" } },
+          ],
+        },
+        makeHooks({ findToolCallEl: () => tool }),
+      );
+      (tool.querySelector("details.tc-output summary") as HTMLElement).click();
+      assert.equal(detail.classList.contains("expanded"), true);
+
+      // And clicking the card again collapses it.
+      detail.click();
+      assert.equal(detail.classList.contains("expanded"), false);
+    });
+
     it("keeps a descriptive Copilot title when it differs from the command", () => {
       const tool = append(
         mod.renderContentEvent(
