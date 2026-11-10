@@ -65,6 +65,7 @@ import {
   noteTaskCreated,
   noteTaskDeleted,
   noteTaskTitleUpdated,
+  taskRefFieldsFrom,
 } from "./task-ref-marks.ts";
 import { applyConnectedLogLevel } from "./log.ts";
 import { log } from "./log.ts";
@@ -1411,31 +1412,17 @@ export function replayEvent(
       break;
     case "system_message":
       if (typeof d.title === "string" && d.title.trim()) {
-        // A persisted row names the tasks it refers to in `data`; a live
-        // envelope names the row's own task `taskId` and the created target
-        // `targetTaskId`. The mark compares ids, never titles.
+        // A persisted row names the tasks it refers to in `data`.
+        // `events[idx]` is this row's own task; a direct render (tests, a
+        // synthetic row) may omit the stored row entirely.
+        const storedTaskId = events[idx]?.task_id;
         addSystemMessage({
           title: d.title,
           body: typeof d.body === "string" ? d.body : undefined,
-          taskRef: {
-            kind: typeof d.kind === "string" ? d.kind : "",
-            // `events[idx]` is this row's own task; a direct render (tests,
-            // a synthetic row) may omit the stored row entirely.
-            ownTaskId:
-              typeof events[idx]?.task_id === "string"
-                ? events[idx].task_id
-                : null,
-            taskId: typeof d.taskId === "string" ? d.taskId : null,
-            taskTitle: typeof d.taskTitle === "string" ? d.taskTitle : null,
-            sourceTaskId:
-              typeof d.sourceTaskId === "string" ? d.sourceTaskId : null,
-            sourceLabel:
-              typeof d.sourceLabel === "string" ? d.sourceLabel : null,
-            targetTaskId:
-              typeof d.targetTaskId === "string" ? d.targetTaskId : null,
-            targetLabel:
-              typeof d.targetLabel === "string" ? d.targetLabel : null,
-          },
+          taskRef: taskRefFieldsFrom(
+            d,
+            typeof storedTaskId === "string" ? storedTaskId : null,
+          ),
         });
       }
       break;

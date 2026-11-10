@@ -105,6 +105,32 @@ export interface TaskRefRowInput {
   targetLabel?: string | null;
 }
 
+/**
+ * Narrow one persisted system row's `data` into the reference fields it names.
+ *
+ * Replay hands the stored JSON over as `unknown`: anything that is not a string
+ * is "not recorded", which is `null` for every field and `""` for `kind` (the
+ * kind is a dispatch key, and an unknown row simply names nothing). `ownTaskId`
+ * is the task whose transcript holds the row, which only the caller knows.
+ */
+export function taskRefFieldsFrom(
+  data: Record<string, unknown>,
+  ownTaskId: string | null,
+): Omit<TaskRefRowInput, "title"> {
+  const text = (value: unknown): string | null =>
+    typeof value === "string" ? value : null;
+  return {
+    kind: text(data.kind) ?? "",
+    ownTaskId,
+    taskId: text(data.taskId),
+    taskTitle: text(data.taskTitle),
+    sourceTaskId: text(data.sourceTaskId),
+    sourceLabel: text(data.sourceLabel),
+    targetTaskId: text(data.targetTaskId),
+    targetLabel: text(data.targetLabel),
+  };
+}
+
 /** A reference placed in the title, byte-for-byte as the title spells it. */
 export interface TaskRefAnchor {
   text: string;
@@ -150,22 +176,38 @@ interface Candidate {
  * A row of any other kind names nothing.
  */
 export function resolveTaskRefs(input: TaskRefRowInput): TaskRefTarget[] {
-  const candidates = collectCandidates(input);
-  // A reference is only placable against the other reference the row names:
-  // the sibling proves the marked span cannot be a title-wide match.
-  return candidates.map((candidate) => {
-    const sibling = candidates.find((other) => other !== candidate);
-    return {
-      taskId: candidate.taskId,
-      label: candidate.label,
-      anchor: placeReference(
-        input.title,
-        candidate.label,
-        candidate.position,
-        sibling ? formatTaskReference(sibling.label) : null,
-      ),
-    };
-  });
+  const anchored = collectCandidates(input).map((candidate) => ({
+    taskId: candidate.taskId,
+    label: candidate.label,
+    anchor: placeAtEdge(input.title, candidate.label, candidate.position),
+  }));
+  // Mark the group or nothing. A row is only readable as the shape its kind
+  // promises when every reference it names lands at its own edge — which is
+  // also what proves the references are those and not an occurrence somewhere
+  // in the prose — and when no two of those spans overlap. One unplaceable or
+  // colliding reference makes the whole set ambiguous, so none is marked.
+  const readable =
+    anchored.every((target) => target.anchor !== null) &&
+    !hasOverlappingAnchors(anchored);
+  return anchored.map((target) => ({
+    ...target,
+    anchor: readable ? target.anchor : null,
+  }));
+}
+
+/** Whether any two placed references share part of the title. */
+function hasOverlappingAnchors(targets: TaskRefTarget[]): boolean {
+  const placed = targets
+    .map((target) => target.anchor)
+    .filter((anchor): anchor is TaskRefAnchor => anchor !== null);
+  return placed.some((anchor, index) =>
+    placed.some(
+      (other, otherIndex) =>
+        otherIndex > index &&
+        anchor.start < other.end &&
+        other.start < anchor.end,
+    ),
+  );
 }
 
 /** The references a row of this kind and side can name, in title order. */
@@ -200,31 +242,25 @@ function collectCandidates(input: TaskRefRowInput): Candidate[] {
   return candidates;
 }
 
-function placeReference(
+/**
+ * Place one reference at the edge its id implies, or nowhere. Only an exact
+ * match of the rebuilt reference at that edge counts; searching for it anywhere
+ * in the title would let prose that merely contains the name pass as the
+ * reference.
+ */
+function placeAtEdge(
   title: string,
   label: string,
   position: RefPosition,
-  sibling: string | null,
 ): TaskRefAnchor | null {
   const text = formatTaskReference(label);
   if (position === "prefix") {
     if (!title.startsWith(text)) return null;
-    const end = text.length;
-    if (sibling !== null) {
-      const siblingStart = title.length - sibling.length;
-      if (siblingStart < end || !title.endsWith(sibling)) return null;
-    }
-    return { text, start: 0, end };
+    return { text, start: 0, end: text.length };
   }
-  if (text.length > title.length || !title.endsWith(text)) return null;
+  if (!title.endsWith(text)) return null;
   const start = title.length - text.length;
-  if (
-    sibling !== null &&
-    (!title.startsWith(sibling) || sibling.length > start)
-  ) {
-    return null;
-  }
-  return { text, start, end: start + text.length };
+  return { text, start, end: title.length };
 }
 
 interface RefState {

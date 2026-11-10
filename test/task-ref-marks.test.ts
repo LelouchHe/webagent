@@ -777,6 +777,75 @@ describe("task-reference marks", () => {
       }
     });
 
+    it("proves the row reads as its kind, not just that the spans differ", () => {
+      // The source sits at the front, but the title does not end with the
+      // target's reference: this is not the shape a collaboration row is
+      // written as, so the source's span must not be marked either. A rule
+      // that only dropped *overlapping* anchors would mark it.
+      const collaboration = marks.resolveTaskRefs({
+        kind: "collaboration",
+        title: "@a sent @b and @c",
+        ownTaskId: "a",
+        sourceTaskId: "a",
+        sourceLabel: "a",
+        targetTaskId: "b",
+        targetLabel: "b",
+      });
+      assert.deepEqual(
+        collaboration.map((target) => target.anchor),
+        [null, null],
+      );
+
+      // A creation row whose reference is not at the end is equally unproven.
+      const created = marks.resolveTaskRefs({
+        kind: "task_created",
+        title: "@child was created",
+        taskId: "child",
+        taskTitle: "child",
+      });
+      assert.equal(created[0].anchor, null);
+    });
+
+    it("narrows a persisted row's fields without inventing values", () => {
+      // Replay hands over stored JSON: a non-string is "not recorded", which is
+      // null per field and "" for the dispatch key. `ownTaskId` comes from the
+      // stored row, not from the payload.
+      assert.deepEqual(
+        marks.taskRefFieldsFrom(
+          {
+            kind: "collaboration",
+            sourceTaskId: "a",
+            sourceLabel: "a",
+            targetTaskId: 7,
+            targetLabel: null,
+            taskId: undefined,
+            taskTitle: { text: "x" },
+          },
+          "own",
+        ),
+        {
+          kind: "collaboration",
+          ownTaskId: "own",
+          taskId: null,
+          taskTitle: null,
+          sourceTaskId: "a",
+          sourceLabel: "a",
+          targetTaskId: null,
+          targetLabel: null,
+        },
+      );
+      assert.deepEqual(marks.taskRefFieldsFrom({}, null), {
+        kind: "",
+        ownTaskId: null,
+        taskId: null,
+        taskTitle: null,
+        sourceTaskId: null,
+        sourceLabel: null,
+        targetTaskId: null,
+        targetLabel: null,
+      });
+    });
+
     it("refuses two references that can only be placed on the same span", () => {
       // `@same` is both names and the whole title. The two references cannot
       // be told apart, so neither is placed; without the sibling (non-overlap)
