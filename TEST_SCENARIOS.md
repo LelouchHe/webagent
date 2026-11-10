@@ -201,8 +201,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a live row resolves its target from `targetTaskId` (not the row's own
     `taskId`) and is marked when that other task is deleted while the client
     views the parent
-  - a task created after the applied snapshot (or before a later, still-older
-    one) is never marked; a create event without a title keeps the listed one
+  - a task this client saw created after the applied snapshot (or before a
+    later, still-older one) is never marked; a create event without a title
+    keeps the listed one. A create this client receives no event for is the
+    gap recorded in `docs/known-issues.md`
   - rows rendered before the boot list read are re-evaluated when it arrives
   - `task_title_updated` refreshes a row that names a Task the client is not
     viewing, and applies to a row rendered after it; the current Task's header

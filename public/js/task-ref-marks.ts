@@ -290,7 +290,9 @@ export function refreshTaskRefMarks(): void {
  * recorded, and mark it from the collection as it stands. Rendering is the
  * single moment a reference is evaluated for the first time, so history
  * replay, live insertion, and a back-paged fragment all agree without a later
- * pass over the DOM.
+ * pass over the DOM. The span must be freshly created by the renderer: the
+ * recorded name is taken from its text, so registering an already-marked span
+ * would fold the appended current name into the struck one.
  */
 export function registerTaskRefRow(
   row: HTMLElement,
