@@ -562,6 +562,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/store.test.ts`
   - task creation / deletion / updates
+  - recent-path keys are canonical: one directory typed two ways stays one row, and a store opened on a database holding legacy non-canonical keys merges each variant into the canonical row keeping its newest use
   - config persistence, including clearing one column with `null` without touching the others
   - an agent image is stored as an attachment (file + row) and referenced by its own `agent_image` record between the surrounding text blocks; the persisted row carries no base64, the live broadcast is the same reference, and an oversized image becomes visible text with no row
   - title persistence
@@ -630,7 +631,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/file-viewer-routes.test.ts`
   - Bearer-gated `info` / `list` and independently HMAC-signed `content`
   - absolute / `~` / `..` / symlink canonicalization, portable HOME display paths, relative/invalid rejection
-  - bounded `opendir` scanning, directory order, hidden/special omission, and truncation
+  - bounded `opendir` scanning, directory order, `hidden=1` dot entries (omitted by default), special omission, and truncation
   - one-descriptor regular-file validation/sniff/stream flow for directories, FIFOs, and mutable paths
   - 1 MiB inline text preview; complete streamed attachment fallback for larger/unknown content
   - signed URL tamper/retarget rejection, no-store responses, and URL-safe Unicode/space paths
@@ -937,6 +938,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/file-browser.test.ts`, `test/view-command.test.ts`, `test/file-viewer-frontend.test.ts`
   - cwd-relative, absolute, portable Windows/HOME, root, trailing-slash, and local-filter path semantics
+  - dot-filter reveal: `hidden=1` is requested and cache-partitioned only while the typed segment starts with `.`, hidden rows match by prefix, and visible names containing a dot never answer a `.` filter
   - Enter dispatch: directory drill-down vs direct file open/download
   - existing Markdown pipeline reuse, safe highlighted code/text + batched line numbers, image, attachment fallback, and close lifecycle
 

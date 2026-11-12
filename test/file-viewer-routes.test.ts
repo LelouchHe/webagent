@@ -280,6 +280,33 @@ describe("file viewer routes", () => {
     assert.equal(typeof txt.mtime, "number");
   });
 
+  it("list?hidden=1 exposes dotfiles on request", async () => {
+    const r = await req(
+      port,
+      "GET",
+      `/api/v1/files/list?path=${encodeURIComponent(projDir)}&hidden=1`,
+      auth(token),
+    );
+    assert.equal(r.status, 200);
+    const b = JSON.parse(r.body);
+    const names = b.entries.map((e: { name: string }) => e.name);
+    // Dot entries sort with the rest of their group (directories first, then
+    // names); the flag only decides visibility, never ordering or `truncated`.
+    assert.deepEqual(names, [
+      "sub",
+      ".hidden.env",
+      "a.txt",
+      "b.txt",
+      "link.md",
+      "notes.md",
+    ]);
+    const hidden = b.entries.find(
+      (e: { name: string }) => e.name === ".hidden.env",
+    );
+    assert.equal(hidden.kind, "file");
+    assert.equal(hidden.size, 6);
+  });
+
   it("list on a file returns 400", async () => {
     const r = await req(
       port,

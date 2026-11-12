@@ -436,6 +436,40 @@ describe("+ title-first create", () => {
     assert.equal(dom.input.value, "+api-fix public/");
   });
 
+  it("asks for hidden directories only when the segment starts with a dot", async () => {
+    listEntries = [
+      { name: "public", kind: "dir", size: null, mtime: 1 },
+      { name: ".config", kind: "dir", size: null, mtime: 1 },
+    ];
+
+    dom.input.value = "+api-fix .";
+    commands.updateSlashMenu();
+    await settle();
+
+    assert.ok(
+      fetchCalls.some(
+        (c) =>
+          c.url.startsWith("/api/v1/files/list?") &&
+          c.url.endsWith("&hidden=1"),
+      ),
+      `expected a hidden listing, got: ${JSON.stringify(fetchCalls.map((c) => c.url))}`,
+    );
+    const row = [...dom.slashMenu.querySelectorAll(".slash-item")].find(
+      (r: any) => r.querySelector(".slash-primary")?.textContent === ".config",
+    );
+    assert.ok(row, "expected the hidden directory row");
+
+    fetchCalls = [];
+    dom.input.value = "+api-fix pu";
+    commands.updateSlashMenu();
+    await settle();
+    assert.equal(
+      fetchCalls.some((c) => c.url.includes("hidden=1")),
+      false,
+      "a visible prefix must not ask for dotfiles",
+    );
+  });
+
   it("clicking the action row creates the previewed task", async () => {
     dom.input.value = "+api-fix";
     commands.updateSlashMenu();

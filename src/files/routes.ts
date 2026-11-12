@@ -140,7 +140,7 @@ export async function handleFileRoutes(
         await handleInfo(res, deps, pathRaw);
         return true;
       case "list":
-        await handleList(res, pathRaw);
+        await handleList(res, pathRaw, params);
         return true;
       case "content":
         await handleContent(res, deps, pathRaw, params);
@@ -195,13 +195,22 @@ async function handleInfo(
   json(res, HTTP_STATUS.OK, out);
 }
 
-async function handleList(res: ServerResponse, pathRaw: string): Promise<void> {
+async function handleList(
+  res: ServerResponse,
+  pathRaw: string,
+  params: URLSearchParams,
+): Promise<void> {
   const canonical = await resolvePath(pathRaw);
   const meta = await statMeta(canonical);
   if (meta.kind !== "dir") {
     throw new FilePathError(HTTP_STATUS.BAD_REQUEST, "Not a directory");
   }
-  const { entries, truncated } = await listDirectory(canonical);
+  // Dotfiles stay out of the default listing; `hidden=1` asks for them
+  // explicitly (the browser sends it only while the typed filter targets a
+  // hidden entry), so a plain directory browse is never flooded by them.
+  const { entries, truncated } = await listDirectory(canonical, {
+    includeHidden: params.get("hidden") === "1",
+  });
   const parent = dirname(canonical);
   json(res, HTTP_STATUS.OK, {
     path: canonical,

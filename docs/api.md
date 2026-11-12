@@ -899,7 +899,11 @@ Set an arbitrary ACP task config option. This path is primarily for newer config
 
 #### `GET /api/v1/recent-paths`
 
-List recent working directory paths, sorted by last used (most recent first). Paths are recorded on each prompt, keeping `last_used_at` up to date. Stale paths are cleaned up based on the `limits.recent_paths_ttl` config.
+List recent working directory paths, sorted by last used (most recent first).
+Paths are recorded on each prompt, keeping `last_used_at` up to date; the key is
+the canonical directory string (expanded, normalized, no trailing separator), so
+one directory is one row regardless of how it was typed. Stale paths are cleaned
+up based on the `limits.recent_paths_ttl` config.
 
 **Query parameters:**
 
@@ -1344,8 +1348,17 @@ List one directory (no recursive tree expansion). Scans at most 2,001 raw
 entries, returns eligible entries from the first 2,000, and marks `truncated`
 when the sentinel entry exists; this bounds memory/CPU even for enormous
 directories. Returned directories are sorted first, then files, with each group
-sorted lexicographically. Dotfiles are omitted. Symlinks to regular
-files/directories are followed; FIFOs, sockets, and device nodes are omitted.
+sorted lexicographically. Dotfiles are omitted unless `hidden=1` asks for them
+(the browser sends it only while the typed filter starts with `.`), so a plain
+browse is never flooded by them. Symlinks to regular files/directories are
+followed; FIFOs, sockets, and device nodes are omitted.
+
+**Query parameters:**
+
+| Param    | Type | Default | Description                                     |
+| -------- | ---- | ------- | ----------------------------------------------- |
+| `path`   | path | —       | Directory to list (required)                    |
+| `hidden` | `1`  | absent  | Include dot entries; any other value omits them
 
 **Response** `200`:
 

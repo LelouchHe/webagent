@@ -26,6 +26,8 @@
 
 - `/view` opens a live picker rooted at the current task cwd; type a path to
   filter, tap a folder to enter one level, or use the `..` row to go back
+- Dotfiles stay out of the listing until the typed segment starts with `.`, so
+  `~/.config` or `.env` are reachable without filling every menu with them
 - Absolute `/...` and `~/...` paths can browse anywhere available to the
   single-operator WebAgent process
 - Markdown and code/text up to 1 MiB render with the existing chat pipeline,

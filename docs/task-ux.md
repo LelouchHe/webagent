@@ -125,7 +125,8 @@ Task runs in and is not echoed back while the field is empty. A
 space then lists cwd candidates: the current cwd marked `*`, the recent paths,
 and, once a path prefix is typed, the real directory layer to drill into. One
 directory is one candidate however it was typed — the cwd and the recent-path
-keys are canonical (expanded, normalized, no trailing separator).
+keys are canonical (expanded, normalized, no trailing separator). A segment
+starting with `.` reveals hidden directories.
 
 A bare `+` has no title to create with. It shows the hint
 `create task · type a title`, and Enter reports `err: Task title is required after +`.

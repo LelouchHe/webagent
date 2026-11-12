@@ -78,6 +78,16 @@ export function fileFilter(query: string): string {
   return raw.slice(slash + 1).toLowerCase();
 }
 
+/**
+ * A filter segment that starts with `.` addresses hidden entries: no visible
+ * name begins with a dot, so a leading dot is the unambiguous way to ask for
+ * them. This decides both the backend listing flag and the matching rule, and
+ * it keeps dotfiles out of every other menu.
+ */
+export function wantsHidden(filter: string): boolean {
+  return filter.trim().startsWith(".");
+}
+
 /** Join a canonical API directory path and one returned entry name. */
 export function joinListedPath(directory: string, name: string): string {
   if (directory === "/") return `/${name}`;
