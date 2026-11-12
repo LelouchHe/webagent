@@ -46,8 +46,9 @@ export function expandHomePath(
 }
 
 /**
- * The one spelling of a directory: HOME expanded, with trailing separators and
- * trailing `.` segments removed.
+ * A cwd's canonical spelling: HOME expanded, with trailing separators and
+ * trailing `.` segments removed. It collapses the trailing end only — it is
+ * deliberately not a claim that every spelling of one directory agrees.
  *
  * Used wherever a cwd is stored or compared — task rows, the recent-path LRU,
  * the pickers' "this is the current directory" check — so `/x`, `/x/`, and
@@ -64,7 +65,8 @@ export function expandHomePath(
  * The strip is bounded by the path's own root, which keeps a filesystem root
  * intact: `C:\`, a UNC share root, and the device namespace's `\\.\C:\` are
  * roots, not directories with a separator to trim (`\\.\C:` is a volume
- * device, a different object).
+ * device, a different object). A trailing `.` under a root yields that root
+ * (`/.` is `/`), never an empty string.
  *
  * Idempotent: the result never starts a new `~` expansion, so passing a stored
  * cwd through this twice (ingress, then the storage boundary) is a no-op.
@@ -87,14 +89,13 @@ export function canonicalDirectoryPath(
       canonical = canonical.slice(0, -1);
     }
     for (const dot of [`${path.sep}.`, "/."]) {
-      if (
-        canonical.length > dot.length &&
-        canonical.length - dot.length >= root.length &&
-        canonical.endsWith(dot)
-      ) {
-        canonical = canonical.slice(0, -dot.length);
-        break;
-      }
+      if (!canonical.endsWith(dot)) continue;
+      const trimmed = canonical.slice(0, -dot.length);
+      // A `.` directly under a root names that root (`/.` is `/`,
+      // `C:\.` is `C:\`); a result shorter than the root is not a path,
+      // so the root itself is the answer rather than an empty string.
+      canonical = trimmed.length < root.length ? root : trimmed;
+      break;
     }
     if (canonical === before) return canonical;
   }

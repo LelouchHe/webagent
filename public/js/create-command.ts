@@ -161,10 +161,17 @@ export function taskAgentFailureLines(
  * while `./rel` stops leaking a `/./`.
  */
 export function tidyResolvedPath(path: string): string {
-  return path
+  const tidied = path
     .replace(/\/\.\//g, "/")
     .replace(/\/{2,}/g, "/")
     .replace(/\/\.$/, "");
+  if (!/\/\.$/.test(path)) return tidied;
+  // A trailing `/.` names the directory before it, and that directory can be
+  // a root: dropping the segment from `/.` must leave `/`, not an empty path
+  // the file API rejects as missing.
+  if (tidied === "") return "/";
+  if (/^[A-Za-z]:$/.test(tidied)) return `${tidied}/`;
+  return tidied;
 }
 
 /**

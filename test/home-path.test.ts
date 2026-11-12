@@ -33,7 +33,7 @@ describe("home paths", () => {
     );
   });
 
-  it("returns one spelling per directory", () => {
+  it("collapses trailing separators and trailing `.` segments", () => {
     // One directory, several typings: a task cwd and the recent-path key built
     // from it must not depend on how the user typed the trailing end.
     assert.equal(canonicalDirectoryPath("/tmp/project/", home), "/tmp/project");
@@ -49,8 +49,11 @@ describe("home paths", () => {
     // Relative input keeps its meaning and loses the same trailing parts.
     assert.equal(canonicalDirectoryPath("src/", home), "src");
     assert.equal(canonicalDirectoryPath("src/./", home), "src");
-    // Root and an empty field keep their identity.
+    // Root and an empty field keep their identity; a `.` under a root names
+    // that root and never collapses to an empty path.
     assert.equal(canonicalDirectoryPath("/", home), "/");
+    assert.equal(canonicalDirectoryPath("/.", home), "/");
+    assert.equal(canonicalDirectoryPath("/./", home), "/");
     assert.equal(canonicalDirectoryPath("", home), "");
   });
 
@@ -141,6 +144,12 @@ describe("home paths", () => {
     assert.equal(
       canonicalDirectoryPath("\\\\srv\\share\\", windowsHome, win32),
       "\\\\srv\\share\\",
+    );
+    // A trailing `.` under a root yields the root, not `C:` (drive-relative).
+    assert.equal(canonicalDirectoryPath("C:\\.", windowsHome, win32), "C:\\");
+    assert.equal(
+      canonicalDirectoryPath("\\\\.\\C:\\.", windowsHome, win32),
+      "\\\\.\\C:\\",
     );
     assert.equal(
       abbreviateHomePath("D:\\project\\file.ts", windowsHome, win32),

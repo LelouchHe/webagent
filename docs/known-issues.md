@@ -45,6 +45,19 @@ time. An entry without a "closing condition" is a wish, not an issue.
 
 ## Task lifecycle and storage
 
+- **The same directory can still hold two recent-path keys.** Cwds are stored
+  canonical at the trailing end only: `/x`, `/x/`, and `/x/./` collapse, but a
+  cwd typed with an interior `..` (for example `~/branch/../repo` beside
+  `~/repo`) keeps its own key while abbreviating to the same display path, so
+  `+`/`/new` can list that directory twice. Folding `..` lexically would fix the
+  display and break correctness: with `a/link -> b/nested`, `a/link/..` is `b`,
+  so a task would move to another directory on the next write or reopen. The
+  residual is therefore a deliberate limit, not a defect to patch with another
+  normalizer. *Closing:* give each directory an identity independent of its
+  spelling (a resolved real path stored beside the typed one, or a display-time
+  collision check that can tell "same directory, two spellings" from "two
+  different directories that render alike"), and dedupe on that identity only.
+
 - **A Root replacement is announced only when the fallback lands normally.**
   `/exit` prints its request row and the landing prints a `notify: Root replaced`
   row, both from client memory. If the fallback's own reads fail
