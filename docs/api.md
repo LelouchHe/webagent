@@ -902,13 +902,15 @@ Set an arbitrary ACP task config option. This path is primarily for newer config
 List recent working directory paths, sorted by last used (most recent first).
 Paths are recorded on each prompt, keeping `last_used_at` up to date; the key is
 the stored cwd form: HOME expanded, `.` and `..` folded the way a shell's `cd`
-folds them (so `a/link/..` is `a`, not the symlink target's parent), repeated and
-trailing separators removed. One directory therefore holds one row. A path whose
-logical form does not exist but resolves physically — a component after a symlink
-that lives beside the target — is stored by its resolved path instead, so a
-stored cwd always names a directory that is really there. Stale paths are cleaned
-up based on the `limits.recent_paths_ttl` config. Task rows and recent-path keys
-written by an older build are rewritten to that form when the store opens.
+folds them (so `a/link/..` is `a`, not the symlink target's parent), and repeated
+and trailing separators removed. One directory therefore holds one row, with two
+exceptions that are about the path's spelling, not its directory: a name that
+differs only in letter case is a separate key on a case-insensitive volume, and a
+task row written by an older build that still carries a `.`/`..` segment keeps its
+bytes (folding it could move a running task across a symlink). Stale paths are
+cleaned up based on the `limits.recent_paths_ttl` config. Task rows and
+recent-path keys written by an older build are otherwise rewritten to that form
+when the store opens.
 
 **Query parameters:**
 
@@ -1363,7 +1365,7 @@ followed; FIFOs, sockets, and device nodes are omitted.
 | Param    | Type | Default | Description                                     |
 | -------- | ---- | ------- | ----------------------------------------------- |
 | `path`   | path | —       | Directory to list (required)                    |
-| `hidden` | `1`  | absent  | Include dot entries; any other value omits them
+| `hidden` | `1`  | absent  | Include dot entries; any other value omits them |
 
 **Response** `200`:
 

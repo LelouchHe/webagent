@@ -176,22 +176,20 @@ describe("/view Enter dispatch", () => {
       assert.equal(view.viewItemMatches(rows[2], "/work/."), false);
       assert.equal(view.viewItemMatches(rows[1], "/work/.g"), true);
       assert.equal(view.viewItemMatches(rows[0], "/work/.z"), false);
-      // The parent row is not a dotfile.
-      assert.equal(
-        view.viewItemMatches(
-          {
-            name: "..",
-            parent: true,
-            kind: "dir",
-            path: "/",
-            pathDisplay: "/",
-            size: null,
-            mtime: 0,
-          },
-          "/work/.",
-        ),
-        false,
-      );
+      // The parent row is navigation, not a hidden entry: a dot filter keeps it
+      // reachable (`/view ..` still shows the `..` row).
+      const parent = {
+        name: "..",
+        parent: true,
+        kind: "dir",
+        path: "/",
+        pathDisplay: "/",
+        size: null,
+        mtime: 0,
+      };
+      assert.equal(view.viewItemMatches(parent, "/work/."), true);
+      assert.equal(view.viewItemMatches(parent, "/work/.."), true);
+      assert.equal(view.viewItemMatches(parent, "/work/re"), false);
     });
 
     it("keeps the plain listing unchanged", () => {

@@ -7,6 +7,7 @@ import { addSystem } from "./render.ts";
 import type { SlashItemSpec } from "./slash-render.ts";
 import {
   fileFilter,
+  foldCwdPath,
   joinListedPath,
   resolveBrowseTarget,
   resolveViewPath,
@@ -83,13 +84,13 @@ export function viewItemMatches(item: unknown, query: string): boolean {
   const row = item as FileBrowserItem;
   const filter = fileFilter(query);
   if (!filter) return true;
-  // A dot filter addresses hidden entries only, with prefix semantics: they
-  // are the entries a plain listing never showed, and `includes` would let
-  // `README.md` answer a `.` filter. `..` is not a dotfile.
-  if (wantsHidden(filter)) {
-    return !row.parent && row.name.toLowerCase().startsWith(filter);
-  }
-  if (row.parent) return "..".includes(filter);
+  // The parent row is the one entry a dot filter must not swallow: `.` and `..`
+  // are prefixes of its name, and it is navigation, not a hidden entry.
+  if (row.parent) return "..".startsWith(filter);
+  // Otherwise a dot filter addresses hidden entries only, with prefix
+  // semantics: they are the entries a plain listing never showed, and
+  // `includes` would let `README.md` answer a `.` filter.
+  if (wantsHidden(filter)) return row.name.toLowerCase().startsWith(filter);
   return row.name.toLowerCase().includes(filter);
 }
 
@@ -125,7 +126,9 @@ export function viewItemSpec(item: unknown): SlashItemSpec {
 /** Enter dispatch: directory → drill down; file → responsive viewer. */
 export async function openViewPath(query: string): Promise<void> {
   try {
-    const path = resolveViewPath(query, state.taskCwd);
+    // Same fold the create path uses, so a file opened from the picker is the
+    // one the picker listed.
+    const path = foldCwdPath(resolveViewPath(query, state.taskCwd));
     const info = await api.getFileInfo(path);
     if (info.kind === "dir") {
       enterViewDirectory(info.pathDisplay ?? info.path);

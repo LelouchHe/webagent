@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { resolveStoredCwd } from "./cwd-path.ts";
+import { canonicalCwd } from "./cwd-path.ts";
 import { formatTaskPath } from "./shared/task-reference.ts";
 import {
   buildCollaborationSystemMessage,
@@ -912,8 +912,13 @@ export class Store {
    * against the recent list and fail to recognize the same directory, rendering
    * it twice. Rewrite both sides to the canonical form: task rows first, then
    * merge each recent-path variant into its canonical key keeping the newest
-   * use. Idempotent, and it cannot invent a directory: a path whose `..` has no
-   * existing component to fold is left exactly as stored.
+   * use.
+   *
+   * A task row that still contains a `.`/`..` segment is the one case left
+   * alone. Folding it would apply today's shell rule to a directory the task
+   * was actually running in under the old rule — across a symlink, that is a
+   * different directory — so the row keeps its bytes and the picker may show it
+   * beside a folded recent key until the user moves the task.
    */
   private migrateCanonicalCwds(): void {
     const tasks = this.db.prepare("SELECT id, cwd FROM tasks").all() as Array<{
@@ -932,11 +937,16 @@ export class Store {
     const remove = this.db.prepare("DELETE FROM recent_paths WHERE cwd = ?");
     this.db.transaction(() => {
       for (const row of tasks) {
-        const canonical = resolveStoredCwd(row.cwd);
+        if (
+          row.cwd.split(/[\\/]/).some((part) => part === "." || part === "..")
+        ) {
+          continue;
+        }
+        const canonical = canonicalCwd(row.cwd);
         if (canonical !== row.cwd) setCwd.run(canonical, row.id);
       }
       for (const row of paths) {
-        const canonical = resolveStoredCwd(row.cwd);
+        const canonical = canonicalCwd(row.cwd);
         if (canonical === row.cwd) continue;
         upsert.run(canonical, row.last_used_at);
         remove.run(row.cwd);
@@ -966,7 +976,7 @@ export class Store {
       .prepare(
         "INSERT INTO tasks (id, cwd, source, parent_id, title, created_at, last_active_at) VALUES (?, ?, 'root', NULL, 'root', ?, ?)",
       )
-      .run(this.rootTaskId, resolveStoredCwd(cwd), now, now);
+      .run(this.rootTaskId, canonicalCwd(cwd), now, now);
   }
 
   /**
@@ -1029,7 +1039,7 @@ export class Store {
         )
         .run(
           id,
-          resolveStoredCwd(cwd),
+          canonicalCwd(cwd),
           source,
           resolvedParentId,
           opts.title ?? id,
@@ -1234,7 +1244,7 @@ export class Store {
       if (cwd !== undefined) {
         this.db
           .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
-          .run(resolveStoredCwd(cwd), taskId);
+          .run(canonicalCwd(cwd), taskId);
       }
       if (before.agentId === agentId && before.sessionId === agentSessionId) {
         return this.getAgentSessionBindingFor(taskId, agentId)!;
@@ -2005,7 +2015,7 @@ export class Store {
        VALUES (?, ?)
        ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at`,
       )
-      .run(resolveStoredCwd(cwd), Date.now());
+      .run(canonicalCwd(cwd), Date.now());
   }
 
   listRecentPaths(opts?: {

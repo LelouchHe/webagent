@@ -124,11 +124,13 @@ what Enter will do is visible. The create cwd defaults to the directory this
 Task runs in and is not echoed back while the field is empty. A
 space then lists cwd candidates: the current cwd marked `*`, the recent paths,
 and, once a path prefix is typed, the real directory layer to drill into. One
-directory is one candidate because the cwd and the recent-path keys are stored
-in one form: HOME expanded, then `.` and `..` folded the way a shell's `cd` folds
-them — `~/a/b/..` and `~/a` are the same candidate, and so are `~/a/link/..` and
-`~/a` even when `link` points elsewhere, because the typed path is what the user
-meant. A segment starting with `.` reveals hidden directories.
+directory is one candidate for every spelling that folds to it: HOME expanded,
+then `.` and `..` folded the way a shell's `cd` folds them — `~/a/b/..` and
+`~/a` are the same candidate, and so are `~/a/link/..` and `~/a` even when `link`
+points elsewhere, because the typed path is what the user meant. The picker folds
+with the same rule before it lists or checks a directory, so the entries it shows
+are the directory a create would use. A segment starting with `.` reveals hidden
+directories.
 
 A bare `+` has no title to create with. It shows the hint
 `create task · type a title`, and Enter reports `err: Task title is required after +`.

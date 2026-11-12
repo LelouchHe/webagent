@@ -7,7 +7,7 @@
 // slash-commands.ts, so it cannot be the shared home).
 
 import { state } from "./state.ts";
-import { resolveViewPath } from "./file-browser.ts";
+import { foldCwdPath, resolveViewPath } from "./file-browser.ts";
 import * as api from "./api.ts";
 import { loadTaskList } from "./task-topology.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
@@ -156,25 +156,6 @@ export function taskAgentFailureLines(
 }
 
 /**
- * Collapse the `.` segments and duplicate separators a relative cwd picks up
- * from the join, without canonicalizing symlinks: `/tmp/my dir` stays literal
- * while `./rel` stops leaking a `/./`.
- */
-export function tidyResolvedPath(path: string): string {
-  const tidied = path
-    .replace(/\/\.\//g, "/")
-    .replace(/\/{2,}/g, "/")
-    .replace(/\/\.$/, "");
-  if (!/\/\.$/.test(path)) return tidied;
-  // A trailing `/.` names the directory before it, and that directory can be
-  // a root: dropping the segment from `/.` must leave `/`, not an empty path
-  // the file API rejects as missing.
-  if (tidied === "") return "/";
-  if (/^[A-Za-z]:$/.test(tidied)) return `${tidied}/`;
-  return tidied;
-}
-
-/**
  * Render one preview field so a value can never be misread as a different
  * (title, cwd) pair. A value without a quote character keeps the plain
  * single-quote form byte for byte; a value containing `'` or `"` switches to a
@@ -195,7 +176,7 @@ export function previewCwdDisplay(rawCwd: string): string {
   const displayBase = state.taskCwdDisplay ?? base;
   if (rawCwd === "") return displayBase;
   try {
-    return tidyResolvedPath(resolveViewPath(rawCwd, displayBase || null));
+    return foldCwdPath(resolveViewPath(rawCwd, displayBase || null));
   } catch {
     return rawCwd;
   }
@@ -213,12 +194,12 @@ export async function resolveCreateCwd(
   const base = state.taskCwd ?? "";
   let resolved: string;
   try {
-    resolved = rawCwd === "" ? base : resolveViewPath(rawCwd, base || null);
+    resolved =
+      rawCwd === "" ? base : foldCwdPath(resolveViewPath(rawCwd, base || null));
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
   if (resolved === "") return { error: "No active task cwd" };
-  resolved = tidyResolvedPath(resolved);
   try {
     const info = await api.getFileInfo(resolved);
     if (info.kind !== "dir") {

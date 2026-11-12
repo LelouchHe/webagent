@@ -30,6 +30,42 @@ function appendRelative(base: string, relative: string): string {
   return `${normalizedBase.replace(/\/+$/, "")}/${relative}`;
 }
 
+/**
+ * Fold `.` and `..` the way a shell's `cd` folds them, for the display paths the
+ * pickers work in. This is the client half of the server's stored-cwd rule
+ * (`src/cwd-path.ts`): folding here means the entry the picker lists, the path
+ * it checks, and the path the server stores all name one directory.
+ *
+ * A leading `~` segment is opaque. The result must not start with a `~/` that
+ * was not there before, or the server would expand a directory named `~` into
+ * HOME.
+ */
+export function foldCwdPath(path: string): string {
+  const raw = normalizeDisplayInput(path);
+  if (raw === "") return raw;
+  const root = raw.startsWith("//")
+    ? "//"
+    : raw.startsWith("/")
+      ? "/"
+      : /^[A-Za-z]:\//.test(raw)
+        ? raw.slice(0, 3)
+        : "";
+  const kept: string[] = [];
+  for (const part of raw.slice(root.length).split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === ".." && kept.length > 0 && kept[kept.length - 1] !== "..") {
+      kept.pop();
+      continue;
+    }
+    kept.push(part);
+  }
+  const folded = root + kept.join("/");
+  if (root === "" && /^~$|^~\//.test(folded) && !/^~$|^~\//.test(raw)) {
+    return `./${folded}`;
+  }
+  return folded === "" ? "." : folded;
+}
+
 /** Resolve one exact user path to the backend's absolute/~ path contract. */
 export function resolveViewPath(query: string, taskCwd: string | null): string {
   const raw = normalizeDisplayInput(query.trim());
@@ -53,17 +89,24 @@ export function resolveBrowseTarget(
   query: string,
   taskCwd: string | null,
 ): BrowseTarget {
-  if (query.trim() === "") {
-    return { directory: resolveViewPath("", taskCwd), filter: "" };
+  const trimmed = query.trim();
+  const path = resolveViewPath(trimmed, taskCwd);
+  // A trailing slash means "entered this directory". It is read from the typed
+  // text, because folding the directory removes the separator that carried it.
+  if (
+    trimmed === "" ||
+    trimmed === "/" ||
+    trimmed === "~" ||
+    trimmed.endsWith("/")
+  ) {
+    return { directory: foldCwdPath(path), filter: "" };
   }
-  const path = resolveViewPath(query, taskCwd);
-
-  if (path === "/" || path === "~" || path.endsWith("/")) {
-    return { directory: path, filter: "" };
-  }
+  // Split first: the final segment is the live filter, and a `.`/`..` there is
+  // text the user is typing, not a directory to resolve. Only the directory
+  // part is folded, so the listing shows what creating there would use.
   const slash = path.lastIndexOf("/");
   return {
-    directory: slash === 0 ? "/" : path.slice(0, slash),
+    directory: foldCwdPath(slash === 0 ? "/" : path.slice(0, slash)),
     filter: path.slice(slash + 1),
   };
 }

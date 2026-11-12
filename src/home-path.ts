@@ -25,7 +25,7 @@ function portableDisplayPath(input: string, path: HomePathOps): string {
  * Both `~/` and `~\` are accepted; named-user forms stay untouched.
  *
  * Expansion only: the result is passed to the filesystem as typed. Callers
- * that store or compare a cwd use `resolveStoredCwd` (`src/cwd-path.ts`), which
+ * that store or compare a cwd use `canonicalCwd` (`src/cwd-path.ts`), which
  * folds `.`/`..` the way a shell's `cd` folds them; this function stays pure so
  * a caller that resolves the path itself (the file API uses `realpath`) keeps
  * the bytes it was given.

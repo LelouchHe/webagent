@@ -561,11 +561,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - public reads stay filtered by the caller's agent while the internal read stays global
 
 - `test/cwd-path.test.ts`
-  - the stored cwd form: `.` and repeated/trailing separators removed, `..` folded logically like `cd` (`a/link/..` is `a`, with real symlinks in a temp tree), a physical-path fallback when only the kernel-resolved directory exists, an unverifiable `..` reported instead of folded, HOME expanded first, a relative `~/…` directory never turned into HOME shorthand, and idempotency over every case
+  - the stored cwd form: pure string folding — `.` and repeated/trailing separators removed, `..` folded logically like `cd` (`a/link/..` is `a`), HOME expanded first, a relative `~/…` directory never turned into HOME shorthand, and idempotency over every case
 
 - `test/store.test.ts`
   - task creation / deletion / updates
-  - a stored cwd has no `.` and no `..`: `a/b/..` and `a/link/..` both become `a` (shell folding), a reopen leaves them unchanged, and a store opened on a database holding legacy variants merges each into its canonical row keeping its newest use
+  - a stored cwd has no `.` and no `..`: `a/b/..` and `a/link/..` both become `a` (shell folding) and a reopen leaves them unchanged; a store opened on a database holding legacy variants merges each into its canonical row keeping its newest use, while a legacy row that still carries `..` keeps its bytes so a running task cannot move
   - config persistence, including clearing one column with `null` without touching the others
   - an agent image is stored as an attachment (file + row) and referenced by its own `agent_image` record between the surrounding text blocks; the persisted row carries no base64, the live broadcast is the same reference, and an oversized image becomes visible text with no row
   - title persistence
@@ -941,6 +941,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/file-browser.test.ts`, `test/view-command.test.ts`, `test/file-viewer-frontend.test.ts`
   - cwd-relative, absolute, portable Windows/HOME, root, trailing-slash, and local-filter path semantics
+  - the picker's cwd fold (same rule as the server): `/view`/`+` list, check, and fill the folded directory, so a `..` before a symlink cannot show one directory and create in another
   - dot-filter reveal: `hidden=1` is requested and cache-partitioned only while the typed segment starts with `.`, hidden rows match by prefix, and visible names containing a dot never answer a `.` filter
   - Enter dispatch: directory drill-down vs direct file open/download
   - existing Markdown pipeline reuse, safe highlighted code/text + batched line numbers, image, attachment fallback, and close lifecycle

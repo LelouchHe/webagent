@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   fileFilter,
+  foldCwdPath,
   joinListedPath,
   resolveBrowseTarget,
 } from "../public/js/file-browser.ts";
@@ -30,7 +31,7 @@ describe("file browser path resolution", () => {
 
   it("treats a trailing slash as an entered directory", () => {
     assert.deepEqual(resolveBrowseTarget("/work/project/src/", "/ignored"), {
-      directory: "/work/project/src/",
+      directory: "/work/project/src",
       filter: "",
     });
   });
@@ -84,6 +85,33 @@ describe("file browser path resolution", () => {
     assert.equal(fileFilter("/work/src/"), "");
     assert.equal(fileFilter("~"), "");
     assert.equal(fileFilter(".."), "..");
+  });
+
+  it("folds `.` and `..` the way the server stores a cwd", () => {
+    // The picker must list, check, and send one directory, so it folds with the
+    // same rule the server applies to the stored value.
+    assert.equal(foldCwdPath("/w/a/b/.."), "/w/a");
+    assert.equal(foldCwdPath("/w/a/link/.."), "/w/a");
+    assert.equal(foldCwdPath("/w//a/./b/"), "/w/a/b");
+    assert.equal(foldCwdPath("/w/a/."), "/w/a");
+    assert.equal(foldCwdPath("/"), "/");
+    assert.equal(foldCwdPath("/."), "/");
+    assert.equal(foldCwdPath("~/a/../b"), "~/b");
+    assert.equal(foldCwdPath("./~/repo"), "./~/repo");
+    assert.equal(foldCwdPath("a/../b"), "b");
+  });
+
+  it("browses the directory a `..` names, not the kernel's parent", () => {
+    // Typing `link/..` continues in the folded directory, so the listing and
+    // the create that follows cannot disagree.
+    assert.deepEqual(resolveBrowseTarget("/w/a/link/../", "/ignored"), {
+      directory: "/w/a",
+      filter: "",
+    });
+    assert.deepEqual(resolveBrowseTarget("/w/a/b/../x", "/ignored"), {
+      directory: "/w/a",
+      filter: "x",
+    });
   });
 
   it("joins listed names without producing a double root slash", () => {

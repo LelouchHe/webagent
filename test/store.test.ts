@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
@@ -1924,33 +1924,18 @@ describe("Store", () => {
     });
 
     it("stores a cwd with no `.` or `..`, folded the way a shell folds it", () => {
-      // `work/a/link` reaches `work/real/nested`: the kernel reads
-      // `a/link/..` as `real`, but the user typed a path and `cd` calls it
-      // `a`, so that is what the task runs in.
-      mkdirSync(join(tmpDir, "work", "a", "b"), { recursive: true });
-      mkdirSync(join(tmpDir, "work", "real", "nested"), { recursive: true });
-      symlinkSync(
-        join("..", "real", "nested"),
-        join(tmpDir, "work", "a", "link"),
-      );
-      const work = join(tmpDir, "work");
-
-      store.createTask("folded", `${work}/a/b/..`, "auto", "test-agent", "a-1");
-      store.createTask(
-        "linked",
-        `${work}/a/link/..`,
-        "auto",
-        "test-agent",
-        "a-2",
-      );
-      assert.equal(store.getTask("folded")!.cwd, `${work}/a`);
-      assert.equal(store.getTask("linked")!.cwd, `${work}/a`);
+      // `a/link/..` is `a` however `link` is spelled, so no filesystem is
+      // consulted: the typed path is what the user meant.
+      store.createTask("folded", "/w/a/b/..", "auto", "test-agent", "a-1");
+      store.createTask("linked", "/w/a/link/..", "auto", "test-agent", "a-2");
+      assert.equal(store.getTask("folded")!.cwd, "/w/a");
+      assert.equal(store.getTask("linked")!.cwd, "/w/a");
 
       store.close();
       store = new Store(tmpDir);
 
-      assert.equal(store.getTask("folded")!.cwd, `${work}/a`);
-      assert.equal(store.getTask("linked")!.cwd, `${work}/a`);
+      assert.equal(store.getTask("folded")!.cwd, "/w/a");
+      assert.equal(store.getTask("linked")!.cwd, "/w/a");
     });
 
     it("keeps a directory literally named ~ out of HOME", () => {
@@ -1965,6 +1950,24 @@ describe("Store", () => {
       store = new Store(tmpDir);
 
       assert.equal(store.getTask(store.rootTaskId)!.cwd, "./~/repo");
+    });
+
+    it("leaves a legacy `..` cwd alone so a running task cannot move", () => {
+      // Before this build, `+t ../foo` stored the raw `..` path and the task
+      // ran where the kernel resolved it. Folding it now would name another
+      // directory, so the row keeps its bytes.
+      store.createTask("legacy-dots", "/w/a", "auto", "test-agent", "a-1");
+      (store as any).db
+        .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
+        .run("/w/a/link/..", "legacy-dots");
+      (store as any).db
+        .prepare("INSERT INTO recent_paths (cwd, last_used_at) VALUES (?, ?)")
+        .run("/w/a/link/..", 1_000);
+
+      store.close();
+      store = new Store(tmpDir);
+
+      assert.equal(store.getTask("legacy-dots")!.cwd, "/w/a/link/..");
     });
 
     it("rewrites a legacy task cwd so it still matches its recent row", () => {

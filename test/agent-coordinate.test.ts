@@ -114,19 +114,6 @@ describe("coordinate parsing", () => {
     assert.equal(mod.previewCreateCwd("copilot:", AGENTS), "copilot:~/work");
   });
 
-  it("keeps a root when a trailing `.` segment is dropped", () => {
-    // `/` is what `/.` names; the tidier must not hand the file API an empty
-    // path, which it rejects as missing.
-    assert.equal(mod.tidyResolvedPath("/."), "/");
-    assert.equal(mod.tidyResolvedPath("//."), "/");
-    assert.equal(mod.tidyResolvedPath("C:/."), "C:/");
-    // Ordinary directories keep the pre-existing behavior.
-    assert.equal(mod.tidyResolvedPath("/tmp/./my dir"), "/tmp/my dir");
-    assert.equal(mod.tidyResolvedPath("/tmp//my dir"), "/tmp/my dir");
-    assert.equal(mod.tidyResolvedPath("/tmp/my dir/."), "/tmp/my dir");
-    assert.equal(mod.tidyResolvedPath("/tmp/link/.."), "/tmp/link/..");
-  });
-
   it("picks a rescue agent other than the one that just failed", () => {
     // The rescue names the configured default; PATH presence is not consulted,
     // because a command that exists can still fail to handshake or

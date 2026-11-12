@@ -886,7 +886,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     );
     assert.ok(
       fetchCalls.some(
-        (call) => call.url === "/api/v1/files/list?path=~%2Fwork%2Fsrc%2F",
+        (call) => call.url === "/api/v1/files/list?path=~%2Fwork%2Fsrc",
       ),
     );
   });
@@ -895,7 +895,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     state.taskCwd = "/work";
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      const isSrc = url.includes("%2Fwork%2Fsrc%2F");
+      const isSrc = url.includes("%2Fwork%2Fsrc");
       const data = isSrc
         ? {
             path: "/work/src",
@@ -934,7 +934,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.equal(dom.input.value, "/view ~/work/src/");
     assert.ok(
       fetchCalls.some(
-        (call) => call.url === "/api/v1/files/list?path=~%2Fwork%2Fsrc%2F",
+        (call) => call.url === "/api/v1/files/list?path=~%2Fwork%2Fsrc",
       ),
     );
     assert.match(dom.slashMenu.textContent, /inner\.ts/);
