@@ -1923,30 +1923,34 @@ describe("Store", () => {
       assert.equal(paths[0].last_used_at, 2_000);
     });
 
-    it("stores a cwd with no `.` or `..`, but never across a symlink", () => {
-      // Folding is verified against the filesystem: `a/b/..` is `a`, while
-      // `linkdir/..` is the target's parent and stays written as typed.
+    it("stores a cwd with no `.` or `..`, folded the way a shell folds it", () => {
+      // `work/a/link` reaches `work/real/nested`: the kernel reads
+      // `a/link/..` as `real`, but the user typed a path and `cd` calls it
+      // `a`, so that is what the task runs in.
       mkdirSync(join(tmpDir, "work", "a", "b"), { recursive: true });
       mkdirSync(join(tmpDir, "work", "real", "nested"), { recursive: true });
-      symlinkSync("real", join(tmpDir, "work", "linkdir"));
+      symlinkSync(
+        join("..", "real", "nested"),
+        join(tmpDir, "work", "a", "link"),
+      );
       const work = join(tmpDir, "work");
 
       store.createTask("folded", `${work}/a/b/..`, "auto", "test-agent", "a-1");
       store.createTask(
         "linked",
-        `${work}/linkdir/..`,
+        `${work}/a/link/..`,
         "auto",
         "test-agent",
         "a-2",
       );
       assert.equal(store.getTask("folded")!.cwd, `${work}/a`);
-      assert.equal(store.getTask("linked")!.cwd, `${work}/linkdir/..`);
+      assert.equal(store.getTask("linked")!.cwd, `${work}/a`);
 
       store.close();
       store = new Store(tmpDir);
 
       assert.equal(store.getTask("folded")!.cwd, `${work}/a`);
-      assert.equal(store.getTask("linked")!.cwd, `${work}/linkdir/..`);
+      assert.equal(store.getTask("linked")!.cwd, `${work}/a`);
     });
 
     it("keeps a directory literally named ~ out of HOME", () => {

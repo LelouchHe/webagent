@@ -125,11 +125,10 @@ Task runs in and is not echoed back while the field is empty. A
 space then lists cwd candidates: the current cwd marked `*`, the recent paths,
 and, once a path prefix is typed, the real directory layer to drill into. One
 directory is one candidate because the cwd and the recent-path keys are stored
-in one form: HOME expanded, `.` and repeated separators removed, and a `..`
-folded only when the component before it is a real directory — so `~/a/b/..`
-and `~/a` are the same candidate. A `..` that follows a symlink is kept as
-written, since folding it would mean following the link. A segment starting
-with `.` reveals hidden directories.
+in one form: HOME expanded, then `.` and `..` folded the way a shell's `cd` folds
+them — `~/a/b/..` and `~/a` are the same candidate, and so are `~/a/link/..` and
+`~/a` even when `link` points elsewhere, because the typed path is what the user
+meant. A segment starting with `.` reveals hidden directories.
 
 A bare `+` has no title to create with. It shows the hint
 `create task · type a title`, and Enter reports `err: Task title is required after +`.

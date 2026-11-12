@@ -561,11 +561,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - public reads stay filtered by the caller's agent while the internal read stays global
 
 - `test/cwd-path.test.ts`
-  - the stored cwd form: `.` and repeated/trailing separators removed, a `..` folded only when the component before it is a real directory (verified with real symlinks in a temp tree), a `..` after a symlink kept as written, two `..` never collapsed into one, HOME expanded first, a relative `~/…` directory never turned into HOME shorthand, and idempotency over every case
+  - the stored cwd form: `.` and repeated/trailing separators removed, `..` folded logically like `cd` (`a/link/..` is `a`, with real symlinks in a temp tree), a physical-path fallback when only the kernel-resolved directory exists, an unverifiable `..` reported instead of folded, HOME expanded first, a relative `~/…` directory never turned into HOME shorthand, and idempotency over every case
 
 - `test/store.test.ts`
   - task creation / deletion / updates
-  - a stored cwd has no `.` and no foldable `..`: `a/b/..` becomes `a`, a `..` after a symlinked component stays as written, and neither a reopen nor the recent-path key changes the directory the task runs in; a store opened on a database holding legacy variants merges each into its canonical row keeping its newest use
+  - a stored cwd has no `.` and no `..`: `a/b/..` and `a/link/..` both become `a` (shell folding), a reopen leaves them unchanged, and a store opened on a database holding legacy variants merges each into its canonical row keeping its newest use
   - config persistence, including clearing one column with `null` without touching the others
   - an agent image is stored as an attachment (file + row) and referenced by its own `agent_image` record between the surrounding text blocks; the persisted row carries no base64, the live broadcast is the same reference, and an oversized image becomes visible text with no row
   - title persistence
