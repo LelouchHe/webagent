@@ -1,7 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { win32 } from "node:path";
-import { abbreviateHomePath, expandHomePath } from "../src/home-path.ts";
+import {
+  abbreviateHomePath,
+  canonicalDirectoryPath,
+  expandHomePath,
+} from "../src/home-path.ts";
 
 describe("home paths", () => {
   const home = "/Users/lelouch";
@@ -19,24 +23,43 @@ describe("home paths", () => {
     assert.equal(expandHomePath("/tmp/project", home), "/tmp/project");
   });
 
+  it("leaves expansion-only callers the path they typed", () => {
+    // The file API resolves paths with `realpath`, where a lexical rewrite of
+    // `link/..` would address a different file than the filesystem does.
+    assert.equal(expandHomePath("/tmp/project/", home), "/tmp/project/");
+    assert.equal(
+      expandHomePath("/tmp/a/link/../note.txt", home),
+      "/tmp/a/link/../note.txt",
+    );
+  });
+
   it("returns one spelling per directory", () => {
     // One directory, several typings: a task cwd and the recent-path key built
     // from it must not depend on how the user typed the path.
-    assert.equal(expandHomePath("/tmp/project/", home), "/tmp/project");
-    assert.equal(expandHomePath("/tmp/project/./", home), "/tmp/project");
-    assert.equal(expandHomePath("/tmp//project", home), "/tmp/project");
-    assert.equal(expandHomePath("/tmp/other/../project", home), "/tmp/project");
+    assert.equal(canonicalDirectoryPath("/tmp/project/", home), "/tmp/project");
     assert.equal(
-      expandHomePath("~/mine/code/webagent/", home),
+      canonicalDirectoryPath("/tmp/project/./", home),
+      "/tmp/project",
+    );
+    assert.equal(canonicalDirectoryPath("/tmp//project", home), "/tmp/project");
+    assert.equal(
+      canonicalDirectoryPath("/tmp/other/../project", home),
+      "/tmp/project",
+    );
+    assert.equal(
+      canonicalDirectoryPath("~/mine/code/webagent/", home),
       "/Users/lelouch/mine/code/webagent",
     );
     assert.equal(
-      expandHomePath("~/mine/../mine/code", home),
+      canonicalDirectoryPath("~/mine/../mine/code", home),
       "/Users/lelouch/mine/code",
     );
+    // Relative input keeps its meaning and loses the same redundancy.
+    assert.equal(canonicalDirectoryPath("src/", home), "src");
+    assert.equal(canonicalDirectoryPath("./src", home), "src");
     // Root and an empty field keep their identity.
-    assert.equal(expandHomePath("/", home), "/");
-    assert.equal(expandHomePath("", home), "");
+    assert.equal(canonicalDirectoryPath("/", home), "/");
+    assert.equal(canonicalDirectoryPath("", home), "");
   });
 
   it("abbreviates only paths inside the current user's home", () => {
@@ -67,8 +90,23 @@ describe("home paths", () => {
       "C:\\Users\\lelouch\\mine\\code",
     );
     assert.equal(
-      expandHomePath("C:\\Users\\lelouch\\mine\\code\\", windowsHome, win32),
+      canonicalDirectoryPath(
+        "C:\\Users\\lelouch\\mine\\code\\",
+        windowsHome,
+        win32,
+      ),
       "C:\\Users\\lelouch\\mine\\code",
+    );
+    // A root is a root: trimming its separator would change the object a path
+    // names — `\\.\C:` is the volume device, `\\.\C:\` the filesystem.
+    assert.equal(canonicalDirectoryPath("C:\\", windowsHome, win32), "C:\\");
+    assert.equal(
+      canonicalDirectoryPath("\\\\.\\C:\\", windowsHome, win32),
+      "\\\\.\\C:\\",
+    );
+    assert.equal(
+      canonicalDirectoryPath("\\\\srv\\share\\", windowsHome, win32),
+      "\\\\srv\\share\\",
     );
     assert.equal(
       abbreviateHomePath("D:\\project\\file.ts", windowsHome, win32),

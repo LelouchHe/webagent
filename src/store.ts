@@ -402,7 +402,7 @@ export class Store {
       this.dropLegacyColumns();
       this.migrateSystemMessagePayloads();
       this.canonicalizeStoredModelValues();
-      this.migrateRecentPathKeys();
+      this.migrateCanonicalCwds();
       this.rootId = this.resolveRootIdentity();
     } catch (error) {
       this.db.close();
@@ -906,13 +906,21 @@ export class Store {
   }
 
   /**
-   * Recent-path keys are canonical directory strings. An older build stored the
-   * bytes a user typed, so `/x` and `/x/` became two rows that abbreviate to
-   * the same display path and appeared twice in the completion menu. Merge each
-   * variant into its canonical key, keeping the newest use. Idempotent.
+   * Cwds are stored as one canonical directory string per directory. An older
+   * build stored the bytes a user typed, so a task could carry `/x/` while the
+   * recent-path row written from it keeps `/x`; the pickers then compare the
+   * task's cwd against the recent list and fail to recognize the same directory,
+   * rendering it twice. Rewrite both sides to the canonical form: task rows
+   * first, then merge each recent-path variant into its canonical key keeping
+   * the newest use. Idempotent; a fresh database has nothing to do.
    */
-  private migrateRecentPathKeys(): void {
-    const rows = this.db
+  private migrateCanonicalCwds(): void {
+    const tasks = this.db.prepare("SELECT id, cwd FROM tasks").all() as Array<{
+      id: string;
+      cwd: string;
+    }>;
+    const setCwd = this.db.prepare("UPDATE tasks SET cwd = ? WHERE id = ?");
+    const paths = this.db
       .prepare("SELECT cwd, last_used_at FROM recent_paths")
       .all() as Array<{ cwd: string; last_used_at: number }>;
     const upsert = this.db.prepare(
@@ -922,7 +930,11 @@ export class Store {
     );
     const remove = this.db.prepare("DELETE FROM recent_paths WHERE cwd = ?");
     this.db.transaction(() => {
-      for (const row of rows) {
+      for (const row of tasks) {
+        const canonical = canonicalDirectoryPath(row.cwd);
+        if (canonical !== row.cwd) setCwd.run(canonical, row.id);
+      }
+      for (const row of paths) {
         const canonical = canonicalDirectoryPath(row.cwd);
         if (canonical === row.cwd) continue;
         upsert.run(canonical, row.last_used_at);
@@ -953,7 +965,7 @@ export class Store {
       .prepare(
         "INSERT INTO tasks (id, cwd, source, parent_id, title, created_at, last_active_at) VALUES (?, ?, 'root', NULL, 'root', ?, ?)",
       )
-      .run(this.rootTaskId, cwd, now, now);
+      .run(this.rootTaskId, canonicalDirectoryPath(cwd), now, now);
   }
 
   /**
@@ -1016,7 +1028,7 @@ export class Store {
         )
         .run(
           id,
-          cwd,
+          canonicalDirectoryPath(cwd),
           source,
           resolvedParentId,
           opts.title ?? id,
@@ -1221,7 +1233,7 @@ export class Store {
       if (cwd !== undefined) {
         this.db
           .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
-          .run(cwd, taskId);
+          .run(canonicalDirectoryPath(cwd), taskId);
       }
       if (before.agentId === agentId && before.sessionId === agentSessionId) {
         return this.getAgentSessionBindingFor(taskId, agentId)!;

@@ -903,7 +903,8 @@ List recent working directory paths, sorted by last used (most recent first).
 Paths are recorded on each prompt, keeping `last_used_at` up to date; the key is
 the canonical directory string (expanded, normalized, no trailing separator), so
 one directory is one row regardless of how it was typed. Stale paths are cleaned
-up based on the `limits.recent_paths_ttl` config.
+up based on the `limits.recent_paths_ttl` config. Task rows and recent-path keys
+written by an older build are rewritten to that form when the store opens.
 
 **Query parameters:**
 

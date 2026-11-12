@@ -52,7 +52,7 @@ import {
   leaseOf,
   type ExecutionLease,
 } from "./execution-authority.ts";
-import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
+import { abbreviateHomePath, canonicalDirectoryPath } from "./home-path.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { log } from "./log.ts";
 import { TaskTreeLock, type TaskTreeLockRelease } from "./task-tree-lock.ts";
@@ -1666,7 +1666,7 @@ export class TaskManager implements ObligationHost {
       assertCaller?: () => void;
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
-    const taskCwd = expandHomePath(cwd ?? this.defaultCwd);
+    const taskCwd = canonicalDirectoryPath(cwd ?? this.defaultCwd);
     const agentId = this.bridgeAgentId(bridge);
     try {
       const info = await stat(taskCwd);
@@ -1929,7 +1929,7 @@ export class TaskManager implements ObligationHost {
     // A rotation's replacement execution is the *verified target* agent: the
     // same binding agent for a rebuild, or an explicitly rescued agent.
     const agentId = this.bridgeAgentId(bridge);
-    const taskCwd = expandHomePath(cwd ?? task.cwd);
+    const taskCwd = canonicalDirectoryPath(cwd ?? task.cwd);
     try {
       const info = await stat(taskCwd);
       if (!info.isDirectory()) throw new Error("not a directory");

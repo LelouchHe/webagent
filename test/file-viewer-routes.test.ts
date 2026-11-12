@@ -108,6 +108,13 @@ describe("file viewer routes", () => {
     writeFileSync(join(projDir, "sub", "deep.txt"), "deep");
     // Symlink that points outside any project root — legal by design.
     symlinkSync(textFile, join(projDir, "link.md"));
+    // A directory reached through a symlink, so `link/../x` has two possible
+    // meanings: the filesystem's (follow, then `..`) and a lexical one.
+    mkdirSync(join(dir, "redir"), { recursive: true });
+    mkdirSync(join(dir, "real", "nested"), { recursive: true });
+    writeFileSync(join(dir, "redir", "note.txt"), "redirected");
+    writeFileSync(join(dir, "real", "note.txt"), "real");
+    symlinkSync(join("..", "real", "nested"), join(dir, "redir", "link"));
 
     const handler = createRequestHandler({
       store,
@@ -236,6 +243,15 @@ describe("file viewer routes", () => {
     const r = await info(join(projDir, "sub", "..", "notes.md"));
     assert.equal(r.status, 200);
     assert.equal(JSON.parse(r.body).path, textFile);
+  });
+
+  it("resolves a symlink before `..`, as the filesystem does", async () => {
+    // `redir/link/../note.txt` is `real/note.txt` to the kernel; a lexical
+    // rewrite of the input would answer `redir/note.txt` instead.
+    // Built by hand: `join` would normalize `link/..` before it is sent.
+    const r = await info(`${dir}/redir/link/../note.txt`);
+    assert.equal(r.status, 200);
+    assert.equal(JSON.parse(r.body).path, join(dir, "real", "note.txt"));
   });
 
   it("info follows symlinks and reports the canonical target", async () => {

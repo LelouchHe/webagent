@@ -154,12 +154,19 @@ describe("/view Enter dispatch", () => {
     });
 
     it("partitions the fetch cache on the flag, not just the directory", () => {
-      assert.equal(
-        view.viewFetchKey("/work") !== view.viewFetchKey("/work/."),
-        true,
+      // Same directory, two listings: the plain one and the dot one must not
+      // share a cache entry, or the reveal would serve the cached plain list.
+      assert.notEqual(
+        view.viewFetchKey("/work/"),
+        view.viewFetchKey("/work/."),
       );
-      // Re-typing the same dot prefix reuses one cache entry.
-      assert.equal(view.viewFetchKey("/work/."), view.viewFetchKey("/work/."));
+      // Different dot prefixes are the same listing, filtered locally.
+      assert.equal(view.viewFetchKey("/work/."), view.viewFetchKey("/work/.g"));
+      // Different directories never collide, hidden or not.
+      assert.notEqual(
+        view.viewFetchKey("/work/."),
+        view.viewFetchKey("/other/."),
+      );
     });
 
     it("matches dot entries by prefix and excludes plain names", () => {

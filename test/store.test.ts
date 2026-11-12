@@ -52,6 +52,18 @@ describe("Store", () => {
       assert.equal(row.count, 1);
     });
 
+    it("stores one canonical cwd spelling, including the Root anchor", () => {
+      // The Root row is created on first use, so it is asserted before any
+      // other task can install one with its own cwd.
+      assert.equal(store.ensureRootTask("/root/").cwd, "/root");
+
+      store.createTask("web-2", "/work/", "auto", "test-agent", "agent-2");
+      assert.equal(store.getTask("web-2")!.cwd, "/work");
+
+      store.replaceAgentSession("web-2", "test-agent", "agent-3", "/moved/./");
+      assert.equal(store.getTask("web-2")!.cwd, "/moved");
+    });
+
     it("persists a requested cwd even when rotation is a no-op (same agent id)", () => {
       store.createTask("web-1", "/a", "auto", "test-agent", "agent-1");
 
@@ -1909,6 +1921,24 @@ describe("Store", () => {
       );
       // The merged row keeps the newest use of either spelling.
       assert.equal(paths[0].last_used_at, 2_000);
+    });
+
+    it("rewrites a legacy task cwd so it still matches its recent row", () => {
+      // A historical task could carry `/projects/a/` while the recent-path row
+      // written from it is keyed `/projects/a`; the pickers compare the two, so
+      // the task row is canonicalized too.
+      store.createTask("legacy-task", "/work", "auto", "test-agent", "agent-1");
+      (store as any).db
+        .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
+        .run("/projects/a/", "legacy-task");
+      (store as any).db
+        .prepare("INSERT INTO recent_paths (cwd, last_used_at) VALUES (?, ?)")
+        .run("/projects/a", 1_000);
+
+      store.close();
+      store = new Store(tmpDir);
+
+      assert.equal(store.getTask("legacy-task")!.cwd, "/projects/a");
     });
 
     it("listRecentPaths returns paths sorted by last_used_at DESC", () => {
