@@ -32,6 +32,10 @@ describe("canonical cwd", () => {
     assert.equal(fold("/tmp/a/link/../.."), "/tmp");
     // Nothing to fold against: the segment stays.
     assert.equal(fold("../../a"), "../../a");
+    // Above a filesystem root is that root, so `/..` cannot hold a second key.
+    assert.equal(fold("/.."), "/");
+    assert.equal(fold("/x/../.."), "/");
+    assert.equal(fold("~/.."), "/home");
   });
 
   it("expands HOME before folding", () => {

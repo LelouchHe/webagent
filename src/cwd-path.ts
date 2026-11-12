@@ -45,8 +45,14 @@ export function canonicalCwd(
   const kept: string[] = [];
   for (const part of expanded.slice(root.length).split(SEPARATORS)) {
     if (part === "" || part === ".") continue;
-    if (part === ".." && kept.length > 0 && kept[kept.length - 1] !== "..") {
-      kept.pop();
+    if (part === "..") {
+      if (kept.length > 0 && kept[kept.length - 1] !== "..") {
+        kept.pop();
+        continue;
+      }
+      // Above a filesystem root is that root (`/..` is `/`).
+      if (root !== "") continue;
+      kept.push("..");
       continue;
     }
     kept.push(part);

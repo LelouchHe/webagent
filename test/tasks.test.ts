@@ -1,7 +1,13 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
@@ -803,6 +809,50 @@ describe("Task REST API", () => {
       );
       assert.equal(store.getPendingCompactSummary("s1"), null);
       assert.deepEqual(mockBridge.retireCalls, ["agent-old"]);
+    });
+
+    it("rotates a legacy cwd in place instead of folding it", async () => {
+      // A task stored with `..` before this build ran in the directory the old
+      // rule named; compaction and bare `/clear` name no new directory, so the
+      // stored spelling must survive them.
+      mkdirSync(join(tmpDir, "y"), { recursive: true });
+      mkdirSync(join(tmpDir, "x"), { recursive: true });
+      symlinkSync(join("..", "y"), join(tmpDir, "x", "link"));
+      const legacy = `${tmpDir}/x/link/..`;
+      store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
+      (store as any).db
+        .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
+        .run(legacy, "s1");
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks/s1/clear",
+        JSON.stringify({}),
+      );
+
+      assert.equal(res.status, 200);
+      assert.equal(store.getTask("s1")?.cwd, legacy);
+    });
+
+    it("rotates a legacy relative cwd without refusing the request", async () => {
+      // The old `/clear <relative>` pass-through could store a relative row. It
+      // is not a reason to make that task impossible to compact. `test/` exists
+      // relative to the process cwd, which is how such a row resolves at all.
+      store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
+      (store as any).db
+        .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
+        .run("test", "s1");
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks/s1/clear",
+        JSON.stringify({}),
+      );
+
+      assert.equal(res.status, 200);
+      assert.equal(store.getTask("s1")?.cwd, "test");
     });
 
     it("rejects a relative rotation cwd and keeps the task's directory", async () => {

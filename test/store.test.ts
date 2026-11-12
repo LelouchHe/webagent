@@ -52,16 +52,21 @@ describe("Store", () => {
       assert.equal(row.count, 1);
     });
 
-    it("stores one canonical cwd spelling, including the Root anchor", () => {
+    it("stores a canonical cwd for a new task and the Root anchor", () => {
       // The Root row is created on first use, so it is asserted before any
       // other task can install one with its own cwd.
       assert.equal(store.ensureRootTask("/root/").cwd, "/root");
 
       store.createTask("web-2", "/work/", "auto", "test-agent", "agent-2");
       assert.equal(store.getTask("web-2")!.cwd, "/work");
+    });
 
-      store.replaceAgentSession("web-2", "test-agent", "agent-3", "/moved/./");
-      assert.equal(store.getTask("web-2")!.cwd, "/moved");
+    it("writes a rotation's cwd as given", () => {
+      // The task manager decides a rotation's directory; the store must not fold
+      // it again, or a legacy spelling the task actually runs in would move.
+      store.createTask("web-2", "/work", "auto", "test-agent", "agent-2");
+      store.replaceAgentSession("web-2", "test-agent", "agent-3", "/w/link/..");
+      assert.equal(store.getTask("web-2")!.cwd, "/w/link/..");
     });
 
     it("persists a requested cwd even when rotation is a no-op (same agent id)", () => {

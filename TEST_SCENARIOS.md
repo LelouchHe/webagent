@@ -614,6 +614,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - task list is global (`?agent=` narrows); every list entry, task detail, snapshot, bootstrap/create/clear payload, and `task_created` broadcast carries `agentId`; only `/api/v1/config` reports `rootTaskId`, and responses and the SSE `connected` event do not repeat it
   - creating a child of a task carried by another configured agent targets that agent without rotating the parent; when the parent's agent is gone the child is created for `default_agent`
   - `POST /clear { agentId }` rescues a task onto another configured agent, leaves the `agent_rotation` record, and refuses an unconfigured / non-string `agentId`
+  - a cwd must be absolute once HOME is expanded: a relative create and a relative rotation both answer 400 without moving the task, while a rotation that names no new directory keeps a legacy `..` or relative row exactly as stored (no user input, so no silent move)
   - REST and MCP callers cannot choose reserved task ids; bootstrap, clear, compact, and actual/synthetic task_created envelopes preserve Root identity
   - bootstrap materializes the Root as the workspace's first task (attach on a never-bound Root, materialize an exit's empty slot) instead of creating an unrelated task
   - config update (model, mode) and broadcast

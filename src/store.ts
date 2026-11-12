@@ -1242,9 +1242,12 @@ export class Store {
       const before = this.currentBinding(taskId);
       if (!before) throw new Error(`Task not found: ${taskId}`);
       if (cwd !== undefined) {
+        // Written as given: the rotation path may deliberately carry a stored
+        // spelling forward (a legacy `..` row the task actually runs in), and
+        // folding here would silently move it.
         this.db
           .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
-          .run(canonicalCwd(cwd), taskId);
+          .run(cwd, taskId);
       }
       if (before.agentId === agentId && before.sessionId === agentSessionId) {
         return this.getAgentSessionBindingFor(taskId, agentId)!;

@@ -1467,7 +1467,6 @@ export class TaskManager implements ObligationHost {
     }
   }
 
-  /** Create a new task in both bridge and store, inheriting the source task's config. */
   /**
    * The directory a create or a rotation will use: folded the way a shell folds
    * a typed path, and required to be absolute, because a relative cwd would
@@ -1479,6 +1478,19 @@ export class TaskManager implements ObligationHost {
     return taskCwd;
   }
 
+  /**
+   * The directory a rotation uses. Naming no new directory (compaction, bare
+   * `/clear`) keeps the stored spelling even when this build would no longer
+   * produce it — a legacy `..` or relative row — because folding it would move
+   * the task with no user input at all.
+   */
+  private rotationCwd(cwd: string | undefined, task: { cwd: string }): string {
+    return cwd === undefined || cwd === task.cwd
+      ? task.cwd
+      : this.resolveTaskCwd(cwd, task.cwd);
+  }
+
+  /** Create a new task in both bridge and store, inheriting the source task's config. */
   async createTask(
     bridge: SessionBridge,
     cwd?: string,
@@ -1954,7 +1966,7 @@ export class TaskManager implements ObligationHost {
     // A rotation's replacement execution is the *verified target* agent: the
     // same binding agent for a rebuild, or an explicitly rescued agent.
     const agentId = this.bridgeAgentId(bridge);
-    const taskCwd = this.resolveTaskCwd(cwd, task.cwd);
+    const taskCwd = this.rotationCwd(cwd, task);
     try {
       const info = await stat(taskCwd);
       if (!info.isDirectory()) throw new Error("not a directory");

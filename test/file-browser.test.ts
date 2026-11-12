@@ -97,6 +97,17 @@ describe("file browser path resolution", () => {
     assert.equal(foldCwdPath("/"), "/");
     assert.equal(foldCwdPath("/."), "/");
     assert.equal(foldCwdPath("~/a/../b"), "~/b");
+    // `~` is a root: HOME's parent is not derivable here, so the `..` stays for
+    // the server to resolve rather than popping `~` and producing `.`.
+    assert.equal(foldCwdPath("~/.."), "~/..");
+    assert.equal(foldCwdPath("~/../shared"), "~/../shared");
+    assert.equal(foldCwdPath("~/a/../.."), "~/..");
+    // A filesystem root absorbs a `..`, so `/..` cannot become a second key.
+    assert.equal(foldCwdPath("/.."), "/");
+    assert.equal(foldCwdPath("/x/../.."), "/");
+    // UNC keeps the share, matching `parse` on the server.
+    assert.equal(foldCwdPath("//srv/share/.."), "//srv/share");
+    assert.equal(foldCwdPath("//srv/share/x/.."), "//srv/share");
     assert.equal(foldCwdPath("./~/repo"), "./~/repo");
     assert.equal(foldCwdPath("a/../b"), "b");
   });

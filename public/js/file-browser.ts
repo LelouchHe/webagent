@@ -40,30 +40,57 @@ function appendRelative(base: string, relative: string): string {
  * was not there before, or the server would expand a directory named `~` into
  * HOME.
  */
-export function foldCwdPath(path: string): string {
-  const raw = normalizeDisplayInput(path);
-  if (raw === "") return raw;
-  const root = raw.startsWith("//")
-    ? "//"
-    : raw.startsWith("/")
-      ? "/"
-      : /^[A-Za-z]:\//.test(raw)
-        ? raw.slice(0, 3)
-        : "";
+/** The root of a display cwd: `~`, a UNC share, `/`, or a drive root. */
+function displayCwdRoot(raw: string): string {
+  if (raw === "~" || raw.startsWith("~/")) return "~";
+  const unc = raw.match(/^\/\/[^/]+\/[^/]+/);
+  if (unc !== null) return unc[0];
+  if (raw.startsWith("/")) return "/";
+  return /^[A-Za-z]:\//.test(raw) ? raw.slice(0, 3) : "";
+}
+
+/**
+ * Fold `.` and `..` over `parts`. A `..` above the base is absorbed when the
+ * base is a filesystem root, and kept when it is `~` (HOME has a parent the
+ * browser cannot name) or a relative path.
+ */
+function foldCwdParts(parts: string[], absorbsDots: boolean): string[] {
   const kept: string[] = [];
-  for (const part of raw.slice(root.length).split("/")) {
+  for (const part of parts) {
     if (part === "" || part === ".") continue;
-    if (part === ".." && kept.length > 0 && kept[kept.length - 1] !== "..") {
+    if (part !== "..") {
+      kept.push(part);
+      continue;
+    }
+    if (kept.length > 0 && kept[kept.length - 1] !== "..") {
       kept.pop();
       continue;
     }
-    kept.push(part);
+    if (!absorbsDots) kept.push("..");
   }
-  const folded = root + kept.join("/");
+  return kept;
+}
+
+export function foldCwdPath(path: string): string {
+  const raw = normalizeDisplayInput(path);
+  if (raw === "") return raw;
+  const root = displayCwdRoot(raw);
+  // Only a filesystem root absorbs a `..`; `~` keeps it for the server.
+  const kept = foldCwdParts(
+    raw.slice(root.length).split("/"),
+    root !== "" && root !== "~",
+  );
+  const body = kept.join("/");
+  const folded =
+    body === ""
+      ? root || "."
+      : root === "" || root.endsWith("/")
+        ? root + body
+        : `${root}/${body}`;
   if (root === "" && /^~$|^~\//.test(folded) && !/^~$|^~\//.test(raw)) {
     return `./${folded}`;
   }
-  return folded === "" ? "." : folded;
+  return folded;
 }
 
 /** Resolve one exact user path to the backend's absolute/~ path contract. */
