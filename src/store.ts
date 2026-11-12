@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { canonicalDirectoryPath } from "./home-path.ts";
 import { formatTaskPath } from "./shared/task-reference.ts";
 import {
   buildCollaborationSystemMessage,
@@ -401,6 +402,7 @@ export class Store {
       this.dropLegacyColumns();
       this.migrateSystemMessagePayloads();
       this.canonicalizeStoredModelValues();
+      this.migrateRecentPathKeys();
       this.rootId = this.resolveRootIdentity();
     } catch (error) {
       this.db.close();
@@ -901,6 +903,32 @@ export class Store {
     if (columns.some((column) => column.name === "brief")) {
       this.db.exec("ALTER TABLE tasks DROP COLUMN brief");
     }
+  }
+
+  /**
+   * Recent-path keys are canonical directory strings. An older build stored the
+   * bytes a user typed, so `/x` and `/x/` became two rows that abbreviate to
+   * the same display path and appeared twice in the completion menu. Merge each
+   * variant into its canonical key, keeping the newest use. Idempotent.
+   */
+  private migrateRecentPathKeys(): void {
+    const rows = this.db
+      .prepare("SELECT cwd, last_used_at FROM recent_paths")
+      .all() as Array<{ cwd: string; last_used_at: number }>;
+    const upsert = this.db.prepare(
+      `INSERT INTO recent_paths (cwd, last_used_at)
+       VALUES (?, ?)
+       ON CONFLICT(cwd) DO UPDATE SET last_used_at = MAX(last_used_at, excluded.last_used_at)`,
+    );
+    const remove = this.db.prepare("DELETE FROM recent_paths WHERE cwd = ?");
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const canonical = canonicalDirectoryPath(row.cwd);
+        if (canonical === row.cwd) continue;
+        upsert.run(canonical, row.last_used_at);
+        remove.run(row.cwd);
+      }
+    })();
   }
 
   /** Normalize the pre-title system_message payload in place. This is
@@ -1955,13 +1983,16 @@ export class Store {
   // --- Recent paths ---
 
   touchRecentPath(cwd: string): void {
+    // The key is the canonical directory string, so two spellings of one
+    // directory (`/x` and `/x/`) can never occupy two LRU rows and render as
+    // the same path twice in the `+` completion menu.
     this.db
       .prepare(
         `INSERT INTO recent_paths (cwd, last_used_at)
        VALUES (?, ?)
        ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at`,
       )
-      .run(cwd, Date.now());
+      .run(canonicalDirectoryPath(cwd), Date.now());
   }
 
   listRecentPaths(opts?: {

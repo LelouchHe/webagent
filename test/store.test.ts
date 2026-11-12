@@ -1883,6 +1883,34 @@ describe("Store", () => {
       assert.ok(after >= before);
     });
 
+    it("touchRecentPath keys the canonical directory string", () => {
+      store.touchRecentPath("/projects/a");
+      store.touchRecentPath("/projects/a/");
+      const paths = store.listRecentPaths();
+      assert.equal(paths.length, 1);
+      assert.equal(paths[0].cwd, "/projects/a");
+    });
+
+    it("merges legacy non-canonical keys when the store opens", () => {
+      const raw = (store as any).db.prepare(
+        "INSERT INTO recent_paths (cwd, last_used_at) VALUES (?, ?)",
+      );
+      raw.run("/projects/a", 1_000);
+      raw.run("/projects/a/", 2_000);
+      raw.run("/projects/b/./", 500);
+
+      store.close();
+      store = new Store(tmpDir);
+
+      const paths = store.listRecentPaths();
+      assert.deepEqual(
+        paths.map((p) => p.cwd),
+        ["/projects/a", "/projects/b"],
+      );
+      // The merged row keeps the newest use of either spelling.
+      assert.equal(paths[0].last_used_at, 2_000);
+    });
+
     it("listRecentPaths returns paths sorted by last_used_at DESC", () => {
       store.touchRecentPath("/a");
       store.touchRecentPath("/b");

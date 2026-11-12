@@ -19,6 +19,26 @@ describe("home paths", () => {
     assert.equal(expandHomePath("/tmp/project", home), "/tmp/project");
   });
 
+  it("returns one spelling per directory", () => {
+    // One directory, several typings: a task cwd and the recent-path key built
+    // from it must not depend on how the user typed the path.
+    assert.equal(expandHomePath("/tmp/project/", home), "/tmp/project");
+    assert.equal(expandHomePath("/tmp/project/./", home), "/tmp/project");
+    assert.equal(expandHomePath("/tmp//project", home), "/tmp/project");
+    assert.equal(expandHomePath("/tmp/other/../project", home), "/tmp/project");
+    assert.equal(
+      expandHomePath("~/mine/code/webagent/", home),
+      "/Users/lelouch/mine/code/webagent",
+    );
+    assert.equal(
+      expandHomePath("~/mine/../mine/code", home),
+      "/Users/lelouch/mine/code",
+    );
+    // Root and an empty field keep their identity.
+    assert.equal(expandHomePath("/", home), "/");
+    assert.equal(expandHomePath("", home), "");
+  });
+
   it("abbreviates only paths inside the current user's home", () => {
     assert.equal(abbreviateHomePath(home, home), "~");
     assert.equal(
@@ -44,6 +64,10 @@ describe("home paths", () => {
     );
     assert.equal(
       expandHomePath("~/mine/code", windowsHome, win32),
+      "C:\\Users\\lelouch\\mine\\code",
+    );
+    assert.equal(
+      expandHomePath("C:\\Users\\lelouch\\mine\\code\\", windowsHome, win32),
       "C:\\Users\\lelouch\\mine\\code",
     );
     assert.equal(
