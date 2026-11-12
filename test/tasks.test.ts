@@ -643,6 +643,29 @@ describe("Task REST API", () => {
       assert.equal(res.status, 400);
     });
 
+    it("reports a cwd that does not exist, but folds a `..` away from it", async () => {
+      // A component that is not there is reported on its own. It stops mattering
+      // once a `..` removes it: the directory that must exist is the folded one.
+      const missing = join(tmpDir, "missing");
+      const rejected = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        JSON.stringify({ cwd: missing }),
+      );
+      assert.equal(rejected.status, 400);
+      assert.match(rejected.body, /does not exist/);
+
+      const folded = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        JSON.stringify({ cwd: `${missing}/..` }),
+      );
+      assert.equal(folded.status, 201);
+      assert.equal(JSON.parse(folded.body).cwd, tmpDir);
+    });
+
     it("rejects a relative cwd instead of resolving it against the service", async () => {
       // A relative path would start the task in whatever directory the service
       // happens to run in, which neither the caller nor the picker named.
