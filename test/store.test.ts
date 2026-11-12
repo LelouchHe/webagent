@@ -1923,6 +1923,40 @@ describe("Store", () => {
       assert.equal(paths[0].last_used_at, 2_000);
     });
 
+    it("never rewrites a stored cwd across a symlink", () => {
+      // `/base/a/link/..` is `b` to the filesystem; a lexical rewrite would
+      // run the task in `a` instead after a reopen.
+      store.createTask(
+        "linked",
+        "/base/a/link/..",
+        "auto",
+        "test-agent",
+        "a-1",
+      );
+      store.touchRecentPath("/base/a/link/..");
+      assert.equal(store.getTask("linked")!.cwd, "/base/a/link/..");
+
+      store.close();
+      store = new Store(tmpDir);
+
+      assert.equal(store.getTask("linked")!.cwd, "/base/a/link/..");
+      assert.equal(store.listRecentPaths()[0].cwd, "/base/a/link/..");
+    });
+
+    it("keeps a directory literally named ~ out of HOME", () => {
+      // `./~/repo` is relative: it must not become `~/repo` (and then HOME on
+      // the next pass) when the store canonicalizes it twice.
+      store.ensureRootTask("./~/repo/");
+      assert.equal(store.getTask(store.rootTaskId)!.cwd, "./~/repo");
+      store.touchRecentPath(store.getTask(store.rootTaskId)!.cwd);
+      assert.equal(store.listRecentPaths()[0].cwd, "./~/repo");
+
+      store.close();
+      store = new Store(tmpDir);
+
+      assert.equal(store.getTask(store.rootTaskId)!.cwd, "./~/repo");
+    });
+
     it("rewrites a legacy task cwd so it still matches its recent row", () => {
       // A historical task could carry `/projects/a/` while the recent-path row
       // written from it is keyed `/projects/a`; the pickers compare the two, so

@@ -35,31 +35,61 @@ describe("home paths", () => {
 
   it("returns one spelling per directory", () => {
     // One directory, several typings: a task cwd and the recent-path key built
-    // from it must not depend on how the user typed the path.
+    // from it must not depend on how the user typed the trailing end.
     assert.equal(canonicalDirectoryPath("/tmp/project/", home), "/tmp/project");
     assert.equal(
       canonicalDirectoryPath("/tmp/project/./", home),
       "/tmp/project",
     );
-    assert.equal(canonicalDirectoryPath("/tmp//project", home), "/tmp/project");
-    assert.equal(
-      canonicalDirectoryPath("/tmp/other/../project", home),
-      "/tmp/project",
-    );
+    assert.equal(canonicalDirectoryPath("/x/.", home), "/x");
     assert.equal(
       canonicalDirectoryPath("~/mine/code/webagent/", home),
       "/Users/lelouch/mine/code/webagent",
     );
-    assert.equal(
-      canonicalDirectoryPath("~/mine/../mine/code", home),
-      "/Users/lelouch/mine/code",
-    );
-    // Relative input keeps its meaning and loses the same redundancy.
+    // Relative input keeps its meaning and loses the same trailing parts.
     assert.equal(canonicalDirectoryPath("src/", home), "src");
-    assert.equal(canonicalDirectoryPath("./src", home), "src");
+    assert.equal(canonicalDirectoryPath("src/./", home), "src");
     // Root and an empty field keep their identity.
     assert.equal(canonicalDirectoryPath("/", home), "/");
     assert.equal(canonicalDirectoryPath("", home), "");
+  });
+
+  it("never rewrites a path across a symlink", () => {
+    // Lexical folding is not the filesystem: with `a/link -> b/nested`,
+    // `a/link/..` is `b`. Rewriting it would move a task to another directory,
+    // so interior segments are preserved verbatim.
+    assert.equal(
+      canonicalDirectoryPath("/base/a/link/../note.txt", home),
+      "/base/a/link/../note.txt",
+    );
+    assert.equal(
+      canonicalDirectoryPath("/tmp//project", home),
+      "/tmp//project",
+    );
+    assert.equal(canonicalDirectoryPath("./src", home), "./src");
+  });
+
+  it("is idempotent, including a directory literally named ~", () => {
+    // Both the task-cwd ingress and the storage boundary canonicalize, and a
+    // stored value is canonicalized again after a reopen.
+    const inputs = [
+      "/tmp/project/",
+      "/tmp/project/./",
+      "/x/././",
+      "~/mine/code/webagent/",
+      "/base/a/link/..",
+      "./~/repo",
+      "./~/repo/",
+      "src/./",
+      "/",
+      "",
+    ];
+    for (const input of inputs) {
+      const once = canonicalDirectoryPath(input, home);
+      assert.equal(canonicalDirectoryPath(once, home), once, input);
+    }
+    // A literal `~` directory in a relative path is not HOME.
+    assert.equal(canonicalDirectoryPath("./~/repo/", home), "./~/repo");
   });
 
   it("abbreviates only paths inside the current user's home", () => {
@@ -95,6 +125,10 @@ describe("home paths", () => {
         windowsHome,
         win32,
       ),
+      "C:\\Users\\lelouch\\mine\\code",
+    );
+    assert.equal(
+      canonicalDirectoryPath("~\\mine\\code\\", windowsHome, win32),
       "C:\\Users\\lelouch\\mine\\code",
     );
     // A root is a root: trimming its separator would change the object a path

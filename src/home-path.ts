@@ -1,11 +1,10 @@
 import { homedir } from "node:os";
-import { isAbsolute, join, normalize, parse, relative, sep } from "node:path";
+import { isAbsolute, join, parse, relative, sep } from "node:path";
 
 /** Structural subset shared by node:path and node:path.win32 in tests. */
 export interface HomePathOps {
   isAbsolute(path: string): boolean;
   join(...paths: string[]): string;
-  normalize(path: string): string;
   parse(path: string): { root: string };
   relative(from: string, to: string): string;
   sep: string;
@@ -14,7 +13,6 @@ export interface HomePathOps {
 const NATIVE_PATH: HomePathOps = {
   isAbsolute,
   join,
-  normalize,
   parse,
   relative,
   sep,
@@ -48,18 +46,28 @@ export function expandHomePath(
 }
 
 /**
- * The one spelling of a directory: HOME expanded, normalized, and without a
- * trailing separator.
+ * The one spelling of a directory: HOME expanded, with trailing separators and
+ * trailing `.` segments removed.
  *
  * Used wherever a cwd is stored or compared — task rows, the recent-path LRU,
  * the pickers' "this is the current directory" check — so `/x`, `/x/`, and
- * `/x/./` can never occupy two keys. `normalize` alone keeps a trailing
- * separator (`/x/./` → `/x/`), so it is stripped down to the path's own root.
- * Bounding the strip by that root is what keeps a filesystem root intact:
- * `C:\`, a UNC share root, and the device namespace's `\\.\C:\` are roots, not
- * directories with a separator to trim (`\\.\C:` is a volume device, a
- * different object). Relative input keeps its meaning and loses the same
- * redundant parts, so `src/` and `src` agree.
+ * `/x/./` cannot occupy two keys.
+ *
+ * Only semantically transparent parts are dropped, because this string is a
+ * directory a process will actually run in:
+ * - A trailing separator names the same directory (`/x/` is `/x`).
+ * - A trailing `.` segment names the same directory and passes through no
+ *   symlink, so `/x/.` is `/x`.
+ * - An interior `.` or `..` is left alone. Lexical folding is not equivalent:
+ *   with `a/link -> b/nested`, `a/link/..` is `b`, not `a`, so rewriting it
+ *   would move an existing or historical task to a different directory.
+ * The strip is bounded by the path's own root, which keeps a filesystem root
+ * intact: `C:\`, a UNC share root, and the device namespace's `\\.\C:\` are
+ * roots, not directories with a separator to trim (`\\.\C:` is a volume
+ * device, a different object).
+ *
+ * Idempotent: the result never starts a new `~` expansion, so passing a stored
+ * cwd through this twice (ingress, then the storage boundary) is a no-op.
  */
 export function canonicalDirectoryPath(
   input: string,
@@ -68,16 +76,28 @@ export function canonicalDirectoryPath(
 ): string {
   const expanded = expandHomePath(input, home, path);
   if (expanded === "") return expanded;
-  const normalized = path.normalize(expanded);
-  const root = path.parse(normalized).root;
-  let canonical = normalized;
-  while (
-    canonical.length > root.length &&
-    (canonical.endsWith(path.sep) || canonical.endsWith("/"))
-  ) {
-    canonical = canonical.slice(0, -1);
+  const root = path.parse(expanded).root;
+  let canonical = expanded;
+  for (;;) {
+    const before = canonical;
+    while (
+      canonical.length > root.length &&
+      (canonical.endsWith(path.sep) || canonical.endsWith("/"))
+    ) {
+      canonical = canonical.slice(0, -1);
+    }
+    for (const dot of [`${path.sep}.`, "/."]) {
+      if (
+        canonical.length > dot.length &&
+        canonical.length - dot.length >= root.length &&
+        canonical.endsWith(dot)
+      ) {
+        canonical = canonical.slice(0, -dot.length);
+        break;
+      }
+    }
+    if (canonical === before) return canonical;
   }
-  return canonical;
 }
 
 /**
