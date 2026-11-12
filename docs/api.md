@@ -188,7 +188,7 @@ Create a new task. Optionally inherits model and reasoning_effort from another t
 
 | Field                  | Type   | Required | Description                                                                       |
 | ---------------------- | ------ | -------- | --------------------------------------------------------------------------------- |
-| `cwd`                  | string | No       | Working directory. Defaults to server's `default_cwd` config. Must exist on disk. |
+| `cwd`                  | string | No       | Working directory. Defaults to server's `default_cwd` config. Must be absolute (or `~`-prefixed) and exist on disk; `.`/`..` are folded as a shell folds them. |
 | `inheritFromTaskId` | string | No       | Copy model + reasoning_effort from this task                                   |
 | `source`               | string | No       | Tag for the task origin. Default: `"auto"`                                     |
 | `parentId`          | string | No       | Parent WebAgent Task. Defaults to the reserved Root when it exists.              |

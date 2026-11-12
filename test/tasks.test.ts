@@ -637,6 +637,19 @@ describe("Task REST API", () => {
       assert.equal(res.status, 400);
     });
 
+    it("rejects a relative cwd instead of resolving it against the service", async () => {
+      // A relative path would start the task in whatever directory the service
+      // happens to run in, which neither the caller nor the picker named.
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        JSON.stringify({ cwd: "relative/dir" }),
+      );
+      assert.equal(res.status, 400);
+      assert.match(res.body, /must be absolute/);
+    });
+
     it("returns 503 when bridge is not ready", async () => {
       // Create handler with no bridge
       const handler = createRequestHandler({
@@ -790,6 +803,21 @@ describe("Task REST API", () => {
       );
       assert.equal(store.getPendingCompactSummary("s1"), null);
       assert.deepEqual(mockBridge.retireCalls, ["agent-old"]);
+    });
+
+    it("rejects a relative rotation cwd and keeps the task's directory", async () => {
+      store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks/s1/clear",
+        JSON.stringify({ cwd: "relative/dir" }),
+      );
+
+      assert.equal(res.status, 400);
+      assert.match(res.body, /must be absolute/);
+      assert.equal(store.getTask("s1")?.cwd, tmpDir);
     });
 
     it("persists a clear request's replacement cwd on the stable task", async () => {

@@ -10,7 +10,8 @@
  * Pure string work, so a stored value cannot depend on when it was written:
  * existence belongs to the caller that already checks the directory, and
  * symlinks are never expanded (a workspace keeps the spelling it was addressed
- * by). The same rule runs in the browser (`foldCwdPath` in
+ * by). One consequence: a `..` with a missing component (`gone/..`) folds to the
+ * parent and lands there visibly, where `cd` would report it. The same rule runs in the browser (`foldCwdPath` in
  * `public/js/file-browser.ts`), so the picker lists, checks, fills, and stores
  * one directory rather than two.
  */

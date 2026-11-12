@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import {
   MessageNotFoundError,
   emptyExecutionSlot,
@@ -274,6 +274,19 @@ export class InvalidTaskDirectoryError extends Error {
   constructor(cwd: string) {
     super(`Directory does not exist: ${cwd}`);
     this.name = "InvalidTaskDirectoryError";
+  }
+}
+
+/**
+ * A task cwd must be absolute once HOME is expanded. A relative one would be
+ * resolved against whatever directory the service process happens to run in, so
+ * the task would start somewhere neither the caller nor the picker named.
+ */
+export class RelativeTaskDirectoryError extends InvalidTaskDirectoryError {
+  constructor(cwd: string) {
+    super(cwd);
+    this.message = `Directory must be absolute: ${cwd}`;
+    this.name = "RelativeTaskDirectoryError";
   }
 }
 
@@ -1455,6 +1468,17 @@ export class TaskManager implements ObligationHost {
   }
 
   /** Create a new task in both bridge and store, inheriting the source task's config. */
+  /**
+   * The directory a create or a rotation will use: folded the way a shell folds
+   * a typed path, and required to be absolute, because a relative cwd would
+   * resolve against whatever directory the service process runs in.
+   */
+  private resolveTaskCwd(cwd: string | undefined, fallback: string): string {
+    const taskCwd = canonicalCwd(cwd ?? fallback);
+    if (!isAbsolute(taskCwd)) throw new RelativeTaskDirectoryError(taskCwd);
+    return taskCwd;
+  }
+
   async createTask(
     bridge: SessionBridge,
     cwd?: string,
@@ -1667,7 +1691,7 @@ export class TaskManager implements ObligationHost {
       assertCaller?: () => void;
     },
   ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
-    const taskCwd = canonicalCwd(cwd ?? this.defaultCwd);
+    const taskCwd = this.resolveTaskCwd(cwd, this.defaultCwd);
     const agentId = this.bridgeAgentId(bridge);
     try {
       const info = await stat(taskCwd);
@@ -1930,7 +1954,7 @@ export class TaskManager implements ObligationHost {
     // A rotation's replacement execution is the *verified target* agent: the
     // same binding agent for a rebuild, or an explicitly rescued agent.
     const agentId = this.bridgeAgentId(bridge);
-    const taskCwd = canonicalCwd(cwd ?? task.cwd);
+    const taskCwd = this.resolveTaskCwd(cwd, task.cwd);
     try {
       const info = await stat(taskCwd);
       if (!info.isDirectory()) throw new Error("not a directory");

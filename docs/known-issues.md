@@ -45,15 +45,6 @@ time. An entry without a "closing condition" is a wish, not an issue.
 
 ## Task lifecycle and storage
 
-- **A relative cwd can still reach a task row.** `/clear <relative>` sends the
-  path untouched, so the server resolves it against the *service's* cwd rather
-  than the task's and can store a relative `tasks.cwd`; MCP `task_create`
-  resolves a relative path with `path.resolve`, which folds `typo/..` without the
-  component check a shell applies. Absolute input is unaffected, and the pickers
-  never send a relative path. Pre-existing; the canonicalization work did not
-  widen it. *Closing:* resolve (or reject) a relative cwd at the task boundary,
-  where the task's own cwd is known.
-
 - **A Root replacement is announced only when the fallback lands normally.**
   `/exit` prints its request row and the landing prints a `notify: Root replaced`
   row, both from client memory. If the fallback's own reads fail
