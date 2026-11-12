@@ -52,6 +52,23 @@ describe("Store", () => {
       assert.equal(row.count, 1);
     });
 
+    it("stores a canonical cwd for a new task and the Root anchor", () => {
+      // The Root row is created on first use, so it is asserted before any
+      // other task can install one with its own cwd.
+      assert.equal(store.ensureRootTask("/root/").cwd, "/root");
+
+      store.createTask("web-2", "/work/", "auto", "test-agent", "agent-2");
+      assert.equal(store.getTask("web-2")!.cwd, "/work");
+    });
+
+    it("writes a rotation's cwd as given", () => {
+      // The task manager decides a rotation's directory; the store must not fold
+      // it again, or a legacy spelling the task actually runs in would move.
+      store.createTask("web-2", "/work", "auto", "test-agent", "agent-2");
+      store.replaceAgentSession("web-2", "test-agent", "agent-3", "/w/link/..");
+      assert.equal(store.getTask("web-2")!.cwd, "/w/link/..");
+    });
+
     it("persists a requested cwd even when rotation is a no-op (same agent id)", () => {
       store.createTask("web-1", "/a", "auto", "test-agent", "agent-1");
 
@@ -1881,6 +1898,99 @@ describe("Store", () => {
       const after = store.listRecentPaths()[0].last_used_at;
       assert.equal(store.listRecentPaths().length, 1);
       assert.ok(after >= before);
+    });
+
+    it("touchRecentPath keys the canonical directory string", () => {
+      store.touchRecentPath("/projects/a");
+      store.touchRecentPath("/projects/a/");
+      const paths = store.listRecentPaths();
+      assert.equal(paths.length, 1);
+      assert.equal(paths[0].cwd, "/projects/a");
+    });
+
+    it("merges legacy non-canonical keys when the store opens", () => {
+      const raw = (store as any).db.prepare(
+        "INSERT INTO recent_paths (cwd, last_used_at) VALUES (?, ?)",
+      );
+      raw.run("/projects/a", 1_000);
+      raw.run("/projects/a/", 2_000);
+      raw.run("/projects/b/./", 500);
+
+      store.close();
+      store = new Store(tmpDir);
+
+      const paths = store.listRecentPaths();
+      assert.deepEqual(
+        paths.map((p) => p.cwd),
+        ["/projects/a", "/projects/b"],
+      );
+      // The merged row keeps the newest use of either spelling.
+      assert.equal(paths[0].last_used_at, 2_000);
+    });
+
+    it("stores a cwd with no `.` or `..`, folded the way a shell folds it", () => {
+      // `a/link/..` is `a` however `link` is spelled, so no filesystem is
+      // consulted: the typed path is what the user meant.
+      store.createTask("folded", "/w/a/b/..", "auto", "test-agent", "a-1");
+      store.createTask("linked", "/w/a/link/..", "auto", "test-agent", "a-2");
+      assert.equal(store.getTask("folded")!.cwd, "/w/a");
+      assert.equal(store.getTask("linked")!.cwd, "/w/a");
+
+      store.close();
+      store = new Store(tmpDir);
+
+      assert.equal(store.getTask("folded")!.cwd, "/w/a");
+      assert.equal(store.getTask("linked")!.cwd, "/w/a");
+    });
+
+    it("keeps a directory literally named ~ out of HOME", () => {
+      // `./~/repo` is relative: it must not become `~/repo` (and then HOME on
+      // the next pass) when the store canonicalizes it twice.
+      store.ensureRootTask("./~/repo/");
+      assert.equal(store.getTask(store.rootTaskId)!.cwd, "./~/repo");
+      store.touchRecentPath(store.getTask(store.rootTaskId)!.cwd);
+      assert.equal(store.listRecentPaths()[0].cwd, "./~/repo");
+
+      store.close();
+      store = new Store(tmpDir);
+
+      assert.equal(store.getTask(store.rootTaskId)!.cwd, "./~/repo");
+    });
+
+    it("leaves a legacy `..` cwd alone so a running task cannot move", () => {
+      // Before this build, `+t ../foo` stored the raw `..` path and the task
+      // ran where the kernel resolved it. Folding it now would name another
+      // directory, so the row keeps its bytes.
+      store.createTask("legacy-dots", "/w/a", "auto", "test-agent", "a-1");
+      (store as any).db
+        .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
+        .run("/w/a/link/..", "legacy-dots");
+      (store as any).db
+        .prepare("INSERT INTO recent_paths (cwd, last_used_at) VALUES (?, ?)")
+        .run("/w/a/link/..", 1_000);
+
+      store.close();
+      store = new Store(tmpDir);
+
+      assert.equal(store.getTask("legacy-dots")!.cwd, "/w/a/link/..");
+    });
+
+    it("rewrites a legacy task cwd so it still matches its recent row", () => {
+      // A historical task could carry `/projects/a/` while the recent-path row
+      // written from it is keyed `/projects/a`; the pickers compare the two, so
+      // the task row is canonicalized too.
+      store.createTask("legacy-task", "/work", "auto", "test-agent", "agent-1");
+      (store as any).db
+        .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
+        .run("/projects/a/", "legacy-task");
+      (store as any).db
+        .prepare("INSERT INTO recent_paths (cwd, last_used_at) VALUES (?, ?)")
+        .run("/projects/a", 1_000);
+
+      store.close();
+      store = new Store(tmpDir);
+
+      assert.equal(store.getTask("legacy-task")!.cwd, "/projects/a");
     });
 
     it("listRecentPaths returns paths sorted by last_used_at DESC", () => {

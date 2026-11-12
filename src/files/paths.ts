@@ -94,11 +94,13 @@ export interface DirEntry {
 
 /**
  * List one directory: scan at most MAX_LIST_ITEMS plus one sentinel raw entry,
- * omit dotfiles/special nodes, then sort the bounded result dirs-first and
- * lexicographically. Entries that vanish mid-list are skipped.
+ * omit special nodes (and dotfiles unless `includeHidden`), then sort the
+ * bounded result dirs-first and lexicographically. Entries that vanish mid-list
+ * are skipped.
  */
 export async function listDirectory(
   target: string,
+  opts?: { includeHidden?: boolean },
 ): Promise<{ entries: DirEntry[]; truncated: boolean }> {
   const dir = await opendir(target);
   const entries: DirEntry[] = [];
@@ -113,7 +115,7 @@ export async function listDirectory(
       truncated = true;
       break;
     }
-    if (entry.name.startsWith(".")) continue;
+    if (!opts?.includeHidden && entry.name.startsWith(".")) continue;
     try {
       const s = await stat(join(target, entry.name));
       // Only expose targets the viewer can actually open. Symlinks to

@@ -12,7 +12,7 @@ import {
   TaskPathParseError,
   type TaskPath,
 } from "../../src/task-path.ts";
-import { resolveBrowseTarget } from "./file-browser.ts";
+import { resolveBrowseTarget, wantsHidden } from "./file-browser.ts";
 import {
   parseCoordinate,
   previewCreateCwd,
@@ -404,7 +404,11 @@ async function buildCreateCwdCandidates(
 
   let entries: api.FileListEntry[];
   try {
-    entries = (await api.listFiles(directory)).entries;
+    // Same dot rule as `/view`: a leading `.` in the segment being typed is
+    // how a hidden directory (`~/.config`) becomes reachable.
+    entries = (
+      await api.listFiles(directory, { includeHidden: wantsHidden(filter) })
+    ).entries;
   } catch {
     // The prefix may not resolve to a readable directory yet.
     return [];

@@ -560,8 +560,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - one `seq` source across a real A→B rotation (two Stores): the binding's agent and session both move, two client cursors accept every patch, and the post-rotation snapshot is never superseded
   - public reads stay filtered by the caller's agent while the internal read stays global
 
+- `test/cwd-path.test.ts`
+  - the stored cwd form: pure string folding — `.` and repeated/trailing separators removed, `..` folded logically like `cd` (`a/link/..` is `a`), HOME expanded first, a relative `~/…` directory never turned into HOME shorthand, and idempotency over every case
+
 - `test/store.test.ts`
   - task creation / deletion / updates
+  - a stored cwd has no `.` and no `..`: `a/b/..` and `a/link/..` both become `a` (shell folding) and a reopen leaves them unchanged; a store opened on a database holding legacy variants merges each into its canonical row keeping its newest use, while a legacy row that still carries `..` keeps its bytes so a running task cannot move
   - config persistence, including clearing one column with `null` without touching the others
   - an agent image is stored as an attachment (file + row) and referenced by its own `agent_image` record between the surrounding text blocks; the persisted row carries no base64, the live broadcast is the same reference, and an oversized image becomes visible text with no row
   - title persistence
@@ -610,6 +614,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - task list is global (`?agent=` narrows); every list entry, task detail, snapshot, bootstrap/create/clear payload, and `task_created` broadcast carries `agentId`; only `/api/v1/config` reports `rootTaskId`, and responses and the SSE `connected` event do not repeat it
   - creating a child of a task carried by another configured agent targets that agent without rotating the parent; when the parent's agent is gone the child is created for `default_agent`
   - `POST /clear { agentId }` rescues a task onto another configured agent, leaves the `agent_rotation` record, and refuses an unconfigured / non-string `agentId`
+  - a cwd must be absolute once HOME is expanded: a relative create and a relative rotation both answer 400 without moving the task, while a rotation that names no new directory keeps a legacy `..` or relative row exactly as stored (no user input, so no silent move)
   - REST and MCP callers cannot choose reserved task ids; bootstrap, clear, compact, and actual/synthetic task_created envelopes preserve Root identity
   - bootstrap materializes the Root as the workspace's first task (attach on a never-bound Root, materialize an exit's empty slot) instead of creating an unrelated task
   - config update (model, mode) and broadcast
@@ -630,7 +635,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/file-viewer-routes.test.ts`
   - Bearer-gated `info` / `list` and independently HMAC-signed `content`
   - absolute / `~` / `..` / symlink canonicalization, portable HOME display paths, relative/invalid rejection
-  - bounded `opendir` scanning, directory order, hidden/special omission, and truncation
+  - bounded `opendir` scanning, directory order, `hidden=1` dot entries (omitted by default), special omission, and truncation
   - one-descriptor regular-file validation/sniff/stream flow for directories, FIFOs, and mutable paths
   - 1 MiB inline text preview; complete streamed attachment fallback for larger/unknown content
   - signed URL tamper/retarget rejection, no-store responses, and URL-safe Unicode/space paths
@@ -937,6 +942,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/file-browser.test.ts`, `test/view-command.test.ts`, `test/file-viewer-frontend.test.ts`
   - cwd-relative, absolute, portable Windows/HOME, root, trailing-slash, and local-filter path semantics
+  - the picker's cwd fold (same rule as the server): `/view`/`+` list, check, and fill the folded directory, so a `..` before a symlink cannot show one directory and create in another
+  - dot-filter reveal: `hidden=1` is requested and cache-partitioned only while the typed segment starts with `.`, hidden rows match by prefix, and visible names containing a dot never answer a `.` filter
   - Enter dispatch: directory drill-down vs direct file open/download
   - existing Markdown pipeline reuse, safe highlighted code/text + batched line numbers, image, attachment fallback, and close lifecycle
 

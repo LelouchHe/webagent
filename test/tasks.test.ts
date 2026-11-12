@@ -1,7 +1,13 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
@@ -637,6 +643,42 @@ describe("Task REST API", () => {
       assert.equal(res.status, 400);
     });
 
+    it("reports a cwd that does not exist, but folds a `..` away from it", async () => {
+      // A component that is not there is reported on its own. It stops mattering
+      // once a `..` removes it: the directory that must exist is the folded one.
+      const missing = join(tmpDir, "missing");
+      const rejected = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        JSON.stringify({ cwd: missing }),
+      );
+      assert.equal(rejected.status, 400);
+      assert.match(rejected.body, /does not exist/);
+
+      const folded = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        JSON.stringify({ cwd: `${missing}/..` }),
+      );
+      assert.equal(folded.status, 201);
+      assert.equal(JSON.parse(folded.body).cwd, tmpDir);
+    });
+
+    it("rejects a relative cwd instead of resolving it against the service", async () => {
+      // A relative path would start the task in whatever directory the service
+      // happens to run in, which neither the caller nor the picker named.
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        JSON.stringify({ cwd: "relative/dir" }),
+      );
+      assert.equal(res.status, 400);
+      assert.match(res.body, /must be absolute/);
+    });
+
     it("returns 503 when bridge is not ready", async () => {
       // Create handler with no bridge
       const handler = createRequestHandler({
@@ -790,6 +832,65 @@ describe("Task REST API", () => {
       );
       assert.equal(store.getPendingCompactSummary("s1"), null);
       assert.deepEqual(mockBridge.retireCalls, ["agent-old"]);
+    });
+
+    it("rotates a legacy cwd in place instead of folding it", async () => {
+      // A task stored with `..` before this build ran in the directory the old
+      // rule named; compaction and bare `/clear` name no new directory, so the
+      // stored spelling must survive them.
+      mkdirSync(join(tmpDir, "y"), { recursive: true });
+      mkdirSync(join(tmpDir, "x"), { recursive: true });
+      symlinkSync(join("..", "y"), join(tmpDir, "x", "link"));
+      const legacy = `${tmpDir}/x/link/..`;
+      store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
+      (store as any).db
+        .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
+        .run(legacy, "s1");
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks/s1/clear",
+        JSON.stringify({}),
+      );
+
+      assert.equal(res.status, 200);
+      assert.equal(store.getTask("s1")?.cwd, legacy);
+    });
+
+    it("rotates a legacy relative cwd without refusing the request", async () => {
+      // The old `/clear <relative>` pass-through could store a relative row. It
+      // is not a reason to make that task impossible to compact. `test/` exists
+      // relative to the process cwd, which is how such a row resolves at all.
+      store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
+      (store as any).db
+        .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
+        .run("test", "s1");
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks/s1/clear",
+        JSON.stringify({}),
+      );
+
+      assert.equal(res.status, 200);
+      assert.equal(store.getTask("s1")?.cwd, "test");
+    });
+
+    it("rejects a relative rotation cwd and keeps the task's directory", async () => {
+      store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks/s1/clear",
+        JSON.stringify({ cwd: "relative/dir" }),
+      );
+
+      assert.equal(res.status, 400);
+      assert.match(res.body, /must be absolute/);
+      assert.equal(store.getTask("s1")?.cwd, tmpDir);
     });
 
     it("persists a clear request's replacement cwd on the stable task", async () => {

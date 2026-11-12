@@ -19,6 +19,16 @@ describe("home paths", () => {
     assert.equal(expandHomePath("/tmp/project", home), "/tmp/project");
   });
 
+  it("leaves expansion-only callers the path they typed", () => {
+    // The file API resolves paths with `realpath`, where a lexical rewrite of
+    // `link/..` would address a different file than the filesystem does.
+    assert.equal(expandHomePath("/tmp/project/", home), "/tmp/project/");
+    assert.equal(
+      expandHomePath("/tmp/a/link/../note.txt", home),
+      "/tmp/a/link/../note.txt",
+    );
+  });
+
   it("abbreviates only paths inside the current user's home", () => {
     assert.equal(abbreviateHomePath(home, home), "~");
     assert.equal(

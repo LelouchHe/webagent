@@ -310,8 +310,14 @@ export function getFileInfo(path: string): Promise<FileInfo> {
   return request(`/api/v1/files/info?path=${encodeURIComponent(path)}`);
 }
 
-export function listFiles(path: string): Promise<FileListResponse> {
-  return request(`/api/v1/files/list?path=${encodeURIComponent(path)}`);
+export function listFiles(
+  path: string,
+  opts?: { includeHidden?: boolean },
+): Promise<FileListResponse> {
+  const hidden = opts?.includeHidden ? "&hidden=1" : "";
+  return request(
+    `/api/v1/files/list?path=${encodeURIComponent(path)}${hidden}`,
+  );
 }
 
 /** client-server-split M1: fetch the current runtime snapshot. */

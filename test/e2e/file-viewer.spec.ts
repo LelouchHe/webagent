@@ -77,6 +77,45 @@ test("mobile /view drills into a folder and opens a full-screen file", async ({
   await expect(viewer).toBeHidden();
 });
 
+test("/view reveals dot entries only behind a leading dot", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await gotoConnected(page);
+
+  const hiddenFile = join(downloadDir, ".env");
+  writeFileSync(hiddenFile, "SECRET=1");
+  writeFileSync(join(downloadDir, "env.txt"), "visible");
+
+  const input = page.locator("#input");
+  const menu = page.locator("#slash-menu");
+  const primary = (text: string) =>
+    menu.locator(".slash-item", {
+      has: page.locator(".slash-primary", { hasText: text }),
+    });
+
+  // A plain listing never offers dot entries.
+  await input.fill(`/view ${downloadDir}/`);
+  await expect(primary("env.txt")).toBeVisible();
+  await expect(primary(".env")).toHaveCount(0);
+
+  // Typing the dot addresses them, and only them: a visible name that merely
+  // contains a dot is not a hidden entry.
+  await input.fill(`/view ${downloadDir}/.`);
+  await expect(primary(".env")).toBeVisible();
+  await expect(primary("env.txt")).toHaveCount(0);
+
+  await primary(".env").click();
+  const viewer = page.locator("#file-viewer");
+  await expect(viewer).toBeVisible();
+  // The server canonicalizes through symlinks (`/var` → `/private/var` on
+  // macOS), so the assertion targets the entry that was opened, not the
+  // pre-realpath temp path.
+  await expect(page.locator("#file-viewer-path")).toHaveText(/\/\.env$/);
+  await page.locator("#file-viewer-close").click();
+  await expect(viewer).toBeHidden();
+});
+
 test("text over 1 MiB downloads in full without opening the viewer", async ({
   page,
 }) => {

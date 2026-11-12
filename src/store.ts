@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { canonicalCwd } from "./cwd-path.ts";
 import { formatTaskPath } from "./shared/task-reference.ts";
 import {
   buildCollaborationSystemMessage,
@@ -401,6 +402,7 @@ export class Store {
       this.dropLegacyColumns();
       this.migrateSystemMessagePayloads();
       this.canonicalizeStoredModelValues();
+      this.migrateCanonicalCwds();
       this.rootId = this.resolveRootIdentity();
     } catch (error) {
       this.db.close();
@@ -903,6 +905,55 @@ export class Store {
     }
   }
 
+  /**
+   * A stored cwd has no `.` and no `..` (`canonicalCwd`). An older build kept
+   * the bytes a user typed, so a task could carry `/x/` while the recent-path
+   * row written from it is `/x`; the pickers then compare the task's cwd
+   * against the recent list and fail to recognize the same directory, rendering
+   * it twice. Rewrite both sides to the canonical form: task rows first, then
+   * merge each recent-path variant into its canonical key keeping the newest
+   * use.
+   *
+   * A task row that still contains a `.`/`..` segment is the one case left
+   * alone. Folding it would apply today's shell rule to a directory the task
+   * was actually running in under the old rule — across a symlink, that is a
+   * different directory — so the row keeps its bytes and the picker may show it
+   * beside a folded recent key until the user moves the task.
+   */
+  private migrateCanonicalCwds(): void {
+    const tasks = this.db.prepare("SELECT id, cwd FROM tasks").all() as Array<{
+      id: string;
+      cwd: string;
+    }>;
+    const setCwd = this.db.prepare("UPDATE tasks SET cwd = ? WHERE id = ?");
+    const paths = this.db
+      .prepare("SELECT cwd, last_used_at FROM recent_paths")
+      .all() as Array<{ cwd: string; last_used_at: number }>;
+    const upsert = this.db.prepare(
+      `INSERT INTO recent_paths (cwd, last_used_at)
+       VALUES (?, ?)
+       ON CONFLICT(cwd) DO UPDATE SET last_used_at = MAX(last_used_at, excluded.last_used_at)`,
+    );
+    const remove = this.db.prepare("DELETE FROM recent_paths WHERE cwd = ?");
+    this.db.transaction(() => {
+      for (const row of tasks) {
+        if (
+          row.cwd.split(/[\\/]/).some((part) => part === "." || part === "..")
+        ) {
+          continue;
+        }
+        const canonical = canonicalCwd(row.cwd);
+        if (canonical !== row.cwd) setCwd.run(canonical, row.id);
+      }
+      for (const row of paths) {
+        const canonical = canonicalCwd(row.cwd);
+        if (canonical === row.cwd) continue;
+        upsert.run(canonical, row.last_used_at);
+        remove.run(row.cwd);
+      }
+    })();
+  }
+
   /** Normalize the pre-title system_message payload in place. This is
    * idempotent and runs before any event can be replayed or returned. */
   private migrateSystemMessagePayloads(): void {
@@ -925,7 +976,7 @@ export class Store {
       .prepare(
         "INSERT INTO tasks (id, cwd, source, parent_id, title, created_at, last_active_at) VALUES (?, ?, 'root', NULL, 'root', ?, ?)",
       )
-      .run(this.rootTaskId, cwd, now, now);
+      .run(this.rootTaskId, canonicalCwd(cwd), now, now);
   }
 
   /**
@@ -988,7 +1039,7 @@ export class Store {
         )
         .run(
           id,
-          cwd,
+          canonicalCwd(cwd),
           source,
           resolvedParentId,
           opts.title ?? id,
@@ -1191,6 +1242,9 @@ export class Store {
       const before = this.currentBinding(taskId);
       if (!before) throw new Error(`Task not found: ${taskId}`);
       if (cwd !== undefined) {
+        // Written as given: the rotation path may deliberately carry a stored
+        // spelling forward (a legacy `..` row the task actually runs in), and
+        // folding here would silently move it.
         this.db
           .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
           .run(cwd, taskId);
@@ -1955,13 +2009,16 @@ export class Store {
   // --- Recent paths ---
 
   touchRecentPath(cwd: string): void {
+    // The key is the canonical directory string, so two spellings of one
+    // directory (`/x` and `/x/`) can never occupy two LRU rows and render as
+    // the same path twice in the `+` completion menu.
     this.db
       .prepare(
         `INSERT INTO recent_paths (cwd, last_used_at)
        VALUES (?, ?)
        ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at`,
       )
-      .run(cwd, Date.now());
+      .run(canonicalCwd(cwd), Date.now());
   }
 
   listRecentPaths(opts?: {

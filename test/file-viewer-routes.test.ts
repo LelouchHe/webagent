@@ -108,6 +108,13 @@ describe("file viewer routes", () => {
     writeFileSync(join(projDir, "sub", "deep.txt"), "deep");
     // Symlink that points outside any project root — legal by design.
     symlinkSync(textFile, join(projDir, "link.md"));
+    // A directory reached through a symlink, so `link/../x` has two possible
+    // meanings: the filesystem's (follow, then `..`) and a lexical one.
+    mkdirSync(join(dir, "redir"), { recursive: true });
+    mkdirSync(join(dir, "real", "nested"), { recursive: true });
+    writeFileSync(join(dir, "redir", "note.txt"), "redirected");
+    writeFileSync(join(dir, "real", "note.txt"), "real");
+    symlinkSync(join("..", "real", "nested"), join(dir, "redir", "link"));
 
     const handler = createRequestHandler({
       store,
@@ -238,6 +245,15 @@ describe("file viewer routes", () => {
     assert.equal(JSON.parse(r.body).path, textFile);
   });
 
+  it("resolves a symlink before `..`, as the filesystem does", async () => {
+    // `redir/link/../note.txt` is `real/note.txt` to the kernel; a lexical
+    // rewrite of the input would answer `redir/note.txt` instead.
+    // Built by hand: `join` would normalize `link/..` before it is sent.
+    const r = await info(`${dir}/redir/link/../note.txt`);
+    assert.equal(r.status, 200);
+    assert.equal(JSON.parse(r.body).path, join(dir, "real", "note.txt"));
+  });
+
   it("info follows symlinks and reports the canonical target", async () => {
     const r = await info(join(projDir, "link.md"));
     assert.equal(r.status, 200);
@@ -278,6 +294,33 @@ describe("file viewer routes", () => {
     assert.equal(txt.kind, "file");
     assert.equal(txt.size, 3);
     assert.equal(typeof txt.mtime, "number");
+  });
+
+  it("list?hidden=1 exposes dotfiles on request", async () => {
+    const r = await req(
+      port,
+      "GET",
+      `/api/v1/files/list?path=${encodeURIComponent(projDir)}&hidden=1`,
+      auth(token),
+    );
+    assert.equal(r.status, 200);
+    const b = JSON.parse(r.body);
+    const names = b.entries.map((e: { name: string }) => e.name);
+    // Dot entries sort with the rest of their group (directories first, then
+    // names); the flag only decides visibility, never ordering or `truncated`.
+    assert.deepEqual(names, [
+      "sub",
+      ".hidden.env",
+      "a.txt",
+      "b.txt",
+      "link.md",
+      "notes.md",
+    ]);
+    const hidden = b.entries.find(
+      (e: { name: string }) => e.name === ".hidden.env",
+    );
+    assert.equal(hidden.kind, "file");
+    assert.equal(hidden.size, 6);
   });
 
   it("list on a file returns 400", async () => {

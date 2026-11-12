@@ -107,4 +107,93 @@ describe("/view Enter dispatch", () => {
     );
     assert.equal(dom.input.value, "/view ~/work/");
   });
+
+  describe("hidden entries", () => {
+    let view: typeof import("../public/js/view-command.ts");
+
+    before(async () => {
+      view = await import("../public/js/view-command.ts");
+    });
+
+    const rows = [
+      { name: ".env", kind: "file" as const, size: 1, mtime: 1 },
+      { name: ".git", kind: "dir" as const, size: null, mtime: 1 },
+      { name: "README.md", kind: "file" as const, size: 1, mtime: 1 },
+    ];
+
+    it("asks the backend for dotfiles only when a dot filter is typed", async () => {
+      globalThis.fetch = async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        fetchCalls.push(url);
+        return new Response(
+          JSON.stringify({
+            path: "/work",
+            pathDisplay: "~/work",
+            parent: "/",
+            parentDisplay: "/",
+            truncated: false,
+            entries: rows,
+          }),
+          { status: 200 },
+        );
+      };
+
+      await view.fetchViewItems("/work/src");
+      assert.equal(fetchCalls.at(-1), `/api/v1/files/list?path=%2Fwork`);
+
+      await view.fetchViewItems("/work/.");
+      assert.equal(
+        fetchCalls.at(-1),
+        `/api/v1/files/list?path=${encodeURIComponent("/work")}&hidden=1`,
+      );
+    });
+
+    it("partitions the fetch cache on the flag, not just the directory", () => {
+      // Same directory, two listings: the plain one and the dot one must not
+      // share a cache entry, or the reveal would serve the cached plain list.
+      assert.notEqual(
+        view.viewFetchKey("/work/"),
+        view.viewFetchKey("/work/."),
+      );
+      // Different dot prefixes are the same listing, filtered locally.
+      assert.equal(view.viewFetchKey("/work/."), view.viewFetchKey("/work/.g"));
+      // Different directories never collide, hidden or not.
+      assert.notEqual(
+        view.viewFetchKey("/work/."),
+        view.viewFetchKey("/other/."),
+      );
+    });
+
+    it("matches dot entries by prefix and excludes plain names", () => {
+      assert.equal(view.viewItemMatches(rows[0], "/work/."), true);
+      assert.equal(view.viewItemMatches(rows[1], "/work/."), true);
+      // `.` must not be answered by a visible name that merely contains one.
+      assert.equal(view.viewItemMatches(rows[2], "/work/."), false);
+      assert.equal(view.viewItemMatches(rows[1], "/work/.g"), true);
+      assert.equal(view.viewItemMatches(rows[0], "/work/.z"), false);
+      // The parent row is navigation, not a hidden entry: a dot filter keeps it
+      // reachable (`/view ..` still shows the `..` row).
+      const parent = {
+        name: "..",
+        parent: true,
+        kind: "dir",
+        path: "/",
+        pathDisplay: "/",
+        size: null,
+        mtime: 0,
+      };
+      assert.equal(view.viewItemMatches(parent, "/work/."), true);
+      assert.equal(view.viewItemMatches(parent, "/work/.."), true);
+      assert.equal(view.viewItemMatches(parent, "/work/re"), false);
+    });
+
+    it("keeps the plain listing unchanged", () => {
+      assert.equal(view.viewItemMatches(rows[2], "/work/RE"), true);
+    });
+  });
 });
