@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 
 /** Structural subset shared by node:path and node:path.win32 in tests. */
-export interface HomePathOps {
+interface HomePathOps {
   isAbsolute(path: string): boolean;
   join(...paths: string[]): string;
   relative(from: string, to: string): string;
