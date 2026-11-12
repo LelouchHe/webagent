@@ -45,20 +45,17 @@ time. An entry without a "closing condition" is a wish, not an issue.
 
 ## Task lifecycle and storage
 
-- **The same directory can still hold two recent-path keys.** Cwds are stored
-  canonical at the trailing end only: `/x`, `/x/`, and `/x/./` collapse, but a
-  cwd typed with an interior `..` keeps that spelling after HOME expansion, so
-  `/home/me/branch/../repo` beside `/home/me/repo` holds two keys while both
-  abbreviate to `~/repo`, and `+`/`/new` can list that directory twice. (A
-  `~/…` input is expanded with `path.join`, which already folds its interior
-  segments; the residual needs an absolute path, or a spelled-out HOME.) Folding `..` lexically would fix the
-  display and break correctness: with `a/link -> b/nested`, `a/link/..` is `b`,
-  so a task would move to another directory on the next write or reopen. The
-  residual is therefore a deliberate limit, not a defect to patch with another
-  normalizer. *Closing:* give each directory an identity independent of its
-  spelling (a resolved real path stored beside the typed one, or a display-time
-  collision check that can tell "same directory, two spellings" from "two
-  different directories that render alike"), and dedupe on that identity only.
+- **A `..` written after a symlink keeps its own recent-path key.** Stored cwds
+  have no `.` and no foldable `..`, but `link/..` names the *target's* parent:
+  removing it would mean expanding a symlink the user chose to spell out, so it
+  is stored as written and can sit beside the resolved spelling as a second key
+  that abbreviates to the same display path. Occurrence needs the user to type
+  `..` directly after a symlinked component, which the pickers never generate.
+  *Closing:* expand the symlinked prefix at storage time (a product decision
+  about preserving symlink spellings), or give a directory an identity
+  independent of its spelling — a stored resolved path, or a display-time check
+  that can tell "one directory, two spellings" from "two directories that
+  render alike".
 
 - **A Root replacement is announced only when the fallback lands normally.**
   `/exit` prints its request row and the landing prints a `notify: Root replaced`

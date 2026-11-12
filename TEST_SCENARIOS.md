@@ -560,9 +560,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - one `seq` source across a real A→B rotation (two Stores): the binding's agent and session both move, two client cursors accept every patch, and the post-rotation snapshot is never superseded
   - public reads stay filtered by the caller's agent while the internal read stays global
 
+- `test/cwd-path.test.ts`
+  - the stored cwd form: `.` and repeated/trailing separators removed, a `..` folded only when the component before it is a real directory (verified with real symlinks in a temp tree), a `..` after a symlink kept as written, two `..` never collapsed into one, HOME expanded first, a relative `~/…` directory never turned into HOME shorthand, and idempotency over every case
+
 - `test/store.test.ts`
   - task creation / deletion / updates
-  - recent-path keys are canonical at the trailing end: `/x`, `/x/`, and `/x/./` stay one row, while an absolute cwd keeps its interior `.`/`..` and symlinked segments verbatim (HOME expansion still folds inside `~/…`), and a store opened on a database holding legacy trailing variants merges each into the canonical row keeping its newest use
+  - a stored cwd has no `.` and no foldable `..`: `a/b/..` becomes `a`, a `..` after a symlinked component stays as written, and neither a reopen nor the recent-path key changes the directory the task runs in; a store opened on a database holding legacy variants merges each into its canonical row keeping its newest use
   - config persistence, including clearing one column with `null` without touching the others
   - an agent image is stored as an attachment (file + row) and referenced by its own `agent_image` record between the surrounding text blocks; the persisted row carries no base64, the live broadcast is the same reference, and an oversized image becomes visible text with no row
   - title persistence

@@ -901,15 +901,14 @@ Set an arbitrary ACP task config option. This path is primarily for newer config
 
 List recent working directory paths, sorted by last used (most recent first).
 Paths are recorded on each prompt, keeping `last_used_at` up to date; the key is
-the canonical directory string (HOME-expanded, with trailing separators and
-trailing `.` segments removed), so spellings that differ only at the trailing end
-share one row. Beyond HOME expansion, interior `.`/`..` segments are preserved
-rather than folded: resolving them lexically is not the same as resolving them
-across a symlink, so `/home/me/branch/../repo` can still name the same directory
-as `/home/me/repo` under its own key. (`~/…` input is expanded with
-`path.join`, which folds its interior segments as before.) Stale paths are cleaned up based on the `limits.recent_paths_ttl` config.
-Task rows and recent-path keys written by an older build are rewritten to that
-form when the store opens.
+the stored cwd form: HOME expanded, `.` and repeated separators removed, a `..`
+folded only where the filesystem proves the component before it is a real
+directory, and no trailing separator. One directory therefore holds one row
+unless the path itself is written through a symlink: `link/..` names the
+target's parent, so removing it would mean expanding a symlink and is left as
+written. Stale paths are cleaned up based on the `limits.recent_paths_ttl`
+config. Task rows and recent-path keys written by an older build are rewritten
+to that form when the store opens.
 
 **Query parameters:**
 

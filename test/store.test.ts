@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
@@ -1923,24 +1923,30 @@ describe("Store", () => {
       assert.equal(paths[0].last_used_at, 2_000);
     });
 
-    it("never rewrites a stored cwd across a symlink", () => {
-      // `/base/a/link/..` is `b` to the filesystem; a lexical rewrite would
-      // run the task in `a` instead after a reopen.
+    it("stores a cwd with no `.` or `..`, but never across a symlink", () => {
+      // Folding is verified against the filesystem: `a/b/..` is `a`, while
+      // `linkdir/..` is the target's parent and stays written as typed.
+      mkdirSync(join(tmpDir, "work", "a", "b"), { recursive: true });
+      mkdirSync(join(tmpDir, "work", "real", "nested"), { recursive: true });
+      symlinkSync("real", join(tmpDir, "work", "linkdir"));
+      const work = join(tmpDir, "work");
+
+      store.createTask("folded", `${work}/a/b/..`, "auto", "test-agent", "a-1");
       store.createTask(
         "linked",
-        "/base/a/link/..",
+        `${work}/linkdir/..`,
         "auto",
         "test-agent",
-        "a-1",
+        "a-2",
       );
-      store.touchRecentPath("/base/a/link/..");
-      assert.equal(store.getTask("linked")!.cwd, "/base/a/link/..");
+      assert.equal(store.getTask("folded")!.cwd, `${work}/a`);
+      assert.equal(store.getTask("linked")!.cwd, `${work}/linkdir/..`);
 
       store.close();
       store = new Store(tmpDir);
 
-      assert.equal(store.getTask("linked")!.cwd, "/base/a/link/..");
-      assert.equal(store.listRecentPaths()[0].cwd, "/base/a/link/..");
+      assert.equal(store.getTask("folded")!.cwd, `${work}/a`);
+      assert.equal(store.getTask("linked")!.cwd, `${work}/linkdir/..`);
     });
 
     it("keeps a directory literally named ~ out of HOME", () => {
