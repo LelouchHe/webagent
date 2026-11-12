@@ -562,7 +562,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/store.test.ts`
   - task creation / deletion / updates
-  - recent-path keys are canonical at the trailing end: `/x`, `/x/`, and `/x/./` stay one row while interior `.`/`..` and symlinked segments are preserved verbatim, and a store opened on a database holding legacy trailing variants merges each into the canonical row keeping its newest use
+  - recent-path keys are canonical at the trailing end: `/x`, `/x/`, and `/x/./` stay one row, while an absolute cwd keeps its interior `.`/`..` and symlinked segments verbatim (HOME expansion still folds inside `~/…`), and a store opened on a database holding legacy trailing variants merges each into the canonical row keeping its newest use
   - config persistence, including clearing one column with `null` without touching the others
   - an agent image is stored as an attachment (file + row) and referenced by its own `agent_image` record between the surrounding text blocks; the persisted row carries no base64, the live broadcast is the same reference, and an oversized image becomes visible text with no row
   - title persistence

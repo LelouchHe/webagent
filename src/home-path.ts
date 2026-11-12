@@ -27,10 +27,10 @@ function portableDisplayPath(input: string, path: HomePathOps): string {
  * Both `~/` and `~\` are accepted; named-user forms stay untouched.
  *
  * Expansion only: the result is passed to the filesystem as typed. Callers
- * that need one spelling per directory use `canonicalDirectoryPath`, which
- * composes this with lexical canonicalization — resolution order matters for
- * paths that contain both a symlink and `..`, so it is never applied behind a
- * caller that means to resolve the path itself (`realpath` in the file API).
+ * that store or compare a cwd use `canonicalDirectoryPath`, which composes this
+ * with a trailing-end collapse; neither step rewrites interior segments, so
+ * resolution order still belongs to whoever resolves the path (`realpath` in
+ * the file API).
  */
 export function expandHomePath(
   input: string,

@@ -47,9 +47,11 @@ time. An entry without a "closing condition" is a wish, not an issue.
 
 - **The same directory can still hold two recent-path keys.** Cwds are stored
   canonical at the trailing end only: `/x`, `/x/`, and `/x/./` collapse, but a
-  cwd typed with an interior `..` (for example `~/branch/../repo` beside
-  `~/repo`) keeps its own key while abbreviating to the same display path, so
-  `+`/`/new` can list that directory twice. Folding `..` lexically would fix the
+  cwd typed with an interior `..` keeps that spelling after HOME expansion, so
+  `/home/me/branch/../repo` beside `/home/me/repo` holds two keys while both
+  abbreviate to `~/repo`, and `+`/`/new` can list that directory twice. (A
+  `~/…` input is expanded with `path.join`, which already folds its interior
+  segments; the residual needs an absolute path, or a spelled-out HOME.) Folding `..` lexically would fix the
   display and break correctness: with `a/link -> b/nested`, `a/link/..` is `b`,
   so a task would move to another directory on the next write or reopen. The
   residual is therefore a deliberate limit, not a defect to patch with another

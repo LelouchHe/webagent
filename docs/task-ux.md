@@ -126,9 +126,9 @@ space then lists cwd candidates: the current cwd marked `*`, the recent paths,
 and, once a path prefix is typed, the real directory layer to drill into. One
 directory is one candidate for every spelling that differs only at the trailing
 end — the cwd and the recent-path keys are canonical (HOME-expanded, trailing
-separators and trailing `.` segments removed). Interior segments are never
-rewritten, so a cwd typed with `..` keeps its own candidate. A segment starting
-with `.` reveals hidden directories.
+separators and trailing `.` segments removed). Beyond HOME expansion, interior
+segments are never rewritten, so an absolute cwd typed with `..` keeps its own
+candidate. A segment starting with `.` reveals hidden directories.
 
 A bare `+` has no title to create with. It shows the hint
 `create task · type a title`, and Enter reports `err: Task title is required after +`.

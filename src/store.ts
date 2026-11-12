@@ -906,11 +906,11 @@ export class Store {
   }
 
   /**
-   * Cwds are stored as one canonical directory string per directory. An older
-   * build stored the bytes a user typed, so a task could carry `/x/` while the
-   * recent-path row written from it keeps `/x`; the pickers then compare the
-   * task's cwd against the recent list and fail to recognize the same directory,
-   * rendering it twice. Rewrite both sides to the canonical form: task rows
+   * Cwds are stored canonical at the trailing end (`/x/` and `/x/./` are
+   * `/x`). An older build stored the bytes a user typed, so a task could carry
+   * `/x/` while the recent-path row written from it keeps `/x`; the pickers
+   * then compare the task's cwd against the recent list and fail to recognize
+   * the same directory, rendering it twice. Rewrite both sides to the canonical form: task rows
    * first, then merge each recent-path variant into its canonical key keeping
    * the newest use. Idempotent; a fresh database has nothing to do.
    */

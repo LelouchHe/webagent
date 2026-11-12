@@ -903,10 +903,11 @@ List recent working directory paths, sorted by last used (most recent first).
 Paths are recorded on each prompt, keeping `last_used_at` up to date; the key is
 the canonical directory string (HOME-expanded, with trailing separators and
 trailing `.` segments removed), so spellings that differ only at the trailing end
-share one row. Interior `.`/`..` segments are preserved rather than folded:
-resolving them lexically is not the same as resolving them across a symlink, so
-`~/branch/../repo` can still name the same directory as `~/repo` under its own
-key. Stale paths are cleaned up based on the `limits.recent_paths_ttl` config.
+share one row. Beyond HOME expansion, interior `.`/`..` segments are preserved
+rather than folded: resolving them lexically is not the same as resolving them
+across a symlink, so `/home/me/branch/../repo` can still name the same directory
+as `/home/me/repo` under its own key. (`~/…` input is expanded with
+`path.join`, which folds its interior segments as before.) Stale paths are cleaned up based on the `limits.recent_paths_ttl` config.
 Task rows and recent-path keys written by an older build are rewritten to that
 form when the store opens.
 
