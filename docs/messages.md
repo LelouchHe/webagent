@@ -109,7 +109,7 @@ Title                                         HH:MM
 /cwd/left-ellipsed                            from
 ```
 
-- **Default action (click / Tab+Enter):** consume → creates task + switches the UI; model and reasoning effort follow the same inheritance rules as `/new`, while mode resets to the agent default
+- **Default action (click / Tab+Enter):** consume → creates task + switches the UI; model and reasoning effort follow the same inheritance rules as `/new`, while mode resets to the agent default. The consume suppresses only the creation announcement; the new Task is a normal execution and streams/persists its agent output from the first prompt.
 - **Dismiss:** drill into the `/inbox dismiss` submenu (type `/inbox dismiss`, or Tab on the `dismiss` row) and pick a message there — same list, but selecting acks instead of consuming
 - **Tab on a message row:** fills `/inbox <title>` into the input so the command is visible before you press Enter
 

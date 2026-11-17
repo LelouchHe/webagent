@@ -124,6 +124,40 @@ const handlers = {
   },
   async prompt(params: acp.PromptRequest): Promise<acp.PromptResponse> {
     record("prompt", params);
+    const text = params.prompt
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join(" ");
+    if (text.includes("E2E_STREAM_ACTIVITY")) {
+      // A prompt that exercises the whole visible-update surface. A session
+      // that is still muted after Task creation loses all of these, while the
+      // RPC's own completion still lands.
+      await connection.notify("session/update", {
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_thought_chunk",
+          content: { type: "text", text: "considering the request" },
+        },
+      });
+      await connection.notify("session/update", {
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "activity-tool",
+          title: "Read file",
+          kind: "read",
+          rawInput: { path: "src/bridge.ts" },
+        },
+      });
+      await connection.notify("session/update", {
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "activity-tool",
+          status: "completed",
+        },
+      });
+    }
     await connection.notify("session/update", {
       sessionId: params.sessionId,
       update: {

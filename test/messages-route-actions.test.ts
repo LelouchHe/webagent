@@ -205,7 +205,9 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
     assert.match(body.taskId, /^[0-9a-f-]{36}$/);
     assert.equal(store.getAgentSessionId(body.taskId), "agent-task-1");
     assert.deepEqual(newTaskCalls, [join(tmpDir, "work")]);
-    assert.deepEqual(newTaskOptions, [{ silent: true }]);
+    // Creation must never request session-wide silence: the consumed task is a
+    // persisted, user-visible Task whose later prompts stream normally.
+    assert.deepEqual(newTaskOptions, [{}]);
 
     // Row deleted
     assert.equal(store.getMessage("m1"), undefined);

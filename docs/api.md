@@ -1283,7 +1283,7 @@ When provided, task creation uses the same inheritance rules as `POST /api/v1/ta
 { "taskId": "<uuid>", "alreadyConsumed": false }
 ```
 
-**Side effects:** broadcasts `message_consumed` SSE; no `task_created` (this carrier task is an internal creation — the answer names it, and the client switches to it, so announcing it first would skip that switch's history load); triggers `pushService.sendClose(id)` to dismiss banners on other devices (stub until C11-C13).
+**Side effects:** broadcasts `message_consumed` SSE; no `task_created` (this carrier task is an internal creation — the answer names it, and the client switches to it, so announcing it first would skip that switch's history load); triggers `pushService.sendClose(id)` to dismiss banners on other devices (stub until C11-C13). Suppressing the announcement does not mute the execution: the created task is an ordinary persisted Task, so its first prompt persists and broadcasts thinking, tool calls, assistant output, and the terminal `prompt_done`.
 
 **Errors:** `400` (message cwd no longer exists), `404` (message not found), `503` (agent/task manager unavailable), `500` (agent or persistence failure). Failures before the local consume transaction completes leave the inbox row pending for retry.
 

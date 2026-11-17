@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-11-07
+Last updated: 2026-11-16
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -409,6 +409,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/bridge.test.ts`
   - prompt success / failure / cancellation
   - silent prompt buffering for compact summarization
+  - mapping a session to a real Task lifts any internal silence, so later updates stream; `promptForText` restores pre-existing persistent silence instead of unmuting it
   - permission request resolution ordering
   - targeted cancellation of pending permission requests
   - config-option update return path
@@ -696,6 +697,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the consume carrier is an internal creation: it broadcasts no `task_created`
     (an announcement would install it before the answer that names it, making
     the follow-up switch skip its history)
+  - creation never requests session-wide silence; the consumed Task is a normal
+    execution from the first prompt
   - Inbox-created tasks reuse `/new` model/reasoning inheritance while resetting mode
   - message cwd inheritance and configured-default fallback
   - sequential idempotency and concurrent consume deduplication
@@ -703,6 +706,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - existing-task message move is atomic at the SQLite boundary
   - ack / delete aliases and corresponding SSE broadcasts
   - authoritative pending-count broadcasts after create, dedup supersede, consume, and dismiss
+
+- `test/inbox-consume-streaming.test.ts` (real ACP child, real bridge, real
+  event handler)
+  - after consuming an inbox message, the first prompt persists `thinking`,
+    `tool_call`, `tool_call_update`, `assistant_message`, and the terminal
+    `prompt_done`; consume still broadcasts no `task_created`
 
 - `test/message-cleanup.test.ts`, `test/sse.test.ts`
   - TTL cleanup broadcasts the post-sweep pending count only when rows change
@@ -1131,6 +1140,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `inbox-indicator.spec.ts`
   - pending messages update the header count through SSE without adding conversation rows
   - the logo button opens the live Inbox picker and dismissing the message hides the count
+
+- `inbox-consume-streaming.spec.ts`
+  - consuming an inbox message and then prompting shows the tool call and
+    assistant reply live, and the same activity plus `prompt_done` is in the
+    stored history a later read sees
 
 - `task-delete-broadcast.spec.ts`
   - deleting the current task disables peer clients correctly
