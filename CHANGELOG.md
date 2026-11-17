@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.13.1] - 2026-11-17
+
+### Added
+
+- **Task references show renames and exits.** Historical creation, collaboration, and cancellation rows mark each affected reference without dimming the surrounding message.
+- **File pickers can reveal hidden entries.** Start a path segment with `.` to browse dotfiles and hidden directories.
+
+### Changed
+
+- **Working-directory paths use consistent shell-style normalization.** Equivalent spellings no longer clutter recent paths. Newly supplied task directories and `default_cwd` must be absolute or `~`-prefixed; ambiguous legacy task paths remain unchanged.
+
+### Fixed
+
+- **Inbox-created Tasks no longer appear unresponsive.** Thinking, tool activity, and replies now stream and persist normally instead of being silently swallowed while only completion events arrive.
+- **Task creation and reconnects keep clients synchronized.** Creation announcements cover all user-requested entrypoints, inbox activation preserves its history load, and stale replay events cannot cross connection generations.
+- **Tool cards remain expandable when command details arrive later.** Opening an image thumbnail no longer also toggles command expansion.
+
 ## [0.13.0] - 2026-11-08
 
 ### ⚠️ BREAKING
@@ -523,6 +540,7 @@ Initial release of WebAgent — a terminal-style web UI for ACP-compatible agent
 - **CI/CD**: GitHub Actions for CI (unit + E2E tests) and npm publishing on tag push
 - **npm package**: Published as `@lelouchhe/webagent`
 
+[0.13.1]: https://github.com/LelouchHe/webagent/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/LelouchHe/webagent/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/LelouchHe/webagent/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/LelouchHe/webagent/compare/v0.10.0...v0.11.0
