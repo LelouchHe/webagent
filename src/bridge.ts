@@ -426,7 +426,16 @@ export class AgentBridge extends EventEmitter {
 
   sessionMapped(agentSessionId: string, taskId?: string): void {
     this.unboundNewSessionIds.delete(agentSessionId);
-    if (taskId) this.recordExecutionLease(agentSessionId, taskId);
+    if (taskId) {
+      // A real Task's execution is never internally silent. A creation path may
+      // have asked for silence before the binding existed, but from here this is
+      // an ordinary execution: its updates must reach the transcript instead of
+      // a buffer nothing reads. Any text captured while it was silent is dropped
+      // with the flag; it has no event boundaries and was never part of history.
+      this.silentSessions.delete(agentSessionId);
+      this.silentBuffers.delete(agentSessionId);
+      this.recordExecutionLease(agentSessionId, taskId);
+    }
     const updates = this.pendingSessionUpdates.get(agentSessionId) ?? [];
     this.pendingSessionUpdates.delete(agentSessionId);
     for (const update of updates) {
@@ -889,10 +898,18 @@ export class AgentBridge extends EventEmitter {
     this.connection = null;
   }
 
-  /** Send a prompt and collect the full text response without emitting events. */
+  /**
+   * Send a prompt and collect the full text response without emitting events.
+   *
+   * The capture is temporary and owns only what it added: a session that was
+   * already deliberately silent keeps its persistent flag (and any text it had
+   * buffered) when this call returns or fails.
+   */
   async promptForText(sessionId: string, text: string): Promise<string> {
     if (this.deadReason) throw new Error(this.deadReason);
     if (!this.connection) throw new Error("Not connected");
+    const alreadySilent = this.silentSessions.has(sessionId);
+    const previousBuffer = this.silentBuffers.get(sessionId);
     this.silentSessions.add(sessionId);
     this.silentBuffers.set(sessionId, "");
     let abortReject: (e: Error) => void = () => {};
@@ -923,8 +940,9 @@ export class AgentBridge extends EventEmitter {
       }
       throw err;
     } finally {
-      this.silentSessions.delete(sessionId);
-      this.silentBuffers.delete(sessionId);
+      if (!alreadySilent) this.silentSessions.delete(sessionId);
+      if (previousBuffer === undefined) this.silentBuffers.delete(sessionId);
+      else this.silentBuffers.set(sessionId, previousBuffer);
       this.pendingAborts.delete(sessionId);
     }
   }

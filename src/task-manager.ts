@@ -950,16 +950,15 @@ export class TaskManager implements ObligationHost {
   /**
    * newSession options with an optional mcpServers entry only when Task mode
    * is configured — otherwise the previous call shape stays untouched.
+   *
+   * Creation never asks for session-wide silence. A Task this manager persists
+   * is user-visible, so suppressing its creation announcement and suppressing
+   * its output are separate decisions (see `announce`).
    */
-  private buildNewTaskOptions(
-    silent: boolean | undefined,
-    mcpServers: AcpMcpServer[] | undefined,
-  ): { silent?: boolean; mcpServers?: AcpMcpServer[] } {
-    const options: { silent?: boolean; mcpServers?: AcpMcpServer[] } = {
-      silent,
-    };
-    if (mcpServers !== undefined) options.mcpServers = mcpServers;
-    return options;
+  private buildNewTaskOptions(mcpServers: AcpMcpServer[] | undefined): {
+    mcpServers?: AcpMcpServer[];
+  } {
+    return mcpServers === undefined ? {} : { mcpServers };
   }
 
   hydrate(): void {
@@ -1323,7 +1322,7 @@ export class TaskManager implements ObligationHost {
     bridge: SessionBridge,
     taskId: string,
     cwd: string,
-    options: { silent?: boolean; mcpServers?: AcpMcpServer[] },
+    options: { mcpServers?: AcpMcpServer[] },
     capabilityToken?: string,
   ): Promise<{ sessionId: string; configOptions: ConfigOption[] }> {
     this.creatingTasks.add(taskId);
@@ -1497,7 +1496,6 @@ export class TaskManager implements ObligationHost {
     inheritFromTaskId?: string,
     source: string = "auto",
     opts?: {
-      silent?: boolean;
       parentId?: string | null;
       title?: string;
       model?: string;
@@ -1693,7 +1691,6 @@ export class TaskManager implements ObligationHost {
     inheritFromTaskId?: string,
     source: string = "auto",
     opts?: {
-      silent?: boolean;
       parentId?: string | null;
       title?: string;
       model?: string;
@@ -1741,7 +1738,7 @@ export class TaskManager implements ObligationHost {
         bridge,
         taskId,
         taskCwd,
-        this.buildNewTaskOptions(opts?.silent, mcpServers),
+        this.buildNewTaskOptions(mcpServers),
       );
     let configOptions = createdConfigOptions;
     const parentId = opts?.parentId ?? null;
@@ -1983,7 +1980,7 @@ export class TaskManager implements ObligationHost {
       bridge,
       taskId,
       taskCwd,
-      this.buildNewTaskOptions(undefined, execution?.servers),
+      this.buildNewTaskOptions(execution?.servers),
       execution?.token,
     );
 
@@ -2586,8 +2583,9 @@ export class TaskManager implements ObligationHost {
       "message",
       // Internal: the consume route answers with this id, and the client
       // switches to it. Announcing it would activate it first, and the switch
-      // would then skip the history it needs.
-      { silent: true, announce: false },
+      // would then skip the history it needs. It is not silent: the task the
+      // user is about to open streams like any other.
+      { announce: false },
     );
 
     try {
@@ -2793,7 +2791,7 @@ export class TaskManager implements ObligationHost {
       bridge,
       taskId,
       task.cwd,
-      this.buildNewTaskOptions(undefined, execution?.servers),
+      this.buildNewTaskOptions(execution?.servers),
       execution?.token,
     );
     try {

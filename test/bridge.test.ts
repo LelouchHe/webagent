@@ -151,6 +151,52 @@ describe("AgentBridge", () => {
     ]);
   });
 
+  it("unmutes a session when it becomes a real Task's execution", async () => {
+    // A creation path may have asked the bridge for an internal, silent
+    // session. Once that session is mapped to a persisted Task it is a normal
+    // execution: its updates must reach the transcript instead of being
+    // captured into a buffer nothing ever reads.
+    const bindings = new Map<string, string>();
+    const bridge = new AgentBridge("fake-agent", {
+      getAgentSessionId: (webTaskId) =>
+        [...bindings].find(([, webId]) => webId === webTaskId)?.[0],
+      getTaskId: (agentSessionId) => bindings.get(agentSessionId),
+    });
+    const events: unknown[] = [];
+    bridge.on("event", (event) => events.push(event));
+    (bridge as any).connection = fakePeer({
+      newSession: async () => ({
+        sessionId: "agent-silent",
+        configOptions: [],
+      }),
+    });
+
+    await bridge.newSession("/repo", { silent: true });
+    await (bridge as any).handleSessionUpdate({
+      sessionId: "agent-silent",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "before mapping" },
+      },
+    });
+    assert.deepEqual(events, []);
+
+    bindings.set("agent-silent", "web-silent");
+    bridge.sessionMapped("agent-silent", "web-silent");
+
+    await (bridge as any).handleSessionUpdate({
+      sessionId: "agent-silent",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "after mapping" },
+      },
+    });
+
+    assert.deepEqual(events, [
+      { type: "message_chunk", taskId: "web-silent", text: "after mapping" },
+    ]);
+  });
+
   it("drops ACP updates after their WebAgent binding is retired", async () => {
     const bindings = new Map<string, string>([["agent-old", "web-1"]]);
     const bridge = new AgentBridge("fake-agent", {
@@ -445,6 +491,69 @@ describe("AgentBridge", () => {
 
     assert.equal(text, "Hello world");
     assert.deepEqual(events, []);
+
+    // The temporary capture is over: the session streams again. Cleanup must
+    // remove only what this call added.
+    await (bridge as any).handleSessionUpdate({
+      sessionId: "silent-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "later" },
+      },
+    });
+    assert.deepEqual(events, [
+      { type: "message_chunk", taskId: "silent-1", text: "later" },
+    ]);
+  });
+
+  it("promptForText preserves silence a session already had", async () => {
+    // A direct-bridge internal session can be deliberately silent for its whole
+    // life. A temporary prompt capture on top of it must not unmute it when the
+    // capture finishes.
+    const bindings = new Map<string, string>([
+      ["agent-internal", "web-internal"],
+    ]);
+    const bridge = new AgentBridge("fake-agent", {
+      getAgentSessionId: (webTaskId) =>
+        [...bindings].find(([, webId]) => webId === webTaskId)?.[0],
+      getTaskId: (agentSessionId) => bindings.get(agentSessionId),
+    });
+    const events: unknown[] = [];
+    bridge.on("event", (event) => events.push(event));
+    (bridge as any).connection = fakePeer({
+      newSession: async () => ({
+        sessionId: "agent-internal",
+        configOptions: [],
+      }),
+      prompt: async ({ sessionId }: any) => {
+        await (bridge as any).handleSessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "summary" },
+          },
+        });
+        return { stopReason: "end_turn" };
+      },
+    });
+
+    await bridge.newSession("/repo", { silent: true });
+    // Mapping without a task id is the bridge-level internal use; the session
+    // keeps its persistent silence while its binding can resolve events.
+    bridge.sessionMapped("agent-internal");
+
+    const summary = await bridge.promptForText("agent-internal", "summarize");
+    assert.equal(summary, "summary");
+    assert.deepEqual(events, []);
+
+    await (bridge as any).handleSessionUpdate({
+      sessionId: "agent-internal",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "late internal update" },
+      },
+    });
+    assert.deepEqual(events, [], "persistent silence outlives the capture");
   });
 
   it("resolves and denies permission requests", async () => {
