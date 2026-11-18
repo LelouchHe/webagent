@@ -50,6 +50,10 @@ describe("Markdown registered file images", () => {
     const unresolved = host.querySelector("img") as HTMLImageElement;
     assert.ok(unresolved);
     assert.equal(unresolved.hasAttribute("src"), false);
+    updateMarkdownStream(
+      host,
+      `before ![screen](${sourceUri}) after\n\nanother block`,
+    );
 
     registerMarkdownImageReference({ sourceUri, attachment });
     const images = host.querySelectorAll("img.agent-image");
@@ -90,6 +94,11 @@ describe("Markdown registered file images", () => {
     updateMarkdownStream(
       table,
       `| preview |\n| --- |\n| ![screen](${sourceUri}) |`,
+    );
+    updateMarkdownStream(list, `- ![screen](${sourceUri})\n- another item`);
+    updateMarkdownStream(
+      table,
+      `| preview |\n| --- |\n| ![screen](${sourceUri}) |\n| another row |`,
     );
     const oldItem = list.querySelector("li");
     const oldRow = table.querySelector("tbody tr");
