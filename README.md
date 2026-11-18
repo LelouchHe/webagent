@@ -148,6 +148,7 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 | **[Security](docs/security.md)**                        | Bearer auth, token storage, SSE ticket, signed image URLs, CSP, data layout    |
 | **[API Reference](docs/api.md)**                        | REST endpoints, SSE events, implementation details                             |
 | **[Attachments](docs/uploads.md)**                      | Upload pipeline, on-disk layout, lifecycle, permission auto-approve, observability |
+| **[Agent image rendering](docs/image-rendering.md)**    | Stored agent/tool/Copilot image ingestion, placement, replay, and security |
 | **[ACP Integration](docs/acp.md)**                      | Client extensions, protocol scope, current limits                              |
 | **[Client Architecture](docs/client-architecture.md)**  | Frontend modules, data flow, conventions                                       |
 | **[Streaming Render Performance](docs/performance.md)** | rAF coalescing, incremental lex, per-block memo, single-token fast path        |

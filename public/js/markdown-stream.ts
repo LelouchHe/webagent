@@ -13,9 +13,23 @@
 //
 // See docs/performance.md for the layered architecture.
 
-import { marked, Lexer, type Token, type Tokens, type Links } from "marked";
+import {
+  marked,
+  Lexer,
+  Renderer,
+  type Token,
+  type Tokens,
+  type Links,
+} from "marked";
 import DOMPurify from "dompurify";
 import { findUnclosedDisplayMathBlockStart } from "./math.ts";
+import { enhanceCodeBlocks } from "./highlight.ts";
+import { serializeStoredImage, storedImageProps } from "./stored-image.ts";
+import {
+  onMarkdownImageReferenceChange,
+  resolveMarkdownImageReference,
+  resolveRegisteredMarkdownAttachmentUrl,
+} from "./markdown-image-references.ts";
 
 // `__DEV__` is injected by esbuild's `define` for browser bundles (see
 // scripts/build.js) and by test/frontend-setup.ts (`globalThis.__DEV__ = true`)
@@ -25,6 +39,89 @@ import { findUnclosedDisplayMathBlockStart } from "./math.ts";
 declare const __DEV__: boolean;
 
 marked.setOptions({ breaks: true, gfm: true });
+
+interface MarkdownHostRecord {
+  text: string;
+  fileSources: Set<string>;
+}
+
+const markdownHostRecords = new WeakMap<HTMLElement, MarkdownHostRecord>();
+const markdownHostRefs = new Set<WeakRef<HTMLElement>>();
+let renderingFileSources: Set<string> | null = null;
+let renderingRegisteredReferences = false;
+const defaultRenderer = new Renderer();
+const escapeAttribute = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+marked.use({
+  renderer: {
+    link(token) {
+      const href = token.href;
+      if (!href.startsWith("file:")) {
+        return defaultRenderer.link.call(this, token);
+      }
+      renderingFileSources?.add(href);
+      const resolved = renderingRegisteredReferences
+        ? resolveRegisteredMarkdownAttachmentUrl(href)
+        : null;
+      if (resolved) {
+        return defaultRenderer.link.call(this, { ...token, href: resolved });
+      }
+      const label = token.autolink
+        ? escapeAttribute(token.text)
+        : this.parser.parseInline(token.tokens);
+      const title = token.title
+        ? ` title="${escapeAttribute(token.title)}"`
+        : "";
+      return `<a${title}>${label}</a>`;
+    },
+    image(token) {
+      const href = token.href;
+      if (!href.startsWith("file:")) {
+        return defaultRenderer.image.call(this, token);
+      }
+      renderingFileSources?.add(href);
+      const reference = renderingRegisteredReferences
+        ? resolveMarkdownImageReference(href)
+        : null;
+      const alt = this.parser.parseInline(
+        token.tokens,
+        this.parser.textRenderer,
+      );
+      return serializeStoredImage(
+        storedImageProps(reference?.attachment ?? null, {
+          className: "agent-image",
+          alt,
+        }),
+        token.title,
+      );
+    },
+  },
+});
+
+onMarkdownImageReferenceChange((changed) => {
+  for (const ref of markdownHostRefs) {
+    const host = ref.deref();
+    if (!host) {
+      markdownHostRefs.delete(ref);
+      continue;
+    }
+    const record = markdownHostRecords.get(host);
+    if (!record) continue;
+    if (!changed.some((source) => record.fileSources.has(source))) continue;
+    resetMarkdownStream(host);
+    host.replaceChildren();
+    updateMarkdownStream(host, record.text);
+    enhanceCodeBlocks(host);
+  }
+});
+
+export function clearMarkdownImageHosts(): void {
+  markdownHostRefs.clear();
+}
 
 export function escHtml(s: string): string {
   const d = document.createElement("div");
@@ -77,6 +174,8 @@ interface MarkdownStreamMemo {
    *  `blockquote`). When the parent block at index i transitions away from a
    *  container type, this entry is reset to null. */
   subMemos: Array<SubMemo | null>;
+  /** Complete image sources encountered while each block was rendered. */
+  fileSourceSets: Set<string>[];
   /** Reference-link definition memo. Keys are normalized def labels; values
    *  are marked's link-record shape ({ href, title? }). Absorbed from
    *  completed `def` tokens (a def token is "completed" once it's no longer
@@ -107,6 +206,10 @@ interface SubMemo {
    *  list: items[].raw aligned with containerEl.children (<li>); for table:
    *  header row + body rows; for blockquote: child block tokens. */
   subCache: string[];
+  /** Complete image sources per retained list item or table row. */
+  fileSources: Set<string>[];
+  /** Image sources rendered into a reused table header. */
+  headerFileSources: Set<string>;
 }
 
 const markdownStreamMemos = new WeakMap<HTMLElement, MarkdownStreamMemo>();
@@ -782,6 +885,7 @@ function renderListBlock(
   // a full container rebuild ourselves, fresh container goes in subMemo.
   let containerEl: HTMLElement;
   let subCache: string[];
+  let subFileSources: Set<string>[];
   const canReuse =
     prevSubMemo !== null &&
     prevSubMemo.type === "list" &&
@@ -791,6 +895,7 @@ function renderListBlock(
   if (canReuse) {
     containerEl = prevSubMemo.containerEl;
     subCache = prevSubMemo.subCache;
+    subFileSources = prevSubMemo.fileSources;
   } else {
     // Build a fresh empty container of the right shape. We do this by
     // parsing the listTok with no items first, so the container element
@@ -824,6 +929,7 @@ function renderListBlock(
     host.insertBefore(fresh, anchor);
     containerEl = fresh as HTMLElement;
     subCache = [];
+    subFileSources = [];
   }
 
   // Walk items[]: for each item, if raw matches subCache[j], leave the
@@ -835,11 +941,16 @@ function renderListBlock(
   for (let j = 0; j < items.length; j++) {
     const itemKey = listItemKey(items[j].raw);
     if (subCache[j] === itemKey && containerEl.children.item(j)) {
+      mergeFileSources(renderingFileSources ?? undefined, subFileSources[j]);
       timing.subList.hits++;
       continue;
     }
     timing.subList.misses++;
-    const r = renderOneListItem(listTok, items[j], now);
+    const rendered = captureFileSources(() =>
+      renderOneListItem(listTok, items[j], now),
+    );
+    const r = rendered.value;
+    mergeFileSources(renderingFileSources ?? undefined, rendered.sources);
     parseAccMs += r.parseMs;
     sanAccMs += r.sanMs;
     domAccMs += r.domMs;
@@ -851,6 +962,7 @@ function renderListBlock(
       containerEl.appendChild(r.newLi);
     }
     subCache[j] = itemKey;
+    subFileSources[j] = rendered.sources;
   }
   // Trim trailing items if the list shrank (LLM shouldn't but defense in
   // depth — also handles the canReuse=false → fresh-empty branch where
@@ -860,6 +972,7 @@ function renderListBlock(
       containerEl.removeChild(containerEl.lastElementChild);
   }
   while (subCache.length > items.length) subCache.pop();
+  while (subFileSources.length > items.length) subFileSources.pop();
 
   timing.parse += parseAccMs;
   timing.sanitize += sanAccMs;
@@ -877,7 +990,14 @@ function renderListBlock(
 
   return {
     newCount: 1,
-    newSubMemo: { type: "list", variant, containerEl, subCache },
+    newSubMemo: {
+      type: "list",
+      variant,
+      containerEl,
+      subCache,
+      fileSources: subFileSources,
+      headerFileSources: new Set(),
+    },
   };
 }
 
@@ -959,6 +1079,8 @@ function renderTableBlock(
   let containerEl: HTMLElement;
   let tbodyEl: HTMLElement;
   let subCache: string[];
+  let subFileSources: Set<string>[];
+  let headerFileSources: Set<string>;
   const canReuse =
     prevSubMemo !== null &&
     prevSubMemo.type === "table" &&
@@ -982,20 +1104,29 @@ function renderTableBlock(
     }
     tbodyEl = tb;
     subCache = prevSubMemo.subCache;
+    subFileSources = prevSubMemo.fileSources;
+    headerFileSources = prevSubMemo.headerFileSources;
+    mergeFileSources(renderingFileSources, headerFileSources);
   } else {
     // Build the table shell (thead + empty tbody) by parsing the table
     // token with rows=[]. marked still emits <thead> + an empty <tbody>.
-    const tP0 = now();
-    const emptyHtml = marked.parser([{ ...tableTok, rows: [] }], {
-      ...marked.defaults,
-      async: false,
-    }) as string;
-    const tP1 = now();
-    timing.parse += tP1 - tP0;
-    const tS0 = now();
-    const sanitizedFrag = sanitizeToFragment(emptyHtml);
-    const tS1 = now();
-    timing.sanitize += tS1 - tS0;
+    const renderedHeader = captureFileSources(() => {
+      const tP0 = now();
+      const emptyHtml = marked.parser([{ ...tableTok, rows: [] }], {
+        ...marked.defaults,
+        async: false,
+      }) as string;
+      const tP1 = now();
+      timing.parse += tP1 - tP0;
+      const tS0 = now();
+      const sanitizedFrag = sanitizeToFragment(emptyHtml);
+      const tS1 = now();
+      timing.sanitize += tS1 - tS0;
+      return sanitizedFrag;
+    });
+    const sanitizedFrag = renderedHeader.value;
+    headerFileSources = renderedHeader.sources;
+    mergeFileSources(renderingFileSources, headerFileSources);
     stripWhitespaceTextNodes(sanitizedFrag);
     const fresh = sanitizedFrag.firstElementChild;
     if (!fresh) {
@@ -1028,6 +1159,7 @@ function renderTableBlock(
     containerEl = fresh as HTMLElement;
     tbodyEl = freshTbody;
     subCache = [];
+    subFileSources = [];
   }
 
   let parseAccMs = 0;
@@ -1036,11 +1168,16 @@ function renderTableBlock(
   for (let j = 0; j < rows.length; j++) {
     const key = tableRowKey(rows[j]);
     if (subCache[j] === key && tbodyEl.children.item(j)) {
+      mergeFileSources(renderingFileSources ?? undefined, subFileSources[j]);
       timing.subTable.hits++;
       continue;
     }
     timing.subTable.misses++;
-    const r = renderOneTableRow(tableTok, rows[j], now);
+    const rendered = captureFileSources(() =>
+      renderOneTableRow(tableTok, rows[j], now),
+    );
+    const r = rendered.value;
+    mergeFileSources(renderingFileSources ?? undefined, rendered.sources);
     parseAccMs += r.parseMs;
     sanAccMs += r.sanMs;
     domAccMs += r.domMs;
@@ -1052,11 +1189,13 @@ function renderTableBlock(
       tbodyEl.appendChild(r.newTr);
     }
     subCache[j] = key;
+    subFileSources[j] = rendered.sources;
   }
   while (tbodyEl.children.length > rows.length) {
     if (tbodyEl.lastElementChild) tbodyEl.removeChild(tbodyEl.lastElementChild);
   }
   while (subCache.length > rows.length) subCache.pop();
+  while (subFileSources.length > rows.length) subFileSources.pop();
 
   timing.parse += parseAccMs;
   timing.sanitize += sanAccMs;
@@ -1074,7 +1213,14 @@ function renderTableBlock(
 
   return {
     newCount: 1,
-    newSubMemo: { type: "table", variant, containerEl, subCache },
+    newSubMemo: {
+      type: "table",
+      variant,
+      containerEl,
+      subCache,
+      fileSources: subFileSources,
+      headerFileSources,
+    },
   };
 }
 
@@ -1082,6 +1228,7 @@ export function updateMarkdownStream(
   host: HTMLElement,
   fullText: string,
 ): void {
+  const fileSources = beginMarkdownRender(host);
   const DEV = typeof __DEV__ !== "undefined" && __DEV__;
   let memo = markdownStreamMemos.get(host);
 
@@ -1112,6 +1259,7 @@ export function updateMarkdownStream(
       cacheTypes: [],
       rootCounts: [],
       subMemos: [],
+      fileSourceSets: [],
       links: {},
       callCount: 0,
     };
@@ -1119,7 +1267,7 @@ export function updateMarkdownStream(
   }
   memo.callCount++;
   timing.seq = memo.callCount;
-  const { cache, cacheTypes, rootCounts, subMemos } = memo;
+  const { cache, cacheTypes, rootCounts, subMemos, fileSourceSets } = memo;
 
   const tLex0 = now();
   const lexResult = incrementalLex(
@@ -1151,24 +1299,30 @@ export function updateMarkdownStream(
     const raw = block.raw;
     const prevCount = rootCounts[i] ?? 0;
     if (cache[i] === raw) {
+      mergeFileSources(fileSources, fileSourceSets[i]);
       offset += prevCount;
       timing.hits++;
       continue;
     }
     timing.misses++;
-    const { newCount, newSubMemo } = renderMissBlock(
-      host,
-      block,
-      offset,
-      prevCount,
-      subMemos[i] ?? null,
-      timing,
-      now,
+    const rendered = captureFileSources(() =>
+      renderMissBlock(
+        host,
+        block,
+        offset,
+        prevCount,
+        subMemos[i] ?? null,
+        timing,
+        now,
+      ),
     );
+    const { newCount, newSubMemo } = rendered.value;
+    mergeFileSources(fileSources, rendered.sources);
     cache[i] = raw;
     cacheTypes[i] = block.type;
     rootCounts[i] = newCount;
     subMemos[i] = newSubMemo;
+    fileSourceSets[i] = rendered.sources;
     offset += newCount;
   }
   while (cache.length > merged.length) {
@@ -1176,6 +1330,7 @@ export function updateMarkdownStream(
     cache.pop();
     cacheTypes.pop();
     subMemos.pop();
+    fileSourceSets.pop();
     for (let k = 0; k < lastCount; k++) {
       if (host.lastChild) host.removeChild(host.lastChild);
     }
@@ -1191,7 +1346,46 @@ export function updateMarkdownStream(
   }
   timing.linkMemoSize = Object.keys(memo.links).length;
   lastTiming = timing;
+  if (!markdownHostRecords.has(host)) {
+    markdownHostRefs.add(new WeakRef(host));
+  }
+  markdownHostRecords.set(host, {
+    text: fullText,
+    fileSources,
+  });
+  renderingFileSources = null;
   perfMeasure("mdstream.total", tTotal0, now());
+}
+
+function beginMarkdownRender(host: HTMLElement): Set<string> {
+  const sources = new Set<string>();
+  renderingFileSources = sources;
+  renderingRegisteredReferences =
+    host.classList.contains("assistant") ||
+    host.closest(".msg.assistant") !== null;
+  return sources;
+}
+
+function mergeFileSources(
+  target: Set<string> | null | undefined,
+  source?: Set<string>,
+): void {
+  if (!target || !source) return;
+  for (const value of source) target.add(value);
+}
+
+function captureFileSources<T>(render: () => T): {
+  value: T;
+  sources: Set<string>;
+} {
+  const previous = renderingFileSources;
+  const sources = new Set<string>();
+  renderingFileSources = sources;
+  try {
+    return { value: render(), sources };
+  } finally {
+    renderingFileSources = previous;
+  }
 }
 
 // Reset the markdown-stream memo for a host. Memo-only — does NOT touch

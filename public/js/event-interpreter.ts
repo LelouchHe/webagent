@@ -289,6 +289,9 @@ export function normalizeEventsResponse(
     total: typeof envelope.total === "number" ? envelope.total : undefined,
     hasMore:
       typeof envelope.hasMore === "boolean" ? envelope.hasMore : undefined,
+    imageReferences: Array.isArray(envelope.imageReferences)
+      ? (envelope.imageReferences as NormalizedEventsResponse["imageReferences"])
+      : undefined,
   };
 }
 

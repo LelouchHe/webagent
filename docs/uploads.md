@@ -257,7 +257,7 @@ Three primitives in `src/auth.ts`:
 | ------------------------------ | ------------------------------------------------------ |
 | `signAttachmentUrl`            | Upload response, history GET, SSE broadcast            |
 | `verifyAttachmentSig`          | `GET /attachments/:file` egress                         |
-| `reSignAttachmentUrlsInJson`   | Stored events on the way out — refreshes every URL     |
+| `reSignAttachmentUrlsInJson`   | Stored events on the way out — refreshes as needed     |
 
 Stored event JSON in SQLite carries the **unsigned base path**
 (`/api/v1/tasks/<task-id>/attachments/<file>`); re-sign happens at egress using
@@ -273,9 +273,13 @@ Two consequences:
   of attachments" — all currently-pasted-into-chat URLs go 401 until
   the page reloads.
 
-TTL is 1 hour. Long enough for the browser's `<img>` cache to keep the
-rendered image alive across a typical task, short enough that a
-leaked URL (screenshot, accidental link share) expires within a day.
+TTL is 1 hour. Egress re-signing reuses one query per task attachment path
+and exact secret object while at least 60 seconds of validity remain, then
+refreshes it. The in-process cache is weakly scoped by secret identity,
+expires entries, and is capped at 2048 paths per secret, so it only stabilizes
+browser cache identity during the existing validity window. Upload responses
+still use direct signing and a process/secret restart naturally starts a fresh
+window.
 
 ## Rendering — `user_message` egress
 
@@ -336,48 +340,11 @@ verdict still belongs to the viewing browser.
 
 ## Agent-returned images
 
-An agent can send a picture with its reply (`agent_message_chunk` carrying an
-`image` content block). It becomes an **ordinary attachment**, not an inline
-payload: the same directory, the same `attachments` row, the same unsigned
-`path` plus egress re-sign, and the same cleanup. Only the trigger differs — it
-arrives with the agent's stream instead of an upload request.
-
-- **Storage** — `<data_dir>/tasks/<taskId>/attachments/<uuid>.<ext>`, written
-  atomically through a `.tmp` rename, extension from the sniffed MIME. The
-  `display_name` is server-generated (`agent-image-N`); the agent sends no
-  filename.
-- **MIME** — never the wire's claim. One reading of the bytes (`readImageInfo`,
-  backed by `image-size`) names the container and, when the header carries it,
-  the pixel size. Only PNG, JPEG, GIF and WebP get a MIME — they are the ones
-  this app both stores and serves inline — so a format the library measures but
-  this app does not serve (BMP, TIFF, AVIF/HEIC, SVG, ...) is reported instead
-  of stored. The container also has to be readable: a PNG without its IHDR, a
-  JPEG without a SOF0/1/2 frame (lossless SOF3/5–15 included), or a GIF/WebP
-  with a truncated header is refused the same way even though its signature
-  matches, because the browser cannot decode it either. Signatures admit
-  nothing on their own; every refusal is visible `[image omitted: unrecognized
-  image format]` text.
-- **Ceiling** — `limits.image_upload`, the same knob as a user upload. An image
-  above it is not written at all; the transcript gets
-  `[image omitted: 12.3 MB > 10 MB limit]` in the image's place. A write or DB
-  failure takes the same path (with the cause in the log), so a bad disk costs
-  one visible line, never the rest of the reply.
-- **Ordering** — the stored record is its own event (`agent_image`), written
-  after the pending assistant text is flushed. A replay therefore keeps
-  text → image → text; the image is never merged into a text block.
-- **Rendering** — `public/js/render-event.ts → buildAgentImageMessage` is shared
-  by live streaming and replay: `<img class="agent-image" src={signed URL}
-  alt={displayName} loading="lazy">`, dimensions reserved from the stored
-  `width`/`height`, and the same `lightbox.ts` click delegation a user image
-  uses. The share viewer rewrites the path to its public route exactly as it
-  does for `attachments[]`.
-- **Cleanup** — the row goes with the task (`attachments.task_id` is
-  `ON DELETE CASCADE`) and the file goes with the task's data directory, which
-  a hard delete removes. No separate reaper.
-
-Storing has to happen synchronously in the event handler: the pipeline has no
-per-task queue, so an `await` between receiving the block and writing the row
-would let a later text flush land ahead of the image.
+Agent-returned images use the shared attachment storage, signing, and cleanup
+infrastructure, but are not browser uploads and do not pass through the upload
+HTTP endpoint. See [Agent image rendering](image-rendering.md) for the three
+ingress sources, storage validation, frontend placement, replay/share behavior,
+and security model.
 
 ## Tests — what guards what
 

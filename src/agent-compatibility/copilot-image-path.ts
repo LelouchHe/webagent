@@ -12,20 +12,19 @@
 //   ACP:   no image content block on any `tool_call_update` for that call
 //
 // Retirement condition: when Copilot's image tool emits a real ACP image
-// block, delete this file and its call site. Deleting it means exactly:
+// block, delete this file and its call sites. Deleting it means exactly:
 //   1. delete `src/agent-compatibility/copilot-image-path.ts`
 //   2. delete the import of `recoverCopilotImagePath` **and** `toolResultText`
 //      in `src/event-handler.ts` (they share one import line)
 //   3. delete the one call to `recoverCopilotImagePath` in that file's
 //      `tool_call_update` branch; `toolResultText` exists only to feed it
-// Nothing else refers to either, and no barrel exists to update.
+// No barrel exists to update.
 //
 // Rules for anything that lands in `src/agent-compatibility/` (one directory
 // for upstream-defect shims; no `index.ts` barrel until a second shim exists):
 //   1. A shim is a plain function: ACP event data + context in, an optional
-//      attachment out. The agent's name appears in its own file and nowhere
-//      else in `src/`.
-//   2. One shim, one call site.
+//      verified attachment association out.
+//   2. One shim, one active call site.
 //   3. The file header states the upstream defect, the evidence, and the
 //      retirement condition.
 //   4. No privilege growth: no config key, no path allowlist.
@@ -48,6 +47,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
 import { attachmentDescriptor, storeImageBytes } from "../agent-image.ts";
 import { readImageInfo } from "../image-info.ts";
 import { log } from "../log.ts";
@@ -120,6 +120,7 @@ function ignore(reason: string, fields: Record<string, unknown>): null {
 
 export interface RecoveredImage {
   attachment: AgentImageAttachment;
+  sourceUri: string;
   /** True only when this call inserted the attachment row. */
   inserted: boolean;
 }
@@ -127,11 +128,9 @@ export interface RecoveredImage {
 /**
  * Recover the image a Copilot `image_generation` result only names by path.
  *
- * Returns the descriptor together with whether this call inserted a new row,
- * or null when the three markers do not all hold or the file does not match
- * them. The caller appends the descriptor to the tool result's content and
- * invalidates the label cache only for a new row; this function never mutates
- * the ACP event.
+ * Returns a verified attachment together with its canonical source URI and
+ * whether this call inserted a new row. It never authorizes reading arbitrary
+ * local paths outside this one verified image-generation result.
  */
 export function recoverCopilotImagePath(
   ctx: CopilotImagePathContext,
@@ -193,8 +192,10 @@ export function recoverCopilotImagePath(
     return ignore("saved_to is not a storable image", logFields);
   }
 
+  const sourceUri = pathToFileURL(marker.path).href;
+
   const duplicate = findStoredCopy(ctx, marker.sha256, bytes.length);
-  if (duplicate) return { attachment: duplicate, inserted: false };
+  if (duplicate) return { attachment: duplicate, sourceUri, inserted: false };
 
   const index = ctx.store.countAttachments(ctx.taskId, "image") + 1;
   const result = storeImageBytes({
@@ -212,7 +213,7 @@ export function recoverCopilotImagePath(
       reason: result.reason,
     });
   }
-  return { attachment: result.stored, inserted: true };
+  return { attachment: result.stored, sourceUri, inserted: true };
 }
 
 /**

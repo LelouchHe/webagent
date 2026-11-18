@@ -147,6 +147,7 @@ import {
   verifyAttachmentSig,
   reSignAttachmentUrlsInJson,
 } from "./auth.ts";
+import { projectMarkdownImageReferences } from "./markdown-image-references.ts";
 import {
   buildContentDisposition,
   classifyKind,
@@ -3042,6 +3043,7 @@ export function createRequestHandler(
           tasks.flushThinkingBuffer(taskId);
           tasks.flushAssistantBuffer(taskId);
         }
+        const allEvents = store.getEvents(taskId);
         const events = store.getEvents(taskId, {
           excludeThinking,
           afterSeq,
@@ -3080,6 +3082,20 @@ export function createRequestHandler(
             thinking: streamingThinking,
             assistant: streamingAssistant,
           },
+          imageReferences: (() => {
+            const projected = projectMarkdownImageReferences(
+              store,
+              taskId,
+              allEvents,
+            );
+            if (!deps.attachmentSecret) return projected;
+            return JSON.parse(
+              reSignAttachmentUrlsInJson(
+                JSON.stringify(projected),
+                deps.attachmentSecret,
+              ),
+            ) as unknown;
+          })(),
         };
         if (limit != null) {
           const total = store.getEventCount(taskId, { excludeThinking });

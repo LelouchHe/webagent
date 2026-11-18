@@ -1,0 +1,253 @@
+import { afterEach, beforeEach, describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { setupDOM, teardownDOM } from "./frontend-setup.ts";
+
+let clearMarkdownImageHosts: typeof import("../public/js/markdown-stream.ts").clearMarkdownImageHosts;
+let updateMarkdownStream: typeof import("../public/js/markdown-stream.ts").updateMarkdownStream;
+let clearMarkdownImageReferenceScope: typeof import("../public/js/markdown-image-references.ts").clearMarkdownImageReferenceScope;
+let registerMarkdownImageReference: typeof import("../public/js/markdown-image-references.ts").registerMarkdownImageReference;
+let registerMarkdownImageReferences: typeof import("../public/js/markdown-image-references.ts").registerMarkdownImageReferences;
+let setMarkdownImageReferenceScope: typeof import("../public/js/markdown-image-references.ts").setMarkdownImageReferenceScope;
+
+const sourceUri = "file:///tmp/generated.png";
+const attachment = {
+  kind: "image" as const,
+  attachmentId: "attachment-1",
+  displayName: "generated-image-1",
+  mimeType: "image/png",
+  path: "/api/v1/tasks/t1/attachments/attachment-1.png?exp=1&sig=abc",
+  width: 8,
+  height: 6,
+};
+
+describe("Markdown registered file images", () => {
+  beforeEach(async () => {
+    setupDOM();
+    ({ clearMarkdownImageHosts, updateMarkdownStream } =
+      await import("../public/js/markdown-stream.ts"));
+    ({
+      clearMarkdownImageReferenceScope,
+      registerMarkdownImageReference,
+      registerMarkdownImageReferences,
+      setMarkdownImageReferenceScope,
+    } = await import("../public/js/markdown-image-references.ts"));
+    setMarkdownImageReferenceScope("owner:t1", []);
+  });
+
+  afterEach(() => {
+    clearMarkdownImageReferenceScope();
+    clearMarkdownImageHosts();
+    teardownDOM();
+  });
+
+  it("waits for a complete token, then renders one registered image once", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    updateMarkdownStream(host, "before ![screen](");
+    assert.equal(host.querySelector("img"), null);
+
+    updateMarkdownStream(host, `before ![screen](${sourceUri}`);
+    assert.equal(host.querySelector("img"), null);
+    updateMarkdownStream(host, `before ![screen](${sourceUri}) after`);
+    const unresolved = host.querySelector("img") as HTMLImageElement;
+    assert.ok(unresolved);
+    assert.equal(unresolved.hasAttribute("src"), false);
+    updateMarkdownStream(
+      host,
+      `before ![screen](${sourceUri}) after\n\nanother block`,
+    );
+
+    registerMarkdownImageReference({ sourceUri, attachment });
+    const images = host.querySelectorAll("img.agent-image");
+    assert.equal(images.length, 1);
+    assert.equal(images[0].getAttribute("src"), attachment.path);
+    assert.equal(images[0].getAttribute("alt"), "screen");
+    assert.equal((images[0] as HTMLImageElement).width, 8);
+    assert.equal((images[0] as HTMLImageElement).height, 6);
+  });
+
+  it("resolves registered ordinary links without promoting them to images", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    registerMarkdownImageReference({ sourceUri, attachment });
+    updateMarkdownStream(host, `[查看图片](${sourceUri})`);
+    const link = host.querySelector("a") as HTMLAnchorElement;
+    assert.ok(link);
+    assert.equal(link.textContent, "查看图片");
+    assert.equal(link.getAttribute("href"), attachment.path);
+    assert.equal(link.querySelector("img"), null);
+    assert.equal(host.querySelector("img"), null);
+  });
+
+  it("keeps code-fenced and unregistered file links inert", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    updateMarkdownStream(
+      host,
+      `\`\`\`\n![screen](${sourceUri})\n\`\`\`\n\n[open](${sourceUri})`,
+    );
+    assert.equal(host.querySelector("img"), null);
+    assert.equal(host.querySelector("a")!.hasAttribute("href"), false);
+    assert.equal(
+      host.querySelector("pre code")?.textContent.includes(sourceUri),
+      true,
+    );
+    registerMarkdownImageReference({ sourceUri, attachment });
+    assert.equal(host.querySelectorAll("a").length, 1);
+    assert.equal(
+      host.querySelector("a")!.getAttribute("href"),
+      attachment.path,
+    );
+  });
+
+  it("does not resolve a partial ordinary link token", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    updateMarkdownStream(host, `[view](${sourceUri}`);
+    registerMarkdownImageReference({ sourceUri, attachment });
+    assert.equal(host.querySelector("a[href]"), null);
+  });
+
+  it("resolves reference-style and angle-bracket autolinks by exact href", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    registerMarkdownImageReference({ sourceUri, attachment });
+    updateMarkdownStream(
+      host,
+      `[view][generated]\n\n<${sourceUri}>\n\n[generated]: ${sourceUri}`,
+    );
+    const links = host.querySelectorAll("a");
+    assert.equal(links.length, 2);
+    for (const link of links) {
+      assert.equal(link.getAttribute("href"), attachment.path);
+    }
+  });
+
+  it("does not upgrade plain text or authored HTML links", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    registerMarkdownImageReference({ sourceUri, attachment });
+    updateMarkdownStream(
+      host,
+      `${sourceUri}\n\n<a href="${sourceUri}">html link</a>`,
+    );
+    assert.equal(host.textContent.includes(sourceUri), true);
+    assert.equal(host.querySelector("a")?.hasAttribute("href"), false);
+  });
+
+  it("late-registers link hrefs in general, list, and table caches", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    updateMarkdownStream(
+      host,
+      `[view](${sourceUri})\n\n- [list](${sourceUri})\n\n| link |\n| --- |\n| [table](${sourceUri}) |`,
+    );
+    assert.equal(host.querySelectorAll("a[href]").length, 0);
+    registerMarkdownImageReference({ sourceUri, attachment });
+    const links = host.querySelectorAll("a");
+    assert.equal(links.length, 3);
+    for (const link of links) {
+      assert.equal(link.getAttribute("href"), attachment.path);
+    }
+  });
+
+  it("keeps DOMPurify strict for raw non-registered file images", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    updateMarkdownStream(host, `<img src="${sourceUri}" alt="raw">`);
+    const image = host.querySelector("img");
+    assert.ok(image);
+    assert.equal(image.hasAttribute("src"), false);
+  });
+
+  it("invalidates list and table subcaches on late association", () => {
+    const list = document.createElement("article");
+    const table = document.createElement("article");
+    list.className = "msg assistant";
+    table.className = "msg assistant";
+    updateMarkdownStream(list, `- ![screen](${sourceUri})`);
+    updateMarkdownStream(
+      table,
+      `| preview |\n| --- |\n| ![screen](${sourceUri}) |`,
+    );
+    updateMarkdownStream(list, `- ![screen](${sourceUri})\n- another item`);
+    updateMarkdownStream(
+      table,
+      `| preview |\n| --- |\n| ![screen](${sourceUri}) |\n| another row |`,
+    );
+    const oldItem = list.querySelector("li");
+    const oldRow = table.querySelector("tbody tr");
+
+    registerMarkdownImageReference({ sourceUri, attachment });
+
+    assert.notEqual(list.querySelector("li"), oldItem);
+    assert.notEqual(table.querySelector("tbody tr"), oldRow);
+    assert.equal(
+      list.querySelector("img")?.getAttribute("src"),
+      attachment.path,
+    );
+    assert.equal(
+      table.querySelector("img")?.getAttribute("src"),
+      attachment.path,
+    );
+  });
+
+  it("retains a header-only table dependency across table updates", () => {
+    const table = document.createElement("article");
+    table.className = "msg assistant";
+    updateMarkdownStream(table, `| ![screen](${sourceUri}) |\n| --- |`);
+    updateMarkdownStream(table, `| ![screen](${sourceUri}) |\n| --- |\n`);
+    assert.equal(table.querySelector("thead img")?.hasAttribute("src"), false);
+
+    registerMarkdownImageReference({ sourceUri, attachment });
+
+    assert.equal(
+      table.querySelector("thead img")?.getAttribute("src"),
+      attachment.path,
+    );
+  });
+
+  it("keeps the first verified binding stable", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    registerMarkdownImageReference({ sourceUri, attachment });
+    updateMarkdownStream(host, `![screen](${sourceUri})`);
+    registerMarkdownImageReference({
+      sourceUri,
+      attachment: { ...attachment, path: "/different.png" },
+    });
+    assert.equal(
+      host.querySelector("img")?.getAttribute("src"),
+      attachment.path,
+    );
+  });
+
+  it("refreshes a signed URL for the same attachment identity", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    registerMarkdownImageReference({ sourceUri, attachment });
+    updateMarkdownStream(host, `![screen](${sourceUri})`);
+    const refreshed = {
+      ...attachment,
+      path: "/api/v1/tasks/t1/attachments/attachment-1.png?exp=2&sig=def",
+    };
+    registerMarkdownImageReferences([{ sourceUri, attachment: refreshed }]);
+    assert.equal(
+      host.querySelector("img")?.getAttribute("src"),
+      refreshed.path,
+    );
+
+    registerMarkdownImageReference({
+      sourceUri,
+      attachment: {
+        ...attachment,
+        attachmentId: "attachment-2",
+        path: "/api/v1/tasks/t1/attachments/attachment-2.png?exp=3&sig=ghi",
+      },
+    });
+    assert.equal(
+      host.querySelector("img")?.getAttribute("src"),
+      refreshed.path,
+    );
+  });
+});

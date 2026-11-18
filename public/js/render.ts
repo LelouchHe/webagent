@@ -268,7 +268,22 @@ export function hideWaiting() {
 }
 
 let scrollRafPending = false;
+let scrollRafGeneration = 0;
 let bottomRepinRafPending = false;
+
+function cancelQueuedScrollForUserIntent(): void {
+  scrollRafGeneration++;
+  scrollRafPending = false;
+  state.followMessages = isNearBottom(dom.messages);
+}
+
+dom.messages.addEventListener("wheel", cancelQueuedScrollForUserIntent, {
+  passive: true,
+});
+dom.messages.addEventListener("touchstart", cancelQueuedScrollForUserIntent, {
+  passive: true,
+});
+dom.messages.addEventListener("pointerdown", cancelQueuedScrollForUserIntent);
 
 export function scrollToBottomImmediate(force?: boolean) {
   const el = dom.messages;
@@ -323,8 +338,10 @@ export function scrollToBottom(force?: boolean) {
     if (typeof requestAnimationFrame === "function") {
       if (!scrollRafPending) {
         scrollRafPending = true;
+        const generation = ++scrollRafGeneration;
         requestAnimationFrame(() => {
           scrollRafPending = false;
+          if (generation !== scrollRafGeneration) return;
           el.scrollTop = el.scrollHeight;
         });
       }

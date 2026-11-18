@@ -390,7 +390,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/tool-result-images-path.test.ts` (temporary shim)
   - all three markers (`image_id: sha256:…`, `saved_to:` absolute path,
     `image_generation` title) copy the file, verify its sha256, record a row and
-    append the descriptor; the tool's text and its own file survive
+    persist a hidden verified source-to-attachment reference; the tool's text
+    and its own file survive, and no recovered image is appended to visible
+    content or broadcast
   - refusals: sha256 mismatch, non-image magic bytes, above the limit,
     unreadable path, and any missing marker each do nothing; identical bytes
     are stored once and a later update reuses that row
@@ -398,6 +400,58 @@ spot gaps, and decide what still needs to be added without reading every spec.
     a row; a content-hash duplicate reuses the existing row and does not
     invalidate again
   - delete with `src/agent-compatibility/copilot-image-path.ts`
+
+- `test/markdown-image-reference-projection.test.ts`
+  - explicit references are task-local, validated against real attachment
+    rows, and first-binding stable
+  - share projection replaces local paths and owner attachment URLs with
+    snapshot-local routes; rows without new-format hidden metadata are ignored
+  - a Markdown image URI split across consecutive assistant events is projected
+    across the same merge boundary the public viewer uses, so the share leaks
+    neither fragment nor original path and the merged text still renders
+
+- `test/markdown-image-references.test.ts`
+  - partial Markdown image tokens create no premature image/request; a late
+    association repaints exactly once with alt, dimensions and lazy loading
+  - late invalidation replaces affected list/table subcache nodes, while
+    code-fenced image text and ordinary links remain non-images
+  - a header-only table retains its image dependency when a raw newline changes
+    the table token; a later same-identity signed URL refresh repaints the
+    image while a conflicting attachment remains rejected
+  - registered ordinary/reference/autolink tokens become attachment hrefs while
+    remaining `<a>` elements; unregistered/code/raw/HTML cases stay inert, and
+    late registration repaints link-only paragraph/list/table caches
+
+- `test/stored-image.test.ts`
+  - the shared stored-image props drive rewritten src, safe alt, class,
+    lazy loading, and validated natural dimensions for DOM and controlled
+    Markdown serialization; unresolved images retain no attachment URL
+
+- `test/e2e/tool-result-images-path.spec.ts`
+  - Copilot image-generation text stays on the tool card with no recovered
+    `.tc-image`; assistant Markdown renders in position from a signed attachment
+    URL with no `file:` request, dimensions/lightbox behavior and replay parity
+  - the persisted tool update keeps the reference unsigned and out of content
+
+- `test/e2e/generated-image-layout.spec.ts`
+  - a real 1536×1024 attachment is held before bytes load; standalone and
+    registered Markdown images keep identical pre/post geometry and bottom pin
+  - the same delayed load does not move a deliberately scrolled-up viewer, and
+    a genuinely post-idle late Markdown association remains bottom-following
+
+- `test/e2e/attachment-cache-switch.spec.ts`
+  - a real `document.hidden` + `document.visibilityState` transition dispatches
+    the visibility listener, observes a successful `/events?after=` catch-up,
+    and preserves all four attachment image node identities/URLs with no
+    additional attachment request or byte response; a changed but still valid
+    signed query reloads once
+  - user, standalone agent, ACP tool, and generated Markdown attachments keep
+    stable signed URLs across task re-entry and browser-tab visibility; new DOM consumes browser cache
+    without another server byte response, while a fresh browser loads once
+
+- `test/render-scroll-follow.test.ts`
+  - a wheel/touch/pointer user-intent event invalidates an already queued
+    bottom-scroll RAF so a later callback cannot undo scroll-up
 
 - `test/tool-result-images-render.test.ts`
   - a tool card renders `.tc-images img.tc-image` from the stored path, before

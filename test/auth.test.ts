@@ -1,4 +1,4 @@
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   generateToken,
@@ -196,6 +196,11 @@ import { reSignAttachmentUrlsInJson } from "../src/auth.ts";
 
 describe("reSignAttachmentUrlsInJson", () => {
   const secret = Buffer.from("a".repeat(64), "hex");
+  const originalNow = Date.now;
+
+  afterEach(() => {
+    Date.now = originalNow;
+  });
 
   it("re-signs a bare image URL inside JSON string", () => {
     const json = '{"path":"/api/v1/tasks/abc/attachments/123.png"}';
@@ -227,5 +232,150 @@ describe("reSignAttachmentUrlsInJson", () => {
     const out = reSignAttachmentUrlsInJson(json, secret, 3600);
     const matches = out.match(/\?exp=\d+&sig=[a-f0-9]+/g);
     assert.equal(matches?.length, 2);
+  });
+
+  it("reuses one query for repeated paths while its safety margin remains", () => {
+    let now = 1_800_000_000_000;
+    Date.now = () => now;
+    const json =
+      '{"path":"/api/v1/tasks/stable/attachments/same.png?exp=1&sig=deadbeef"}';
+    const first = reSignAttachmentUrlsInJson(json, secret, 3600);
+    now += 30_000;
+    const second = reSignAttachmentUrlsInJson(json, secret, 3600);
+    assert.equal(second, first);
+  });
+
+  it("refreshes near expiry for the same path", () => {
+    let now = 1_800_000_000_000;
+    Date.now = () => now;
+    const json = '{"path":"/api/v1/tasks/refresh/attachments/same.png"}';
+    const first = reSignAttachmentUrlsInJson(json, secret, 3600);
+    now += 3_541_000;
+    const second = reSignAttachmentUrlsInJson(json, secret, 3600);
+    assert.notEqual(second, first);
+    assert.match(second, /\?exp=\d+&sig=[a-f0-9]+/);
+  });
+
+  it("isolates cache entries by secret identity and attachment path", () => {
+    Date.now = () => 1_800_000_000_000;
+    const pathA = "/api/v1/tasks/cache/attachments/a.png";
+    const pathB = "/api/v1/tasks/cache/attachments/b.png";
+    const otherSecret = Buffer.from("b".repeat(64), "hex");
+    const firstA = reSignAttachmentUrlsInJson(
+      JSON.stringify({ pathA }),
+      secret,
+    );
+    const secondA = reSignAttachmentUrlsInJson(
+      JSON.stringify({ pathA }),
+      secret,
+    );
+    const firstB = reSignAttachmentUrlsInJson(
+      JSON.stringify({ pathB }),
+      secret,
+    );
+    const other = reSignAttachmentUrlsInJson(
+      JSON.stringify({ pathA }),
+      otherSecret,
+    );
+    assert.equal(secondA, firstA);
+    const parse = (json: string): URL =>
+      new URL(
+        (JSON.parse(json) as { pathA?: string; pathB?: string }).pathA ??
+          (JSON.parse(json) as { pathB: string }).pathB,
+        "http://localhost",
+      );
+    const urlA = parse(firstA);
+    const urlB = parse(firstB);
+    const urlOther = parse(other);
+    assert.notEqual(urlB.searchParams.get("sig"), urlA.searchParams.get("sig"));
+    assert.notEqual(
+      urlOther.searchParams.get("sig"),
+      urlA.searchParams.get("sig"),
+    );
+    for (const [path, url, key] of [
+      [pathA, urlA, secret],
+      [pathB, urlB, secret],
+      [pathA, urlOther, otherSecret],
+    ] as const) {
+      assert.equal(
+        verifyAttachmentSig(
+          path,
+          url.searchParams.get("exp")!,
+          url.searchParams.get("sig")!,
+          key,
+        ),
+        true,
+      );
+    }
+  });
+
+  it("replaces expired input with the valid cached query", () => {
+    Date.now = () => 1_800_000_000_000;
+    const path = "/api/v1/tasks/expired/attachments/old.png";
+    const out = reSignAttachmentUrlsInJson(
+      JSON.stringify({ path: `${path}?exp=1&sig=deadbeef` }),
+      secret,
+    );
+    const url = new URL(
+      (JSON.parse(out) as { path: string }).path,
+      "http://localhost",
+    );
+    assert.equal(
+      verifyAttachmentSig(
+        path,
+        url.searchParams.get("exp")!,
+        url.searchParams.get("sig")!,
+        secret,
+      ),
+      true,
+    );
+  });
+
+  it("bounds entries per secret and evicts the oldest path", () => {
+    Date.now = () => 1_800_000_000_000;
+    const boundedSecret = Buffer.from("c".repeat(64), "hex");
+    const firstZero = reSignAttachmentUrlsInJson(
+      JSON.stringify({
+        path: "/api/v1/tasks/cap/attachments/0.png",
+      }),
+      boundedSecret,
+    );
+    const originalZero = new URLSearchParams(
+      new URL(
+        (JSON.parse(firstZero) as { path: string }).path,
+        "http://localhost",
+      ).search,
+    ).get("exp");
+    for (let i = 1; i <= 2048; i++) {
+      reSignAttachmentUrlsInJson(
+        JSON.stringify({
+          path: `/api/v1/tasks/cap/attachments/${i}.png`,
+        }),
+        boundedSecret,
+      );
+    }
+    Date.now = () => 1_800_000_500_000;
+    const retained = reSignAttachmentUrlsInJson(
+      JSON.stringify({
+        path: "/api/v1/tasks/cap/attachments/1.png",
+      }),
+      boundedSecret,
+    );
+    const evicted = reSignAttachmentUrlsInJson(
+      JSON.stringify({
+        path: "/api/v1/tasks/cap/attachments/0.png",
+      }),
+      boundedSecret,
+    );
+    const retainedPath = (JSON.parse(retained) as { path: string }).path;
+    const evictedPath = (JSON.parse(evicted) as { path: string }).path;
+    assert.equal(
+      new URL(retainedPath, "http://localhost").searchParams.get("exp"),
+      String(1_800_003_600),
+    );
+    assert.notEqual(
+      new URL(evictedPath, "http://localhost").searchParams.get("exp"),
+      originalZero,
+    );
   });
 });

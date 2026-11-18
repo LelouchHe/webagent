@@ -2,11 +2,15 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ToolContentItem } from "../src/types.ts";
+import { pathToFileURL } from "node:url";
+import type {
+  AgentEvent,
+  AgentImageAttachment,
+  ToolContentItem,
+} from "../src/types.ts";
 import { enrichEventForDisplay } from "../src/attachment-labels.ts";
 import {
   REAL_PNG,
-  attachmentOf,
   createToolResultImageHarness,
   disposeToolResultImageHarness,
   png,
@@ -63,15 +67,40 @@ describe("tool-result images: a named image file", () => {
     harness.emit(harness.update(id, [textItem(markerText(path, hash))]));
   }
 
-  it("copies the file, records the row and appends the descriptor", () => {
+  function recoveredAt(index = 0) {
+    const updates = store
+      .getEvents("t1")
+      .filter((event) => event.type === "tool_call_update");
+    const data = JSON.parse(updates[index].data) as {
+      recoveredCopilotImage: {
+        sourceUri: string;
+        attachment: AgentImageAttachment;
+      };
+    };
+    return data.recoveredCopilotImage;
+  }
+
+  it("copies the file and records a hidden verified reference", () => {
     generated("t1");
 
     const content = harness.storedContent();
-    assert.equal(content.length, 2);
-    // The tool's own text is still there; the picture is additive.
+    assert.equal(content.length, 1);
     assert.match(textOf(content), /Image generated successfully/);
-    const descriptor = attachmentOf(content[1]);
+    const recovered = recoveredAt();
+    assert.equal(recovered.sourceUri, pathToFileURL(imagePath).href);
+    const descriptor = recovered.attachment;
     assert.ok(descriptor);
+    const live = harness.broadcasts.at(-1) as Extract<
+      AgentEvent,
+      { type: "tool_call_update" }
+    >;
+    assert.ok(live);
+    assert.equal(live.type, "tool_call_update");
+    assert.equal(live.content?.length, 1);
+    assert.equal(
+      live.recoveredCopilotImage?.attachment.attachmentId,
+      descriptor.attachmentId,
+    );
     assert.equal(descriptor.kind, "image");
     assert.equal(descriptor.mimeType, "image/png");
     assert.equal(descriptor.displayName, "generated-image-1");
@@ -86,6 +115,7 @@ describe("tool-result images: a named image file", () => {
     assert.equal(row.height, 1);
     assert.equal(descriptor.width, 1);
     assert.equal(descriptor.height, 1);
+    assert.equal(String(descriptor.path).includes("?"), false);
     // The descriptor is a reference, and the persisted row never carries the
     // file's actual payload. Compute the expectation from the fixture bytes:
     // checking for the literal string "base64" would pass on any payload.
@@ -102,7 +132,7 @@ describe("tool-result images: a named image file", () => {
 
     generated("t1");
 
-    const descriptor = attachmentOf(harness.storedContent()[1]);
+    const descriptor = recoveredAt().attachment;
     assert.ok(descriptor);
     const row = store.getAttachment("t1", String(descriptor.attachmentId));
     assert.ok(row);
@@ -187,10 +217,15 @@ describe("tool-result images: a named image file", () => {
       .getEvents("t1")
       .filter((event) => event.type === "tool_call_update");
     assert.equal(rows.length, 2);
-    const attachments = rows.map((event) =>
-      attachmentOf(
-        (JSON.parse(event.data) as { content: ToolContentItem[] }).content[1],
-      ),
+    const attachments = rows.map(
+      (event) =>
+        (
+          JSON.parse(event.data) as {
+            recoveredCopilotImage: {
+              attachment: { attachmentId: string };
+            };
+          }
+        ).recoveredCopilotImage.attachment,
     );
     assert.equal(attachments[0]?.attachmentId, attachments[1]?.attachmentId);
   });

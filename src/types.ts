@@ -56,6 +56,14 @@ export interface AgentImageAttachment {
   height?: number | null;
 }
 
+/** A verified local image source associated with a same-task attachment. */
+export interface MarkdownImageReference {
+  /** Canonical local file URI. Never accepted as authority to read the path. */
+  sourceUri: string;
+  /** Validated same-task attachment descriptor with an unsigned base path. */
+  attachment: AgentImageAttachment;
+}
+
 // --- Shared interfaces used by both frontend and backend ---
 
 /** Debug log entry produced by the frontend Logger or a future server log SSE bridge. */
@@ -272,6 +280,7 @@ export type AgentEvent =
       rawInput?: RawInput;
       rawOutput?: unknown;
       locations?: { path: string; line?: number | null }[];
+      recoveredCopilotImage?: MarkdownImageReference;
     }
   | { type: "plan"; taskId: string; entries: PlanEntry[] }
   | ({ type: "usage_update"; taskId: string } & ContextUsage)
@@ -504,6 +513,7 @@ export interface ToolContentItem {
 export interface NormalizedEventsResponse {
   events: StoredEvent[];
   streaming: { thinking: boolean; assistant: boolean };
+  imageReferences?: MarkdownImageReference[];
   total?: number;
   hasMore?: boolean;
 }
