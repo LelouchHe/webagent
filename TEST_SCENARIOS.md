@@ -406,12 +406,18 @@ spot gaps, and decide what still needs to be added without reading every spec.
     rows, and first-binding stable
   - share projection replaces local paths and owner attachment URLs with
     snapshot-local routes; rows without new-format hidden metadata are ignored
+  - a Markdown image URI split across consecutive assistant events is projected
+    across the same merge boundary the public viewer uses, so the share leaks
+    neither fragment nor original path and the merged text still renders
 
 - `test/markdown-image-references.test.ts`
   - partial Markdown image tokens create no premature image/request; a late
     association repaints exactly once with alt, dimensions and lazy loading
   - late invalidation replaces affected list/table subcache nodes, while
     code-fenced image text and ordinary links remain non-images
+  - a header-only table retains its image dependency when a raw newline changes
+    the table token; a later same-identity signed URL refresh repaints the
+    image while a conflicting attachment remains rejected
 
 - `test/e2e/tool-result-images-path.spec.ts`
   - Copilot image-generation text stays on the tool card with no recovered

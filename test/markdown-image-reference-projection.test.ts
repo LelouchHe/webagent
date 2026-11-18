@@ -11,6 +11,7 @@ import {
 } from "../src/markdown-image-references.ts";
 import { Store } from "../src/store.ts";
 import { REAL_PNG } from "./tool-result-images-harness.ts";
+import { setupDOM, teardownDOM } from "./frontend-setup.ts";
 
 describe("Markdown image reference projection", () => {
   let dir: string;
@@ -129,5 +130,68 @@ describe("Markdown image reference projection", () => {
     assert.equal(publicJson.includes("/api/v1/tasks/t1/attachments/"), false);
     assert.equal(publicJson.includes("recoveredCopilotImage"), false);
     assert.match(projected[0].attachment.path, /^\/s\/a{24}\/attachments\//);
+  });
+
+  it("projects a split assistant image URI across the viewer merge boundary", async () => {
+    const row = insert("t1", "66666666-6666-4666-8666-666666666666");
+    const attachment = attachmentDescriptor("t1", row);
+    const sourceUri = pathToFileURL(join(dir, "private", "generated.png")).href;
+    store.saveEvent(
+      "t1",
+      "tool_call_update",
+      {
+        id: "call",
+        status: "completed",
+        recoveredCopilotImage: { sourceUri, attachment },
+        content: [],
+      },
+      { from_ref: "agent" },
+    );
+    const split = sourceUri.indexOf("/generated.png");
+    store.saveEvent(
+      "t1",
+      "assistant_message",
+      { text: `![screen](${sourceUri.slice(0, split)}` },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "t1",
+      "assistant_message",
+      { text: `${sourceUri.slice(split)})` },
+      { from_ref: "agent" },
+    );
+    const events = store.getEvents("t1");
+    const projected = projectShareMarkdownImageReferences(
+      "b".repeat(24),
+      projectMarkdownImageReferences(store, "t1", events),
+      events,
+    );
+    const assistantEvents = events.filter(
+      (event) => event.type === "assistant_message",
+    );
+    const combined = assistantEvents
+      .map((event) => (JSON.parse(event.data) as { text: string }).text)
+      .join("");
+    assert.equal(assistantEvents.length, 2);
+    assert.equal(combined.includes(sourceUri), false);
+    assert.equal(combined.includes(projected[0].sourceUri), true);
+    assert.equal(JSON.stringify(events).includes(join(dir, "private")), false);
+
+    setupDOM();
+    try {
+      const references =
+        await import("../public/js/markdown-image-references.ts");
+      const markdown = await import("../public/js/markdown-stream.ts");
+      references.setMarkdownImageReferenceScope("share:test", projected);
+      const host = document.createElement("div");
+      host.className = "msg assistant";
+      markdown.updateMarkdownStream(host, combined);
+      const image = host.querySelector("img.agent-image");
+      assert.equal(image?.getAttribute("src"), projected[0].attachment.path);
+      markdown.clearMarkdownImageHosts();
+      references.clearMarkdownImageReferenceScope();
+    } finally {
+      teardownDOM();
+    }
   });
 });

@@ -45,12 +45,34 @@ export function registerMarkdownImageReferences(references: unknown): void {
     const reference = validReference(raw);
     if (!reference) continue;
     const existing = bindings.get(reference.sourceUri);
-    if (existing) continue;
+    if (existing) {
+      if (!sameAttachmentIdentity(existing, reference)) continue;
+      if (existing.attachment.path === reference.attachment.path) continue;
+      bindings.set(reference.sourceUri, reference);
+      changed.push(reference.sourceUri);
+      continue;
+    }
     bindings.set(reference.sourceUri, reference);
     changed.push(reference.sourceUri);
   }
   if (changed.length === 0) return;
   for (const listener of listeners) listener(changed);
+}
+
+function sameAttachmentIdentity(
+  left: MarkdownImageReference,
+  right: MarkdownImageReference,
+): boolean {
+  const a = left.attachment;
+  const b = right.attachment;
+  return (
+    a.attachmentId === b.attachmentId &&
+    a.displayName === b.displayName &&
+    a.mimeType === b.mimeType &&
+    a.path.split("?")[0] === b.path.split("?")[0] &&
+    (a.width ?? null) === (b.width ?? null) &&
+    (a.height ?? null) === (b.height ?? null)
+  );
 }
 
 export function registerMarkdownImageReference(reference: unknown): void {

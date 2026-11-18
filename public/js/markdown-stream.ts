@@ -193,6 +193,8 @@ interface SubMemo {
   subCache: string[];
   /** Complete image sources per retained list item or table row. */
   fileSources: Set<string>[];
+  /** Image sources rendered into a reused table header. */
+  headerFileSources: Set<string>;
 }
 
 const markdownStreamMemos = new WeakMap<HTMLElement, MarkdownStreamMemo>();
@@ -979,6 +981,7 @@ function renderListBlock(
       containerEl,
       subCache,
       fileSources: subFileSources,
+      headerFileSources: new Set(),
     },
   };
 }
@@ -1062,6 +1065,7 @@ function renderTableBlock(
   let tbodyEl: HTMLElement;
   let subCache: string[];
   let subFileSources: Set<string>[];
+  let headerFileSources: Set<string>;
   const canReuse =
     prevSubMemo !== null &&
     prevSubMemo.type === "table" &&
@@ -1086,20 +1090,28 @@ function renderTableBlock(
     tbodyEl = tb;
     subCache = prevSubMemo.subCache;
     subFileSources = prevSubMemo.fileSources;
+    headerFileSources = prevSubMemo.headerFileSources;
+    mergeFileSources(renderingFileSources, headerFileSources);
   } else {
     // Build the table shell (thead + empty tbody) by parsing the table
     // token with rows=[]. marked still emits <thead> + an empty <tbody>.
-    const tP0 = now();
-    const emptyHtml = marked.parser([{ ...tableTok, rows: [] }], {
-      ...marked.defaults,
-      async: false,
-    }) as string;
-    const tP1 = now();
-    timing.parse += tP1 - tP0;
-    const tS0 = now();
-    const sanitizedFrag = sanitizeToFragment(emptyHtml);
-    const tS1 = now();
-    timing.sanitize += tS1 - tS0;
+    const renderedHeader = captureFileSources(() => {
+      const tP0 = now();
+      const emptyHtml = marked.parser([{ ...tableTok, rows: [] }], {
+        ...marked.defaults,
+        async: false,
+      }) as string;
+      const tP1 = now();
+      timing.parse += tP1 - tP0;
+      const tS0 = now();
+      const sanitizedFrag = sanitizeToFragment(emptyHtml);
+      const tS1 = now();
+      timing.sanitize += tS1 - tS0;
+      return sanitizedFrag;
+    });
+    const sanitizedFrag = renderedHeader.value;
+    headerFileSources = renderedHeader.sources;
+    mergeFileSources(renderingFileSources, headerFileSources);
     stripWhitespaceTextNodes(sanitizedFrag);
     const fresh = sanitizedFrag.firstElementChild;
     if (!fresh) {
@@ -1192,6 +1204,7 @@ function renderTableBlock(
       containerEl,
       subCache,
       fileSources: subFileSources,
+      headerFileSources,
     },
   };
 }

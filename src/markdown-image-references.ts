@@ -108,6 +108,101 @@ function rewriteStrings(
   return value;
 }
 
+function rewriteAcrossAssistantRun(
+  texts: string[],
+  replacements: Map<string, string>,
+): string[] {
+  const output = texts.map(() => "");
+  const combined = texts.join("");
+  const starts: number[] = [];
+  let start = 0;
+  for (const text of texts) {
+    starts.push(start);
+    start += text.length;
+  }
+
+  const ownerAt = (position: number): number => {
+    let owner = starts.length - 1;
+    for (let i = 1; i < starts.length; i++) {
+      if (starts[i] > position) {
+        owner = i - 1;
+        break;
+      }
+    }
+    return owner;
+  };
+  const appendRange = (from: number, to: number): void => {
+    for (let i = 0; i < texts.length; i++) {
+      const begin = Math.max(from, starts[i]);
+      const end = Math.min(to, starts[i] + texts[i].length);
+      if (begin < end) output[i] += combined.slice(begin, end);
+    }
+  };
+
+  let cursor = 0;
+  while (cursor < combined.length) {
+    let nextIndex = -1;
+    let nextFrom = "";
+    let nextTo = "";
+    for (const [from, to] of replacements) {
+      const index = combined.indexOf(from, cursor);
+      if (
+        index >= 0 &&
+        (nextIndex < 0 ||
+          index < nextIndex ||
+          (index === nextIndex && from.length > nextFrom.length))
+      ) {
+        nextIndex = index;
+        nextFrom = from;
+        nextTo = to;
+      }
+    }
+    if (nextIndex < 0) {
+      appendRange(cursor, combined.length);
+      break;
+    }
+    appendRange(cursor, nextIndex);
+    output[ownerAt(nextIndex)] += nextTo;
+    cursor = nextIndex + nextFrom.length;
+  }
+  return output;
+}
+
+function rewriteAssistantRuns(
+  events: EventRow[],
+  replacements: Map<string, string>,
+): void {
+  for (let i = 0; i < events.length;) {
+    if (events[i].type !== "assistant_message") {
+      i++;
+      continue;
+    }
+    const run: EventRow[] = [];
+    const texts: string[] = [];
+    while (
+      i < events.length &&
+      events[i].type === "assistant_message" &&
+      (run.length === 0 || events[i].seq === run[run.length - 1].seq + 1)
+    ) {
+      const event = events[i];
+      const data = parseEventData(event);
+      run.push(event);
+      texts.push(typeof data.text === "string" ? data.text : "");
+      i++;
+    }
+    if (run.length === 0) {
+      i++;
+      continue;
+    }
+    const rewritten = rewriteAcrossAssistantRun(texts, replacements);
+    for (let j = 0; j < run.length; j++) {
+      const data = parseEventData(run[j]);
+      data.text = rewritten[j];
+      run[j].data = JSON.stringify(data);
+    }
+  }
+}
+
 /**
  * Build a share-local projection before redaction. Raw file identities are
  * replaced with opaque file-shaped tokens; public payloads expose neither an
@@ -142,6 +237,7 @@ export function projectShareMarkdownImageReferences(
   const sorted = new Map(
     [...replacements].sort(([a], [b]) => b.length - a.length),
   );
+  rewriteAssistantRuns(events, sorted);
   for (const event of events) {
     event.data = JSON.stringify(rewriteStrings(parseEventData(event), sorted));
   }
