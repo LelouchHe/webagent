@@ -1,14 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { basename } from "node:path";
 import { attachmentDescriptor } from "./agent-image.ts";
-import { reconstructLegacyCopilotImage } from "./agent-compatibility/copilot-image-path.ts";
 import { parseImageAttachment } from "./shared/tool-content.ts";
 import type { EventRow, Store } from "./store.ts";
-import type {
-  AgentImageAttachment,
-  MarkdownImageReference,
-  ToolContentItem,
-} from "./types.ts";
+import type { AgentImageAttachment, MarkdownImageReference } from "./types.ts";
 
 function canonicalFileUri(raw: unknown): string | null {
   if (typeof raw !== "string" || !raw.startsWith("file://")) return null;
@@ -74,33 +69,15 @@ export function projectMarkdownImageReferences(
   taskId: string,
   events: EventRow[],
 ): MarkdownImageReference[] {
-  const titles = new Map<string, string>();
   const bindings = new Map<string, MarkdownImageReference>();
   for (const event of events) {
     const data = parseEventData(event);
-    if (event.type === "tool_call" && typeof data.id === "string") {
-      if (typeof data.title === "string") titles.set(data.id, data.title);
-      continue;
-    }
-    if (event.type !== "tool_call_update" || typeof data.id !== "string")
-      continue;
-    let reference = explicitReference(
+    if (event.type !== "tool_call_update") continue;
+    const reference = explicitReference(
       store,
       taskId,
       data.recoveredCopilotImage,
     );
-    if (!reference && Array.isArray(data.content)) {
-      const content = data.content as ToolContentItem[];
-      reference = reconstructLegacyCopilotImage({
-        store,
-        taskId,
-        title:
-          typeof data.title === "string"
-            ? data.title
-            : (titles.get(data.id) ?? ""),
-        content,
-      });
-    }
     if (reference && !bindings.has(reference.sourceUri)) {
       bindings.set(reference.sourceUri, reference);
     }

@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -89,95 +88,6 @@ describe("Markdown image reference projection", () => {
     assert.deepEqual(
       projectMarkdownImageReferences(store, "t1", store.getEvents("t1")),
       [{ sourceUri, attachment }],
-    );
-  });
-
-  it("reconstructs an unambiguous legacy row without reading the saved_to file", () => {
-    store.createTask("t2", "/tmp", "auto", "test-agent");
-    const row = insert("t2", "22222222-2222-4222-8222-222222222222");
-    const attachment = attachmentDescriptor("t2", row);
-    writeFileSync(sourcePath(), REAL_PNG);
-    const hash = createHash("sha256").update(REAL_PNG).digest("hex");
-    store.saveEvent(
-      "t2",
-      "tool_call",
-      {
-        id: "legacy",
-        title: "image_generation",
-        kind: "other",
-      },
-      { from_ref: "agent" },
-    );
-    store.saveEvent(
-      "t2",
-      "tool_call_update",
-      {
-        id: "legacy",
-        status: "completed",
-        content: [
-          {
-            type: "content",
-            content: {
-              type: "text",
-              text: `image_id: sha256:${hash}\nsaved_to: ${sourcePath()}`,
-            },
-          },
-          { type: "image", attachment },
-        ],
-      },
-      { from_ref: "agent" },
-    );
-    unlinkSync(sourcePath());
-
-    assert.deepEqual(
-      projectMarkdownImageReferences(store, "t2", store.getEvents("t2")),
-      [{ sourceUri: pathToFileURL(sourcePath()).href, attachment }],
-    );
-  });
-
-  it("fails closed on ambiguous legacy descriptors and preserves the thumbnail data", () => {
-    store.createTask("t2", "/tmp", "auto", "test-agent");
-    const row = insert("t2", "33333333-3333-4333-8333-333333333333");
-    const attachment = attachmentDescriptor("t2", row);
-    const hash = createHash("sha256").update(REAL_PNG).digest("hex");
-    store.saveEvent(
-      "t2",
-      "tool_call",
-      {
-        id: "legacy",
-        title: "image_generation",
-        kind: "other",
-      },
-      { from_ref: "agent" },
-    );
-    store.saveEvent(
-      "t2",
-      "tool_call_update",
-      {
-        id: "legacy",
-        status: "completed",
-        content: [
-          {
-            type: "content",
-            content: {
-              type: "text",
-              text: `image_id: sha256:${hash}\nsaved_to: ${sourcePath()}`,
-            },
-          },
-          { type: "image", attachment },
-          { type: "image", attachment },
-        ],
-      },
-      { from_ref: "agent" },
-    );
-
-    assert.equal(
-      projectMarkdownImageReferences(store, "t2", store.getEvents("t2")).length,
-      0,
-    );
-    assert.equal(
-      JSON.parse(store.getEvents("t2").at(-1)!.data).content.length,
-      3,
     );
   });
 

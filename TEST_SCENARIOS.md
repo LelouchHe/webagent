@@ -402,10 +402,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - delete with `src/agent-compatibility/copilot-image-path.ts`
 
 - `test/markdown-image-reference-projection.test.ts`
-  - explicit references and reconstructed legacy references are task-local,
-    validated against real attachment rows, and first-binding stable
-  - legacy ambiguity fails closed without source-file access; share projection
-    replaces local paths and owner attachment URLs with snapshot-local routes
+  - explicit references are task-local, validated against real attachment
+    rows, and first-binding stable
+  - share projection replaces local paths and owner attachment URLs with
+    snapshot-local routes; rows without new-format hidden metadata are ignored
 
 - `test/markdown-image-references.test.ts`
   - partial Markdown image tokens create no premature image/request; a late

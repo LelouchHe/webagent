@@ -219,21 +219,20 @@ egress-signed attachment URL; unmatched local-file images receive no `src`.
 Raw Markdown remains unchanged in storage, and ordinary ACP tool-result image
 blocks still use the thumbnail path.
 
-History responses project all associations for the task before pagination
-replay. Share responses build a separate snapshot-cutoff projection with
-opaque source identities and share routes; owner-signed URLs and original local
-paths are never reused there. Unambiguous old rows are reconstructed from the
-old marker text, appended descriptor, and same-task attachment row without
-rereading the old `saved_to` file.
+History responses project all new-format associations for the task before
+pagination replay. Previously persisted rows do not have a compatibility
+path: old `saved_to` text and appended descriptors are not parsed or promoted
+into Markdown references. Share responses build a separate snapshot-cutoff
+projection with opaque source identities and share routes; owner-signed URLs
+and original local paths are never reused there.
 
 **Delete it when Copilot's image tool emits a real ACP image block**: delete
 `src/agent-compatibility/copilot-image-path.ts`, its import in
 `src/event-handler.ts`, and the one call in that file's `tool_call_update`
 branch. The import line also brings in `toolResultText`, which exists only to
 feed the shim's eligibility test, so it goes with the same line; with both
-removed nothing unused remains. Delete the legacy reconstruction/export call
-from `src/markdown-image-references.ts` and the corresponding hidden-reference
-projection at the same retirement.
+removed nothing unused remains. Delete the hidden-reference projection at the
+same retirement.
 
 ## Client Extensions
 
