@@ -118,12 +118,12 @@ async function recoverVisible(
     hidden = false;
     document.dispatchEvent(new Event("visibilitychange"));
   });
+  let recoveryUrl: string | null = null;
   if (responses) {
     const response = await responses;
     expect(response.ok()).toBe(true);
-    const url = response.url();
-    expect(url).toMatch(/\/api\/v1\/tasks\/[^/]+\/events\?after=\d+/);
-    return url;
+    recoveryUrl = response.url();
+    expect(recoveryUrl).toMatch(/\/api\/v1\/tasks\/[^/]+\/events\?after=\d+/);
   } else {
     await page.waitForFunction(
       () =>
@@ -138,7 +138,7 @@ async function recoverVisible(
         .then((value) => Number(value ?? 0)),
     )
     .toBeGreaterThan(previousCompletion);
-  return null;
+  return recoveryUrl;
 }
 
 async function refreshNextEventLoad(
