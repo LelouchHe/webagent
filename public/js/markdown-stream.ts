@@ -24,6 +24,7 @@ import {
 import DOMPurify from "dompurify";
 import { findUnclosedDisplayMathBlockStart } from "./math.ts";
 import { enhanceCodeBlocks } from "./highlight.ts";
+import { serializeStoredImage, storedImageProps } from "./stored-image.ts";
 import {
   onMarkdownImageReferenceChange,
   resolveMarkdownImageReference,
@@ -48,13 +49,6 @@ const markdownHostRefs = new Set<WeakRef<HTMLElement>>();
 let renderingFileSources: Set<string> | null = null;
 let renderingRegisteredImages = false;
 const defaultRenderer = new Renderer();
-const escapeAttribute = (value: string): string =>
-  value
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-
 marked.use({
   renderer: {
     image(token) {
@@ -66,23 +60,17 @@ marked.use({
       const reference = renderingRegisteredImages
         ? resolveMarkdownImageReference(href)
         : null;
-      const title = token.title
-        ? ` title="${escapeAttribute(token.title)}"`
-        : "";
-      const src = reference
-        ? ` src="${escapeAttribute(reference.attachment.path)}"`
-        : "";
       const alt = this.parser.parseInline(
         token.tokens,
         this.parser.textRenderer,
       );
-      const dimensions =
-        reference &&
-        typeof reference.attachment.width === "number" &&
-        typeof reference.attachment.height === "number"
-          ? ` width="${reference.attachment.width}" height="${reference.attachment.height}"`
-          : "";
-      return `<img class="agent-image" loading="lazy"${src} alt="${escapeAttribute(alt)}"${title}${dimensions}>`;
+      return serializeStoredImage(
+        storedImageProps(reference?.attachment ?? null, {
+          className: "agent-image",
+          alt,
+        }),
+        token.title,
+      );
     },
   },
 });

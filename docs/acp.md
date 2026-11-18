@@ -104,7 +104,7 @@ WebAgent uses ACP for the core agent loop: session creation / restore, prompt tu
     database or a client: the event handler writes them as an **attachment**
     (same layout, row, unsigned `path` + egress re-sign and cleanup a user
     upload gets) and the event carries the reference. See
-    [Uploads](uploads.md#agent-returned-images).
+    [Agent image rendering](image-rendering.md).
   - An image above `limits.image_upload` (the existing upload ceiling), one
     whose content is not a storable image container, or one that cannot be
     written, is not stored: the transcript gets the visible text
@@ -156,12 +156,6 @@ are explicitly **not** covered: `rawInput` (tool input, not a result picture —
 untouched) and `rawOutput` (never persisted; its inline `data` is emptied for the
 live frame instead of being stored).
 
-- Storage is the same attachment pipeline an agent message image uses: the same
-  `tasks/<taskId>/attachments/<uuid>.<ext>` layout, the same `attachments` row,
-  the same `limits.image_upload` ceiling, the same content sniff, the same
-  unsigned base path + egress re-sign, and the same cleanup. In `content` the
-  block is replaced by the descriptor an `agent_image` carries, so neither the
-  database nor a client ever sees base64.
 - `rawOutput` is forwarded as the agent sent it and is not persisted, but an
   agent may repeat the same image block inside it. Before the live SSE frame is
   written, every inline image block in `rawOutput` has its `data` emptied by the
@@ -170,17 +164,9 @@ live frame instead of being stored).
 - An image above the ceiling, one whose bytes are not PNG/JPEG/GIF/WebP, or one
   that cannot be written becomes visible `[image omitted: …]` text in place of
   the block; nothing is dropped silently and no row is created.
-- The tool card shows a thumbnail that opens the same lightbox as any other
-  chat image. Live streaming and replay both render `tool_call_update` through
-  `renderContentEvent`, so the two paths cannot drift.
-- Display size comes from the container, not a fixed ceiling: `max-width: 100%`
-  with `height: auto`, so a wide card shows a wide picture, a narrow one still
-  keeps it inside the card, and a small picture keeps its own pixels (nothing
-  upscales). The height is capped against the viewport (`max-height: 70dvh`,
-  with a `70vh` fallback) so one portrait image cannot fill the screen while a
-  16:9 picture still reaches the card's full width. The `width`/`height` attributes carry the image's own
-  size — they reserve a proportional box before the bytes arrive — and an
-  `agent_image` bubble uses the same rule.
+
+Storage, tool-card placement, replay behavior, and shared frontend props are
+documented in [Agent image rendering](image-rendering.md).
 
 #### Known workaround: Copilot's image tool returns a path
 
@@ -208,21 +194,8 @@ identical bytes once per task. Any failure is "do nothing" plus a log line, so
 the tool call itself is never affected. It adds no configuration key and no
 path allowlist.
 
-This is a **verified and registered renderable attachment**, not authority to
-read arbitrary local paths. Recovery copies the bytes into the task attachment
-system and records hidden `recoveredCopilotImage` metadata on the tool update:
-a canonical `file:` source URI plus the same validated task attachment
-descriptor. It does not append an image block to the visible tool output, so
-the image-generation card keeps only text/status. A later assistant Markdown
-image using that exact URI is resolved by the shared Markdown renderer to the
-egress-signed attachment URL; unmatched local-file images receive no `src`.
-Raw Markdown remains unchanged in storage, and ordinary ACP tool-result image
-blocks still use the thumbnail path.
-
-History responses project all new-format associations for the task before
-pagination replay. Share responses build a separate snapshot-cutoff projection
-with opaque source identities and share routes; owner-signed URLs and original
-local paths are never reused there.
+The hidden-reference, Markdown rendering, replay/share, and security boundaries
+are specified in [Agent image rendering](image-rendering.md).
 
 **Delete it when Copilot's image tool emits a real ACP image block**: delete
 `src/agent-compatibility/copilot-image-path.ts`, its import in

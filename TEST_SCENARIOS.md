@@ -419,6 +419,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
     the table token; a later same-identity signed URL refresh repaints the
     image while a conflicting attachment remains rejected
 
+- `test/stored-image.test.ts`
+  - the shared stored-image props drive rewritten src, safe alt, class,
+    lazy loading, and validated natural dimensions for DOM and controlled
+    Markdown serialization; unresolved images retain no attachment URL
+
 - `test/e2e/tool-result-images-path.spec.ts`
   - Copilot image-generation text stays on the tool card with no recovered
     `.tc-image`; assistant Markdown renders in position from a signed attachment

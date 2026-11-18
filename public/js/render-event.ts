@@ -30,6 +30,11 @@ import {
   classifyToolContentItem,
   parseImageAttachment,
 } from "../../src/shared/tool-content.ts";
+import {
+  applyStoredImageProps,
+  naturalImageSize,
+  storedImageProps,
+} from "./stored-image.ts";
 import type {
   AgentImageAttachment,
   RawInput,
@@ -307,31 +312,6 @@ function buildUserFileLink(src: string, name: string): HTMLAnchorElement {
 }
 
 /**
- * A stored image's own pixel size, or null when the row carries none.
- *
- * This is what an agent image's `width`/`height` attributes carry, and nothing
- * else: the attributes exist so the browser can reserve a proportional box
- * before the bytes arrive. The display size is CSS's job — `max-width: 100%`
- * only shrinks, so the picture takes the container's width on a wide screen and
- * keeps its own pixels when it is small. A px ceiling here would pin every
- * picture to that width no matter how wide the card is.
- */
-function naturalImageSize(
-  rawWidth: unknown,
-  rawHeight: unknown,
-): { width: number; height: number } | null {
-  if (typeof rawWidth !== "number" || typeof rawHeight !== "number") {
-    return null;
-  }
-  if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) return null;
-  if (rawWidth <= 0 || rawHeight <= 0) return null;
-  return {
-    width: Math.max(1, Math.round(rawWidth)),
-    height: Math.max(1, Math.round(rawHeight)),
-  };
-}
-
-/**
  * The attribute box for a user's attachment thumbnail.
  *
  * A user's picture is a preview inside the message bubble, not the reply
@@ -403,17 +383,11 @@ export function buildAgentImageMessage(raw: unknown): HTMLElement {
   // must never receive foreign children (the streaming renderer owns them).
   const attachment = parseAgentImage(raw);
   if (!attachment) return el;
-  const img = document.createElement("img");
-  img.className = "agent-image";
-  img.alt = attachment.displayName;
-  img.loading = "lazy";
-  const size = naturalImageSize(attachment.width, attachment.height);
-  if (size) {
-    img.width = size.width;
-    img.height = size.height;
-  }
-  img.src = hooks_rewriteSrc(attachment.path);
-  el.appendChild(img);
+  const props = storedImageProps(attachment, {
+    className: "agent-image",
+    rewriteSrc: hooks_rewriteSrc,
+  });
+  el.appendChild(applyStoredImageProps(document.createElement("img"), props));
   return el;
 }
 
@@ -874,17 +848,13 @@ function applyToolResultImages(
   }
   container.replaceChildren();
   for (const attachment of images) {
-    const img = document.createElement("img");
-    img.className = "tc-image";
-    img.alt = attachment.displayName;
-    img.loading = "lazy";
-    const size = naturalImageSize(attachment.width, attachment.height);
-    if (size) {
-      img.width = size.width;
-      img.height = size.height;
-    }
-    img.src = hooks_rewriteSrc(attachment.path);
-    container.appendChild(img);
+    const props = storedImageProps(attachment, {
+      className: "tc-image",
+      rewriteSrc: hooks_rewriteSrc,
+    });
+    container.appendChild(
+      applyStoredImageProps(document.createElement("img"), props),
+    );
   }
   // Keep the picture next to the tool's label: before source, diff and output.
   if (created) {
