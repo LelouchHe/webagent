@@ -560,6 +560,8 @@ export async function loadHistory(sid: string): Promise<boolean> {
     if (replayToken === replayLoadToken) {
       state.replayTarget = null;
       state.replayInProgress = false;
+      state.replayCompletion += 1;
+      dom.messages.dataset.replayCompletion = String(state.replayCompletion);
       drainReplayQueue(sid);
     }
   }
@@ -937,6 +939,8 @@ async function _loadNewEventsImpl(
     if (replayToken === replayLoadToken) {
       state.replayTarget = null;
       state.replayInProgress = false;
+      state.replayCompletion += 1;
+      dom.messages.dataset.replayCompletion = String(state.replayCompletion);
       drainReplayQueue(sid);
     }
   }

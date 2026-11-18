@@ -170,6 +170,7 @@ export const state = {
   hasMoreHistory: false,
   loadingOlderEvents: false,
   replayInProgress: false,
+  replayCompletion: 0,
   replayTarget: null as DocumentFragment | null,
   replayQueue: [] as AgentEvent[],
   /**

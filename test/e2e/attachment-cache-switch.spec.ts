@@ -92,6 +92,10 @@ async function recoverVisible(
   page: Page,
   emulatedReplay = false,
 ): Promise<string | null> {
+  const previousCompletion = await page
+    .locator("#messages")
+    .getAttribute("data-replay-completion")
+    .then((value) => Number(value ?? 0));
   const responses = emulatedReplay
     ? null
     : page.waitForResponse(
@@ -126,6 +130,14 @@ async function recoverVisible(
         (window as Window & { __fullReplayDone?: boolean }).__fullReplayDone,
     );
   }
+  await expect
+    .poll(async () =>
+      page
+        .locator("#messages")
+        .getAttribute("data-replay-completion")
+        .then((value) => Number(value ?? 0)),
+    )
+    .toBeGreaterThan(previousCompletion);
   return null;
 }
 
