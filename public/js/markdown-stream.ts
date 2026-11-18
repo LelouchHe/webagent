@@ -13,9 +13,21 @@
 //
 // See docs/performance.md for the layered architecture.
 
-import { marked, Lexer, type Token, type Tokens, type Links } from "marked";
+import {
+  marked,
+  Lexer,
+  Renderer,
+  type Token,
+  type Tokens,
+  type Links,
+} from "marked";
 import DOMPurify from "dompurify";
 import { findUnclosedDisplayMathBlockStart } from "./math.ts";
+import { enhanceCodeBlocks } from "./highlight.ts";
+import {
+  onMarkdownImageReferenceChange,
+  resolveMarkdownImageReference,
+} from "./markdown-image-references.ts";
 
 // `__DEV__` is injected by esbuild's `define` for browser bundles (see
 // scripts/build.js) and by test/frontend-setup.ts (`globalThis.__DEV__ = true`)
@@ -25,6 +37,68 @@ import { findUnclosedDisplayMathBlockStart } from "./math.ts";
 declare const __DEV__: boolean;
 
 marked.setOptions({ breaks: true, gfm: true });
+
+interface MarkdownHostRecord {
+  text: string;
+  fileSources: Set<string>;
+}
+
+const markdownHostRecords = new Map<HTMLElement, MarkdownHostRecord>();
+let renderingFileSources: Set<string> | null = null;
+let renderingRegisteredImages = false;
+const defaultRenderer = new Renderer();
+const escapeAttribute = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+marked.use({
+  renderer: {
+    image(token) {
+      const href = token.href;
+      if (!href.startsWith("file:")) {
+        return defaultRenderer.image.call(this, token);
+      }
+      renderingFileSources?.add(href);
+      const reference = renderingRegisteredImages
+        ? resolveMarkdownImageReference(href)
+        : null;
+      const title = token.title
+        ? ` title="${escapeAttribute(token.title)}"`
+        : "";
+      const src = reference
+        ? ` src="${escapeAttribute(reference.attachment.path)}"`
+        : "";
+      const alt = this.parser.parseInline(
+        token.tokens,
+        this.parser.textRenderer,
+      );
+      const dimensions =
+        reference &&
+        typeof reference.attachment.width === "number" &&
+        typeof reference.attachment.height === "number"
+          ? ` width="${reference.attachment.width}" height="${reference.attachment.height}"`
+          : "";
+      return `<img class="agent-image" loading="lazy"${src} alt="${escapeAttribute(alt)}"${title}${dimensions}>`;
+    },
+  },
+});
+
+onMarkdownImageReferenceChange((changed) => {
+  for (const [host, record] of markdownHostRecords) {
+    if (!changed.some((source) => record.fileSources.has(source))) continue;
+    resetMarkdownStream(host);
+    host.replaceChildren();
+    updateMarkdownStream(host, record.text);
+    enhanceCodeBlocks(host);
+  }
+});
+
+export function clearMarkdownImageHosts(): void {
+  markdownHostRecords.clear();
+}
 
 export function escHtml(s: string): string {
   const d = document.createElement("div");
@@ -1082,6 +1156,7 @@ export function updateMarkdownStream(
   host: HTMLElement,
   fullText: string,
 ): void {
+  const fileSources = beginMarkdownRender(host);
   const DEV = typeof __DEV__ !== "undefined" && __DEV__;
   let memo = markdownStreamMemos.get(host);
 
@@ -1191,7 +1266,21 @@ export function updateMarkdownStream(
   }
   timing.linkMemoSize = Object.keys(memo.links).length;
   lastTiming = timing;
+  markdownHostRecords.set(host, {
+    text: fullText,
+    fileSources,
+  });
+  renderingFileSources = null;
   perfMeasure("mdstream.total", tTotal0, now());
+}
+
+function beginMarkdownRender(host: HTMLElement): Set<string> {
+  const sources = new Set<string>();
+  renderingFileSources = sources;
+  renderingRegisteredImages =
+    host.classList.contains("assistant") ||
+    host.closest(".msg.assistant") !== null;
+  return sources;
 }
 
 // Reset the markdown-stream memo for a host. Memo-only — does NOT touch

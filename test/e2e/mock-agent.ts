@@ -22,6 +22,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Readable, Writable } from "node:stream";
 import type { McpServer, McpServerHttp } from "@agentclientprotocol/sdk";
 
@@ -910,6 +911,16 @@ class MockAgent {
               },
             },
           ],
+        },
+      });
+      await this.connection.notify("session/update", {
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: `\n\n![generated image](${pathToFileURL(path).href})`,
+          },
         },
       });
       return { stopReason: "end_turn" };

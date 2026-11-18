@@ -11,6 +11,10 @@ import { generateShareToken } from "../tokens.ts";
 import { SanitizeError, sanitizeEventsForShare } from "./sanitize.ts";
 import { buildContentDisposition, isInlineMime } from "../attachments.ts";
 import { enrichStoredEventsForDisplay } from "../attachment-labels.ts";
+import {
+  projectMarkdownImageReferences,
+  projectShareMarkdownImageReferences,
+} from "../markdown-image-references.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { log } from "../log.ts";
 import { HTTP_STATUS } from "../http-status.ts";
@@ -472,6 +476,11 @@ async function handlePreviewRead(
   const allEvents = deps.store
     .getEvents(taskId)
     .filter((e) => e.seq <= row.share_snapshot_seq);
+  const imageReferences = projectShareMarkdownImageReferences(
+    token,
+    projectMarkdownImageReferences(deps.store, taskId, allEvents),
+    allEvents,
+  );
   if (deps.tasks) {
     enrichStoredEventsForDisplay(allEvents, deps.tasks.getLabelMap(taskId));
   }
@@ -509,6 +518,7 @@ async function handlePreviewRead(
         ttl_hours: row.ttl_hours,
       },
       events,
+      imageReferences,
     });
   } catch (err: unknown) {
     if (err instanceof SanitizeError) {
@@ -768,6 +778,11 @@ async function handleSharedEvents(
   const allEvents = deps.store
     .getEvents(row.task_id)
     .filter((e) => e.seq <= row.share_snapshot_seq);
+  const imageReferences = projectShareMarkdownImageReferences(
+    token,
+    projectMarkdownImageReferences(deps.store, row.task_id, allEvents),
+    allEvents,
+  );
   if (deps.tasks) {
     enrichStoredEventsForDisplay(
       allEvents,
@@ -802,6 +817,7 @@ async function handleSharedEvents(
           ttl_hours: row.ttl_hours,
         },
         events,
+        imageReferences,
       }),
     );
   } catch (err: unknown) {

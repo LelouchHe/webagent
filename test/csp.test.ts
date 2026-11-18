@@ -103,6 +103,7 @@ describe("CSP header on HTML entrypoints", () => {
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self'",
+      "img-src 'self' data: blob:",
       "object-src 'none'",
       "frame-ancestors 'none'",
       "base-uri 'self'",
@@ -113,6 +114,7 @@ describe("CSP header on HTML entrypoints", () => {
         `CSP_POLICY missing required directive: ${directive}`,
       );
     }
+    assert.equal(CSP_POLICY.includes("file:"), false);
   });
 
   it("script-src allows 'wasm-unsafe-eval' for WebAssembly", () => {

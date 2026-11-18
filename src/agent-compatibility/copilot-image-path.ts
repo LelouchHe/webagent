@@ -12,20 +12,22 @@
 //   ACP:   no image content block on any `tool_call_update` for that call
 //
 // Retirement condition: when Copilot's image tool emits a real ACP image
-// block, delete this file and its call site. Deleting it means exactly:
+// block, delete this file and its call sites. Deleting it means exactly:
 //   1. delete `src/agent-compatibility/copilot-image-path.ts`
 //   2. delete the import of `recoverCopilotImagePath` **and** `toolResultText`
 //      in `src/event-handler.ts` (they share one import line)
 //   3. delete the one call to `recoverCopilotImagePath` in that file's
 //      `tool_call_update` branch; `toolResultText` exists only to feed it
-// Nothing else refers to either, and no barrel exists to update.
+//   4. delete the legacy-only reconstruction import/call in
+//      `src/markdown-image-references.ts`
+// No barrel exists to update.
 //
 // Rules for anything that lands in `src/agent-compatibility/` (one directory
 // for upstream-defect shims; no `index.ts` barrel until a second shim exists):
-//   1. A shim is a plain function: ACP event data + context in, an optional
-//      attachment out. The agent's name appears in its own file and nowhere
-//      else in `src/`.
-//   2. One shim, one call site.
+//   1. A shim has one active recovery function plus an optional pure legacy
+//      reconstruction helper. The active call site receives ACP event data +
+//      context and returns a verified attachment association.
+//   2. One active recovery call site; legacy reconstruction is history-only.
 //   3. The file header states the upstream defect, the evidence, and the
 //      retirement condition.
 //   4. No privilege growth: no config key, no path allowlist.
@@ -48,10 +50,14 @@
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { attachmentDescriptor, storeImageBytes } from "../agent-image.ts";
 import { readImageInfo } from "../image-info.ts";
 import { log } from "../log.ts";
-import { classifyToolContentItem } from "../shared/tool-content.ts";
+import {
+  classifyToolContentItem,
+  parseImageAttachment,
+} from "../shared/tool-content.ts";
 import type { Store } from "../store.ts";
 import type { AgentImageAttachment, ToolContentItem } from "../types.ts";
 
@@ -120,6 +126,7 @@ function ignore(reason: string, fields: Record<string, unknown>): null {
 
 export interface RecoveredImage {
   attachment: AgentImageAttachment;
+  sourceUri: string;
   /** True only when this call inserted the attachment row. */
   inserted: boolean;
 }
@@ -127,11 +134,9 @@ export interface RecoveredImage {
 /**
  * Recover the image a Copilot `image_generation` result only names by path.
  *
- * Returns the descriptor together with whether this call inserted a new row,
- * or null when the three markers do not all hold or the file does not match
- * them. The caller appends the descriptor to the tool result's content and
- * invalidates the label cache only for a new row; this function never mutates
- * the ACP event.
+ * Returns a verified attachment together with its canonical source URI and
+ * whether this call inserted a new row. It never authorizes reading arbitrary
+ * local paths outside this one verified image-generation result.
  */
 export function recoverCopilotImagePath(
   ctx: CopilotImagePathContext,
@@ -193,8 +198,10 @@ export function recoverCopilotImagePath(
     return ignore("saved_to is not a storable image", logFields);
   }
 
+  const sourceUri = pathToFileURL(marker.path).href;
+
   const duplicate = findStoredCopy(ctx, marker.sha256, bytes.length);
-  if (duplicate) return { attachment: duplicate, inserted: false };
+  if (duplicate) return { attachment: duplicate, sourceUri, inserted: false };
 
   const index = ctx.store.countAttachments(ctx.taskId, "image") + 1;
   const result = storeImageBytes({
@@ -212,7 +219,77 @@ export function recoverCopilotImagePath(
       reason: result.reason,
     });
   }
-  return { attachment: result.stored, inserted: true };
+  return { attachment: result.stored, sourceUri, inserted: true };
+}
+
+export interface LegacyCopilotImageContext {
+  store: Store;
+  taskId: string;
+  title: string;
+  content: ToolContentItem[];
+}
+
+/**
+ * Reconstruct the old shim's appended descriptor without reading `saved_to`.
+ * The current attachment row must prove the descriptor and marker agree.
+ */
+export function reconstructLegacyCopilotImage(
+  ctx: LegacyCopilotImageContext,
+): { sourceUri: string; attachment: AgentImageAttachment } | null {
+  if (ctx.title !== TOOL_TITLE || ctx.content.length < 2) return null;
+  const marker = readMarker(toolResultText(ctx.content));
+  if (!marker) return null;
+
+  const descriptors = ctx.content.flatMap((item) =>
+    classifyToolContentItem(item).kind === "image_attachment"
+      ? [parseImageAttachment((item as { attachment?: unknown }).attachment)]
+      : [],
+  );
+  if (descriptors.length !== 1) return null;
+  const lastShape = classifyToolContentItem(
+    ctx.content[ctx.content.length - 1],
+  );
+  if (lastShape.kind !== "image_attachment") return null;
+  const attachment = descriptors[0] ?? null;
+  if (!attachment) return null;
+
+  const row = ctx.store.getAttachment(ctx.taskId, attachment.attachmentId);
+  const expected = row && attachmentDescriptor(ctx.taskId, row);
+  if (
+    row?.kind !== "image" ||
+    !expected ||
+    !sameAttachment(expected, attachment)
+  ) {
+    return null;
+  }
+  try {
+    const storedBytes = readFileSync(row.realpath);
+    if (
+      storedBytes.length !== row.size ||
+      sha256Of(storedBytes) !== marker.sha256
+    ) {
+      return null;
+    }
+    const sourceUri = pathToFileURL(marker.path).href;
+    if (!fileURLToPath(sourceUri).startsWith("/")) return null;
+    return { sourceUri, attachment };
+  } catch {
+    return null;
+  }
+}
+
+function sameAttachment(
+  expected: AgentImageAttachment,
+  actual: AgentImageAttachment,
+): boolean {
+  return (
+    expected.attachmentId === actual.attachmentId &&
+    expected.displayName === actual.displayName &&
+    expected.mimeType === actual.mimeType &&
+    expected.path === actual.path &&
+    (expected.width ?? null) === (actual.width ?? null) &&
+    (expected.height ?? null) === (actual.height ?? null)
+  );
 }
 
 /**

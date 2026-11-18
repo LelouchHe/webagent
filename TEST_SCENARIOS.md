@@ -390,7 +390,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/tool-result-images-path.test.ts` (temporary shim)
   - all three markers (`image_id: sha256:…`, `saved_to:` absolute path,
     `image_generation` title) copy the file, verify its sha256, record a row and
-    append the descriptor; the tool's text and its own file survive
+    persist a hidden verified source-to-attachment reference; the tool's text
+    and its own file survive, and no recovered image is appended to visible
+    content or broadcast
   - refusals: sha256 mismatch, non-image magic bytes, above the limit,
     unreadable path, and any missing marker each do nothing; identical bytes
     are stored once and a later update reuses that row
@@ -398,6 +400,24 @@ spot gaps, and decide what still needs to be added without reading every spec.
     a row; a content-hash duplicate reuses the existing row and does not
     invalidate again
   - delete with `src/agent-compatibility/copilot-image-path.ts`
+
+- `test/markdown-image-reference-projection.test.ts`
+  - explicit references and reconstructed legacy references are task-local,
+    validated against real attachment rows, and first-binding stable
+  - legacy ambiguity fails closed without source-file access; share projection
+    replaces local paths and owner attachment URLs with snapshot-local routes
+
+- `test/markdown-image-references.test.ts`
+  - partial Markdown image tokens create no premature image/request; a late
+    association repaints exactly once with alt, dimensions and lazy loading
+  - late invalidation replaces affected list/table subcache nodes, while
+    code-fenced image text and ordinary links remain non-images
+
+- `test/e2e/tool-result-images-path.spec.ts`
+  - Copilot image-generation text stays on the tool card with no recovered
+    `.tc-image`; assistant Markdown renders in position from a signed attachment
+    URL with no `file:` request, dimensions/lightbox behavior and replay parity
+  - the persisted tool update keeps the reference unsigned and out of content
 
 - `test/tool-result-images-render.test.ts`
   - a tool card renders `.tc-images img.tc-image` from the stored path, before

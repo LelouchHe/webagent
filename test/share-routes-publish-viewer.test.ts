@@ -7,6 +7,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Store } from "../src/store.ts";
 import { handleShareRoutes, type ShareRouteDeps } from "../src/share/routes.ts";
 import type { Config } from "../src/config.ts";
+import { attachmentDescriptor } from "../src/agent-image.ts";
+import { REAL_PNG } from "./tool-result-images-harness.ts";
 
 // --- test doubles ---
 
@@ -210,6 +212,88 @@ describe("share publish route — POST /api/v1/tasks/:id/share/publish", () => {
     assert.ok(row.shared_at != null);
     // display_name persisted into owner_prefs for next default.
     assert.equal(store.getOwnerPref("share.default_display_name"), "alice");
+  });
+
+  it("publishes only cutoff-local opaque generated-image references", async () => {
+    const id = "55555555-5555-4555-8555-555555555555";
+    const realpath = join(tmpDir, `${id}.png`);
+    writeFileSync(realpath, REAL_PNG);
+    const row = store.insertAttachment({
+      id,
+      taskId,
+      kind: "image",
+      name: "generated-image-1",
+      mime: "image/png",
+      size: REAL_PNG.length,
+      realpath,
+      width: 1,
+      height: 1,
+    });
+    const attachment = attachmentDescriptor(taskId, row);
+    const sourceUri = "file:///tmp/private/generated-before.png";
+    store.saveEvent(
+      taskId,
+      "tool_call_update",
+      {
+        id: "generated-before",
+        status: "completed",
+        content: [],
+        recoveredCopilotImage: { sourceUri, attachment },
+      },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      taskId,
+      "assistant_message",
+      { text: `![before](${sourceUri})` },
+      { from_ref: "agent" },
+    );
+    const { token } = await createAndPublishShare(deps, taskId);
+    store.saveEvent(
+      taskId,
+      "tool_call_update",
+      {
+        id: "generated-after",
+        status: "completed",
+        content: [],
+        recoveredCopilotImage: {
+          sourceUri: "file:///tmp/private/generated-after.png",
+          attachment,
+        },
+      },
+      { from_ref: "agent" },
+    );
+
+    const response = mockRes();
+    await handleShareRoutes(
+      publicReq(`/api/v1/shared/${token}/events`),
+      response.res,
+      deps,
+    );
+    assert.equal(response.status(), 200);
+    const payload = response.json() as {
+      events: Array<{ type: string; data: unknown }>;
+      imageReferences: Array<{
+        sourceUri: string;
+        attachment: { path: string };
+      }>;
+    };
+    assert.equal(payload.imageReferences.length, 1);
+    assert.equal(
+      payload.events.some(
+        (event) =>
+          event.type === "tool_call_update" &&
+          JSON.stringify(event.data).includes("generated-after"),
+      ),
+      false,
+    );
+    const publicJson = JSON.stringify(payload);
+    assert.equal(publicJson.includes(sourceUri), false);
+    assert.equal(publicJson.includes("/api/v1/tasks/"), false);
+    assert.match(
+      payload.imageReferences[0].attachment.path,
+      new RegExp(`^/s/${token}/attachments/`),
+    );
   });
 
   it("publishes for a live task that has no execution binding", async () => {

@@ -21,10 +21,14 @@ import { extractCompletedFinalAnswer } from "../event-interpreter.ts";
 import { enhanceCodeBlocks } from "../highlight.ts";
 import { formatRelativeTime, formatExactUtc } from "../relative-time.ts";
 import { makeAttachmentRewriter } from "./attachment-rewriter.ts";
+import { setMarkdownImageReferenceScope } from "../markdown-image-references.ts";
 import "../lightbox.ts"; // click-to-enlarge user-image, same as main app
 import "../theme.ts"; // wires #theme-btn click + applies saved theme
 import type { StoredEvent } from "../../../src/types.ts";
-import type { ToolContentItem } from "../../../src/types.ts";
+import type {
+  MarkdownImageReference,
+  ToolContentItem,
+} from "../../../src/types.ts";
 import { HTTP_STATUS } from "../../../src/http-status.ts";
 
 interface SharePayload {
@@ -38,6 +42,7 @@ interface SharePayload {
     created_at: string;
   };
   events: StoredEvent[];
+  imageReferences?: MarkdownImageReference[];
 }
 
 function parseData(ev: StoredEvent): Record<string, unknown> {
@@ -224,6 +229,10 @@ async function main(): Promise<void> {
     footerAuthorEl.textContent = name ? `by ${name}` : "";
   }
 
+  setMarkdownImageReferenceScope(
+    `share:${token}`,
+    payload.imageReferences ?? [],
+  );
   renderEvents(payload.events, messagesEl, token);
 
   if (footerMetaEl) {

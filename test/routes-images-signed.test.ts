@@ -180,6 +180,7 @@ describe("image signed URLs", () => {
     const response = await req(port, "GET", `/api/v1/tasks/${rootId}/events`, {
       Authorization: `Bearer ${token}`,
     });
+
     assert.equal(response.status, 200);
     const payload = JSON.parse(response.body) as {
       events: Array<{ data: string }>;
@@ -202,6 +203,59 @@ describe("image signed URLs", () => {
       ),
       true,
     );
+  });
+
+  it("projects an image reference from outside the loaded history page", async () => {
+    const stored = storeAgentImage({
+      store,
+      dataDir: tmpDir,
+      taskId: "sess1",
+      data: PNG.toString("base64"),
+      index: 30,
+      limitBytes: 10 * 1024 * 1024,
+    });
+    assert.ok("stored" in stored);
+    const sourceUri = "file:///tmp/copilot-generated.png";
+    store.saveEvent(
+      "sess1",
+      "tool_call_update",
+      {
+        id: "generated",
+        status: "completed",
+        content: [],
+        recoveredCopilotImage: { sourceUri, attachment: stored.stored },
+      },
+      { from_ref: "agent" },
+    );
+    store.saveEvent(
+      "sess1",
+      "assistant_message",
+      { text: `![generated](${sourceUri})` },
+      { from_ref: "agent" },
+    );
+
+    const response = await req(
+      port,
+      "GET",
+      "/api/v1/tasks/sess1/events?limit=1",
+      { Authorization: `Bearer ${token}` },
+    );
+    assert.equal(response.status, 200);
+    const payload = JSON.parse(response.body) as {
+      events: unknown[];
+      imageReferences: Array<{
+        sourceUri: string;
+        attachment: { path: string };
+      }>;
+    };
+    assert.equal(payload.events.length, 1);
+    assert.equal(payload.imageReferences.length, 1);
+    assert.equal(payload.imageReferences[0].sourceUri, sourceUri);
+    const url = new URL(
+      payload.imageReferences[0].attachment.path,
+      "http://localhost",
+    );
+    assert.match(url.search, /^\?exp=\d+&sig=[a-f0-9]+$/);
   });
 
   it("re-signs a stored agent image in history and serves it by that URL", async () => {

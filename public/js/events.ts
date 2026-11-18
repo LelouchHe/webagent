@@ -90,10 +90,17 @@ import type {
   AgentEvent,
   ConfigOption,
   StoredEvent,
+  NormalizedEventsResponse,
   ToolContentItem,
 } from "../../src/types.ts";
 import "./plan-panel.ts";
 import { OrphanToolUpdateCache } from "./orphan-tool-updates.ts";
+import {
+  registerMarkdownImageReference,
+  setMarkdownImageReferenceScope,
+  clearMarkdownImageReferenceScope,
+} from "./markdown-image-references.ts";
+import { clearMarkdownImageHosts } from "./markdown-stream.ts";
 
 const orphanToolUpdates = new OrphanToolUpdateCache({
   // An entry expiring without its host ever appearing is the one genuinely
@@ -513,7 +520,9 @@ export async function loadHistory(sid: string): Promise<boolean> {
     });
     if (!body) return false;
     if (replayToken !== replayLoadToken) return false;
-    const { events, streaming, hasMore } = normalizeEventsResponse(body);
+    const { events, streaming, hasMore, imageReferences } =
+      normalizeEventsResponse(body);
+    setMarkdownImageReferenceScope(sid, imageReferences);
 
     // Batch DOM operations: render into an offscreen fragment, then append once.
     // ReplayIndex provides O(1) element lookup, replacing querySelector on the fragment.
@@ -770,7 +779,9 @@ async function _loadNewEventsImpl(
       (state.taskId && state.taskId !== sid)
     )
       return false;
-    const { events, streaming } = normalizeEventsResponse(body);
+    const { events, streaming, imageReferences } =
+      normalizeEventsResponse(body);
+    setMarkdownImageReferenceScope(sid, imageReferences);
     if (inflight.preserveLiveOnEmpty && events.length === 0) return true;
 
     // Revert primed elements to their DB-only content before boundary cleanup.
@@ -1214,7 +1225,11 @@ function removeHistorySentinel({ invalidateLoads = true } = {}) {
 async function fetchOlderEventsPage(
   taskId: string,
   loadToken: number,
-): Promise<{ events: StoredEvent[]; hasMore: boolean | undefined } | null> {
+): Promise<{
+  events: StoredEvent[];
+  hasMore: boolean | undefined;
+  imageReferences: NormalizedEventsResponse["imageReferences"];
+} | null> {
   const body = await api.withTimeout(async (signal) => {
     const res = await fetch(
       `/api/v1/tasks/${taskId}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
@@ -1225,8 +1240,8 @@ async function fetchOlderEventsPage(
   });
   if (!isCurrentHistoryLoad(taskId, loadToken)) return null;
   if (!body) return null;
-  const { events, hasMore } = normalizeEventsResponse(body);
-  return { events, hasMore };
+  const { events, hasMore, imageReferences } = normalizeEventsResponse(body);
+  return { events, hasMore, imageReferences };
 }
 
 // Revoke both pagination and replay ownership across task switches.
@@ -1240,6 +1255,8 @@ onTaskReset(() => {
   terminalReconcileTaskId = null;
   terminalReconcilePromise = Promise.resolve();
   orphanToolUpdates.clear();
+  clearMarkdownImageReferenceScope();
+  clearMarkdownImageHosts();
 });
 
 export async function loadOlderEvents(sid: string): Promise<boolean> {
@@ -1259,7 +1276,8 @@ export async function loadOlderEvents(sid: string): Promise<boolean> {
   try {
     const page = await fetchOlderEventsPage(sid, loadToken);
     if (!page) return false;
-    const { events, hasMore } = page;
+    const { events, hasMore, imageReferences } = page;
+    setMarkdownImageReferenceScope(sid, imageReferences);
 
     await waitForTopBounceToSettle(container);
     if (!isCurrentHistoryLoad(sid, loadToken)) return false;
@@ -2353,6 +2371,7 @@ export function handleEvent(msg: AgentEvent) {
     }
 
     case "tool_call_update": {
+      registerMarkdownImageReference(msg.recoveredCopilotImage);
       const hooks = liveHooks();
       if (!hooks.findToolCallEl(msg.id)) {
         // Dedup: log only the first buffering per tool-call id, so a burst of
