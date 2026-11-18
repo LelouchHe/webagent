@@ -111,7 +111,7 @@ async function recoverVisible(
   }
 }
 
-async function replayFullTranscriptOnNextEventLoad(
+async function refreshNextEventLoad(
   page: Page,
   reorderSignatures = false,
 ): Promise<void> {
@@ -130,9 +130,7 @@ async function replayFullTranscriptOnNextEventLoad(
         return original(input, init);
       }
       window.fetch = original;
-      const url = new URL(requestUrl, location.origin);
-      url.searchParams.delete("after");
-      const response = await original(url.toString(), init);
+      const response = await original(requestUrl, init);
       let body = await response.text();
       if (reorder) {
         body = body.replace(
@@ -198,7 +196,19 @@ test("visibility recovery reloads once for a distinct valid signed URL", async (
   const urls = await loadAllAttachmentImages(page);
   const baseline = serverResponses();
 
-  await replayFullTranscriptOnNextEventLoad(page, true);
+  await page
+    .locator("#messages img:not([alt='generated image'])")
+    .evaluateAll((images) =>
+      images.forEach((image, index) =>
+        image.setAttribute("data-refresh-proof", String(index)),
+      ),
+    );
+  const stableProofs = await page
+    .locator("#messages img:not([alt='generated image'])")
+    .evaluateAll((images) =>
+      images.map((image) => image.getAttribute("data-refresh-proof")),
+    );
+  await refreshNextEventLoad(page, true);
   await recoverVisible(page, true);
   const refreshed = await attachmentUrls(page);
   const generated = page.locator(
@@ -208,11 +218,18 @@ test("visibility recovery reloads once for a distinct valid signed URL", async (
     "src",
     /\/attachments\/[^?]+\?sig=[a-f0-9]+&exp=\d+/,
   );
+  expect(await page.locator("#messages img").count()).toBe(4);
+  expect(
+    await page
+      .locator("#messages img:not([alt='generated image'])")
+      .evaluateAll((images) =>
+        images.map((image) => image.getAttribute("data-refresh-proof")),
+      ),
+  ).toEqual(stableProofs);
   const old = new Set(urls);
   const newUrls = new Set(refreshed.filter((url) => !old.has(url)));
-  await expect
-    .poll(serverResponses, { timeout: 10_000 })
-    .toBe(baseline + newUrls.size);
+  await expect.poll(serverResponses, { timeout: 10_000 }).toBe(baseline + 1);
+  expect(newUrls.size).toBe(1);
   expect(refreshed).not.toEqual(urls);
   expect(urls.some((url) => /\?exp=\d+&sig=/.test(url))).toBe(true);
 });
