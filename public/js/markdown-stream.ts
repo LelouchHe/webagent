@@ -28,6 +28,7 @@ import { serializeStoredImage, storedImageProps } from "./stored-image.ts";
 import {
   onMarkdownImageReferenceChange,
   resolveMarkdownImageReference,
+  resolveRegisteredMarkdownAttachmentUrl,
 } from "./markdown-image-references.ts";
 
 // `__DEV__` is injected by esbuild's `define` for browser bundles (see
@@ -47,17 +48,43 @@ interface MarkdownHostRecord {
 const markdownHostRecords = new WeakMap<HTMLElement, MarkdownHostRecord>();
 const markdownHostRefs = new Set<WeakRef<HTMLElement>>();
 let renderingFileSources: Set<string> | null = null;
-let renderingRegisteredImages = false;
+let renderingRegisteredReferences = false;
 const defaultRenderer = new Renderer();
+const escapeAttribute = (value: string): string =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 marked.use({
   renderer: {
+    link(token) {
+      const href = token.href;
+      if (!href.startsWith("file:")) {
+        return defaultRenderer.link.call(this, token);
+      }
+      renderingFileSources?.add(href);
+      const resolved = renderingRegisteredReferences
+        ? resolveRegisteredMarkdownAttachmentUrl(href)
+        : null;
+      if (resolved) {
+        return defaultRenderer.link.call(this, { ...token, href: resolved });
+      }
+      const label = token.autolink
+        ? escapeAttribute(token.text)
+        : this.parser.parseInline(token.tokens);
+      const title = token.title
+        ? ` title="${escapeAttribute(token.title)}"`
+        : "";
+      return `<a${title}>${label}</a>`;
+    },
     image(token) {
       const href = token.href;
       if (!href.startsWith("file:")) {
         return defaultRenderer.image.call(this, token);
       }
       renderingFileSources?.add(href);
-      const reference = renderingRegisteredImages
+      const reference = renderingRegisteredReferences
         ? resolveMarkdownImageReference(href)
         : null;
       const alt = this.parser.parseInline(
@@ -1333,7 +1360,7 @@ export function updateMarkdownStream(
 function beginMarkdownRender(host: HTMLElement): Set<string> {
   const sources = new Set<string>();
   renderingFileSources = sources;
-  renderingRegisteredImages =
+  renderingRegisteredReferences =
     host.classList.contains("assistant") ||
     host.closest(".msg.assistant") !== null;
   return sources;

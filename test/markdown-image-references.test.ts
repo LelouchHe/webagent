@@ -66,16 +66,89 @@ describe("Markdown registered file images", () => {
     assert.equal((images[0] as HTMLImageElement).height, 6);
   });
 
-  it("does not resolve code-fenced or ordinary-link file text", () => {
+  it("resolves registered ordinary links without promoting them to images", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    registerMarkdownImageReference({ sourceUri, attachment });
+    updateMarkdownStream(host, `[查看图片](${sourceUri})`);
+    const link = host.querySelector("a") as HTMLAnchorElement;
+    assert.ok(link);
+    assert.equal(link.textContent, "查看图片");
+    assert.equal(link.getAttribute("href"), attachment.path);
+    assert.equal(link.querySelector("img"), null);
+    assert.equal(host.querySelector("img"), null);
+  });
+
+  it("keeps code-fenced and unregistered file links inert", () => {
     const host = document.createElement("article");
     host.className = "msg assistant";
     updateMarkdownStream(
       host,
       `\`\`\`\n![screen](${sourceUri})\n\`\`\`\n\n[open](${sourceUri})`,
     );
-    registerMarkdownImageReference({ sourceUri, attachment });
     assert.equal(host.querySelector("img"), null);
+    assert.equal(host.querySelector("a")!.hasAttribute("href"), false);
+    assert.equal(
+      host.querySelector("pre code")?.textContent.includes(sourceUri),
+      true,
+    );
+    registerMarkdownImageReference({ sourceUri, attachment });
+    assert.equal(host.querySelectorAll("a").length, 1);
+    assert.equal(
+      host.querySelector("a")!.getAttribute("href"),
+      attachment.path,
+    );
+  });
+
+  it("does not resolve a partial ordinary link token", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    updateMarkdownStream(host, `[view](${sourceUri}`);
+    registerMarkdownImageReference({ sourceUri, attachment });
+    assert.equal(host.querySelector("a[href]"), null);
+  });
+
+  it("resolves reference-style and angle-bracket autolinks by exact href", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    registerMarkdownImageReference({ sourceUri, attachment });
+    updateMarkdownStream(
+      host,
+      `[view][generated]\n\n<${sourceUri}>\n\n[generated]: ${sourceUri}`,
+    );
+    const links = host.querySelectorAll("a");
+    assert.equal(links.length, 2);
+    for (const link of links) {
+      assert.equal(link.getAttribute("href"), attachment.path);
+    }
+  });
+
+  it("does not upgrade plain text or authored HTML links", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    registerMarkdownImageReference({ sourceUri, attachment });
+    updateMarkdownStream(
+      host,
+      `${sourceUri}\n\n<a href="${sourceUri}">html link</a>`,
+    );
+    assert.equal(host.textContent.includes(sourceUri), true);
     assert.equal(host.querySelector("a")?.hasAttribute("href"), false);
+  });
+
+  it("late-registers link hrefs in general, list, and table caches", () => {
+    const host = document.createElement("article");
+    host.className = "msg assistant";
+    updateMarkdownStream(
+      host,
+      `[view](${sourceUri})\n\n- [list](${sourceUri})\n\n| link |\n| --- |\n| [table](${sourceUri}) |`,
+    );
+    assert.equal(host.querySelectorAll("a[href]").length, 0);
+    registerMarkdownImageReference({ sourceUri, attachment });
+    const links = host.querySelectorAll("a");
+    assert.equal(links.length, 3);
+    for (const link of links) {
+      assert.equal(link.getAttribute("href"), attachment.path);
+    }
   });
 
   it("keeps DOMPurify strict for raw non-registered file images", () => {

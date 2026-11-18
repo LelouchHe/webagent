@@ -85,6 +85,12 @@ export function resolveMarkdownImageReference(
   return bindings.get(sourceUri) ?? null;
 }
 
+export function resolveRegisteredMarkdownAttachmentUrl(
+  sourceUri: string,
+): string | null {
+  return resolveMarkdownImageReference(sourceUri)?.attachment.path ?? null;
+}
+
 export function onMarkdownImageReferenceChange(
   listener: (changed: string[]) => void,
 ): () => void {

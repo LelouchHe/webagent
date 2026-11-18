@@ -919,7 +919,9 @@ class MockAgent {
           sessionUpdate: "agent_message_chunk",
           content: {
             type: "text",
-            text: `\n\n![generated image](${pathToFileURL(path).href})`,
+            text:
+              `\n\n[查看图片](${pathToFileURL(path).href})\n\n` +
+              `![generated image](${pathToFileURL(path).href})`,
           },
         },
       });

@@ -12,17 +12,20 @@ reference for image ingestion, placement, replay, and frontend rendering.
 | ACP `tool_call_update.content` image block | Stored attachment descriptor inside tool content | Tool-card thumbnail, `img.tc-image` |
 | Copilot `image_generation` path text | Hidden `recoveredCopilotImage` on the tool update | Exact assistant Markdown image position, `img.agent-image` |
 
-```mermaid
-flowchart LR
-  A[ACP inline image bytes] --> S[validate + store task attachment]
-  T[ACP tool image block] --> S
-  C[Copilot marker text + verified local file] --> S
-  S --> E[unsigned descriptor in stored event]
-  E --> X[egress signs or share-projects URL]
-  X --> P[shared stored-image props]
-  P --> D[DOM image for event/tool]
-  P --> H[controlled HTML for Markdown]
-  H --> Z[DOMPurify + existing Markdown DOM]
+```text
+ACP message image ----\
+ACP tool image -------+--> validate/store task attachment
+Copilot verified file/  --> unsigned descriptor
+                              |
+                              v
+                    signed owner / share URL
+                              |
+                    shared stored-image props
+                       /                  \
+                  DOM image         controlled Markdown HTML
+               event/tool card       image src or link href
+                       \                  /
+                        existing DOMPurify path
 ```
 
 Standalone ACP images keep event ordering: pending assistant text is flushed,
@@ -73,10 +76,18 @@ stable; later egress may refresh only the signed query for the same attachment.
 A different attachment or base path cannot replace the first binding.
 
 The Markdown stream renderer recognizes only a complete image token. Partial
-tokens, unmatched file URIs, code fences, and ordinary links do not request a
-file. A late registration invalidates every affected Markdown host and preserves
-the host's raw text; block and list/table subcaches retain image dependencies
-so cached paragraphs and reused table headers are included in that repaint.
+tokens, unmatched file URIs, and code fences do not request a file. A complete
+registered image token becomes an inline `.agent-image`; a complete registered
+ordinary link token remains an `<a>` whose `href` is the attachment URL.
+Reference-style links and marked autolinks follow the same exact parsed-`href`
+rule. This preserves author intent: links are not promoted into pictures, and
+`![](...)` remains an image. Raw plain text and authored HTML links are not
+upgraded by this registration path.
+
+A late registration invalidates every affected Markdown host and preserves the
+host's raw text; block and list/table subcaches retain registered source
+dependencies for both images and links, so cached paragraphs and reused table
+headers are included in that repaint.
 
 ## Security boundaries
 
@@ -85,7 +96,9 @@ so cached paragraphs and reused table headers are included in that repaint.
 - Only the Copilot recovery call reads and verifies the named file during live
   `image_generation` handling. Markdown never opens disk paths and does not
   receive local-file capability.
-- Unregistered `file:` images have no `src`. CSP and DOMPurify remain strict.
+- Unregistered `file:` image tokens have no `src`, and unregistered `file:`
+  link tokens have no usable `href`. Raw `file:` text and authored HTML are not
+  upgraded. CSP and DOMPurify remain strict.
 - Raw assistant Markdown is neither rewritten nor reauthored on ingest or flush.
 - Share projection starts from verified events at or before `snapshot_seq`.
   Adjacent assistant fragments are projected across the same merge boundary as

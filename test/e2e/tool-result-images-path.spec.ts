@@ -32,6 +32,10 @@ test("a tool result that only names an image file resolves assistant Markdown", 
   await expect(card.locator("img.tc-image")).toHaveCount(0);
   await expect(card.locator(".tc-content")).toContainText("saved_to:");
   const image = page.locator(".msg.assistant img.agent-image");
+  const link = page.locator(".msg.assistant a").filter({ hasText: "查看图片" });
+  await expect(link).toHaveAttribute("href", SIGNED_TOOL_IMAGE);
+  await expect(link.locator("img")).toHaveCount(0);
+  await expect(page.locator(".msg.assistant a[href^='file:']")).toHaveCount(0);
   await expect(image).toHaveAttribute("src", SIGNED_TOOL_IMAGE);
   await expect(image).toHaveAttribute("alt", "generated image");
   await expect(image).toHaveAttribute("loading", "lazy");
@@ -96,6 +100,9 @@ test("a tool result that only names an image file resolves assistant Markdown", 
   );
 
   await page.reload();
+  await expect(
+    page.locator(".msg.assistant a").filter({ hasText: "查看图片" }),
+  ).toHaveAttribute("href", SIGNED_TOOL_IMAGE);
   await expect(page.locator(".msg.assistant img.agent-image")).toHaveCount(1);
   await expect(page.locator(".tool-call .tc-images img.tc-image")).toHaveCount(
     0,
@@ -119,6 +126,14 @@ test("a tool result that only names an image file resolves assistant Markdown", 
   const viewer = await page.context().newPage();
   await viewer.goto(`/s/${token}`);
   const sharedImage = viewer.locator(".msg.assistant img.agent-image");
+  const sharedLink = viewer
+    .locator(".msg.assistant a")
+    .filter({ hasText: "查看图片" });
+  await expect(sharedLink).toHaveAttribute(
+    "href",
+    new RegExp(`^/s/${token}/attachments/`),
+  );
+  await expect(sharedLink.locator("img")).toHaveCount(0);
   await expect(sharedImage).toHaveCount(1);
   await expect(sharedImage).toHaveAttribute(
     "src",

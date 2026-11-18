@@ -418,6 +418,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a header-only table retains its image dependency when a raw newline changes
     the table token; a later same-identity signed URL refresh repaints the
     image while a conflicting attachment remains rejected
+  - registered ordinary/reference/autolink tokens become attachment hrefs while
+    remaining `<a>` elements; unregistered/code/raw/HTML cases stay inert, and
+    late registration repaints link-only paragraph/list/table caches
 
 - `test/stored-image.test.ts`
   - the shared stored-image props drive rewritten src, safe alt, class,
