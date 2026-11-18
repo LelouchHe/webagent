@@ -60,6 +60,11 @@ reference indexes are task- and snapshot-local respectively.
 - an alt from the attachment display name for standalone/tool images, or the
   Markdown token alt for registered Markdown images.
 
+The helper emits `width`/`height` together. The image CSS intentionally leaves
+the HTML width presentational hint active (and keeps `height:auto`), so a
+dimensioned attachment reserves its natural aspect ratio before bytes arrive;
+`max-width` and `max-height` still enforce the same displayed-size caps.
+
 Event and tool renderers apply that model directly to DOM `HTMLImageElement`s.
 The Markdown renderer serializes the same props into controlled image HTML
 before the existing DOMPurify pass. This keeps one prop policy without forcing

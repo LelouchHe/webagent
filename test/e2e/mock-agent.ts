@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Readable, Writable } from "node:stream";
+import { deflateSync } from "node:zlib";
 import type { McpServer, McpServerHttp } from "@agentclientprotocol/sdk";
 
 // Optional capability profile + call log for the resume-restore E2E spec.
@@ -41,6 +42,44 @@ const MOCK_CALLS_PATH = process.argv[3] === "-" ? undefined : process.argv[3];
  * that assert "the read does not wait" need that latency to exist.
  */
 const MOCK_LOAD_DELAY_MS = Number(process.argv[4] ?? 0);
+
+function crc32(bytes: Buffer): number {
+  let crc = 0xffff_ffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc >>> 1) ^ (0xedb8_8320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffff_ffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const typeBytes = Buffer.from(type, "ascii");
+  const out = Buffer.alloc(data.length + 12);
+  out.writeUInt32BE(data.length, 0);
+  typeBytes.copy(out, 4);
+  data.copy(out, 8);
+  out.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])), out.length - 4);
+  return out;
+}
+
+function largePng(width: number, height: number): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const scanline = Buffer.alloc(width * 3 + 1);
+  const pixels = Buffer.alloc(scanline.length * height);
+  for (let y = 0; y < height; y++) scanline.copy(pixels, y * scanline.length);
+  return Buffer.concat([
+    Buffer.from("89504e470d0a1a0a", "hex"),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(pixels)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
 /**
  * A slow restore also reports one schema entry and one command that only exist
  * after the load. A test can then tell "the client already knew this" from
@@ -838,6 +877,7 @@ class MockAgent {
     );
   }
 
+  // eslint-disable-next-line complexity -- scenario dispatcher intentionally mirrors prompts
   private async runRemainingPrompt(
     params: PromptRequest,
     text: string,
@@ -860,7 +900,10 @@ class MockAgent {
           content: {
             type: "image",
             mimeType: "image/png",
-            data: E2E_AGENT_IMAGE_PNG,
+            data:
+              text === "E2E_AGENT_IMAGE_LAYOUT"
+                ? largePng(1536, 1024).toString("base64")
+                : E2E_AGENT_IMAGE_PNG,
           },
         },
       });
@@ -868,7 +911,15 @@ class MockAgent {
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "That is the full window." },
+          content: {
+            type: "text",
+            text:
+              text === "E2E_AGENT_IMAGE_LAYOUT"
+                ? Array.from({ length: 48 }, (_, i) => `after ${i}`).join(
+                    "\n\n",
+                  )
+                : "That is the full window.",
+          },
         },
       });
       return { stopReason: "end_turn" };
@@ -922,6 +973,106 @@ class MockAgent {
             text:
               `\n\n[查看图片](${pathToFileURL(path).href})\n\n` +
               `![generated image](${pathToFileURL(path).href})`,
+          },
+        },
+      });
+      return { stopReason: "end_turn" };
+    }
+
+    if (text.startsWith("E2E_TOOL_RESULT_IMAGE_LAYOUT")) {
+      const dir = mkdtempSync(join(tmpdir(), "webagent-e2e-image-layout-"));
+      const path = join(dir, "image-generated-large.png");
+      const bytes = largePng(1536, 1024);
+      writeFileSync(path, bytes);
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      const source = pathToFileURL(path).href;
+      const toolCallId = `tool-${++this.toolCallCounter}`;
+      await this.connection.notify("session/update", {
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "image_generation",
+          kind: "other",
+        },
+      });
+      if (text.startsWith("E2E_TOOL_RESULT_IMAGE_LAYOUT_LATE")) {
+        await this.connection.notify("session/update", {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text:
+                `${Array.from({ length: 36 }, (_, i) => `before ${i}`).join("\n\n")}\n\n` +
+                `![delayed image](${source})\n\n` +
+                `${Array.from({ length: 24 }, (_, i) => `after ${i}`).join("\n\n")}`,
+            },
+          },
+        });
+        setTimeout(() => {
+          void this.connection.notify("session/update", {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId,
+              status: "completed",
+              content: [
+                {
+                  type: "content",
+                  content: {
+                    type: "text",
+                    text:
+                      "Image generated successfully.\n" +
+                      `image_id: sha256:${sha256}\n` +
+                      `saved_to: ${path}`,
+                  },
+                },
+              ],
+            },
+          });
+        }, 1000);
+        return { stopReason: "end_turn" };
+      }
+      await this.connection.notify("session/update", {
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "completed",
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text:
+                  "Image generated successfully.\n" +
+                  `image_id: sha256:${sha256}\n` +
+                  `saved_to: ${path}`,
+              },
+            },
+          ],
+        },
+      });
+      await this.connection.notify("session/update", {
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text:
+              `${Array.from({ length: 36 }, (_, i) => `before ${i}`).join("\n\n")}\n\n` +
+              `![delayed image](${source})`,
+          },
+        },
+      });
+      await this.connection.notify("session/update", {
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: `\n\n${Array.from({ length: 24 }, (_, i) => `after ${i}`).join("\n\n")}`,
           },
         },
       });

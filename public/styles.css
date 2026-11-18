@@ -562,7 +562,8 @@ body {
   max-width: 100%;
   max-height: 70vh;
   max-height: 70dvh;
-  width: auto;
+  /* Do not set `width:auto`: that overrides the HTML width presentational
+     hint and discards pre-load reservation. max-width can still shrink it. */
   height: auto;
   border-radius: 4px;
   border: 1px solid var(--border);
@@ -1319,7 +1320,8 @@ body.file-viewer-open {
   max-width: 100%;
   max-height: 70vh;
   max-height: 70dvh;
-  width: auto;
+  /* Keep the HTML width hint active so the stored dimensions reserve the
+     aspect ratio before bytes arrive; max-width remains the visual ceiling. */
   height: auto;
   border-radius: 4px;
   border: 1px solid var(--border);

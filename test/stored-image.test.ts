@@ -1,5 +1,7 @@
 import { before, after, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { setupDOM, teardownDOM } from "./frontend-setup.ts";
 import type { AgentImageAttachment } from "../src/types.ts";
 
@@ -85,5 +87,24 @@ describe("stored image view model", () => {
     });
     assert.equal(unresolved.src, null);
     assert.equal(serializeStoredImage(unresolved).includes(" src="), false);
+  });
+
+  it("keeps HTML width reservation active in agent and tool CSS", () => {
+    const css = readFileSync(
+      join(process.cwd(), "public", "styles.css"),
+      "utf8",
+    );
+    for (const selector of [
+      ".msg.assistant img.agent-image",
+      ".tool-call .tc-images img.tc-image",
+    ]) {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const rule = new RegExp(`${escaped}\\s*\\{([^}]+)\\}`).exec(css);
+      assert.ok(rule, `missing CSS rule for ${selector}`);
+      const declarations = rule[1].replace(/\/\*[\s\S]*?\*\//g, "");
+      assert.doesNotMatch(declarations, /\bwidth\s*:\s*auto\b/);
+      assert.match(declarations, /\bheight\s*:\s*auto\b/);
+      assert.match(declarations, /max-width\s*:\s*100%/);
+    }
   });
 });

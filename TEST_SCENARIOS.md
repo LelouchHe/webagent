@@ -433,6 +433,16 @@ spot gaps, and decide what still needs to be added without reading every spec.
     URL with no `file:` request, dimensions/lightbox behavior and replay parity
   - the persisted tool update keeps the reference unsigned and out of content
 
+- `test/e2e/generated-image-layout.spec.ts`
+  - a real 1536×1024 attachment is held before bytes load; standalone and
+    registered Markdown images keep identical pre/post geometry and bottom pin
+  - the same delayed load does not move a deliberately scrolled-up viewer, and
+    a genuinely post-idle late Markdown association remains bottom-following
+
+- `test/render-scroll-follow.test.ts`
+  - a wheel/touch/pointer user-intent event invalidates an already queued
+    bottom-scroll RAF so a later callback cannot undo scroll-up
+
 - `test/tool-result-images-render.test.ts`
   - a tool card renders `.tc-images img.tc-image` from the stored path, before
     the output disclosure, from the same helper live streaming and replay use
