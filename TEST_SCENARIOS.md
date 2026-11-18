@@ -439,6 +439,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the same delayed load does not move a deliberately scrolled-up viewer, and
     a genuinely post-idle late Markdown association remains bottom-following
 
+- `test/e2e/attachment-cache-switch.spec.ts`
+  - user, standalone agent, ACP tool, and generated Markdown attachments keep
+    stable signed URLs across task re-entry; new DOM consumes browser cache
+    without another server byte response, while a fresh browser loads once
+
 - `test/render-scroll-follow.test.ts`
   - a wheel/touch/pointer user-intent event invalidates an already queued
     bottom-scroll RAF so a later callback cannot undo scroll-up

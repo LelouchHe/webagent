@@ -257,7 +257,7 @@ Three primitives in `src/auth.ts`:
 | ------------------------------ | ------------------------------------------------------ |
 | `signAttachmentUrl`            | Upload response, history GET, SSE broadcast            |
 | `verifyAttachmentSig`          | `GET /attachments/:file` egress                         |
-| `reSignAttachmentUrlsInJson`   | Stored events on the way out — refreshes every URL     |
+| `reSignAttachmentUrlsInJson`   | Stored events on the way out — refreshes as needed     |
 
 Stored event JSON in SQLite carries the **unsigned base path**
 (`/api/v1/tasks/<task-id>/attachments/<file>`); re-sign happens at egress using
@@ -273,9 +273,13 @@ Two consequences:
   of attachments" — all currently-pasted-into-chat URLs go 401 until
   the page reloads.
 
-TTL is 1 hour. Long enough for the browser's `<img>` cache to keep the
-rendered image alive across a typical task, short enough that a
-leaked URL (screenshot, accidental link share) expires within a day.
+TTL is 1 hour. Egress re-signing reuses one query per task attachment path
+and exact secret object while at least 60 seconds of validity remain, then
+refreshes it. The in-process cache is weakly scoped by secret identity,
+expires entries, and is capped at 2048 paths per secret, so it only stabilizes
+browser cache identity during the existing validity window. Upload responses
+still use direct signing and a process/secret restart naturally starts a fresh
+window.
 
 ## Rendering — `user_message` egress
 

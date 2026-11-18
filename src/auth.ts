@@ -88,12 +88,60 @@ export function verifyAttachmentSig(
 
 /**
  * Rewrite every `/api/v1/tasks/:id/attachments/:file` URL inside a JSON-serialized
- * payload to carry a fresh `?exp=&sig=`. Applied at egress (history GET, SSE
- * push) so a 1h-old stored URL is re-signed on the way out — the user can
- * reload history days later and images still resolve.
+ * payload to carry a valid `?exp=&sig=`. Applied at egress (history GET, SSE
+ * push); a per-secret bounded cache keeps a path's URL stable while it has a
+ * safety margin left, so recreated DOM can reuse the browser's immutable entry.
  */
 const ATTACHMENT_URL_RE =
   /\/api\/v1\/tasks\/[A-Za-z0-9_-]+\/attachments\/[A-Za-z0-9._-]+(?:\?(?:exp=\d+&sig=[a-f0-9]+|sig=[a-f0-9]+&exp=\d+))?/g;
+
+const SIGNING_CACHE_MARGIN_SECONDS = 60;
+const SIGNING_CACHE_MAX_ENTRIES = 2048;
+
+interface SignedAttachmentCacheEntry {
+  exp: number;
+  ttlSeconds: number;
+  query: string;
+}
+
+const signedAttachmentCache = new WeakMap<
+  Buffer,
+  Map<string, SignedAttachmentCacheEntry>
+>();
+
+function cachedSignedQuery(
+  basePath: string,
+  secret: Buffer,
+  ttlSeconds: number,
+): string {
+  const now = Math.floor(Date.now() / 1000);
+  let entries = signedAttachmentCache.get(secret);
+  if (!entries) {
+    entries = new Map();
+    signedAttachmentCache.set(secret, entries);
+  }
+
+  for (const [path, entry] of entries) {
+    if (entry.exp <= now + SIGNING_CACHE_MARGIN_SECONDS) {
+      entries.delete(path);
+    }
+  }
+  const existing = entries.get(basePath);
+  if (existing?.ttlSeconds === ttlSeconds) {
+    entries.delete(basePath);
+    entries.set(basePath, existing);
+    return existing.query;
+  }
+
+  const query = signAttachmentUrl(basePath, secret, ttlSeconds);
+  const exp = Number(new URLSearchParams(query).get("exp"));
+  if (entries.size >= SIGNING_CACHE_MAX_ENTRIES) {
+    const oldest = entries.keys().next().value;
+    if (oldest !== undefined) entries.delete(oldest);
+  }
+  entries.set(basePath, { exp, ttlSeconds, query });
+  return query;
+}
 
 export function reSignAttachmentUrlsInJson(
   json: string,
@@ -102,6 +150,6 @@ export function reSignAttachmentUrlsInJson(
 ): string {
   return json.replace(ATTACHMENT_URL_RE, (match) => {
     const basePath = match.split("?")[0];
-    return `${basePath}?${signAttachmentUrl(basePath, secret, ttlSeconds)}`;
+    return `${basePath}?${cachedSignedQuery(basePath, secret, ttlSeconds)}`;
   });
 }
