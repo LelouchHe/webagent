@@ -440,10 +440,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
     a genuinely post-idle late Markdown association remains bottom-following
 
 - `test/e2e/attachment-cache-switch.spec.ts`
-  - a real `document.hidden` visibility recovery calls the `/events?after=`
-    catch-up path and preserves all four attachment image nodes/URLs with no
-    additional byte response; a changed but still valid signed query reloads
-    once per distinct new URL
+  - a real `document.hidden` + `document.visibilityState` transition dispatches
+    the visibility listener, observes a successful `/events?after=` catch-up,
+    and preserves all four attachment image node identities/URLs with no
+    additional attachment request or byte response; a changed but still valid
+    signed query reloads once
   - user, standalone agent, ACP tool, and generated Markdown attachments keep
     stable signed URLs across task re-entry and browser-tab visibility; new DOM consumes browser cache
     without another server byte response, while a fresh browser loads once

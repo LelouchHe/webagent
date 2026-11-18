@@ -11,11 +11,17 @@ const PNG_1X1 = Buffer.from(
   "base64",
 );
 
-async function attachmentServerResponses(page: Page) {
+async function attachmentNetwork(page: Page) {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Network.enable");
   const cached = new Set<string>();
+  const attachmentRequests: string[] = [];
   let serverBytes = 0;
+  cdp.on("Network.requestWillBeSent", ({ request }) => {
+    if (request.url.includes("/attachments/")) {
+      attachmentRequests.push(request.url);
+    }
+  });
   cdp.on("Network.requestServedFromCache", ({ requestId }) => {
     cached.add(requestId);
   });
@@ -29,7 +35,10 @@ async function attachmentServerResponses(page: Page) {
       serverBytes++;
     }
   });
-  return () => serverBytes;
+  return {
+    requests: () => attachmentRequests.length,
+    responses: () => serverBytes,
+  };
 }
 
 async function populateImages(page: Page): Promise<string> {
@@ -82,7 +91,7 @@ async function loadAllAttachmentImages(page: Page): Promise<string[]> {
 async function recoverVisible(
   page: Page,
   emulatedReplay = false,
-): Promise<void> {
+): Promise<string | null> {
   const responses = emulatedReplay
     ? null
     : page.waitForResponse(
@@ -97,18 +106,27 @@ async function recoverVisible(
       configurable: true,
       get: () => hidden,
     });
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => (hidden ? "hidden" : "visible"),
+    });
     document.dispatchEvent(new Event("visibilitychange"));
     hidden = false;
     document.dispatchEvent(new Event("visibilitychange"));
   });
   if (responses) {
-    await responses;
+    const response = await responses;
+    expect(response.ok()).toBe(true);
+    const url = response.url();
+    expect(url).toMatch(/\/api\/v1\/tasks\/[^/]+\/events\?after=\d+/);
+    return url;
   } else {
     await page.waitForFunction(
       () =>
         (window as Window & { __fullReplayDone?: boolean }).__fullReplayDone,
     );
   }
+  return null;
 }
 
 async function refreshNextEventLoad(
@@ -151,11 +169,12 @@ async function refreshNextEventLoad(
 test("browser visibility recovery keeps attachment DOM and bytes stable", async ({
   page,
 }) => {
-  const serverResponses = await attachmentServerResponses(page);
+  const network = await attachmentNetwork(page);
   await populateImages(page);
   await recoverVisible(page);
   const urls = await loadAllAttachmentImages(page);
-  const baseline = serverResponses();
+  const baselineRequests = network.requests();
+  const baselineResponses = network.responses();
   const generated = page.locator(
     ".msg.assistant img.agent-image[alt='generated image']",
   );
@@ -172,8 +191,16 @@ test("browser visibility recovery keeps attachment DOM and bytes stable", async 
       images.map((image) => image.getAttribute("data-dom-proof")),
     );
   const generatedProof = await generated.getAttribute("data-dom-proof");
+  await page.evaluate(() => {
+    (
+      window as Window & { __attachmentImages?: HTMLImageElement[] }
+    ).__attachmentImages = Array.from(
+      document.querySelectorAll<HTMLImageElement>("#messages img"),
+    );
+  });
 
-  await recoverVisible(page);
+  const recoveryUrl = await recoverVisible(page);
+  expect(recoveryUrl).not.toBeNull();
   await expect(generated).toHaveAttribute("data-dom-proof", generatedProof!);
   expect(await attachmentUrls(page)).toEqual(urls);
   expect(await page.locator("#messages img").count()).toBe(4);
@@ -184,17 +211,29 @@ test("browser visibility recovery keeps attachment DOM and bytes stable", async 
         images.map((image) => image.getAttribute("data-dom-proof")),
       ),
   ).toEqual(imagesBefore);
-  expect(serverResponses()).toBe(baseline);
+  expect(
+    await page.evaluate(() =>
+      (
+        window as Window & { __attachmentImages?: HTMLImageElement[] }
+      ).__attachmentImages?.every(
+        (image, index) =>
+          image ===
+          document.querySelectorAll<HTMLImageElement>("#messages img")[index],
+      ),
+    ),
+  ).toBe(true);
+  expect(network.requests()).toBe(baselineRequests);
+  expect(network.responses()).toBe(baselineResponses);
 });
 
 test("visibility recovery reloads once for a distinct valid signed URL", async ({
   page,
 }) => {
-  const serverResponses = await attachmentServerResponses(page);
+  const network = await attachmentNetwork(page);
   await populateImages(page);
   await recoverVisible(page);
   const urls = await loadAllAttachmentImages(page);
-  const baseline = serverResponses();
+  const baselineResponses = network.responses();
 
   await page
     .locator("#messages img:not([alt='generated image'])")
@@ -228,7 +267,9 @@ test("visibility recovery reloads once for a distinct valid signed URL", async (
   ).toEqual(stableProofs);
   const old = new Set(urls);
   const newUrls = new Set(refreshed.filter((url) => !old.has(url)));
-  await expect.poll(serverResponses, { timeout: 10_000 }).toBe(baseline + 1);
+  await expect
+    .poll(network.responses, { timeout: 10_000 })
+    .toBe(baselineResponses + 1);
   expect(newUrls.size).toBe(1);
   expect(refreshed).not.toEqual(urls);
   expect(urls.some((url) => /\?exp=\d+&sig=/.test(url))).toBe(true);
@@ -237,14 +278,14 @@ test("visibility recovery reloads once for a distinct valid signed URL", async (
 test("task re-entry reuses attachment bytes while URLs stay stable", async ({
   page,
 }) => {
-  const serverResponses = await attachmentServerResponses(page);
+  const network = await attachmentNetwork(page);
   const taskId = await populateImages(page);
   const otherTaskId = await createNewTask(page);
   await sendPrompt(page, `/switch ${taskId.slice(0, 8)}`);
   await expect.poll(() => currentTaskId(page)).toBe(taskId);
   await expect(page.locator("#messages img")).toHaveCount(4);
   const urls = await loadAllAttachmentImages(page);
-  const baseline = serverResponses();
+  const baselineResponses = network.responses();
 
   await sendPrompt(page, `/switch ${otherTaskId.slice(0, 8)}`);
   await expect.poll(() => currentTaskId(page)).toBe(otherTaskId);
@@ -252,7 +293,7 @@ test("task re-entry reuses attachment bytes while URLs stay stable", async ({
   await expect.poll(() => currentTaskId(page)).toBe(taskId);
   await expect(page.locator("#messages img")).toHaveCount(4);
   expect(await loadAllAttachmentImages(page)).toEqual(urls);
-  expect(serverResponses()).toBe(baseline);
+  expect(network.responses()).toBe(baselineResponses);
 });
 
 test("fresh browser loads each attachment once", async ({
@@ -274,13 +315,13 @@ test("fresh browser loads each attachment once", async ({
 
   const fresh = await browser.newContext();
   const freshPage = await fresh.newPage();
-  const serverResponses = await attachmentServerResponses(freshPage);
+  const network = await attachmentNetwork(freshPage);
   await freshPage.goto(`${baseURL}/#${taskId}`);
   await expect.poll(() => currentTaskId(freshPage)).toBe(taskId);
   await expect(freshPage.locator("#messages img")).toHaveCount(4);
   expect(await loadAllAttachmentImages(freshPage)).toEqual(urls);
   await expect
-    .poll(serverResponses, { timeout: 10_000 })
+    .poll(network.responses, { timeout: 10_000 })
     .toBe(new Set(urls).size);
   await fresh.close();
 });
