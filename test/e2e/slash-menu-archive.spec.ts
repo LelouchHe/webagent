@@ -67,8 +67,11 @@ test("slash-menu /archive detaches a task and reopens it", async ({ page }) => {
   await expect(page.locator("#messages")).toContainText("original parent");
   await expect.poll(() => currentTaskId(page)).toBe(archivedId);
 
-  // The other client (viewing Root) converges without a reload: the archive
-  // structural fact invalidated its open `/switch` list.
+  // The other client (viewing Root) may briefly keep its already-open menu
+  // rows. A menu opened after the fact reads the list again and no longer
+  // offers the archived task.
+  await secondInput.fill("");
+  await secondInput.fill("/switch ");
   await expect(
     second.locator("#slash-menu.active .slash-item", { hasText: title }),
   ).toHaveCount(0);

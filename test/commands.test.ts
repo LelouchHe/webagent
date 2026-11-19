@@ -1137,60 +1137,6 @@ describe("commands", () => {
       );
     });
 
-    it("re-reads /switch when an archive invalidates the list it is waiting on", async () => {
-      state.taskId = "current";
-      const topology = await import("../public/js/task-topology.ts");
-      let releaseFirst!: () => void;
-      let listCalls = 0;
-      setFetch(async (url: string) => {
-        if (url.split("?")[0] === "/api/v1/tasks") {
-          listCalls += 1;
-          if (listCalls === 1) {
-            return new Promise((resolve) => {
-              releaseFirst = () => {
-                resolve({
-                  ok: true,
-                  text: async () =>
-                    JSON.stringify([
-                      {
-                        id: "archived-target",
-                        title: "Archived Target",
-                        archived: false,
-                      },
-                    ]),
-                });
-              };
-            });
-          }
-          return { ok: true, text: async () => "[]" };
-        }
-        if (url.startsWith("/api/v1/tasks/archived-target")) {
-          throw new Error("a stale archived:false row must not be entered");
-        }
-        return { ok: true, text: async () => "{}" };
-      });
-
-      try {
-        const handling = commands.handleSlashCommand("/switch archived-target");
-        const release = releaseFirst;
-        assert.ok(release, "the first list read is in flight");
-        // The archive fact lands while Enter is waiting for that read.
-        topology.noteTaskArchived("archived-target");
-        release();
-        await handling;
-
-        assert.equal(listCalls, 2, "Enter re-reads after the invalidation");
-        assert.notEqual(state.taskId, "archived-target");
-        assert.ok(
-          dom.messages.textContent.includes(
-            'No task matching "archived-target"',
-          ),
-        );
-      } finally {
-        topology.resetTaskTopologyForTest();
-      }
-    });
-
     it("sends cancel when /cancel is used while busy", async () => {
       setFetch(() => ({
         ok: true,

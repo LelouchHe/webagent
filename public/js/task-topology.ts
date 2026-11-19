@@ -59,12 +59,8 @@ let generation = 0;
 let listLoaded = false;
 let viewedTaskId: string | null = null;
 let parentRef: ParentRef | null = null;
-let pending: {
-  generation: number;
-  /** The archive epoch the request was issued under. */
-  epoch: number;
-  promise: Promise<TaskSummary[]>;
-} | null = null;
+let pending: { generation: number; promise: Promise<TaskSummary[]> } | null =
+  null;
 /**
  * Read order within one generation. Two reads can be in flight — the startup
  * one and the one the stream handshake forces — and the older response must
@@ -80,14 +76,6 @@ let listAppliedSeq = 0;
  * claim that a task created during registration does not exist.
  */
 let listRequiredSeq = 0;
-/** Bumped by facts that change tree membership or a task's parent link. */
-let listEpoch = 0;
-/**
- * Archive is one-way, so one task id names one structural fact for this client.
- * The same live message can be consumed twice (pre-filter, then replay/navigation
- * queues); the epoch bump is applied once, while parent clearing still runs.
- */
-const archivedFacts = new Set<string>();
 
 const changeListeners: (() => void)[] = [];
 
@@ -157,16 +145,9 @@ export function setCurrentTask(taskId: string | null, hint?: ParentHint): void {
  */
 export function noteTaskArchived(taskId: string): void {
   if (viewedTaskId === taskId) parentRef = { taskId, status: "none" };
-  if (!archivedFacts.has(taskId)) {
-    archivedFacts.add(taskId);
-    listEpoch += 1;
-  }
+  // Menus repaint from their cached rows; a menu opened after this fact reads
+  // the list again. No epoch fence is kept for requests already in flight.
   notifyChange();
-}
-
-/** Monotonic fact counter for archive-driven list invalidation. */
-export function taskListEpoch(): number {
-  return listEpoch;
 }
 
 function settleHint(taskId: string, hint: ParentHint): ParentRef {
@@ -363,20 +344,13 @@ async function resolveParentFromDetail(
  */
 function startTaskListRequest(): {
   generation: number;
-  epoch: number;
   promise: Promise<TaskSummary[]>;
 } {
   const requestGeneration = generation;
-  // A response issued before the latest structural fact (archive) cannot speak
-  // for the collection, even if it arrives later: it must not become the
-  // baseline, and a caller that needs the current topology must not be handed
-  // it. The epoch check covers both.
-  const requestEpoch = listEpoch;
   const seq = ++listRequestSeq;
   const promise = api.listTasks().then((tasks) => {
     if (
       requestGeneration === generation &&
-      requestEpoch === listEpoch &&
       seq > listAppliedSeq &&
       seq >= listRequiredSeq
     ) {
@@ -387,7 +361,7 @@ function startTaskListRequest(): {
     }
     return tasks;
   });
-  return { generation: requestGeneration, epoch: requestEpoch, promise };
+  return { generation: requestGeneration, promise };
 }
 
 /**
@@ -397,48 +371,16 @@ function startTaskListRequest(): {
  * only feeds the row-label flag here; the parent reference never comes from it.
  */
 export async function loadTaskList(): Promise<TaskSummary[]> {
-  // A caller waiting across an archive fact must not receive the pre-archive
-  // collection. Retry (bounded) against the new epoch instead of handing back
-  // a response the fence already rejected — including a rejected request: a
-  // transient error from before the fact is not the caller's answer.
-  let last: { tasks: TaskSummary[] } | { error: unknown } | undefined;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const epoch = listEpoch;
-    if (pending?.generation === generation && pending.epoch === epoch) {
-      try {
-        const tasks = await pending.promise;
-        last = { tasks };
-        if (epoch === listEpoch) return tasks;
-      } catch (error) {
-        last = { error };
-        if (epoch === listEpoch) throw error;
-      }
-      continue;
-    }
-    const request = startTaskListRequest();
-    pending = request;
-    try {
-      const tasks = await request.promise;
-      last = { tasks };
-      if (request.epoch === listEpoch) return tasks;
-    } catch (error) {
-      last = { error };
-      if (request.epoch === listEpoch) throw error;
-    } finally {
-      if (pending === request) pending = null;
-    }
+  if (pending?.generation === generation) {
+    return pending.promise;
   }
-  // Report the last iteration, not the oldest error: a later successful read
-  // is the best answer the budget produced.
-  if (last !== undefined && "error" in last) {
-    const error = last.error;
-    throw error instanceof Error
-      ? error
-      : new Error(
-          typeof error === "string" ? error : "Task list request failed",
-        );
+  const request = startTaskListRequest();
+  pending = request;
+  try {
+    return await request.promise;
+  } finally {
+    if (pending === request) pending = null;
   }
-  return last !== undefined && "tasks" in last ? last.tasks : [];
 }
 
 /**
@@ -501,7 +443,5 @@ export function resetTaskTopologyForTest(): void {
   listRequestSeq = 0;
   listAppliedSeq = 0;
   listRequiredSeq = 0;
-  listEpoch = 0;
-  archivedFacts.clear();
   resetTaskRefMarks();
 }

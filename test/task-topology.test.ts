@@ -12,7 +12,6 @@ import {
   resetTaskTopologyForTest,
   setCurrentTask,
   subscribeTaskTopology,
-  taskListEpoch,
 } from "../public/js/task-topology.ts";
 import type { TaskSummary } from "../src/types.ts";
 
@@ -142,13 +141,9 @@ describe("parent reference", () => {
         parentId: "parent",
         agentId: "pi",
       });
-      const epoch = taskListEpoch();
       noteTaskArchived("child");
       assert.equal(parentOf("child"), null);
       assert.equal(isParentResolved("child"), true);
-      // The epoch is what makes an open `/switch` refetch instead of serving
-      // pre-archive rows.
-      assert.equal(taskListEpoch(), epoch + 1);
       assert.deepEqual(fetchStub.urls, []);
     } finally {
       fetchStub.restore();
@@ -304,141 +299,6 @@ describe("parent reference", () => {
       await pending;
       // The superseded response is discarded: no row-label baseline.
       assert.equal(entryAgentLabel("copilot", "a", "pi"), null);
-    } finally {
-      fetchStub.restore();
-    }
-  });
-
-  it("does not reuse a list request issued before an archive", async () => {
-    const resolvers: Array<(response: Response) => void> = [];
-    const fetchStub = stubFetch(
-      () =>
-        new Promise<Response>((resolve) => {
-          resolvers.push(resolve);
-        }),
-    );
-    try {
-      const staleRequest = loadTaskList();
-      assert.equal(resolvers.length, 1);
-      // The SSE archive fact arrives while the old read is in flight.
-      noteTaskArchived("area");
-      const freshRequest = loadTaskList();
-      assert.equal(
-        resolvers.length,
-        2,
-        "a pre-archive read must not satisfy a post-archive read",
-      );
-      assert.notEqual(freshRequest, staleRequest);
-
-      resolvers[0](new Response(JSON.stringify([task("area", "pi")])));
-      await tick();
-      resolvers[1](new Response(JSON.stringify([task("root", "pi")])));
-      const [stale, fresh] = await Promise.all([staleRequest, freshRequest]);
-      // The caller that started before the archive also retries: it never
-      // receives the fenced pre-archive collection.
-      assert.deepEqual(
-        stale.map((entry) => entry.id),
-        ["root"],
-      );
-      assert.deepEqual(
-        fresh.map((entry) => entry.id),
-        ["root"],
-      );
-    } finally {
-      fetchStub.restore();
-    }
-  });
-
-  it("bumps the archive epoch once per archived task fact", () => {
-    const epoch = taskListEpoch();
-    noteTaskArchived("archived-once");
-    noteTaskArchived("archived-once");
-    assert.equal(taskListEpoch(), epoch + 1);
-
-    setCurrentTask("archived-once", {
-      parentId: "parent",
-      agentId: "pi",
-    });
-    // A duplicate delivery still lets the current view clear its parent.
-    noteTaskArchived("archived-once");
-    assert.equal(parentOf("archived-once"), null);
-    assert.equal(taskListEpoch(), epoch + 1);
-  });
-
-  it("retries a rejected list read when the archive epoch moved", async () => {
-    const calls: Array<{
-      resolve: (response: Response) => void;
-      reject: (error: unknown) => void;
-    }> = [];
-    const fetchStub = stubFetch(
-      () =>
-        new Promise<Response>((resolve, reject) => {
-          calls.push({ resolve, reject });
-        }),
-    );
-    try {
-      const waiting = loadTaskList();
-      assert.equal(calls.length, 1);
-      noteTaskArchived("archived-during-read");
-      calls[0].reject(new Error("transient list failure"));
-      await tick();
-      assert.equal(calls.length, 2, "a fenced rejection is retried");
-      calls[1].resolve(new Response(JSON.stringify([task("root", "pi")])));
-      const tasks = await waiting;
-      assert.deepEqual(
-        tasks.map((entry) => entry.id),
-        ["root"],
-      );
-    } finally {
-      fetchStub.restore();
-    }
-  });
-
-  it("returns the last successful read when the retry budget is exhausted", async () => {
-    const calls: Array<{
-      resolve: (response: Response) => void;
-      reject: (error: unknown) => void;
-    }> = [];
-    const fetchStub = stubFetch(
-      () =>
-        new Promise<Response>((resolve, reject) => {
-          calls.push({ resolve, reject });
-        }),
-    );
-    const waitForCalls = async (count: number) => {
-      for (let i = 0; i < 50 && calls.length < count; i++) await tick();
-      assert.equal(calls.length, count);
-    };
-    try {
-      const waiting = loadTaskList();
-      noteTaskArchived("budget-1");
-      calls[0].reject(new Error("oldest error"));
-      await waitForCalls(2);
-
-      noteTaskArchived("budget-2");
-      calls[1].resolve(new Response(JSON.stringify([task("second", "pi")])));
-      await waitForCalls(3);
-
-      noteTaskArchived("budget-3");
-      calls[2].resolve(new Response(JSON.stringify([task("third", "pi")])));
-      const tasks = await waiting;
-      // The third response is still fenced, but it is the last and successful
-      // outcome; the older rejection must not win.
-      assert.deepEqual(
-        tasks.map((entry) => entry.id),
-        ["third"],
-      );
-    } finally {
-      fetchStub.restore();
-    }
-  });
-
-  it("propagates a list rejection when the epoch did not move", async () => {
-    const fetchStub = stubFetch(() =>
-      Promise.reject(new Error("list unavailable")),
-    );
-    try {
-      await assert.rejects(loadTaskList(), /list unavailable/);
     } finally {
       fetchStub.restore();
     }
