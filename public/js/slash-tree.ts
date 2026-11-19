@@ -55,9 +55,20 @@ export interface CmdNode {
   onSelect?: () => void | Promise<void>;
 }
 
-/** Walker's data-state for a fetch node. Either a resolved array, the
- *  "loading" sentinel, or an error wrapper carrying the message to display. */
-export type FetchData = unknown[] | "loading" | { error: string };
+/** One resolved data section.
+ *
+ *  `seeded` records provenance, not content: these items were painted from a
+ *  display cache before this menu's own read returned. The marker travels with
+ *  the rows so every rebuild of the same section keeps it, and the rows it
+ *  marks are display-only (see `Candidate.seeded`). */
+export interface DataSection {
+  items: unknown[];
+  seeded?: boolean;
+}
+
+/** Walker's data-state for a fetch node: a resolved array or {@link DataSection},
+ *  the "loading" sentinel, or an error wrapper carrying the message to display. */
+export type FetchData = unknown[] | DataSection | "loading" | { error: string };
 
 /** Data states that already render a placeholder row of their own. */
 const PLACEHOLDER_STATES = new Set(["loading", "error", "empty", "no-match"]);
@@ -89,6 +100,10 @@ export interface Candidate {
    *  instead of the label for selection preservation, and to check a
    *  cache-painted row against the fresh read before acting on it. */
   identity?: string;
+  /** Painted from a display cache before this menu's own read returned:
+   *  display-only, so the row performs no action until a fresh read replaces
+   *  it. Follows the row through every repaint that keeps it on screen. */
+  seeded?: boolean;
 }
 
 /**
@@ -218,6 +233,18 @@ export function buildCandidates(
   let dataState: "none" | "loading" | "error" | "empty" | "no-match" | "ok" =
     "none";
   let errorMsg = "";
+  // A section carries its own provenance; a plain array is a fresh result.
+  const items = Array.isArray(data)
+    ? data
+    : data && typeof data === "object" && "items" in data
+      ? data.items
+      : null;
+  const rowsSeeded =
+    data !== undefined &&
+    typeof data === "object" &&
+    !Array.isArray(data) &&
+    "items" in data &&
+    data.seeded === true;
 
   if (node.fetch && node.toSpec) {
     if (data === "loading") {
@@ -230,17 +257,17 @@ export function buildCandidates(
     ) {
       dataState = "error";
       errorMsg = typeof data.error === "string" ? data.error : "";
-    } else if (Array.isArray(data)) {
-      if (data.length === 0) {
+    } else if (items) {
+      if (items.length === 0) {
         dataState = "empty";
       } else {
         const filteredItems = q
-          ? data.filter((item) =>
+          ? items.filter((item) =>
               node.matches
                 ? node.matches(item, q)
                 : node.toSpec!(item).primary.toLowerCase().includes(q),
             )
-          : data;
+          : items;
         const filtered = filteredItems.map((item) => {
           const spec = node.toSpec!(item);
           return {
@@ -318,6 +345,7 @@ export function buildCandidates(
         prefix: row.spec.current ? "*" : "",
         kind: "data",
         identity: row.identity,
+        ...(rowsSeeded ? { seeded: true } : {}),
       });
     }
   }
