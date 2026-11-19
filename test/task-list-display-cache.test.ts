@@ -43,6 +43,18 @@ const TASKS = [
   task("frontend", "frontend", "root"),
 ];
 
+/** Two tasks whose `/switch` rows render identically (title and cwd). */
+function twin(id: string): Record<string, unknown> {
+  return {
+    id,
+    cwd: "/work/same",
+    title: "Twin",
+    parent_id: null,
+    workflow_status: "idle",
+    last_active_at: "2026-01-01T00:00:00.000Z",
+  };
+}
+
 function okJson(value: unknown): Record<string, unknown> {
   return {
     ok: true,
@@ -137,6 +149,12 @@ describe("task pickers paint from the last list, then revalidate", () => {
   function selectedPrimary(): string | undefined {
     const row = dom.slashMenu.querySelector(".slash-item.selected");
     return row?.querySelector(".slash-primary")?.textContent ?? undefined;
+  }
+
+  function selectedIndex(): number {
+    return [...dom.slashMenu.querySelectorAll(".slash-item")].findIndex(
+      (row: any) => row.classList.contains("selected"),
+    );
   }
 
   function itemByPrimary(primary: string): any {
@@ -265,14 +283,69 @@ describe("task pickers paint from the last list, then revalidate", () => {
     assert.equal(selectedPrimary(), rows()[0]);
   });
 
+  it("/switch keeps the selected twin when the identically rendered list returns", async () => {
+    listHandler = () =>
+      Promise.resolve(okJson([twin("twin-a"), twin("twin-b")]));
+    await warmMenu("/switch ");
+
+    const held = holdList();
+    openMenu("/switch ");
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    assert.equal(selectedIndex(), 1);
+
+    held.release([twin("twin-a"), twin("twin-b")]);
+    await tick();
+
+    assert.equal(selectedIndex(), 1);
+  });
+
+  it("/switch falls back when the selected row's rendered key is ambiguous", async () => {
+    listHandler = () =>
+      Promise.resolve(
+        okJson([task("alpha", "Alpha", null), twin("twin-a"), twin("twin-b")]),
+      );
+    await warmMenu("/switch ");
+
+    const held = holdList();
+    openMenu("/switch ");
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    assert.equal(selectedPrimary(), "Twin");
+
+    // The twins move: the previous index now holds another row, and the key
+    // matches two rows, so there is no unambiguous row to keep.
+    held.release([
+      task("alpha", "Alpha", null),
+      task("beta", "Beta", null),
+      twin("twin-a"),
+      twin("twin-b"),
+    ]);
+    await tick();
+
+    assert.equal(selectedIndex(), 0);
+    assert.equal(selectedPrimary(), "Alpha");
+  });
+
   it("typing in /switch still selects the first row", async () => {
+    listHandler = () =>
+      Promise.resolve(
+        okJson([
+          task("alpha", "Alpha", null),
+          task("beta", "Beta", null),
+          task("gamma", "Beta Two", null),
+        ]),
+      );
     await warmMenu("/switch ");
     openMenu("/switch ");
     commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    assert.equal(selectedPrimary(), "Beta Two");
 
-    openMenu("/switch b");
-
+    // The filter keeps two rows, including the row selected before typing.
+    openMenu("/switch eta");
+    assert.ok(rows().length >= 2);
+    assert.ok(rows().includes("Beta Two"));
     assert.equal(selectedPrimary(), rows()[0]);
+    assert.equal(selectedPrimary(), "Beta");
   });
 
   it("/switch still shows (loading...) when no list has been fetched", async () => {

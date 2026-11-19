@@ -219,9 +219,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a row painted from the earlier list acts at once, without waiting for the
     read
   - a leading-whitespace ` @` paints from the last list too
-  - a live `/switch` repaint keeps the selected row (an added task leaves it
-    selected); a selected task the fresh read dropped falls back to the first
-    selectable row, and typing still selects the first row
+  - a live `/switch` repaint keeps the selected row when it is still
+    unambiguously offered (an added task leaves it selected at the same
+    position); two tasks with identical rendered rows keep the selected one
+    when the list is unchanged, but fall back to the first selectable row when
+    their key is ambiguous and they moved; a selected task the fresh read
+    dropped falls back too, and typing a filter that still offers several rows
+    selects the first
   - a watch lasts exactly as long as its menu scope: closing the menu or moving
     to another command stops it, typing within `/switch` keeps one, and each
     `@` keystroke replaces it instead of adding one
