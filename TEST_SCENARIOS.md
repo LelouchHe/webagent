@@ -807,6 +807,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a rename collision with an archived top returns 400, a concurrent
     out-of-scope send returns 400, and a store failure returns a diagnosable 500
 
+- `test/task-manager.test.ts` (archive edge)
+  - cutting the former-parent edge keeps the task own child edge; a later
+    `task_update` records against the current (null) parent and does not
+    deliver an account to the parent the task left
+  - a queued delivery across the cut edge is not drained, and a closing
+    reminder that loses the edge while resuming abandons before submitting
+
 - `test/read-scope.test.ts`
   - a `read` token reaches the task list, stored history, detail, status, and
     permissions (including trailing-slash forms the routes support), but is

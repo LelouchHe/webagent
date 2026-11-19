@@ -135,6 +135,58 @@ describe("TaskManager", () => {
   });
 
   describe("archive edge cut", () => {
+    it("keeps the tree-internal edge but cuts the former-parent edge", () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      store.createTask(
+        "grandchild",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "g-session",
+        "child",
+      );
+      for (const [id, source, target] of [
+        ["incoming", "parent", "child"],
+        ["internal", "child", "grandchild"],
+      ] as const) {
+        store.createCollaborationMessage({
+          id,
+          deliveryId: `${id}-delivery`,
+          sourceTaskId: source,
+          directTargetTaskId: target,
+          sourceActor: "agent",
+          body: "work",
+        });
+      }
+      assert.ok(sm.getObligation("parent", "child"));
+      assert.ok(sm.getObligation("child", "grandchild"));
+
+      store.archiveTask("child");
+      sm.cutArchivedEdge("parent", "child");
+
+      // Only the former-parent edge is gone; the task still owes its own child.
+      assert.equal(sm.getObligation("parent", "child"), undefined);
+      assert.ok(sm.getObligation("child", "grandchild"));
+
+      // A real account after archive is recorded against the current parent
+      // (none) instead of being delivered to the parent the task left.
+      const result = sm.settleAgentUpdate("child", "done", "finished", {
+        promptId: "p",
+        startedAt: Date.now(),
+      });
+      assert.equal(result.decision.kind, "current-parent");
+      assert.equal(result.accountTargetTaskId, null);
+      assert.equal(result.collaborationMessageId, null);
+    });
+
     it("does not drain a delivery the archive interrupted", async () => {
       store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
       store.createTask(
