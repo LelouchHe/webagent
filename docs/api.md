@@ -496,13 +496,11 @@ task, naming the original parent's path and id; children stay attached to it
 and get no rows of their own. A pending account owed to the former parent does
 not block archiving: that edge is dropped, so a later `task_update` is recorded
 but not delivered to the parent the task left. Collaboration not yet handed to the agent between the archived subtree and
-anything outside it — a queued message in either direction, or a
-`failed/prompt_failed` row still waiting for its bounded retry — is marked
+anything outside it — a queued message in either direction — is marked
 `failed` with `failure_reason: "archived_edge_cut"`; the message rows are kept,
 and nothing new is delivered across the boundary. Deliveries wholly inside the
-subtree are untouched. A `draining` delivery already reached the agent, so it
-is left alone and its own callback records the final status. Work already
-handed to the agent is not recalled. The detach, system message, and delivery
+subtree are untouched. Rows already `draining` or `failed` keep their own
+status and reason. Work already handed to the agent is not recalled. The detach, system message, and delivery
 marks are one transaction.
 
 **Response** `200`:

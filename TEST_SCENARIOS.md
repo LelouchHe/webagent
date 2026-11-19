@@ -799,8 +799,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - detach, transcript, and delivery marks roll back together when a delivery
     write fails; a retry then commits all of them
   - queued work between the archived subtree and anything outside it is marked
-    interrupted, tree-internal work is untouched, and failed rows keep their
-    own reason
+    interrupted, and tree-internal work is untouched
 
 - `test/archive-routes.test.ts`
   - `POST /api/v1/tasks/:id/archive` archives, broadcasts one system message,
