@@ -176,19 +176,39 @@ test("/new paints the last recent paths before its own read returns", async ({
 }) => {
   await gotoConnected(page);
   const parentCwdDisplay = (await readStatusBarCwd(page)).replace(/\/$/, "");
+  const cachedPath = "/tmp/e2e-cached-recent";
 
-  // Warm the shared list with one fully resolved open, then close.
+  // Warm the shared list with a known recent path, then close. The route makes
+  // the cache deterministic instead of depending on earlier server activity.
+  const warmPattern = "**/api/v1/recent-paths*";
+  await page.route(warmPattern, (route) =>
+    route.fulfill({
+      json: [
+        {
+          cwd: cachedPath,
+          cwdDisplay: cachedPath,
+          last_used_at: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    }),
+  );
   const menu = page.locator("#slash-menu.active");
-  await page.locator("#input").fill("/new ");
-  await expect(menu).toContainText(parentCwdDisplay);
-  await page.locator("#input").fill("");
-  await expect(page.locator("#slash-menu.active")).toHaveCount(0);
+  try {
+    await page.locator("#input").fill("/new ");
+    await expect(menu).toContainText(cachedPath);
+    await page.locator("#input").fill("");
+    await expect(page.locator("#slash-menu.active")).toHaveCount(0);
+  } finally {
+    await page.unroute(warmPattern);
+  }
 
   const held = await holdRecentPathReads(page);
   try {
     await page.locator("#input").fill("/new ");
-    // The read is still held: the cwd row can only come from the last list.
+    // The read is still held: the cwd row and the recent path can only come
+    // from the last list.
     await expect(menu).toContainText(parentCwdDisplay);
+    await expect(menu).toContainText(cachedPath);
     await expect(menu).not.toContainText("(loading...)");
     await held.readStarted;
     await expect(menu).not.toContainText("e2e-fresh-recent");

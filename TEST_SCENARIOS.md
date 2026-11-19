@@ -219,6 +219,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a row painted from the earlier list acts at once, without waiting for the
     read
   - a leading-whitespace ` @` paints from the last list too
+  - a live `/switch` repaint keeps the selected row (an added task leaves it
+    selected); a selected task the fresh read dropped falls back to the first
+    selectable row, and typing still selects the first row
   - a watch lasts exactly as long as its menu scope: closing the menu or moving
     to another command stops it, typing within `/switch` keeps one, and each
     `@` keystroke replaces it instead of adding one
@@ -235,8 +238,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
     before its own read returns, and the fresh read repaints it
   - a first `/clear` or `/new` open with nothing fetched still shows
     `(loading...)`
-  - `/new` keeps its current cwd row ahead of the recents while the read is
-    held
+  - `/new` includes its current cwd row and a cached recent while the read is
+    held (membership; the e2e covers their order)
+  - a live refresh keeps the selected path when the fresh list is identical or
+    only adds a path (ArrowDown to the second path, then Tab fills it)
 
 - `test/task-ref-marks.test.ts` (one reference per Task, four states)
   - a live reference is completely unmarked (no strike, no appended name, no
@@ -1352,9 +1357,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the `/new` picker leads with the `create task` action row, then the current
     cwd — marked `*` on that row itself — and only then other recent
     directories (a second recent directory makes the order real, not vacuous)
-  - a second `/new` open paints the last recent paths (the cwd row included)
-    while its recent-paths read is held, and the path that read carries appears
-    once it is released
+  - a second `/new` open paints the last recent paths (the cwd row and a
+    cached recent included) while its recent-paths read is held, and the path
+    that read carries appears once it is released
   - `/new <relative>` resolves against the current task cwd on both Enter and
     the picker action row, and the preview names the resolved directory
   - `+<title>` creates a titled child without switching; `@<title> <body>` then

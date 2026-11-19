@@ -209,8 +209,12 @@ export function updateSlashMenu(): void {
         currentData = source.read();
         onDataScopeEnd(
           source.watch(() => {
+            const previous = candidates[selectedIdx];
             currentData = source.read();
             rebuildFromInput(pathPrefix);
+            if (candidates.length === 0) return;
+            selectedIdx = selectedRowForLiveRepaint(previous, candidates);
+            renderMenu(dom.slashMenu.dataset.pathPrefix ?? "");
           }),
         );
       } else if (result instanceof Promise) {
@@ -273,7 +277,8 @@ async function updateTaskCommandMenu(text: string): Promise<void> {
     paintTaskCommandMenu(source.read());
     onDataScopeEnd(
       source.watch(() => {
-        paintTaskCommandMenu(source.read());
+        const previous = candidates[selectedIdx];
+        paintTaskCommandMenu(source.read(), previous);
       }),
     );
     return;
@@ -299,7 +304,10 @@ async function updateTaskCommandMenu(text: string): Promise<void> {
  * Paint `+`/`@` rows. No rows hides the view but keeps the data scope, so a
  * source that later has rows for this input can still show them.
  */
-function paintTaskCommandMenu(data: LiveState<Candidate[]>): void {
+function paintTaskCommandMenu(
+  data: LiveState<Candidate[]>,
+  previousSelected?: Candidate,
+): void {
   if (Array.isArray(data) && data.length === 0) {
     dom.slashMenu.classList.remove("active");
     dom.slashMenu.innerHTML = "";
@@ -319,13 +327,53 @@ function paintTaskCommandMenu(data: LiveState<Candidate[]>): void {
     selectedIdx = 0;
   } else {
     candidates = data;
-    const firstSelectable = data.findIndex(
-      (c) => c.kind !== "separator" && c.kind !== "placeholder",
-    );
-    selectedIdx = firstSelectable >= 0 ? firstSelectable : 0;
+    selectedIdx =
+      previousSelected === undefined
+        ? firstSelectableIndex(data)
+        : selectedRowForLiveRepaint(previousSelected, data);
   }
   renderMenu("");
   dom.slashMenu.classList.add("active");
+}
+
+/** A row's identity across a live repaint: only what it renders. */
+function rowKey(candidate: Candidate | undefined): string | null {
+  if (
+    candidate === undefined ||
+    candidate.kind === "separator" ||
+    candidate.kind === "placeholder"
+  )
+    return null;
+  return JSON.stringify([
+    candidate.kind,
+    candidate.spec.primary,
+    candidate.spec.path ?? null,
+    candidate.spec.fill ?? null,
+  ]);
+}
+
+/**
+ * The row a live repaint keeps selected: the same rendered row when the new
+ * candidates still offer it, otherwise the first selectable row. Only live
+ * repaints use this; typing and one-shot results still start at the top.
+ */
+function selectedRowForLiveRepaint(
+  previous: Candidate | undefined,
+  next: Candidate[],
+): number {
+  const key = rowKey(previous);
+  if (key !== null) {
+    const found = next.findIndex((candidate) => rowKey(candidate) === key);
+    if (found >= 0) return found;
+  }
+  return firstSelectableIndex(next);
+}
+
+function firstSelectableIndex(rows: Candidate[]): number {
+  const first = rows.findIndex(
+    (c) => c.kind !== "separator" && c.kind !== "placeholder",
+  );
+  return first >= 0 ? first : 0;
 }
 
 function fetchErrorMessage(err: unknown): string {
@@ -356,10 +404,7 @@ function rebuild(
   // the `current` item — its `*` marker is already a strong visual cue, and
   // auto-selecting it (e.g. the active task in /switch) is awkward when the
   // user opens the menu intending to switch *away* from it.
-  const firstSelectable = cands.findIndex(
-    (c) => c.kind !== "separator" && c.kind !== "placeholder",
-  );
-  selectedIdx = firstSelectable >= 0 ? firstSelectable : 0;
+  selectedIdx = firstSelectableIndex(cands);
 
   renderMenu(pathPrefix);
   dom.slashMenu.classList.add("active");
@@ -598,7 +643,15 @@ export function refreshSlashMenuRows(): void {
     rootForInput(text),
   );
   if (node !== currentNode) return;
+  // The task list's own read also repaints through here before its live watch
+  // fires, so keeping the selected row here is what makes the live repaint
+  // able to keep it. A row that really changed (its rendered key moved) still
+  // falls back to the first selectable row.
+  const previous = candidates[selectedIdx];
   rebuild(tailQuery, pathPrefix, node.field?.(rawRemainder));
+  if (candidates.length === 0) return;
+  selectedIdx = selectedRowForLiveRepaint(previous, candidates);
+  renderMenu(dom.slashMenu.dataset.pathPrefix ?? "");
 }
 
 /**

@@ -85,6 +85,11 @@ describe("recent-paths pickers paint from the last list, then revalidate", () =>
     );
   }
 
+  function selectedPrimary(): string | undefined {
+    const row = dom.slashMenu.querySelector(".slash-item.selected");
+    return row?.querySelector(".slash-primary")?.textContent ?? undefined;
+  }
+
   /** Open once, let the read resolve, and report the settled rows. */
   async function warmMenu(value: string): Promise<string[]> {
     openMenu(value);
@@ -146,6 +151,45 @@ describe("recent-paths pickers paint from the last list, then revalidate", () =>
     await tick();
 
     assert.ok(rows().includes("~/fresh"));
+  });
+
+  it("a live refresh with identical rows keeps the selected row", async () => {
+    recentsHandler = () =>
+      Promise.resolve(okJson(recents("/work/one", "/work/two")));
+    await warmMenu("/clear ");
+
+    const held = holdRecents();
+    openMenu("/clear ");
+    assert.deepEqual(rows(), ["~/one", "~/two"]);
+
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    assert.equal(selectedPrimary(), "~/two");
+
+    held.release(recents("/work/one", "/work/two"));
+    await tick();
+    assert.equal(selectedPrimary(), "~/two");
+
+    commands.handleSlashMenuKey({ key: "Tab", preventDefault() {} });
+    assert.equal(dom.input.value, "/clear ~/two");
+  });
+
+  it("a live refresh with an added row keeps the selected row", async () => {
+    recentsHandler = () =>
+      Promise.resolve(okJson(recents("/work/one", "/work/two")));
+    await warmMenu("/clear ");
+
+    const held = holdRecents();
+    openMenu("/clear ");
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    assert.equal(selectedPrimary(), "~/two");
+
+    held.release(recents("/work/one", "/work/two", "/work/fresh"));
+    await tick();
+    assert.deepEqual(rows(), ["~/one", "~/two", "~/fresh"]);
+    assert.equal(selectedPrimary(), "~/two");
+
+    commands.handleSlashMenuKey({ key: "Tab", preventDefault() {} });
+    assert.equal(dom.input.value, "/clear ~/two");
   });
 
   // --- `/new` --------------------------------------------------------------

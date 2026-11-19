@@ -288,7 +288,9 @@ function makeNavigationCandidate(args: {
  *
  * Returns an empty array when the input is not a task command or the parser
  * rejects it; the caller decides whether to hide the menu. `@` target rows come
- * back as a live source over the shared task list, `+` rows as a promise.
+ * back as a live source over the shared task list. `+` rows are a live source
+ * when no cwd is typed yet, and a promise for a typed directory prefix, whose
+ * listing is never cached.
  */
 export function buildTaskCommandCandidates(
   text: string,

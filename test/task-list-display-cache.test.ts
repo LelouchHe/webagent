@@ -134,6 +134,11 @@ describe("task pickers paint from the last list, then revalidate", () => {
     );
   }
 
+  function selectedPrimary(): string | undefined {
+    const row = dom.slashMenu.querySelector(".slash-item.selected");
+    return row?.querySelector(".slash-primary")?.textContent ?? undefined;
+  }
+
   function itemByPrimary(primary: string): any {
     return [...dom.slashMenu.querySelectorAll(".slash-item")].find(
       (row: any) =>
@@ -223,6 +228,51 @@ describe("task pickers paint from the last list, then revalidate", () => {
     await tick();
 
     assert.ok(rows().includes("fresh-task"));
+  });
+
+  it("/switch keeps the selected row when the fresh list adds one", async () => {
+    await warmMenu("/switch ");
+    const held = holdList();
+    openMenu("/switch ");
+    await tick();
+
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    const selected = selectedPrimary();
+    assert.ok(selected);
+
+    held.release([...TASKS, task("fresh", "fresh-task", null)]);
+    await tick();
+
+    assert.ok(rows().includes("fresh-task"));
+    assert.equal(selectedPrimary(), selected);
+  });
+
+  it("/switch falls back to the first selectable row when the selected row disappears", async () => {
+    await warmMenu("/switch ");
+    const held = holdList();
+    openMenu("/switch ");
+    await tick();
+
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    const selected = selectedPrimary();
+    assert.ok(selected);
+
+    // Drop the selected Task from the fresh list.
+    held.release(TASKS.filter((t) => (t.title as string) !== selected));
+    await tick();
+
+    assert.equal(rows().includes(selected), false);
+    assert.equal(selectedPrimary(), rows()[0]);
+  });
+
+  it("typing in /switch still selects the first row", async () => {
+    await warmMenu("/switch ");
+    openMenu("/switch ");
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+
+    openMenu("/switch b");
+
+    assert.equal(selectedPrimary(), rows()[0]);
   });
 
   it("/switch still shows (loading...) when no list has been fetched", async () => {

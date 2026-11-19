@@ -94,11 +94,17 @@ paints the last list at once instead of waiting a round trip on
 and loads when a watch starts, but only when no load is already in flight, so
 a later watch joins the running one and two loads never overlap. A failure is
 shown only while there is no value; after a successful read it keeps the
-value. `/new` and `+` still lead with their own cwd row, and
-treat a recent-paths failure as no recents (`errorsAsEmpty`), exactly as their
-old `catch` did. `+` keeps directory listings one-shot: only the no-cwd
-recent-paths branch is live. Every other node keeps its one-shot `fetch`. A
-repaint selects the first selectable row, like any other rebuild.
+value. A refresh whose data is unchanged does not notify, so an open menu does
+not repaint and keeps the user's selection. `/new` and `+` still put their own
+cwd row ahead of the path rows (their action row still leads the whole menu),
+and treat a recent-paths failure as no recents (`errorsAsEmpty`), exactly as
+their old `catch` did; that fallback matters only before any list has loaded,
+because after that the last list stays. `+` keeps directory listings one-shot:
+only the no-cwd recent-paths branch is live. Every other node keeps its
+one-shot `fetch`. A live repaint keeps the selected row when a row with the
+same rendered text, path, and fill is still offered (placeholders and
+separators have no identity); otherwise it selects the first selectable row,
+like any other rebuild. Typing still selects the first row.
 
 ## FieldView — a node's own argument field
 
