@@ -303,21 +303,24 @@ describe("task pickers paint from the last list, then revalidate", () => {
     openMenu("/switch ");
     await tick();
     assert.ok(rows().includes("tests"));
-    assert.ok(itemByPrimary("tests").classList.contains("slash-seeded"));
 
     fetchCalls = [];
     clickItemRow(itemByPrimary("tests"));
     await tick();
 
-    // No action, no queued side effect: the menu stays open with its input.
-    assert.deepEqual(detailReads("tests"), []);
+    // No action and nothing queued: the menu stays open with its input.
+    assert.equal(fetchCalls.length, 0);
     assert.ok(dom.slashMenu.classList.contains("active"));
     assert.equal(dom.input.value, "/switch ");
     assert.equal(state.taskId, "api");
+    assert.ok(itemByPrimary("tests").classList.contains("slash-seeded"));
 
-    // The fresh read repaints the same row actionable.
+    // The fresh read repaints the same row actionable, and the earlier click
+    // never catches up: it queued nothing.
     held.release(TASKS);
     await tick();
+    await tick();
+    assert.equal(fetchCalls.length, 0);
     assert.ok(!itemByPrimary("tests").classList.contains("slash-seeded"));
 
     clickItemRow(itemByPrimary("tests"));
@@ -332,18 +335,20 @@ describe("task pickers paint from the last list, then revalidate", () => {
     openMenu("@../../");
     await tick();
     assert.ok(rows().includes("frontend"));
-    assert.ok(itemByPrimary("frontend").classList.contains("slash-seeded"));
 
     fetchCalls = [];
     clickItemRow(itemByPrimary("frontend"));
     await tick();
 
-    assert.deepEqual(detailReads("frontend"), []);
+    assert.equal(fetchCalls.length, 0);
     assert.ok(dom.slashMenu.classList.contains("active"));
     assert.equal(dom.input.value, "@../../");
+    assert.ok(itemByPrimary("frontend").classList.contains("slash-seeded"));
 
     held.release(TASKS);
     await tick();
+    await tick();
+    assert.equal(fetchCalls.length, 0);
     assert.ok(!itemByPrimary("frontend").classList.contains("slash-seeded"));
 
     clickItemRow(itemByPrimary("frontend"));
@@ -364,21 +369,23 @@ describe("task pickers paint from the last list, then revalidate", () => {
     installTaskAgentId("api", "copilot");
     await tick();
     assert.ok(rows().includes("frontend"));
-    assert.ok(itemByPrimary("frontend").classList.contains("slash-seeded"));
 
     fetchCalls = [];
     clickItemRow(itemByPrimary("frontend"));
     await tick();
 
-    assert.deepEqual(detailReads("frontend"), []);
+    // Still inert after the repaint: the marker rides the retained rows.
+    assert.equal(fetchCalls.length, 0);
     assert.ok(dom.slashMenu.classList.contains("active"));
+    assert.ok(itemByPrimary("frontend").classList.contains("slash-seeded"));
     assert.equal(state.taskId, "api");
 
     // The fresh read no longer offers the target; it is gone, not acted on.
     held.release(TASKS.filter((t) => t.id !== "frontend"));
     await tick();
+    await tick();
     assert.equal(rows().includes("frontend"), false);
-    assert.deepEqual(detailReads("frontend"), []);
+    assert.equal(fetchCalls.length, 0);
     assert.equal(state.taskId, "api");
   });
 
