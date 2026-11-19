@@ -785,28 +785,37 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - terminal startup intents are cleared; retryable intents survive refresh without in-page duplication
 
 - `test/archive.test.ts`
-  - archiving detaches a task and its whole subtree; the default list excludes
-    archived trees, `archived=only` returns them, and `archived=include`
-    returns both
+  - archiving detaches a task and its whole subtree; the store default range is
+    every live task, `archived=exclude` is the active tree, and
+    `archived=only` returns archived trees
   - exactly one `system_message` is written on the detached task and it names
     the original parent path and id; children get no rows
   - a deeper task can be archived out of an archived tree; an archived top is a
     no-op; Root is refused
   - a Root exit leaves archived trees, their structure, and their history intact
+  - empty-task GC detaches children inside an archived tree and still re-parents
+    them under Root outside one
 
 - `test/archive-routes.test.ts`
   - `POST /api/v1/tasks/:id/archive` archives, broadcasts one system message,
-    reports and drops a pending account edge, reports an archived top as a
-    no-op, refuses Root, and 404s an unknown task
-  - the task list filter accepts `archived=exclude|include|only` and rejects an
-    unknown value
+    reports and cuts a pending account edge, reports an archived top as a no-op,
+    refuses Root, and 404s an unknown task
+  - queued deliveries across the cut edge fail with `archived_edge_cut`; a
+    tree-internal delivery stays queued
+  - the task list filter accepts `archived=exclude|include|only`, rejects an
+    unknown value, and marks archived rows
+  - a rename collision with an archived top returns 400, a concurrent
+    out-of-scope send returns 400, and a store failure returns a diagnosable 500
 
 - `test/read-scope.test.ts`
-  - a `read` token reaches the task list, stored history, detail, and snapshot,
-    but is denied every write and undeclared read
-  - read-scope detail and snapshot reads never warm an execution; an api-scope
-    read still warms (control)
-  - the task list and stored history never warm anything for any scope
+  - a `read` token reaches the task list, stored history, detail, status, and
+    permissions (including trailing-slash forms the routes support), but is
+    denied every write and undeclared read, including `/snapshot`
+  - a read-token `/events` returns persisted rows only: no buffer flush, no seq
+    advance, `streaming: false`; an api-token control still flushes
+  - read-scope detail never warms an execution; an api-scope read still warms
+    (control)
+  - the task list never warms anything for any scope
 
 ### Frontend state and UI event flow
 
@@ -1319,6 +1328,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - archived tasks leave `/switch`; Root refuses `/archive`; the `/archive`
     menu lists archived tops and its Enter path reopens one, which stays
     runnable
+  - `@child` still resolves inside the archived tree, and a second client whose
+    `/switch` menu is open drops the archived row on the archive event
 
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and
