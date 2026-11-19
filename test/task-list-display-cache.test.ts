@@ -1,6 +1,7 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
+import { beginTaskTopologyGeneration } from "../public/js/task-topology.ts";
 
 /**
  * The task pickers (`@` and `/switch`) paint from the last task list a read
@@ -34,10 +35,33 @@ const TASKS = [
   task("api", "api", "backend"),
   task("api-unit", "unit", "api"),
   task("tests", "tests", "backend"),
+  // Outside the current Task's scope, so `@` offers it as a navigation row.
+  task("frontend", "frontend", "root"),
+];
+
+const TOKENS = [
+  {
+    name: "one",
+    scope: "api",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    lastUsedAt: null,
+    isSelf: false,
+  },
+  {
+    name: "two",
+    scope: "api",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    lastUsedAt: null,
+    isSelf: false,
+  },
 ];
 
 function okJson(value: unknown): Record<string, unknown> {
-  return { ok: true, text: () => Promise.resolve(JSON.stringify(value)) };
+  return {
+    ok: true,
+    text: () => Promise.resolve(JSON.stringify(value)),
+    json: () => Promise.resolve(value),
+  };
 }
 
 function tick(): Promise<void> {
@@ -74,6 +98,15 @@ describe("task pickers paint from the last list, then revalidate", () => {
     globalThis.fetch = ((url: string) => {
       fetchCalls.push(url);
       if (url === "/api/v1/tasks") return listHandler();
+      if (url === "/api/v1/tokens") return Promise.resolve(okJson(TOKENS));
+      if (url.startsWith("/api/v1/recent-paths")) {
+        return Promise.resolve(
+          okJson([
+            { cwd: "/work/api", last_used_at: "2026-01-01T00:00:00.000Z" },
+            { cwd: "/work/other", last_used_at: "2026-01-02T00:00:00.000Z" },
+          ]),
+        );
+      }
       return Promise.resolve(okJson({}));
     }) as any;
     state.clientId = "cl-cache";
@@ -122,8 +155,35 @@ describe("task pickers paint from the last list, then revalidate", () => {
   }
 
   function selectedRow(): string | null {
-    const row = dom.slashMenu.querySelector(".slash-item.selected");
-    return row?.querySelector(".slash-primary")?.textContent ?? null;
+    return selectedItem()?.querySelector(".slash-primary")?.textContent ?? null;
+  }
+
+  function selectedItem(): any {
+    return dom.slashMenu.querySelector(".slash-item.selected");
+  }
+
+  function selectedPath(): string | null {
+    return selectedItem()?.querySelector(".slash-path")?.textContent ?? null;
+  }
+
+  function itemByPrimary(primary: string): any {
+    return [...dom.slashMenu.querySelectorAll(".slash-item")].find(
+      (row: any) =>
+        row.querySelector(".slash-primary")?.textContent === primary,
+    );
+  }
+
+  /** Dispatch the same mousedown the menu listens for. */
+  function clickItemRow(row: any): void {
+    row.dispatchEvent(
+      new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true }),
+    );
+  }
+
+  function detailReads(taskId: string): string[] {
+    return fetchCalls.filter((url) =>
+      url.startsWith(`/api/v1/tasks/${taskId}`),
+    );
   }
 
   // --- `@` -----------------------------------------------------------------
@@ -226,6 +286,169 @@ describe("task pickers paint from the last list, then revalidate", () => {
     assert.match(dom.slashMenu.textContent, /\(loading\.\.\.\)/);
   });
 
+  // --- a cache-painted row is validated before it acts --------------------
+
+  it("/switch does not act on a cached row the fresh read dropped", async () => {
+    await warmMenu("/switch ");
+    const held = holdList();
+    openMenu("/switch ");
+    await tick();
+    assert.ok(rows().includes("tests"));
+
+    fetchCalls = [];
+    clickItemRow(itemByPrimary("tests"));
+    // The action waits for the read this menu already issued.
+    await tick();
+    assert.deepEqual(detailReads("tests"), []);
+
+    held.release(TASKS.filter((t) => t.id !== "tests"));
+    await tick();
+    await tick();
+
+    assert.match(dom.messages.textContent, /no longer exists: tests/);
+    assert.deepEqual(detailReads("tests"), []);
+    assert.equal(state.taskId, "api");
+  });
+
+  it("/switch acts on a cached row the fresh read still contains", async () => {
+    await warmMenu("/switch ");
+    const held = holdList();
+    openMenu("/switch ");
+    await tick();
+
+    fetchCalls = [];
+    clickItemRow(itemByPrimary("tests"));
+    await tick();
+    assert.deepEqual(detailReads("tests"), []);
+
+    held.release(TASKS);
+    await tick();
+    await tick();
+
+    assert.ok(detailReads("tests").length > 0);
+    assert.doesNotMatch(dom.messages.textContent, /no longer exists/);
+  });
+
+  it("@ does not navigate from a cached row the fresh read dropped", async () => {
+    await warmMenu("@../../");
+    const held = holdList();
+    openMenu("@../../");
+    await tick();
+    assert.ok(rows().includes("frontend"));
+
+    fetchCalls = [];
+    clickItemRow(itemByPrimary("frontend"));
+    await tick();
+    assert.deepEqual(detailReads("frontend"), []);
+
+    held.release(TASKS.filter((t) => t.id !== "frontend"));
+    await tick();
+    await tick();
+
+    assert.match(dom.messages.textContent, /no longer exists: frontend/);
+    assert.deepEqual(detailReads("frontend"), []);
+    assert.equal(state.taskId, "api");
+  });
+
+  it("@ does not act when the validating read fails", async () => {
+    await warmMenu("@../../");
+    let fail!: () => void;
+    listHandler = () =>
+      new Promise((_resolve, reject) => {
+        fail = () => {
+          reject(new Error("read failed"));
+        };
+      });
+    openMenu("@../../");
+    await tick();
+
+    fetchCalls = [];
+    clickItemRow(itemByPrimary("frontend"));
+    await tick();
+    fail();
+    await tick();
+    await tick();
+
+    assert.match(dom.messages.textContent, /task list unavailable/);
+    assert.deepEqual(detailReads("frontend"), []);
+    assert.equal(state.taskId, "api");
+  });
+
+  // --- rows are identified by target, not by label ------------------------
+
+  it("/switch keeps the selected row when two Tasks share a title", async () => {
+    const twins = [
+      { ...task("a", "dup", null), cwd: "/work/a" },
+      { ...task("b", "dup", null), cwd: "/work/b" },
+    ];
+    listHandler = () => Promise.resolve(okJson(twins));
+    await warmMenu("/switch ");
+
+    const held = holdList();
+    openMenu("/switch ");
+    await tick();
+    assert.deepEqual(rows(), ["dup", "dup"]);
+
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    assert.equal(selectedPath(), "/work/b");
+
+    // The fresh snapshot is identical: the second row must stay the row.
+    held.release(twins);
+    await tick();
+
+    assert.equal(selectedPath(), "/work/b");
+  });
+
+  // --- the seed gate matches the dispatch predicate -----------------------
+
+  it("@ paints from the cache when the input has leading whitespace", async () => {
+    await warmMenu("@");
+    const held = holdList();
+
+    openMenu(" @");
+    await tick();
+
+    // Held read: these rows can only come from the cache.
+    assert.ok(rows().includes("unit"));
+    assert.doesNotMatch(dom.slashMenu.textContent, /loading/);
+
+    held.release(TASKS);
+    await tick();
+  });
+
+  // --- nodes without a display cache are untouched ------------------------
+
+  it("a node without a display cache resets the selection on a repaint", async () => {
+    openMenu("/token ");
+    await tick();
+    assert.deepEqual(rows(), ["revoke", "one", "two"]);
+    assert.equal(selectedRow(), "revoke");
+
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    assert.equal(selectedRow(), "one");
+
+    // A topology change repaints the open menu without any input change.
+    beginTaskTopologyGeneration();
+
+    assert.equal(selectedRow(), "revoke");
+  });
+
+  it("+ resets the selection on a same-input repaint", async () => {
+    state.taskCwd = "/work/api";
+    openMenu("+new ");
+    await tick();
+    assert.deepEqual(rows().slice(1, 3), ["/work/api", "/work/other"]);
+
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    assert.equal(selectedRow(), "/work/other");
+
+    openMenu("+new ");
+    await tick();
+
+    assert.equal(selectedRow(), "create 'new'");
+  });
+
   // --- execution keeps reading --------------------------------------------
 
   it("resolving a target on Enter still reads the list", async () => {
@@ -234,6 +457,19 @@ describe("task pickers paint from the last list, then revalidate", () => {
 
     await taskCommand.executeTaskCommand("@does-not-exist");
 
+    assert.deepEqual(fetchCalls, ["/api/v1/tasks"]);
+  });
+
+  it("Enter on a cached target uses the fresh list, not the cache", async () => {
+    // The cache knows `tests`; the fresh read no longer does.
+    await warmMenu("@");
+    listHandler = () =>
+      Promise.resolve(okJson(TASKS.filter((t) => t.id !== "tests")));
+    fetchCalls = [];
+
+    await taskCommand.executeTaskCommand("@tests hello");
+
+    assert.match(dom.messages.textContent, /incomplete or not found: 'tests'/);
     assert.deepEqual(fetchCalls, ["/api/v1/tasks"]);
   });
 });

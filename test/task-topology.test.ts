@@ -372,6 +372,32 @@ describe("task list display cache", () => {
     }
   });
 
+  it("keeps a list whose connection generation was superseded in flight", async () => {
+    let release!: (response: Response) => void;
+    const fetchStub = stubFetch(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    try {
+      const pending = loadTaskList();
+      beginTaskTopologyGeneration();
+      release(new Response(JSON.stringify([task("a", "pi")])));
+      await pending;
+      // The read cannot become this connection's baseline...
+      assert.equal(entryAgentLabel("copilot", "a", "pi"), null);
+      // ...but the pickers still get its rows: the cache's order rule is its
+      // own, and a newer connection has not completed a list yet.
+      assert.deepEqual(
+        peekTaskList()?.map((t) => t.id),
+        ["a"],
+      );
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
   it("keeps the last list when a later read fails", async () => {
     let calls = 0;
     const fetchStub = stubFetch(() => {
