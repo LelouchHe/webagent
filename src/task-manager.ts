@@ -4253,7 +4253,15 @@ export class TaskManager implements ObligationHost {
     const parentId = this.store.getTask(taskId)?.parent_id;
     if (!parentId) return null;
     if (!this.obligations.isOwed(parentId, taskId)) return null;
-    if (!this.store.queuedDeliverySources(taskId).includes(parentId)) {
+    const obligation = this.obligations.getActive(parentId, taskId);
+    // Only the delivery that opened this obligation's current attempt may own
+    // an attempt. An ordinary user message from the same parent is not a
+    // dispatch, even while the record exists.
+    if (
+      !obligation ||
+      this.store.getCollaborationDelivery(obligation.openingDeliveryId)
+        ?.status !== "queued"
+    ) {
       return null;
     }
     this.obligations.beginDispatch(parentId, taskId, promptId);
@@ -4389,7 +4397,15 @@ export class TaskManager implements ObligationHost {
             message.source_task_id,
             taskId,
           );
-          if (obligation) {
+          // Qualification is the current dispatch attempt, not merely "a
+          // record exists": non-terminal, and this row is the attempt's
+          // opening delivery. A settled/unresolved record or an ordinary
+          // parent message never qualifies.
+          if (
+            obligation &&
+            this.obligations.isOwed(message.source_task_id, taskId) &&
+            obligation.openingDeliveryId === delivery.id
+          ) {
             qualifyingSources.add(message.source_task_id);
             qualifyingDeliveryIds.push(delivery.id);
           }
@@ -4446,10 +4462,16 @@ export class TaskManager implements ObligationHost {
         // retry, which requeues and resubmits them under backoff; an immediate
         // idle drain would bypass that budget. A late failure after archive has
         // no edge left to retry, so it must not create an orphan retry entry.
-        const retryEdgeExists = [...qualifyingSources].some(
-          (sourceTaskId) =>
-            this.obligations.getActive(sourceTaskId, taskId) !== undefined,
-        );
+        const retrySource = [...qualifyingSources].at(0);
+        const retryObligation =
+          retrySource !== undefined
+            ? this.obligations.getActive(retrySource, taskId)
+            : undefined;
+        const retryEdgeExists =
+          retryObligation !== undefined &&
+          this.obligations.isOwed(retryObligation.sourceTaskId, taskId) &&
+          retryObligation.attemptId === promptId &&
+          retryObligation.openingDeliveryId === qualifyingDeliveryIds[0];
         if (qualifyingDeliveryIds.length > 0 && retryEdgeExists) {
           this.pendingDispatchRetries.set(taskId, qualifyingDeliveryIds);
         }

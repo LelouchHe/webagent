@@ -134,6 +134,158 @@ describe("TaskManager", () => {
     });
   });
 
+  describe("dispatch retry qualification", () => {
+    function seedEdge() {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      store.createCollaborationMessage({
+        id: "opening",
+        deliveryId: "opening-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+    }
+    function retries(): Map<string, string[]> {
+      return (
+        sm as unknown as { pendingDispatchRetries: Map<string, string[]> }
+      ).pendingDispatchRetries;
+    }
+    function rejectBridge(): void {
+      sm.attachExecutionBridge({
+        async newSession() {
+          return { sessionId: "c-session", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt() {
+          throw new Error("prompt rejected");
+        },
+        isAvailable: () => true,
+      });
+    }
+    async function waitForStatus(id: string, status: string): Promise<void> {
+      for (let i = 0; i < 50; i++) {
+        if (store.getCollaborationDelivery(id)?.status === status) return;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    }
+
+    it("does not retry an ordinary user message on a settled edge", async () => {
+      seedEdge();
+      // Finish the dispatch and settle the edge, leaving a terminal record.
+      (
+        sm as unknown as {
+          obligations: { markDelivered(...args: string[]): void };
+        }
+      ).obligations.markDelivered("parent", "child");
+      const settled = sm.settleAgentUpdate("child", "done", "finished", {
+        promptId: "p",
+        startedAt: Date.now(),
+      });
+      assert.equal(settled.decision.kind, "settle");
+      assert.equal(sm.getObligation("parent", "child")?.state, "settled");
+      const opening = store.claimQueuedDeliveries("child");
+      store.markCollaborationDeliveriesDelivered(
+        opening.map((delivery) => delivery.id),
+      );
+
+      // A normal user message from the same parent is not a dispatch.
+      store.createCollaborationMessage({
+        id: "user-message",
+        deliveryId: "user-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "user",
+        body: "hello",
+      });
+      rejectBridge();
+      await sm.drainCollaborationDeliveries("child");
+      await waitForStatus("user-delivery", "failed");
+
+      assert.equal(
+        store.getCollaborationDelivery("user-delivery")?.failure_reason,
+        "prompt_failed",
+      );
+      assert.equal(retries().has("child"), false);
+
+      sm.archiveTask("child");
+      // The real failure cause is preserved; it was never retryable.
+      assert.equal(
+        store.getCollaborationDelivery("user-delivery")?.failure_reason,
+        "prompt_failed",
+      );
+    });
+
+    it("retries only the opening delivery of an active edge", async () => {
+      seedEdge();
+      store.createCollaborationMessage({
+        id: "user-message",
+        deliveryId: "user-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "user",
+        body: "hello",
+      });
+      rejectBridge();
+      await sm.drainCollaborationDeliveries("child");
+      await waitForStatus("user-delivery", "failed");
+
+      assert.deepEqual(retries().get("child"), ["opening-delivery"]);
+      assert.equal(
+        store.getCollaborationDelivery("user-delivery")?.failure_reason,
+        "prompt_failed",
+      );
+      assert.equal(
+        store.getCollaborationDelivery("opening-delivery")?.failure_reason,
+        "prompt_failed",
+      );
+    });
+
+    it("still retries a failed active dispatch to success", async () => {
+      seedEdge();
+      rejectBridge();
+      await sm.drainCollaborationDeliveries("child");
+      await waitForStatus("opening-delivery", "failed");
+      assert.deepEqual(retries().get("child"), ["opening-delivery"]);
+
+      const obligation = sm.getObligation("parent", "child");
+      assert.ok(obligation);
+      sm.attachExecutionBridge({
+        async newSession() {
+          return { sessionId: "c-session", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt() {},
+        isAvailable: () => true,
+      });
+      sm.retryObligationDispatch(obligation);
+      await waitForStatus("opening-delivery", "delivered");
+      assert.equal(
+        store.getCollaborationDelivery("opening-delivery")?.status,
+        "delivered",
+      );
+      assert.equal(retries().has("child"), false);
+    });
+  });
+
   describe("archive edge cut", () => {
     it("keeps the tree-internal edge but cuts the former-parent edge", () => {
       store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
