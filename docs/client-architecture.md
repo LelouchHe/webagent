@@ -400,6 +400,13 @@ requests, and fallbacks capture it and abandon their result if it moved, so
 work begun under one connection is never applied to the connection that
 replaced it, or to the gap after a disconnect.
 
+A list read is fenced by the archive epoch: a response issued before an
+archive structural fact never becomes the baseline, and `loadTaskList` starts a
+new request instead of reusing that in-flight one. The `/exit` fallback resolves
+the server-named `parentId` against the full topology (so a parent inside an
+archived tree is found); only its ordinary newest-task fallback stays in the
+active tree.
+
 `switchToTask` writes the requested hash before fetching detail, and
 activation (`task_created`) writes it again for the Task it installs; the hash
 is the same for Root as for any Task.

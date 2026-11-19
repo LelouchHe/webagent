@@ -309,6 +309,44 @@ describe("parent reference", () => {
     }
   });
 
+  it("does not reuse a list request issued before an archive", async () => {
+    const resolvers: Array<(response: Response) => void> = [];
+    const fetchStub = stubFetch(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    try {
+      const staleRequest = loadTaskList();
+      assert.equal(resolvers.length, 1);
+      // The SSE archive fact arrives while the old read is in flight.
+      noteTaskArchived("area");
+      const freshRequest = loadTaskList();
+      assert.equal(
+        resolvers.length,
+        2,
+        "a pre-archive read must not satisfy a post-archive read",
+      );
+      assert.notEqual(freshRequest, staleRequest);
+
+      resolvers[0](new Response(JSON.stringify([task("area", "pi")])));
+      await tick();
+      resolvers[1](new Response(JSON.stringify([task("root", "pi")])));
+      const [stale, fresh] = await Promise.all([staleRequest, freshRequest]);
+      assert.deepEqual(
+        stale.map((entry) => entry.id),
+        ["area"],
+      );
+      assert.deepEqual(
+        fresh.map((entry) => entry.id),
+        ["root"],
+      );
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
   it("shares one list request per generation", async () => {
     let calls = 0;
     const fetchStub = stubFetch(() => {

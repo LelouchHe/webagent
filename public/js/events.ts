@@ -296,17 +296,22 @@ async function fallbackToNextTaskImpl(
   state.taskSwitchGen++;
   const gen = state.taskSwitchGen;
   try {
-    const tasks = (await loadTaskList()).filter((task) => !task.archived);
+    const allTasks = await loadTaskList();
     if (
       gen !== state.taskSwitchGen ||
       connectionEpoch !== state.connectionEpoch
     ) {
       return;
     }
+    // The server can name an archived parent (exiting a task inside an
+    // archived tree). Look it up in the full topology; only the ordinary
+    // fallback stays in the active tree.
+    const preferred = preferredTaskId
+      ? allTasks.find((s) => s.id === preferredTaskId)
+      : undefined;
     const next =
-      (preferredTaskId
-        ? tasks.find((s) => s.id === preferredTaskId)
-        : undefined) ?? tasks.find((s) => s.id !== expiredId);
+      preferred ??
+      allTasks.filter((task) => !task.archived).find((s) => s.id !== expiredId);
     if (next) {
       resetTaskUI();
       state.taskId = next.id;

@@ -2031,6 +2031,61 @@ describe("events", () => {
         );
       });
 
+      it("prefers a server-named archived parent when leaving an archived tree", async () => {
+        state.taskId = "archived-child";
+        const archivedParent = {
+          id: "archived-parent",
+          cwd: "/tmp",
+          title: "Archived parent",
+          configOptions: [],
+          busyKind: null,
+        };
+        setFetch(async (url: string, init?: any) => {
+          if (
+            url.split("?")[0] === "/api/v1/tasks" &&
+            (!init?.method || init.method === "GET")
+          )
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify([
+                  { id: "mru", archived: false },
+                  { id: "archived-parent", archived: true },
+                ]),
+            };
+          if (url === "/api/v1/tasks/archived-parent")
+            return {
+              ok: true,
+              text: async () => JSON.stringify(archivedParent),
+            };
+          if (url.startsWith("/api/v1/tasks/archived-parent/events"))
+            return { ok: true, text: async () => "[]" };
+          if (url === "/api/v1/tasks/archived-parent/snapshot")
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify({
+                  version: 1,
+                  seq: 0,
+                  task: {},
+                  runtime: { busy: null },
+                }),
+            };
+          return { ok: true, text: async () => "{}" };
+        });
+
+        events.handleEvent({
+          type: "task_deleted",
+          taskId: "archived-child",
+          parentId: "archived-parent",
+        });
+        for (let i = 0; i < 30; i++) await Promise.resolve();
+
+        // The server named an archived parent; lookup uses the full topology,
+        // while the ordinary fallback would still skip archived rows.
+        assert.equal(state.taskId, "archived-parent");
+      });
+
       it("follows the old Root's deletion to the Root that replaced it", async () => {
         const NEW_ROOT_ID = "9a1d3c6e-2f4b-4e8a-b7c5-0d2e4f6a8b1c";
         state.taskId = ROOT_ID;

@@ -59,8 +59,12 @@ let generation = 0;
 let listLoaded = false;
 let viewedTaskId: string | null = null;
 let parentRef: ParentRef | null = null;
-let pending: { generation: number; promise: Promise<TaskSummary[]> } | null =
-  null;
+let pending: {
+  generation: number;
+  /** The archive epoch the request was issued under. */
+  epoch: number;
+  promise: Promise<TaskSummary[]>;
+} | null = null;
 /**
  * Read order within one generation. Two reads can be in flight — the startup
  * one and the one the stream handshake forces — and the older response must
@@ -350,13 +354,20 @@ async function resolveParentFromDetail(
  */
 function startTaskListRequest(): {
   generation: number;
+  epoch: number;
   promise: Promise<TaskSummary[]>;
 } {
   const requestGeneration = generation;
+  // A response issued before the latest structural fact (archive) cannot speak
+  // for the collection, even if it arrives later: it must not become the
+  // baseline, and a caller that needs the current topology must not be handed
+  // it. The epoch check covers both.
+  const requestEpoch = listEpoch;
   const seq = ++listRequestSeq;
   const promise = api.listTasks().then((tasks) => {
     if (
       requestGeneration === generation &&
+      requestEpoch === listEpoch &&
       seq > listAppliedSeq &&
       seq >= listRequiredSeq
     ) {
@@ -367,7 +378,7 @@ function startTaskListRequest(): {
     }
     return tasks;
   });
-  return { generation: requestGeneration, promise };
+  return { generation: requestGeneration, epoch: requestEpoch, promise };
 }
 
 /**
@@ -377,7 +388,7 @@ function startTaskListRequest(): {
  * only feeds the row-label flag here; the parent reference never comes from it.
  */
 export async function loadTaskList(): Promise<TaskSummary[]> {
-  if (pending?.generation === generation) {
+  if (pending?.generation === generation && pending.epoch === listEpoch) {
     return pending.promise;
   }
   const request = startTaskListRequest();
