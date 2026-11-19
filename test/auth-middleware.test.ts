@@ -230,6 +230,12 @@ describe("auth-middleware", () => {
         isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/events"),
         true,
       );
+      // The events route does not accept a trailing slash, so neither does the
+      // read allowlist.
+      assert.equal(
+        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/events/"),
+        false,
+      );
     });
 
     it("allows task detail and the in-memory runtime reads", () => {

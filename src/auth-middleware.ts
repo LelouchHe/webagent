@@ -112,8 +112,11 @@ const READ_SCOPE_PATHS: readonly WhitelistEntry[] = [
   { method: "GET", test: (p) => /^\/api\/v1\/tasks\/[^/]+\/?$/.test(p) },
   {
     method: "GET",
-    test: (p) =>
-      /^\/api\/v1\/tasks\/[^/]+\/(events|status|permissions)\/?$/.test(p),
+    test: (p) => /^\/api\/v1\/tasks\/[^/]+\/events$/.test(p),
+  },
+  {
+    method: "GET",
+    test: (p) => /^\/api\/v1\/tasks\/[^/]+\/(status|permissions)\/?$/.test(p),
   },
 ];
 
