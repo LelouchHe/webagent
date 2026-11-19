@@ -183,6 +183,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - entry labels are baseline-relative to the current task (same agent → none,
     other agent → its id, no baseline → all); a null binding never prints one
   - concurrent list callers in one generation share one request
+  - an archive epoch bump after a list request started keeps the old response
+    from satisfying a post-archive read; the new read issues its own request
+    (SSE-first, old-response-late race)
   - the baseline taken after the stream handshake supersedes an in-flight
     startup read, so a task created while the stream was registering is live
     rather than exited (`test/connection.test.ts` drives the real connect)
@@ -779,6 +782,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - hashless startup preserves user-input-first selection and canonical Root fallback
   - Root is addressed by its own `#<id>` deep link like every task, and stays active across a reconnect, including one whose config request fails
   - an SSE `task_deleted` for the current (old) Root follows its `replacedBy` to the new Root even when another task is more recently active (`test/events.test.ts`)
+  - a server-named archived parent is resolved in the full topology, while the ordinary fallback still skips archived rows
   - foreign `root-*` ids are ordinary 404s and never aliases; fallback selection uses the current connection's scoped task array
   - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
   - existing-window and cold-start service-worker routing
@@ -795,6 +799,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a Root exit leaves archived trees, their structure, and their history intact
   - empty-task GC detaches children inside an archived tree and still re-parents
     them under Root outside one
+  - detach, transcript, and delivery marks roll back together when a delivery
+    write fails; a retry then commits all of them
+  - queued work between the archived subtree and anything outside it is cut in
+    both directions, tree-internal work is untouched, and only
+    failed/prompt_failed rows held for retry are included
 
 - `test/archive-routes.test.ts`
   - `POST /api/v1/tasks/:id/archive` archives, broadcasts one system message,
@@ -804,8 +813,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     tree-internal delivery stays queued
   - the task list filter accepts `archived=exclude|include|only`, rejects an
     unknown value, and marks archived rows
-  - a rename collision with an archived top returns 400, a concurrent
-    out-of-scope send returns 400, and a store failure returns a diagnosable 500
+  - a rename collision inside an archived tree returns 400, a concurrent
+    out-of-scope send returns 400, a lineage invariant failure stays 500, and a
+    store failure returns a diagnosable 500
 
 - `test/task-manager.test.ts` (archive edge)
   - cutting the former-parent edge keeps the task own child edge; a later
@@ -813,6 +823,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     deliver an account to the parent the task left
   - a queued delivery across the cut edge is not drained, and a closing
     reminder that loses the edge while resuming abandons before submitting
+  - a draining delivery is left alone and finishes delivered after archive; a
+    retry-waiting delivery is marked and removed from the in-memory retry map
 
 - `test/read-scope.test.ts`
   - a `read` token reaches the task list, stored history, detail, status, and
@@ -823,6 +835,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - read-scope detail never warms an execution; an api-scope read still warms
     (control)
   - the task list never warms anything for any scope
+  - a read-token detail does not persist legacy model canonicalization; an api
+    read keeps the write-back (control)
 
 ### Frontend state and UI event flow
 
