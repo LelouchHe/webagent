@@ -590,10 +590,10 @@ above:
 - One rule decides its order: a read may replace it only if it was issued after
   the read that produced the current entry, so a late response cannot overwrite
   a newer list. A failed read leaves the previous one in place.
-- Actions never read it. Enter on an `@` target and every execution path call
-  `loadTaskList()` themselves, and a clicked row that was painted from the
-  cache waits for the menu's own fresh read and runs only if its Task is still
-  in that result.
+- Actions never read it, and rows painted from it are inert. A menu row built
+  from the cache carries its own `seeded` marker and performs no action until
+  the menu's own read replaces it; Enter on an `@` target and every execution
+  path call `loadTaskList()` themselves.
 
 ---
 

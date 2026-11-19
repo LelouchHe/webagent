@@ -206,9 +206,15 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the fresh read repaints the open menu, and the row the user moved to in
     between stays selected — including two Tasks that share a title, which stay
     distinct because a row is identified by its Task id, not its label
-  - a click on a cache-painted row waits for that read and runs only when the
-    Task is still in it; a Task the fresh payload dropped (or a read that
-    fails) reports inline and leaves the current Task untouched
+  - a row painted from that cache is display-only: clicking it on `/switch` and
+    on an `@` navigation row does nothing (menu open, input untouched, no
+    request) until the fresh read repaints the row, which then acts
+  - a same-input repaint that retains cache-painted rows keeps them inert, and
+    a fresh payload that dropped the target simply removes the row
+  - Enter submits the typed input, whose execution path reads the list itself,
+    so it waits for the held read instead of resolving against the cache
+  - a node that is not opted in and the `+` picker never mark rows seeded and
+    keep acting as before
   - the `@` seed uses the same predicate dispatch does, so a leading-whitespace
     ` @` paints from the cache too
   - nodes without a display cache (`/token` rows) and the `+` picker keep their
@@ -1313,11 +1319,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a second `/switch` open paints the previously fetched list while its task
     read is held, and the row that read carries but the cache did not appears
     once it is released
+  - a seeded `/switch` row is marked and inert (click leaves the menu open and
+    the task unchanged) and switches only after the fresh read repaints it
 
 - `slash-menu-at-picker.spec.ts`
   - a second `@` open paints the previously fetched list while its task read is
     held, and the sibling the held read carries but the cache did not appears
-    once it is released
+    once it is released (the test awaits the intercepted request before
+    asserting how many reads this open issued)
 
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and
