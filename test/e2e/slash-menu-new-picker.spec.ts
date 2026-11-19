@@ -1,4 +1,4 @@
-import { test, expect } from "playwright/test";
+import { test, expect, type Page } from "playwright/test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -123,6 +123,83 @@ test("/new picker leads with the action row and marks the current cwd first", as
   await expect(page.locator("#messages")).toContainText("Creating new task…");
   await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
   expect(await readTaskCwd(page, await currentTaskId(page))).toBe(parentCwd);
+});
+
+/**
+ * Hold every recent-paths read so the menu can only paint what it already
+ * has, then answer it with one extra path. Nothing in the held window can come
+ * from the network, and the extra row can only come from the released read.
+ */
+async function holdRecentPathReads(page: Page): Promise<{
+  readStarted: Promise<void>;
+  release: () => void;
+  restore: () => Promise<void>;
+}> {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let markReadStarted!: () => void;
+  const readStarted = new Promise<void>((resolve) => {
+    markReadStarted = resolve;
+  });
+  const pattern = "**/api/v1/recent-paths*";
+  await page.route(pattern, async (route) => {
+    markReadStarted();
+    // Fetch the real answer now; hold only the delivery.
+    const original = await route.fetch();
+    await held;
+    await route.fulfill({
+      response: original,
+      json: [
+        {
+          cwd: "/tmp/e2e-fresh-recent",
+          cwdDisplay: "/tmp/e2e-fresh-recent",
+          last_used_at: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+  });
+  return {
+    readStarted,
+    release: () => release(),
+    restore: async () => {
+      release();
+      await page.waitForTimeout(100);
+      await page.unroute(pattern);
+    },
+  };
+}
+
+test("/new paints the last recent paths before its own read returns", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  const parentCwdDisplay = (await readStatusBarCwd(page)).replace(/\/$/, "");
+
+  // Warm the shared list with one fully resolved open, then close.
+  const menu = page.locator("#slash-menu.active");
+  await page.locator("#input").fill("/new ");
+  await expect(menu).toContainText(parentCwdDisplay);
+  await page.locator("#input").fill("");
+  await expect(page.locator("#slash-menu.active")).toHaveCount(0);
+
+  const held = await holdRecentPathReads(page);
+  try {
+    await page.locator("#input").fill("/new ");
+    // The read is still held: the cwd row can only come from the last list.
+    await expect(menu).toContainText(parentCwdDisplay);
+    await expect(menu).not.toContainText("(loading...)");
+    await held.readStarted;
+    await expect(menu).not.toContainText("e2e-fresh-recent");
+
+    // Revalidation repaints from that read.
+    held.release();
+    await expect(menu).toContainText("e2e-fresh-recent");
+    await expect(menu).toContainText(parentCwdDisplay);
+  } finally {
+    await held.restore();
+  }
 });
 
 test("/new previews a typed path without ambiguity", async ({ page }) => {

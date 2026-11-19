@@ -85,12 +85,20 @@ placeholder, or the menu closes — and starting one stops everything the
 previous scope watched. A watch registers its own stop at the moment it starts,
 so the code that ends a scope never needs to know what was watched.
 
-Only the task pickers use it today: `/switch` returns the shared
-`taskListSource` from `task-topology.ts`, and `@` returns rows derived from it
-(`deriveLive`). That source shows the last list a read resolved with and
-refreshes when a watch starts, so an already-visited picker paints at once and
-repaints when the fresh read lands. Every other node keeps its one-shot
-`fetch`. A repaint selects the first selectable row, like any other rebuild.
+The pickers use it today: `/switch` returns the shared `taskListSource` from
+`task-topology.ts`, and `@` returns rows derived from it (`deriveLive`). The
+recent-paths entries (`/clear`, `/new`, and the `+` cwd rows) share one
+`refreshingSource(listRecentPaths)` from `slash-commands.ts`, so a second open
+paints the last list at once instead of waiting a round trip on
+`(loading...)`. `refreshingSource` shows the last value a load resolved with
+and loads when a watch starts, but only when no load is already in flight, so
+a later watch joins the running one and two loads never overlap. A failure is
+shown only while there is no value; after a successful read it keeps the
+value. `/new` and `+` still lead with their own cwd row, and
+treat a recent-paths failure as no recents (`errorsAsEmpty`), exactly as their
+old `catch` did. `+` keeps directory listings one-shot: only the no-cwd
+recent-paths branch is live. Every other node keeps its one-shot `fetch`. A
+repaint selects the first selectable row, like any other rebuild.
 
 ## FieldView — a node's own argument field
 

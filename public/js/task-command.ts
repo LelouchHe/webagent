@@ -24,9 +24,14 @@ import {
 import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
 import { loadTaskList, taskListSource } from "./task-topology.ts";
-import { deriveLive, type LiveSource } from "./live-source.ts";
+import {
+  deriveLive,
+  errorsAsEmpty,
+  isLiveSource,
+  type LiveSource,
+} from "./live-source.ts";
 import { setInputValue, state } from "./state.ts";
-import { listRecentPaths } from "./slash-commands.ts";
+import { recentPathsSource } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
 import { isTaskCommand } from "./input-command.ts";
 import { addSystem } from "./render.ts";
@@ -352,38 +357,39 @@ function bareCreateCandidates(): Candidate[] {
 
 /**
  * cwd rows for `+`: the current cwd plus recents when no cwd is typed yet, or
- * the real directory layer to drill into once a prefix is present.
+ * the real directory layer to drill into once a prefix is present. The recents
+ * are a live source, so a picker paints the last list and follows the refresh;
+ * a directory listing stays a one-shot read.
  */
-async function buildCreateCwdCandidates(
+function buildCreateCwdCandidates(
   title: string,
   rawCwd: string,
   /** `<agent>:` to keep glued to every fill, so completing a path after a
    *  settled coordinate never drops the chosen agent. */
   coordinatePrefix = "",
-): Promise<Candidate[]> {
+): Promise<Candidate[]> | LiveSource<Candidate[]> {
   const titleWord = quoteShellWord(title);
   const base = state.taskCwd ?? "";
 
   if (rawCwd === "") {
-    const candidates: Candidate[] = [];
     const display = state.taskCwdDisplay ?? base;
-    if (base) {
-      candidates.push({
-        spec: {
-          primary: display,
-          current: true,
-          fill: `+${titleWord} ${coordinatePrefix}${display}`,
-          continueOnFill: true,
-        },
-        prefix: "*",
-        kind: "data",
-      });
-    }
-    try {
-      const recents = await listRecentPaths();
+    return deriveLive(errorsAsEmpty(recentPathsSource), (recents) => {
+      const rows: Candidate[] = [];
+      if (base) {
+        rows.push({
+          spec: {
+            primary: display,
+            current: true,
+            fill: `+${titleWord} ${coordinatePrefix}${display}`,
+            continueOnFill: true,
+          },
+          prefix: "*",
+          kind: "data",
+        });
+      }
       for (const p of recents) {
         if (p.cwd.toLowerCase() === base.toLowerCase()) continue;
-        candidates.push({
+        rows.push({
           spec: {
             primary: p.cwdDisplay,
             fill: `+${titleWord} ${coordinatePrefix}${p.cwdDisplay}`,
@@ -393,12 +399,20 @@ async function buildCreateCwdCandidates(
           kind: "data",
         });
       }
-    } catch {
-      // Recent paths unavailable; the current cwd row still stands.
-    }
-    return candidates;
+      return rows;
+    });
   }
 
+  return listCreateDirectories(titleWord, rawCwd, base, coordinatePrefix);
+}
+
+/** The directory layer for a typed cwd prefix; never cached. */
+async function listCreateDirectories(
+  titleWord: string,
+  rawCwd: string,
+  base: string,
+  coordinatePrefix: string,
+): Promise<Candidate[]> {
   let directory: string;
   let filter: string;
   try {
@@ -442,11 +456,11 @@ async function buildCreateCwdCandidates(
     }));
 }
 
-async function buildCreateCandidates(parsed: {
+function buildCreateCandidates(parsed: {
   marker: string;
   target: string;
   remainder: string;
-}): Promise<Candidate[]> {
+}): Candidate[] | Promise<Candidate[]> | LiveSource<Candidate[]> {
   const title = parsed.target;
   if (title.trim() === "") return bareCreateCandidates();
 
@@ -502,20 +516,27 @@ async function buildCreateCandidates(parsed: {
   // every fill re-states `<agent>:` instead of dropping it.
   const pathInput =
     coordinate.agentId === null ? rawCwd.trim() : coordinate.cwd;
-  const cwdCandidates = await buildCreateCwdCandidates(
+  const cwdCandidates = buildCreateCwdCandidates(
     title,
     pathInput,
     coordinatePrefix,
   );
-  if (cwdCandidates.length > 0) {
-    candidates.push({ spec: { primary: "" }, prefix: "", kind: "separator" });
-    candidates.push(...cwdCandidates);
+  const withCwdRows = (rows: Candidate[]): Candidate[] => {
+    const built = [...candidates];
+    if (rows.length > 0) {
+      built.push({ spec: { primary: "" }, prefix: "", kind: "separator" });
+      built.push(...rows);
+    }
+    // The menu ends with the one-line hint: agents are typed, paths are
+    // completed, and no agent row is ever offered.
+    const hint = agentHintRow(rawCwd, configuredAgentIds(), state.taskAgentId);
+    if (hint !== null) built.push(hint);
+    return built;
+  };
+  if (isLiveSource<Candidate[]>(cwdCandidates)) {
+    return deriveLive(cwdCandidates, withCwdRows);
   }
-  // The menu ends with the one-line hint: agents are typed, paths are
-  // completed, and no agent row is ever offered.
-  const hint = agentHintRow(rawCwd, configuredAgentIds(), state.taskAgentId);
-  if (hint !== null) candidates.push(hint);
-  return candidates;
+  return cwdCandidates.then(withCwdRows);
 }
 
 /** Resolve one submitted @ target using the full Task path semantics. */

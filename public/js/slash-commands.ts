@@ -67,6 +67,12 @@ import {
   viewItemMatches,
   viewItemSpec,
 } from "./view-command.ts";
+import {
+  deriveLive,
+  errorsAsEmpty,
+  refreshingSource,
+  type LiveSource,
+} from "./live-source.ts";
 
 // --- shared helpers used by onSelect handlers ---
 
@@ -154,6 +160,19 @@ export async function listRecentPaths(): Promise<PathItem[]> {
     cwdDisplay: p.cwdDisplay ?? p.cwd,
     time: formatLocalTime(p.last_used_at),
   }));
+}
+
+/**
+ * The last recent-paths list a read resolved with, shared by `/clear`, `/new`
+ * and `+`: a picker opened again paints it at once and repaints when the fresh
+ * read lands instead of waiting a round trip with `(loading...)`.
+ */
+export let recentPathsSource: LiveSource<PathItem[]> =
+  refreshingSource(listRecentPaths);
+
+/** Test seam: a cold source between test cases. */
+export function resetRecentPathsSourceForTest(): void {
+  recentPathsSource = refreshingSource(listRecentPaths);
 }
 
 const listInbox = async (): Promise<api.InboxMessage[]> => {
@@ -528,7 +547,7 @@ export const ROOT: CmdNode = {
       name: "/clear",
       desc: "Clear context",
       help: "Clear context; history stays.",
-      fetch: listRecentPaths,
+      fetch: () => recentPathsSource,
       field: (rawRemainder) => pathFieldView(rawRemainder, clearToPath),
       toSpec: (item: unknown) => {
         const p = item as PathItem;
@@ -712,27 +731,24 @@ export const ROOT: CmdNode = {
       name: "/new",
       desc: "Create a child task",
       field: (rawRemainder) => pathFieldView(rawRemainder, createAtPath),
-      fetch: async () => {
-        const base = state.taskCwd ?? "";
-        const items: PathItem[] = [];
-        if (base) {
-          items.push({
-            cwd: base,
-            cwdDisplay: state.taskCwdDisplay ?? base,
-            time: "",
-          });
-        }
-        try {
-          for (const p of await listRecentPaths()) {
+      fetch: () =>
+        deriveLive(errorsAsEmpty(recentPathsSource), (recents) => {
+          const base = state.taskCwd ?? "";
+          const items: PathItem[] = [];
+          if (base) {
+            items.push({
+              cwd: base,
+              cwdDisplay: state.taskCwdDisplay ?? base,
+              time: "",
+            });
+          }
+          for (const p of recents) {
             if (base !== "" && p.cwd.toLowerCase() === base.toLowerCase())
               continue;
             items.push(p);
           }
-        } catch {
-          // Recent paths unavailable; the current cwd row still stands.
-        }
-        return items;
-      },
+          return items;
+        }),
       toSpec: (item: unknown) => {
         const p = item as PathItem;
         const currentCwd = state.taskCwd;
