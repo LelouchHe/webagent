@@ -261,22 +261,25 @@ describe("POST /api/v1/tasks/:id/archive", () => {
     assert.equal(res.status, 404);
   });
 
-  it("rejects a rename collision with an archived top", async () => {
+  it("rejects a rename collision with a sibling inside an archived tree", async () => {
+    store.createTask("work2", dir, "auto", "agent-a", "work2-session", "area", {
+      title: "work2",
+    });
     await req(port, "POST", "/api/v1/tasks/area/archive", apiToken);
-    await req(port, "POST", "/api/v1/tasks/work/archive", apiToken);
-    // Both tasks are now parentless archived tops. The partial unique index is
-    // on (parent_id, title), so `area` collides even though the renamed task's
-    // parent is null; the route must answer 400 without hitting the DB error.
+    // `work` and `work2` are still siblings under the archived top. Their
+    // parent is non-null, so the partial unique index really does reject the
+    // rename; the pre-check must see the archived sibling and answer 400
+    // without reaching the DB error.
     const res = await req(
       port,
       "PUT",
-      "/api/v1/tasks/work/title",
+      "/api/v1/tasks/work2/title",
       apiToken,
-      JSON.stringify({ value: "area" }),
+      JSON.stringify({ value: "work" }),
     );
     assert.equal(res.status, 400, res.body);
     assert.match(res.body, /already has that title/);
-    assert.equal(store.getTask("work")?.title, "work");
+    assert.equal(store.getTask("work2")?.title, "work2");
   });
 
   it("reports a concurrent out-of-scope send as 4xx, not 500", async () => {

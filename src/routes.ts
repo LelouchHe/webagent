@@ -2210,10 +2210,10 @@ export function createRequestHandler(
           return;
         }
         if (
+          task.parent_id !== null &&
           store
             // Rename collisions are a storage constraint across the whole
-            // sibling set, archived trees and parentless archived tops
-            // included.
+            // sibling set, including siblings inside an archived tree.
             .listTasks({ archived: "include" })
             .some(
               (live) =>
