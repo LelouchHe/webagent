@@ -76,6 +76,8 @@ let listAppliedSeq = 0;
  * claim that a task created during registration does not exist.
  */
 let listRequiredSeq = 0;
+/** Bumped by facts that change tree membership or a task's parent link. */
+let listEpoch = 0;
 
 const changeListeners: (() => void)[] = [];
 
@@ -137,14 +139,21 @@ export function setCurrentTask(taskId: string | null, hint?: ParentHint): void {
 }
 
 /**
- * A structural change (archive) removed the current task's parent. Unlike an
- * activation hint, this is an explicit fact about an already-settled reference,
- * so it overwrites `known` with `none` without a request.
+ * An archive detached `taskId` from its parent. Every client that learns the
+ * fact — the initiator and any other client receiving the `task_archive`
+ * system message — settles the parent reference (only when it is the viewed
+ * task) and invalidates cached task-list views (`/switch`). The epoch bump is
+ * what lets an open menu refetch instead of serving pre-archive rows.
  */
-export function noteParentCleared(taskId: string): void {
-  if (viewedTaskId !== taskId) return;
-  parentRef = { taskId, status: "none" };
+export function noteTaskArchived(taskId: string): void {
+  if (viewedTaskId === taskId) parentRef = { taskId, status: "none" };
+  listEpoch += 1;
   notifyChange();
+}
+
+/** Monotonic fact counter for archive-driven list invalidation. */
+export function taskListEpoch(): number {
+  return listEpoch;
 }
 
 function settleHint(taskId: string, hint: ParentHint): ParentRef {
@@ -440,5 +449,6 @@ export function resetTaskTopologyForTest(): void {
   listRequestSeq = 0;
   listAppliedSeq = 0;
   listRequiredSeq = 0;
+  listEpoch = 0;
   resetTaskRefMarks();
 }

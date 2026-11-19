@@ -344,7 +344,8 @@ async function resumeFromTaskList(
   isCurrent: () => boolean,
 ): Promise<boolean> {
   try {
-    const tasks = await loadTaskList();
+    // Startup lands in the active tree; archived trees are reached explicitly.
+    const tasks = (await loadTaskList()).filter((task) => !task.archived);
     if (!isCurrent()) return true;
     if (tasks.length === 0) return false;
 

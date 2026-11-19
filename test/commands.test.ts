@@ -76,7 +76,7 @@ describe("commands", () => {
   describe("handleSlashCommand", () => {
     it("creates a new task using the provided cwd", async () => {
       setFetch((url, init) => {
-        if (url === "/api/v1/tasks" && !init?.method) {
+        if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
           return { ok: true, text: async () => '[{"id":"current-task"}]' };
         }
         if (url.startsWith("/api/v1/files/info?")) {
@@ -103,7 +103,8 @@ describe("commands", () => {
       assert.equal(state.taskId, "new-1");
       // requestNewTask now uses REST POST /api/v1/tasks
       const createCall = fetchCalls.find(
-        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+        (c) =>
+          c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
       );
       assert.ok(createCall, "expected POST /api/v1/tasks");
       const body = JSON.parse(createCall.init.body);
@@ -131,7 +132,8 @@ describe("commands", () => {
 
       assert.equal(handled, true);
       const createCall = fetchCalls.find(
-        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+        (c) =>
+          c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
       );
       assert.ok(createCall, "expected POST /api/v1/tasks");
       const body = JSON.parse(createCall.init.body);
@@ -149,7 +151,7 @@ describe("commands", () => {
 
     it("resolves a relative /new cwd against the current task cwd", async () => {
       setFetch((url, init) => {
-        if (url === "/api/v1/tasks" && !init?.method) {
+        if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
           return { ok: true, text: async () => '[{"id":"current-task"}]' };
         }
         if (url.startsWith("/api/v1/files/info?")) {
@@ -178,7 +180,8 @@ describe("commands", () => {
         `expected the task-cwd probe, got: ${JSON.stringify(fetchCalls.map((c) => c.url))}`,
       );
       const createCall = fetchCalls.find(
-        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+        (c) =>
+          c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
       );
       assert.ok(createCall, "expected POST /api/v1/tasks");
       assert.equal(
@@ -190,7 +193,7 @@ describe("commands", () => {
 
     it("reports a missing /new cwd instead of sending it to the server", async () => {
       setFetch((url, init) => {
-        if (url === "/api/v1/tasks" && !init?.method) {
+        if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
           return { ok: true, text: async () => '[{"id":"current-task"}]' };
         }
         if (url.startsWith("/api/v1/files/info?")) {
@@ -216,7 +219,9 @@ describe("commands", () => {
       );
       assert.equal(
         fetchCalls.some(
-          (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+          (c) =>
+            c.url.split("?")[0] === "/api/v1/tasks" &&
+            c.init?.method === "POST",
         ),
         false,
         "a missing cwd must not reach the create endpoint",
@@ -229,7 +234,7 @@ describe("commands", () => {
         releaseInfo = resolve;
       });
       setFetch(async (url, init) => {
-        if (url === "/api/v1/tasks" && !init?.method) {
+        if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
           return { ok: true, text: async () => '[{"id":"A"}]' };
         }
         if (url.startsWith("/api/v1/files/info?")) {
@@ -254,7 +259,8 @@ describe("commands", () => {
       await pending;
 
       const createCall = fetchCalls.find(
-        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+        (c) =>
+          c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
       );
       assert.ok(createCall, "expected POST /api/v1/tasks");
       const body = JSON.parse(createCall.init.body);
@@ -277,7 +283,7 @@ describe("commands", () => {
         releaseInfo = resolve;
       });
       setFetch(async (url, init) => {
-        if (url === "/api/v1/tasks" && !init?.method) {
+        if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
           // The launching task was deleted while the probe was pending.
           return { ok: true, text: async () => "[]" };
         }
@@ -321,7 +327,9 @@ describe("commands", () => {
       assert.equal(state.pendingNewTaskOpId, null);
       assert.equal(
         fetchCalls.some(
-          (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+          (c) =>
+            c.url.split("?")[0] === "/api/v1/tasks" &&
+            c.init?.method === "POST",
         ),
         false,
         "a deleted launching task must not reach the create endpoint",
@@ -342,7 +350,7 @@ describe("commands", () => {
             json: async () => ({ error: "not found" }),
           };
         }
-        if (url === "/api/v1/tasks" && !init?.method) {
+        if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
           listRequested = true;
           await listGate;
           return { ok: true, text: async () => "[]" };
@@ -533,7 +541,10 @@ describe("commands", () => {
             text: async () => json,
           };
         };
-        if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
+        if (
+          url.split("?")[0] === "/api/v1/tasks" &&
+          (!init?.method || init.method === "GET")
+        )
           return body(taskList);
         if (url === "/api/v1/tasks/current" && init?.method === "DELETE") {
           // The request row must already be visible while the delete is in
@@ -600,7 +611,10 @@ describe("commands", () => {
             text: async () => json,
           };
         };
-        if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
+        if (
+          url.split("?")[0] === "/api/v1/tasks" &&
+          (!init?.method || init.method === "GET")
+        )
           return body(taskList);
         if (url === "/api/v1/tasks/current" && init?.method === "DELETE")
           return body({
@@ -662,7 +676,10 @@ describe("commands", () => {
             text: async () => json,
           };
         };
-        if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
+        if (
+          url.split("?")[0] === "/api/v1/tasks" &&
+          (!init?.method || init.method === "GET")
+        )
           return body(taskList);
         if (url === "/api/v1/tasks/current" && init?.method === "DELETE")
           return body({});
@@ -720,7 +737,10 @@ describe("commands", () => {
         };
         // A more recently active task is listed first: the exit must still
         // land on the replacement Root it was told about, not on that one.
-        if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
+        if (
+          url.split("?")[0] === "/api/v1/tasks" &&
+          (!init?.method || init.method === "GET")
+        )
           return body([
             { id: "recent-other", title: "other", isRoot: false },
             { id: NEW_ROOT_ID, title: "root", isRoot: true },
@@ -766,14 +786,14 @@ describe("commands", () => {
           };
         };
         if (
-          url === "/api/v1/tasks" &&
+          url.split("?")[0] === "/api/v1/tasks" &&
           (!init?.method || init.method === "GET")
         ) {
           return body([{ id: "only-one", title: "Only Task" }]);
         }
         if (url === "/api/v1/tasks/only-one" && init?.method === "DELETE")
           return body({});
-        if (url === "/api/v1/tasks" && init?.method === "POST")
+        if (url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST")
           return body({ id: "new-1" });
         return body({});
       });
@@ -1031,7 +1051,7 @@ describe("commands", () => {
         },
       ];
       setFetch(async (url: string) => {
-        if (url === "/api/v1/tasks") {
+        if (url.split("?")[0] === "/api/v1/tasks") {
           const tasks = [{ id: "target-1", title: "Target Task" }];
           return {
             ok: true,
@@ -1084,7 +1104,7 @@ describe("commands", () => {
 
       assert.equal(handled, true);
       assert.ok(
-        fetchCalls.some((c) => c.url === "/api/v1/tasks"),
+        fetchCalls.some((c) => c.url.split("?")[0] === "/api/v1/tasks"),
         "should list tasks",
       );
       assert.ok(

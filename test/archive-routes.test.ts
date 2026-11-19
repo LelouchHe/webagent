@@ -20,6 +20,7 @@ function req(
   method: string,
   path: string,
   token?: string,
+  body?: string,
 ): Promise<Resp> {
   return new Promise((resolve, reject) => {
     const r = http.request(
@@ -28,7 +29,10 @@ function req(
         port,
         path,
         method,
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+        },
       },
       (res) => {
         let data = "";
@@ -39,6 +43,7 @@ function req(
       },
     );
     r.on("error", reject);
+    if (body !== undefined) r.write(body);
     r.end();
   });
 }
@@ -205,6 +210,24 @@ describe("POST /api/v1/tasks/:id/archive", () => {
       apiToken,
     );
     assert.equal(res.status, 404);
+  });
+
+  it("rejects a rename collision with an archived top", async () => {
+    await req(port, "POST", "/api/v1/tasks/area/archive", apiToken);
+    await req(port, "POST", "/api/v1/tasks/work/archive", apiToken);
+    // Both tasks are now parentless archived tops. The partial unique index is
+    // on (parent_id, title), so `area` collides even though the renamed task's
+    // parent is null; the route must answer 400 without hitting the DB error.
+    const res = await req(
+      port,
+      "PUT",
+      "/api/v1/tasks/work/title",
+      apiToken,
+      JSON.stringify({ value: "area" }),
+    );
+    assert.equal(res.status, 400, res.body);
+    assert.match(res.body, /already has that title/);
+    assert.equal(store.getTask("work")?.title, "work");
   });
 
   it("rejects an unknown archived filter", async () => {

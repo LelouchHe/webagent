@@ -343,7 +343,8 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
       try {
-        const tasks = await loadTaskList();
+        // `/switch` never targets an archived task; `/archive` is that path.
+        const tasks = (await loadTaskList()).filter((task) => !task.archived);
         const query = arg.toLowerCase();
         const match = tasks.find(
           (s) => s.id.startsWith(arg) || s.title?.toLowerCase().includes(query),

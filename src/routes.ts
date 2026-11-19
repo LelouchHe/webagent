@@ -861,6 +861,7 @@ export function createRequestHandler(
           });
           return;
         }
+        const archivedIds = store.listArchivedTaskIds();
         const publicTasks = store
           .listTasks({
             ...(source ? { source } : {}),
@@ -885,6 +886,9 @@ export function createRequestHandler(
               cwdDisplay: abbreviateHomePath(task.cwd),
               hasUserInput: Boolean(hasUserInput),
               isRoot: store.isRootTaskId(task.id),
+              // Egress fact, not a column: clients keep the full topology and
+              // decide which reads (`/switch`, path roots) exclude these.
+              archived: archivedIds.has(task.id),
             };
           });
         res.end(JSON.stringify(publicTasks));
@@ -2197,9 +2201,11 @@ export function createRequestHandler(
           return;
         }
         if (
-          task.parent_id !== null &&
           store
-            .listTasks()
+            // Rename collisions are a storage constraint across the whole
+            // sibling set, archived trees and parentless archived tops
+            // included.
+            .listTasks({ archived: "include" })
             .some(
               (live) =>
                 live.parent_id === task.parent_id &&
@@ -2212,7 +2218,20 @@ export function createRequestHandler(
           });
           return;
         }
-        store.updateTaskTitle(taskId, title);
+        try {
+          store.updateTaskTitle(taskId, title);
+        } catch (err) {
+          // A concurrent rename can still hit the partial unique index between
+          // the check above and this write. Answer as a conflict, never as an
+          // unhandled rejection.
+          if (/UNIQUE constraint failed/i.test(String(err))) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "A sibling task already has that title",
+            });
+            return;
+          }
+          throw err;
+        }
         const titleEvent = {
           type: "task_title_updated",
           taskId,
@@ -2242,7 +2261,12 @@ export function createRequestHandler(
           // global, so asking it globally could resume a task another agent
           // carries.
           const existing = store
-            .listTasks({ agentId: taskManager.defaultAgentId })
+            // Bootstrap resumes an active task only; an archived tree is not
+            // a startup destination.
+            .listTasks({
+              agentId: taskManager.defaultAgentId,
+              archived: "exclude",
+            })
             .at(0);
           if (existing) {
             return {

@@ -57,6 +57,7 @@ import {
 import * as api from "./api.ts";
 import {
   loadTaskList,
+  noteTaskArchived,
   observeTaskCreated,
   observeTaskDeleted,
   setCurrentTask,
@@ -295,7 +296,7 @@ async function fallbackToNextTaskImpl(
   state.taskSwitchGen++;
   const gen = state.taskSwitchGen;
   try {
-    const tasks = await loadTaskList();
+    const tasks = (await loadTaskList()).filter((task) => !task.archived);
     if (
       gen !== state.taskSwitchGen ||
       connectionEpoch !== state.connectionEpoch
@@ -1436,6 +1437,14 @@ export function replayEvent(
       renderMessageCard(d as unknown as AgentEvent & { type: "message" });
       break;
     case "system_message":
+      // A replayed archive row is the same structural fact as the live event.
+      // The stored row's `task_id` is the archived task; the JSON payload holds
+      // only the message fields.
+      if (d.kind === "task_archive") {
+        const archivedTaskId = events[idx]?.task_id;
+        if (typeof archivedTaskId === "string")
+          noteTaskArchived(archivedTaskId);
+      }
       if (typeof d.title === "string" && d.title.trim()) {
         // A persisted row names the tasks it refers to in `data`.
         // `events[idx]` is this row's own task; a direct render (tests, a
@@ -2663,6 +2672,7 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "system_message":
+      if (msg.kind === "task_archive") noteTaskArchived(msg.taskId);
       if (msg.taskId === state.taskId) {
         addSystemMessage({
           title: msg.title,

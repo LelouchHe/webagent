@@ -1200,7 +1200,11 @@ export class TaskManager implements ObligationHost {
    * task another agent carries.
    */
   taskIdsForAgent(agentId: string): string[] {
-    return this.store.listTasks({ agentId }).map((task) => task.id);
+    // Whole-agent cleanup must see archived trees too: their executions are
+    // just as real as the active tree's.
+    return this.store
+      .listTasks({ agentId, archived: "include" })
+      .map((task) => task.id);
   }
 
   /**

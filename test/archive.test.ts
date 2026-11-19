@@ -55,7 +55,7 @@ describe("task archive", () => {
     return tasks.map((task) => task.id).sort();
   }
 
-  it("detaches the task and its subtree from the default list", () => {
+  it("detaches the task and its subtree from the active list", () => {
     const result = store.archiveTask("area");
     assert.ok(result);
     assert.equal(result.status, "archived");
@@ -65,18 +65,21 @@ describe("task archive", () => {
     // The child still belongs to the archived top.
     assert.equal(store.getTask("work")?.parent_id, "area");
 
+    // The store's default range is every live task; only the REST list and
+    // explicit active-only callers exclude archived trees.
     assert.deepEqual(
       ids(store.listTasks()),
+      ["area", "other", "work", store.rootTaskId].sort(),
+    );
+    assert.deepEqual(
+      ids(store.listTasks({ archived: "exclude" })),
       ["other", store.rootTaskId].sort(),
     );
     assert.deepEqual(ids(store.listTasks({ archived: "only" })), [
       "area",
       "work",
     ]);
-    assert.deepEqual(
-      ids(store.listTasks({ archived: "include" })),
-      ["area", "other", "work", store.rootTaskId].sort(),
-    );
+    assert.deepEqual([...store.listArchivedTaskIds()].sort(), ["area", "work"]);
   });
 
   it("writes exactly one system message on the archived task, naming the parent", () => {
@@ -123,7 +126,7 @@ describe("task archive", () => {
       "work",
     ]);
     assert.deepEqual(
-      ids(store.listTasks()),
+      ids(store.listTasks({ archived: "exclude" })),
       ["other", store.rootTaskId].sort(),
     );
   });
@@ -160,7 +163,7 @@ describe("task archive", () => {
     assert.equal(store.getTask("area")?.parent_id, null);
     assert.equal(store.getTask("work")?.parent_id, "area");
     assert.equal(store.getEvents("area").length, areaEvents);
-    assert.deepEqual(ids(store.listTasks()), [newRoot]);
+    assert.deepEqual(ids(store.listTasks({ archived: "exclude" })), [newRoot]);
     assert.deepEqual(ids(store.listTasks({ archived: "only" })), [
       "area",
       "work",

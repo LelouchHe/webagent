@@ -7,11 +7,12 @@ import {
   loadTaskList,
   observeTaskCreated,
   observeTaskDeleted,
-  noteParentCleared,
+  noteTaskArchived,
   parentOf,
   resetTaskTopologyForTest,
   setCurrentTask,
   subscribeTaskTopology,
+  taskListEpoch,
 } from "../public/js/task-topology.ts";
 import type { TaskSummary } from "../src/types.ts";
 
@@ -141,9 +142,13 @@ describe("parent reference", () => {
         parentId: "parent",
         agentId: "pi",
       });
-      noteParentCleared("child");
+      const epoch = taskListEpoch();
+      noteTaskArchived("child");
       assert.equal(parentOf("child"), null);
       assert.equal(isParentResolved("child"), true);
+      // The epoch is what makes an open `/switch` refetch instead of serving
+      // pre-archive rows.
+      assert.equal(taskListEpoch(), epoch + 1);
       assert.deepEqual(fetchStub.urls, []);
     } finally {
       fetchStub.restore();
@@ -252,7 +257,7 @@ describe("parent reference", () => {
       setCurrentTask("child", { parentId: "parent", agentId: "pi" });
       await tick();
       assert.equal(
-        fetchStub.urls.some((url) => url === "/api/v1/tasks"),
+        fetchStub.urls.some((url) => url.split("?")[0] === "/api/v1/tasks"),
         false,
       );
     } finally {

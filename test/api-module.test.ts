@@ -235,7 +235,7 @@ describe("api module", () => {
       text: () => Promise.resolve(JSON.stringify(tasks)),
     };
     assert.deepEqual(await api.listTasks(), tasks);
-    assert.equal(fetchCalls[0].url, "/api/v1/tasks");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks?archived=include");
     assert.equal(fetchCalls[0].init?.method, undefined); // GET
   });
 

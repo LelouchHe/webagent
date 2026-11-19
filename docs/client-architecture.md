@@ -97,7 +97,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`render.ts`**            | DOM helpers: add messages, streaming markdown render, theme, scroll, diff HTML generation           | `addMessage()`, `addSystem()`, `scrollToBottom()`, `updateMarkdownStream()`, `resetMarkdownStream()` |
 | **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createTask()`, `sendMessage()`, `cancelTask()`, etc.                                     |
 | **`agent-directory.ts`**   | The configured agent directory from `GET /config` / bootstrap: ids in configuration order, default agent (no liveness) | `installAgentDirectory()`, `configuredAgentIds()`, `getDefaultAgentId()`                          |
-| **`task-topology.ts`**     | The current task's parent reference and the list-arrival flag          | `loadTaskList()`, `setCurrentTask()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
+| **`task-topology.ts`**     | The current task's parent reference, the list-arrival flag, and archive-driven list invalidation | `loadTaskList()`, `setCurrentTask()`, `noteTaskArchived()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
 | **`create-command.ts`**    | Shared `+` / `/new` / `/clear` helpers: coordinate parsing, cwd resolution, preview, failure rescue   | `parseCoordinate()`, `resolveCreateCwd()`, `agentRescueCommand()`                                |
 | **`agent-hint.ts`**        | The menus' one-line agent hint (non-selectable): configured agents and the coordinate syntax once    | `agentHintRow()`                                                                                 |
 

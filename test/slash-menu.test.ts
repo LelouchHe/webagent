@@ -456,7 +456,8 @@ describe("slash menu — Tab vs Click behavior", () => {
     await new Promise((r) => setTimeout(r, 20));
 
     const createCall = fetchCalls.find(
-      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+      (c) =>
+        c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
     );
     assert.ok(createCall, "expected POST /api/v1/tasks");
     const body = JSON.parse(createCall.init.body);
@@ -542,7 +543,8 @@ describe("slash menu — Tab vs Click behavior", () => {
     await new Promise((r) => setTimeout(r, 20));
 
     const createCall = fetchCalls.find(
-      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+      (c) =>
+        c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
     );
     assert.ok(createCall, "the action row must create on click");
     const body = JSON.parse(createCall.init.body);
@@ -587,7 +589,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     state.taskCwdDisplay = "~/current";
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      if (url === "/api/v1/tasks" && !init?.method) {
+      if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
         return Promise.resolve({
           ok: true,
           text: () => Promise.resolve(JSON.stringify([{ id: "s1" }])),
@@ -637,7 +639,8 @@ describe("slash menu — Tab vs Click behavior", () => {
       `expected the task-cwd probe, got: ${JSON.stringify(fetchCalls.map((c) => c.url))}`,
     );
     const createCall = fetchCalls.find(
-      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+      (c) =>
+        c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
     );
     assert.ok(createCall, "the action row must create on click");
     assert.equal(
@@ -657,7 +660,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     state.taskCwdDisplay = "~/a";
     globalThis.fetch = (async (url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      if (url === "/api/v1/tasks" && !init?.method) {
+      if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
         return new Response(JSON.stringify([{ id: "A" }]), { status: 200 });
       }
       if (url.startsWith("/api/v1/files/info?")) {
@@ -698,7 +701,8 @@ describe("slash menu — Tab vs Click behavior", () => {
     await new Promise((r) => setTimeout(r, 20));
 
     const createCall = fetchCalls.find(
-      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+      (c) =>
+        c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
     );
     assert.ok(createCall, "the action row must create on click");
     const body = JSON.parse(createCall.init.body);
@@ -721,7 +725,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     state.taskCwdDisplay = "~/a";
     globalThis.fetch = (async (url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      if (url === "/api/v1/tasks" && !init?.method) {
+      if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
         // The launching task was deleted while the probe was pending.
         return new Response("[]", { status: 200 });
       }
@@ -777,7 +781,8 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.equal(state.pendingNewTaskOpId, null);
     assert.equal(
       fetchCalls.some(
-        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+        (c) =>
+          c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
       ),
       false,
       "a deleted launching task must not reach the create endpoint",
@@ -800,7 +805,7 @@ describe("slash menu — Tab vs Click behavior", () => {
           status: 404,
         });
       }
-      if (url === "/api/v1/tasks" && !init?.method) {
+      if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
         listRequested = true;
         await listGate;
         return new Response("[]", { status: 200 });
@@ -995,7 +1000,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     ];
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      if (url === "/api/v1/tasks") {
+      if (url.split("?")[0] === "/api/v1/tasks") {
         return Promise.resolve({
           ok: true,
           text: () => Promise.resolve(JSON.stringify(tasks)),
@@ -1228,10 +1233,10 @@ describe("slash menu — Tab vs Click behavior", () => {
             json: () => Promise.resolve(obj),
             text: () => Promise.resolve(JSON.stringify(obj)),
           });
-        if (url === "/api/v1/tasks" && !init?.method) {
+        if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
           return respond([{ id: "s1" }]);
         }
-        if (url === "/api/v1/tasks" && init?.method === "POST") {
+        if (url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST") {
           return respond({ id: "new-task" });
         }
         return respond({});
@@ -1274,7 +1279,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     ];
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      if (url === "/api/v1/tasks") {
+      if (url.split("?")[0] === "/api/v1/tasks") {
         const body = JSON.stringify(tasks);
         return Promise.resolve({
           ok: true,

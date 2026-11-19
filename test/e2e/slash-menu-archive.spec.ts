@@ -28,6 +28,28 @@ test("slash-menu /archive detaches a task and reopens it", async ({ page }) => {
   const archivedId = await currentTaskId(page);
   await expect(page.locator("#task-info")).toContainText(title);
 
+  // A child inside the future archived tree: after archiving, the client must
+  // still resolve `@kid` from the archived parent (the full topology includes
+  // archived rows even though `/switch` hides them).
+  const kid = "e2e-archive-kid-" + Date.now().toString(36);
+  await input.fill(`+${kid}`);
+  await input.press("Enter");
+  await expect(page.locator("#messages")).toContainText(`Created task @${kid}`);
+
+  // A second client views the same task with its `/switch` menu already open.
+  // When the archive event arrives it must invalidate that cached list, not
+  // keep offering the archived task.
+  const second = await page.context().newPage();
+  await gotoConnected(second, `/#${archivedId}`);
+  await expect(second.locator("#task-info")).toContainText(title);
+  const secondInput = second.locator("#input");
+  await secondInput.fill("/switch ");
+  await expect(
+    second
+      .locator("#slash-menu.active .slash-item", { hasText: title })
+      .first(),
+  ).toBeVisible();
+
   await sendPrompt(page, "before archive");
   await expect(page.locator(".msg.assistant").last()).toContainText(
     "Echo: before archive",
@@ -39,6 +61,21 @@ test("slash-menu /archive detaches a task and reopens it", async ({ page }) => {
   await expect(page.locator("#messages")).toContainText("Task archived");
   await expect(page.locator("#messages")).toContainText("original parent");
   await expect.poll(() => currentTaskId(page)).toBe(archivedId);
+
+  // The other client converges without a reload: the archive event invalidated
+  // its open `/switch` list.
+  await expect(
+    second.locator("#slash-menu.active .slash-item", { hasText: title }),
+  ).toHaveCount(0);
+  await second.close();
+
+  // Messaging a child from inside the archived tree still resolves.
+  await input.fill(`@${kid} inside archived tree`);
+  await input.press("Enter");
+  await expect(page.locator("#messages")).toContainText("inside archived tree");
+  await expect(page.locator("#messages")).not.toContainText(
+    "Current task not found",
+  );
 
   // Archived tasks leave `/switch`.
   await input.fill("/switch ");

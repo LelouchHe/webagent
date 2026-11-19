@@ -17,7 +17,7 @@ import type { AgentCommandSnapshot, ConfigOption } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import * as api from "./api.ts";
 import { fallbackToNextTask } from "./events.ts";
-import { noteParentCleared } from "./task-topology.ts";
+import { noteTaskArchived } from "./task-topology.ts";
 import { taskAgentFailureLines } from "./create-command.ts";
 
 interface ClearTaskResult {
@@ -79,7 +79,7 @@ export async function archiveCurrentTask(): Promise<void> {
       addSystem("notify: this task is already archived");
       return;
     }
-    noteParentCleared(taskId);
+    noteTaskArchived(taskId);
     addSystem(
       `notify: archived — detached from ${result.parentPath ?? "its parent"}`,
     );

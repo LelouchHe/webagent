@@ -16,7 +16,7 @@ import {
 } from "./slash-tree.ts";
 import { renderItem } from "./slash-render.ts";
 import { ROOT } from "./slash-commands.ts";
-import { subscribeTaskTopology } from "./task-topology.ts";
+import { subscribeTaskTopology, taskListEpoch } from "./task-topology.ts";
 import { handleSlashCommand } from "./slash-exec.ts";
 import { buildTaskCommandCandidates, isTaskCommand } from "./task-command.ts";
 
@@ -33,6 +33,7 @@ let candidates: Candidate[] = [];
 let selectedIdx = -1;
 let dismissedFor: string | null = null;
 let menuInputOverride: string | null = null;
+let appliedListEpoch = taskListEpoch();
 
 function currentMenuInput(): string {
   return menuInputOverride ?? dom.input.value;
@@ -528,6 +529,15 @@ function nextSelectable(from: number, dir: 1 | -1): number {
 export function refreshSlashMenuRows(): void {
   if (!dom.slashMenu.classList.contains("active")) return;
   if (currentNode === TASK_COMMAND_ROOT) return;
+  // A fact that changed tree membership (archive) invalidates the fetched rows
+  // of an open list. Other topology notifications only repaint existing data.
+  const epoch = taskListEpoch();
+  if (epoch !== appliedListEpoch && currentNode.fetch && currentNode.toSpec) {
+    appliedListEpoch = epoch;
+    currentFetchKey = null;
+    updateSlashMenu();
+    return;
+  }
   const text = currentMenuInput();
   const { node, pathPrefix, tailQuery, rawRemainder } = resolvePath(
     text,

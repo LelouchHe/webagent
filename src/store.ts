@@ -1083,37 +1083,21 @@ export class Store {
    * use materializes an execution, so the read must not depend on a binding
    * row existing. `agentId` narrows the result to tasks whose current binding
    * names that agent.
+   *
+   * The default range is **every live task**, archived trees included. Archive
+   * is a UI/read concern, not a storage partition: internal callers that must
+   * see the whole database (whole-agent cleanup, MCP collaboration, rename
+   * collision checks) rely on this default, and a caller that wants one side
+   * says so explicitly.
    */
   listTasks(opts?: {
     source?: string;
     agentId?: string;
-    /** Which trees to return; the default excludes every archived tree. */
+    /** Which trees to return; the default includes every live task. */
     archived?: ArchivedFilter;
   }): TaskRow[] {
     const conditions = ["s.deleted_at IS NULL"];
     const params: unknown[] = [];
-    const archived = opts?.archived ?? "exclude";
-    // An archived tree is exactly a live parentless subtree that is not the
-    // Root: nothing marks it, the structure is the fact. `only` and `exclude`
-    // both need the set, so one recursive walk serves both.
-    const archivedCte =
-      archived === "include"
-        ? ""
-        : `WITH RECURSIVE archived(id) AS (
-             SELECT id FROM tasks
-             WHERE deleted_at IS NULL AND parent_id IS NULL AND id != ?
-             UNION
-             SELECT t.id FROM tasks t
-             JOIN archived a ON t.parent_id = a.id
-             WHERE t.deleted_at IS NULL
-           ) `;
-    if (archived === "exclude") {
-      conditions.push("s.id NOT IN (SELECT id FROM archived)");
-      params.push(this.rootTaskId);
-    } else if (archived === "only") {
-      conditions.push("s.id IN (SELECT id FROM archived)");
-      params.push(this.rootTaskId);
-    }
     if (opts?.source) {
       conditions.push("s.source = ?");
       params.push(opts.source);
@@ -1124,9 +1108,9 @@ export class Store {
       );
       params.push(opts.agentId);
     }
-    return this.db
+    const rows = this.db
       .prepare(
-        `${archivedCte}SELECT s.*,
+        `SELECT s.*,
            EXISTS (
              SELECT 1 FROM events e
              WHERE e.task_id = s.id AND e.type = 'user_message'
@@ -1140,6 +1124,36 @@ export class Store {
          ORDER BY COALESCE(s.last_active_at, s.created_at) DESC`,
       )
       .all(...params) as TaskRow[];
+    const archived = opts?.archived ?? "include";
+    if (archived === "include") return rows;
+    const archivedIds = this.listArchivedTaskIds();
+    return rows.filter((task) =>
+      archived === "only"
+        ? archivedIds.has(task.id)
+        : !archivedIds.has(task.id),
+    );
+  }
+
+  /**
+   * Ids of every live task in an archived tree: a parentless non-Root task and
+   * its whole subtree. Nothing marks an archived tree; the structure is the
+   * fact, so this recursive walk is the only definition.
+   */
+  listArchivedTaskIds(): Set<string> {
+    const rows = this.db
+      .prepare(
+        `WITH RECURSIVE archived(id) AS (
+           SELECT id FROM tasks
+           WHERE deleted_at IS NULL AND parent_id IS NULL AND id != ?
+           UNION
+           SELECT t.id FROM tasks t
+           JOIN archived a ON t.parent_id = a.id
+           WHERE t.deleted_at IS NULL
+         )
+         SELECT id FROM archived`,
+      )
+      .all(this.rootTaskId) as Array<{ id: string }>;
+    return new Set(rows.map((row) => row.id));
   }
 
   /** Returns live tasks only. Soft-deleted (tombstone) rows are hidden. */

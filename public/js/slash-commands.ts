@@ -134,8 +134,10 @@ async function unsubscribePush(): Promise<void> {
 
 // --- shared data fetchers (keep call sites identical for /inbox + /inbox dismiss) ---
 
+/** `/switch` shows the active tree only; archived tasks are reached via
+ *  `/archive`. Topology itself keeps archived rows so paths resolve. */
 async function listTasks(): Promise<TaskSummary[]> {
-  return loadTaskList();
+  return (await loadTaskList()).filter((task) => !task.archived);
 }
 
 interface PathItem {

@@ -178,9 +178,20 @@ function resolveTaskPathNodes(
   const current = map.get(currentId);
   if (!current) return [];
 
-  let nodes: TaskNode[] = path.absolute
-    ? [...map.values()].filter((n) => !n.parentId)
-    : [current];
+  // An absolute path starts at *this task's tree top*, not at every parentless
+  // row in the list. For the active tree that is still Root; inside an
+  // archived tree it is that archived top, so `@/child` cannot browse into
+  // another archived tree or back into the active one.
+  let root = current;
+  const climbed = new Set<string>();
+  while (root.parentId) {
+    if (climbed.has(root.id)) break;
+    climbed.add(root.id);
+    const parent = map.get(root.parentId);
+    if (!parent) break;
+    root = parent;
+  }
+  let nodes: TaskNode[] = path.absolute ? [root] : [current];
 
   for (let i = 0; i < path.segments.length; i++) {
     const seg = path.segments[i];

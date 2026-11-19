@@ -159,8 +159,12 @@ sees only active tasks. History consumers opt in with `archived`.
 
 **Response** `200`: Array of `TaskSummary` (defined in `src/types.ts`). Each
 entry carries `agentId`: the agent of the task's current execution binding, or
-`null` when the task is unbound, and `isRoot`: `true` only for the workspace
-Root, so a client never has to recognise Root by its id. `created_at` and
+`null` when the task is unbound; `isRoot`: `true` only for the workspace Root,
+so a client never has to recognise Root by its id; and `archived`: `true` when
+the task belongs to an archived tree. `archived` is an egress fact derived from
+the structure, not a column. The frontend requests `archived=include` for its
+topology (so `@`/`+` paths resolve inside an archived tree) and filters the
+`/switch` rows on `archived`. `created_at` and
 `last_active_at` are rendered ISO-8601 UTC with `Z` (see
 [Timestamps](#timestamps)). The Root id itself is reported only by
 `GET /api/v1/config`.

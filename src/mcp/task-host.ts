@@ -196,8 +196,10 @@ export function createMcpTaskToolHost(deps: {
     list(principal) {
       authorize(principal);
       const source = requireTask(principal.taskId);
+      // A task in an archived tree still needs its own row (relation: self)
+      // and its local relatives; the default store range is every live task.
       const entries = store
-        .listTasks()
+        .listTasks({ archived: "include" })
         .map((task) => ({
           task,
           relation: collaborationRelation(source, task),

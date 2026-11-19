@@ -279,7 +279,9 @@ export function sendCollaborationMessage(
 }
 
 export function listTasks(): Promise<TaskSummary[]> {
-  return request("/api/v1/tasks");
+  // The client keeps the full topology: archived trees must resolve inside
+  // themselves (`@child`, path roots). Active-only views filter on `archived`.
+  return request("/api/v1/tasks?archived=include");
 }
 
 export function getConfig(): Promise<{

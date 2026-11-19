@@ -114,6 +114,26 @@ describe("TaskManager", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  describe("archive-aware whole-agent listings", () => {
+    it("includes archived tasks in whole-agent cleanup", () => {
+      store.createTask("active", tmpDir, "auto", "test-agent", "s-active");
+      store.createTask("archived", tmpDir, "auto", "test-agent", "s-arch");
+      store.archiveTask("archived");
+      assert.deepEqual(sm.taskIdsForAgent("test-agent").sort(), [
+        "active",
+        "archived",
+      ]);
+
+      // Behavior, not just the id list: an archived execution must lose its
+      // runtime facts on agent restart/disconnect too.
+      sm.liveTasks.add("archived");
+      sm.activePrompts.add("archived");
+      sm.clearAgentRuntime("test-agent");
+      assert.equal(sm.liveTasks.has("archived"), false);
+      assert.equal(sm.activePrompts.has("archived"), false);
+    });
+  });
+
   describe("MCP capability lifecycle", () => {
     it("allows MCP auto-connect while a new ACP task is being created", async () => {
       const capabilities = new CapabilityStore();

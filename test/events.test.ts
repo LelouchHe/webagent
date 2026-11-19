@@ -1869,7 +1869,7 @@ describe("events", () => {
         };
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/tasks" &&
+            url.split("?")[0] === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return {
@@ -1932,7 +1932,7 @@ describe("events", () => {
         };
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/tasks" &&
+            url.split("?")[0] === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           ) {
             listCalls++;
@@ -1989,7 +1989,7 @@ describe("events", () => {
         };
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/tasks" &&
+            url.split("?")[0] === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return {
@@ -2045,7 +2045,7 @@ describe("events", () => {
           // A more recently active task is listed first, so a client that
           // ignored `replacedBy` would land there instead.
           if (
-            url === "/api/v1/tasks" &&
+            url.split("?")[0] === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return {
@@ -2093,7 +2093,7 @@ describe("events", () => {
         state.taskId = "s1";
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/tasks" &&
+            url.split("?")[0] === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return { ok: true, text: async () => "[]" };
@@ -2133,7 +2133,7 @@ describe("events", () => {
         });
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/tasks" &&
+            url.split("?")[0] === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return {
@@ -7639,7 +7639,7 @@ describe("events", () => {
           text: async () => JSON.stringify(body),
           json: async () => body,
         });
-        if (url === "/api/v1/tasks" && init?.method === "POST") {
+        if (url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST") {
           return response({
             id: "t-created",
             rootTaskId: ROOT_ID,
@@ -7669,7 +7669,7 @@ describe("events", () => {
           text: async () => JSON.stringify(body),
           json: async () => body,
         });
-        if (url === "/api/v1/tasks") {
+        if (url.split("?")[0] === "/api/v1/tasks") {
           return response([{ id: "t-next", agentId: "agent-b" }]);
         }
         if (url === "/api/v1/tasks/t-next") {
