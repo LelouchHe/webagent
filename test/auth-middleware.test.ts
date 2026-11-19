@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { AuthStore } from "../src/auth-store.ts";
 import {
   isWhitelistedPath,
+  isReadScopeAllowedPath,
   authenticate,
   requireScope,
   type AuthResult,
@@ -174,6 +175,18 @@ describe("auth-middleware", () => {
         },
       };
     }
+    function read(): AuthResult {
+      return {
+        ok: true,
+        principal: {
+          name: "r",
+          scope: "read",
+          lastUsedAt: null,
+          createdAt: 0,
+          hash: "x",
+        },
+      };
+    }
 
     it("admin scope passes admin requirement", () => {
       assert.equal(requireScope(admin(), "admin"), true);
@@ -195,6 +208,58 @@ describe("auth-middleware", () => {
       const r: AuthResult = { ok: false, reason: "missing" };
       assert.equal(requireScope(r, "api"), false);
       assert.equal(requireScope(r, "admin"), false);
+      assert.equal(requireScope(r, "read"), false);
+    });
+
+    it("read scope passes read but not api or admin", () => {
+      assert.equal(requireScope(read(), "read"), true);
+      assert.equal(requireScope(read(), "api"), false);
+      assert.equal(requireScope(read(), "admin"), false);
+    });
+
+    it("api and admin scopes satisfy read", () => {
+      assert.equal(requireScope(api(), "read"), true);
+      assert.equal(requireScope(admin(), "read"), true);
+    });
+  });
+
+  describe("isReadScopeAllowedPath", () => {
+    it("allows the task list and stored history", () => {
+      assert.equal(isReadScopeAllowedPath("GET", "/api/v1/tasks"), true);
+      assert.equal(
+        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/events"),
+        true,
+      );
+    });
+
+    it("allows task detail and the in-memory runtime reads", () => {
+      assert.equal(isReadScopeAllowedPath("GET", "/api/v1/tasks/abc"), true);
+      assert.equal(
+        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/snapshot"),
+        true,
+      );
+      assert.equal(
+        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/status"),
+        true,
+      );
+      assert.equal(
+        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/permissions"),
+        true,
+      );
+    });
+
+    it("denies writes and reads outside the contract", () => {
+      assert.equal(
+        isReadScopeAllowedPath("POST", "/api/v1/tasks/abc/archive"),
+        false,
+      );
+      assert.equal(isReadScopeAllowedPath("GET", "/api/v1/config"), false);
+      assert.equal(isReadScopeAllowedPath("GET", "/api/v1/tokens"), false);
+      assert.equal(isReadScopeAllowedPath("GET", "/api/v1/files/info"), false);
+      assert.equal(
+        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/events/stream"),
+        false,
+      );
     });
   });
 });

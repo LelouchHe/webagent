@@ -29,7 +29,11 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { handleShareRoutes } from "./share/routes.ts";
 import { handleFileRoutes } from "./files/routes.ts";
-import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
+import {
+  authenticate,
+  isReadScopeAllowedPath,
+  isWhitelistedPath,
+} from "./auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
 import { abbreviateHomePath } from "./home-path.ts";
@@ -765,6 +769,19 @@ export function createRequestHandler(
           return;
         }
         principalByRequest.set(req, result.principal);
+        // A read token is a pure-read credential. The allowlist is checked
+        // here, before any route can touch execution or storage, so a new
+        // endpoint is denied by default until it is deliberately opened.
+        if (
+          result.principal.scope === "read" &&
+          !isReadScopeAllowedPath(method, path)
+        ) {
+          res.writeHead(HTTP_STATUS.FORBIDDEN, {
+            "Content-Type": "application/json",
+          });
+          res.end(JSON.stringify({ error: "Forbidden", reason: "read_scope" }));
+          return;
+        }
       }
     }
 
@@ -980,16 +997,29 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
           return;
         }
-        let body: { name?: unknown };
+        let body: { name?: unknown; scope?: unknown };
         try {
-          body = JSON.parse(await readBody(req)) as { name?: unknown };
+          body = JSON.parse(await readBody(req)) as {
+            name?: unknown;
+            scope?: unknown;
+          };
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         const name = typeof body.name === "string" ? body.name : "";
+        // REST can mint `api` (default) or the narrower `read`. `admin` is
+        // deliberately CLI-only so a compromised api/read token cannot
+        // escalate through this route.
+        const scope = body.scope === undefined ? "api" : body.scope;
+        if (scope !== "api" && scope !== "read") {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "scope must be 'api' or 'read'",
+          });
+          return;
+        }
         try {
-          const created = await deps.authStore.addToken(name, "api");
+          const created = await deps.authStore.addToken(name, scope);
           json(res, HTTP_STATUS.CREATED, {
             token: created.token,
             name: created.record.name,
@@ -1307,7 +1337,10 @@ export function createRequestHandler(
         // A read returns what is known now. Warming the execution happens in
         // the background and reports back through `task_runtime_warmed`; no
         // fixed wait can be right, because a real restore replays history.
-        if (!tasks.liveTasks.has(taskId)) {
+        if (
+          !tasks.liveTasks.has(taskId) &&
+          getPrincipal(req)?.scope !== "read"
+        ) {
           tasks.warmTaskInBackground(taskId);
         }
         // Make sure runtime reflects the current activePrompts/bash state even
@@ -2637,7 +2670,11 @@ export function createRequestHandler(
           // publishes `task_runtime_warmed`; the client never waits for ACP
           // restore, and no fixed timeout is involved.
           const wasLive = tasks?.liveTasks.has(taskId) ?? true;
-          if (tasks && !wasLive) tasks.warmTaskInBackground(taskId);
+          // A `read` token never materializes an execution: external consumers
+          // walk history and must not start one agent process per task.
+          const readOnly = principalByRequest.get(req)?.scope === "read";
+          if (tasks && !wasLive && !readOnly)
+            tasks.warmTaskInBackground(taskId);
           const freshTask = store.getTask(taskId) ?? task;
           const configOptions = tasks
             ? tasks.applyStoredConfig(

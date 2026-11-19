@@ -422,7 +422,21 @@ agent really attempted — the target is inherited when the request names none)
 
 #### `GET /api/v1/tasks/:id`
 
-Get task details. **Auto-resumes** the task in the ACP agent if it's not already live (e.g., after server restart). Interrupted turns are restored without being continued automatically; the user decides whether to continue. A task whose binding agent is configured but whose execution slot is unmaterialized is materialized by that background warm, which also records the execution config the new session reports for the columns the task has no value of its own — so this read can change those columns. It never takes a task over from an agent that left the configuration; that remains an operation's job (next use or `POST /clear`).
+Get task details. A read answers with what is known now; for a UI-authenticated
+read, a task that is not live starts a **background warm** in the ACP agent
+(e.g., after a server restart), reported later through `task_runtime_warmed`.
+The response never waits for the restore and a failed restore does not fail the
+read. Interrupted turns are restored without being continued automatically; the
+user decides whether to continue. A task whose binding agent is configured but
+whose execution slot is unmaterialized is materialized by that background warm,
+which also records the execution config the new session reports for the columns
+the task has no value of its own — so this read can change those columns. It
+never takes a task over from an agent that left the configuration; that remains
+an operation's job (next use or `POST /clear`).
+
+A `read`-scope token never warms: the response is the same metadata read with no
+restore or materialization, so an external consumer walking stored tasks does
+not start one agent process per task.
 
 **Response** `200`:
 
@@ -615,7 +629,9 @@ the background and serves the snapshot from what it already knows; the restore
 can take as long as a real session replay takes. When it finishes, the restored
 schema and commands are published to the task's subscribers as
 `task_runtime_warmed` (see [Live Events](#live-events)). A missing, dead, or no
-longer configured agent simply means no such event arrives.
+longer configured agent simply means no such event arrives. A `read`-scope
+token does not warm either: the snapshot reports only what is already in
+memory.
 
 A write that needs the execution ready — prompt, config, compact — waits for
 that same restore instead of failing with `409 Task is busy`: the restore is
@@ -702,7 +718,7 @@ Send a user prompt to the agent. Returns immediately; the agent's response strea
 
 #### `GET /api/v1/tasks/:id/events`
 
-Retrieve stored events for a task (history). This is the primary history endpoint used during page load.
+Retrieve stored events for a task (history). This is the primary history endpoint used during page load, and the read contract for external consumers: it never touches execution, so it works for archived, unbound, and never-materialized tasks alike. A `read`-scope token may call it.
 
 | Parameter  | In    | Type           | Description                                                                                                      |
 | ---------- | ----- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -975,7 +991,7 @@ This endpoint **always requires** a valid `Authorization: Bearer <token>` header
 | ------- | ------- | ---------------------------------------------------- |
 | `ok`    | boolean | Always `true` on success                             |
 | `name`  | string  | Token's human-readable name (e.g. `"laptop"`)        |
-| `scope` | string  | `"admin"` (full access) or `"api"` (no `/tokens/**`) |
+| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"read"` (pure reads only: task list, task detail, events, snapshot, status, permissions, version, auth/verify; never warms) |
 
 **Response** `401`:
 
@@ -1019,7 +1035,7 @@ The SSE stream re-checks the bound token on every heartbeat (≤15 s). If the to
 
 ### Tokens
 
-Manage Bearer tokens stored in `data/auth.json`. All endpoints require an admin-scope token; api-scope tokens get `403`.
+Manage Bearer tokens stored in `data/auth.json`. All endpoints require an admin-scope token; api- and read-scope tokens get `403`.
 
 #### `GET /api/v1/tokens`
 
@@ -1053,28 +1069,34 @@ Create a new token. **The raw token is returned exactly once** — the server on
 **Request body:**
 
 ```json
-{ "name": "phone" }
+{ "name": "history-reader", "scope": "read" }
 ```
 
-| Field  | Type   | Description                                  |
-| ------ | ------ | -------------------------------------------- |
-| `name` | string | 1–64 chars, `[A-Za-z0-9_-]`. Must be unique. |
+| Field   | Type   | Description                                                                 |
+| ------- | ------ | --------------------------------------------------------------------------- |
+| `name`  | string | 1–64 chars, `[A-Za-z0-9_-]`. Must be unique.                                |
+| `scope` | string | Optional. `"api"` (default) or `"read"`. `admin` is not accepted here.      |
 
-New tokens are always created with `api` scope (no access to `/tokens/**`). Use the `webagent --create-token <name>` CLI to mint admin-scope tokens.
+New tokens default to `api` scope (no access to `/tokens/**`). `read` mints the
+narrow pure-read credential used by external history consumers; it is denied by
+default on every route outside the documented read allowlist (see
+[Auth Flow](security.md#auth-flow)). `admin` is CLI-only: use
+`webagent --create-token <name>` so an api/read token cannot escalate through
+this route.
 
 **Response** `201`:
 
 ```json
 {
   "token": "wat_…",
-  "name": "phone",
-  "scope": "api"
+  "name": "history-reader",
+  "scope": "read"
 }
 ```
 
 **Errors:**
 
-- `400` — invalid name (missing, too long, illegal chars)
+- `400` — invalid name (missing, too long, illegal chars) or an unsupported scope
 - `409` — name already exists
 
 #### `DELETE /api/v1/tokens/:name`
