@@ -825,6 +825,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     reminder that loses the edge while resuming abandons before submitting
   - a draining delivery is left alone and finishes delivered after archive; a
     retry-waiting delivery is marked and removed from the in-memory retry map
+  - a terminal no_account notice clears the retry entry, so archive leaves the
+    real prompt_failed reason; a late failure after archive creates no retry
+    entry for the cut edge
 
 - `test/read-scope.test.ts`
   - a `read` token reaches the task list, stored history, detail, status, and
@@ -966,6 +969,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/commands.test.ts`, `test/slash-menu.test.ts`
   - `/new`, `/switch`, `/exit`, `/cancel`, `/rename`
+  - an archive fact arriving while `/switch <query>` Enter waits for its list
+    forces a re-read; the stale `archived:false` row is not entered
   - `/new` (typed and picker-selected) posts a child create whose parent and
     inheritance source are the launching task, keeping the id as its title
   - typed and menu-clicked `/cancel` remain authoritative escape hatches when frontend busy state is stale
@@ -1349,8 +1354,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - archived tasks leave `/switch`; Root refuses `/archive`; the `/archive`
     menu lists archived tops and its Enter path reopens one, which stays
     runnable
-  - `@child` still resolves inside the archived tree, and a second client whose
-    `/switch` menu is open drops the archived row on the archive event
+  - `@child` still resolves inside the archived tree
+  - a second client **viewing Root** with `/switch` open drops the archived
+    row on the archive event (structural fact consumed before the view filter)
 
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and
