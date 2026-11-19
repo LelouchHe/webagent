@@ -134,6 +134,38 @@ describe("TaskManager", () => {
     });
   });
 
+  describe("archive edge cut", () => {
+    it("does not drain a delivery the archive interrupted", async () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      store.createCollaborationMessage({
+        id: "queued-request",
+        deliveryId: "queued-request-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      const prompts: string[] = [];
+      sm.attachExecutionBridge(makeRecoveryBridge(prompts));
+
+      assert.equal(sm.cutArchivedEdge("parent", "child"), 1);
+      assert.equal(await sm.drainCollaborationDeliveries("child"), false);
+      assert.deepEqual(prompts, [], "nothing crossed the cut edge");
+      assert.equal(
+        store.getCollaborationDelivery("queued-request-delivery")?.status,
+        "failed",
+      );
+    });
+  });
+
   describe("MCP capability lifecycle", () => {
     it("allows MCP auto-connect while a new ACP task is being created", async () => {
       const capabilities = new CapabilityStore();

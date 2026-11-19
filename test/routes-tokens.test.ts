@@ -83,6 +83,51 @@ describe("tokens CRUD", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("POST /tokens with scope=read mints a usable read token", async () => {
+    const name = `reader-${Date.now().toString(36)}`;
+    const created = await req(
+      port,
+      "POST",
+      "/api/v1/tokens",
+      {
+        Authorization: `Bearer ${adminToken}`,
+        "Content-Type": "application/json",
+      },
+      JSON.stringify({ name, scope: "read" }),
+    );
+    assert.equal(created.status, 201);
+    const body = JSON.parse(created.body) as { token: string; scope: string };
+    assert.equal(body.scope, "read");
+
+    const verify = await req(port, "GET", "/api/v1/auth/verify", {
+      Authorization: `Bearer ${body.token}`,
+    });
+    assert.equal(verify.status, 200);
+    assert.equal((JSON.parse(verify.body) as { scope: string }).scope, "read");
+    // It cannot reach an admin-only route.
+    const tokens = await req(port, "GET", "/api/v1/tokens", {
+      Authorization: `Bearer ${body.token}`,
+    });
+    assert.equal(tokens.status, 403);
+  });
+
+  it("POST /tokens rejects admin scope", async () => {
+    const res = await req(
+      port,
+      "POST",
+      "/api/v1/tokens",
+      {
+        Authorization: `Bearer ${adminToken}`,
+        "Content-Type": "application/json",
+      },
+      JSON.stringify({
+        name: `admin-${Date.now().toString(36)}`,
+        scope: "admin",
+      }),
+    );
+    assert.equal(res.status, 400);
+  });
+
   // GET /tokens
   it("GET /tokens for api scope returns self-only list", async () => {
     const r = await req(port, "GET", "/api/v1/tokens", {
