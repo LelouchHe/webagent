@@ -73,6 +73,10 @@ describe("task pickers paint from the last list, then revalidate", () => {
   let dom: any;
   let commands: any;
   let taskCommand: any;
+  let installTaskAgentId: (
+    taskId: string | null | undefined,
+    agentId: string | null | undefined,
+  ) => void;
   let fetchCalls: string[];
   let listHandler: () => Promise<unknown>;
 
@@ -81,6 +85,7 @@ describe("task pickers paint from the last list, then revalidate", () => {
     const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
+    installTaskAgentId = stateMod.installTaskAgentId;
     await import("../public/js/render.ts");
     commands = await import("../public/js/commands.ts");
     taskCommand = await import("../public/js/task-command.ts");
@@ -178,6 +183,10 @@ describe("task pickers paint from the last list, then revalidate", () => {
     row.dispatchEvent(
       new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true }),
     );
+  }
+
+  function isSeededRow(primary: string): boolean {
+    return Boolean(itemByPrimary(primary)?.classList.contains("slash-seeded"));
   }
 
   function detailReads(taskId: string): string[] {
@@ -286,92 +295,170 @@ describe("task pickers paint from the last list, then revalidate", () => {
     assert.match(dom.slashMenu.textContent, /\(loading\.\.\.\)/);
   });
 
-  // --- a cache-painted row is validated before it acts --------------------
+  // --- cache-painted rows are display-only --------------------------------
 
-  it("/switch does not act on a cached row the fresh read dropped", async () => {
+  it("/switch seeded rows do nothing until the fresh read repaints them", async () => {
     await warmMenu("/switch ");
     const held = holdList();
     openMenu("/switch ");
     await tick();
     assert.ok(rows().includes("tests"));
+    assert.ok(itemByPrimary("tests").classList.contains("slash-seeded"));
 
     fetchCalls = [];
     clickItemRow(itemByPrimary("tests"));
-    // The action waits for the read this menu already issued.
-    await tick();
-    assert.deepEqual(detailReads("tests"), []);
-
-    held.release(TASKS.filter((t) => t.id !== "tests"));
-    await tick();
     await tick();
 
-    assert.match(dom.messages.textContent, /no longer exists: tests/);
+    // No action, no queued side effect: the menu stays open with its input.
     assert.deepEqual(detailReads("tests"), []);
+    assert.ok(dom.slashMenu.classList.contains("active"));
+    assert.equal(dom.input.value, "/switch ");
+    assert.equal(state.taskId, "api");
+
+    // The fresh read repaints the same row actionable.
+    held.release(TASKS);
+    await tick();
+    assert.ok(!itemByPrimary("tests").classList.contains("slash-seeded"));
+
+    clickItemRow(itemByPrimary("tests"));
+    await tick();
+    assert.ok(detailReads("tests").length > 0);
+    assert.ok(!dom.slashMenu.classList.contains("active"));
+  });
+
+  it("@ seeded navigation rows do nothing until the fresh read repaints them", async () => {
+    await warmMenu("@../../");
+    const held = holdList();
+    openMenu("@../../");
+    await tick();
+    assert.ok(rows().includes("frontend"));
+    assert.ok(itemByPrimary("frontend").classList.contains("slash-seeded"));
+
+    fetchCalls = [];
+    clickItemRow(itemByPrimary("frontend"));
+    await tick();
+
+    assert.deepEqual(detailReads("frontend"), []);
+    assert.ok(dom.slashMenu.classList.contains("active"));
+    assert.equal(dom.input.value, "@../../");
+
+    held.release(TASKS);
+    await tick();
+    assert.ok(!itemByPrimary("frontend").classList.contains("slash-seeded"));
+
+    clickItemRow(itemByPrimary("frontend"));
+    await tick();
+    assert.ok(detailReads("frontend").length > 0);
+  });
+
+  it("a same-input repaint keeps retained cache-painted rows inert", async () => {
+    await warmMenu("@../../");
+    const held = holdList();
+    openMenu("@../../");
+    await tick();
+
+    // A binding change repaints the open menu for the same input while this
+    // menu's own read is still pending. The rows it retains are still the
+    // cached ones, so they must still be inert.
+    installTaskAgentId("api", "pi");
+    installTaskAgentId("api", "copilot");
+    await tick();
+    assert.ok(rows().includes("frontend"));
+    assert.ok(itemByPrimary("frontend").classList.contains("slash-seeded"));
+
+    fetchCalls = [];
+    clickItemRow(itemByPrimary("frontend"));
+    await tick();
+
+    assert.deepEqual(detailReads("frontend"), []);
+    assert.ok(dom.slashMenu.classList.contains("active"));
+    assert.equal(state.taskId, "api");
+
+    // The fresh read no longer offers the target; it is gone, not acted on.
+    held.release(TASKS.filter((t) => t.id !== "frontend"));
+    await tick();
+    assert.equal(rows().includes("frontend"), false);
+    assert.deepEqual(detailReads("frontend"), []);
     assert.equal(state.taskId, "api");
   });
 
-  it("/switch acts on a cached row the fresh read still contains", async () => {
+  it("Enter on a seeded row target waits for the fresh read, not the cache", async () => {
+    // Enter never dispatches a menu row: it submits the typed input, whose
+    // execution path reads the list itself. That read joins the held one, so
+    // nothing acts until it resolves and then it acts on the fresh result.
+    await warmMenu("@");
+    const held = holdList();
+    openMenu("@");
+    await tick();
+    assert.ok(rows().includes("unit"));
+
+    fetchCalls = [];
+    // `api-unit` is the current Task's child: a valid exact target.
+    const enter = taskCommand.executeTaskCommand("@api-unit hello");
+    await tick();
+    assert.equal(fetchCalls.length, 0);
+
+    held.release(TASKS);
+    await enter;
+    // The send is the action; it could only be reached through the fresh list.
+    assert.ok(
+      fetchCalls.some((url) => url.endsWith("/messages")),
+      `expected a send, got ${JSON.stringify(fetchCalls)}`,
+    );
+  });
+
+  it("/switch Enter resolves the typed target from the fresh read", async () => {
     await warmMenu("/switch ");
     const held = holdList();
     openMenu("/switch ");
     await tick();
 
     fetchCalls = [];
-    clickItemRow(itemByPrimary("tests"));
+    const enter = commands.handleSlashCommand("/switch api-unit");
     await tick();
-    assert.deepEqual(detailReads("tests"), []);
+    assert.deepEqual(detailReads("api-unit"), []);
 
     held.release(TASKS);
-    await tick();
+    await enter;
+    assert.ok(detailReads("api-unit").length > 0);
+  });
+
+  it("fresh rows are actionable and never carry the seeded cue", async () => {
+    openMenu("/switch ");
     await tick();
 
+    assert.equal(rows().length > 0, true);
+    assert.equal(
+      itemByPrimary("tests").classList.contains("slash-seeded"),
+      false,
+    );
+
+    fetchCalls = [];
+    clickItemRow(itemByPrimary("tests"));
+    await tick();
     assert.ok(detailReads("tests").length > 0);
-    assert.doesNotMatch(dom.messages.textContent, /no longer exists/);
   });
 
-  it("@ does not navigate from a cached row the fresh read dropped", async () => {
-    await warmMenu("@../../");
-    const held = holdList();
-    openMenu("@../../");
+  it("a node that is not opted in never marks its rows seeded", async () => {
+    openMenu("/token ");
     await tick();
-    assert.ok(rows().includes("frontend"));
+    assert.ok(rows().includes("two"));
+    assert.equal(isSeededRow("two"), false);
 
-    fetchCalls = [];
-    clickItemRow(itemByPrimary("frontend"));
+    // Its rows keep acting: the hint row answers immediately.
+    clickItemRow(itemByPrimary("two"));
     await tick();
-    assert.deepEqual(detailReads("frontend"), []);
-
-    held.release(TASKS.filter((t) => t.id !== "frontend"));
-    await tick();
-    await tick();
-
-    assert.match(dom.messages.textContent, /no longer exists: frontend/);
-    assert.deepEqual(detailReads("frontend"), []);
-    assert.equal(state.taskId, "api");
+    assert.match(dom.messages.textContent, /use \/token revoke two/);
   });
 
-  it("@ does not act when the validating read fails", async () => {
-    await warmMenu("@../../");
-    let fail!: () => void;
-    listHandler = () =>
-      new Promise((_resolve, reject) => {
-        fail = () => {
-          reject(new Error("read failed"));
-        };
-      });
-    openMenu("@../../");
+  it("+ rows never carry the seeded cue", async () => {
+    state.taskCwd = "/work/api";
+    openMenu("+new ");
     await tick();
-
-    fetchCalls = [];
-    clickItemRow(itemByPrimary("frontend"));
-    await tick();
-    fail();
-    await tick();
-    await tick();
-
-    assert.match(dom.messages.textContent, /task list unavailable/);
-    assert.deepEqual(detailReads("frontend"), []);
-    assert.equal(state.taskId, "api");
+    assert.equal(
+      itemByPrimary("/work/other").classList.contains("slash-seeded"),
+      false,
+    );
   });
 
   // --- rows are identified by target, not by label ------------------------

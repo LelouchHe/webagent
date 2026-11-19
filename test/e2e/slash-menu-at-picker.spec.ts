@@ -60,6 +60,7 @@ async function holdTaskListReads(
   page: Page,
   extraRow: (tasks: Record<string, unknown>[]) => Record<string, unknown>,
 ): Promise<{
+  readStarted: Promise<void>;
   reads: () => number;
   release: () => void;
   restore: () => Promise<void>;
@@ -68,10 +69,15 @@ async function holdTaskListReads(
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
+  let markReadStarted!: () => void;
+  const readStarted = new Promise<void>((resolve) => {
+    markReadStarted = resolve;
+  });
   let reads = 0;
   const pattern = "**/api/v1/tasks";
   await page.route(pattern, async (route) => {
     reads += 1;
+    markReadStarted();
     // Fetch the real answer now; hold only the delivery.
     const original = await route.fetch();
     const tasks = (await original.json()) as Record<string, unknown>[];
@@ -86,7 +92,12 @@ async function holdTaskListReads(
     await page.waitForTimeout(100);
     await page.unroute(pattern);
   };
-  return { reads: () => reads, release: () => release(), restore };
+  return {
+    readStarted,
+    reads: () => reads,
+    release: () => release(),
+    restore,
+  };
 }
 
 test("@ paints the cached task list before its own read returns", async ({
@@ -120,6 +131,7 @@ test("@ paints the cached task list before its own read returns", async ({
     await expect(menu).toContainText("e2e-child");
     await expect(menu).not.toContainText("(loading...)");
     // The open did issue its own read, and its row is not on screen yet.
+    await held.readStarted;
     expect(held.reads()).toBe(1);
     await expect(menu).not.toContainText("e2e-fresh-row");
 

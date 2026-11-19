@@ -45,6 +45,7 @@ test("slash-menu /switch selection changes tasks via keyboard", async ({
  * released read.
  */
 async function holdTaskListReads(page: Page): Promise<{
+  readStarted: Promise<void>;
   reads: () => number;
   release: () => void;
   restore: () => Promise<void>;
@@ -53,10 +54,15 @@ async function holdTaskListReads(page: Page): Promise<{
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
+  let markReadStarted!: () => void;
+  const readStarted = new Promise<void>((resolve) => {
+    markReadStarted = resolve;
+  });
   let reads = 0;
   const pattern = "**/api/v1/tasks";
   await page.route(pattern, async (route) => {
     reads += 1;
+    markReadStarted();
     // Fetch the real answer now; hold only the delivery.
     const original = await route.fetch();
     const tasks = (await original.json()) as Record<string, unknown>[];
@@ -81,7 +87,12 @@ async function holdTaskListReads(page: Page): Promise<{
     await page.waitForTimeout(100);
     await page.unroute(pattern);
   };
-  return { reads: () => reads, release: () => release(), restore };
+  return {
+    readStarted,
+    reads: () => reads,
+    release: () => release(),
+    restore,
+  };
 }
 
 test("/switch paints the cached task list before its own read returns", async ({
@@ -104,6 +115,7 @@ test("/switch paints the cached task list before its own read returns", async ({
     await expect(menu).toContainText("e2e-child");
     await expect(menu).not.toContainText("(loading...)");
     // The open did issue its own read, and its row is not on screen yet.
+    await held.readStarted;
     expect(held.reads()).toBe(1);
     await expect(menu).not.toContainText("e2e-fresh-row");
 
@@ -111,6 +123,46 @@ test("/switch paints the cached task list before its own read returns", async ({
     held.release();
     await expect(menu).toContainText("e2e-fresh-row");
     await expect(menu).toContainText("e2e-child");
+  } finally {
+    await held.restore();
+  }
+});
+
+test("a seeded /switch row is inert until the fresh read lands", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  const firstTaskId = await createNewTask(page);
+  const secondTaskId = await createNewTask(page);
+  const filter = firstTaskId.slice(0, 8);
+
+  // Warm the display cache, then close.
+  const menu = page.locator("#slash-menu.active");
+  await page.locator("#input").fill(`/switch ${filter}`);
+  await expect(menu.locator(".slash-item")).toHaveCount(1);
+  await page.locator("#input").fill("");
+  await expect(page.locator("#slash-menu.active")).toHaveCount(0);
+
+  const held = await holdTaskListReads(page);
+  try {
+    await page.locator("#input").fill(`/switch ${filter}`);
+    const row = menu.locator(".slash-item").first();
+    await expect(row).toBeVisible();
+    // Painted from the cache: shown, marked, and inert.
+    await expect(row).toHaveClass(/slash-seeded/);
+
+    await row.click();
+    await expect(page.locator("#slash-menu.active")).toBeVisible();
+    await expect.poll(() => currentTaskId(page)).toBe(secondTaskId);
+
+    await held.readStarted;
+    expect(held.reads()).toBe(1);
+
+    // The fresh read repaints the row actionable.
+    held.release();
+    await expect(row).not.toHaveClass(/slash-seeded/);
+    await row.click();
+    await expect.poll(() => currentTaskId(page)).toBe(firstTaskId);
   } finally {
     await held.restore();
   }
