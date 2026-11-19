@@ -801,6 +801,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - an SSE `task_deleted` for the current (old) Root follows its `replacedBy` to the new Root even when another task is more recently active (`test/events.test.ts`)
   - foreign `root-*` ids are ordinary 404s and never aliases; fallback selection uses the current connection's scoped task array
   - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
+  - a switch whose target cannot be opened (deleted, failed read) returns to the previous task instead of leaving an empty view
   - existing-window and cold-start service-worker routing
   - terminal startup intents are cleared; retryable intents survive refresh without in-page duplication
 
