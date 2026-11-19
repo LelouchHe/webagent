@@ -186,6 +186,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - an archive epoch bump after a list request started keeps the old response
     from satisfying a post-archive read; the new read issues its own request
     (SSE-first, old-response-late race)
+  - the epoch bump is idempotent per archived task id while parent clearing
+    still runs on a duplicate delivery
+  - a fenced list request that rejects is retried; a rejection from the current
+    epoch still propagates
   - the baseline taken after the stream handshake supersedes an in-flight
     startup read, so a task created while the stream was registering is live
     rather than exited (`test/connection.test.ts` drives the real connect)
@@ -828,6 +832,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a terminal no_account notice clears the retry entry, so archive leaves the
     real prompt_failed reason; a late failure after archive creates no retry
     entry for the cut edge
+  - a settled edge plus a later ordinary user message never creates a retry
+    entry, and archive keeps its real prompt_failed reason
+  - an active edge retries only its opening delivery, and a failed active
+    dispatch still retries to success (control)
 
 - `test/read-scope.test.ts`
   - a `read` token reaches the task list, stored history, detail, status, and
