@@ -43,15 +43,19 @@ const TASKS = [
   task("frontend", "frontend", "root"),
 ];
 
-/** Two tasks whose `/switch` rows render identically (title and cwd). */
-function twin(id: string): Record<string, unknown> {
+/** Two tasks whose `/switch` rows render alike (title and cwd); the activity
+ *  time is what the `secondary` label shows. */
+function twin(
+  id: string,
+  lastActive = "2026-01-01T00:00:00.000Z",
+): Record<string, unknown> {
   return {
     id,
     cwd: "/work/same",
     title: "Twin",
     parent_id: null,
     workflow_status: "idle",
-    last_active_at: "2026-01-01T00:00:00.000Z",
+    last_active_at: lastActive,
   };
 }
 
@@ -155,6 +159,16 @@ describe("task pickers paint from the last list, then revalidate", () => {
     return [...dom.slashMenu.querySelectorAll(".slash-item")].findIndex(
       (row: any) => row.classList.contains("selected"),
     );
+  }
+
+  function rowSecondary(index: number): string | undefined {
+    const row = dom.slashMenu.querySelectorAll(".slash-item")[index];
+    return row?.querySelector(".slash-secondary")?.textContent ?? undefined;
+  }
+
+  function selectedSecondary(): string | undefined {
+    const row = dom.slashMenu.querySelector(".slash-item.selected");
+    return row?.querySelector(".slash-secondary")?.textContent ?? undefined;
   }
 
   function itemByPrimary(primary: string): any {
@@ -323,6 +337,33 @@ describe("task pickers paint from the last list, then revalidate", () => {
 
     assert.equal(selectedIndex(), 0);
     assert.equal(selectedPrimary(), "Alpha");
+  });
+
+  it("/switch does not keep the highlight on the other twin after activity re-sorts them", async () => {
+    const twinA = twin("twin-a", "2026-01-01T09:00:00.000Z");
+    const twinB = twin("twin-b", "2026-01-01T09:01:00.000Z");
+    listHandler = () => Promise.resolve(okJson([twinA, twinB]));
+    await warmMenu("/switch ");
+
+    const held = holdList();
+    openMenu("/switch ");
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    const aTime = rowSecondary(0);
+    assert.equal(selectedIndex(), 1);
+    assert.equal(selectedSecondary(), rowSecondary(1));
+
+    // B becomes active: its minute changes and it sorts above A, so the row
+    // at the previous index is now the other twin.
+    held.release([
+      twin("twin-b", "2026-01-01T09:05:00.000Z"),
+      twin("twin-a", "2026-01-01T09:00:00.000Z"),
+    ]);
+    await tick();
+
+    assert.deepEqual(rows(), ["Twin", "Twin"]);
+    assert.equal(selectedIndex(), 0);
+    assert.notEqual(selectedSecondary(), aTime);
+    assert.equal(selectedSecondary(), rowSecondary(0));
   });
 
   it("typing in /switch still selects the first row", async () => {

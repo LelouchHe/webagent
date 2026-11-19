@@ -204,6 +204,16 @@ time. An entry without a "closing condition" is a wish, not an issue.
   a `typescript-native` alias is the only interim route and is not worth the
   ~1s it saves on a 2.2s typecheck.
 
+## Slash menu
+
+- **Two `/switch` rows that render identically can trade places during a live
+  repaint.** The selected row is matched by rendered text (title, time, path,
+  fill) and, when keys repeat, by position — not by task identity. Two tasks
+  with the same title, cwd, agent, and active minute are indistinguishable, so
+  if new activity re-sorts them while a read is in flight the highlight can
+  stay on the other one. *Closing:* give rows a stable id if this ever shows up
+  in practice.
+
 ## Deferred features (design decided, not scheduled)
 
 - **An agent's output file has no automatic channel to a person — postponed,

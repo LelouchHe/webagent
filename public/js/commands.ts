@@ -339,7 +339,9 @@ interface KeepRow {
   index: number;
 }
 
-/** A row's identity across a live repaint: only what it renders. */
+/** A row's identity across a live repaint: only what it renders. The time
+ *  label (`secondary`) counts, because two rows can share a title and cwd and
+ *  still be told apart by activity. */
 function rowKey(candidate: Candidate | undefined): string | null {
   if (
     candidate === undefined ||
@@ -350,6 +352,7 @@ function rowKey(candidate: Candidate | undefined): string | null {
   return JSON.stringify([
     candidate.kind,
     candidate.spec.primary,
+    candidate.spec.secondary ?? null,
     candidate.spec.path ?? null,
     candidate.spec.fill ?? null,
   ]);
