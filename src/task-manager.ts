@@ -4158,6 +4158,12 @@ export class TaskManager implements ObligationHost {
     notice: ObligationNotice,
     obligation: DirectedObligation,
   ): void {
+    // `no_account` / `delivery_failed` are emitted only by the terminal
+    // `exhaust` transition. The bounded dispatch retry is over, so its map
+    // entry must not outlive it: archive uses that map as "still retryable".
+    if (notice.reason === "no_account" || notice.reason === "delivery_failed") {
+      this.pendingDispatchRetries.delete(obligation.targetTaskId);
+    }
     const payload = {
       sourceTaskId: obligation.sourceTaskId,
       targetTaskId: obligation.targetTaskId,
@@ -4438,8 +4444,13 @@ export class TaskManager implements ObligationHost {
         // A qualifying dispatch is not abandoned on one request-level failure.
         // Hold its claimed rows for the controller's bounded initial-delivery
         // retry, which requeues and resubmits them under backoff; an immediate
-        // idle drain would bypass that budget.
-        if (qualifyingDeliveryIds.length > 0) {
+        // idle drain would bypass that budget. A late failure after archive has
+        // no edge left to retry, so it must not create an orphan retry entry.
+        const retryEdgeExists = [...qualifyingSources].some(
+          (sourceTaskId) =>
+            this.obligations.getActive(sourceTaskId, taskId) !== undefined,
+        );
+        if (qualifyingDeliveryIds.length > 0 && retryEdgeExists) {
           this.pendingDispatchRetries.set(taskId, qualifyingDeliveryIds);
         }
         for (const sourceTaskId of qualifyingSources) {

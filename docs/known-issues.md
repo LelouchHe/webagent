@@ -109,6 +109,17 @@ time. An entry without a "closing condition" is a wish, not an issue.
   source task is deleted during the cwd probe) leaves no active task until a
   reload. The probe's liveness guard fails open on purpose. *Closing:* clear
   only after a successful create, or restore the previous task on failure.
+- **A claimed (`draining`) delivery can be stranded before the ACP handoff.**
+  `claimQueuedDeliveries` marks rows `draining`, but the prompt is handed to
+  ACP later in the same synchronous block. If the process exits or a database
+  write in that window fails, the row stays `draining` with no outcome callback
+  and no failure reason. It is not redelivered: only `queued` rows are claimable,
+  and the retry map never contains it. Archive deliberately does not relabel it,
+  because `draining` means "handed over / in flight", not "not yet submitted".
+  *Closing:* the startup sweep already planned for task collaboration — mark
+  leftover `queued`/`draining` rows from a previous process as interrupted
+  before delivery starts.
+
 - **Task-created broadcast guards lack multi-client coverage.** The live
   `task_created` / `system_message` guards are asserted in the frontend tests,
   not against two real clients. *Closing:* a two-client integration test that

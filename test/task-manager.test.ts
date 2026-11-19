@@ -228,6 +228,128 @@ describe("TaskManager", () => {
       );
     });
 
+    it("clears a retry entry when the obligation becomes terminal", () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      store.createCollaborationMessage({
+        id: "terminal-retry",
+        deliveryId: "terminal-retry-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      const claimed = store.claimQueuedDeliveries("child");
+      store.failCollaborationDeliveries(
+        claimed.map((delivery) => delivery.id),
+        "prompt_failed",
+      );
+      const retries = (
+        sm as unknown as { pendingDispatchRetries: Map<string, string[]> }
+      ).pendingDispatchRetries;
+      retries.set("child", ["terminal-retry-delivery"]);
+      const obligation = sm.getObligation("parent", "child");
+      assert.ok(obligation);
+
+      sm.emitObligationNotice(
+        { reason: "no_account", message: "no account", evidence: {} } as never,
+        obligation,
+      );
+      // Retry exhausted: the map no longer claims this row is retryable.
+      assert.equal(retries.has("child"), false);
+
+      sm.archiveTask("child");
+      // Archive must not overwrite the real failure with archived_edge_cut.
+      assert.equal(
+        store.getCollaborationDelivery("terminal-retry-delivery")
+          ?.failure_reason,
+        "prompt_failed",
+      );
+    });
+
+    it("does not create a retry entry for a late failure after archive", async () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      store.createCollaborationMessage({
+        id: "late-failure",
+        deliveryId: "late-failure-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      let releasePrompt!: () => void;
+      const promptGate = new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
+      let enteredPrompt!: () => void;
+      const inPrompt = new Promise<void>((resolve) => {
+        enteredPrompt = resolve;
+      });
+      sm.attachExecutionBridge({
+        async newSession() {
+          return { sessionId: "c-session", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt(_taskId: string, _text: string) {
+          enteredPrompt();
+          await promptGate;
+          throw new Error("prompt failed after archive");
+        },
+        isAvailable: () => true,
+      });
+
+      const drained = sm.drainCollaborationDeliveries("child");
+      await inPrompt;
+      sm.archiveTask("child");
+      releasePrompt();
+      await drained;
+      for (let i = 0; i < 10; i++) {
+        if (
+          store.getCollaborationDelivery("late-failure-delivery")?.status ===
+          "failed"
+        ) {
+          break;
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.equal(
+        store.getCollaborationDelivery("late-failure-delivery")?.status,
+        "failed",
+      );
+      assert.equal(
+        store.getCollaborationDelivery("late-failure-delivery")?.failure_reason,
+        "prompt_failed",
+      );
+      const retries = (
+        sm as unknown as { pendingDispatchRetries: Map<string, string[]> }
+      ).pendingDispatchRetries;
+      assert.equal(
+        retries.has("child"),
+        false,
+        "a cut edge has nothing to retry",
+      );
+    });
+
     it("leaves a draining delivery to finish after archive", async () => {
       store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
       store.createTask(
