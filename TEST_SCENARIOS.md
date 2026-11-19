@@ -190,6 +190,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     still runs on a duplicate delivery
   - a fenced list request that rejects is retried; a rejection from the current
     epoch still propagates
+  - when the retry budget is exhausted, the last successful collection wins
+    over an older rejection
   - the baseline taken after the stream handshake supersedes an in-flight
     startup read, so a task created while the stream was registering is live
     rather than exited (`test/connection.test.ts` drives the real connect)
@@ -836,6 +838,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     entry, and archive keeps its real prompt_failed reason
   - an active edge retries only its opening delivery, and a failed active
     dispatch still retries to success (control)
+  - a coalesced batch of two agent dispatches plus one user message retries
+    both agent dispatches on the second prompt; the user message is not
+    retried, and archive marks both agent rows as archived interruptions
 
 - `test/read-scope.test.ts`
   - a `read` token reaches the task list, stored history, detail, status, and
