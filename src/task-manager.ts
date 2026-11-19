@@ -2981,9 +2981,22 @@ export class TaskManager implements ObligationHost {
       mode: string | null;
       reasoning_effort: string | null;
     },
+    opts?: {
+      /**
+       * False on a pure-read path: canonicalize the displayed value without
+       * writing the legacy model identity back to the row. Writes and
+       * operation paths keep the default (true).
+       */
+      persist?: boolean;
+    },
   ): ConfigOption[] {
     const model = task.model ? canonicalModelIdentity(task.model) : task.model;
-    if (task.id && model !== task.model && model !== null) {
+    if (
+      opts?.persist !== false &&
+      task.id &&
+      model !== task.model &&
+      model !== null
+    ) {
       this.store.updateTaskConfig(task.id, "model", model);
     }
     if (!configOptions.length) return configOptions;

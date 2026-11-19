@@ -2794,6 +2794,8 @@ export function createRequestHandler(
             ? tasks.applyStoredConfig(
                 tasks.configOptionsForTask(freshTask.id),
                 freshTask,
+                // A read token must not write the legacy model identity back.
+                { persist: !readOnly },
               )
             : [];
           json(

@@ -207,6 +207,23 @@ describe("read-scope auth", () => {
     assert.equal(tasks.assistantBuffers.has("t1"), false);
   });
 
+  it("does not persist model canonicalization on a read-token detail", async () => {
+    seed("t1");
+    // A legacy composite identity that canonicalization would rewrite.
+    store["db"]
+      .prepare("UPDATE tasks SET model = ? WHERE id = ?")
+      .run('["provider","model"]', "t1");
+
+    const detail = await req(port, "GET", "/api/v1/tasks/t1", readToken);
+    assert.equal(detail.status, 200);
+    assert.equal(store.getTask("t1")?.model, '["provider","model"]');
+
+    // Control: an ordinary api read keeps the write-back behavior.
+    const apiDetail = await req(port, "GET", "/api/v1/tasks/t1", apiToken);
+    assert.equal(apiDetail.status, 200);
+    assert.equal(store.getTask("t1")?.model, "provider/model");
+  });
+
   it("accepts the trailing-slash forms the routes already support", async () => {
     seed("t1");
     const detail = await req(port, "GET", "/api/v1/tasks/t1/", readToken);
