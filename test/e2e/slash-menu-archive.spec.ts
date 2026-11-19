@@ -40,8 +40,13 @@ test("slash-menu /archive detaches a task and reopens it", async ({ page }) => {
   // When the archive event arrives it must invalidate that cached list, not
   // keep offering the archived task.
   const second = await page.context().newPage();
-  await gotoConnected(second, `/#${archivedId}`);
-  await expect(second.locator("#task-info")).toContainText(title);
+  await gotoConnected(second);
+  // This client views Root, not the task being archived: the structural fact
+  // must still invalidate its open `/switch` list.
+  await second.locator("#input").fill("/switch root");
+  await second.locator("#input").press("Enter");
+  await expect.poll(() => currentTaskId(second)).not.toBe(archivedId);
+  await expect(second.locator("#task-info")).toContainText("root");
   const secondInput = second.locator("#input");
   await secondInput.fill("/switch ");
   await expect(
@@ -62,8 +67,8 @@ test("slash-menu /archive detaches a task and reopens it", async ({ page }) => {
   await expect(page.locator("#messages")).toContainText("original parent");
   await expect.poll(() => currentTaskId(page)).toBe(archivedId);
 
-  // The other client converges without a reload: the archive event invalidated
-  // its open `/switch` list.
+  // The other client (viewing Root) converges without a reload: the archive
+  // structural fact invalidated its open `/switch` list.
   await expect(
     second.locator("#slash-menu.active .slash-item", { hasText: title }),
   ).toHaveCount(0);

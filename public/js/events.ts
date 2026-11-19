@@ -2059,6 +2059,11 @@ export function handleEvent(msg: AgentEvent) {
     // it recorded may now be stale. Only the current task's own header below
     // is view-scoped.
     noteTaskTitleUpdated(msg.taskId, msg.title);
+  } else if (msg.type === "system_message" && msg.kind === "task_archive") {
+    // The archive structural fact changes /switch for every view, not only the
+    // archived task's own transcript. Consume it before the per-view filter
+    // below; the row rendering stays view-scoped in the switch.
+    noteTaskArchived(msg.taskId);
   }
   if (msg.type === "inbox_count_changed") {
     updateInboxCount(msg.pendingCount);
@@ -2677,7 +2682,6 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "system_message":
-      if (msg.kind === "task_archive") noteTaskArchived(msg.taskId);
       if (msg.taskId === state.taskId) {
         addSystemMessage({
           title: msg.title,
