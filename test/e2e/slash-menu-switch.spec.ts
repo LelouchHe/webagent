@@ -156,3 +156,55 @@ test("a cache-painted /switch row switches before the fresh read lands", async (
     await held.restore();
   }
 });
+
+test("a cached /switch row for a deleted task returns to the current task with the error", async ({
+  page,
+}) => {
+  await gotoConnected(page);
+  const homeTaskId = await createNewTask(page);
+  // A child created without switching, so the page stays on the home task.
+  const title = "e2e-gone-" + Date.now().toString(36);
+  await page.locator("#input").fill(`+${title}`);
+  await page.locator("#input").press("Enter");
+  await expect(page.locator("#messages")).toContainText(
+    `Created task @${title}`,
+  );
+
+  // Warm the display cache with the soon-deleted row, then close.
+  const menu = page.locator("#slash-menu.active");
+  await page.locator("#input").fill(`/switch ${title}`);
+  await expect(menu.locator(".slash-item")).toHaveCount(1);
+  await page.locator("#input").fill("");
+  await expect(page.locator("#slash-menu.active")).toHaveCount(0);
+
+  const held = await holdTaskListReads(page);
+  try {
+    // Deleted elsewhere; any list refresh it triggers stays held, so the
+    // cache still names the task.
+    const tasks = (await (await page.request.get("/api/v1/tasks")).json()) as {
+      id: string;
+      title: string | null;
+    }[];
+    const goneId = tasks.find((t) => t.title === title)?.id;
+    expect(goneId).toBeTruthy();
+    const deleted = await page.request.delete(`/api/v1/tasks/${goneId}`);
+    expect(deleted.ok()).toBeTruthy();
+
+    await page.locator("#input").fill(`/switch ${title}`);
+    const row = menu.locator(".slash-item").first();
+    await expect(row).toContainText(title);
+    await row.click();
+
+    // Back on the home task, its transcript restored, the failure reported in it.
+    await expect(page.locator("#messages")).toContainText(
+      "err: Failed to switch task",
+    );
+    await expect.poll(() => currentTaskId(page)).toBe(homeTaskId);
+    await expect(page.locator("#messages")).toContainText(
+      `Created task @${title}`,
+    );
+  } finally {
+    held.release();
+    await held.restore();
+  }
+});

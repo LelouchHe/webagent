@@ -1313,6 +1313,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     read is held, and the row that read carries but the cache did not appears
     once it is released
   - a cache-painted `/switch` row switches while the list read is still held
+  - clicking a cached `/switch` row whose task was deleted since the cached read
+    returns to the current task, restores its transcript, and shows
+    `err: Failed to switch task` there
 
 - `slash-menu-at-picker.spec.ts`
   - a second `@` open paints the previously fetched list while its task read is
