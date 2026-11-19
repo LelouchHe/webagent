@@ -847,10 +847,25 @@ export function createRequestHandler(
         // Global by default; `?agent=` narrows to tasks whose current binding
         // names that agent. Filtering is a read concern, never a gate.
         const agentFilter = params.get("agent") ?? undefined;
+        // Archived trees are the parentless non-Root subtrees. The default read
+        // is the active Root tree; `archived=include|only` widens it for
+        // history consumers and the `/archive` menu.
+        const archivedRaw = params.get("archived") ?? "exclude";
+        if (
+          archivedRaw !== "exclude" &&
+          archivedRaw !== "include" &&
+          archivedRaw !== "only"
+        ) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "archived must be one of: exclude, include, only",
+          });
+          return;
+        }
         const publicTasks = store
           .listTasks({
             ...(source ? { source } : {}),
             ...(agentFilter !== undefined ? { agentId: agentFilter } : {}),
+            archived: archivedRaw,
           })
           .map((task) => {
             const {
@@ -2647,6 +2662,61 @@ export function createRequestHandler(
             error: err instanceof Error ? err.message : String(err),
           });
         }
+        return;
+      }
+
+      // POST /api/v1/tasks/:id/archive — detach the task (and therefore its
+      // whole subtree) from the tree by clearing `parent_id`. Archive is
+      // one-way; nothing marks the row. The one record written is a system
+      // message on the detached task naming the parent it came from.
+      const archiveMatch = url.match(
+        /^\/api\/v1\/tasks\/([^/]+)\/archive\/?(?:\?.*)?$/,
+      );
+      if (archiveMatch && req.method === "POST") {
+        const taskId = decodeURIComponent(archiveMatch[1]);
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+          return;
+        }
+        if (store.isRootTaskId(taskId)) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Root cannot be archived",
+          });
+          return;
+        }
+        // A debt to the former parent does not block archiving. Archiving cuts
+        // that edge, so a later task_update is recorded but not delivered to a
+        // parent the task no longer belongs to. The response warns the caller.
+        const pendingAccount =
+          task.parent_id !== null &&
+          tasks?.hasOpenObligation(task.parent_id, taskId) === true;
+        const result = store.archiveTask(taskId);
+        if (!result) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+          return;
+        }
+        if (result.status === "archived") {
+          if (task.parent_id !== null) {
+            tasks?.dropObligationEdge(task.parent_id, taskId);
+          }
+          if (result.message) {
+            sseManager.broadcast({
+              type: "system_message",
+              taskId,
+              kind: result.message.kind,
+              title: result.message.title,
+              body: result.message.body,
+            });
+          }
+        }
+        json(res, HTTP_STATUS.OK, {
+          status: result.status,
+          taskId,
+          parentId: result.parentId,
+          parentPath: result.parentPath,
+          pendingAccount,
+        });
         return;
       }
 

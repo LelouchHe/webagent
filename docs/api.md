@@ -145,10 +145,17 @@ startup the frontend selects the first task with `hasUserInput: true`, then the
 canonical Root, then the first listed task. SSE reconnects preserve the task
 already active in the browser.
 
-| Parameter | In    | Type   | Description                                                   |
-| --------- | ----- | ------ | ------------------------------------------------------------- |
-| `source`  | query | string | Optional. Filter by task source (e.g., `"auto"`)              |
-| `agent`   | query | string | Optional. Narrow to tasks whose current binding names this agent |
+By default the list is the active Root tree. An **archived tree** is a live,
+parentless, non-Root task and its whole subtree; nothing marks it, the
+structure is the fact (see [Task Lifecycle](task-lifecycle.md#archived-trees)).
+Archived trees are excluded by default, so a normal reader — and `/switch` —
+sees only active tasks. History consumers opt in with `archived`.
+
+| Parameter  | In    | Type   | Description                                                   |
+| ---------- | ----- | ------ | ------------------------------------------------------------- |
+| `source`   | query | string | Optional. Filter by task source (e.g., `"auto"`)              |
+| `agent`    | query | string | Optional. Narrow to tasks whose current binding names this agent |
+| `archived` | query | string | Optional. `exclude` (default): only the active Root tree. `include`: active and archived tasks. `only`: archived trees only. Any other value is `400`. |
 
 **Response** `200`: Array of `TaskSummary` (defined in `src/types.ts`). Each
 entry carries `agentId`: the agent of the task's current execution binding, or
@@ -459,12 +466,53 @@ not start one agent process per task.
 | Field           | Type                        | Description                                                                   |
 | --------------- | --------------------------- | ----------------------------------------------------------------------------- |
 | `configOptions` | `ConfigOption[]`            | Current config with stored overrides applied (type defined in `src/types.ts`) |
-| `parentId` | `string \| null` | Parent WebAgent Task; `null` for the Root Task, or for a survivor detached by a delete collision (see DELETE) |
+| `parentId` | `string \| null` | Parent WebAgent Task; `null` for the Root Task, an archived tree top, or a survivor detached by a delete collision or an archive (see DELETE and archiving) |
 | `parentAgentId` | `string \| null` | The parent's confirmed binding; only meaningful with `parentId`. `null` means the parent exists but has no binding. Lets a client compare this task's agent with what it should have inherited without a second read. |
 | `busy`          | boolean                     | Whether the task has an active agent prompt or bash process                |
 | `busyKind`      | `"agent" \| "bash" \| null` | What kind of work is in progress (user-visible work only, as in `runtime.busy`; a background restore reports `null`) |
 
-**Errors:** `404` (task not found), `500` (ACP restore failed)
+**Errors:** `404` (task not found)
+
+---
+
+#### `POST /api/v1/tasks/:id/archive`
+
+Detach a task — and therefore its whole subtree — from its current parent by
+clearing `parent_id`. Archive is **one-way**: nothing is stored, no field or
+table is added, and "archived" is derived from the structure (a live,
+parentless, non-Root task is the top of an archived tree). The detached task
+stays live and runnable; it no longer appears in the default task list or in
+`/switch`, and it never re-attaches to Root.
+
+Archiving a task that is already an archived top is a no-op (`status:
+"already_archived"`, no event). Archiving a deeper task inside an archived tree
+splits that subtree out into a new archived tree. Root is refused. The action
+writes exactly one `system_message` (`kind: "task_archive"`) on the detached
+task, naming the original parent's path and id; children stay attached to it
+and get no rows of their own. A pending account owed to the former parent does
+not block archiving: that edge is dropped, so a later `task_update` is recorded
+but not delivered to the parent the task left.
+
+**Response** `200`:
+
+```json
+{
+  "status": "archived",
+  "taskId": "abc-123",
+  "parentId": "def-456",
+  "parentPath": "@/area",
+  "pendingAccount": false
+}
+```
+
+| Field            | Type      | Description                                                                 |
+| ---------------- | --------- | --------------------------------------------------------------------------- |
+| `status`         | string    | `"archived"`, or `"already_archived"` when the task was already a tree top |
+| `parentId`       | `string \| null` | The parent the task was detached from; `null` for a no-op          |
+| `parentPath`     | `string \| null` | The parent's user-facing path at archive time; `null` for a no-op  |
+| `pendingAccount` | boolean   | True when the task still owed its former parent an account                  |
+
+**Errors:** `400` (Root cannot be archived), `404` (task not found)
 
 ---
 

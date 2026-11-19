@@ -975,6 +975,34 @@ describe("ObligationController", () => {
     assert.equal(bySource.controller.getForTarget("child"), undefined);
   });
 
+  it("drops one edge without touching other edges", async () => {
+    const h = makeController();
+    armOpen(h);
+    await tick(h);
+
+    h.controller.dropEdge("parent", "child");
+
+    // Mutation evidence: leaving the record in place keeps the reminder timer
+    // and lets a later task_update settle against the detached parent.
+    assert.equal(h.controller.getActive("parent", "child"), undefined);
+    assert.equal(h.controller.getForTarget("child"), undefined);
+    const submissionsBefore = h.submissions.length;
+    await tick(h, 60 * 60_000);
+    assert.equal(h.submissions.length, submissionsBefore);
+
+    // An unrelated edge is untouched: archiving one task must not silence its
+    // own children's accounts.
+    const keep = makeController();
+    keep.controller.arm({
+      sourceTaskId: "child",
+      targetTaskId: "grandchild",
+      messageId: "m-2",
+      deliveryId: "d-2",
+    });
+    keep.controller.dropEdge("parent", "child");
+    assert.ok(keep.controller.getActive("child", "grandchild"));
+  });
+
   it("ignores callbacks from a superseded dispatch", () => {
     const h = makeController();
     const obligation = armDirect(h);

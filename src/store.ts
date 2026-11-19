@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalCwd } from "./cwd-path.ts";
+import { formatFieldBlock } from "./shared/field-block.ts";
 import { formatTaskPath } from "./shared/task-reference.ts";
 import {
   buildCollaborationSystemMessage,
@@ -86,6 +87,26 @@ export interface TaskDelete {
 }
 
 export type WorkflowStatus = "running" | "idle" | "blocked" | "done";
+
+/** Which trees `listTasks` returns. Archived trees are derived, not stored. */
+export type ArchivedFilter = "exclude" | "include" | "only";
+
+/** The system message a successful archive appends to the detached task. */
+export interface ArchiveSystemMessage {
+  kind: "task_archive";
+  title: string;
+  body: string;
+}
+
+export interface ArchiveTaskResult {
+  status: "archived" | "already_archived";
+  taskId: string;
+  /** The parent the task was detached from; null when it was already a top. */
+  parentId: string | null;
+  parentPath: string | null;
+  /** Present only when this call actually archived the task. */
+  message: ArchiveSystemMessage | null;
+}
 
 export interface TaskRow {
   id: string;
@@ -1063,9 +1084,36 @@ export class Store {
    * row existing. `agentId` narrows the result to tasks whose current binding
    * names that agent.
    */
-  listTasks(opts?: { source?: string; agentId?: string }): TaskRow[] {
+  listTasks(opts?: {
+    source?: string;
+    agentId?: string;
+    /** Which trees to return; the default excludes every archived tree. */
+    archived?: ArchivedFilter;
+  }): TaskRow[] {
     const conditions = ["s.deleted_at IS NULL"];
     const params: unknown[] = [];
+    const archived = opts?.archived ?? "exclude";
+    // An archived tree is exactly a live parentless subtree that is not the
+    // Root: nothing marks it, the structure is the fact. `only` and `exclude`
+    // both need the set, so one recursive walk serves both.
+    const archivedCte =
+      archived === "include"
+        ? ""
+        : `WITH RECURSIVE archived(id) AS (
+             SELECT id FROM tasks
+             WHERE deleted_at IS NULL AND parent_id IS NULL AND id != ?
+             UNION
+             SELECT t.id FROM tasks t
+             JOIN archived a ON t.parent_id = a.id
+             WHERE t.deleted_at IS NULL
+           ) `;
+    if (archived === "exclude") {
+      conditions.push("s.id NOT IN (SELECT id FROM archived)");
+      params.push(this.rootTaskId);
+    } else if (archived === "only") {
+      conditions.push("s.id IN (SELECT id FROM archived)");
+      params.push(this.rootTaskId);
+    }
     if (opts?.source) {
       conditions.push("s.source = ?");
       params.push(opts.source);
@@ -1078,7 +1126,7 @@ export class Store {
     }
     return this.db
       .prepare(
-        `SELECT s.*,
+        `${archivedCte}SELECT s.*,
            EXISTS (
              SELECT 1 FROM events e
              WHERE e.task_id = s.id AND e.type = 'user_message'
@@ -1510,6 +1558,65 @@ export class Store {
       this.rootId = oldId;
       throw error;
     }
+  }
+
+  /**
+   * Detach a task (and with it its whole subtree) from the tree by clearing
+   * `parent_id`. Archive is one-way: nothing is stored, and “archived” is the
+   * structure `parent_id IS NULL` on a live non-Root task.
+   *
+   * The only record written is one `system_message` on the detached task,
+   * naming the parent it came from. Children stay attached to it, so they need
+   * no rows of their own.
+   */
+  archiveTask(id: string): ArchiveTaskResult | undefined {
+    const task = this.getTask(id);
+    if (!task) return undefined;
+    if (this.isRootTaskId(id)) {
+      throw new Error("Root task cannot be archived");
+    }
+    if (task.parent_id === null) {
+      return {
+        status: "already_archived",
+        taskId: id,
+        parentId: null,
+        parentPath: null,
+        message: null,
+      };
+    }
+    const parentId = task.parent_id;
+    return this.db.transaction(() => {
+      const parentPath = this.getTaskPath(parentId) ?? parentId;
+      this.db
+        .prepare(
+          "UPDATE tasks SET parent_id = NULL WHERE id = ? AND parent_id = ?",
+        )
+        .run(id, parentId);
+      const message: ArchiveSystemMessage = {
+        kind: "task_archive",
+        title: "Task archived",
+        body: formatFieldBlock([
+          { label: "original parent", value: `${parentPath} (${parentId})` },
+        ]),
+      };
+      this.saveEvent(
+        id,
+        "system_message",
+        {
+          ...message,
+          originalParentId: parentId,
+          originalParentPath: parentPath,
+        },
+        { from_ref: "system" },
+      );
+      return {
+        status: "archived" as const,
+        taskId: id,
+        parentId,
+        parentPath,
+        message,
+      };
+    })();
   }
 
   /**

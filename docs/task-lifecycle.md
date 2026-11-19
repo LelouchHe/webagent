@@ -48,10 +48,34 @@ the SQL mechanics, and the debt state machine live in their own documents (see
 | **Implicit takeover** — the binding agent is no longer in configuration | Everything a rotation keeps | The binding moves to `default_agent`'s reserved empty slot (`no-execution:<taskId>`, Root included), leaving the task **unmaterialized**. A configured agent that is merely not running, dead, or unavailable is *not* a trigger; only removing it from configuration is. |
 | **Materialization** — first use (resume, prompt, explicit clear) of an unmaterialized task | Everything | A fresh ACP session replaces the empty slot. All first-use paths share the same per-task single-flight. |
 | **Delete** — `DELETE /api/v1/tasks/:id`, `/exit` off Root | Nothing | The **whole task tree**, whatever agent owns each descendant: rows gone, executions retired through each agent's adapter, directories removed. |
+| **Archive** — `POST /api/v1/tasks/:id/archive`, `/archive` | Task id, subtree, events, attachments, shares, binding, runtime | `parent_id` is cleared, detaching the task and its whole subtree from the tree as one **archived tree**. One `system_message` (`task_archive`) naming the former parent's path and id is appended to the detached task; children get no rows. A pending account to the former parent is dropped from the obligation controller, so a later `task_update` is recorded but not delivered. No row, column, or event type marks the tree; the structure is the fact. |
 | **Delete with an active share** | Row, events, attachments, shares | Soft delete: `deleted_at` set, binding removed, re-parented under Root (detached when Root is missing or a live sibling-title collision exists). |
 | **Tombstone reap** — last share revoked (the revoke route is the only caller) | The row, until reaped | Hard-deleted: task row, events, attachment rows (cascaded), and `tasks/<id>` on disk. Repeating the reap is a no-op, and a tombstone that still has an activated share is never reaped. |
 | **Empty-task GC** | The task's children | Only zero-event tasks older than 60 s, never Root, whatever agent carries them. Each removed execution is retired through the agent in its record. Children are re-parented under Root, not deleted. |
 | **Process restart** | Bindings, history, shares, tree | Every execution is gone (its session id is dead); no agent process starts until a task needs one; the generation ledger starts empty and is re-adopted on the first restore; clients rebuild from a snapshot with a fresh `lastSeq`, because `seq` is process-local. |
+
+## Archived Trees
+
+An **archived tree** is a live, parentless, non-Root task and its whole
+subtree. There is no `archived_at`, no table, and no state flag: a task is
+archived exactly when it is live, `parent_id IS NULL`, and not Root. Any
+parentless subtree produced elsewhere — for example an orphan detached by
+`reparentChildrenToRoot` when Root is missing or a sibling title collides —
+falls under the same definition and is therefore reachable from `/archive`.
+
+- **Archive is one-way.** The detached task can be opened, prompted, executed,
+  and accounted like any live task, but it never re-attaches to Root and does not
+  appear in `/switch`. There is no unarchive.
+- **Archive is not delete.** `/exit` remains the delete operation. To delete an
+  archived task, enter it from `/archive` and exit there; Root exit deletes only
+  the Root tree, so archived trees are untouched.
+- **Internal collaboration is unchanged.** The MCP surface is still self, parent,
+  children, and siblings. An archived top has no parent, and siblings require a
+  non-null `parent_id`, so different archived trees cannot see each other;
+  collaboration inside one archived tree works as before.
+- **List visibility is a read filter.** `GET /api/v1/tasks` excludes archived
+  trees by default and can include or select them with `archived=include|only`.
+  No read depends on execution, and a `read`-scope token never warms one.
 
 ## Three operations that look alike
 

@@ -3862,6 +3862,25 @@ export class TaskManager implements ObligationHost {
     return this.obligations.getActive(sourceTaskId, targetTaskId);
   }
 
+  /**
+   * True when the target still owes an open account to this source. Terminal
+   * records stay in the controller for audit, so `getObligation` alone would
+   * report a settled edge as pending.
+   */
+  hasOpenObligation(sourceTaskId: string, targetTaskId: string): boolean {
+    return this.obligations.isOwed(sourceTaskId, targetTaskId);
+  }
+
+  /**
+   * Forget one directed edge after its target left the source's tree (archive).
+   * The target keeps every other edge it has, so an archived subtree can keep
+   * accounting internally; only the link to the former parent is cut.
+   */
+  dropObligationEdge(sourceTaskId: string, targetTaskId: string): void {
+    this.obligations.dropEdge(sourceTaskId, targetTaskId);
+    this.pendingDispatchRetries.delete(targetTaskId);
+  }
+
   /** True when `promptId` is still the task's live agent turn. */
   isTurnRunning(taskId: string, promptId: string): boolean {
     const busy = this.state.getState(taskId).runtime.busy;
