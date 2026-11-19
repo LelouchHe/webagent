@@ -29,7 +29,7 @@ The web UI is a thin wrapper: the browser client stays small because the substan
 - **Inline bash** — `!ls -la` runs directly in your Task's cwd, output streams in real time, cancellable.
 - **Tasks that survive everything** — SQLite-persisted history, auto-resume on page open, auto-restore via ACP `loadTask` after server restart, and context clearing that keeps the Task and its history intact.
 - **Faithful ACP completion status** — standard `cancelled`, `max_tokens`, `max_turn_requests`, and `refusal` outcomes are shown as system notices; prompt errors are displayed and persisted without becoming assistant messages.
-- **Rich slash menu** — `/new`, `/switch`, `/view`, `/model`, `/mode`, `/think`, `/notify`, `/inbox`, `/share`, `/token`, `/log` — autocomplete with Tab, submenus for pickable values.
+- **Rich slash menu** — `/new`, `/switch`, `/archive`, `/view`, `/model`, `/mode`, `/think`, `/notify`, `/inbox`, `/share`, `/token`, `/log` — autocomplete with Tab, submenus for pickable values.
 - **Public share links** — `/share` snapshots a Task into a sanitized read-only viewer at `/s/<token>` for show-and-tell.
 - **Daemon mode with crash recovery** — `webagent start` runs as a background service with PID file, log rotation, and exponential-backoff restart on crash.
 - **Built-in security** — Bearer token auth, per-device tokens, signed image URLs, strict CSP, single-operator threat model.

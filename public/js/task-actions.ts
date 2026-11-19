@@ -14,8 +14,10 @@ import {
   scrollToBottom,
 } from "./render.ts";
 import type { AgentCommandSnapshot, ConfigOption } from "../../src/types.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
 import * as api from "./api.ts";
 import { fallbackToNextTask } from "./events.ts";
+import { setCurrentTask } from "./task-topology.ts";
 import { taskAgentFailureLines } from "./create-command.ts";
 
 interface ClearTaskResult {
@@ -56,6 +58,45 @@ export async function exitCurrentTask(): Promise<void> {
     );
   } catch (err) {
     addSystem(`err: Failed to exit task — ${String(err)}`);
+  }
+}
+
+/**
+ * Detach the current task (and its subtree) from the tree without deleting it.
+ * The task stays current and runnable; only its place in the tree changes, so
+ * the local parent reference is settled immediately instead of waiting for the
+ * next reload. The persisted system message arrives over SSE.
+ */
+export async function archiveCurrentTask(): Promise<void> {
+  if (!state.taskId) {
+    addSystem("warn: No active task");
+    return;
+  }
+  const taskId = state.taskId;
+  try {
+    const result = await api.archiveTask(taskId);
+    if (result.status === "already_archived") {
+      addSystem("notify: this task is already archived");
+      return;
+    }
+    setCurrentTask(taskId, { parentId: null, agentId: null });
+    addSystem(
+      `notify: archived — detached from ${result.parentPath ?? "its parent"}`,
+    );
+    if (result.pendingAccount) {
+      addSystem(
+        "notify: it still owed its original parent an account; after archiving, task_update is recorded but not delivered",
+      );
+    }
+  } catch (err) {
+    const e = err as api.ApiError;
+    if (e.status === HTTP_STATUS.BAD_REQUEST) {
+      addSystem("err: Root cannot be archived");
+    } else if (e.status === HTTP_STATUS.NOT_FOUND) {
+      addSystem("err: task not found");
+    } else {
+      addSystem("err: failed to archive task");
+    }
   }
 }
 

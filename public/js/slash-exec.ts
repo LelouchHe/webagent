@@ -29,7 +29,11 @@ import {
   submitClearField,
   submitCreateField,
 } from "./slash-commands.ts";
-import { compactCurrentTask, exitCurrentTask } from "./task-actions.ts";
+import {
+  archiveCurrentTask,
+  compactCurrentTask,
+  exitCurrentTask,
+} from "./task-actions.ts";
 import {
   createPreview,
   revokeShare,
@@ -215,6 +219,30 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     case "/exit":
       await exitCurrentTask();
       return true;
+
+    case "/archive": {
+      if (!arg) {
+        await archiveCurrentTask();
+        return true;
+      }
+      // With an argument this mirrors `/switch <query>`, but only over archived
+      // tree tops: Enter never consumes a highlighted row.
+      try {
+        const archived = await api.listArchivedTaskTops();
+        const query = arg.toLowerCase();
+        const match = archived.find(
+          (s) => s.id.startsWith(arg) || s.title?.toLowerCase().includes(query),
+        );
+        if (!match) {
+          addSystem(`err: No archived task matching "${arg}"`);
+          return true;
+        }
+        await switchToTask(match.id);
+      } catch {
+        addSystem("err: Failed to open archived task");
+      }
+      return true;
+    }
 
     case "/logout": {
       try {

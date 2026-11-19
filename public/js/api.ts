@@ -240,6 +240,27 @@ export async function deleteTask(
     : result;
 }
 
+export interface ArchiveTaskResult {
+  status: "archived" | "already_archived";
+  taskId: string;
+  parentId: string | null;
+  parentPath: string | null;
+  /** True when the task still owed its former parent an account.
+   *  Archiving cuts that edge; the debt is recorded but never delivered. */
+  pendingAccount: boolean;
+}
+
+export function archiveTask(id: string): Promise<ArchiveTaskResult> {
+  return post(`/api/v1/tasks/${encodeURIComponent(id)}/archive`, {});
+}
+
+/** Only the tops of archived trees: a live parentless non-Root task is what
+ *  the server calls an archived tree. */
+export async function listArchivedTaskTops(): Promise<TaskSummary[]> {
+  const tasks = await request<TaskSummary[]>("/api/v1/tasks?archived=only");
+  return tasks.filter((task) => task.parent_id === null && !task.isRoot);
+}
+
 export function sendCollaborationMessage(
   sourceTaskId: string,
   targetTaskId: string,

@@ -920,6 +920,42 @@ export const ROOT: CmdNode = {
       },
     },
     {
+      name: "/archive",
+      desc: "Archive task / open archived task",
+      help: "Archive the current task and its subtree; with a query, open a matching archived task.",
+      fetch: () => api.listArchivedTaskTops(),
+      matches: (item: unknown, q: string) => {
+        const s = item as TaskSummary;
+        const title = (s.title ?? "").toLowerCase();
+        return title.includes(q) || s.id.startsWith(q);
+      },
+      toSpec: (item: unknown) => {
+        const s = item as TaskSummary;
+        const label = s.title ?? s.id;
+        const time = formatLocalTime(s.last_active_at);
+        const agentLabel = entryAgentLabel(
+          s.agentId ?? null,
+          state.taskId,
+          state.taskAgentId,
+        );
+        const displayPath = taskDisplayPath(s);
+        return {
+          primary: label,
+          secondary: time,
+          path:
+            agentLabel === null ? displayPath : `${agentLabel}:${displayPath}`,
+          current: s.id === state.taskId,
+          onSelect: async () => {
+            try {
+              await switchToTask(s.id);
+            } catch {
+              addSystem("err: Failed to open archived task");
+            }
+          },
+        };
+      },
+    },
+    {
       name: "/view",
       desc: "View files",
       fetch: fetchViewItems,
