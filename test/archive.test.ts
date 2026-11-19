@@ -140,6 +140,55 @@ describe("task archive", () => {
     assert.equal(store.getEvents("area").length, count);
   });
 
+  it("GC detaches children inside an archived tree instead of re-rooting them", () => {
+    store.archiveTask("area");
+    store.createTask("empty", dir, "auto", "agent-a", "empty-session", "area");
+    store.createTask(
+      "grandchild",
+      dir,
+      "auto",
+      "agent-a",
+      "grandchild-session",
+      "empty",
+    );
+    // Keep the child out of the empty-task GC snapshot.
+    store.saveEvent(
+      "grandchild",
+      "user_message",
+      { text: "keep" },
+      { from_ref: "user" },
+    );
+
+    const removed = store.deleteEmptyTasks(0).map((entry) => entry.id);
+    assert.ok(removed.includes("empty"));
+    assert.equal(store.getTask("empty"), undefined);
+    // Inside an archived tree the survivor detaches as its own archived top;
+    // it must not be pulled back under the Root.
+    assert.equal(store.getTask("grandchild")?.parent_id, null);
+
+    // Control: the same shape outside an archived tree still re-parents to Root.
+    store.createTask("active-empty", dir, "auto", "agent-a", "ae-session");
+    store.createTask(
+      "active-child",
+      dir,
+      "auto",
+      "agent-a",
+      "ac-session",
+      "active-empty",
+    );
+    store.saveEvent(
+      "active-child",
+      "user_message",
+      { text: "keep" },
+      {
+        from_ref: "user",
+      },
+    );
+    store.deleteEmptyTasks(0);
+    assert.equal(store.getTask("active-empty"), undefined);
+    assert.equal(store.getTask("active-child")?.parent_id, store.rootTaskId);
+  });
+
   it("refuses to archive Root", () => {
     assert.throws(
       () => store.archiveTask(store.rootTaskId),

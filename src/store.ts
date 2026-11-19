@@ -1418,6 +1418,13 @@ export class Store {
     );
   }
 
+  /** Detach every direct child so each becomes the top of its own tree. */
+  private detachChildren(parentId: string): void {
+    this.db
+      .prepare("UPDATE tasks SET parent_id = NULL WHERE parent_id = ?")
+      .run(parentId);
+  }
+
   /**
    * Preserve each surviving child under the one global Root. A title
    * collision or a missing Root detaches the child instead of failing the
@@ -1787,9 +1794,16 @@ export class Store {
           agentId: r.agent_key,
           sessionId: r.agent_session_id,
         };
-        // A junk task may still be someone's parent; keep the children by
-        // re-parenting them under Root instead of deleting them.
-        this.reparentChildrenToRoot(r.id);
+        // A junk task may still be someone's parent; keep the children.
+        // Outside an archived tree they go under Root; inside one they detach
+        // and become their own archived tops, so GC never pulls archived
+        // history back into the Root tree.
+        const lineage = this.getTaskLineage(r.id);
+        if (lineage !== undefined && lineage[0] !== this.rootTaskId) {
+          this.detachChildren(r.id);
+        } else {
+          this.reparentChildrenToRoot(r.id);
+        }
         this.failOutstandingDeliveriesForDeletedTask(r.id);
         del.run(r.id);
         this.collectBindingChange(r.id, beforeBinding);
