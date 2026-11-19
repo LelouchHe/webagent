@@ -183,15 +183,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - entry labels are baseline-relative to the current task (same agent → none,
     other agent → its id, no baseline → all); a null binding never prints one
   - concurrent list callers in one generation share one request
-  - an archive epoch bump after a list request started keeps the old response
-    from satisfying a post-archive read; the new read issues its own request
-    (SSE-first, old-response-late race)
-  - the epoch bump is idempotent per archived task id while parent clearing
-    still runs on a duplicate delivery
-  - a fenced list request that rejects is retried; a rejection from the current
-    epoch still propagates
-  - when the retry budget is exhausted, the last successful collection wins
-    over an older rejection
   - the baseline taken after the stream handshake supersedes an in-flight
     startup read, so a task created while the stream was registering is live
     rather than exited (`test/connection.test.ts` drives the real connect)
@@ -807,9 +798,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     them under Root outside one
   - detach, transcript, and delivery marks roll back together when a delivery
     write fails; a retry then commits all of them
-  - queued work between the archived subtree and anything outside it is cut in
-    both directions, tree-internal work is untouched, and only
-    failed/prompt_failed rows held for retry are included
+  - queued work between the archived subtree and anything outside it is marked
+    interrupted, tree-internal work is untouched, and failed rows keep their
+    own reason
 
 - `test/archive-routes.test.ts`
   - `POST /api/v1/tasks/:id/archive` archives, broadcasts one system message,
@@ -827,20 +818,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - cutting the former-parent edge keeps the task own child edge; a later
     `task_update` records against the current (null) parent and does not
     deliver an account to the parent the task left
-  - a queued delivery across the cut edge is not drained, and a closing
-    reminder that loses the edge while resuming abandons before submitting
-  - a draining delivery is left alone and finishes delivered after archive; a
-    retry-waiting delivery is marked and removed from the in-memory retry map
-  - a terminal no_account notice clears the retry entry, so archive leaves the
-    real prompt_failed reason; a late failure after archive creates no retry
-    entry for the cut edge
-  - a settled edge plus a later ordinary user message never creates a retry
-    entry, and archive keeps its real prompt_failed reason
-  - an active edge retries only its opening delivery, and a failed active
-    dispatch still retries to success (control)
-  - a coalesced batch of two agent dispatches plus one user message retries
-    both agent dispatches on the second prompt; the user message is not
-    retried, and archive marks both agent rows as archived interruptions
+  - a queued delivery across the cut edge is not drained
+  - a draining delivery is left alone and finishes delivered after archive
 
 - `test/read-scope.test.ts`
   - a `read` token reaches the task list, stored history, detail, status, and
@@ -982,8 +961,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/commands.test.ts`, `test/slash-menu.test.ts`
   - `/new`, `/switch`, `/exit`, `/cancel`, `/rename`
-  - an archive fact arriving while `/switch <query>` Enter waits for its list
-    forces a re-read; the stale `archived:false` row is not entered
   - `/new` (typed and picker-selected) posts a child create whose parent and
     inheritance source are the launching task, keeping the id as its title
   - typed and menu-clicked `/cancel` remain authoritative escape hatches when frontend busy state is stale
@@ -1368,8 +1345,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     menu lists archived tops and its Enter path reopens one, which stays
     runnable
   - `@child` still resolves inside the archived tree
-  - a second client **viewing Root** with `/switch` open drops the archived
-    row on the archive event (structural fact consumed before the view filter)
+  - a second client **viewing Root** no longer offers the archived row when
+    its `/switch` menu is opened after the archive event
 
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and
