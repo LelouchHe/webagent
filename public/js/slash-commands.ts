@@ -1023,6 +1023,11 @@ export const ROOT: CmdNode = {
   ],
 };
 
+// Top-level slash commands are listed alphabetically in both the menu and
+// /help, regardless of where they are declared above. Subcommands keep their
+// declared order, which is semantic (e.g. /log levels).
+ROOT.children!.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
 function configCmdNode(
   name: string,
   desc: string,

@@ -60,6 +60,11 @@ describe("slash menu — Tab vs Click behavior", () => {
   // Tab: always fills input, never executes
   // -----------------------------------------------------------------------
 
+  it("lists top-level commands alphabetically", () => {
+    const names = slashCommands.ROOT.children.map((n: any) => n.name);
+    assert.deepEqual(names, [...names].sort());
+  });
+
   it("Tab on top-level command fills input without executing", () => {
     dom.input.value = "/";
     commands.updateSlashMenu();
