@@ -100,20 +100,20 @@ export function isWhitelistedPath(method: string, path: string): boolean {
  * endpoint that external consumers need must be added explicitly.
  *
  * `/tasks/:id/events` and the task list are the contract with external history
- * consumers. `/snapshot` and `/status` are included because they report only
- * what the process already knows; the route must not warm a task for this
- * scope. `/version` and `/auth/verify` let a consumer discover itself without
- * starting any agent.
+ * consumers. `/status` and `/permissions` report only in-memory runtime facts.
+ * `/snapshot` is deliberately excluded: the UI snapshot path may warm a task,
+ * and `read` must not. `/version` and `/auth/verify` let a consumer discover
+ * itself without starting any agent.
  */
 const READ_SCOPE_PATHS: readonly WhitelistEntry[] = [
   { method: "GET", test: (p) => p === "/api/v1/version" },
   { method: "GET", test: (p) => p === "/api/v1/auth/verify" },
   { method: "GET", test: (p) => p === "/api/v1/tasks" },
-  { method: "GET", test: (p) => /^\/api\/v1\/tasks\/[^/]+$/.test(p) },
+  { method: "GET", test: (p) => /^\/api\/v1\/tasks\/[^/]+\/?$/.test(p) },
   {
     method: "GET",
     test: (p) =>
-      /^\/api\/v1\/tasks\/[^/]+\/(events|snapshot|status|permissions)$/.test(p),
+      /^\/api\/v1\/tasks\/[^/]+\/(events|status|permissions)\/?$/.test(p),
   },
 ];
 

@@ -43,6 +43,16 @@ time. An entry without a "closing condition" is a wish, not an issue.
   the turn-authorization invariant in
   [`implementation-invariants.md`](./implementation-invariants.md).
 
+## Read surface
+
+- **`api`/`admin` `/events` reads still flush streaming buffers.** That is the
+  UI's long-standing replay behavior: a history read writes the pending
+  thinking/assistant text as events and advances `seq`. A `read` token is
+  side-effect free, so external consumers are unaffected; the UI path was left
+  unchanged in this range on purpose. *Closing:* decide whether the UI should
+  read buffers without persisting them (or render them from a separate runtime
+  projection) and change both the route and its replay tests together.
+
 ## Task lifecycle and storage
 
 - **A Root replacement is announced only when the fallback lands normally.**

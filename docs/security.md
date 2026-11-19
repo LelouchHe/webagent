@@ -110,7 +110,7 @@ Every HTTP request flows through `src/auth-middleware.ts`:
 1. If the path matches a whitelist entry → pass through unauthenticated.
 2. Otherwise extract `Authorization: Bearer <token>` from the request header.
 3. Hash the token, look up in `AuthStore`. On match, attach `principal: TokenRecord` to the request and continue. On any failure, return `401 Unauthorized`.
-4. A `read`-scope principal is then checked against an explicit read allowlist. Anything outside it — every write, plus undeclared reads such as `/api/v1/config`, `/api/v1/tokens`, and `/api/v1/files/**` — returns `403 Forbidden` with `reason: "read_scope"` before the route runs. The allowlist lives in `src/auth-middleware.ts`: task list, task detail, task events, snapshot, status, permissions, version, and auth/verify. Read-scope calls to task detail and snapshot never warm an execution.
+4. A `read`-scope principal is then checked against an explicit read allowlist. Anything outside it — every write, plus undeclared reads such as `/api/v1/config`, `/api/v1/tokens`, and `/api/v1/files/**` — returns `403 Forbidden` with `reason: "read_scope"` before the route runs. The allowlist lives in `src/auth-middleware.ts`: task list, task detail, task events, status, permissions, version, and auth/verify. `/events` returns persisted rows only for this scope (no buffer flush, no seq advance); `/snapshot` is excluded because that path may warm an execution.
 
 Whitelisted paths (no auth required):
 

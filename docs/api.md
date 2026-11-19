@@ -686,8 +686,8 @@ can take as long as a real session replay takes. When it finishes, the restored
 schema and commands are published to the task's subscribers as
 `task_runtime_warmed` (see [Live Events](#live-events)). A missing, dead, or no
 longer configured agent simply means no such event arrives. A `read`-scope
-token does not warm either: the snapshot reports only what is already in
-memory.
+token may not call this route: the snapshot path is allowed to start that
+background warm.
 
 A write that needs the execution ready — prompt, config, compact — waits for
 that same restore instead of failing with `409 Task is busy`: the restore is
@@ -774,7 +774,9 @@ Send a user prompt to the agent. Returns immediately; the agent's response strea
 
 #### `GET /api/v1/tasks/:id/events`
 
-Retrieve stored events for a task (history). This is the primary history endpoint used during page load, and the read contract for external consumers: it never touches execution, so it works for archived, unbound, and never-materialized tasks alike. A `read`-scope token may call it.
+Retrieve events for a task (history). This is the primary history endpoint used during page load, and the read contract for external consumers: it never touches execution, so it works for archived, unbound, and never-materialized tasks alike. A `read`-scope token may call it.
+
+A `read` token gets **persisted rows only**: it does not flush in-memory thinking/assistant buffers and does not advance `seq`, so repeated reads are side-effect free and `streaming` is `false`. An ordinary `api`/`admin` read still flushes pending buffers (the UI's existing behavior; tracked in [Known issues](known-issues.md)).
 
 | Parameter  | In    | Type           | Description                                                                                                      |
 | ---------- | ----- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -1047,7 +1049,7 @@ This endpoint **always requires** a valid `Authorization: Bearer <token>` header
 | ------- | ------- | ---------------------------------------------------- |
 | `ok`    | boolean | Always `true` on success                             |
 | `name`  | string  | Token's human-readable name (e.g. `"laptop"`)        |
-| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"read"` (pure reads only: task list, task detail, events, snapshot, status, permissions, version, auth/verify; never warms) |
+| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"read"` (pure reads only: task list, task detail, events, status, permissions, version, auth/verify; events never flushes and no read warms) |
 
 **Response** `401`:
 

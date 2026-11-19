@@ -3180,9 +3180,12 @@ export function createRequestHandler(
         // Flush pending buffers so their content becomes part of the event list.
         // Track whether each buffer was non-empty so the frontend can keep the
         // last thinking/assistant element "open" for continued live streaming.
+        // A `read` token gets persisted rows only: flushing writes events and
+        // advances seq, which is not a pure read.
         let streamingThinking = false;
         let streamingAssistant = false;
-        if (tasks) {
+        const readOnly = principalByRequest.get(req)?.scope === "read";
+        if (tasks && !readOnly) {
           const runtimeStreaming = tasks.state.peekStreaming(taskId);
           streamingThinking =
             runtimeStreaming.thinking ||

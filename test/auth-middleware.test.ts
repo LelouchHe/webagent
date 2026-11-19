@@ -234,17 +234,30 @@ describe("auth-middleware", () => {
 
     it("allows task detail and the in-memory runtime reads", () => {
       assert.equal(isReadScopeAllowedPath("GET", "/api/v1/tasks/abc"), true);
-      assert.equal(
-        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/snapshot"),
-        true,
-      );
+      // Trailing-slash forms are accepted exactly where the route accepts them.
+      assert.equal(isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/"), true);
       assert.equal(
         isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/status"),
         true,
       );
       assert.equal(
+        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/status/"),
+        true,
+      );
+      assert.equal(
         isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/permissions"),
         true,
+      );
+    });
+
+    it("denies snapshot: the UI path may warm", () => {
+      assert.equal(
+        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/snapshot"),
+        false,
+      );
+      assert.equal(
+        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/snapshot/"),
+        false,
       );
     });
 

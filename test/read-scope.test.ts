@@ -159,23 +159,65 @@ describe("read-scope auth", () => {
     assert.match(events.body, /"seq":1/);
   });
 
-  it("allows task detail and snapshot without warming the execution", async () => {
+  it("allows task detail without warming the execution", async () => {
     seed("t1");
     const detail = await req(port, "GET", "/api/v1/tasks/t1", readToken);
     assert.equal(detail.status, 200);
     await settle();
     assert.equal(bridge.loads, 0, "task detail must not start a restore");
+    assert.equal(tasks.liveTasks.has("t1"), false);
+  });
 
+  it("denies the warming snapshot read", async () => {
+    seed("t1");
     const snapshot = await req(
       port,
       "GET",
       "/api/v1/tasks/t1/snapshot",
       readToken,
     );
-    assert.equal(snapshot.status, 200);
+    assert.equal(snapshot.status, 403);
     await settle();
-    assert.equal(bridge.loads, 0, "snapshot must not start a restore");
-    assert.equal(tasks.liveTasks.has("t1"), false);
+    assert.equal(bridge.loads, 0);
+  });
+
+  it("returns persisted events only, without flushing buffers or seq", async () => {
+    seed("t1");
+    tasks.assistantBuffers.set("t1", "unflushed");
+    const before = store.getEvents("t1").length;
+    const lastSeq = store.getLastEventSeq("t1");
+
+    const res = await req(port, "GET", "/api/v1/tasks/t1/events", readToken);
+    assert.equal(res.status, 200);
+    const body = JSON.parse(res.body) as {
+      events: unknown[];
+      streaming: { thinking: boolean; assistant: boolean };
+    };
+    assert.equal(body.events.length, before);
+    assert.deepEqual(body.streaming, { thinking: false, assistant: false });
+    assert.equal(store.getEvents("t1").length, before);
+    assert.equal(store.getLastEventSeq("t1"), lastSeq);
+    assert.equal(tasks.assistantBuffers.get("t1"), "unflushed");
+
+    // Control: an ordinary api read still flushes (existing behavior).
+    const api = await req(port, "GET", "/api/v1/tasks/t1/events", apiToken);
+    assert.equal(api.status, 200);
+    assert.equal(store.getEvents("t1").length, before + 1);
+    assert.ok(store.getLastEventSeq("t1") > lastSeq);
+    assert.equal(tasks.assistantBuffers.has("t1"), false);
+  });
+
+  it("accepts the trailing-slash forms the routes already support", async () => {
+    seed("t1");
+    const detail = await req(port, "GET", "/api/v1/tasks/t1/", readToken);
+    assert.equal(detail.status, 200);
+    const status = await req(
+      port,
+      "GET",
+      "/api/v1/tasks/t1/status/",
+      readToken,
+    );
+    assert.equal(status.status, 200);
   });
 
   it("still warms for an ordinary api token (control)", async () => {
