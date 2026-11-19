@@ -70,6 +70,11 @@ export interface DataSection {
  *  the "loading" sentinel, or an error wrapper carrying the message to display. */
 export type FetchData = unknown[] | DataSection | "loading" | { error: string };
 
+/** A resolved section, as opposed to the loading sentinel or an error. */
+function isDataSection(data: FetchData | undefined): data is DataSection {
+  return typeof data === "object" && !Array.isArray(data) && "items" in data;
+}
+
 /** Data states that already render a placeholder row of their own. */
 const PLACEHOLDER_STATES = new Set(["loading", "error", "empty", "no-match"]);
 
@@ -236,15 +241,10 @@ export function buildCandidates(
   // A section carries its own provenance; a plain array is a fresh result.
   const items = Array.isArray(data)
     ? data
-    : data && typeof data === "object" && "items" in data
+    : isDataSection(data)
       ? data.items
       : null;
-  const rowsSeeded =
-    data !== undefined &&
-    typeof data === "object" &&
-    !Array.isArray(data) &&
-    "items" in data &&
-    data.seeded === true;
+  const rowsSeeded = isDataSection(data) && data.seeded === true;
 
   if (node.fetch && node.toSpec) {
     if (data === "loading") {

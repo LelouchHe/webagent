@@ -195,7 +195,7 @@ export function updateSlashMenu(): void {
         // Only a node that opted in keeps the selected row across that
         // repaint, so every other node behaves exactly as it always has.
         const optedIn = node.cached !== undefined;
-        currentData = optedIn ? seededData(node) : "loading";
+        currentData = seededData(node);
         const myPath = pathPrefix;
         const myFetchKey = nextFetchKey;
         void result.then(
@@ -443,7 +443,6 @@ function renderMenu(pathPrefix: string): void {
       // the inert state is visible instead of feeling broken.
       itemEl.classList.add("slash-seeded");
       itemEl.setAttribute("aria-disabled", "true");
-      itemEl.title = "waiting for the fresh task list";
     }
     itemEl.dataset.idx = String(i);
     dom.slashMenu.appendChild(itemEl);
