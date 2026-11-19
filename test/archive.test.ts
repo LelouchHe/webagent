@@ -140,6 +140,155 @@ describe("task archive", () => {
     assert.equal(store.getEvents("area").length, count);
   });
 
+  it("marks only retry-waiting failed rows as archive-interrupted", () => {
+    for (const id of ["retry", "stale"]) {
+      store.createCollaborationMessage({
+        id,
+        deliveryId: `d-${id}`,
+        sourceTaskId: "other",
+        directTargetTaskId: "area",
+        sourceActor: "agent",
+        body: id,
+      });
+    }
+    const claimed = store.claimQueuedDeliveries("area");
+    store.failCollaborationDeliveries(
+      claimed.map((delivery) => delivery.id),
+      "prompt_failed",
+    );
+
+    store.archiveTask("area", { retryDeliveryIds: new Set(["d-retry"]) });
+
+    assert.equal(store.getCollaborationDelivery("d-retry")?.status, "failed");
+    assert.equal(
+      store.getCollaborationDelivery("d-retry")?.failure_reason,
+      "archived_edge_cut",
+    );
+    // Not listed for retry: it is a historical failure, not pending work.
+    assert.equal(store.getCollaborationDelivery("d-stale")?.status, "failed");
+    assert.equal(
+      store.getCollaborationDelivery("d-stale")?.failure_reason,
+      "prompt_failed",
+    );
+    // A stale retry id cannot resurrect the cut row.
+    store.requeueCollaborationDeliveries(["d-retry"]);
+    assert.equal(store.getCollaborationDelivery("d-retry")?.status, "failed");
+    assert.equal(
+      store.getCollaborationDelivery("d-retry")?.failure_reason,
+      "archived_edge_cut",
+    );
+  });
+
+  it("rolls back detach, transcript, and delivery marks as one transaction", () => {
+    store.createCollaborationMessage({
+      id: "cross-message",
+      deliveryId: "cross-delivery",
+      sourceTaskId: "other",
+      directTargetTaskId: "area",
+      sourceActor: "agent",
+      body: "cross",
+    });
+    store.createCollaborationMessage({
+      id: "internal-message",
+      deliveryId: "internal-delivery",
+      sourceTaskId: "area",
+      directTargetTaskId: "work",
+      sourceActor: "agent",
+      body: "internal",
+    });
+    const eventsBefore = store.getEvents("area").length;
+    store["db"].exec(
+      `CREATE TRIGGER fail_archive_delivery
+       BEFORE UPDATE ON deliveries
+       BEGIN SELECT RAISE(ABORT, 'injected archive failure'); END;`,
+    );
+    try {
+      assert.throws(
+        () => store.archiveTask("area"),
+        /injected archive failure/,
+      );
+    } finally {
+      store["db"].exec("DROP TRIGGER fail_archive_delivery");
+    }
+
+    // The detach and its system message rolled back with the delivery write.
+    assert.equal(store.getTask("area")?.parent_id, store.rootTaskId);
+    assert.equal(store.getEvents("area").length, eventsBefore);
+    assert.equal(
+      store.getCollaborationDelivery("cross-delivery")?.status,
+      "queued",
+    );
+    assert.equal(
+      store.getCollaborationDelivery("internal-delivery")?.status,
+      "queued",
+    );
+    // A retry now succeeds and commits everything.
+    assert.equal(store.archiveTask("area")?.status, "archived");
+    assert.equal(store.getTask("area")?.parent_id, null);
+  });
+
+  it("cuts queued work across the subtree boundary, both directions", () => {
+    // Sibling trees: area (being archived, with child work) and other.
+    store.createTask(
+      "other-child",
+      dir,
+      "auto",
+      "agent-a",
+      "oc-session",
+      "other",
+    );
+    const messages: Array<[string, string, string]> = [
+      ["root-to-area", store.rootTaskId, "area"],
+      ["area-to-root", "area", store.rootTaskId],
+      ["area-to-sibling", "area", "other"],
+      ["sibling-to-area", "other", "area"],
+      ["area-to-internal", "area", "work"],
+      ["internal-to-area", "work", "area"],
+      ["other-internal", "other", "other-child"],
+    ];
+    for (const [id, source, target] of messages) {
+      store.createCollaborationMessage({
+        id,
+        deliveryId: `d-${id}`,
+        sourceTaskId: source,
+        directTargetTaskId: target,
+        sourceActor: "agent",
+        body: id,
+      });
+    }
+
+    store.archiveTask("area");
+
+    for (const id of [
+      "root-to-area",
+      "area-to-root",
+      "area-to-sibling",
+      "sibling-to-area",
+    ]) {
+      assert.equal(
+        store.getCollaborationDelivery(`d-${id}`)?.status,
+        "failed",
+        id,
+      );
+      assert.equal(
+        store.getCollaborationDelivery(`d-${id}`)?.failure_reason,
+        "archived_edge_cut",
+        id,
+      );
+    }
+    for (const id of ["area-to-internal", "internal-to-area"]) {
+      assert.equal(
+        store.getCollaborationDelivery(`d-${id}`)?.status,
+        "queued",
+        id,
+      );
+    }
+    assert.equal(
+      store.getCollaborationDelivery("d-other-internal")?.status,
+      "queued",
+    );
+  });
+
   it("GC detaches children inside an archived tree instead of re-rooting them", () => {
     store.archiveTask("area");
     store.createTask("empty", dir, "auto", "agent-a", "empty-session", "area");

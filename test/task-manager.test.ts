@@ -169,8 +169,7 @@ describe("TaskManager", () => {
       assert.ok(sm.getObligation("parent", "child"));
       assert.ok(sm.getObligation("child", "grandchild"));
 
-      store.archiveTask("child");
-      sm.cutArchivedEdge("parent", "child");
+      sm.archiveTask("child");
 
       // Only the former-parent edge is gone; the task still owes its own child.
       assert.equal(sm.getObligation("parent", "child"), undefined);
@@ -185,6 +184,125 @@ describe("TaskManager", () => {
       assert.equal(result.decision.kind, "current-parent");
       assert.equal(result.accountTargetTaskId, null);
       assert.equal(result.collaborationMessageId, null);
+    });
+
+    it("drops a retry-waiting delivery from the in-memory retry map", async () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      store.createCollaborationMessage({
+        id: "retry-waiting",
+        deliveryId: "retry-waiting-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      const claimed = store.claimQueuedDeliveries("child");
+      store.failCollaborationDeliveries(
+        claimed.map((delivery) => delivery.id),
+        "prompt_failed",
+      );
+      const retries = (
+        sm as unknown as { pendingDispatchRetries: Map<string, string[]> }
+      ).pendingDispatchRetries;
+      retries.set("child", ["retry-waiting-delivery"]);
+
+      assert.equal(sm.archiveTask("child")?.status, "archived");
+
+      assert.equal(retries.has("child"), false);
+      assert.equal(
+        store.getCollaborationDelivery("retry-waiting-delivery")?.status,
+        "failed",
+      );
+      assert.equal(
+        store.getCollaborationDelivery("retry-waiting-delivery")
+          ?.failure_reason,
+        "archived_edge_cut",
+      );
+    });
+
+    it("leaves a draining delivery to finish after archive", async () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      store.createCollaborationMessage({
+        id: "in-flight",
+        deliveryId: "in-flight-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      let releasePrompt!: () => void;
+      const promptGate = new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
+      let enteredPrompt!: () => void;
+      const inPrompt = new Promise<void>((resolve) => {
+        enteredPrompt = resolve;
+      });
+      sm.attachExecutionBridge({
+        async newSession() {
+          return { sessionId: "c-session", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt(_taskId: string, _text: string) {
+          enteredPrompt();
+          await promptGate;
+        },
+        isAvailable: () => true,
+      });
+
+      const drained = sm.drainCollaborationDeliveries("child");
+      await inPrompt;
+      // The content is already with ACP: archive must not rewrite the row.
+      assert.equal(
+        store.getCollaborationDelivery("in-flight-delivery")?.status,
+        "draining",
+      );
+      assert.equal(sm.archiveTask("child")?.status, "archived");
+      assert.equal(
+        store.getCollaborationDelivery("in-flight-delivery")?.status,
+        "draining",
+      );
+
+      releasePrompt();
+      await drained;
+      for (let i = 0; i < 10; i++) {
+        if (
+          store.getCollaborationDelivery("in-flight-delivery")?.status ===
+          "delivered"
+        ) {
+          break;
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.equal(
+        store.getCollaborationDelivery("in-flight-delivery")?.status,
+        "delivered",
+      );
+      assert.equal(
+        store.getCollaborationDelivery("in-flight-delivery")?.failure_reason,
+        null,
+      );
     });
 
     it("does not drain a delivery the archive interrupted", async () => {
@@ -208,7 +326,7 @@ describe("TaskManager", () => {
       const prompts: string[] = [];
       sm.attachExecutionBridge(makeRecoveryBridge(prompts));
 
-      assert.equal(sm.cutArchivedEdge("parent", "child"), 1);
+      assert.equal(sm.archiveTask("child")?.status, "archived");
       assert.equal(await sm.drainCollaborationDeliveries("child"), false);
       assert.deepEqual(prompts, [], "nothing crossed the cut edge");
       assert.equal(
@@ -3225,7 +3343,7 @@ describe("TaskManager", () => {
       await inLoad;
       // The archive transaction cuts the edge while the reminder is waiting on
       // the transport/resume. Nothing was handed to ACP yet.
-      sm.cutArchivedEdge("parent", "child");
+      sm.archiveTask("child");
       release();
 
       assert.deepEqual(await submission, {

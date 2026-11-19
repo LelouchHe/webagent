@@ -98,6 +98,15 @@ export interface ArchiveSystemMessage {
   body: string;
 }
 
+export interface ArchiveTaskOptions {
+  /**
+   * Delivery ids currently waiting for the bounded dispatch retry. Only these
+   * `failed` rows count as not-yet-handed-over work; a `draining` row already
+   * reached ACP and must keep its own outcome callback.
+   */
+  retryDeliveryIds?: ReadonlySet<string>;
+}
+
 export interface ArchiveTaskResult {
   status: "archived" | "already_archived";
   taskId: string;
@@ -106,6 +115,8 @@ export interface ArchiveTaskResult {
   parentPath: string | null;
   /** Present only when this call actually archived the task. */
   message: ArchiveSystemMessage | null;
+  /** Deliveries marked `archived_edge_cut` by this archive. */
+  cutDeliveryIds: string[];
 }
 
 export interface TaskRow {
@@ -1590,7 +1601,10 @@ export class Store {
    * naming the parent it came from. Children stay attached to it, so they need
    * no rows of their own.
    */
-  archiveTask(id: string): ArchiveTaskResult | undefined {
+  archiveTask(
+    id: string,
+    opts?: ArchiveTaskOptions,
+  ): ArchiveTaskResult | undefined {
     const task = this.getTask(id);
     if (!task) return undefined;
     if (this.isRootTaskId(id)) {
@@ -1603,9 +1617,14 @@ export class Store {
         parentId: null,
         parentPath: null,
         message: null,
+        cutDeliveryIds: [],
       };
     }
     const parentId = task.parent_id;
+    // Everything this operation persists — detach, transcript fact, and the
+    // cross-tree delivery marks — commits or rolls back together. Memory
+    // cleanup (obligation edge, retry map) belongs to the caller and only runs
+    // after this returns.
     return this.db.transaction(() => {
       const parentPath = this.getTaskPath(parentId) ?? parentId;
       this.db
@@ -1630,14 +1649,67 @@ export class Store {
         },
         { from_ref: "system" },
       );
+      const cutDeliveryIds = this.failDeliveriesAcrossSubtreeBoundary(
+        id,
+        opts?.retryDeliveryIds,
+      );
       return {
         status: "archived" as const,
         taskId: id,
         parentId,
         parentPath,
         message,
+        cutDeliveryIds,
       };
     })();
+  }
+
+  /**
+   * Mark not-yet-handed-over collaboration between a subtree and everything
+   * outside it as interrupted by archive, in both directions.
+   *
+   * `queued` rows have not reached ACP. A `failed` row is included only when
+   * the caller still lists it for the bounded dispatch retry: it would
+   * otherwise be requeued into a cut edge. `draining` rows are already handed
+   * to ACP; they keep their outcome callback and are never rewritten here.
+   */
+  private failDeliveriesAcrossSubtreeBoundary(
+    seedTaskId: string,
+    retryDeliveryIds: ReadonlySet<string> | undefined,
+  ): string[] {
+    const candidates = this.db
+      .prepare(
+        `WITH RECURSIVE subtree(id) AS (
+           SELECT id FROM tasks WHERE id = ?
+           UNION
+           SELECT t.id FROM tasks t JOIN subtree s ON t.parent_id = s.id
+         )
+         SELECT d.id, d.status FROM deliveries d
+         JOIN messages m ON m.id = d.message_id
+         WHERE (
+             (m.source_task_id IN (SELECT id FROM subtree))
+             <> (m.direct_target_task_id IN (SELECT id FROM subtree))
+           )
+           AND (
+             d.status = 'queued'
+             OR (d.status = 'failed' AND d.failure_reason = 'prompt_failed')
+           )`,
+      )
+      .all(seedTaskId) as Array<{ id: string; status: string }>;
+    const selected = candidates.filter(
+      (row) =>
+        row.status === "queued" ||
+        (row.status === "failed" && retryDeliveryIds?.has(row.id) === true),
+    );
+    if (selected.length === 0) return [];
+    const mark = this.db.prepare(
+      `UPDATE deliveries
+       SET status = 'failed', failed_at = ?, failure_reason = 'archived_edge_cut'
+       WHERE id = ? AND status IN ('queued', 'failed')`,
+    );
+    const failedAt = Date.now();
+    for (const row of selected) mark.run(failedAt, row.id);
+    return selected.map((row) => row.id);
   }
 
   /**
@@ -2619,34 +2691,12 @@ export class Store {
       `UPDATE deliveries
        SET status = 'queued', claimed_at = NULL, delivered_at = NULL,
            failed_at = NULL, failure_reason = NULL
-       WHERE id = ? AND status IN ('draining', 'failed')`,
+       WHERE id = ? AND status IN ('draining', 'failed')
+         AND (failure_reason IS NULL OR failure_reason <> 'archived_edge_cut')`,
     );
     this.db.transaction(() => {
       for (const id of ids) requeue.run(id);
     })();
-  }
-
-  /**
-   * Mark not-yet-delivered collaboration across one cut edge as interrupted by
-   * archive, in both directions: a queued request from the former parent and a
-   * queued account/notice from the archived task. Messages, projections, and
-   * the delivery rows are kept; only the status records that they will not be
-   * delivered. Work already handed to ACP is not recalled.
-   */
-  failDeliveriesAcrossEdge(sourceTaskId: string, targetTaskId: string): number {
-    const result = this.db
-      .prepare(
-        `UPDATE deliveries
-         SET status = 'failed', failed_at = ?, failure_reason = 'archived_edge_cut'
-         WHERE status IN ('queued', 'draining')
-           AND message_id IN (
-             SELECT id FROM messages
-             WHERE (source_task_id = ? AND direct_target_task_id = ?)
-                OR (source_task_id = ? AND direct_target_task_id = ?)
-           )`,
-      )
-      .run(Date.now(), sourceTaskId, targetTaskId, targetTaskId, sourceTaskId);
-    return result.changes;
   }
 
   failOutstandingDeliveriesForTaskClear(taskId: string): void {

@@ -8,6 +8,7 @@ import {
   MessageNotFoundError,
   emptyExecutionSlot,
   isEmptyExecutionSlot,
+  type ArchiveTaskResult,
   type CollaborationDeliveryRow,
   type CollaborationMessageRow,
   type TaskDelete,
@@ -3880,19 +3881,35 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
-   * Cut the archived task's former-parent edge. Work still queued across it in
-   * either direction is recorded as interrupted and will not be delivered;
-   * the obligation record and its reminders are dropped. The task keeps every
-   * other edge (its own children), so internal collaboration is untouched.
+   * Archive through the store's single transaction, then clean the in-memory
+   * facts that described the now-cut edges. If the transaction throws, nothing
+   * in memory is touched and the task stays attached.
+   *
+   * The store marks not-yet-handed-over work between the archived subtree and
+   * everything outside it. This method only mirrors that result: it drops the
+   * former-parent obligation edge and removes cut delivery ids from the bounded
+   * retry map. `draining` work is absent from both because it already reached
+   * ACP and finishes through its own callback.
    */
-  cutArchivedEdge(sourceTaskId: string, targetTaskId: string): number {
-    const failed = this.store.failDeliveriesAcrossEdge(
-      sourceTaskId,
-      targetTaskId,
-    );
-    this.obligations.dropEdge(sourceTaskId, targetTaskId);
-    this.pendingDispatchRetries.delete(targetTaskId);
-    return failed;
+  archiveTask(taskId: string): ArchiveTaskResult | undefined {
+    const retryDeliveryIds = new Set<string>();
+    for (const ids of this.pendingDispatchRetries.values()) {
+      for (const id of ids) retryDeliveryIds.add(id);
+    }
+    const result = this.store.archiveTask(taskId, { retryDeliveryIds });
+    if (result?.status !== "archived") return result;
+    if (result.parentId !== null) {
+      this.obligations.dropEdge(result.parentId, taskId);
+    }
+    if (result.cutDeliveryIds.length > 0) {
+      const cut = new Set(result.cutDeliveryIds);
+      for (const [target, ids] of [...this.pendingDispatchRetries]) {
+        const kept = ids.filter((id) => !cut.has(id));
+        if (kept.length === 0) this.pendingDispatchRetries.delete(target);
+        else this.pendingDispatchRetries.set(target, kept);
+      }
+    }
+    return result;
   }
 
   /** True when `promptId` is still the task's live agent turn. */

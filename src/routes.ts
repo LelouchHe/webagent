@@ -1465,8 +1465,7 @@ export function createRequestHandler(
           if (msg.startsWith("Live task not found")) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: msg });
           } else if (
-            msg.startsWith("Collaboration tasks have no common ancestor") ||
-            msg.startsWith("Cannot determine collaboration task lineage")
+            msg.startsWith("Collaboration tasks have no common ancestor")
           ) {
             // A concurrent archive cut the edge between the pre-check and this
             // insert. That is an ordinary out-of-scope answer, not a 500.
@@ -2726,10 +2725,12 @@ export function createRequestHandler(
           tasks?.hasOpenObligation(task.parent_id, taskId) === true;
         let result: ReturnType<typeof store.archiveTask>;
         try {
-          result = store.archiveTask(taskId);
-          if (result?.status === "archived" && task.parent_id !== null) {
-            tasks?.cutArchivedEdge(task.parent_id, taskId);
-          }
+          // With a manager, the store transaction and the post-commit memory
+          // cleanup are one operation; without one (headless store users) only
+          // the transaction applies and no in-memory edge exists.
+          result = tasks
+            ? tasks.archiveTask(taskId)
+            : store.archiveTask(taskId);
         } catch (err) {
           // The store's transaction rolls back on its own; report a diagnosable
           // API error instead of an unhandled rejection.
