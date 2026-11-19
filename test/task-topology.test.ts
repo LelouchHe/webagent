@@ -4,10 +4,12 @@ import {
   beginTaskTopologyGeneration,
   entryAgentLabel,
   isParentResolved,
+  loadStartupTaskList,
   loadTaskList,
   observeTaskCreated,
   observeTaskDeleted,
   parentOf,
+  peekTaskList,
   resetTaskTopologyForTest,
   setCurrentTask,
   subscribeTaskTopology,
@@ -295,6 +297,96 @@ describe("parent reference", () => {
       assert.equal(calls, 1);
       assert.deepEqual(first, second);
       assert.equal(entryAgentLabel("copilot", "a", "pi"), "copilot");
+    } finally {
+      fetchStub.restore();
+    }
+  });
+});
+
+/**
+ * The display cache: the last list a read resolved with, kept so an
+ * already-visited picker paints before its own read returns. It is display
+ * only — it never answers "has this connection's list arrived".
+ */
+describe("task list display cache", () => {
+  beforeEach(() => {
+    resetTaskTopologyForTest();
+  });
+
+  it("records the list a read resolved with", async () => {
+    const fetchStub = stubFetch(
+      () => new Response(JSON.stringify([task("a", "pi")])),
+    );
+    try {
+      await loadTaskList();
+    } finally {
+      fetchStub.restore();
+    }
+    assert.deepEqual(
+      peekTaskList()?.map((t) => t.id),
+      ["a"],
+    );
+  });
+
+  it("survives a reconnect while the baseline claim is withdrawn", async () => {
+    const fetchStub = stubFetch(
+      () => new Response(JSON.stringify([task("a", "pi")])),
+    );
+    try {
+      await loadTaskList();
+      beginTaskTopologyGeneration();
+      // The rows stay painted from the cached list...
+      assert.deepEqual(
+        peekTaskList()?.map((t) => t.id),
+        ["a"],
+      );
+      // ...but it still claims nothing about this connection's baseline.
+      assert.equal(entryAgentLabel("copilot", "a", "pi"), null);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it("never replaces a newer list with an older response", async () => {
+    const releases: ((response: Response) => void)[] = [];
+    const fetchStub = stubFetch(
+      () =>
+        new Promise<Response>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+    try {
+      const first = loadStartupTaskList();
+      const second = loadStartupTaskList();
+      assert.equal(releases.length, 2);
+      releases[1](new Response(JSON.stringify([task("new", "pi")])));
+      await second;
+      releases[0](new Response(JSON.stringify([task("old", "pi")])));
+      await first;
+      assert.deepEqual(
+        peekTaskList()?.map((t) => t.id),
+        ["new"],
+      );
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it("keeps the last list when a later read fails", async () => {
+    let calls = 0;
+    const fetchStub = stubFetch(() => {
+      calls += 1;
+      return calls === 1
+        ? new Response(JSON.stringify([task("a", "pi")]))
+        : new Response("nope", { status: 503 });
+    });
+    try {
+      await loadTaskList();
+      await assert.rejects(loadTaskList());
+      assert.deepEqual(
+        peekTaskList()?.map((t) => t.id),
+        ["a"],
+      );
     } finally {
       fetchStub.restore();
     }
