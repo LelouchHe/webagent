@@ -219,6 +219,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     `@` keystroke replaces it instead of adding one
   - an `@` input the shown list has no rows for stays hidden, and appears when
     the fresh read has rows for it
+  - Escape dismisses such a hidden `@` input too: its watch stops, and the read
+    that would have had rows lands on a closed menu
   - Enter on an `@` target still reads the list instead of resolving against
     the cache, and a target the fresh read dropped is reported rather than
     messaged

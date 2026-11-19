@@ -90,7 +90,7 @@ Only the task pickers use it today: `/switch` returns the shared
 (`deriveLive`). That source shows the last list a read resolved with and
 refreshes when a watch starts, so an already-visited picker paints at once and
 repaints when the fresh read lands. Every other node keeps its one-shot
-`fetch`. A repaint selects the first row, like any other rebuild.
+`fetch`. A repaint selects the first selectable row, like any other rebuild.
 
 ## FieldView — a node's own argument field
 

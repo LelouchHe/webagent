@@ -409,6 +409,14 @@ export function hideSlashMenu(): void {
   dismissedFor = dismissedInput;
 }
 
+/**
+ * Whether the menu owns the input: it is showing, or it is an `+`/`@` view
+ * with no rows yet that is still waiting for its data. Escape dismisses both.
+ */
+export function isSlashMenuOpen(): boolean {
+  return currentPath !== null;
+}
+
 export function openSlashMenuForPath(path: string): void {
   menuInputOverride = path;
   dismissedFor = null;

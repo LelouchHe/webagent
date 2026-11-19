@@ -360,14 +360,14 @@ function startTaskListRequest(): {
   const requestGeneration = generation;
   const seq = ++listRequestSeq;
   const promise = api.listTasks().then((tasks) => {
-    // The shown list first and under its own guard: it is fed by every read
+    // The shown list is under its own guard: it is fed by every read
     // (including one whose generation has already been replaced), and only a
     // read issued later may replace it.
-    if (seq > displaySeq) {
+    const shown = seq > displaySeq;
+    if (shown) {
       displaySeq = seq;
       displayList = tasks;
       displayError = null;
-      notifyListWatchers();
     }
     if (
       requestGeneration === generation &&
@@ -379,6 +379,9 @@ function startTaskListRequest(): {
       applyTaskListSnapshot(tasks);
       notifyChange();
     }
+    // Display watchers last, so a repaint can never stand between a read and
+    // its baseline.
+    if (shown) notifyListWatchers();
     return tasks;
   });
   // A failure only matters to watchers when there is nothing to show; a list

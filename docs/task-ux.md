@@ -232,7 +232,7 @@ already-fetched list paints the first frame at once, and the rows are replaced
 when the read that every open issues (or joins) returns. With no list fetched
 yet the first frame is `(loading...)`; when the shown list has no rows for the
 current input (for example it predates the current Task) the menu stays hidden
-until the fresh read has some.
+until the fresh read has some; Escape dismisses it in the meantime too.
 
 A row painted from an earlier list acts like any other row. If its Task was deleted
 since the cached read, the switch fails like any switch to a missing Task: the

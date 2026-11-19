@@ -71,6 +71,8 @@ describe("task pickers paint from the last list, then revalidate", () => {
     await import("../public/js/render.ts");
     commands = await import("../public/js/commands.ts");
     taskCommand = await import("../public/js/task-command.ts");
+    // Escape dismisses the menu through the input's own key handler.
+    await import("../public/js/input.ts");
   });
 
   after(() => {
@@ -323,6 +325,29 @@ describe("task pickers paint from the last list, then revalidate", () => {
 
     assert.ok(dom.slashMenu.classList.contains("active"));
     assert.ok(rows().includes(".."));
+  });
+
+  it("Escape dismisses an @ input that is waiting for rows", async () => {
+    await warmMenu("/switch ");
+    state.taskId = "brand-new";
+    const held = holdList();
+    openMenu("@");
+    await tick();
+    assert.ok(!dom.slashMenu.classList.contains("active"));
+
+    dom.input.dispatchEvent(
+      new (globalThis.window as any).KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    assert.equal(taskListWatchCountForTest(), 0);
+
+    // The read that would have had rows lands after the dismissal.
+    held.release([...TASKS, task("brand-new", "new", "api")]);
+    await tick();
+    assert.ok(!dom.slashMenu.classList.contains("active"));
   });
 
   // --- execution keeps reading --------------------------------------------
