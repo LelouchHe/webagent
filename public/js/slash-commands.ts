@@ -526,6 +526,41 @@ export const ROOT: CmdNode = {
   name: "<root>",
   children: [
     {
+      name: "/archive",
+      desc: "Archive task",
+      fetch: () => api.listArchivedTaskTops(),
+      matches: (item: unknown, q: string) => {
+        const s = item as TaskSummary;
+        const title = (s.title ?? "").toLowerCase();
+        return title.includes(q) || s.id.startsWith(q);
+      },
+      toSpec: (item: unknown) => {
+        const s = item as TaskSummary;
+        const label = s.title ?? s.id;
+        const time = formatLocalTime(s.last_active_at);
+        const agentLabel = entryAgentLabel(
+          s.agentId ?? null,
+          state.taskId,
+          state.taskAgentId,
+        );
+        const displayPath = taskDisplayPath(s);
+        return {
+          primary: label,
+          secondary: time,
+          path:
+            agentLabel === null ? displayPath : `${agentLabel}:${displayPath}`,
+          current: s.id === state.taskId,
+          onSelect: async () => {
+            try {
+              await switchToTask(s.id);
+            } catch {
+              addSystem("err: Failed to open archived task");
+            }
+          },
+        };
+      },
+    },
+    {
       name: "/cancel",
       desc: "Cancel response",
       onSelect: requestAuthoritativeCancel,
@@ -916,42 +951,6 @@ export const ROOT: CmdNode = {
               await switchToTask(s.id);
             } catch {
               addSystem("err: Failed to switch task");
-            }
-          },
-        };
-      },
-    },
-    {
-      name: "/archive",
-      desc: "Archive task",
-      help: "Archive task; query opens an archived one.",
-      fetch: () => api.listArchivedTaskTops(),
-      matches: (item: unknown, q: string) => {
-        const s = item as TaskSummary;
-        const title = (s.title ?? "").toLowerCase();
-        return title.includes(q) || s.id.startsWith(q);
-      },
-      toSpec: (item: unknown) => {
-        const s = item as TaskSummary;
-        const label = s.title ?? s.id;
-        const time = formatLocalTime(s.last_active_at);
-        const agentLabel = entryAgentLabel(
-          s.agentId ?? null,
-          state.taskId,
-          state.taskAgentId,
-        );
-        const displayPath = taskDisplayPath(s);
-        return {
-          primary: label,
-          secondary: time,
-          path:
-            agentLabel === null ? displayPath : `${agentLabel}:${displayPath}`,
-          current: s.id === state.taskId,
-          onSelect: async () => {
-            try {
-              await switchToTask(s.id);
-            } catch {
-              addSystem("err: Failed to open archived task");
             }
           },
         };
