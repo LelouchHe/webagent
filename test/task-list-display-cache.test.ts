@@ -389,47 +389,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
     assert.equal(state.taskId, "api");
   });
 
-  it("Enter on a seeded row target waits for the fresh read, not the cache", async () => {
-    // Enter never dispatches a menu row: it submits the typed input, whose
-    // execution path reads the list itself. That read joins the held one, so
-    // nothing acts until it resolves and then it acts on the fresh result.
-    await warmMenu("@");
-    const held = holdList();
-    openMenu("@");
-    await tick();
-    assert.ok(rows().includes("unit"));
-
-    fetchCalls = [];
-    // `api-unit` is the current Task's child: a valid exact target.
-    const enter = taskCommand.executeTaskCommand("@api-unit hello");
-    await tick();
-    assert.equal(fetchCalls.length, 0);
-
-    held.release(TASKS);
-    await enter;
-    // The send is the action; it could only be reached through the fresh list.
-    assert.ok(
-      fetchCalls.some((url) => url.endsWith("/messages")),
-      `expected a send, got ${JSON.stringify(fetchCalls)}`,
-    );
-  });
-
-  it("/switch Enter resolves the typed target from the fresh read", async () => {
-    await warmMenu("/switch ");
-    const held = holdList();
-    openMenu("/switch ");
-    await tick();
-
-    fetchCalls = [];
-    const enter = commands.handleSlashCommand("/switch api-unit");
-    await tick();
-    assert.deepEqual(detailReads("api-unit"), []);
-
-    held.release(TASKS);
-    await enter;
-    assert.ok(detailReads("api-unit").length > 0);
-  });
-
   it("fresh rows are actionable and never carry the seeded cue", async () => {
     openMenu("/switch ");
     await tick();

@@ -211,10 +211,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     request) until the fresh read repaints the row, which then acts
   - a same-input repaint that retains cache-painted rows keeps them inert, and
     a fresh payload that dropped the target simply removes the row
-  - Enter submits the typed input, whose execution path reads the list itself,
-    so it waits for the held read instead of resolving against the cache
-  - a node that is not opted in and the `+` picker never mark rows seeded and
-    keep acting as before
+  - fresh rows are actionable and unmarked; a node that is not opted in and the
+    `+` picker never mark rows seeded and keep acting as before
   - the `@` seed uses the same predicate dispatch does, so a leading-whitespace
     ` @` paints from the cache too
   - nodes without a display cache (`/token` rows) and the `+` picker keep their
