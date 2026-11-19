@@ -37,11 +37,7 @@ import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
 import type { TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import {
-  entryAgentLabel,
-  loadTaskList,
-  peekTaskList,
-} from "./task-topology.ts";
+import { entryAgentLabel, taskListSource } from "./task-topology.ts";
 import { taskDisplayPath } from "./path-display.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { resetLocalFrontendState } from "./local-reset.ts";
@@ -137,10 +133,6 @@ async function unsubscribePush(): Promise<void> {
 }
 
 // --- shared data fetchers (keep call sites identical for /inbox + /inbox dismiss) ---
-
-async function listTasks(): Promise<TaskSummary[]> {
-  return loadTaskList();
-}
 
 interface PathItem {
   cwd: string;
@@ -887,12 +879,8 @@ export const ROOT: CmdNode = {
     {
       name: "/switch",
       desc: "Switch task",
-      fetch: listTasks,
-      // Painted while the fresh read runs; `/switch` only displays this list,
-      // so a previously fetched one is good enough for the first frame.
-      cached: peekTaskList,
-      // A row is the task it names, not its label: two Tasks may share a title.
-      identity: (item: unknown) => (item as TaskSummary).id,
+      // Display only: rows show the last list at once and follow newer reads.
+      fetch: () => taskListSource,
       matches: (item: unknown, q: string) => {
         const s = item as TaskSummary;
         const title = (s.title ?? "").toLowerCase();

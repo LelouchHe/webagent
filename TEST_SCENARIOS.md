@@ -199,18 +199,26 @@ spot gaps, and decide what still needs to be added without reading every spec.
     an older response, keeps a list whose connection generation was superseded
     in flight (the cache's order rule is its own, not the connection's), and
     keeps the previous list when a later read fails
+  - `taskListSource`: a watch refreshes the list once (a second watch joins
+    the read in flight) and reports when it lands; a stopped watch hears
+    nothing; a failure is shown only while there is no list
 
-- `test/task-list-display-cache.test.ts` (the pickers paint, then revalidate)
-  - a second `@` / `/switch` open paints the cached list before its own read
-    returns; a first open with no cache still shows `(loading...)`
-  - the fresh read repaints the open menu, and the row the user moved to in
-    between stays selected — including two Tasks that share a title, which stay
-    distinct because a row is identified by its Task id, not its label
-  - a row painted from that cache acts at once, without waiting for the read
-  - the `@` seed uses the same predicate dispatch does, so a leading-whitespace
-    ` @` paints from the cache too
-  - nodes without a display cache (`/token` rows) and the `+` picker keep their
-    old selection behavior on a repaint
+- `test/live-source.test.ts`
+  - a derived source derives a value, passes loading and errors through, and
+    watches through to its origin
+
+- `test/task-list-display-cache.test.ts` (the pickers follow the shared list)
+  - a second `@` / `/switch` open paints the last list before its own read
+    returns; a first open with nothing fetched still shows `(loading...)`
+  - the fresh read repaints the open menu
+  - a row painted from the earlier list acts at once, without waiting for the
+    read
+  - a leading-whitespace ` @` paints from the last list too
+  - a watch lasts exactly as long as its menu scope: closing the menu or moving
+    to another command stops it, typing within `/switch` keeps one, and each
+    `@` keystroke replaces it instead of adding one
+  - an `@` input the shown list has no rows for stays hidden, and appears when
+    the fresh read has rows for it
   - Enter on an `@` target still reads the list instead of resolving against
     the cache, and a target the fresh read dropped is reported rather than
     messaged

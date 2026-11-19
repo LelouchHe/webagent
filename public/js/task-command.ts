@@ -23,7 +23,8 @@ import {
 } from "./create-command.ts";
 import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
-import { loadTaskList } from "./task-topology.ts";
+import { loadTaskList, taskListSource } from "./task-topology.ts";
+import { deriveLive, type LiveSource } from "./live-source.ts";
 import { setInputValue, state } from "./state.ts";
 import { listRecentPaths } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
@@ -39,21 +40,6 @@ export function canSubmitTaskCommandWhileBusy(text: string): boolean {
 }
 
 export { isTaskCommand };
-
-/**
- * Whether this input addresses a Task with `@` — the picker whose rows come
- * from the shared task list. Uses the same trimming predicate as dispatch, so
- * a leading-whitespace ` @` counts; `+` owns other sources and is excluded.
- */
-export function isMessageCommand(text: string): boolean {
-  if (!isTaskCommand(text)) return false;
-  try {
-    return parseTaskCommand(text).marker !== "+";
-  } catch {
-    // An unparseable head is reported by the candidate builder itself.
-    return false;
-  }
-}
 
 // --- path helpers (browser-safe, server paths are `/`-separated) ---
 
@@ -238,8 +224,6 @@ interface CreateCandidateArgs {
   selectedSecondary?: string;
   /** Prefix used for expandable target rows. */
   prefix?: Candidate["prefix"];
-  /** The Task this row names, when it names one. */
-  identity?: string;
   /** Rows without onSelect complete via fill on click instead of executing. */
   onSelect?: () => void | Promise<void>;
 }
@@ -262,7 +246,6 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
     },
     prefix: args.prefix ?? "",
     kind: "data",
-    identity: args.identity,
   };
 }
 
@@ -292,7 +275,6 @@ function makeNavigationCandidate(args: {
     },
     prefix: args.prefix ?? "",
     kind: "data",
-    identity: args.taskId,
   };
 }
 
@@ -300,16 +282,12 @@ function makeNavigationCandidate(args: {
  * Build slash-menu candidates for the current `+` or `@` input.
  *
  * Returns an empty array when the input is not a task command or the parser
- * rejects it; the caller decides whether to hide the menu.
- *
- * `cachedTasks` paints `@` rows from a previously fetched list while the fresh
- * read runs. It only seeds the display: the caller revalidates with a second call that
- * omits it. Action paths (Enter on a target) never pass one.
+ * rejects it; the caller decides whether to hide the menu. `@` target rows come
+ * back as a live source over the shared task list, `+` rows as a promise.
  */
-export async function buildTaskCommandCandidates(
+export function buildTaskCommandCandidates(
   text: string,
-  options?: { cachedTasks?: TaskSummary[] | null },
-): Promise<Candidate[]> {
+): Candidate[] | Promise<Candidate[]> | LiveSource<Candidate[]> {
   if (!isTaskCommand(text)) return [];
 
   let parsed;
@@ -355,7 +333,10 @@ export async function buildTaskCommandCandidates(
     return [];
   }
 
-  return buildMessageCandidates(parsed, options?.cachedTasks ?? null);
+  // `@` rows are a view of the shared task list: they follow it as it changes.
+  return deriveLive(taskListSource, (tasks) =>
+    buildMessageCandidates(parsed, tasks),
+  );
 }
 
 /** Hint for a bare `+`: there is no title to create with yet. */
@@ -575,7 +556,6 @@ function addTaskTargetEntry(args: {
           ? "type message to send"
           : undefined,
         prefix,
-        identity: args.node.id,
       }),
     );
   } else {
@@ -686,27 +666,16 @@ function addTaskContextEntries(args: {
   });
 }
 
-async function buildMessageCandidates(
+function buildMessageCandidates(
   parsed: {
     marker: string;
     target: string;
     path: TaskPath;
     remainder: string;
   },
-  /** Display cache for the rows' task list; null means read it now. */
-  cachedTasks: TaskSummary[] | null = null,
-): Promise<Candidate[]> {
+  tasks: TaskSummary[],
+): Candidate[] {
   if (!state.taskId) return [];
-  let tasks: TaskSummary[];
-  if (cachedTasks) {
-    tasks = cachedTasks;
-  } else {
-    try {
-      tasks = await loadTaskList();
-    } catch {
-      return [];
-    }
-  }
 
   const map = buildTaskTree(tasks);
   const current = map.get(state.taskId);

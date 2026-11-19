@@ -4,6 +4,7 @@
 // Field absence = capability not present. To reuse data across nodes, share
 // the same JS function reference (e.g. `const listInbox = () => ...`).
 import type { SlashItemSpec, SlashPrefix } from "./slash-render.ts";
+import type { LiveSource, LiveState } from "./live-source.ts";
 
 export interface CmdNode {
   /** Command segment without leading slash for children, with slash for ROOT-level. */
@@ -16,8 +17,11 @@ export interface CmdNode {
   children?: CmdNode[];
   /** Fetch this layer's data items. Receives the current tail query; existing
    *  query-independent fetchers may ignore it. May return a plain array (for
-   *  state-backed lists) or a Promise. */
-  fetch?: (query: string) => unknown[] | Promise<unknown[]>;
+   *  state-backed lists), a Promise, or a `LiveSource` — a value the menu
+   *  renders now and re-renders whenever the source reports a change. */
+  fetch?: (
+    query: string,
+  ) => unknown[] | Promise<unknown[]> | LiveSource<unknown[]>;
   /** Optional cache-partition key for query-dependent data. The controller
    *  refetches only when this key changes; otherwise it reuses the current
    *  data and applies local filtering. Absent preserves the historical
@@ -25,18 +29,6 @@ export interface CmdNode {
   fetchKey?: (query: string) => string;
   /** Render data item → SlashItemSpec. Required when `fetch` is defined. */
   toSpec?: (item: unknown) => SlashItemSpec;
-  /** Display cache for `fetch`'s items, read synchronously before the current
-   *  fetch resolves. Present = an already-visited menu paints these rows
-   *  immediately instead of a `(loading...)` frame; the fetch always runs and
-   *  replaces them when it returns. Absent = the historical loading frame.
-   *  Typed-input execution never reads it. Setting it also opts the node into
-   *  keeping the selected row across a repaint. */
-  cached?: () => unknown[] | null;
-  /** Stable identity for one data item (e.g. a Task id), carried into
-   *  `Candidate.identity`. Selection preservation names a row by this, never
-   *  by its label. Absent = the row is
-   *  identified by what acting on it fills. */
-  identity?: (item: unknown) => string | undefined;
   /** Optional custom filter for data items. Receives raw item + lowercased
    *  trimmed query; returns true to keep. Defaults to substring match on
    *  `toSpec(item).primary`. Use when filtering should consider fields not
@@ -54,9 +46,9 @@ export interface CmdNode {
   onSelect?: () => void | Promise<void>;
 }
 
-/** Walker's data-state for a fetch node: a resolved array, the "loading"
- *  sentinel, or an error wrapper carrying the message to display. */
-export type FetchData = unknown[] | "loading" | { error: string };
+/** Walker's data-state for a fetch node. Either a resolved array, the
+ *  "loading" sentinel, or an error wrapper carrying the message to display. */
+export type FetchData = LiveState<unknown[]>;
 
 /** Data states that already render a placeholder row of their own. */
 const PLACEHOLDER_STATES = new Set(["loading", "error", "empty", "no-match"]);
@@ -84,9 +76,6 @@ export interface Candidate {
   kind: "subcommand" | "freeform" | "data" | "placeholder" | "separator";
   /** When kind === 'subcommand', the child node selected. */
   node?: CmdNode;
-  /** Stable identity of this row's target when one exists (a Task id). Used
-   *  instead of the label for selection preservation. */
-  identity?: string;
 }
 
 /**
@@ -212,11 +201,10 @@ export function buildCandidates(
   out.push(...subcommands);
 
   // 2. Resolve data specs (need them before freeform for collision check)
-  let dataSpecs: { spec: SlashItemSpec; identity?: string }[] = [];
+  let dataSpecs: SlashItemSpec[] = [];
   let dataState: "none" | "loading" | "error" | "empty" | "no-match" | "ok" =
     "none";
   let errorMsg = "";
-  const items = Array.isArray(data) ? data : null;
 
   if (node.fetch && node.toSpec) {
     if (data === "loading") {
@@ -229,23 +217,20 @@ export function buildCandidates(
     ) {
       dataState = "error";
       errorMsg = typeof data.error === "string" ? data.error : "";
-    } else if (items) {
-      if (items.length === 0) {
+    } else if (Array.isArray(data)) {
+      if (data.length === 0) {
         dataState = "empty";
       } else {
         const filteredItems = q
-          ? items.filter((item) =>
+          ? data.filter((item) =>
               node.matches
                 ? node.matches(item, q)
                 : node.toSpec!(item).primary.toLowerCase().includes(q),
             )
-          : items;
+          : data;
         const filtered = filteredItems.map((item) => {
           const spec = node.toSpec!(item);
-          return {
-            spec: field?.decorate ? field.decorate(spec, item) : spec,
-            identity: node.identity?.(item),
-          };
+          return field?.decorate ? field.decorate(spec, item) : spec;
         });
         if (filtered.length === 0) {
           dataState = "no-match";
@@ -264,9 +249,7 @@ export function buildCandidates(
     const trimmedQ = tailQuery.trim();
     const collision =
       trimmedQ.length > 0 &&
-      dataSpecs.some(
-        (s) => s.spec.primary.toLowerCase() === trimmedQ.toLowerCase(),
-      );
+      dataSpecs.some((s) => s.primary.toLowerCase() === trimmedQ.toLowerCase());
     if (!collision) {
       const fspec = node.freeform(field?.raw ?? tailQuery);
       if (fspec) {
@@ -311,12 +294,11 @@ export function buildCandidates(
       kind: "placeholder",
     });
   } else if (dataState === "ok") {
-    for (const row of dataSpecs) {
+    for (const spec of dataSpecs) {
       out.push({
-        spec: row.spec,
-        prefix: row.spec.current ? "*" : "",
+        spec,
+        prefix: spec.current ? "*" : "",
         kind: "data",
-        identity: row.identity,
       });
     }
   }

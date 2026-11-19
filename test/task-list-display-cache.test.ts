@@ -1,11 +1,15 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
-import { beginTaskTopologyGeneration } from "../public/js/task-topology.ts";
+import {
+  loadTaskList,
+  taskListWatchCountForTest,
+} from "../public/js/task-topology.ts";
 
 /**
- * The task pickers (`@` and `/switch`) paint from the last task list a read
- * resolved with, then revalidate.
+ * The task pickers (`@` and `/switch`) watch the shared task list: they paint
+ * the last list a read resolved with, refresh it when the watch starts, and
+ * repaint when the fresh read lands. The watch ends with the menu's scope.
  *
  * Every "painted" assertion here runs while the fresh read is still held by the
  * stub, so the rows on screen can only come from the display cache: the visible
@@ -37,23 +41,6 @@ const TASKS = [
   task("tests", "tests", "backend"),
   // Outside the current Task's scope, so `@` offers it as a navigation row.
   task("frontend", "frontend", "root"),
-];
-
-const TOKENS = [
-  {
-    name: "one",
-    scope: "api",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    lastUsedAt: null,
-    isSelf: false,
-  },
-  {
-    name: "two",
-    scope: "api",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    lastUsedAt: null,
-    isSelf: false,
-  },
 ];
 
 function okJson(value: unknown): Record<string, unknown> {
@@ -98,15 +85,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
     globalThis.fetch = ((url: string) => {
       fetchCalls.push(url);
       if (url === "/api/v1/tasks") return listHandler();
-      if (url === "/api/v1/tokens") return Promise.resolve(okJson(TOKENS));
-      if (url.startsWith("/api/v1/recent-paths")) {
-        return Promise.resolve(
-          okJson([
-            { cwd: "/work/api", last_used_at: "2026-01-01T00:00:00.000Z" },
-            { cwd: "/work/other", last_used_at: "2026-01-02T00:00:00.000Z" },
-          ]),
-        );
-      }
       return Promise.resolve(okJson({}));
     }) as any;
     state.clientId = "cl-cache";
@@ -152,18 +130,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
     return [...dom.slashMenu.querySelectorAll(".slash-item")].map((row: any) =>
       String(row.querySelector(".slash-primary")?.textContent),
     );
-  }
-
-  function selectedRow(): string | null {
-    return selectedItem()?.querySelector(".slash-primary")?.textContent ?? null;
-  }
-
-  function selectedItem(): any {
-    return dom.slashMenu.querySelector(".slash-item.selected");
-  }
-
-  function selectedPath(): string | null {
-    return selectedItem()?.querySelector(".slash-path")?.textContent ?? null;
   }
 
   function itemByPrimary(primary: string): any {
@@ -219,23 +185,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
     assert.ok(rows().includes("fresh-child"));
   });
 
-  it("@ keeps the row the user moved to when the fresh read repaints", async () => {
-    await warmMenu("@");
-    const held = holdList();
-    openMenu("@");
-    await tick();
-
-    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
-    const selected = selectedRow();
-    assert.ok(selected !== null);
-
-    held.release([...TASKS, task("api-fresh", "fresh-child", "api")]);
-    await tick();
-
-    assert.ok(rows().includes("fresh-child"));
-    assert.equal(selectedRow(), selected);
-  });
-
   it("@ still shows (loading...) when no list has been fetched", async () => {
     holdList();
     openMenu("@");
@@ -261,22 +210,17 @@ describe("task pickers paint from the last list, then revalidate", () => {
     await tick();
   });
 
-  it("/switch repaints from the fresh read and keeps the selected row", async () => {
+  it("/switch repaints from the fresh read", async () => {
     await warmMenu("/switch ");
     const held = holdList();
     openMenu("/switch ");
     await tick();
-
-    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
-    const selected = selectedRow();
-    assert.ok(selected !== null);
     assert.equal(rows().includes("fresh-task"), false);
 
     held.release([...TASKS, task("fresh", "fresh-task", null)]);
     await tick();
 
     assert.ok(rows().includes("fresh-task"));
-    assert.equal(selectedRow(), selected);
   });
 
   it("/switch still shows (loading...) when no list has been fetched", async () => {
@@ -306,32 +250,7 @@ describe("task pickers paint from the last list, then revalidate", () => {
     await tick();
   });
 
-  // --- rows are identified by target, not by label ------------------------
-
-  it("/switch keeps the selected row when two Tasks share a title", async () => {
-    const twins = [
-      { ...task("a", "dup", null), cwd: "/work/a" },
-      { ...task("b", "dup", null), cwd: "/work/b" },
-    ];
-    listHandler = () => Promise.resolve(okJson(twins));
-    await warmMenu("/switch ");
-
-    const held = holdList();
-    openMenu("/switch ");
-    await tick();
-    assert.deepEqual(rows(), ["dup", "dup"]);
-
-    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
-    assert.equal(selectedPath(), "/work/b");
-
-    // The fresh snapshot is identical: the second row must stay the row.
-    held.release(twins);
-    await tick();
-
-    assert.equal(selectedPath(), "/work/b");
-  });
-
-  // --- the seed gate matches the dispatch predicate -----------------------
+  // --- leading whitespace ---------------------------------------------------
 
   it("@ paints from the cache when the input has leading whitespace", async () => {
     await warmMenu("@");
@@ -348,37 +267,62 @@ describe("task pickers paint from the last list, then revalidate", () => {
     await tick();
   });
 
-  // --- nodes without a display cache are untouched ------------------------
+  // --- a watch lasts exactly as long as its menu scope --------------------
 
-  it("a node without a display cache resets the selection on a repaint", async () => {
-    openMenu("/token ");
+  it("closing the menu stops following the list", async () => {
+    openMenu("/switch ");
     await tick();
-    assert.deepEqual(rows(), ["revoke", "one", "two"]);
-    assert.equal(selectedRow(), "revoke");
+    assert.equal(taskListWatchCountForTest(), 1);
 
-    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
-    assert.equal(selectedRow(), "one");
+    closeMenu();
+    assert.equal(taskListWatchCountForTest(), 0);
 
-    // A topology change repaints the open menu without any input change.
-    beginTaskTopologyGeneration();
-
-    assert.equal(selectedRow(), "revoke");
+    // A later read lands on nobody: the closed menu stays closed.
+    await loadTaskList();
+    await tick();
+    assert.ok(!dom.slashMenu.classList.contains("active"));
   });
 
-  it("+ resets the selection on a same-input repaint", async () => {
-    state.taskCwd = "/work/api";
-    openMenu("+new ");
+  it("moving to another command stops following the list", async () => {
+    openMenu("/switch ");
     await tick();
-    assert.deepEqual(rows().slice(1, 3), ["/work/api", "/work/other"]);
+    openMenu("/");
+    assert.equal(taskListWatchCountForTest(), 0);
+  });
 
-    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
-    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
-    assert.equal(selectedRow(), "/work/other");
+  it("typing in /switch keeps one watch", async () => {
+    openMenu("/switch ");
+    openMenu("/switch b");
+    openMenu("/switch ba");
+    await tick();
+    assert.equal(taskListWatchCountForTest(), 1);
+    assert.deepEqual(rows(), ["backend"]);
+  });
 
-    openMenu("+new ");
+  it("each @ keystroke replaces the watch instead of adding one", async () => {
+    openMenu("@");
+    openMenu("@u");
+    openMenu("@un");
+    await tick();
+    assert.equal(taskListWatchCountForTest(), 1);
+    closeMenu();
+    assert.equal(taskListWatchCountForTest(), 0);
+  });
+
+  it("@ with no rows yet still shows them when the fresh read has them", async () => {
+    // The cached list predates the current Task, so it has nothing to show.
+    await warmMenu("/switch ");
+    state.taskId = "brand-new";
+    const held = holdList();
+    openMenu("@");
+    await tick();
+    assert.ok(!dom.slashMenu.classList.contains("active"));
+
+    held.release([...TASKS, task("brand-new", "new", "api")]);
     await tick();
 
-    assert.equal(selectedRow(), "create 'new'");
+    assert.ok(dom.slashMenu.classList.contains("active"));
+    assert.ok(rows().includes(".."));
   });
 
   // --- execution keeps reading --------------------------------------------

@@ -97,7 +97,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`render.ts`**            | DOM helpers: add messages, streaming markdown render, theme, scroll, diff HTML generation           | `addMessage()`, `addSystem()`, `scrollToBottom()`, `updateMarkdownStream()`, `resetMarkdownStream()` |
 | **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createTask()`, `sendMessage()`, `cancelTask()`, etc.                                     |
 | **`agent-directory.ts`**   | The configured agent directory from `GET /config` / bootstrap: ids in configuration order, default agent (no liveness) | `installAgentDirectory()`, `configuredAgentIds()`, `getDefaultAgentId()`                          |
-| **`task-topology.ts`**     | The current task's parent reference, the list-arrival flag, and the pickers' display cache | `loadTaskList()`, `peekTaskList()`, `setCurrentTask()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
+| **`task-topology.ts`**     | The current task's parent reference, the list-arrival flag, and the pickers' display cache | `loadTaskList()`, `taskListSource`, `setCurrentTask()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
 | **`create-command.ts`**    | Shared `+` / `/new` / `/clear` helpers: coordinate parsing, cwd resolution, preview, failure rescue   | `parseCoordinate()`, `resolveCreateCwd()`, `agentRescueCommand()`                                |
 | **`agent-hint.ts`**        | The menus' one-line agent hint (non-selectable): configured agents and the coordinate syntax once    | `agentHintRow()`                                                                                 |
 
@@ -569,30 +569,28 @@ current binding changes while it is open) uses the new baseline.
 
 ### Task-List Display Cache
 
-The `@` picker and `/switch` show the shared list, and every open still reads
-it again: `loadTaskList()` issues a read or joins one already in flight, and
-only a result that is eligible for the connection becomes its baseline (below).
-A menu repaint simply uses what that read resolves with. To keep the read off
-the visual critical path, `task-topology.ts` also keeps the last list a read
-resolved with (`peekTaskList()`): an already-visited menu paints those rows
-immediately and repaints when the fresh result lands. With nothing cached — or
-when the cached snapshot cannot describe the current input, e.g. the current
-Task is not in it — the first frame is `(loading...)` as before.
+The `@` picker and `/switch` show the shared list through `taskListSource`, a
+`LiveSource` (see [Slash Menu](slash-menu.md#live-data)). Its value is the last
+list a read resolved with; starting a watch refreshes it with `loadTaskList()`,
+which issues a read or joins one already in flight. An already-visited menu
+therefore paints at once and repaints when the fresh result lands, and the
+watch stops with the menu's data scope. With nothing fetched yet the value is
+`"loading"`, and a failure is shown only while there is no list at all.
 
-The cache only seeds menus and is deliberately separate from the baseline machinery
-above:
+The shown list is display only and deliberately separate from the baseline
+machinery above:
 
 - It never stands in for an answer about a connection: `listLoaded`,
   `listAppliedSeq` / `listRequiredSeq`, `applyTaskListSnapshot` and the
   generation guards keep their own meaning.
 - It survives reconnects and task switches, because a reconnect is exactly when
-  the round trip would otherwise be visible; every menu read revalidates it.
+  the round trip would otherwise be visible; every watch refreshes it.
 - One rule decides its order: a read may replace it only if it was issued after
   the read that produced the current entry, so a late response cannot overwrite
   a newer list. A failed read leaves the previous one in place.
 - Typed-input execution never reads it: Enter on an `@` target and every
-  execution path call `loadTaskList()` themselves. A clicked menu row painted
-  from it acts at once; a target deleted in the meantime fails the switch,
+  execution path call `loadTaskList()` themselves. A clicked row painted from
+  an earlier list acts at once; a target deleted in the meantime fails the switch,
   which returns to the previous Task (`switchToTask`).
 
 ---

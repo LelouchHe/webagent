@@ -16,13 +16,14 @@ import {
 } from "./slash-tree.ts";
 import { renderItem } from "./slash-render.ts";
 import { ROOT } from "./slash-commands.ts";
-import { peekTaskList, subscribeTaskTopology } from "./task-topology.ts";
+import { subscribeTaskTopology } from "./task-topology.ts";
 import { handleSlashCommand } from "./slash-exec.ts";
+import { buildTaskCommandCandidates, isTaskCommand } from "./task-command.ts";
 import {
-  buildTaskCommandCandidates,
-  isMessageCommand,
-  isTaskCommand,
-} from "./task-command.ts";
+  isLiveSource,
+  type LiveSource,
+  type LiveState,
+} from "./live-source.ts";
 
 export { handleSlashCommand };
 
@@ -31,6 +32,8 @@ export { handleSlashCommand };
 let currentPath: string | null = null;
 let currentFetchKey: string | null = null;
 let fetchGeneration = 0;
+/** How to stop whatever the current data scope watches. */
+let scopeEnders: (() => void)[] = [];
 let currentNode: CmdNode = ROOT;
 let currentData: FetchData | undefined = undefined;
 let candidates: Candidate[] = [];
@@ -72,7 +75,7 @@ const TASK_COMMAND_ROOT: CmdNode = {
 function showPlaceholder(primary: string): void {
   currentPath = "";
   currentFetchKey = null;
-  fetchGeneration++;
+  beginDataScope();
   currentNode = rootForInput(dom.input.value);
   currentData = undefined;
   candidates = [
@@ -90,7 +93,7 @@ function showPlaceholder(primary: string): void {
 export function __resetCommandsForTest(): void {
   currentPath = null;
   currentFetchKey = null;
-  fetchGeneration++;
+  beginDataScope();
   currentNode = ROOT;
   currentData = undefined;
   candidates = [];
@@ -100,11 +103,22 @@ export function __resetCommandsForTest(): void {
 }
 
 /**
- * What a fetch node shows while its own read is in flight: the last fetched
- * list when the node has a display cache, otherwise the loading frame.
+ * Start a new data scope: the data the menu showed is no longer current (the
+ * input moved to another command or scope, or the menu closed). Whatever the
+ * previous scope watched stops here; a watch registers its own stop when it
+ * starts (`onDataScopeEnd`), so nothing here knows what was being watched.
+ * Returns the new scope's generation, which async results compare against.
  */
-function cachedOrLoading(node: CmdNode): FetchData {
-  return node.cached?.() ?? "loading";
+function beginDataScope(): number {
+  const enders = scopeEnders;
+  scopeEnders = [];
+  for (const end of enders) end();
+  return ++fetchGeneration;
+}
+
+/** Register how to stop something this data scope started. */
+function onDataScopeEnd(end: () => void): void {
+  scopeEnders.push(end);
 }
 
 /** Cache partition for a fetch node: the command path alone, or the path plus
@@ -160,6 +174,7 @@ export function updateSlashMenu(): void {
   try {
     nextFetchKey = fetchKeyFor(node, pathPrefix, tailQuery);
   } catch (err) {
+    beginDataScope();
     currentPath = pathPrefix;
     currentFetchKey = null;
     currentNode = node;
@@ -178,9 +193,9 @@ export function updateSlashMenu(): void {
   // The dual guard drops stale responses when either dimension moves. A
   // stable fetch key keeps the resolved data and uses local filtering only.
   if (shouldFetch) {
-    const myFetchGeneration = ++fetchGeneration;
+    const myFetchGeneration = beginDataScope();
     if (node.fetch && node.toSpec) {
-      let result: unknown[] | Promise<unknown[]>;
+      let result: unknown[] | Promise<unknown[]> | LiveSource<unknown[]>;
       try {
         result = node.fetch(tailQuery);
       } catch (err) {
@@ -188,13 +203,18 @@ export function updateSlashMenu(): void {
         rebuild(tailQuery, pathPrefix, field);
         return;
       }
-      if (result instanceof Promise) {
-        // Paint a previously fetched list immediately; the read below still
-        // runs and repaints when it lands (see `cached` in slash-tree.ts).
-        // Only a node that opted in keeps the selected row across that
-        // repaint, so every other node behaves exactly as it always has.
-        const optedIn = node.cached !== undefined;
-        currentData = cachedOrLoading(node);
+      if (isLiveSource<unknown[]>(result)) {
+        // Show what the source has now and follow it while this scope lasts.
+        const source = result;
+        currentData = source.read();
+        onDataScopeEnd(
+          source.watch(() => {
+            currentData = source.read();
+            rebuildFromInput(pathPrefix);
+          }),
+        );
+      } else if (result instanceof Promise) {
+        currentData = "loading";
         const myPath = pathPrefix;
         const myFetchKey = nextFetchKey;
         void result.then(
@@ -206,9 +226,7 @@ export function updateSlashMenu(): void {
             )
               return;
             currentData = items;
-            rebuildFromInput(pathPrefix, {
-              preserveSelection: optedIn,
-            });
+            rebuildFromInput(pathPrefix);
           },
           (err: unknown) => {
             if (
@@ -218,9 +236,7 @@ export function updateSlashMenu(): void {
             )
               return;
             currentData = { error: fetchErrorMessage(err) };
-            rebuildFromInput(pathPrefix, {
-              preserveSelection: optedIn,
-            });
+            rebuildFromInput(pathPrefix);
           },
         );
       } else {
@@ -237,127 +253,79 @@ export function updateSlashMenu(): void {
 
 // Re-resolve the current input (used by async fetch callbacks that may fire
 // after the input changed but currentPath is still valid).
-function rebuildFromInput(
-  pathPrefix: string,
-  options?: { preserveSelection?: boolean },
-): void {
+function rebuildFromInput(pathPrefix: string): void {
   const input = currentMenuInput();
   const { tailQuery, rawRemainder } = resolvePath(input, rootForInput(input));
-  rebuild(tailQuery, pathPrefix, currentNode.field?.(rawRemainder), options);
-}
-
-/**
- * Stable identity of a selectable row across a repaint: what acting on it
- * fills, which already distinguishes data rows by the target they address.
- * Placeholders and separators have none — they are never "the user's row".
- */
-function selectableKey(candidate: Candidate | undefined): string | null {
-  if (!candidate) return null;
-  if (candidate.kind === "separator" || candidate.kind === "placeholder") {
-    return null;
-  }
-  // A row that names a target is that target: labels repeat (two Tasks may
-  // share a title) and change (a rename), an identity does neither.
-  if (candidate.identity !== undefined) return `id\0${candidate.identity}`;
-  return `${candidate.kind}\0${candidate.spec.fill ?? candidate.spec.primary}`;
-}
-
-/**
- * Paint one task-command candidate list. `keptKey` is the row the user had
- * selected; it survives the repaint when the same row is still offered.
- */
-function paintTaskCommandCandidates(
-  cands: Candidate[],
-  keptKey: string | null,
-): void {
-  candidates = cands;
-  const keptIdx =
-    keptKey === null
-      ? -1
-      : cands.findIndex((c) => selectableKey(c) === keptKey);
-  const firstSelectable = cands.findIndex(
-    (c) => c.kind !== "separator" && c.kind !== "placeholder",
-  );
-  selectedIdx =
-    keptIdx >= 0 ? keptIdx : firstSelectable >= 0 ? firstSelectable : 0;
-  renderMenu("");
-  dom.slashMenu.classList.add("active");
-}
-
-function showTaskCommandLoading(): void {
-  candidates = [
-    {
-      spec: { primary: "(loading...)" },
-      prefix: "",
-      kind: "placeholder",
-    },
-  ];
-  selectedIdx = -1;
-  renderMenu("");
-  dom.slashMenu.classList.add("active");
+  rebuild(tailQuery, pathPrefix, currentNode.field?.(rawRemainder));
 }
 
 async function updateTaskCommandMenu(text: string): Promise<void> {
-  // `@` is the only task-command picker whose rows come from the shared list,
-  // and the same predicate dispatch uses decides it (leading whitespace
-  // included). `+` keeps its sources and its previous selection behavior.
-  const message = isMessageCommand(text);
-  // A repaint of the same input (the binding changed under an open menu) keeps
-  // the row the user moved to; a new input selects the first row as always.
-  // Only `@` preserves: that is the picker with a cache to repaint from.
-  const repaint = message && currentPath === text && candidates.length > 0;
-  const previousKey = repaint ? selectableKey(candidates[selectedIdx]) : null;
-
   currentPath = text;
   currentFetchKey = text;
-  fetchGeneration++;
-  const myFetchGeneration = fetchGeneration;
+  const myFetchGeneration = beginDataScope();
   currentNode = TASK_COMMAND_ROOT;
   currentData = undefined;
 
-  // First paint from the display cache, so `@` does not show `(loading...)`
-  // for one full round trip on every open. The fresh read below always runs
-  // and repaints when it lands, so these rows are at most one read stale. A
-  // cached snapshot that cannot produce rows for this input (for example the
-  // current Task is not in it) still falls back to `(loading...)`.
-  const cachedTasks = message ? peekTaskList() : null;
-  let painted = false;
-  if (cachedTasks) {
-    const cachedRows = await buildTaskCommandCandidates(text, { cachedTasks });
-    if (fetchGeneration !== myFetchGeneration) return;
-    if (cachedRows.length > 0) {
-      paintTaskCommandCandidates(cachedRows, previousKey);
-      painted = true;
-    }
-  }
-  if (!painted && !repaint) showTaskCommandLoading();
-
-  try {
-    const cands = await buildTaskCommandCandidates(text);
-    if (fetchGeneration !== myFetchGeneration) return;
-    if (cands.length === 0) {
-      hideSlashMenu();
-      return;
-    }
-    paintTaskCommandCandidates(
-      cands,
-      message ? selectableKey(candidates[selectedIdx]) : null,
+  const result = buildTaskCommandCandidates(text);
+  if (isLiveSource<Candidate[]>(result)) {
+    // Show what the source has now and follow it while this scope lasts.
+    const source = result;
+    paintTaskCommandMenu(source.read());
+    onDataScopeEnd(
+      source.watch(() => {
+        paintTaskCommandMenu(source.read());
+      }),
     );
+    return;
+  }
+  if (!(result instanceof Promise)) {
+    paintTaskCommandMenu(result);
+    return;
+  }
+  paintTaskCommandMenu("loading");
+  try {
+    const cands = await result;
+    if (fetchGeneration !== myFetchGeneration) return;
+    paintTaskCommandMenu(cands);
   } catch (err) {
     if (fetchGeneration !== myFetchGeneration) return;
+    paintTaskCommandMenu({
+      error: err instanceof Error ? err.message : "error",
+    });
+  }
+}
+
+/**
+ * Paint `+`/`@` rows. No rows hides the view but keeps the data scope, so a
+ * source that later has rows for this input can still show them.
+ */
+function paintTaskCommandMenu(data: LiveState<Candidate[]>): void {
+  if (Array.isArray(data) && data.length === 0) {
+    dom.slashMenu.classList.remove("active");
+    dom.slashMenu.innerHTML = "";
+    candidates = [];
+    selectedIdx = -1;
+    return;
+  }
+  if (data === "loading") {
     candidates = [
-      {
-        spec: {
-          primary: `(${err instanceof Error ? err.message : "error"})`,
-        },
-        prefix: "",
-        kind: "placeholder",
-      },
+      { spec: { primary: "(loading...)" }, prefix: "", kind: "placeholder" },
+    ];
+    selectedIdx = -1;
+  } else if (!Array.isArray(data)) {
+    candidates = [
+      { spec: { primary: `(${data.error})` }, prefix: "", kind: "placeholder" },
     ];
     selectedIdx = 0;
-    renderMenu("");
-    dom.slashMenu.classList.add("active");
+  } else {
+    candidates = data;
+    const firstSelectable = data.findIndex(
+      (c) => c.kind !== "separator" && c.kind !== "placeholder",
+    );
+    selectedIdx = firstSelectable >= 0 ? firstSelectable : 0;
   }
+  renderMenu("");
+  dom.slashMenu.classList.add("active");
 }
 
 function fetchErrorMessage(err: unknown): string {
@@ -368,14 +336,7 @@ function rebuild(
   tailQuery: string,
   pathPrefix: string,
   field?: FieldView,
-  options?: { preserveSelection?: boolean },
 ): void {
-  // A repaint the user did not ask for (fresh data for the same input, or new
-  // row labels) keeps the row they moved to. An input-driven rebuild selects
-  // the first row as before.
-  const keptKey = options?.preserveSelection
-    ? selectableKey(candidates[selectedIdx])
-    : null;
   const cands = buildCandidates(currentNode, tailQuery, currentData, field);
   if (dom.input.value === "/") {
     cands.push({
@@ -391,10 +352,6 @@ function rebuild(
     return;
   }
 
-  const keptIdx =
-    keptKey === null
-      ? -1
-      : cands.findIndex((c) => selectableKey(c) === keptKey);
   // Auto-select first selectable candidate. We deliberately do NOT auto-select
   // the `current` item — its `*` marker is already a strong visual cue, and
   // auto-selecting it (e.g. the active task in /switch) is awkward when the
@@ -402,8 +359,7 @@ function rebuild(
   const firstSelectable = cands.findIndex(
     (c) => c.kind !== "separator" && c.kind !== "placeholder",
   );
-  selectedIdx =
-    keptIdx >= 0 ? keptIdx : firstSelectable >= 0 ? firstSelectable : 0;
+  selectedIdx = firstSelectable >= 0 ? firstSelectable : 0;
 
   renderMenu(pathPrefix);
   dom.slashMenu.classList.add("active");
@@ -447,7 +403,7 @@ export function hideSlashMenu(): void {
   candidates = [];
   currentPath = null;
   currentFetchKey = null;
-  fetchGeneration++;
+  beginDataScope();
   currentNode = ROOT;
   currentData = undefined;
   dismissedFor = dismissedInput;
@@ -538,6 +494,7 @@ async function clickItem(idx: number): Promise<void> {
   const preserveInput = menuInputOverride !== null;
 
   if (c.kind === "separator" || c.kind === "placeholder") return;
+
   if (c.kind === "subcommand" && c.node) {
     const childNodes = c.node.children ?? [];
     const hasMore =
@@ -620,10 +577,9 @@ function nextSelectable(from: number, dir: 1 | -1): number {
  *
  * Row labels are computed at render time from the current task's binding (the
  * `/switch` baseline), so a rotation that changes that binding while a menu is
- * open must not leave the old baseline on screen. The row the user selected is
- * kept when it still fits the current input. Only walker menus are rebuilt
- * here; `+`/`@` rows are assembled asynchronously by their own input pipeline,
- * which repaints itself.
+ * open must not leave the old baseline on screen. Only walker menus are
+ * rebuilt here; `+`/`@` rows are assembled asynchronously by their own input
+ * pipeline.
  */
 export function refreshSlashMenuRows(): void {
   if (!dom.slashMenu.classList.contains("active")) return;
@@ -634,11 +590,7 @@ export function refreshSlashMenuRows(): void {
     rootForInput(text),
   );
   if (node !== currentNode) return;
-  // A repaint, not an input change. Only a node that opts into a display cache
-  // keeps the selected row; every other node behaves as it always has.
-  rebuild(tailQuery, pathPrefix, node.field?.(rawRemainder), {
-    preserveSelection: node.cached !== undefined,
-  });
+  rebuild(tailQuery, pathPrefix, node.field?.(rawRemainder));
 }
 
 /**

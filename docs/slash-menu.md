@@ -47,10 +47,8 @@ interface CmdNode {
   desc?: string; // shown as secondary in the parent menu
   help?: string; // fuller one-line description shown by /help
   children?: CmdNode[]; // subcommands, walker prefixes them with ›
-  fetch?: (query: string) => unknown[] | Promise<unknown[]>; // sync OR async data
+  fetch?: (query: string) => unknown[] | Promise<unknown[]> | LiveSource<unknown[]>; // sync, async, or live data
   fetchKey?: (query: string) => string; // cache partition; same key = no refetch
-  cached?: () => unknown[] | null; // first frame while `fetch` runs
-  identity?: (item: unknown) => string | undefined; // stable row identity (e.g. a Task id)
   toSpec?: (item: unknown) => SlashItemSpec;
   matches?: (item: unknown, q: string) => boolean; // optional non-primary filter
   freeform?: (q: string) => SlashItemSpec | null; // "create on the fly" row
@@ -63,28 +61,36 @@ Field absence = capability not present. A node with only `children` is a pure su
 
 `fetchKey` is what keeps a scoped list from re-fetching on every keystroke: the controller re-fetches only when the key changes and otherwise filters the cached items locally (`/view` keys on the directory).
 
-`cached` is a seed for the first frame of an asynchronous `fetch`. When it returns
-items, the menu paints them immediately and the fetch still runs; when the
-result arrives it replaces them and, if the user moved the selection in the
-meantime, that row stays selected. Absent, or returning `null`, the first frame
-is `(loading...)` as before. It exists so a menu whose data was already fetched
-once does not wait a full round trip — noticeable through a tunnel or a slow
-link, invisible locally. `/switch` is the only node that sets it today (over the
-shared task-list display cache in `task-topology.ts`).
+### Live data
 
-Rows painted from the seed look and act like any other row; a target that
-vanished since the cached read fails the way any stale target does (for
-`/switch`, the client returns to the current Task and reports the failure).
+A `fetch` may return a `LiveSource` ([`live-source.ts`](../public/js/live-source.ts))
+instead of a one-shot result: a value that can change while the menu shows it.
 
-Opting in also changes one behaviour, and only for that node: **a repaint keeps
-the selected row.** A repaint the user did not ask for (the fresh result
-arriving, or a re-render for a new agent baseline) keeps the row they moved to;
-an input-driven rebuild still selects the first row.
+```ts
+interface LiveSource<T> {
+  read(): T | "loading" | { error: string }; // what there is now
+  watch(onChange: () => void): () => void; // returns how to stop
+}
+```
 
-`identity` is the stable name of a data row's target — the Task id for `/switch`
-rows. Selection preservation compares identities, never labels, so two Tasks
-that share a title stay distinct and a rename does not lose the selection. When
-an item has no identity, the row falls back to what acting on it fills.
+The menu does not know where the value comes from. It renders `read()`, and
+re-renders from `read()` whenever the source reports a change. Whether the
+source answers with something it already has, and when it refreshes, is the
+source's own business.
+
+A watch lives exactly as long as the menu's **data scope**: the span in which
+the shown data is current. A new scope starts whenever the data would be
+fetched again — the command path or `fetchKey` changes, the menu shows a
+placeholder, or the menu closes — and starting one stops everything the
+previous scope watched. A watch registers its own stop at the moment it starts,
+so the code that ends a scope never needs to know what was watched.
+
+Only the task pickers use it today: `/switch` returns the shared
+`taskListSource` from `task-topology.ts`, and `@` returns rows derived from it
+(`deriveLive`). That source shows the last list a read resolved with and
+refreshes when a watch starts, so an already-visited picker paints at once and
+repaints when the fresh read lands. Every other node keeps its one-shot
+`fetch`. A repaint selects the first row, like any other rebuild.
 
 ## FieldView — a node's own argument field
 
@@ -127,7 +133,7 @@ Today two walker nodes provide a field (`/clear` and `/new`), both through one h
 1. **Subcommands** (`›` prefix, hierarchical drill-in)
 2. **Freeform** (`↵` prefix, suppressed when the query matches a primary case-insensitively)
 3. **Separator** (only when both a `›`/`↵` group and a data section are present)
-4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`. An asynchronous `fetch` whose node supplies `cached` paints that seed instead of `(loading...)`, then repaints when the fetch returns. A `null` seed still shows `(loading...)`; a seed that is an empty array renders its ordinary empty state (`(none)` or `(no match)`), and the `@` picker additionally falls back to `(loading...)` when the cached snapshot cannot describe the current input (for example the current Task is not in it)
+4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`. A live `fetch` renders whatever its source holds: `"loading"` is `(loading...)`, an error is `(error)`, and a value is filtered like any other array
 5. **`field.trail` rows** (only when a `field` supplied them, and never beside a placeholder)
 
 `Candidate.kind` (`subcommand` / `freeform` / `data` / `placeholder` / `separator`) is what dispatches selection and clicks; `placeholder` and `separator` are never selectable and are skipped by arrow keys.
