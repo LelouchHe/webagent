@@ -23,7 +23,8 @@ import {
 } from "./create-command.ts";
 import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
-import { loadTaskList } from "./task-topology.ts";
+import { loadTaskList, taskListSource } from "./task-topology.ts";
+import { deriveLive, type LiveSource } from "./live-source.ts";
 import { setInputValue, state } from "./state.ts";
 import { listRecentPaths } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
@@ -281,11 +282,12 @@ function makeNavigationCandidate(args: {
  * Build slash-menu candidates for the current `+` or `@` input.
  *
  * Returns an empty array when the input is not a task command or the parser
- * rejects it; the caller decides whether to hide the menu.
+ * rejects it; the caller decides whether to hide the menu. `@` target rows come
+ * back as a live source over the shared task list, `+` rows as a promise.
  */
-export async function buildTaskCommandCandidates(
+export function buildTaskCommandCandidates(
   text: string,
-): Promise<Candidate[]> {
+): Candidate[] | Promise<Candidate[]> | LiveSource<Candidate[]> {
   if (!isTaskCommand(text)) return [];
 
   let parsed;
@@ -331,7 +333,10 @@ export async function buildTaskCommandCandidates(
     return [];
   }
 
-  return buildMessageCandidates(parsed);
+  // `@` rows are a view of the shared task list: they follow it as it changes.
+  return deriveLive(taskListSource, (tasks) =>
+    buildMessageCandidates(parsed, tasks),
+  );
 }
 
 /** Hint for a bare `+`: there is no title to create with yet. */
@@ -661,19 +666,16 @@ function addTaskContextEntries(args: {
   });
 }
 
-async function buildMessageCandidates(parsed: {
-  marker: string;
-  target: string;
-  path: TaskPath;
-  remainder: string;
-}): Promise<Candidate[]> {
+function buildMessageCandidates(
+  parsed: {
+    marker: string;
+    target: string;
+    path: TaskPath;
+    remainder: string;
+  },
+  tasks: TaskSummary[],
+): Candidate[] {
   if (!state.taskId) return [];
-  let tasks: TaskSummary[];
-  try {
-    tasks = await loadTaskList();
-  } catch {
-    return [];
-  }
 
   const map = buildTaskTree(tasks);
   const current = map.get(state.taskId);

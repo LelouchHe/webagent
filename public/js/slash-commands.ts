@@ -37,7 +37,7 @@ import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
 import type { TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import { entryAgentLabel, loadTaskList } from "./task-topology.ts";
+import { entryAgentLabel, taskListSource } from "./task-topology.ts";
 import { taskDisplayPath } from "./path-display.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { resetLocalFrontendState } from "./local-reset.ts";
@@ -133,10 +133,6 @@ async function unsubscribePush(): Promise<void> {
 }
 
 // --- shared data fetchers (keep call sites identical for /inbox + /inbox dismiss) ---
-
-async function listTasks(): Promise<TaskSummary[]> {
-  return loadTaskList();
-}
 
 interface PathItem {
   cwd: string;
@@ -883,7 +879,8 @@ export const ROOT: CmdNode = {
     {
       name: "/switch",
       desc: "Switch task",
-      fetch: listTasks,
+      // Display only: rows show the last list at once and follow newer reads.
+      fetch: () => taskListSource,
       matches: (item: unknown, q: string) => {
         const s = item as TaskSummary;
         const title = (s.title ?? "").toLowerCase();

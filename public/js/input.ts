@@ -24,6 +24,7 @@ import {
   handleSlashCommand,
   hideSlashMenu,
   handleSlashMenuKey,
+  isSlashMenuOpen,
 } from "./commands.ts";
 import { renderAttachPreview } from "./attachments.ts";
 import { registerInputHandlers } from "./input-actions.ts";
@@ -359,7 +360,7 @@ document.addEventListener("keydown", (e) => {
       }
     }
   }
-  if (e.key === "Escape" && dom.slashMenu.classList.contains("active")) {
+  if (e.key === "Escape" && isSlashMenuOpen()) {
     e.preventDefault();
     hideSlashMenu();
     dom.input.focus();

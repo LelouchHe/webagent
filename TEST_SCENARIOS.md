@@ -169,7 +169,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
     yields nothing when the default is absent or failed (PATH presence is never
     consulted)
 
-- `test/task-topology.test.ts` (the current task's parent reference)
+- `test/task-topology.test.ts` (the current task's parent reference and the task-list display cache)
   - an activation hint (parent id + its binding, or a known absence) settles
     the reference with zero requests; the shared list is never read for this
   - without a hint the task's own link read supplies the parent and the parent
@@ -194,6 +194,36 @@ spot gaps, and decide what still needs to be added without reading every spec.
     one
   - a successful handshake baseline still applies when the later startup read
     fails; the startup read does not raise the floor above it
+  - the display cache records the list a read resolved with, keeps it across a
+    reconnect while the row-label baseline is withdrawn, is never replaced by
+    an older response, keeps a list whose connection generation was superseded
+    in flight (the cache's order rule is its own, not the connection's), and
+    keeps the previous list when a later read fails
+  - `taskListSource`: a watch refreshes the list once (a second watch joins
+    the read in flight) and reports when it lands; a stopped watch hears
+    nothing; a failure is shown only while there is no list
+
+- `test/live-source.test.ts`
+  - a derived source derives a value, passes loading and errors through, and
+    watches through to its origin
+
+- `test/task-list-display-cache.test.ts` (the pickers follow the shared list)
+  - a second `@` / `/switch` open paints the last list before its own read
+    returns; a first open with nothing fetched still shows `(loading...)`
+  - the fresh read repaints the open menu
+  - a row painted from the earlier list acts at once, without waiting for the
+    read
+  - a leading-whitespace ` @` paints from the last list too
+  - a watch lasts exactly as long as its menu scope: closing the menu or moving
+    to another command stops it, typing within `/switch` keeps one, and each
+    `@` keystroke replaces it instead of adding one
+  - an `@` input the shown list has no rows for stays hidden, and appears when
+    the fresh read has rows for it
+  - Escape dismisses such a hidden `@` input too: its watch stops, and the read
+    that would have had rows lands on a closed menu
+  - Enter on an `@` target still reads the list instead of resolving against
+    the cache, and a target the fresh read dropped is reported rather than
+    messaged
 
 - `test/task-ref-marks.test.ts` (one reference per Task, four states)
   - a live reference is completely unmarked (no strike, no appended name, no
@@ -781,6 +811,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - an SSE `task_deleted` for the current (old) Root follows its `replacedBy` to the new Root even when another task is more recently active (`test/events.test.ts`)
   - foreign `root-*` ids are ordinary 404s and never aliases; fallback selection uses the current connection's scoped task array
   - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
+  - a switch whose target cannot be opened (deleted, failed read) returns to the previous task instead of leaving an empty view
   - existing-window and cold-start service-worker routing
   - terminal startup intents are cleared; retryable intents survive refresh without in-page duplication
 
@@ -1288,6 +1319,19 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `slash-menu-switch.spec.ts`
   - slash-menu task switch works from keyboard navigation
+  - a second `/switch` open paints the previously fetched list while its task
+    read is held, and the row that read carries but the cache did not appears
+    once it is released
+  - a cache-painted `/switch` row switches while the list read is still held
+  - clicking a cached `/switch` row whose task was deleted since the cached read
+    returns to the current task, restores its transcript, and shows
+    `err: Failed to switch task` there
+
+- `slash-menu-at-picker.spec.ts`
+  - a second `@` open paints the previously fetched list while its task read is
+    held, and the sibling the held read carries but the cache did not appears
+    once it is released (the test awaits the intercepted request before
+    asserting how many reads this open issued)
 
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and

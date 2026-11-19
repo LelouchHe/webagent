@@ -47,7 +47,7 @@ interface CmdNode {
   desc?: string; // shown as secondary in the parent menu
   help?: string; // fuller one-line description shown by /help
   children?: CmdNode[]; // subcommands, walker prefixes them with ›
-  fetch?: (query: string) => unknown[] | Promise<unknown[]>; // sync OR async data
+  fetch?: (query: string) => unknown[] | Promise<unknown[]> | LiveSource<unknown[]>; // sync, async, or live data
   fetchKey?: (query: string) => string; // cache partition; same key = no refetch
   toSpec?: (item: unknown) => SlashItemSpec;
   matches?: (item: unknown, q: string) => boolean; // optional non-primary filter
@@ -60,6 +60,37 @@ interface CmdNode {
 Field absence = capability not present. A node with only `children` is a pure submenu; a node with only `fetch + toSpec` is a pure list (e.g. `/mode`); a node with `freeform` plus `fetch` is a list-with-create (e.g. `/token`).
 
 `fetchKey` is what keeps a scoped list from re-fetching on every keystroke: the controller re-fetches only when the key changes and otherwise filters the cached items locally (`/view` keys on the directory).
+
+### Live data
+
+A `fetch` may return a `LiveSource` ([`live-source.ts`](../public/js/live-source.ts))
+instead of a one-shot result: a value that can change while the menu shows it.
+
+```ts
+interface LiveSource<T> {
+  read(): T | "loading" | { error: string }; // what there is now
+  watch(onChange: () => void): () => void; // returns how to stop
+}
+```
+
+The menu does not know where the value comes from. It renders `read()`, and
+re-renders from `read()` whenever the source reports a change. Whether the
+source answers with something it already has, and when it refreshes, is the
+source's own business.
+
+A watch lives exactly as long as the menu's **data scope**: the span in which
+the shown data is current. A new scope starts whenever the data would be
+fetched again — the command path or `fetchKey` changes, the menu shows a
+placeholder, or the menu closes — and starting one stops everything the
+previous scope watched. A watch registers its own stop at the moment it starts,
+so the code that ends a scope never needs to know what was watched.
+
+Only the task pickers use it today: `/switch` returns the shared
+`taskListSource` from `task-topology.ts`, and `@` returns rows derived from it
+(`deriveLive`). That source shows the last list a read resolved with and
+refreshes when a watch starts, so an already-visited picker paints at once and
+repaints when the fresh read lands. Every other node keeps its one-shot
+`fetch`. A repaint selects the first selectable row, like any other rebuild.
 
 ## FieldView — a node's own argument field
 
@@ -102,7 +133,7 @@ Today two walker nodes provide a field (`/clear` and `/new`), both through one h
 1. **Subcommands** (`›` prefix, hierarchical drill-in)
 2. **Freeform** (`↵` prefix, suppressed when the query matches a primary case-insensitively)
 3. **Separator** (only when both a `›`/`↵` group and a data section are present)
-4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`
+4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`. A live `fetch` renders whatever its source holds: `"loading"` is `(loading...)`, an error is `(error)`, and a value is filtered like any other array
 5. **`field.trail` rows** (only when a `field` supplied them, and never beside a placeholder)
 
 `Candidate.kind` (`subcommand` / `freeform` / `data` / `placeholder` / `separator`) is what dispatches selection and clicks; `placeholder` and `separator` are never selectable and are skipped by arrow keys.

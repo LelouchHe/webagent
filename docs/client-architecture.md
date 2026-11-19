@@ -97,7 +97,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`render.ts`**            | DOM helpers: add messages, streaming markdown render, theme, scroll, diff HTML generation           | `addMessage()`, `addSystem()`, `scrollToBottom()`, `updateMarkdownStream()`, `resetMarkdownStream()` |
 | **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createTask()`, `sendMessage()`, `cancelTask()`, etc.                                     |
 | **`agent-directory.ts`**   | The configured agent directory from `GET /config` / bootstrap: ids in configuration order, default agent (no liveness) | `installAgentDirectory()`, `configuredAgentIds()`, `getDefaultAgentId()`                          |
-| **`task-topology.ts`**     | The current task's parent reference and the list-arrival flag          | `loadTaskList()`, `setCurrentTask()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
+| **`task-topology.ts`**     | The current task's parent reference, the list-arrival flag, and the pickers' display cache | `loadTaskList()`, `taskListSource`, `setCurrentTask()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
 | **`create-command.ts`**    | Shared `+` / `/new` / `/clear` helpers: coordinate parsing, cwd resolution, preview, failure rescue   | `parseCoordinate()`, `resolveCreateCwd()`, `agentRescueCommand()`                                |
 | **`agent-hint.ts`**        | The menus' one-line agent hint (non-selectable): configured agents and the coordinate syntax once    | `agentHintRow()`                                                                                 |
 
@@ -554,8 +554,8 @@ activates a task carries the answer with it:
    status bar draws no coordinate rather than guessing. Both reads are owned by
    the connection generation and the task they were issued for.
 4. **The shared task list is never consulted for this.** `loadTaskList` exists
-   for the pickers and for the list-arrival flag only, so switching or
-   activating a task produces no list read.
+   for the pickers, for the list-arrival flag, and for the pickers' display
+   cache only, so switching or activating a task produces no list read.
 5. **A task switch or a new connection** resets the reference (a new connection
    also clears the list-arrival flag). Until it is resolved, the status bar
    draws no coordinate: "not looked up yet" is not "no parent".
@@ -566,6 +566,32 @@ agent". `entryAgentLabel` combines it with the current task's binding; a row
 with no binding, or a connection without a list, states nothing. `/switch` rows
 recompute this at render time, so a menu opened after a switch (or after the
 current binding changes while it is open) uses the new baseline.
+
+### Task-List Display Cache
+
+The `@` picker and `/switch` show the shared list through `taskListSource`, a
+`LiveSource` (see [Slash Menu](slash-menu.md#live-data)). Its value is the last
+list a read resolved with; starting a watch refreshes it with `loadTaskList()`,
+which issues a read or joins one already in flight. An already-visited menu
+therefore paints at once and repaints when the fresh result lands, and the
+watch stops with the menu's data scope. With nothing fetched yet the value is
+`"loading"`, and a failure is shown only while there is no list at all.
+
+The shown list is display only and deliberately separate from the baseline
+machinery above:
+
+- It never stands in for an answer about a connection: `listLoaded`,
+  `listAppliedSeq` / `listRequiredSeq`, `applyTaskListSnapshot` and the
+  generation guards keep their own meaning.
+- It survives reconnects and task switches, because a reconnect is exactly when
+  the round trip would otherwise be visible; every watch refreshes it.
+- One rule decides its order: a read may replace it only if it was issued after
+  the read that produced the current entry, so a late response cannot overwrite
+  a newer list. A failed read leaves the previous one in place.
+- Typed-input execution never reads it: Enter on an `@` target and every
+  execution path call `loadTaskList()` themselves. A clicked row painted from
+  an earlier list acts at once; a target deleted in the meantime fails the switch,
+  which returns to the previous Task (`switchToTask`).
 
 ---
 

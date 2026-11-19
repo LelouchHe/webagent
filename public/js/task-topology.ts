@@ -28,6 +28,7 @@ import type { TaskSummary } from "../../src/types.ts";
 import * as api from "./api.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import { applyTaskListSnapshot, resetTaskRefMarks } from "./task-ref-marks.ts";
+import type { LiveSource, LiveState } from "./live-source.ts";
 
 /** The confirmed parent of a task, with its binding when known. */
 export interface ParentBinding {
@@ -76,6 +77,30 @@ let listAppliedSeq = 0;
  * claim that a task created during registration does not exist.
  */
 let listRequiredSeq = 0;
+/**
+ * What `taskListSource` shows: the last list a read resolved with. A picker
+ * that watches the source paints it at once and repaints when a newer read
+ * lands, instead of waiting a round trip on every open.
+ *
+ * It is deliberately not part of the baseline machinery above:
+ *
+ * - it never claims that a connection's list has arrived (`listLoaded`,
+ *   `listRequiredSeq` and `applyTaskListSnapshot` keep their own answers);
+ * - it survives a generation change, because a reconnect is exactly when a
+ *   menu would otherwise wait a round trip, and every watch refreshes it;
+ * - order is decided by one rule only: a read may only replace it when it was
+ *   issued after the read that produced the current list, so a late response
+ *   can never overwrite a newer one.
+ */
+let displayList: TaskSummary[] | null = null;
+let displaySeq = 0;
+/** Why the last read failed, shown only while there is no list at all. */
+let displayError: string | null = null;
+const listWatchers = new Set<() => void>();
+
+function notifyListWatchers(): void {
+  for (const onChange of [...listWatchers]) onChange();
+}
 
 const changeListeners: (() => void)[] = [];
 
@@ -335,6 +360,15 @@ function startTaskListRequest(): {
   const requestGeneration = generation;
   const seq = ++listRequestSeq;
   const promise = api.listTasks().then((tasks) => {
+    // The shown list is under its own guard: it is fed by every read
+    // (including one whose generation has already been replaced), and only a
+    // read issued later may replace it.
+    const shown = seq > displaySeq;
+    if (shown) {
+      displaySeq = seq;
+      displayList = tasks;
+      displayError = null;
+    }
     if (
       requestGeneration === generation &&
       seq > listAppliedSeq &&
@@ -345,10 +379,44 @@ function startTaskListRequest(): {
       applyTaskListSnapshot(tasks);
       notifyChange();
     }
+    // Display watchers last, so a repaint can never stand between a read and
+    // its baseline.
+    if (shown) notifyListWatchers();
     return tasks;
+  });
+  // A failure only matters to watchers when there is nothing to show; a list
+  // that is already there stays up. Callers still see the rejection.
+  promise.catch((err: unknown) => {
+    if (displayList !== null) return;
+    displayError = err instanceof Error && err.message ? err.message : "error";
+    notifyListWatchers();
   });
   return { generation: requestGeneration, promise };
 }
+
+/**
+ * The task list as the pickers see it: the last list a read resolved with,
+ * refreshed whenever a watch starts (joining a read already in flight).
+ *
+ * Display only. Execution (resolving a typed target) reads `loadTaskList()`
+ * fresh, and nothing here answers "has this connection's list arrived" — see
+ * the module comment on `displayList`.
+ */
+export const taskListSource: LiveSource<TaskSummary[]> = {
+  read(): LiveState<TaskSummary[]> {
+    if (displayList !== null) return displayList;
+    return displayError !== null ? { error: displayError } : "loading";
+  },
+  watch(onChange) {
+    listWatchers.add(onChange);
+    // Refresh on watch. The outcome reaches watchers through the state above;
+    // the rejection itself has nobody to report to here.
+    loadTaskList().catch(() => undefined);
+    return () => {
+      listWatchers.delete(onChange);
+    };
+  },
+};
 
 /**
  * Fetch the task list and apply it to this generation. Concurrent callers in
@@ -419,6 +487,11 @@ export function loadStartupTaskList(): Promise<TaskSummary[]> {
   return readBaseline();
 }
 
+/** Test seam: how many watches of `taskListSource` are live. */
+export function taskListWatchCountForTest(): number {
+  return listWatchers.size;
+}
+
 /** Test seam: forget everything without bumping the visible generation. */
 export function resetTaskTopologyForTest(): void {
   generation = 0;
@@ -429,5 +502,9 @@ export function resetTaskTopologyForTest(): void {
   listRequestSeq = 0;
   listAppliedSeq = 0;
   listRequiredSeq = 0;
+  displayList = null;
+  displaySeq = 0;
+  displayError = null;
+  listWatchers.clear();
   resetTaskRefMarks();
 }
