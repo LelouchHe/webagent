@@ -3106,6 +3106,70 @@ describe("TaskManager", () => {
       });
       await expectControllerCanSubmitAgain(healed);
     });
+
+    it("abandons the reminder when the edge is archived while resuming", async () => {
+      const obligation = seedReminder();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let entered!: () => void;
+      const inLoad = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const prompts: string[] = [];
+      sm.liveTasks.delete("child");
+      sm.attachExecutionBridge({
+        async newSession() {
+          throw new Error("not part of a restore");
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          entered();
+          await gate;
+          return { taskId, configOptions: [] };
+        },
+        async prompt(_taskId: string, text: string) {
+          prompts.push(text);
+        },
+        isAvailable: () => true,
+      });
+
+      const submission = sm.submitObligationReminder(obligation);
+      await inLoad;
+      // The archive transaction cuts the edge while the reminder is waiting on
+      // the transport/resume. Nothing was handed to ACP yet.
+      sm.cutArchivedEdge("parent", "child");
+      release();
+
+      assert.deepEqual(await submission, {
+        status: "deferred",
+        reason: "edge_gone",
+      });
+      assert.equal(prompts.length, 0);
+      assert.equal(sm.getBusyKind("child"), null);
+    });
+
+    it("treats an unresolved account as still owed for the archive warning", () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p");
+      store.createTask("child", tmpDir, "auto", "test-agent", "c", "parent");
+      store.createCollaborationMessage({
+        id: "owed-check",
+        deliveryId: "owed-check-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      const record = sm.getObligation("parent", "child");
+      assert.ok(record);
+      (record as { state: string }).state = "unresolved";
+      assert.equal(sm.hasOpenObligation("parent", "child"), true);
+      (record as { state: string }).state = "settled";
+      assert.equal(sm.hasOpenObligation("parent", "child"), false);
+    });
   });
 
   // The restore window must be busy, and the rotation claim must happen in

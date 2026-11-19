@@ -104,13 +104,6 @@ time. An entry without a "closing condition" is a wish, not an issue.
   not against two real clients. *Closing:* a two-client integration test that
   asserts exactly one row per client.
 
-- **Archiving does not cancel already-queued collaboration deliveries.**
-  Archive drops the outstanding account edge so a later `task_update` is
-  recorded but not delivered. A request from the former parent that was queued
-  but not yet delivered is not cancelled and may still reach the archived task;
-  no obligation then tracks it. *Closing:* decide whether archive should fail,
-  requeue, or keep such deliveries, then implement it in the archive path.
-
 ## Protocol and agent compatibility
 
 - **`MAX_ACP_MESSAGE_BYTES` is a hardcoded 128 MiB cap.** It is not derived from

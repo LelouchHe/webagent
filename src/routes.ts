@@ -1464,6 +1464,15 @@ export function createRequestHandler(
           const msg = err instanceof Error ? err.message : String(err);
           if (msg.startsWith("Live task not found")) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: msg });
+          } else if (
+            msg.startsWith("Collaboration tasks have no common ancestor") ||
+            msg.startsWith("Cannot determine collaboration task lineage")
+          ) {
+            // A concurrent archive cut the edge between the pre-check and this
+            // insert. That is an ordinary out-of-scope answer, not a 500.
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "Target task is outside the local collaboration scope",
+            });
           } else {
             json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
           }
@@ -2715,15 +2724,25 @@ export function createRequestHandler(
         const pendingAccount =
           task.parent_id !== null &&
           tasks?.hasOpenObligation(task.parent_id, taskId) === true;
-        const result = store.archiveTask(taskId);
+        let result: ReturnType<typeof store.archiveTask>;
+        try {
+          result = store.archiveTask(taskId);
+          if (result?.status === "archived" && task.parent_id !== null) {
+            tasks?.cutArchivedEdge(task.parent_id, taskId);
+          }
+        } catch (err) {
+          // The store's transaction rolls back on its own; report a diagnosable
+          // API error instead of an unhandled rejection.
+          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            error: `Archive failed: ${errorMessage(err)}`,
+          });
+          return;
+        }
         if (!result) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
         if (result.status === "archived") {
-          if (task.parent_id !== null) {
-            tasks?.dropObligationEdge(task.parent_id, taskId);
-          }
           if (result.message) {
             sseManager.broadcast({
               type: "system_message",

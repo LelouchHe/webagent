@@ -2612,6 +2612,29 @@ export class Store {
     })();
   }
 
+  /**
+   * Mark not-yet-delivered collaboration across one cut edge as interrupted by
+   * archive, in both directions: a queued request from the former parent and a
+   * queued account/notice from the archived task. Messages, projections, and
+   * the delivery rows are kept; only the status records that they will not be
+   * delivered. Work already handed to ACP is not recalled.
+   */
+  failDeliveriesAcrossEdge(sourceTaskId: string, targetTaskId: string): number {
+    const result = this.db
+      .prepare(
+        `UPDATE deliveries
+         SET status = 'failed', failed_at = ?, failure_reason = 'archived_edge_cut'
+         WHERE status IN ('queued', 'draining')
+           AND message_id IN (
+             SELECT id FROM messages
+             WHERE (source_task_id = ? AND direct_target_task_id = ?)
+                OR (source_task_id = ? AND direct_target_task_id = ?)
+           )`,
+      )
+      .run(Date.now(), sourceTaskId, targetTaskId, targetTaskId, sourceTaskId);
+    return result.changes;
+  }
+
   failOutstandingDeliveriesForTaskClear(taskId: string): void {
     const failedAt = Date.now();
     this.db

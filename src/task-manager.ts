@@ -3872,17 +3872,27 @@ export class TaskManager implements ObligationHost {
    * report a settled edge as pending.
    */
   hasOpenObligation(sourceTaskId: string, targetTaskId: string): boolean {
-    return this.obligations.isOwed(sourceTaskId, targetTaskId);
+    const obligation = this.obligations.getActive(sourceTaskId, targetTaskId);
+    // `unresolved` stopped the runtime's own attempts but a late account can
+    // still settle it, so archiving must warn about that debt too. Only
+    // `settled` is finished.
+    return obligation !== undefined && obligation.state !== "settled";
   }
 
   /**
-   * Forget one directed edge after its target left the source's tree (archive).
-   * The target keeps every other edge it has, so an archived subtree can keep
-   * accounting internally; only the link to the former parent is cut.
+   * Cut the archived task's former-parent edge. Work still queued across it in
+   * either direction is recorded as interrupted and will not be delivered;
+   * the obligation record and its reminders are dropped. The task keeps every
+   * other edge (its own children), so internal collaboration is untouched.
    */
-  dropObligationEdge(sourceTaskId: string, targetTaskId: string): void {
+  cutArchivedEdge(sourceTaskId: string, targetTaskId: string): number {
+    const failed = this.store.failDeliveriesAcrossEdge(
+      sourceTaskId,
+      targetTaskId,
+    );
     this.obligations.dropEdge(sourceTaskId, targetTaskId);
     this.pendingDispatchRetries.delete(targetTaskId);
+    return failed;
   }
 
   /** True when `promptId` is still the task's live agent turn. */
@@ -3975,6 +3985,15 @@ export class TaskManager implements ObligationHost {
   async submitObligationReminder(
     obligation: DirectedObligation,
   ): Promise<ObligationSubmissionOutcome> {
+    // The edge may have been archived while this attempt waited for its timer.
+    const edgeStillExists = () =>
+      this.obligations.getActive(
+        obligation.sourceTaskId,
+        obligation.targetTaskId,
+      ) !== undefined;
+    if (!edgeStillExists()) {
+      return { status: "deferred", reason: "edge_gone" };
+    }
     const task = this.liveTask(obligation.targetTaskId);
     if (!task) {
       // The target is gone; its debt is purged with the task lifecycle, which
@@ -4039,6 +4058,12 @@ export class TaskManager implements ObligationHost {
       // replacement execution.
       if (!promptId || !this.isTurnRunning(task.id, promptId)) {
         return { status: "deferred", reason: "turn_superseded" };
+      }
+      // The edge can be cut while this attempt awaits the transport/resume.
+      // Nothing was submitted yet, so abandoning here is not a recall: the
+      // archived task must not receive a reminder for an edge it left.
+      if (!edgeStillExists()) {
+        return { status: "deferred", reason: "edge_gone" };
       }
       const lease = this.currentLease(task.id);
       await bridge.prompt(task.id, text, undefined, promptId);

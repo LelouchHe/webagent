@@ -98,8 +98,9 @@ describe("POST /api/v1/tasks/:id/archive", () => {
     const fakeTasks = {
       liveTasks: new Map(),
       hasOpenObligation: () => owed,
-      dropObligationEdge: (source: string, target: string) => {
+      cutArchivedEdge: (source: string, target: string) => {
         dropped.push([source, target]);
+        return store.failDeliveriesAcrossEdge(source, target);
       },
     } as unknown as TaskManager;
 
@@ -181,6 +182,54 @@ describe("POST /api/v1/tasks/:id/archive", () => {
     assert.deepEqual(dropped, [["area", "work"]]);
   });
 
+  it("marks queued deliveries across the cut edge as interrupted", async () => {
+    // One outgoing request (area → work) and one account (work → area), plus a
+    // tree-internal edge (work → work-child) that must survive the archive.
+    store.createTask(
+      "work-child",
+      dir,
+      "auto",
+      "agent-a",
+      "wc-session",
+      "work",
+      {
+        title: "work-child",
+      },
+    );
+    for (const [id, source, target, body] of [
+      ["m-request", "area", "work", "request"],
+      ["m-account", "work", "area", "account"],
+      ["m-internal", "work", "work-child", "internal"],
+    ] as const) {
+      store.createCollaborationMessage({
+        id,
+        deliveryId: `d-${id}`,
+        sourceTaskId: source,
+        directTargetTaskId: target,
+        sourceActor: "agent",
+        body,
+      });
+    }
+
+    const res = await req(port, "POST", "/api/v1/tasks/work/archive", apiToken);
+    assert.equal(res.status, 200);
+
+    for (const deliveryId of ["d-m-request", "d-m-account"]) {
+      const delivery = store.getCollaborationDelivery(deliveryId);
+      assert.ok(delivery);
+      assert.equal(delivery.status, "failed");
+      assert.equal(delivery.failure_reason, "archived_edge_cut");
+    }
+    // The message rows are kept as evidence.
+    assert.equal(store.getCollaborationMessage("m-request")?.body, "request");
+    assert.equal(store.getCollaborationMessage("m-account")?.body, "account");
+    // Internal work is untouched.
+    assert.equal(
+      store.getCollaborationDelivery("d-m-internal")?.status,
+      "queued",
+    );
+  });
+
   it("reports an archived top as a no-op", async () => {
     await req(port, "POST", "/api/v1/tasks/area/archive", apiToken);
     const res = await req(port, "POST", "/api/v1/tasks/area/archive", apiToken);
@@ -228,6 +277,47 @@ describe("POST /api/v1/tasks/:id/archive", () => {
     assert.equal(res.status, 400, res.body);
     assert.match(res.body, /already has that title/);
     assert.equal(store.getTask("work")?.title, "work");
+  });
+
+  it("reports a concurrent out-of-scope send as 4xx, not 500", async () => {
+    const original = store.createCollaborationMessage.bind(store);
+    store.createCollaborationMessage = () => {
+      throw new Error("Collaboration tasks have no common ancestor");
+    };
+    try {
+      const res = await req(
+        port,
+        "POST",
+        "/api/v1/tasks/area/messages",
+        apiToken,
+        JSON.stringify({ targetTaskId: "work", body: "hi" }),
+      );
+      assert.equal(res.status, 400, res.body);
+      assert.match(res.body, /outside the local collaboration scope/);
+    } finally {
+      store.createCollaborationMessage = original;
+    }
+  });
+
+  it("answers a store failure as a diagnosable archive error", async () => {
+    const original = store.archiveTask.bind(store);
+    store.archiveTask = () => {
+      throw new Error("simulated write failure");
+    };
+    try {
+      const res = await req(
+        port,
+        "POST",
+        "/api/v1/tasks/area/archive",
+        apiToken,
+      );
+      assert.equal(res.status, 500, res.body);
+      assert.match(res.body, /Archive failed: simulated write failure/);
+    } finally {
+      store.archiveTask = original;
+    }
+    // The failed call wrote nothing: the task is still attached.
+    assert.equal(store.getTask("area")?.parent_id, store.rootTaskId);
   });
 
   it("rejects an unknown archived filter", async () => {

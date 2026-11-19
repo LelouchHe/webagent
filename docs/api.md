@@ -495,7 +495,11 @@ writes exactly one `system_message` (`kind: "task_archive"`) on the detached
 task, naming the original parent's path and id; children stay attached to it
 and get no rows of their own. A pending account owed to the former parent does
 not block archiving: that edge is dropped, so a later `task_update` is recorded
-but not delivered to the parent the task left.
+but not delivered to the parent the task left. Collaboration already queued
+across the cut edge in either direction is marked `failed` with
+`failure_reason: "archived_edge_cut"`; the message rows are kept, and nothing
+new is delivered across that edge. Work already handed to the agent is not
+recalled.
 
 **Response** `200`:
 
