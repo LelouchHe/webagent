@@ -76,6 +76,22 @@ let listAppliedSeq = 0;
  * claim that a task created during registration does not exist.
  */
 let listRequiredSeq = 0;
+/**
+ * Display cache for the task pickers. It is the last list read that resolved,
+ * kept so an already-visited menu can paint rows before its own read returns.
+ *
+ * It is deliberately not part of the baseline machinery above:
+ *
+ * - it never claims that a connection's list has arrived (`listLoaded`,
+ *   `listRequiredSeq` and `applyTaskListSnapshot` keep their own answers);
+ * - it survives a generation change, because a reconnect is exactly when a
+ *   menu would otherwise wait a round trip, and every menu read revalidates;
+ * - order is decided by one rule only: a read may only replace the cache when
+ *   it was issued after the read that produced the current entry, so a late
+ *   response can never overwrite a newer list.
+ */
+let displayList: TaskSummary[] | null = null;
+let displaySeq = 0;
 
 const changeListeners: (() => void)[] = [];
 
@@ -335,6 +351,13 @@ function startTaskListRequest(): {
   const requestGeneration = generation;
   const seq = ++listRequestSeq;
   const promise = api.listTasks().then((tasks) => {
+    // Display cache first and under its own guard: it is fed by every read
+    // (including one whose generation has already been replaced), and only a
+    // read issued later may replace what is cached.
+    if (seq > displaySeq) {
+      displaySeq = seq;
+      displayList = tasks;
+    }
     if (
       requestGeneration === generation &&
       seq > listAppliedSeq &&
@@ -348,6 +371,17 @@ function startTaskListRequest(): {
     return tasks;
   });
   return { generation: requestGeneration, promise };
+}
+
+/**
+ * The last task list a read resolved with, or null when none has.
+ *
+ * Display only: the pickers paint from it while their own read is in flight,
+ * and every caller still issues (or joins) a fresh read. It never stands in for
+ * a baseline answer — see the module comment on the display cache.
+ */
+export function peekTaskList(): TaskSummary[] | null {
+  return displayList;
 }
 
 /**
@@ -429,5 +463,7 @@ export function resetTaskTopologyForTest(): void {
   listRequestSeq = 0;
   listAppliedSeq = 0;
   listRequiredSeq = 0;
+  displayList = null;
+  displaySeq = 0;
   resetTaskRefMarks();
 }

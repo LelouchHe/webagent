@@ -16,7 +16,7 @@ import {
 } from "./slash-tree.ts";
 import { renderItem } from "./slash-render.ts";
 import { ROOT } from "./slash-commands.ts";
-import { subscribeTaskTopology } from "./task-topology.ts";
+import { peekTaskList, subscribeTaskTopology } from "./task-topology.ts";
 import { handleSlashCommand } from "./slash-exec.ts";
 import { buildTaskCommandCandidates, isTaskCommand } from "./task-command.ts";
 
@@ -177,7 +177,9 @@ export function updateSlashMenu(): void {
         return;
       }
       if (result instanceof Promise) {
-        currentData = "loading";
+        // Paint a previously fetched list immediately; the read below still
+        // runs and repaints when it lands (see `cached` in slash-tree.ts).
+        currentData = node.cached?.() ?? "loading";
         const myPath = pathPrefix;
         const myFetchKey = nextFetchKey;
         void result.then(
@@ -189,7 +191,7 @@ export function updateSlashMenu(): void {
             )
               return;
             currentData = items;
-            rebuildFromInput(pathPrefix);
+            rebuildFromInput(pathPrefix, { preserveSelection: true });
           },
           (err: unknown) => {
             if (
@@ -199,7 +201,7 @@ export function updateSlashMenu(): void {
             )
               return;
             currentData = { error: fetchErrorMessage(err) };
-            rebuildFromInput(pathPrefix);
+            rebuildFromInput(pathPrefix, { preserveSelection: true });
           },
         );
       } else {
@@ -216,20 +218,51 @@ export function updateSlashMenu(): void {
 
 // Re-resolve the current input (used by async fetch callbacks that may fire
 // after the input changed but currentPath is still valid).
-function rebuildFromInput(pathPrefix: string): void {
+function rebuildFromInput(
+  pathPrefix: string,
+  options?: { preserveSelection?: boolean },
+): void {
   const input = currentMenuInput();
   const { tailQuery, rawRemainder } = resolvePath(input, rootForInput(input));
-  rebuild(tailQuery, pathPrefix, currentNode.field?.(rawRemainder));
+  rebuild(tailQuery, pathPrefix, currentNode.field?.(rawRemainder), options);
 }
 
-async function updateTaskCommandMenu(text: string): Promise<void> {
-  currentPath = text;
-  currentFetchKey = text;
-  fetchGeneration++;
-  const myFetchGeneration = fetchGeneration;
-  currentNode = TASK_COMMAND_ROOT;
-  currentData = undefined;
+/**
+ * Stable identity of a selectable row across a repaint: what acting on it
+ * fills, which already distinguishes data rows by the target they address.
+ * Placeholders and separators have none — they are never "the user's row".
+ */
+function selectableKey(candidate: Candidate | undefined): string | null {
+  if (!candidate) return null;
+  if (candidate.kind === "separator" || candidate.kind === "placeholder") {
+    return null;
+  }
+  return `${candidate.kind}\0${candidate.spec.fill ?? candidate.spec.primary}`;
+}
 
+/**
+ * Paint one task-command candidate list. `keptKey` is the row the user had
+ * selected; it survives the repaint when the same row is still offered.
+ */
+function paintTaskCommandCandidates(
+  cands: Candidate[],
+  keptKey: string | null,
+): void {
+  candidates = cands;
+  const keptIdx =
+    keptKey === null
+      ? -1
+      : cands.findIndex((c) => selectableKey(c) === keptKey);
+  const firstSelectable = cands.findIndex(
+    (c) => c.kind !== "separator" && c.kind !== "placeholder",
+  );
+  selectedIdx =
+    keptIdx >= 0 ? keptIdx : firstSelectable >= 0 ? firstSelectable : 0;
+  renderMenu("");
+  dom.slashMenu.classList.add("active");
+}
+
+function showTaskCommandLoading(): void {
   candidates = [
     {
       spec: { primary: "(loading...)" },
@@ -240,6 +273,36 @@ async function updateTaskCommandMenu(text: string): Promise<void> {
   selectedIdx = -1;
   renderMenu("");
   dom.slashMenu.classList.add("active");
+}
+
+async function updateTaskCommandMenu(text: string): Promise<void> {
+  // A repaint of the same input (the binding changed under an open menu) keeps
+  // the row the user moved to; a new input selects the first row as always.
+  const repaint = currentPath === text && candidates.length > 0;
+  const previousKey = repaint ? selectableKey(candidates[selectedIdx]) : null;
+
+  currentPath = text;
+  currentFetchKey = text;
+  fetchGeneration++;
+  const myFetchGeneration = fetchGeneration;
+  currentNode = TASK_COMMAND_ROOT;
+  currentData = undefined;
+
+  // First paint from the display cache, so `@` does not show `(loading...)`
+  // for one full round trip on every open. The fresh read below always runs
+  // and repaints when it lands, so these rows are at most one read stale.
+  // `+` reads other sources and keeps its own pipeline.
+  const cachedTasks = text.startsWith("@") ? peekTaskList() : null;
+  let painted = false;
+  if (cachedTasks) {
+    const seeded = await buildTaskCommandCandidates(text, { cachedTasks });
+    if (fetchGeneration !== myFetchGeneration) return;
+    if (seeded.length > 0) {
+      paintTaskCommandCandidates(seeded, previousKey);
+      painted = true;
+    }
+  }
+  if (!painted && !repaint) showTaskCommandLoading();
 
   try {
     const cands = await buildTaskCommandCandidates(text);
@@ -248,13 +311,7 @@ async function updateTaskCommandMenu(text: string): Promise<void> {
       hideSlashMenu();
       return;
     }
-    candidates = cands;
-    const firstSelectable = cands.findIndex(
-      (c) => c.kind !== "separator" && c.kind !== "placeholder",
-    );
-    selectedIdx = firstSelectable >= 0 ? firstSelectable : 0;
-    renderMenu("");
-    dom.slashMenu.classList.add("active");
+    paintTaskCommandCandidates(cands, selectableKey(candidates[selectedIdx]));
   } catch (err) {
     if (fetchGeneration !== myFetchGeneration) return;
     candidates = [
@@ -280,7 +337,14 @@ function rebuild(
   tailQuery: string,
   pathPrefix: string,
   field?: FieldView,
+  options?: { preserveSelection?: boolean },
 ): void {
+  // A repaint the user did not ask for (fresh data for the same input, or new
+  // row labels) keeps the row they moved to. An input-driven rebuild selects
+  // the first row as before.
+  const keptKey = options?.preserveSelection
+    ? selectableKey(candidates[selectedIdx])
+    : null;
   const cands = buildCandidates(currentNode, tailQuery, currentData, field);
   if (dom.input.value === "/") {
     cands.push({
@@ -296,6 +360,10 @@ function rebuild(
     return;
   }
 
+  const keptIdx =
+    keptKey === null
+      ? -1
+      : cands.findIndex((c) => selectableKey(c) === keptKey);
   // Auto-select first selectable candidate. We deliberately do NOT auto-select
   // the `current` item — its `*` marker is already a strong visual cue, and
   // auto-selecting it (e.g. the active task in /switch) is awkward when the
@@ -303,7 +371,8 @@ function rebuild(
   const firstSelectable = cands.findIndex(
     (c) => c.kind !== "separator" && c.kind !== "placeholder",
   );
-  selectedIdx = firstSelectable >= 0 ? firstSelectable : 0;
+  selectedIdx =
+    keptIdx >= 0 ? keptIdx : firstSelectable >= 0 ? firstSelectable : 0;
 
   renderMenu(pathPrefix);
   dom.slashMenu.classList.add("active");
@@ -521,9 +590,10 @@ function nextSelectable(from: number, dir: 1 | -1): number {
  *
  * Row labels are computed at render time from the current task's binding (the
  * `/switch` baseline), so a rotation that changes that binding while a menu is
- * open must not leave the old baseline on screen. Only walker menus are
- * rebuilt here; `+`/`@` rows are assembled asynchronously by their own input
- * pipeline.
+ * open must not leave the old baseline on screen. The row the user selected is
+ * kept when it still fits the current input. Only walker menus are rebuilt
+ * here; `+`/`@` rows are assembled asynchronously by their own input pipeline,
+ * which repaints itself.
  */
 export function refreshSlashMenuRows(): void {
   if (!dom.slashMenu.classList.contains("active")) return;
@@ -534,7 +604,10 @@ export function refreshSlashMenuRows(): void {
     rootForInput(text),
   );
   if (node !== currentNode) return;
-  rebuild(tailQuery, pathPrefix, node.field?.(rawRemainder));
+  // A repaint, not an input change: the selected row stays selected.
+  rebuild(tailQuery, pathPrefix, node.field?.(rawRemainder), {
+    preserveSelection: true,
+  });
 }
 
 /**

@@ -37,7 +37,11 @@ import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
 import type { TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import { entryAgentLabel, loadTaskList } from "./task-topology.ts";
+import {
+  entryAgentLabel,
+  loadTaskList,
+  peekTaskList,
+} from "./task-topology.ts";
 import { taskDisplayPath } from "./path-display.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { resetLocalFrontendState } from "./local-reset.ts";
@@ -884,6 +888,9 @@ export const ROOT: CmdNode = {
       name: "/switch",
       desc: "Switch task",
       fetch: listTasks,
+      // Painted while the fresh read runs; `/switch` only displays this list,
+      // so a previously fetched one is good enough for the first frame.
+      cached: peekTaskList,
       matches: (item: unknown, q: string) => {
         const s = item as TaskSummary;
         const title = (s.title ?? "").toLowerCase();

@@ -25,6 +25,12 @@ export interface CmdNode {
   fetchKey?: (query: string) => string;
   /** Render data item → SlashItemSpec. Required when `fetch` is defined. */
   toSpec?: (item: unknown) => SlashItemSpec;
+  /** Display cache for `fetch`'s items, read synchronously before the current
+   *  fetch resolves. Present = an already-visited menu paints these rows
+   *  immediately instead of a `(loading...)` frame; the fetch always runs and
+   *  replaces them when it returns. Absent = the historical loading frame.
+   *  Only for display: nothing that resolves a target may read it. */
+  cached?: () => unknown[] | null;
   /** Optional custom filter for data items. Receives raw item + lowercased
    *  trimmed query; returns true to keep. Defaults to substring match on
    *  `toSpec(item).primary`. Use when filtering should consider fields not

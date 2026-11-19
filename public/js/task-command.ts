@@ -282,9 +282,14 @@ function makeNavigationCandidate(args: {
  *
  * Returns an empty array when the input is not a task command or the parser
  * rejects it; the caller decides whether to hide the menu.
+ *
+ * `cachedTasks` paints `@` rows from a previously fetched list while the fresh
+ * read runs. It is display-only: the caller revalidates with a second call that
+ * omits it. Action paths (Enter on a target) never pass one.
  */
 export async function buildTaskCommandCandidates(
   text: string,
+  options?: { cachedTasks?: TaskSummary[] | null },
 ): Promise<Candidate[]> {
   if (!isTaskCommand(text)) return [];
 
@@ -331,7 +336,7 @@ export async function buildTaskCommandCandidates(
     return [];
   }
 
-  return buildMessageCandidates(parsed);
+  return buildMessageCandidates(parsed, options?.cachedTasks ?? null);
 }
 
 /** Hint for a bare `+`: there is no title to create with yet. */
@@ -661,18 +666,26 @@ function addTaskContextEntries(args: {
   });
 }
 
-async function buildMessageCandidates(parsed: {
-  marker: string;
-  target: string;
-  path: TaskPath;
-  remainder: string;
-}): Promise<Candidate[]> {
+async function buildMessageCandidates(
+  parsed: {
+    marker: string;
+    target: string;
+    path: TaskPath;
+    remainder: string;
+  },
+  /** Display cache for the rows' task list; null means read it now. */
+  cachedTasks: TaskSummary[] | null = null,
+): Promise<Candidate[]> {
   if (!state.taskId) return [];
   let tasks: TaskSummary[];
-  try {
-    tasks = await loadTaskList();
-  } catch {
-    return [];
+  if (cachedTasks) {
+    tasks = cachedTasks;
+  } else {
+    try {
+      tasks = await loadTaskList();
+    } catch {
+      return [];
+    }
   }
 
   const map = buildTaskTree(tasks);
