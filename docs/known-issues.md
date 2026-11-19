@@ -104,6 +104,23 @@ time. An entry without a "closing condition" is a wish, not an issue.
   not against two real clients. *Closing:* a two-client integration test that
   asserts exactly one row per client.
 
+- **UI task discovery inside an archived tree is incomplete.** The frontend's
+  shared task list uses the default `GET /api/v1/tasks`, which now excludes
+  archived trees, so `+` / `@` completion inside an archived task has no current
+  node to resolve from and cannot browse archived relatives. MCP collaboration
+  inside the tree is unaffected; this is discovery only. Including archived rows
+  in the shared list would also expose them in `/switch` and in absolute `@` /
+  `+` path roots, which needs a per-row archived marker and root-scoped path
+  resolution. *Closing:* return an `archived` flag (or a separate topology read)
+  and filter `/switch` and absolute path roots on it.
+
+- **Archiving does not cancel already-queued collaboration deliveries.**
+  Archive drops the outstanding account edge so a later `task_update` is
+  recorded but not delivered. A request from the former parent that was queued
+  but not yet delivered is not cancelled and may still reach the archived task;
+  no obligation then tracks it. *Closing:* decide whether archive should fail,
+  requeue, or keep such deliveries, then implement it in the archive path.
+
 ## Protocol and agent compatibility
 
 - **`MAX_ACP_MESSAGE_BYTES` is a hardcoded 128 MiB cap.** It is not derived from
