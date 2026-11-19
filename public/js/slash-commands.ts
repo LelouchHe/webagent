@@ -923,8 +923,8 @@ export const ROOT: CmdNode = {
     },
     {
       name: "/archive",
-      desc: "Archive task / open archived task",
-      help: "Archive the current task and its subtree; with a query, open a matching archived task.",
+      desc: "Archive task",
+      help: "Archive task; query opens an archived one.",
       fetch: () => api.listArchivedTaskTops(),
       matches: (item: unknown, q: string) => {
         const s = item as TaskSummary;

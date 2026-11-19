@@ -76,26 +76,22 @@ export async function archiveCurrentTask(): Promise<void> {
   try {
     const result = await api.archiveTask(taskId);
     if (result.status === "already_archived") {
-      addSystem("notify: this task is already archived");
+      addSystem("notify: already archived");
       return;
     }
     noteTaskArchived(taskId);
-    addSystem(
-      `notify: archived — detached from ${result.parentPath ?? "its parent"}`,
-    );
+    addSystem(`notify: archived from ${result.parentPath ?? "its parent"}`);
     if (result.pendingAccount) {
-      addSystem(
-        "notify: it still owed its original parent an account; after archiving, task_update is recorded but not delivered",
-      );
+      addSystem("warn: pending report to the former parent won't be delivered");
     }
   } catch (err) {
     const e = err as api.ApiError;
     if (e.status === HTTP_STATUS.BAD_REQUEST) {
       addSystem("err: Root cannot be archived");
     } else if (e.status === HTTP_STATUS.NOT_FOUND) {
-      addSystem("err: task not found");
+      addSystem("err: Task not found");
     } else {
-      addSystem("err: failed to archive task");
+      addSystem("err: Failed to archive task");
     }
   }
 }
