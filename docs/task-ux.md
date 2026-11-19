@@ -233,13 +233,12 @@ open issues (or joins) returns. With no list fetched yet — or when the cached
 snapshot cannot describe the current input, for example the current Task is not
 in it — the first frame is `(loading...)`.
 
-A row painted from that cache is display-only until the menu's own read
-replaces it: it is shown dimmed and does nothing when clicked (the menu stays
-open and the input is untouched), so a Task deleted since the cached read can
-never be acted on. Tab still completes the path from such a row — that only
-edits the input. Enter never picks a menu row: it submits what is typed, and
-that path resolves its target from a fresh read, never from what the menu was
-showing.
+A row painted from that cache acts like any other row. If its Task was deleted
+since the cached read, the switch fails like any switch to a missing Task: the
+client returns to the Task the user was on and reports the failure there,
+instead of leaving an empty view. Enter never picks a menu row: it submits what
+is typed, and that path resolves its target from a fresh read, never from what
+the menu was showing.
 
 ## Enter, Tab, and Click
 

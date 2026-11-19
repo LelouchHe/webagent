@@ -206,13 +206,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the fresh read repaints the open menu, and the row the user moved to in
     between stays selected — including two Tasks that share a title, which stay
     distinct because a row is identified by its Task id, not its label
-  - a row painted from that cache is display-only: clicking it on `/switch` and
-    on an `@` navigation row does nothing (menu open, input untouched, no
-    request) until the fresh read repaints the row, which then acts
-  - a same-input repaint that retains cache-painted rows keeps them inert, and
-    a fresh payload that dropped the target simply removes the row
-  - fresh rows are actionable and unmarked; a node that is not opted in and the
-    `+` picker never mark rows seeded and keep acting as before
+  - a row painted from that cache acts at once, without waiting for the read
   - the `@` seed uses the same predicate dispatch does, so a leading-whitespace
     ` @` paints from the cache too
   - nodes without a display cache (`/token` rows) and the `+` picker keep their
@@ -1317,8 +1311,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a second `/switch` open paints the previously fetched list while its task
     read is held, and the row that read carries but the cache did not appears
     once it is released
-  - a seeded `/switch` row is marked and inert (click leaves the menu open and
-    the task unchanged) and switches only after the fresh read repaints it
+  - a cache-painted `/switch` row switches while the list read is still held
 
 - `slash-menu-at-picker.spec.ts`
   - a second `@` open paints the previously fetched list while its task read is

@@ -100,12 +100,11 @@ export function __resetCommandsForTest(): void {
 }
 
 /**
- * A node's display-cache seed as a data section that records its provenance.
- * A node without a seed shows the historical loading frame.
+ * What a fetch node shows while its own read is in flight: the last fetched
+ * list when the node has a display cache, otherwise the loading frame.
  */
-function seededData(node: CmdNode): FetchData {
-  const seed = node.cached?.() ?? null;
-  return seed === null ? "loading" : { items: seed, seeded: true };
+function cachedOrLoading(node: CmdNode): FetchData {
+  return node.cached?.() ?? "loading";
 }
 
 /** Cache partition for a fetch node: the command path alone, or the path plus
@@ -195,7 +194,7 @@ export function updateSlashMenu(): void {
         // Only a node that opted in keeps the selected row across that
         // repaint, so every other node behaves exactly as it always has.
         const optedIn = node.cached !== undefined;
-        currentData = seededData(node);
+        currentData = cachedOrLoading(node);
         const myPath = pathPrefix;
         const myFetchKey = nextFetchKey;
         void result.then(
@@ -264,15 +263,6 @@ function selectableKey(candidate: Candidate | undefined): string | null {
 }
 
 /**
- * Mark a list painted from the display cache. The marker rides the row, so a
- * repaint that keeps these rows on screen keeps them inert with it; rows built
- * from a fresh read never carry it.
- */
-function markSeeded(cands: Candidate[]): Candidate[] {
-  return cands.map((c) => (c.kind === "data" ? { ...c, seeded: true } : c));
-}
-
-/**
  * Paint one task-command candidate list. `keptKey` is the row the user had
  * selected; it survives the repaint when the same row is still offered.
  */
@@ -333,10 +323,10 @@ async function updateTaskCommandMenu(text: string): Promise<void> {
   const cachedTasks = message ? peekTaskList() : null;
   let painted = false;
   if (cachedTasks) {
-    const seeded = await buildTaskCommandCandidates(text, { cachedTasks });
+    const cachedRows = await buildTaskCommandCandidates(text, { cachedTasks });
     if (fetchGeneration !== myFetchGeneration) return;
-    if (seeded.length > 0) {
-      paintTaskCommandCandidates(markSeeded(seeded), previousKey);
+    if (cachedRows.length > 0) {
+      paintTaskCommandCandidates(cachedRows, previousKey);
       painted = true;
     }
   }
@@ -437,12 +427,6 @@ function renderMenu(pathPrefix: string): void {
     }
     if (c.kind === "placeholder") {
       itemEl.classList.add("slash-placeholder");
-    }
-    if (c.seeded) {
-      // Display-only until this menu's own read replaces the row: say so, so
-      // the inert state is visible instead of feeling broken.
-      itemEl.classList.add("slash-seeded");
-      itemEl.setAttribute("aria-disabled", "true");
     }
     itemEl.dataset.idx = String(i);
     dom.slashMenu.appendChild(itemEl);
@@ -554,12 +538,6 @@ async function clickItem(idx: number): Promise<void> {
   const preserveInput = menuInputOverride !== null;
 
   if (c.kind === "separator" || c.kind === "placeholder") return;
-  // A row painted from the display cache is display-only: it has not been
-  // confirmed by this menu's own read, so it performs no action at all. The
-  // fresh read arrives within one round trip and repaints it actionable.
-  // Tab still completes the input from such a row — that edits text only.
-  if (c.seeded) return;
-
   if (c.kind === "subcommand" && c.node) {
     const childNodes = c.node.children ?? [];
     const hasMore =

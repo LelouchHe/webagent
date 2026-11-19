@@ -73,10 +73,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
   let dom: any;
   let commands: any;
   let taskCommand: any;
-  let installTaskAgentId: (
-    taskId: string | null | undefined,
-    agentId: string | null | undefined,
-  ) => void;
   let fetchCalls: string[];
   let listHandler: () => Promise<unknown>;
 
@@ -85,7 +81,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
     const stateMod = await import("../public/js/state.ts");
     state = stateMod.state;
     dom = stateMod.dom;
-    installTaskAgentId = stateMod.installTaskAgentId;
     await import("../public/js/render.ts");
     commands = await import("../public/js/commands.ts");
     taskCommand = await import("../public/js/task-command.ts");
@@ -183,10 +178,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
     row.dispatchEvent(
       new (globalThis.window as any).MouseEvent("mousedown", { bubbles: true }),
     );
-  }
-
-  function isSeededRow(primary: string): boolean {
-    return Boolean(itemByPrimary(primary)?.classList.contains("slash-seeded"));
   }
 
   function detailReads(taskId: string): string[] {
@@ -295,9 +286,9 @@ describe("task pickers paint from the last list, then revalidate", () => {
     assert.match(dom.slashMenu.textContent, /\(loading\.\.\.\)/);
   });
 
-  // --- cache-painted rows are display-only --------------------------------
+  // --- cache-painted rows act like any other row --------------------------
 
-  it("/switch seeded rows do nothing until the fresh read repaints them", async () => {
+  it("a cache-painted /switch row acts at once, without waiting for the read", async () => {
     await warmMenu("/switch ");
     const held = holdList();
     openMenu("/switch ");
@@ -308,123 +299,11 @@ describe("task pickers paint from the last list, then revalidate", () => {
     clickItemRow(itemByPrimary("tests"));
     await tick();
 
-    // No action and nothing queued: the menu stays open with its input.
-    assert.equal(fetchCalls.length, 0);
-    assert.ok(dom.slashMenu.classList.contains("active"));
-    assert.equal(dom.input.value, "/switch ");
-    assert.equal(state.taskId, "api");
-    assert.ok(itemByPrimary("tests").classList.contains("slash-seeded"));
-
-    // The fresh read repaints the same row actionable, and the earlier click
-    // never catches up: it queued nothing.
-    held.release(TASKS);
-    await tick();
-    await tick();
-    assert.equal(fetchCalls.length, 0);
-    assert.ok(!itemByPrimary("tests").classList.contains("slash-seeded"));
-
-    clickItemRow(itemByPrimary("tests"));
-    await tick();
+    // The click navigates now: nothing waits on the held list read.
     assert.ok(detailReads("tests").length > 0);
     assert.ok(!dom.slashMenu.classList.contains("active"));
-  });
-
-  it("@ seeded navigation rows do nothing until the fresh read repaints them", async () => {
-    await warmMenu("@../../");
-    const held = holdList();
-    openMenu("@../../");
-    await tick();
-    assert.ok(rows().includes("frontend"));
-
-    fetchCalls = [];
-    clickItemRow(itemByPrimary("frontend"));
-    await tick();
-
-    assert.equal(fetchCalls.length, 0);
-    assert.ok(dom.slashMenu.classList.contains("active"));
-    assert.equal(dom.input.value, "@../../");
-    assert.ok(itemByPrimary("frontend").classList.contains("slash-seeded"));
-
     held.release(TASKS);
     await tick();
-    await tick();
-    assert.equal(fetchCalls.length, 0);
-    assert.ok(!itemByPrimary("frontend").classList.contains("slash-seeded"));
-
-    clickItemRow(itemByPrimary("frontend"));
-    await tick();
-    assert.ok(detailReads("frontend").length > 0);
-  });
-
-  it("a same-input repaint keeps retained cache-painted rows inert", async () => {
-    await warmMenu("@../../");
-    const held = holdList();
-    openMenu("@../../");
-    await tick();
-
-    // A binding change repaints the open menu for the same input while this
-    // menu's own read is still pending. The rows it retains are still the
-    // cached ones, so they must still be inert.
-    installTaskAgentId("api", "pi");
-    installTaskAgentId("api", "copilot");
-    await tick();
-    assert.ok(rows().includes("frontend"));
-
-    fetchCalls = [];
-    clickItemRow(itemByPrimary("frontend"));
-    await tick();
-
-    // Still inert after the repaint: the marker rides the retained rows.
-    assert.equal(fetchCalls.length, 0);
-    assert.ok(dom.slashMenu.classList.contains("active"));
-    assert.ok(itemByPrimary("frontend").classList.contains("slash-seeded"));
-    assert.equal(state.taskId, "api");
-
-    // The fresh read no longer offers the target; it is gone, not acted on.
-    held.release(TASKS.filter((t) => t.id !== "frontend"));
-    await tick();
-    await tick();
-    assert.equal(rows().includes("frontend"), false);
-    assert.equal(fetchCalls.length, 0);
-    assert.equal(state.taskId, "api");
-  });
-
-  it("fresh rows are actionable and never carry the seeded cue", async () => {
-    openMenu("/switch ");
-    await tick();
-
-    assert.equal(rows().length > 0, true);
-    assert.equal(
-      itemByPrimary("tests").classList.contains("slash-seeded"),
-      false,
-    );
-
-    fetchCalls = [];
-    clickItemRow(itemByPrimary("tests"));
-    await tick();
-    assert.ok(detailReads("tests").length > 0);
-  });
-
-  it("a node that is not opted in never marks its rows seeded", async () => {
-    openMenu("/token ");
-    await tick();
-    assert.ok(rows().includes("two"));
-    assert.equal(isSeededRow("two"), false);
-
-    // Its rows keep acting: the hint row answers immediately.
-    clickItemRow(itemByPrimary("two"));
-    await tick();
-    assert.match(dom.messages.textContent, /use \/token revoke two/);
-  });
-
-  it("+ rows never carry the seeded cue", async () => {
-    state.taskCwd = "/work/api";
-    openMenu("+new ");
-    await tick();
-    assert.equal(
-      itemByPrimary("/work/other").classList.contains("slash-seeded"),
-      false,
-    );
   });
 
   // --- rows are identified by target, not by label ------------------------

@@ -29,13 +29,12 @@ export interface CmdNode {
    *  fetch resolves. Present = an already-visited menu paints these rows
    *  immediately instead of a `(loading...)` frame; the fetch always runs and
    *  replaces them when it returns. Absent = the historical loading frame.
-   *  Only for display: nothing that resolves a target may read it. Setting it
-   *  also opts the node into keeping the selected row across a repaint, and
-   *  into validating a clicked cache-painted row against the fresh result. */
+   *  Typed-input execution never reads it. Setting it also opts the node into
+   *  keeping the selected row across a repaint. */
   cached?: () => unknown[] | null;
   /** Stable identity for one data item (e.g. a Task id), carried into
-   *  `Candidate.identity`. Selection preservation and post-revalidation
-   *  validation name a row by this, never by its label. Absent = the row is
+   *  `Candidate.identity`. Selection preservation names a row by this, never
+   *  by its label. Absent = the row is
    *  identified by what acting on it fills. */
   identity?: (item: unknown) => string | undefined;
   /** Optional custom filter for data items. Receives raw item + lowercased
@@ -55,25 +54,9 @@ export interface CmdNode {
   onSelect?: () => void | Promise<void>;
 }
 
-/** One resolved data section.
- *
- *  `seeded` records provenance, not content: these items were painted from a
- *  display cache before this menu's own read returned. The marker travels with
- *  the rows so every rebuild of the same section keeps it, and the rows it
- *  marks are display-only (see `Candidate.seeded`). */
-export interface DataSection {
-  items: unknown[];
-  seeded?: boolean;
-}
-
-/** Walker's data-state for a fetch node: a resolved array or {@link DataSection},
- *  the "loading" sentinel, or an error wrapper carrying the message to display. */
-export type FetchData = unknown[] | DataSection | "loading" | { error: string };
-
-/** A resolved section, as opposed to the loading sentinel or an error. */
-function isDataSection(data: FetchData | undefined): data is DataSection {
-  return typeof data === "object" && !Array.isArray(data) && "items" in data;
-}
+/** Walker's data-state for a fetch node: a resolved array, the "loading"
+ *  sentinel, or an error wrapper carrying the message to display. */
+export type FetchData = unknown[] | "loading" | { error: string };
 
 /** Data states that already render a placeholder row of their own. */
 const PLACEHOLDER_STATES = new Set(["loading", "error", "empty", "no-match"]);
@@ -102,13 +85,8 @@ export interface Candidate {
   /** When kind === 'subcommand', the child node selected. */
   node?: CmdNode;
   /** Stable identity of this row's target when one exists (a Task id). Used
-   *  instead of the label for selection preservation, and to check a
-   *  cache-painted row against the fresh read before acting on it. */
+   *  instead of the label for selection preservation. */
   identity?: string;
-  /** Painted from a display cache before this menu's own read returned:
-   *  display-only, so the row performs no action until a fresh read replaces
-   *  it. Follows the row through every repaint that keeps it on screen. */
-  seeded?: boolean;
 }
 
 /**
@@ -238,13 +216,7 @@ export function buildCandidates(
   let dataState: "none" | "loading" | "error" | "empty" | "no-match" | "ok" =
     "none";
   let errorMsg = "";
-  // A section carries its own provenance; a plain array is a fresh result.
-  const items = Array.isArray(data)
-    ? data
-    : isDataSection(data)
-      ? data.items
-      : null;
-  const rowsSeeded = isDataSection(data) && data.seeded === true;
+  const items = Array.isArray(data) ? data : null;
 
   if (node.fetch && node.toSpec) {
     if (data === "loading") {
@@ -345,7 +317,6 @@ export function buildCandidates(
         prefix: row.spec.current ? "*" : "",
         kind: "data",
         identity: row.identity,
-        ...(rowsSeeded ? { seeded: true } : {}),
       });
     }
   }

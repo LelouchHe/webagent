@@ -579,7 +579,7 @@ immediately and repaints when the fresh result lands. With nothing cached — or
 when the cached snapshot cannot describe the current input, e.g. the current
 Task is not in it — the first frame is `(loading...)` as before.
 
-The cache is display-only and deliberately separate from the baseline machinery
+The cache only seeds menus and is deliberately separate from the baseline machinery
 above:
 
 - It never stands in for an answer about a connection: `listLoaded`,
@@ -590,10 +590,10 @@ above:
 - One rule decides its order: a read may replace it only if it was issued after
   the read that produced the current entry, so a late response cannot overwrite
   a newer list. A failed read leaves the previous one in place.
-- Actions never read it, and rows painted from it are inert. A menu row built
-  from the cache carries its own `seeded` marker and performs no action until
-  the menu's own read replaces it; Enter on an `@` target and every execution
-  path call `loadTaskList()` themselves.
+- Typed-input execution never reads it: Enter on an `@` target and every
+  execution path call `loadTaskList()` themselves. A clicked menu row painted
+  from it acts at once; a target deleted in the meantime fails the switch,
+  which returns to the previous Task (`switchToTask`).
 
 ---
 

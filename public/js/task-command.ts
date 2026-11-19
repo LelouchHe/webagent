@@ -303,7 +303,7 @@ function makeNavigationCandidate(args: {
  * rejects it; the caller decides whether to hide the menu.
  *
  * `cachedTasks` paints `@` rows from a previously fetched list while the fresh
- * read runs. It is display-only: the caller revalidates with a second call that
+ * read runs. It only seeds the display: the caller revalidates with a second call that
  * omits it. Action paths (Enter on a target) never pass one.
  */
 export async function buildTaskCommandCandidates(

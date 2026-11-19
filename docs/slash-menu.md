@@ -49,7 +49,7 @@ interface CmdNode {
   children?: CmdNode[]; // subcommands, walker prefixes them with ›
   fetch?: (query: string) => unknown[] | Promise<unknown[]>; // sync OR async data
   fetchKey?: (query: string) => string; // cache partition; same key = no refetch
-  cached?: () => unknown[] | null; // display-only first frame while `fetch` runs
+  cached?: () => unknown[] | null; // first frame while `fetch` runs
   identity?: (item: unknown) => string | undefined; // stable row identity (e.g. a Task id)
   toSpec?: (item: unknown) => SlashItemSpec;
   matches?: (item: unknown, q: string) => boolean; // optional non-primary filter
@@ -63,7 +63,7 @@ Field absence = capability not present. A node with only `children` is a pure su
 
 `fetchKey` is what keeps a scoped list from re-fetching on every keystroke: the controller re-fetches only when the key changes and otherwise filters the cached items locally (`/view` keys on the directory).
 
-`cached` is a **display-only** seed for an asynchronous `fetch`. When it returns
+`cached` is a seed for the first frame of an asynchronous `fetch`. When it returns
 items, the menu paints them immediately and the fetch still runs; when the
 result arrives it replaces them and, if the user moved the selection in the
 meantime, that row stays selected. Absent, or returning `null`, the first frame
@@ -72,21 +72,14 @@ once does not wait a full round trip — noticeable through a tunnel or a slow
 link, invisible locally. `/switch` is the only node that sets it today (over the
 shared task-list display cache in `task-topology.ts`).
 
-Opting in also changes two behaviours, and only for that node:
+Rows painted from the seed look and act like any other row; a target that
+vanished since the cached read fails the way any stale target does (for
+`/switch`, the client returns to the current Task and reports the failure).
 
-- **Seeded rows are display-only.** Every data row built from the seed carries
-  its own `seeded` marker, so a row that stays on screen across a repaint keeps
-  it. Such a row performs no action: a click does nothing at all — the menu
-  stays open and the input is not cleared, and nothing is deferred, queued, or
-  validated later. Rows become actionable only when this menu's own read
-  replaces them. Tab still completes the input from a seeded row, because that
-  edits text and nothing else. Enter never dispatches a menu row (see below);
-  it submits the typed input, whose execution path does its own read. The rows
-  are marked visually with `.slash-item.slash-seeded` so the inert state is
-  visible, and `aria-disabled` says the same to assistive technology.
-- **A repaint keeps the selected row.** A repaint the user did not ask for (the
-  fresh result arriving, or a re-render for a new agent baseline) keeps the row
-  they moved to; an input-driven rebuild still selects the first row.
+Opting in also changes one behaviour, and only for that node: **a repaint keeps
+the selected row.** A repaint the user did not ask for (the fresh result
+arriving, or a re-render for a new agent baseline) keeps the row they moved to;
+an input-driven rebuild still selects the first row.
 
 `identity` is the stable name of a data row's target — the Task id for `/switch`
 rows. Selection preservation compares identities, never labels, so two Tasks
@@ -134,7 +127,7 @@ Today two walker nodes provide a field (`/clear` and `/new`), both through one h
 1. **Subcommands** (`›` prefix, hierarchical drill-in)
 2. **Freeform** (`↵` prefix, suppressed when the query matches a primary case-insensitively)
 3. **Separator** (only when both a `›`/`↵` group and a data section are present)
-4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`. An asynchronous `fetch` whose node supplies `cached` paints that seed instead of `(loading...)`, marked `seeded`, then repaints unmarked rows when the fetch returns. A `null` seed still shows `(loading...)`; a seed that is an empty array renders its ordinary empty state (`(none)` or `(no match)`), and the `@` picker additionally falls back to `(loading...)` when the cached snapshot cannot describe the current input (for example the current Task is not in it)
+4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`. An asynchronous `fetch` whose node supplies `cached` paints that seed instead of `(loading...)`, then repaints when the fetch returns. A `null` seed still shows `(loading...)`; a seed that is an empty array renders its ordinary empty state (`(none)` or `(no match)`), and the `@` picker additionally falls back to `(loading...)` when the cached snapshot cannot describe the current input (for example the current Task is not in it)
 5. **`field.trail` rows** (only when a `field` supplied them, and never beside a placeholder)
 
 `Candidate.kind` (`subcommand` / `freeform` / `data` / `placeholder` / `separator`) is what dispatches selection and clicks; `placeholder` and `separator` are never selectable and are skipped by arrow keys.
@@ -162,7 +155,6 @@ There is exactly one renderer. Adding visual variants means extending `SlashItem
 | Data row                      | Fill `<path> <fill ?? primary>`                       | Run `onSelect` (or system message if read-only), close | Same                                          |
 | Freeform                      | No-op unless `spec.continueOnFill`                      | Run `freeform.onSelect`, close                         | Same                                          |
 | Placeholder / separator       | No-op                                                 | No-op                                                  | —                                             |
-| Seeded data row (display-only) | Same as its kind (fill only)                          | No-op: menu and input stay as they are                 | — (Enter submits the input; it never dispatches a row) |
 
 A data row that sets `spec.continueOnFill` keeps the menu open after filling, which is how a drill-in path (fill the coordinate prefix, then complete the suffix) is expressed without a new key binding.
 
