@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-11-16
+Last updated: 2026-11-19
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -784,6 +784,30 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - existing-window and cold-start service-worker routing
   - terminal startup intents are cleared; retryable intents survive refresh without in-page duplication
 
+- `test/archive.test.ts`
+  - archiving detaches a task and its whole subtree; the default list excludes
+    archived trees, `archived=only` returns them, and `archived=include`
+    returns both
+  - exactly one `system_message` is written on the detached task and it names
+    the original parent path and id; children get no rows
+  - a deeper task can be archived out of an archived tree; an archived top is a
+    no-op; Root is refused
+  - a Root exit leaves archived trees, their structure, and their history intact
+
+- `test/archive-routes.test.ts`
+  - `POST /api/v1/tasks/:id/archive` archives, broadcasts one system message,
+    reports and drops a pending account edge, reports an archived top as a
+    no-op, refuses Root, and 404s an unknown task
+  - the task list filter accepts `archived=exclude|include|only` and rejects an
+    unknown value
+
+- `test/read-scope.test.ts`
+  - a `read` token reaches the task list, stored history, detail, and snapshot,
+    but is denied every write and undeclared read
+  - read-scope detail and snapshot reads never warm an execution; an api-scope
+    read still warms (control)
+  - the task list and stored history never warm anything for any scope
+
 ### Frontend state and UI event flow
 
 - `test/inbox-indicator.test.ts`, `test/state.test.ts`, `test/events.test.ts`
@@ -1288,6 +1312,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `slash-menu-switch.spec.ts`
   - slash-menu task switch works from keyboard navigation
+
+- `slash-menu-archive.spec.ts`
+  - `/archive` with no argument detaches the current task, announces the
+    persisted system message, and keeps the task current
+  - archived tasks leave `/switch`; Root refuses `/archive`; the `/archive`
+    menu lists archived tops and its Enter path reopens one, which stays
+    runnable
 
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and
