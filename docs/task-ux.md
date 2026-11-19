@@ -227,6 +227,12 @@ first `↵ navigate` command for `a` itself.
 A bare `@` lists the current path layer and its parent target when present. It
 does not invent a command for an unresolved target.
 
+The picker is a view of the shared task list, so an already-fetched list paints
+the first frame: rows appear at once and are replaced when the read that every
+open issues returns. With no list fetched yet the first frame is
+`(loading...)`. Enter still resolves its target from a fresh read, never from
+what the menu was showing.
+
 ## Enter, Tab, and Click
 
 Enter always submits the current input value. It never silently replaces the

@@ -169,7 +169,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
     yields nothing when the default is absent or failed (PATH presence is never
     consulted)
 
-- `test/task-topology.test.ts` (the current task's parent reference)
+- `test/task-topology.test.ts` (the current task's parent reference and the task-list display cache)
   - an activation hint (parent id + its binding, or a known absence) settles
     the reference with zero requests; the shared list is never read for this
   - without a hint the task's own link read supplies the parent and the parent
@@ -194,6 +194,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
     one
   - a successful handshake baseline still applies when the later startup read
     fails; the startup read does not raise the floor above it
+  - the display cache records the list a read resolved with, keeps it across a
+    reconnect while the row-label baseline is withdrawn, is never replaced by
+    an older response, and keeps the previous list when a later read fails
+
+- `test/task-list-display-cache.test.ts` (the pickers paint, then revalidate)
+  - a second `@` / `/switch` open paints the cached list before its own read
+    returns; a first open with no cache still shows `(loading...)`
+  - the fresh read repaints the open menu, and the row the user moved to in
+    between stays selected
+  - Enter on an `@` target still reads the list instead of resolving against
+    the cache
 
 - `test/task-ref-marks.test.ts` (one reference per Task, four states)
   - a live reference is completely unmarked (no strike, no appended name, no
@@ -1288,6 +1299,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `slash-menu-switch.spec.ts`
   - slash-menu task switch works from keyboard navigation
+  - a second `/switch` open paints the previously fetched list while its task
+    read is held, then repaints from that read
+
+- `slash-menu-at-picker.spec.ts`
+  - a second `@` open paints the previously fetched list while its task read is
+    held, then repaints from that read
 
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and

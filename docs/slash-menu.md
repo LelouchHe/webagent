@@ -49,6 +49,7 @@ interface CmdNode {
   children?: CmdNode[]; // subcommands, walker prefixes them with ›
   fetch?: (query: string) => unknown[] | Promise<unknown[]>; // sync OR async data
   fetchKey?: (query: string) => string; // cache partition; same key = no refetch
+  cached?: () => unknown[] | null; // display-only first frame while `fetch` runs
   toSpec?: (item: unknown) => SlashItemSpec;
   matches?: (item: unknown, q: string) => boolean; // optional non-primary filter
   freeform?: (q: string) => SlashItemSpec | null; // "create on the fly" row
@@ -60,6 +61,18 @@ interface CmdNode {
 Field absence = capability not present. A node with only `children` is a pure submenu; a node with only `fetch + toSpec` is a pure list (e.g. `/mode`); a node with `freeform` plus `fetch` is a list-with-create (e.g. `/token`).
 
 `fetchKey` is what keeps a scoped list from re-fetching on every keystroke: the controller re-fetches only when the key changes and otherwise filters the cached items locally (`/view` keys on the directory).
+
+`cached` is a **display-only** seed for an asynchronous `fetch`. When it returns
+items, the menu paints them immediately and the fetch still runs; when the
+result arrives it replaces them and, if the user moved the selection in the
+meantime, that row stays selected (a row is identified by what acting on it
+fills). Absent, or returning `null`, the first frame is `(loading...)` as
+before. It exists so a menu whose data was already fetched once does not wait a
+full round trip — noticeable through a tunnel or a slow link, invisible
+locally. Only display may read it: a command that resolves a target must call
+`fetch` and act on its result, never on the seed. `/switch` is the only node
+that sets it today (over the shared task-list display cache in
+`task-topology.ts`).
 
 ## FieldView — a node's own argument field
 
@@ -102,7 +115,7 @@ Today two walker nodes provide a field (`/clear` and `/new`), both through one h
 1. **Subcommands** (`›` prefix, hierarchical drill-in)
 2. **Freeform** (`↵` prefix, suppressed when the query matches a primary case-insensitively)
 3. **Separator** (only when both a `›`/`↵` group and a data section are present)
-4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`
+4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`. An asynchronous `fetch` whose node supplies `cached` paints those rows instead of `(loading...)`, then repaints when the fetch returns
 5. **`field.trail` rows** (only when a `field` supplied them, and never beside a placeholder)
 
 `Candidate.kind` (`subcommand` / `freeform` / `data` / `placeholder` / `separator`) is what dispatches selection and clicks; `placeholder` and `separator` are never selectable and are skipped by arrow keys.
