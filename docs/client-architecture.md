@@ -569,12 +569,15 @@ current binding changes while it is open) uses the new baseline.
 
 ### Task-List Display Cache
 
-The `@` picker and `/switch` show the shared list, and every open still issues
-(and applies) its own read. To keep that read off the visual critical path,
-`task-topology.ts` also keeps the last list a read resolved with
-(`peekTaskList()`): an already-visited menu paints those rows immediately and
-repaints when the fresh result lands. With nothing cached, the first frame is
-`(loading...)` as before.
+The `@` picker and `/switch` show the shared list, and every open still reads
+it again: `loadTaskList()` issues a read or joins one already in flight, and
+only a result that is eligible for the connection becomes its baseline (below).
+A menu repaint simply uses what that read resolves with. To keep the read off
+the visual critical path, `task-topology.ts` also keeps the last list a read
+resolved with (`peekTaskList()`): an already-visited menu paints those rows
+immediately and repaints when the fresh result lands. With nothing cached — or
+when the cached snapshot cannot describe the current input, e.g. the current
+Task is not in it — the first frame is `(loading...)` as before.
 
 The cache is display-only and deliberately separate from the baseline machinery
 above:
@@ -588,7 +591,9 @@ above:
   the read that produced the current entry, so a late response cannot overwrite
   a newer list. A failed read leaves the previous one in place.
 - Actions never read it. Enter on an `@` target and every execution path call
-  `loadTaskList()` themselves.
+  `loadTaskList()` themselves, and a clicked row that was painted from the
+  cache waits for the menu's own fresh read and runs only if its Task is still
+  in that result.
 
 ---
 

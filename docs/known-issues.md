@@ -71,6 +71,15 @@ time. An entry without a "closing condition" is a wish, not an issue.
   from the manager's own deletions as well, or make the derived set subscribe
   to every deletion source instead of only the event stream.
 
+- **A held menu read can repaint an open menu after a newer baseline.** The
+  `@` / `/switch` menu guards track only its own fetch generation, path, and
+  fetch key, so a read started by an earlier open that resolves late still
+  repaints the menu with its (older) rows. The display cache itself stays
+  correct — it only accepts a read issued after the one it holds — and the next
+  menu read corrects the screen. Pre-existing before the display cache existed.
+  *Closing:* track a list generation in the menu, or let the menu repaint only
+  when the resolved read is the newest one issued.
+
 - **A list read that fails after a baseline does not downgrade existing marks.**
   `loadTaskList` applies only successful reads, so a later 503 leaves the last
   baseline in place. Exits are permanent, so an exited mark cannot become

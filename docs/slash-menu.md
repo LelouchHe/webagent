@@ -50,6 +50,7 @@ interface CmdNode {
   fetch?: (query: string) => unknown[] | Promise<unknown[]>; // sync OR async data
   fetchKey?: (query: string) => string; // cache partition; same key = no refetch
   cached?: () => unknown[] | null; // display-only first frame while `fetch` runs
+  identity?: (item: unknown) => string | undefined; // stable row identity (e.g. a Task id)
   toSpec?: (item: unknown) => SlashItemSpec;
   matches?: (item: unknown, q: string) => boolean; // optional non-primary filter
   freeform?: (q: string) => SlashItemSpec | null; // "create on the fly" row
@@ -65,14 +66,28 @@ Field absence = capability not present. A node with only `children` is a pure su
 `cached` is a **display-only** seed for an asynchronous `fetch`. When it returns
 items, the menu paints them immediately and the fetch still runs; when the
 result arrives it replaces them and, if the user moved the selection in the
-meantime, that row stays selected (a row is identified by what acting on it
-fills). Absent, or returning `null`, the first frame is `(loading...)` as
-before. It exists so a menu whose data was already fetched once does not wait a
-full round trip — noticeable through a tunnel or a slow link, invisible
-locally. Only display may read it: a command that resolves a target must call
-`fetch` and act on its result, never on the seed. `/switch` is the only node
-that sets it today (over the shared task-list display cache in
-`task-topology.ts`).
+meantime, that row stays selected. Absent, or returning `null`, the first frame
+is `(loading...)` as before. It exists so a menu whose data was already fetched
+once does not wait a full round trip — noticeable through a tunnel or a slow
+link, invisible locally. `/switch` is the only node that sets it today (over the
+shared task-list display cache in `task-topology.ts`).
+
+Opting in also changes two behaviours, and only for that node:
+
+- **A clicked row is validated before it acts.** The seed can name a target that
+  was deleted since that read, so its action waits for the fresh read the menu
+  already issued and runs only if the row's `identity` is still in the result;
+  a vanished target reports inline and leaves the current Task untouched, and a
+  failed read acts on nothing. Rows painted from the fresh result, and rows
+  without an `identity`, act immediately as before.
+- **A repaint keeps the selected row.** A repaint the user did not ask for (the
+  fresh result arriving, or a re-render for a new agent baseline) keeps the row
+  they moved to; an input-driven rebuild still selects the first row.
+
+`identity` is the stable name of a data row's target — the Task id for `/switch`
+rows. Selection preservation compares identities, never labels, so two Tasks
+that share a title stay distinct and a rename does not lose the selection. When
+an item has no identity, the row falls back to what acting on it fills.
 
 ## FieldView — a node's own argument field
 
@@ -115,7 +130,7 @@ Today two walker nodes provide a field (`/clear` and `/new`), both through one h
 1. **Subcommands** (`›` prefix, hierarchical drill-in)
 2. **Freeform** (`↵` prefix, suppressed when the query matches a primary case-insensitively)
 3. **Separator** (only when both a `›`/`↵` group and a data section are present)
-4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`. An asynchronous `fetch` whose node supplies `cached` paints those rows instead of `(loading...)`, then repaints when the fetch returns
+4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`. An asynchronous `fetch` whose node supplies `cached` paints those rows instead of `(loading...)`, then repaints when the fetch returns; a cached snapshot that cannot describe the input still shows `(loading...)`
 5. **`field.trail` rows** (only when a `field` supplied them, and never beside a placeholder)
 
 `Candidate.kind` (`subcommand` / `freeform` / `data` / `placeholder` / `separator`) is what dispatches selection and clicks; `placeholder` and `separator` are never selectable and are skipped by arrow keys.

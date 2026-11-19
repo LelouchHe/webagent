@@ -196,15 +196,26 @@ spot gaps, and decide what still needs to be added without reading every spec.
     fails; the startup read does not raise the floor above it
   - the display cache records the list a read resolved with, keeps it across a
     reconnect while the row-label baseline is withdrawn, is never replaced by
-    an older response, and keeps the previous list when a later read fails
+    an older response, keeps a list whose connection generation was superseded
+    in flight (the cache's order rule is its own, not the connection's), and
+    keeps the previous list when a later read fails
 
 - `test/task-list-display-cache.test.ts` (the pickers paint, then revalidate)
   - a second `@` / `/switch` open paints the cached list before its own read
     returns; a first open with no cache still shows `(loading...)`
   - the fresh read repaints the open menu, and the row the user moved to in
-    between stays selected
+    between stays selected — including two Tasks that share a title, which stay
+    distinct because a row is identified by its Task id, not its label
+  - a click on a cache-painted row waits for that read and runs only when the
+    Task is still in it; a Task the fresh payload dropped (or a read that
+    fails) reports inline and leaves the current Task untouched
+  - the `@` seed uses the same predicate dispatch does, so a leading-whitespace
+    ` @` paints from the cache too
+  - nodes without a display cache (`/token` rows) and the `+` picker keep their
+    old selection behavior on a repaint
   - Enter on an `@` target still reads the list instead of resolving against
-    the cache
+    the cache, and a target the fresh read dropped is reported rather than
+    messaged
 
 - `test/task-ref-marks.test.ts` (one reference per Task, four states)
   - a live reference is completely unmarked (no strike, no appended name, no
@@ -1300,11 +1311,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `slash-menu-switch.spec.ts`
   - slash-menu task switch works from keyboard navigation
   - a second `/switch` open paints the previously fetched list while its task
-    read is held, then repaints from that read
+    read is held, and the row that read carries but the cache did not appears
+    once it is released
 
 - `slash-menu-at-picker.spec.ts`
   - a second `@` open paints the previously fetched list while its task read is
-    held, then repaints from that read
+    held, and the sibling the held read carries but the cache did not appears
+    once it is released
 
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and

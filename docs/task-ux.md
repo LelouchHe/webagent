@@ -229,9 +229,16 @@ does not invent a command for an unresolved target.
 
 The picker is a view of the shared task list, so an already-fetched list paints
 the first frame: rows appear at once and are replaced when the read that every
-open issues returns. With no list fetched yet the first frame is
-`(loading...)`. Enter still resolves its target from a fresh read, never from
-what the menu was showing.
+open issues (or joins) returns. With no list fetched yet — or when the cached
+snapshot cannot describe the current input, for example the current Task is not
+in it — the first frame is `(loading...)`.
+
+A row clicked while it is still painted from that cache is validated first: the
+click waits for the menu's own read and acts only if the Task is still in the
+result. A target that disappeared since the cached read reports inline
+(`err: task no longer exists: <name>`) and leaves the current Task alone; a
+failed read acts on nothing. Enter still resolves its target from a fresh read,
+never from what the menu was showing.
 
 ## Enter, Tab, and Click
 
