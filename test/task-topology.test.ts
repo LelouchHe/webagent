@@ -394,6 +394,45 @@ describe("parent reference", () => {
     }
   });
 
+  it("returns the last successful read when the retry budget is exhausted", async () => {
+    const calls: Array<{
+      resolve: (response: Response) => void;
+      reject: (error: unknown) => void;
+    }> = [];
+    const fetchStub = stubFetch(
+      () =>
+        new Promise<Response>((resolve, reject) => {
+          calls.push({ resolve, reject });
+        }),
+    );
+    const waitForCalls = async (count: number) => {
+      for (let i = 0; i < 50 && calls.length < count; i++) await tick();
+      assert.equal(calls.length, count);
+    };
+    try {
+      const waiting = loadTaskList();
+      noteTaskArchived("budget-1");
+      calls[0].reject(new Error("oldest error"));
+      await waitForCalls(2);
+
+      noteTaskArchived("budget-2");
+      calls[1].resolve(new Response(JSON.stringify([task("second", "pi")])));
+      await waitForCalls(3);
+
+      noteTaskArchived("budget-3");
+      calls[2].resolve(new Response(JSON.stringify([task("third", "pi")])));
+      const tasks = await waiting;
+      // The third response is still fenced, but it is the last and successful
+      // outcome; the older rejection must not win.
+      assert.deepEqual(
+        tasks.map((entry) => entry.id),
+        ["third"],
+      );
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
   it("propagates a list rejection when the epoch did not move", async () => {
     const fetchStub = stubFetch(() =>
       Promise.reject(new Error("list unavailable")),

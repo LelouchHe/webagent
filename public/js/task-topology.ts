@@ -401,44 +401,44 @@ export async function loadTaskList(): Promise<TaskSummary[]> {
   // collection. Retry (bounded) against the new epoch instead of handing back
   // a response the fence already rejected — including a rejected request: a
   // transient error from before the fact is not the caller's answer.
-  let last: TaskSummary[] = [];
-  let lastError: unknown;
+  let last: { tasks: TaskSummary[] } | { error: unknown } | undefined;
   for (let attempt = 0; attempt < 3; attempt++) {
     const epoch = listEpoch;
     if (pending?.generation === generation && pending.epoch === epoch) {
       try {
-        last = await pending.promise;
+        const tasks = await pending.promise;
+        last = { tasks };
+        if (epoch === listEpoch) return tasks;
       } catch (error) {
+        last = { error };
         if (epoch === listEpoch) throw error;
-        lastError = error;
-        continue;
       }
-      if (epoch === listEpoch) return last;
       continue;
     }
     const request = startTaskListRequest();
     pending = request;
     try {
-      last = await request.promise;
+      const tasks = await request.promise;
+      last = { tasks };
+      if (request.epoch === listEpoch) return tasks;
     } catch (error) {
+      last = { error };
       if (request.epoch === listEpoch) throw error;
-      lastError = error;
-      continue;
     } finally {
       if (pending === request) pending = null;
     }
-    if (request.epoch === listEpoch) return last;
   }
-  if (lastError !== undefined) {
-    throw lastError instanceof Error
-      ? lastError
+  // Report the last iteration, not the oldest error: a later successful read
+  // is the best answer the budget produced.
+  if (last !== undefined && "error" in last) {
+    const error = last.error;
+    throw error instanceof Error
+      ? error
       : new Error(
-          typeof lastError === "string"
-            ? lastError
-            : "Task list request failed",
+          typeof error === "string" ? error : "Task list request failed",
         );
   }
-  return last;
+  return last !== undefined && "tasks" in last ? last.tasks : [];
 }
 
 /**

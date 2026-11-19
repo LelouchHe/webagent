@@ -407,7 +407,9 @@ epoch: a response issued before the fact never becomes the baseline, and
 `loadTaskList` starts a new request instead of reusing that in-flight one. The
 bump is idempotent per archived task id (one-way archive facts may be consumed
 more than once), and a fenced request that **rejects** is retried like a fenced
-response; only an error from the current epoch propagates. The `/exit` fallback resolves
+response; only an error from the current epoch propagates. When the retry
+budget is exhausted, the last iteration decides: the last successful
+collection is returned, or the last rejection is thrown. The `/exit` fallback resolves
 the server-named `parentId` against the full topology (so a parent inside an
 archived tree is found); only its ordinary newest-task fallback stays in the
 active tree.
