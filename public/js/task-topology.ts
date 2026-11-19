@@ -136,6 +136,17 @@ export function setCurrentTask(taskId: string | null, hint?: ParentHint): void {
   void resolveParentFromTaskDetail(generation, taskId);
 }
 
+/**
+ * A structural change (archive) removed the current task's parent. Unlike an
+ * activation hint, this is an explicit fact about an already-settled reference,
+ * so it overwrites `known` with `none` without a request.
+ */
+export function noteParentCleared(taskId: string): void {
+  if (viewedTaskId !== taskId) return;
+  parentRef = { taskId, status: "none" };
+  notifyChange();
+}
+
 function settleHint(taskId: string, hint: ParentHint): ParentRef {
   return hint.parentId === null
     ? { taskId, status: "none" }

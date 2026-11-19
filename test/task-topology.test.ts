@@ -7,6 +7,7 @@ import {
   loadTaskList,
   observeTaskCreated,
   observeTaskDeleted,
+  noteParentCleared,
   parentOf,
   resetTaskTopologyForTest,
   setCurrentTask,
@@ -122,6 +123,28 @@ describe("parent reference", () => {
       assert.deepEqual(fetchStub.urls, []);
       assert.equal(isParentResolved("child"), true);
       assert.equal(parentOf("child"), null);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it("clears a settled parent after a structural archive", async () => {
+    const fetchStub = stubFetch((url) => {
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    try {
+      setCurrentTask("child", { parentId: "parent", agentId: "pi" });
+      // A hint can only complete an unresolved reference, so a known parent is
+      // cleared by the explicit structural fact.
+      setCurrentTask("child", { parentId: null, agentId: null });
+      assert.deepEqual(parentOf("child"), {
+        parentId: "parent",
+        agentId: "pi",
+      });
+      noteParentCleared("child");
+      assert.equal(parentOf("child"), null);
+      assert.equal(isParentResolved("child"), true);
+      assert.deepEqual(fetchStub.urls, []);
     } finally {
       fetchStub.restore();
     }
