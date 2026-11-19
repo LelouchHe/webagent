@@ -891,6 +891,8 @@ export const ROOT: CmdNode = {
       // Painted while the fresh read runs; `/switch` only displays this list,
       // so a previously fetched one is good enough for the first frame.
       cached: peekTaskList,
+      // A row is the task it names, not its label: two Tasks may share a title.
+      identity: (item: unknown) => (item as TaskSummary).id,
       matches: (item: unknown, q: string) => {
         const s = item as TaskSummary;
         const title = (s.title ?? "").toLowerCase();

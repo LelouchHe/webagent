@@ -16,9 +16,19 @@ import {
 } from "./slash-tree.ts";
 import { renderItem } from "./slash-render.ts";
 import { ROOT } from "./slash-commands.ts";
-import { peekTaskList, subscribeTaskTopology } from "./task-topology.ts";
+import {
+  loadTaskList,
+  peekTaskList,
+  subscribeTaskTopology,
+} from "./task-topology.ts";
 import { handleSlashCommand } from "./slash-exec.ts";
-import { buildTaskCommandCandidates, isTaskCommand } from "./task-command.ts";
+import {
+  buildTaskCommandCandidates,
+  isMessageCommand,
+  isTaskCommand,
+} from "./task-command.ts";
+import { addSystem } from "./render.ts";
+import type { TaskSummary } from "../../src/types.ts";
 
 export { handleSlashCommand };
 
@@ -33,6 +43,14 @@ let candidates: Candidate[] = [];
 let selectedIdx = -1;
 let dismissedFor: string | null = null;
 let menuInputOverride: string | null = null;
+/**
+ * Whether the rows on screen were painted from a `cached` seed and the menu's
+ * own fresh read has not resolved yet. Such a row can name a target that has
+ * since disappeared, so its action waits for that read (see
+ * `runCandidateAction`). Cleared when the fresh result (or its failure) lands,
+ * and whenever the menu closes.
+ */
+let dataSeeded = false;
 
 function currentMenuInput(): string {
   return menuInputOverride ?? dom.input.value;
@@ -93,6 +111,14 @@ export function __resetCommandsForTest(): void {
   selectedIdx = -1;
   dismissedFor = null;
   menuInputOverride = null;
+  dataSeeded = false;
+}
+
+/** A node's display-cache seed: the rows to paint first, and whether they came
+ *  from the cache (only such rows need validating before they act). */
+function seededData(node: CmdNode): { data: FetchData; seeded: boolean } {
+  const seed = node.cached?.() ?? null;
+  return { data: seed ?? "loading", seeded: seed !== null };
 }
 
 /** Cache partition for a fetch node: the command path alone, or the path plus
@@ -179,7 +205,12 @@ export function updateSlashMenu(): void {
       if (result instanceof Promise) {
         // Paint a previously fetched list immediately; the read below still
         // runs and repaints when it lands (see `cached` in slash-tree.ts).
-        currentData = node.cached?.() ?? "loading";
+        // Only a node that opted in keeps the selected row across that
+        // repaint, so every other node behaves exactly as it always has.
+        const seed = seededData(node);
+        const optedIn = node.cached !== undefined;
+        dataSeeded = seed.seeded;
+        currentData = seed.data;
         const myPath = pathPrefix;
         const myFetchKey = nextFetchKey;
         void result.then(
@@ -190,8 +221,11 @@ export function updateSlashMenu(): void {
               currentFetchKey !== myFetchKey
             )
               return;
+            dataSeeded = false;
             currentData = items;
-            rebuildFromInput(pathPrefix, { preserveSelection: true });
+            rebuildFromInput(pathPrefix, {
+              preserveSelection: optedIn,
+            });
           },
           (err: unknown) => {
             if (
@@ -200,15 +234,20 @@ export function updateSlashMenu(): void {
               currentFetchKey !== myFetchKey
             )
               return;
+            dataSeeded = false;
             currentData = { error: fetchErrorMessage(err) };
-            rebuildFromInput(pathPrefix, { preserveSelection: true });
+            rebuildFromInput(pathPrefix, {
+              preserveSelection: optedIn,
+            });
           },
         );
       } else {
         // Synchronous data (e.g. config options pulled from state)
+        dataSeeded = false;
         currentData = result;
       }
     } else {
+      dataSeeded = false;
       currentData = undefined;
     }
   }
@@ -237,6 +276,9 @@ function selectableKey(candidate: Candidate | undefined): string | null {
   if (candidate.kind === "separator" || candidate.kind === "placeholder") {
     return null;
   }
+  // A row that names a target is that target: labels repeat (two Tasks may
+  // share a title) and change (a rename), an identity does neither.
+  if (candidate.identity !== undefined) return `id\0${candidate.identity}`;
   return `${candidate.kind}\0${candidate.spec.fill ?? candidate.spec.primary}`;
 }
 
@@ -276,9 +318,14 @@ function showTaskCommandLoading(): void {
 }
 
 async function updateTaskCommandMenu(text: string): Promise<void> {
+  // `@` is the only task-command picker whose rows come from the shared list,
+  // and the same predicate dispatch uses decides it (leading whitespace
+  // included). `+` keeps its sources and its previous selection behavior.
+  const message = isMessageCommand(text);
   // A repaint of the same input (the binding changed under an open menu) keeps
   // the row the user moved to; a new input selects the first row as always.
-  const repaint = currentPath === text && candidates.length > 0;
+  // Only `@` preserves: that is the picker with a cache to repaint from.
+  const repaint = message && currentPath === text && candidates.length > 0;
   const previousKey = repaint ? selectableKey(candidates[selectedIdx]) : null;
 
   currentPath = text;
@@ -287,12 +334,14 @@ async function updateTaskCommandMenu(text: string): Promise<void> {
   const myFetchGeneration = fetchGeneration;
   currentNode = TASK_COMMAND_ROOT;
   currentData = undefined;
+  dataSeeded = false;
 
   // First paint from the display cache, so `@` does not show `(loading...)`
   // for one full round trip on every open. The fresh read below always runs
-  // and repaints when it lands, so these rows are at most one read stale.
-  // `+` reads other sources and keeps its own pipeline.
-  const cachedTasks = text.startsWith("@") ? peekTaskList() : null;
+  // and repaints when it lands, so these rows are at most one read stale. A
+  // cached snapshot that cannot produce rows for this input (for example the
+  // current Task is not in it) still falls back to `(loading...)`.
+  const cachedTasks = message ? peekTaskList() : null;
   let painted = false;
   if (cachedTasks) {
     const seeded = await buildTaskCommandCandidates(text, { cachedTasks });
@@ -300,6 +349,7 @@ async function updateTaskCommandMenu(text: string): Promise<void> {
     if (seeded.length > 0) {
       paintTaskCommandCandidates(seeded, previousKey);
       painted = true;
+      dataSeeded = true;
     }
   }
   if (!painted && !repaint) showTaskCommandLoading();
@@ -307,12 +357,17 @@ async function updateTaskCommandMenu(text: string): Promise<void> {
   try {
     const cands = await buildTaskCommandCandidates(text);
     if (fetchGeneration !== myFetchGeneration) return;
+    dataSeeded = false;
     if (cands.length === 0) {
       hideSlashMenu();
       return;
     }
-    paintTaskCommandCandidates(cands, selectableKey(candidates[selectedIdx]));
+    paintTaskCommandCandidates(
+      cands,
+      message ? selectableKey(candidates[selectedIdx]) : null,
+    );
   } catch (err) {
+    dataSeeded = false;
     if (fetchGeneration !== myFetchGeneration) return;
     candidates = [
       {
@@ -419,6 +474,7 @@ export function hideSlashMenu(): void {
   fetchGeneration++;
   currentNode = ROOT;
   currentData = undefined;
+  dataSeeded = false;
   dismissedFor = dismissedInput;
 }
 
@@ -499,12 +555,53 @@ function tabComplete(): void {
 
 // --- Click: fill + execute ---
 
+/**
+ * Run one row's action, checking a cache-painted row first.
+ *
+ * A row painted from the display cache can name a Task that was deleted or
+ * renamed since that read, and the action would then act on something the
+ * fresh read no longer offers. So an action chosen from a seeded row waits for
+ * the fresh read the menu already issued (`loadTaskList` joins it) and runs
+ * only when the row's identity is still in that result. A vanished target or a
+ * failed read is reported inline and leaves the current Task untouched.
+ *
+ * Rows painted from a fresh result, and rows without an identity (menu rows
+ * that are not Task targets), run immediately as before.
+ */
+async function runCandidateAction(
+  c: Candidate,
+  seeded: boolean,
+): Promise<void> {
+  const run = c.spec.onSelect;
+  if (!run) return;
+  if (!seeded || c.identity === undefined) {
+    await run();
+    return;
+  }
+  let tasks: TaskSummary[];
+  try {
+    tasks = await loadTaskList();
+  } catch (err) {
+    const message =
+      err instanceof Error && err.message ? err.message : "failed";
+    addSystem(`err: task list unavailable — ${message}`);
+    return;
+  }
+  if (!tasks.some((t) => t.id === c.identity)) {
+    addSystem(`err: task no longer exists: ${c.spec.primary}`);
+    return;
+  }
+  await run();
+}
+
 async function clickItem(idx: number): Promise<void> {
   const c = candidates[idx];
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- array access safety
   if (!c) return;
   const pathPrefix = dom.slashMenu.dataset.pathPrefix ?? "";
   const preserveInput = menuInputOverride !== null;
+  // Read before `hideSlashMenu` clears it: a seeded row must be validated.
+  const seeded = dataSeeded;
 
   if (c.kind === "separator" || c.kind === "placeholder") return;
 
@@ -538,7 +635,7 @@ async function clickItem(idx: number): Promise<void> {
   if (c.spec.onSelect) {
     hideSlashMenu();
     if (!preserveInput) setInputValue("");
-    await c.spec.onSelect();
+    await runCandidateAction(c, seeded);
     return;
   }
   // No action of its own: complete via the same fill Tab uses (e.g. `+`
@@ -604,9 +701,10 @@ export function refreshSlashMenuRows(): void {
     rootForInput(text),
   );
   if (node !== currentNode) return;
-  // A repaint, not an input change: the selected row stays selected.
+  // A repaint, not an input change. Only a node that opts into a display cache
+  // keeps the selected row; every other node behaves as it always has.
   rebuild(tailQuery, pathPrefix, node.field?.(rawRemainder), {
-    preserveSelection: true,
+    preserveSelection: node.cached !== undefined,
   });
 }
 

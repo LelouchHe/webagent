@@ -40,6 +40,21 @@ export function canSubmitTaskCommandWhileBusy(text: string): boolean {
 
 export { isTaskCommand };
 
+/**
+ * Whether this input addresses a Task with `@` — the picker whose rows come
+ * from the shared task list. Uses the same trimming predicate as dispatch, so
+ * a leading-whitespace ` @` counts; `+` owns other sources and is excluded.
+ */
+export function isMessageCommand(text: string): boolean {
+  if (!isTaskCommand(text)) return false;
+  try {
+    return parseTaskCommand(text).marker !== "+";
+  } catch {
+    // An unparseable head is reported by the candidate builder itself.
+    return false;
+  }
+}
+
 // --- path helpers (browser-safe, server paths are `/`-separated) ---
 
 // --- task tree helpers ---
@@ -223,6 +238,8 @@ interface CreateCandidateArgs {
   selectedSecondary?: string;
   /** Prefix used for expandable target rows. */
   prefix?: Candidate["prefix"];
+  /** The Task this row names, when it names one. */
+  identity?: string;
   /** Rows without onSelect complete via fill on click instead of executing. */
   onSelect?: () => void | Promise<void>;
 }
@@ -245,6 +262,7 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
     },
     prefix: args.prefix ?? "",
     kind: "data",
+    identity: args.identity,
   };
 }
 
@@ -274,6 +292,7 @@ function makeNavigationCandidate(args: {
     },
     prefix: args.prefix ?? "",
     kind: "data",
+    identity: args.taskId,
   };
 }
 
@@ -556,6 +575,7 @@ function addTaskTargetEntry(args: {
           ? "type message to send"
           : undefined,
         prefix,
+        identity: args.node.id,
       }),
     );
   } else {

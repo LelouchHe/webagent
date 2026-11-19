@@ -29,8 +29,15 @@ export interface CmdNode {
    *  fetch resolves. Present = an already-visited menu paints these rows
    *  immediately instead of a `(loading...)` frame; the fetch always runs and
    *  replaces them when it returns. Absent = the historical loading frame.
-   *  Only for display: nothing that resolves a target may read it. */
+   *  Only for display: nothing that resolves a target may read it. Setting it
+   *  also opts the node into keeping the selected row across a repaint, and
+   *  into validating a clicked cache-painted row against the fresh result. */
   cached?: () => unknown[] | null;
+  /** Stable identity for one data item (e.g. a Task id), carried into
+   *  `Candidate.identity`. Selection preservation and post-revalidation
+   *  validation name a row by this, never by its label. Absent = the row is
+   *  identified by what acting on it fills. */
+  identity?: (item: unknown) => string | undefined;
   /** Optional custom filter for data items. Receives raw item + lowercased
    *  trimmed query; returns true to keep. Defaults to substring match on
    *  `toSpec(item).primary`. Use when filtering should consider fields not
@@ -78,6 +85,10 @@ export interface Candidate {
   kind: "subcommand" | "freeform" | "data" | "placeholder" | "separator";
   /** When kind === 'subcommand', the child node selected. */
   node?: CmdNode;
+  /** Stable identity of this row's target when one exists (a Task id). Used
+   *  instead of the label for selection preservation, and to check a
+   *  cache-painted row against the fresh read before acting on it. */
+  identity?: string;
 }
 
 /**
@@ -203,7 +214,7 @@ export function buildCandidates(
   out.push(...subcommands);
 
   // 2. Resolve data specs (need them before freeform for collision check)
-  let dataSpecs: SlashItemSpec[] = [];
+  let dataSpecs: { spec: SlashItemSpec; identity?: string }[] = [];
   let dataState: "none" | "loading" | "error" | "empty" | "no-match" | "ok" =
     "none";
   let errorMsg = "";
@@ -232,7 +243,10 @@ export function buildCandidates(
           : data;
         const filtered = filteredItems.map((item) => {
           const spec = node.toSpec!(item);
-          return field?.decorate ? field.decorate(spec, item) : spec;
+          return {
+            spec: field?.decorate ? field.decorate(spec, item) : spec,
+            identity: node.identity?.(item),
+          };
         });
         if (filtered.length === 0) {
           dataState = "no-match";
@@ -251,7 +265,9 @@ export function buildCandidates(
     const trimmedQ = tailQuery.trim();
     const collision =
       trimmedQ.length > 0 &&
-      dataSpecs.some((s) => s.primary.toLowerCase() === trimmedQ.toLowerCase());
+      dataSpecs.some(
+        (s) => s.spec.primary.toLowerCase() === trimmedQ.toLowerCase(),
+      );
     if (!collision) {
       const fspec = node.freeform(field?.raw ?? tailQuery);
       if (fspec) {
@@ -296,11 +312,12 @@ export function buildCandidates(
       kind: "placeholder",
     });
   } else if (dataState === "ok") {
-    for (const spec of dataSpecs) {
+    for (const row of dataSpecs) {
       out.push({
-        spec,
-        prefix: spec.current ? "*" : "",
+        spec: row.spec,
+        prefix: row.spec.current ? "*" : "",
         kind: "data",
+        identity: row.identity,
       });
     }
   }
