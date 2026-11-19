@@ -334,9 +334,11 @@ describe("parent reference", () => {
       await tick();
       resolvers[1](new Response(JSON.stringify([task("root", "pi")])));
       const [stale, fresh] = await Promise.all([staleRequest, freshRequest]);
+      // The caller that started before the archive also retries: it never
+      // receives the fenced pre-archive collection.
       assert.deepEqual(
         stale.map((entry) => entry.id),
-        ["area"],
+        ["root"],
       );
       assert.deepEqual(
         fresh.map((entry) => entry.id),

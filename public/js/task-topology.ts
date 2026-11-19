@@ -388,16 +388,27 @@ function startTaskListRequest(): {
  * only feeds the row-label flag here; the parent reference never comes from it.
  */
 export async function loadTaskList(): Promise<TaskSummary[]> {
-  if (pending?.generation === generation && pending.epoch === listEpoch) {
-    return pending.promise;
+  // A caller waiting across an archive fact must not receive the pre-archive
+  // collection. Retry (bounded) against the new epoch instead of handing back
+  // a response the fence already rejected.
+  let last: TaskSummary[] = [];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const epoch = listEpoch;
+    if (pending?.generation === generation && pending.epoch === epoch) {
+      last = await pending.promise;
+      if (epoch === listEpoch) return last;
+      continue;
+    }
+    const request = startTaskListRequest();
+    pending = request;
+    try {
+      last = await request.promise;
+    } finally {
+      if (pending === request) pending = null;
+    }
+    if (request.epoch === listEpoch) return last;
   }
-  const request = startTaskListRequest();
-  pending = request;
-  try {
-    return await request.promise;
-  } finally {
-    if (pending === request) pending = null;
-  }
+  return last;
 }
 
 /**
