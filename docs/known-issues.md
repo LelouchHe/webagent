@@ -109,6 +109,12 @@ time. An entry without a "closing condition" is a wish, not an issue.
   source task is deleted during the cwd probe) leaves no active task until a
   reload. The probe's liveness guard fails open on purpose. *Closing:* clear
   only after a successful create, or restore the previous task on failure.
+- **Archive UI and late delivery are best effort.** An already-open task menu
+  on another client may keep a pre-archive row until the menu is reopened; work
+  already handed to ACP may still be delivered after archive; and a late
+  failure on a cut edge may leave a harmless retry-map entry with a
+  `prompt_failed` label. No dedicated race fence covers these windows.
+
 - **A claimed (`draining`) delivery can be stranded before the ACP handoff.**
   `claimQueuedDeliveries` marks rows `draining`, but the prompt is handed to
   ACP later in the same synchronous block. If the process exits or a database

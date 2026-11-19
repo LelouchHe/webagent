@@ -3894,33 +3894,15 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
-   * Archive through the store's single transaction, then clean the in-memory
-   * facts that described the now-cut edges. If the transaction throws, nothing
-   * in memory is touched and the task stays attached.
-   *
-   * The store marks not-yet-handed-over work between the archived subtree and
-   * everything outside it. This method only mirrors that result: it drops the
-   * former-parent obligation edge and removes cut delivery ids from the bounded
-   * retry map. `draining` work is absent from both because it already reached
-   * ACP and finishes through its own callback.
+   * Archive through the store's single transaction, then drop the in-memory
+   * obligation edge. If the transaction throws, nothing in memory is touched
+   * and the task stays attached.
    */
   archiveTask(taskId: string): ArchiveTaskResult | undefined {
-    const retryDeliveryIds = new Set<string>();
-    for (const ids of this.pendingDispatchRetries.values()) {
-      for (const id of ids) retryDeliveryIds.add(id);
-    }
-    const result = this.store.archiveTask(taskId, { retryDeliveryIds });
+    const result = this.store.archiveTask(taskId);
     if (result?.status !== "archived") return result;
     if (result.parentId !== null) {
       this.obligations.dropEdge(result.parentId, taskId);
-    }
-    if (result.cutDeliveryIds.length > 0) {
-      const cut = new Set(result.cutDeliveryIds);
-      for (const [target, ids] of [...this.pendingDispatchRetries]) {
-        const kept = ids.filter((id) => !cut.has(id));
-        if (kept.length === 0) this.pendingDispatchRetries.delete(target);
-        else this.pendingDispatchRetries.set(target, kept);
-      }
     }
     return result;
   }
@@ -4015,15 +3997,6 @@ export class TaskManager implements ObligationHost {
   async submitObligationReminder(
     obligation: DirectedObligation,
   ): Promise<ObligationSubmissionOutcome> {
-    // The edge may have been archived while this attempt waited for its timer.
-    const edgeStillExists = () =>
-      this.obligations.getActive(
-        obligation.sourceTaskId,
-        obligation.targetTaskId,
-      ) !== undefined;
-    if (!edgeStillExists()) {
-      return { status: "deferred", reason: "edge_gone" };
-    }
     const task = this.liveTask(obligation.targetTaskId);
     if (!task) {
       // The target is gone; its debt is purged with the task lifecycle, which
@@ -4089,12 +4062,6 @@ export class TaskManager implements ObligationHost {
       if (!promptId || !this.isTurnRunning(task.id, promptId)) {
         return { status: "deferred", reason: "turn_superseded" };
       }
-      // The edge can be cut while this attempt awaits the transport/resume.
-      // Nothing was submitted yet, so abandoning here is not a recall: the
-      // archived task must not receive a reminder for an edge it left.
-      if (!edgeStillExists()) {
-        return { status: "deferred", reason: "edge_gone" };
-      }
       const lease = this.currentLease(task.id);
       await bridge.prompt(task.id, text, undefined, promptId);
       if (!this.leaseCurrent(lease)) {
@@ -4158,12 +4125,6 @@ export class TaskManager implements ObligationHost {
     notice: ObligationNotice,
     obligation: DirectedObligation,
   ): void {
-    // `no_account` / `delivery_failed` are emitted only by the terminal
-    // `exhaust` transition. The bounded dispatch retry is over, so its map
-    // entry must not outlive it: archive uses that map as "still retryable".
-    if (notice.reason === "no_account" || notice.reason === "delivery_failed") {
-      this.pendingDispatchRetries.delete(obligation.targetTaskId);
-    }
     const payload = {
       sourceTaskId: obligation.sourceTaskId,
       targetTaskId: obligation.targetTaskId,
@@ -4253,10 +4214,9 @@ export class TaskManager implements ObligationHost {
     const parentId = this.store.getTask(taskId)?.parent_id;
     if (!parentId) return null;
     if (!this.obligations.isOwed(parentId, taskId)) return null;
-    // Any queued direct-parent agent dispatch names this attempt, including an
-    // older dispatch coalesced into a newer `openingDeliveryId`. An ordinary
-    // user message from the same parent is not a dispatch.
-    if (!this.store.hasQueuedAgentDispatch(parentId, taskId)) return null;
+    if (!this.store.queuedDeliverySources(taskId).includes(parentId)) {
+      return null;
+    }
     this.obligations.beginDispatch(parentId, taskId, promptId);
     return { sourceTaskId: parentId, promptId };
   }
@@ -4390,16 +4350,7 @@ export class TaskManager implements ObligationHost {
             message.source_task_id,
             taskId,
           );
-          // Qualification is the edge's current dispatch, not merely "a
-          // record exists": non-terminal, and this row is an agent dispatch
-          // from the direct parent. Every such row in the failed batch keeps
-          // its retry, including older dispatches coalesced into a newer
-          // opening. Ordinary user messages never qualify.
-          if (
-            obligation &&
-            this.obligations.isOwed(message.source_task_id, taskId) &&
-            message.source_actor === "agent"
-          ) {
+          if (obligation) {
             qualifyingSources.add(message.source_task_id);
             qualifyingDeliveryIds.push(delivery.id);
           }
@@ -4454,18 +4405,8 @@ export class TaskManager implements ObligationHost {
         // A qualifying dispatch is not abandoned on one request-level failure.
         // Hold its claimed rows for the controller's bounded initial-delivery
         // retry, which requeues and resubmits them under backoff; an immediate
-        // idle drain would bypass that budget. A late failure after archive has
-        // no edge left to retry, so it must not create an orphan retry entry.
-        const retrySource = [...qualifyingSources].at(0);
-        const retryObligation =
-          retrySource !== undefined
-            ? this.obligations.getActive(retrySource, taskId)
-            : undefined;
-        const retryEdgeExists =
-          retryObligation !== undefined &&
-          this.obligations.isOwed(retryObligation.sourceTaskId, taskId) &&
-          retryObligation.attemptId === promptId;
-        if (qualifyingDeliveryIds.length > 0 && retryEdgeExists) {
+        // idle drain would bypass that budget.
+        if (qualifyingDeliveryIds.length > 0) {
           this.pendingDispatchRetries.set(taskId, qualifyingDeliveryIds);
         }
         for (const sourceTaskId of qualifyingSources) {

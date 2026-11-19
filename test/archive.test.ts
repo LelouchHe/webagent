@@ -140,45 +140,6 @@ describe("task archive", () => {
     assert.equal(store.getEvents("area").length, count);
   });
 
-  it("marks only retry-waiting failed rows as archive-interrupted", () => {
-    for (const id of ["retry", "stale"]) {
-      store.createCollaborationMessage({
-        id,
-        deliveryId: `d-${id}`,
-        sourceTaskId: "other",
-        directTargetTaskId: "area",
-        sourceActor: "agent",
-        body: id,
-      });
-    }
-    const claimed = store.claimQueuedDeliveries("area");
-    store.failCollaborationDeliveries(
-      claimed.map((delivery) => delivery.id),
-      "prompt_failed",
-    );
-
-    store.archiveTask("area", { retryDeliveryIds: new Set(["d-retry"]) });
-
-    assert.equal(store.getCollaborationDelivery("d-retry")?.status, "failed");
-    assert.equal(
-      store.getCollaborationDelivery("d-retry")?.failure_reason,
-      "archived_edge_cut",
-    );
-    // Not listed for retry: it is a historical failure, not pending work.
-    assert.equal(store.getCollaborationDelivery("d-stale")?.status, "failed");
-    assert.equal(
-      store.getCollaborationDelivery("d-stale")?.failure_reason,
-      "prompt_failed",
-    );
-    // A stale retry id cannot resurrect the cut row.
-    store.requeueCollaborationDeliveries(["d-retry"]);
-    assert.equal(store.getCollaborationDelivery("d-retry")?.status, "failed");
-    assert.equal(
-      store.getCollaborationDelivery("d-retry")?.failure_reason,
-      "archived_edge_cut",
-    );
-  });
-
   it("rolls back detach, transcript, and delivery marks as one transaction", () => {
     store.createCollaborationMessage({
       id: "cross-message",
