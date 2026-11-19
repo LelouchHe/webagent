@@ -404,7 +404,10 @@ The `task_archive` structural fact is consumed before the per-view event
 filter, so a client viewing any task invalidates its `/switch` cache; only the
 transcript row itself is view-scoped. A list read is fenced by the archive
 epoch: a response issued before the fact never becomes the baseline, and
-`loadTaskList` starts a new request instead of reusing that in-flight one. The `/exit` fallback resolves
+`loadTaskList` starts a new request instead of reusing that in-flight one. The
+bump is idempotent per archived task id (one-way archive facts may be consumed
+more than once), and a fenced request that **rejects** is retried like a fenced
+response; only an error from the current epoch propagates. The `/exit` fallback resolves
 the server-named `parentId` against the full topology (so a parent inside an
 archived tree is found); only its ordinary newest-task fallback stays in the
 active tree.

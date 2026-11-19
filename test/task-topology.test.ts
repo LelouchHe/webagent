@@ -349,6 +349,62 @@ describe("parent reference", () => {
     }
   });
 
+  it("bumps the archive epoch once per archived task fact", () => {
+    const epoch = taskListEpoch();
+    noteTaskArchived("archived-once");
+    noteTaskArchived("archived-once");
+    assert.equal(taskListEpoch(), epoch + 1);
+
+    setCurrentTask("archived-once", {
+      parentId: "parent",
+      agentId: "pi",
+    });
+    // A duplicate delivery still lets the current view clear its parent.
+    noteTaskArchived("archived-once");
+    assert.equal(parentOf("archived-once"), null);
+    assert.equal(taskListEpoch(), epoch + 1);
+  });
+
+  it("retries a rejected list read when the archive epoch moved", async () => {
+    const calls: Array<{
+      resolve: (response: Response) => void;
+      reject: (error: unknown) => void;
+    }> = [];
+    const fetchStub = stubFetch(
+      () =>
+        new Promise<Response>((resolve, reject) => {
+          calls.push({ resolve, reject });
+        }),
+    );
+    try {
+      const waiting = loadTaskList();
+      assert.equal(calls.length, 1);
+      noteTaskArchived("archived-during-read");
+      calls[0].reject(new Error("transient list failure"));
+      await tick();
+      assert.equal(calls.length, 2, "a fenced rejection is retried");
+      calls[1].resolve(new Response(JSON.stringify([task("root", "pi")])));
+      const tasks = await waiting;
+      assert.deepEqual(
+        tasks.map((entry) => entry.id),
+        ["root"],
+      );
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it("propagates a list rejection when the epoch did not move", async () => {
+    const fetchStub = stubFetch(() =>
+      Promise.reject(new Error("list unavailable")),
+    );
+    try {
+      await assert.rejects(loadTaskList(), /list unavailable/);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
   it("shares one list request per generation", async () => {
     let calls = 0;
     const fetchStub = stubFetch(() => {

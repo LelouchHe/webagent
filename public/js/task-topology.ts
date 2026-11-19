@@ -82,6 +82,12 @@ let listAppliedSeq = 0;
 let listRequiredSeq = 0;
 /** Bumped by facts that change tree membership or a task's parent link. */
 let listEpoch = 0;
+/**
+ * Archive is one-way, so one task id names one structural fact for this client.
+ * The same live message can be consumed twice (pre-filter, then replay/navigation
+ * queues); the epoch bump is applied once, while parent clearing still runs.
+ */
+const archivedFacts = new Set<string>();
 
 const changeListeners: (() => void)[] = [];
 
@@ -151,7 +157,10 @@ export function setCurrentTask(taskId: string | null, hint?: ParentHint): void {
  */
 export function noteTaskArchived(taskId: string): void {
   if (viewedTaskId === taskId) parentRef = { taskId, status: "none" };
-  listEpoch += 1;
+  if (!archivedFacts.has(taskId)) {
+    archivedFacts.add(taskId);
+    listEpoch += 1;
+  }
   notifyChange();
 }
 
@@ -390,12 +399,20 @@ function startTaskListRequest(): {
 export async function loadTaskList(): Promise<TaskSummary[]> {
   // A caller waiting across an archive fact must not receive the pre-archive
   // collection. Retry (bounded) against the new epoch instead of handing back
-  // a response the fence already rejected.
+  // a response the fence already rejected — including a rejected request: a
+  // transient error from before the fact is not the caller's answer.
   let last: TaskSummary[] = [];
+  let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     const epoch = listEpoch;
     if (pending?.generation === generation && pending.epoch === epoch) {
-      last = await pending.promise;
+      try {
+        last = await pending.promise;
+      } catch (error) {
+        if (epoch === listEpoch) throw error;
+        lastError = error;
+        continue;
+      }
       if (epoch === listEpoch) return last;
       continue;
     }
@@ -403,10 +420,23 @@ export async function loadTaskList(): Promise<TaskSummary[]> {
     pending = request;
     try {
       last = await request.promise;
+    } catch (error) {
+      if (request.epoch === listEpoch) throw error;
+      lastError = error;
+      continue;
     } finally {
       if (pending === request) pending = null;
     }
     if (request.epoch === listEpoch) return last;
+  }
+  if (lastError !== undefined) {
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(
+          typeof lastError === "string"
+            ? lastError
+            : "Task list request failed",
+        );
   }
   return last;
 }
@@ -472,5 +502,6 @@ export function resetTaskTopologyForTest(): void {
   listAppliedSeq = 0;
   listRequiredSeq = 0;
   listEpoch = 0;
+  archivedFacts.clear();
   resetTaskRefMarks();
 }
