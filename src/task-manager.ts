@@ -4253,17 +4253,10 @@ export class TaskManager implements ObligationHost {
     const parentId = this.store.getTask(taskId)?.parent_id;
     if (!parentId) return null;
     if (!this.obligations.isOwed(parentId, taskId)) return null;
-    const obligation = this.obligations.getActive(parentId, taskId);
-    // Only the delivery that opened this obligation's current attempt may own
-    // an attempt. An ordinary user message from the same parent is not a
-    // dispatch, even while the record exists.
-    if (
-      !obligation ||
-      this.store.getCollaborationDelivery(obligation.openingDeliveryId)
-        ?.status !== "queued"
-    ) {
-      return null;
-    }
+    // Any queued direct-parent agent dispatch names this attempt, including an
+    // older dispatch coalesced into a newer `openingDeliveryId`. An ordinary
+    // user message from the same parent is not a dispatch.
+    if (!this.store.hasQueuedAgentDispatch(parentId, taskId)) return null;
     this.obligations.beginDispatch(parentId, taskId, promptId);
     return { sourceTaskId: parentId, promptId };
   }
@@ -4397,14 +4390,15 @@ export class TaskManager implements ObligationHost {
             message.source_task_id,
             taskId,
           );
-          // Qualification is the current dispatch attempt, not merely "a
-          // record exists": non-terminal, and this row is the attempt's
-          // opening delivery. A settled/unresolved record or an ordinary
-          // parent message never qualifies.
+          // Qualification is the edge's current dispatch, not merely "a
+          // record exists": non-terminal, and this row is an agent dispatch
+          // from the direct parent. Every such row in the failed batch keeps
+          // its retry, including older dispatches coalesced into a newer
+          // opening. Ordinary user messages never qualify.
           if (
             obligation &&
             this.obligations.isOwed(message.source_task_id, taskId) &&
-            obligation.openingDeliveryId === delivery.id
+            message.source_actor === "agent"
           ) {
             qualifyingSources.add(message.source_task_id);
             qualifyingDeliveryIds.push(delivery.id);
@@ -4470,8 +4464,7 @@ export class TaskManager implements ObligationHost {
         const retryEdgeExists =
           retryObligation !== undefined &&
           this.obligations.isOwed(retryObligation.sourceTaskId, taskId) &&
-          retryObligation.attemptId === promptId &&
-          retryObligation.openingDeliveryId === qualifyingDeliveryIds[0];
+          retryObligation.attemptId === promptId;
         if (qualifyingDeliveryIds.length > 0 && retryEdgeExists) {
           this.pendingDispatchRetries.set(taskId, qualifyingDeliveryIds);
         }

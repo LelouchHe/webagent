@@ -275,9 +275,11 @@ is a no-op and cannot mutate the record that replaced it.
 request never reached the agent session — is a `PromptNotDeliveredError`, thrown
 after the error event. It consumes the transport-failure budget and returns the
 record to `awaiting_delivery` for a bounded retry under the attempt's identity.
-That retry belongs only to the delivery that opened the current non-terminal
-attempt: a later ordinary message from the same parent is not a dispatch and is
-not retried by the obligation machinery.
+That retry belongs to the current non-terminal attempt and to every agent
+dispatch from the direct parent in the failed batch — including older
+dispatches coalesced into a newer opening delivery. An ordinary user message
+from the same parent is not a dispatch and is not retried by the obligation
+machinery.
 An agent error *inside a delivered turn* emits an error event but resolves, so it
 is not a transport failure. A resume failure while submitting the original
 dispatch consumes the same budget; a resume failure while submitting a closing

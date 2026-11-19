@@ -229,6 +229,131 @@ describe("TaskManager", () => {
       );
     });
 
+    it("retries every coalesced agent dispatch, never a user message", async () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      for (const [id, actor, body] of [
+        ["dispatch-a", "agent", "first dispatch"],
+        ["dispatch-b", "agent", "second dispatch"],
+        ["ordinary", "user", "hello user"],
+      ] as const) {
+        store.createCollaborationMessage({
+          id,
+          deliveryId: `delivery-${id}`,
+          sourceTaskId: "parent",
+          directTargetTaskId: "child",
+          sourceActor: actor,
+          body,
+        });
+      }
+      const prompts: string[] = [];
+      let fail = true;
+      const bridge = {
+        async newSession() {
+          return { sessionId: "c-session", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt(_taskId: string, text: string) {
+          prompts.push(text);
+          if (fail) throw new Error("prompt rejected");
+        },
+        isAvailable: () => true,
+      };
+      sm.attachExecutionBridge(bridge);
+
+      await sm.drainCollaborationDeliveries("child");
+      await waitForStatus("delivery-dispatch-b", "failed");
+      assert.deepEqual([...(retries().get("child") ?? [])].sort(), [
+        "delivery-dispatch-a",
+        "delivery-dispatch-b",
+      ]);
+      assert.equal(
+        store.getCollaborationDelivery("delivery-ordinary")?.failure_reason,
+        "prompt_failed",
+      );
+
+      const obligation = sm.getObligation("parent", "child");
+      assert.ok(obligation);
+      fail = false;
+      sm.retryObligationDispatch(obligation);
+      for (let i = 0; i < 50 && prompts.length < 2; i++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      await waitForStatus("delivery-dispatch-a", "delivered");
+      await waitForStatus("delivery-dispatch-b", "delivered");
+
+      assert.equal(prompts.length, 2);
+      assert.match(prompts[1], /first dispatch/);
+      assert.match(prompts[1], /second dispatch/);
+      assert.doesNotMatch(prompts[1], /hello user/);
+      assert.equal(
+        store.getCollaborationDelivery("delivery-ordinary")?.status,
+        "failed",
+      );
+    });
+
+    it("archives every coalesced retry-waiting dispatch, not only the opening", async () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      for (const id of ["dispatch-a", "dispatch-b"]) {
+        store.createCollaborationMessage({
+          id,
+          deliveryId: `delivery-${id}`,
+          sourceTaskId: "parent",
+          directTargetTaskId: "child",
+          sourceActor: "agent",
+          body: id,
+        });
+      }
+      sm.attachExecutionBridge({
+        async newSession() {
+          return { sessionId: "c-session", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt() {
+          throw new Error("prompt rejected");
+        },
+        isAvailable: () => true,
+      });
+      await sm.drainCollaborationDeliveries("child");
+      await waitForStatus("delivery-dispatch-b", "failed");
+      assert.equal((retries().get("child") ?? []).length, 2);
+
+      sm.archiveTask("child");
+      for (const id of ["dispatch-a", "dispatch-b"]) {
+        assert.equal(
+          store.getCollaborationDelivery(`delivery-${id}`)?.failure_reason,
+          "archived_edge_cut",
+          id,
+        );
+      }
+      assert.equal(retries().has("child"), false);
+    });
+
     it("retries only the opening delivery of an active edge", async () => {
       seedEdge();
       store.createCollaborationMessage({

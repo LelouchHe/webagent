@@ -2623,6 +2623,24 @@ export class Store {
     return rows.map((row) => row.source);
   }
 
+  /**
+   * True when one direct-parent agent dispatch from `sourceTaskId` is still
+   * queued for `targetTaskId`. An ordinary user message is not a dispatch.
+   */
+  hasQueuedAgentDispatch(sourceTaskId: string, targetTaskId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 AS present FROM deliveries d
+           JOIN messages m ON m.id = d.message_id
+           WHERE d.recipient_task_id = ? AND d.status = 'queued'
+             AND m.source_task_id = ? AND m.source_actor = 'agent'
+           LIMIT 1`,
+        )
+        .get(targetTaskId, sourceTaskId) !== undefined
+    );
+  }
+
   /** Atomically claim every currently queued Delivery for one target task. */
   claimQueuedDeliveries(recipientTaskId: string): CollaborationDeliveryRow[] {
     const claimedAt = Date.now();
