@@ -110,6 +110,10 @@ describe("task-reference marks", () => {
     return summary;
   }
 
+  function tick(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
   function assertLive(ref: HTMLElement, name: string): void {
     assert.deepEqual(view(ref), {
       state: null,
@@ -919,5 +923,160 @@ describe("task-reference marks", () => {
       assert.equal(refSpans(row).length, 0);
       assert.equal(row.textContent, "@child was created");
     });
+  });
+
+  it("strikes an archived task and unstrikes it after unarchive", async () => {
+    topology.resetTaskTopologyForTest();
+    state.taskId = "parent";
+    snapshot({ parent: "parent", child: "child" });
+    const row = renderCreatedRow("child");
+    assertLive(refSpan(row), "@child");
+
+    let active: Record<string, string> = { parent: "parent" };
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = ((url: string) => {
+      if (url.split("?")[0] === "/api/v1/tasks") {
+        return Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify(
+                Object.entries(active).map(([id, title]) => ({ id, title })),
+              ),
+            ),
+        });
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve("{}") });
+    }) as typeof fetch;
+    try {
+      events.handleEvent({
+        type: "system_message",
+        taskId: "child",
+        kind: "task_archive",
+        title: "Task archived",
+        body: "",
+      });
+      for (let i = 0; i < 20 && view(refSpan(row)).state !== "exited"; i++) {
+        await tick();
+      }
+      assert.equal(view(refSpan(row)).state, "exited");
+
+      active = { parent: "parent", child: "child" };
+      events.handleEvent({
+        type: "system_message",
+        taskId: "child",
+        kind: "task_unarchive",
+        title: "Task unarchived",
+        body: "",
+      });
+      for (let i = 0; i < 20 && view(refSpan(row)).state !== null; i++) {
+        await tick();
+      }
+      assertLive(refSpan(row), "@child");
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("strikes a task created in this connection after archive", async () => {
+    topology.resetTaskTopologyForTest();
+    state.taskId = "parent";
+    snapshot({ parent: "parent" });
+    marks.noteTaskCreated("child", "child");
+    const row = renderCreatedRow("child");
+    assertLive(refSpan(row), "@child");
+
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = ((url: string) => {
+      if (url.split("?")[0] === "/api/v1/tasks") {
+        return Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify([{ id: "parent", title: "parent" }]),
+            ),
+        });
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve("{}") });
+    }) as typeof fetch;
+    try {
+      events.handleEvent({
+        type: "system_message",
+        taskId: "child",
+        kind: "task_archive",
+        title: "Task archived",
+        body: "",
+      });
+      for (let i = 0; i < 20 && view(refSpan(row)).state !== "exited"; i++) {
+        await tick();
+      }
+      assert.equal(view(refSpan(row)).state, "exited");
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("shows the renamed state after restoring an archived renamed task", async () => {
+    topology.resetTaskTopologyForTest();
+    state.taskId = "parent";
+    snapshot({ parent: "parent", child: "old" });
+    marks.noteTaskTitleUpdated("child", "new");
+    const row = renderCreatedRow("child", "old");
+    assert.deepEqual(view(refSpan(row)), {
+      state: "renamed",
+      name: "@old",
+      current: " @new",
+      sr: " (renamed)",
+    });
+
+    let active: Record<string, string> = { parent: "parent" };
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = ((url: string) => {
+      if (url.split("?")[0] === "/api/v1/tasks") {
+        return Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify(
+                Object.entries(active).map(([id, title]) => ({ id, title })),
+              ),
+            ),
+        });
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve("{}") });
+    }) as typeof fetch;
+    try {
+      events.handleEvent({
+        type: "system_message",
+        taskId: "child",
+        kind: "task_archive",
+        title: "Task archived",
+        body: "",
+      });
+      for (let i = 0; i < 20 && view(refSpan(row)).state !== "exited"; i++) {
+        await tick();
+      }
+      assert.equal(view(refSpan(row)).state, "exited");
+
+      active = { parent: "parent", child: "new" };
+      events.handleEvent({
+        type: "system_message",
+        taskId: "child",
+        kind: "task_unarchive",
+        title: "Task unarchived",
+        body: "",
+      });
+      for (let i = 0; i < 20 && view(refSpan(row)).state !== "renamed"; i++) {
+        await tick();
+      }
+      assert.deepEqual(view(refSpan(row)), {
+        state: "renamed",
+        name: "@old",
+        current: " @new",
+        sr: " (renamed)",
+      });
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
   });
 });

@@ -58,6 +58,7 @@ import * as api from "./api.ts";
 import {
   loadTaskList,
   noteTaskArchived,
+  noteTaskUnarchived,
   observeTaskCreated,
   observeTaskDeleted,
   setCurrentTask,
@@ -68,6 +69,7 @@ import {
   noteTaskDeleted,
   noteTaskTitleUpdated,
   taskRefFieldsFrom,
+  pruneCreatedTasksAbsentFrom,
 } from "./task-ref-marks.ts";
 import { applyConnectedLogLevel } from "./log.ts";
 import { log } from "./log.ts";
@@ -2090,11 +2092,25 @@ export function handleEvent(msg: AgentEvent) {
     // it recorded may now be stale. Only the current task's own header below
     // is view-scoped.
     noteTaskTitleUpdated(msg.taskId, msg.title);
-  } else if (msg.type === "system_message" && msg.kind === "task_archive") {
-    // The archive structural fact changes /switch for every view, not only the
-    // archived task's own transcript. Consume it before the per-view filter
-    // below; the row rendering stays view-scoped in the switch.
-    noteTaskArchived(msg.taskId);
+  } else if (
+    msg.type === "system_message" &&
+    (msg.kind === "task_archive" || msg.kind === "task_unarchive")
+  ) {
+    // The structural fact changes the active tree for every view, not only the
+    // task's own transcript. Consume it before the per-view filter below. The
+    // refreshed active list decides the reference marks: an archived task (and
+    // its subtree) is absent, a restored task is present again.
+    if (msg.kind === "task_archive") {
+      noteTaskArchived(msg.taskId);
+      void loadTaskList()
+        .then((tasks) => {
+          pruneCreatedTasksAbsentFrom(tasks);
+        })
+        .catch(() => undefined);
+    } else {
+      noteTaskUnarchived(msg.taskId);
+      void loadTaskList().catch(() => undefined);
+    }
   }
   if (msg.type === "inbox_count_changed") {
     updateInboxCount(msg.pendingCount);
