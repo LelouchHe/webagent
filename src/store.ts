@@ -2018,8 +2018,14 @@ export class Store {
     // and must be re-parented under Root before the row goes away.
     this.reparentChildrenToRoot(taskId);
     this.failOutstandingDeliveriesForDeletedTask(taskId);
+    const failedDeliveryIds = this.failedDeliveryIdsForRecipient(
+      taskId,
+      "target_deleted",
+    );
     this.db.prepare("DELETE FROM events WHERE task_id = ?").run(taskId);
     this.db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
+    // Publish the sender marks only after the reaper's writes landed.
+    this.broadcastDeliveryStatus(failedDeliveryIds);
     return true;
   }
 

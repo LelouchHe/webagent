@@ -301,7 +301,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a closing reminder is queued behind a running turn and appears only at the boundary through the automatic drain; the recipient gets exactly one row, labeled `WebAgent runtime`, with no pre-drain `handoff_reminder` row and no delivery mark
   - an unrelated REST/system delivery failing does not close the dispatch account; a stale resume leaves queued work for the current execution
   - same-time deliveries drain in insertion order, not id order
-  - a request-level error emitted before a rejection runs no turn-end check; only the rejection path (`target_removed`) applies
+  - a request-level error emitted before a rejection runs no turn-end check, queues no reminder and writes no `handoff_reminder` audit row; only the rejection path (`target_removed`) applies
   - a failed update transaction marks nothing and keeps the account open
 
 - `test/collaboration-route.test.ts`
@@ -534,6 +534,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/bridge.test.ts`
   - prompt success / failure / cancellation
+  - a dead-agent fast-path prompt error carries its prompt id and
+    `requestLevel` before rejecting, so the turn-end check is skipped
   - silent prompt buffering for compact summarization
   - mapping a session to a real Task lifts any internal silence, so later updates stream; `promptForText` restores pre-existing persistent silence instead of unmuting it
   - permission request resolution ordering
@@ -613,7 +615,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/turn-slot.test.ts`
   - one turn slot per task, and every real submission assigns its own origin: the interactive route, `/compact`, and the beta quick prompt are `interactive`; a collaboration drain is `delegated` for an all-agent/system batch and `interactive` for a batch containing one user message. Nothing inherits the previous turn's value
-  - every per-path release point of the end-of-turn table closes the slot — `prompt_done`, agent error, drain rejection, reminder `finally`, interactive `finally`, `/compact` `finally`, `resetTaskRuntime` even under `preserveRuntimeState`, and an agent-scoped `clearAgentRuntime` — and the next turn on that task is interactive again; a cancel request alone ends nothing, because only the turn's own terminal does. The task-vanishing row is covered only through its production entries (next bullet), never by calling a private release method
+  - every per-path release point of the end-of-turn table closes the slot — `prompt_done`, agent error, drain rejection, interactive `finally`, `/compact` `finally`, `resetTaskRuntime` even under `preserveRuntimeState`, and an agent-scoped `clearAgentRuntime` — and the next turn on that task is interactive again; a cancel request alone ends nothing, because only the turn's own terminal does. The task-vanishing row is covered only through its production entries (next bullet), never by calling a private release method
   - a superseded turn's late terminal (including a late `prompt_done`) never releases or re-origins the turn that replaced it
   - the submission protocol is shared and survives awaits: a runtime reservation blocks an interactive submit and vice versa, the slot is held across `ensureResumed`, a submitter that wins during the transport resolution is the only one that reaches `bridge.prompt` (and the loser's delivery stays queued), and a reservation invalidated by a cancel during that await gives up without claiming or submitting
   - admission is one check over every busy source, for both the interactive and the runtime route; `allowBash` opens bash and nothing else, and only an explicit `allowRestoring` waives a restore
@@ -1179,6 +1181,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - `reapTombstoneIfOrphaned`: no-op while an active share remains, no-op on a
     live task, cascades attachment rows, and repeating it after a successful
     reap is a no-op
+  - reaping the last share of a soft-deleted recipient fails its queued
+    deliveries and publishes the sender mark after the writes land
 
 - `test/share-sanitize.test.ts` / `test/share-sanitize-secrets.test.ts`
   - secret detection → hard-reject with `event_id` + `rule`

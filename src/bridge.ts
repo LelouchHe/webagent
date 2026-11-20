@@ -88,6 +88,16 @@ function requestLevelFields(handedOver: boolean): { requestLevel?: true } {
   return handedOver ? {} : { requestLevel: true };
 }
 
+function promptErrorFields(
+  promptId: string | undefined,
+  handedOver: boolean,
+): { promptId?: string; requestLevel?: true } {
+  return {
+    ...(promptId ? { promptId } : {}),
+    ...requestLevelFields(handedOver),
+  };
+}
+
 export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
   private connection: acp.ClientContext | null = null;
@@ -743,6 +753,7 @@ export class AgentBridge extends EventEmitter {
         type: "error",
         taskId,
         message: this.deadReason,
+        ...promptErrorFields(promptId, false),
       } satisfies AgentEvent);
       throw new PromptNotDeliveredError(this.deadReason);
     }

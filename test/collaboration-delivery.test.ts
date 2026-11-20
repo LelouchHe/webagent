@@ -685,9 +685,7 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(sourceNotice("parent")?.reason, "target_removed");
     const reminderRows = store
       .getEvents("child")
-      .filter((event) => event.type === "system_message")
-      .map((event) => JSON.parse(event.data) as Record<string, unknown>)
-      .filter((data) => data.kind === "handoff_reminder");
+      .filter((event) => event.type === "handoff_reminder");
     assert.equal(reminderRows.length, 0);
     const visibleReminders = store
       .getEvents("child")
