@@ -65,20 +65,24 @@ describe("task archive", () => {
     // The child still belongs to the archived top.
     assert.equal(store.getTask("work")?.parent_id, "area");
 
-    // The store's default range is every live task; only the REST list and
-    // explicit active-only callers exclude archived trees.
+    // The store range follows the HTTP list: default/false is active, true is
+    // archived; a caller that needs both asks twice.
     assert.deepEqual(
       ids(store.listTasks()),
-      ["area", "other", "work", store.rootTaskId].sort(),
-    );
-    assert.deepEqual(
-      ids(store.listTasks({ archived: "exclude" })),
       ["other", store.rootTaskId].sort(),
     );
-    assert.deepEqual(ids(store.listTasks({ archived: "only" })), [
+    assert.deepEqual(
+      ids(store.listTasks({ archived: false })),
+      ["other", store.rootTaskId].sort(),
+    );
+    assert.deepEqual(ids(store.listTasks({ archived: true })), [
       "area",
       "work",
     ]);
+    assert.deepEqual(
+      ids([...store.listTasks(), ...store.listTasks({ archived: true })]),
+      ["area", "other", "work", store.rootTaskId].sort(),
+    );
     assert.deepEqual([...store.listArchivedTaskIds()].sort(), ["area", "work"]);
   });
 
@@ -121,12 +125,12 @@ describe("task archive", () => {
     assert.equal(result.parentPath, "@/area");
     assert.equal(store.getTask("work")?.parent_id, null);
 
-    assert.deepEqual(ids(store.listTasks({ archived: "only" })), [
+    assert.deepEqual(ids(store.listTasks({ archived: true })), [
       "area",
       "work",
     ]);
     assert.deepEqual(
-      ids(store.listTasks({ archived: "exclude" })),
+      ids(store.listTasks()),
       ["other", store.rootTaskId].sort(),
     );
   });
@@ -322,8 +326,8 @@ describe("task archive", () => {
     assert.equal(store.getTask("area")?.parent_id, null);
     assert.equal(store.getTask("work")?.parent_id, "area");
     assert.equal(store.getEvents("area").length, areaEvents);
-    assert.deepEqual(ids(store.listTasks({ archived: "exclude" })), [newRoot]);
-    assert.deepEqual(ids(store.listTasks({ archived: "only" })), [
+    assert.deepEqual(ids(store.listTasks()), [newRoot]);
+    assert.deepEqual(ids(store.listTasks({ archived: true })), [
       "area",
       "work",
     ]);

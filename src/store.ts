@@ -88,9 +88,6 @@ export interface TaskDelete {
 
 export type WorkflowStatus = "running" | "idle" | "blocked" | "done";
 
-/** Which trees `listTasks` returns. Archived trees are derived, not stored. */
-export type ArchivedFilter = "exclude" | "include" | "only";
-
 /** The system message a successful archive appends to the detached task. */
 export interface ArchiveSystemMessage {
   kind: "task_archive";
@@ -1099,17 +1096,15 @@ export class Store {
    * row existing. `agentId` narrows the result to tasks whose current binding
    * names that agent.
    *
-   * The default range is **every live task**, archived trees included. Archive
-   * is a UI/read concern, not a storage partition: internal callers that must
-   * see the whole database (whole-agent cleanup, MCP collaboration, rename
-   * collision checks) rely on this default, and a caller that wants one side
-   * says so explicitly.
+   * The range follows the HTTP list: omitted or `false` is the active tree,
+   * `true` is archived trees. There is no combined read; a caller that needs
+   * every live task concatenates the two reads.
    */
   listTasks(opts?: {
     source?: string;
     agentId?: string;
-    /** Which trees to return; the default includes every live task. */
-    archived?: ArchivedFilter;
+    /** `false`/omitted: active tree. `true`: archived trees. */
+    archived?: boolean;
   }): TaskRow[] {
     const conditions = ["s.deleted_at IS NULL"];
     const params: unknown[] = [];
@@ -1139,13 +1134,10 @@ export class Store {
          ORDER BY COALESCE(s.last_active_at, s.created_at) DESC`,
       )
       .all(...params) as TaskRow[];
-    const archived = opts?.archived ?? "include";
-    if (archived === "include") return rows;
+    const archived = opts?.archived === true;
     const archivedIds = this.listArchivedTaskIds();
     return rows.filter((task) =>
-      archived === "only"
-        ? archivedIds.has(task.id)
-        : !archivedIds.has(task.id),
+      archived ? archivedIds.has(task.id) : !archivedIds.has(task.id),
     );
   }
 

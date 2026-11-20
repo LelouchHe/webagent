@@ -851,9 +851,9 @@ export function createRequestHandler(
         // is the active tree; `archived=true` selects archived trees only.
         // There is no combined read: a caller that needs both asks twice.
         const archivedParam = params.get("archived");
-        let archivedFilter: "exclude" | "only" = "exclude";
+        let archivedFilter = false;
         if (archivedParam !== null) {
-          if (archivedParam === "true") archivedFilter = "only";
+          if (archivedParam === "true") archivedFilter = true;
           else if (archivedParam !== "false") {
             json(res, HTTP_STATUS.BAD_REQUEST, {
               error: "archived must be 'true' or 'false'",
@@ -2213,7 +2213,8 @@ export function createRequestHandler(
           store
             // Rename collisions are a storage constraint across the whole
             // sibling set, including siblings inside an archived tree.
-            .listTasks({ archived: "include" })
+            .listTasks()
+            .concat(store.listTasks({ archived: true }))
             .some(
               (live) =>
                 live.parent_id === task.parent_id &&
@@ -2273,7 +2274,6 @@ export function createRequestHandler(
             // a startup destination.
             .listTasks({
               agentId: taskManager.defaultAgentId,
-              archived: "exclude",
             })
             .at(0);
           if (existing) {
