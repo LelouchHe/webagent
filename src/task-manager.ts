@@ -264,6 +264,8 @@ function handoffReminderText(): string {
     "Report what this turn established, then call exactly one of:",
     "- `task_update(done, ...)` with the completion report.",
     "- `task_update(blocked, ...)` and explain what is missing.",
+    "- `task_update(waiting, ...)` only when another Task will hand off and wake",
+    "  you; waiting on a person or an external event is `blocked`.",
     "",
     "If the user cancelled this turn, say so plainly in that report instead of",
     "resuming the cancelled work. Do not start new work, and do not end this turn",
@@ -387,9 +389,7 @@ export interface ConsumeMessageResult {
  * constructed by the server before (or independently of) the manager.
  */
 export interface ObligationHost {
-  /** Gate face: a restore defers a reminder submission, so it is included. */
-  getGateBusyKind(taskId: string): "agent" | "bash" | null;
-  submitObligationReminder(targetTaskId: string): void;
+  submitObligationReminder(sourceTaskId: string, targetTaskId: string): void;
   emitObligationNotice(notice: ObligationNotice): void;
 }
 
@@ -512,8 +512,8 @@ export function createObligationController(
     clearTimer: (handle: TimerHandle) => {
       clearTimeout(handle);
     },
-    submitReminder: (targetTaskId) => {
-      host.submitObligationReminder(targetTaskId);
+    submitReminder: (sourceTaskId, targetTaskId) => {
+      host.submitObligationReminder(sourceTaskId, targetTaskId);
     },
     emitNotice: (notice) => {
       host.emitObligationNotice(notice);
@@ -640,21 +640,6 @@ export function createTaskManager(
     authority: new ExecutionAuthority(),
     agents: new SingleAgentEnvironment(agentId),
   });
-}
-
-/**
- * The parent-facing text of a runtime outcome notice.
- *
- * A notice body is also the prompt text the source agent reads, so it is a
- * readable `key: value` block rather than JSON. The machine payload is not
- * lost: it remains the `task_outcome_notice` event this body accompanies, which
- * is what audit and tooling read.
- */
-function noticeBody(payload: { reason: string; message: string }): string {
-  return formatFieldBlock([
-    { label: "reason", value: payload.reason },
-    { label: "message", value: payload.message },
-  ]);
 }
 
 /**
@@ -789,6 +774,22 @@ export class TaskManager implements ObligationHost {
     // can silently bypass it.
     this.store.onCollaborationMessageCreated(({ message, delivery }) => {
       this.onCollaborationMessageCreated(message, delivery);
+    });
+    // The Store owns every delivery status write, so one observer covers the
+    // drain, archive, clear, deletion, and failure paths for the sender mark.
+    this.store.onDeliveryStatusChanged((change) => {
+      this.deliveryStatusBroadcast?.({
+        type: "collaboration_delivery",
+        taskId: change.sourceTaskId,
+        messageId: change.messageId,
+        status: change.status,
+        ...(change.deliveredAt === null
+          ? {}
+          : { deliveredAt: new Date(change.deliveredAt).toISOString() }),
+        ...(change.failureReason === null
+          ? {}
+          : { failureReason: change.failureReason }),
+      });
     });
     // Binding facts are applied before any other post-commit side effect: the
     // generation ledger must already name the new generation when the
@@ -1043,6 +1044,7 @@ export class TaskManager implements ObligationHost {
     this.liveTasks.delete(taskId);
     this.resetTaskRuntime(taskId);
     this.store.failOutstandingDeliveriesForTaskClear(taskId);
+    this.obligations.noteTargetUnavailable(taskId);
     this.agents.existing(from.agentId)?.agentCommandSnapshots.delete(taskId);
     this.retireExecution(taskId, from.agentId, from.sessionId);
     if (!task) return;
@@ -2089,6 +2091,7 @@ export class TaskManager implements ObligationHost {
     toAgent: string,
   ): void {
     this.store.failOutstandingDeliveriesForTaskClear(taskId);
+    this.obligations.noteTargetUnavailable(taskId);
     this.store.updateTaskWorkflowStatus(taskId, "idle");
     if (!reason) return;
     this.store.saveEvent(
@@ -3469,6 +3472,9 @@ export class TaskManager implements ObligationHost {
   ): boolean {
     if (!this.isCurrentPrompt(taskId, opts?.promptId)) return false;
     const wasOpen = this.activePrompts.delete(taskId);
+    // No prompt is running after this point. The turn-end check still sees
+    // whether this turn carried an update; only the silence watchdog stops.
+    this.obligations.clearTurnWatcher(taskId);
     if (opts?.sync !== false) {
       this.syncBusy(taskId, undefined, opts?.recoveryOrigin ?? "busy_idle");
     }
@@ -3666,11 +3672,6 @@ export class TaskManager implements ObligationHost {
     const sameWork =
       current?.kind === kind && current.promptId === nextPromptId;
     if (sameWork) return;
-    if (kind === "agent" && nextPromptId) {
-      // The watchdog observes only a running target turn that already has an
-      // active obligation; a turn with no obligation is ignored.
-      this.obligations.beginTurn(taskId, nextPromptId);
-    }
     this.state.patch(taskId, {
       runtime: {
         busy: {
@@ -3794,6 +3795,11 @@ export class TaskManager implements ObligationHost {
     });
   }
 
+  /** A prompt was actually submitted for this turn; start the silence clock. */
+  notePromptSubmitted(taskId: string): void {
+    this.obligations.beginTurn(taskId);
+  }
+
   /** A current target turn ended; the controller runs its turn-end check. */
   onTargetTurnEnded(taskId: string, opts?: { cancelled?: boolean }): void {
     this.obligations.onTargetTurnEnded(taskId, opts?.cancelled === true);
@@ -3885,6 +3891,7 @@ export class TaskManager implements ObligationHost {
    * Record one typed agent update for `targetTaskId`. `waiting` only records
    * the status; `done` and `blocked` settle the target's open account (or fall
    * back to the current parent when none is open) and are delivered there.
+   * The account closes only after the update transaction commits.
    */
   settleAgentUpdate(
     targetTaskId: string,
@@ -3896,10 +3903,16 @@ export class TaskManager implements ObligationHost {
   } {
     this.obligations.noteUpdate(targetTaskId);
     if (status === "waiting") {
-      this.store.recordAgentWorkflowUpdate(targetTaskId, status, body, null);
+      this.store.recordAgentWorkflowUpdate(
+        targetTaskId,
+        status,
+        body,
+        null,
+        "waiting",
+      );
       return { collaborationMessageId: null, accountTargetTaskId: null };
     }
-    const accountSource = this.obligations.settle(targetTaskId);
+    const accountSource = this.obligations.peekSource(targetTaskId);
     const accountTargetTaskId =
       accountSource ?? this.store.getTask(targetTaskId)?.parent_id ?? null;
     const { collaborationMessageId } = this.store.recordAgentWorkflowUpdate(
@@ -3907,15 +3920,17 @@ export class TaskManager implements ObligationHost {
       status,
       body,
       accountTargetTaskId,
+      accountSource === undefined ? "fallback" : "settled",
     );
+    if (accountSource !== undefined) this.obligations.close(targetTaskId);
     return { collaborationMessageId, accountTargetTaskId };
   }
 
   /**
-   * Submit one closing reminder to the target. Best effort: no live execution
-   * or a busy target simply means the reminder is not delivered.
+   * Queue one closing reminder to the target through the normal delivery path.
+   * It is held while the target's turn runs and drained at the boundary.
    */
-  submitObligationReminder(targetTaskId: string): void {
+  submitObligationReminder(sourceTaskId: string, targetTaskId: string): void {
     const text = handoffReminderText();
     this.store.saveEvent(
       targetTaskId,
@@ -3924,18 +3939,30 @@ export class TaskManager implements ObligationHost {
         kind: "handoff_reminder",
         title: "Task handoff required",
         body: text,
+        reason: "closing_reminder",
+        sourceTaskId,
+        targetTaskId,
       },
       { from_ref: "system" },
     );
-    void this.injectRuntimePrompt(targetTaskId, text);
+    this.store.createSystemDelivery({
+      messageId: randomUUID(),
+      deliveryId: randomUUID(),
+      fromTaskId: sourceTaskId,
+      recipientTaskId: targetTaskId,
+      body: text,
+    });
+    void this.drainCollaborationDeliveries(targetTaskId);
   }
 
   /**
-   * Persist and deliver one runtime notice to the account's source. The event
-   * carries source, target, and reason; waking the source is best effort.
+   * Persist one runtime notice to the account's source and queue it through the
+   * normal delivery path. The event carries source, target, and reason; the
+   * delivered body also names the target so two children stay distinguishable.
    */
   emitObligationNotice(notice: ObligationNotice): void {
     if (!this.store.getTask(notice.sourceTaskId)) return;
+    const target = this.store.getTaskIncludingDeleted(notice.targetTaskId);
     const payload = {
       reason: notice.reason,
       sourceTaskId: notice.sourceTaskId,
@@ -3945,60 +3972,24 @@ export class TaskManager implements ObligationHost {
     this.store.saveEvent(notice.sourceTaskId, "task_outcome_notice", payload, {
       from_ref: "system",
     });
-    void this.injectRuntimePrompt(notice.sourceTaskId, noticeBody(payload));
-  }
-
-  /**
-   * Run one runtime-authored turn on `taskId`: reserve the ACP slot, open the
-   * turn, and submit `text`. Failures are logged and dropped; nothing waits on
-   * the outcome.
-   */
-  private async injectRuntimePrompt(
-    taskId: string,
-    text: string,
-  ): Promise<void> {
-    let submissionId: number | null = null;
-    let promptId: string | undefined;
-    let turnOpen = false;
-    try {
-      const task = this.liveTask(taskId);
-      if (!task) return;
-      const bridge = await this.resolveDeliveryTransport(taskId);
-      if (!bridge) return;
-      if (this.rotatingTasks.has(task.id)) return;
-      if (!this.isExecutionAvailable(bridge)) return;
-      submissionId = this.reservePromptSubmission(task.id, {
-        allowBash: true,
-      });
-      if (submissionId === null) return;
-      this.releasePromptSubmission(task.id, submissionId, false);
-      this.beginAgentTurn(task.id, { origin: "delegated", submissionId });
-      turnOpen = true;
-      promptId =
-        this.state.getState(task.id).runtime.busy?.promptId ?? undefined;
-      await this.ensureResumed(bridge, task.id);
-      if (!promptId || !this.isTurnRunning(task.id, promptId)) return;
-      await bridge.prompt(task.id, text, undefined, promptId);
-    } catch (error) {
-      slog.warn("runtime prompt failed", {
-        taskId: taskId.slice(0, 8),
-        error,
-      });
-    } finally {
-      try {
-        if (submissionId !== null) {
-          this.releasePromptSubmission(taskId, submissionId, false);
-        }
-        if (turnOpen) this.endTurn(taskId, { promptId });
-      } catch (error) {
-        // Shutdown or a test closing the store can land here; the turn is
-        // already gone with the runtime.
-        slog.debug("runtime prompt cleanup failed", {
-          taskId: taskId.slice(0, 8),
-          error,
-        });
-      }
-    }
+    const body = formatFieldBlock([
+      { label: "reason", value: notice.reason },
+      {
+        label: "target",
+        value: target?.title
+          ? `${target.title} (${notice.targetTaskId})`
+          : notice.targetTaskId,
+      },
+      { label: "message", value: notice.message },
+    ]);
+    this.store.createSystemDelivery({
+      messageId: randomUUID(),
+      deliveryId: randomUUID(),
+      fromTaskId: notice.targetTaskId,
+      recipientTaskId: notice.sourceTaskId,
+      body,
+    });
+    void this.drainCollaborationDeliveries(notice.sourceTaskId);
   }
 
   /**
@@ -4039,7 +4030,30 @@ export class TaskManager implements ObligationHost {
    * it as one ACP prompt. The caller never trusts a client for this decision:
    * Store rows, runtime busy state, and the bridge binding are authoritative.
    */
+  /**
+   * Claim and submit a target's queued deliveries. Never rejects: callers fire
+   * this without awaiting, and a shutdown or closed store must not surface as
+   * an unhandled rejection.
+   */
   async drainCollaborationDeliveries(
+    taskId: string,
+    providedBridge?: DeliveryBridge | null,
+  ): Promise<boolean> {
+    try {
+      return await this.drainCollaborationDeliveriesOnce(
+        taskId,
+        providedBridge,
+      );
+    } catch (error) {
+      slog.debug("collaboration delivery drain crashed", {
+        taskId: taskId.slice(0, 8),
+        error,
+      });
+      return false;
+    }
+  }
+
+  private async drainCollaborationDeliveriesOnce(
     taskId: string,
     providedBridge?: DeliveryBridge | null,
   ): Promise<boolean> {
@@ -4096,6 +4110,15 @@ export class TaskManager implements ObligationHost {
           taskId: taskId.slice(0, 8),
           error,
         });
+        // Nothing will retry these rows now; fail them and report the edge.
+        const stranded = this.store.claimQueuedDeliveries(taskId);
+        if (stranded.length > 0) {
+          this.store.failCollaborationDeliveries(
+            stranded.map((delivery) => delivery.id),
+            "resume_failed",
+          );
+        }
+        this.obligations.noteTargetUnavailable(taskId);
         return false;
       }
       // The slot is held across the resume; a cancel, reload, or rotation
@@ -4169,23 +4192,6 @@ export class TaskManager implements ObligationHost {
           body: message.body,
         });
       }
-      const notifyDelivery = (
-        status: "delivered" | "failed",
-        failureReason?: string,
-      ) => {
-        const deliveredAt =
-          status === "delivered" ? new Date().toISOString() : undefined;
-        for (const { message } of claimed) {
-          this.deliveryStatusBroadcast?.({
-            type: "collaboration_delivery",
-            taskId: message.source_task_id,
-            messageId: message.id,
-            status,
-            ...(deliveredAt === undefined ? {} : { deliveredAt }),
-            ...(failureReason === undefined ? {} : { failureReason }),
-          });
-        }
-      };
       this.persistCollaborationPromptAudit(
         taskId,
         deliveries.map((delivery) => delivery.message_id),
@@ -4206,6 +4212,7 @@ export class TaskManager implements ObligationHost {
       const lease = this.currentLease(taskId);
       const promptId =
         this.state.getState(taskId).runtime.busy?.promptId ?? undefined;
+      this.notePromptSubmitted(taskId);
       const promptPromise = bridge.prompt(
         taskId,
         entries.join("\n\n"),
@@ -4224,7 +4231,7 @@ export class TaskManager implements ObligationHost {
           error,
         });
         this.store.failCollaborationDeliveries(allDeliveryIds, "prompt_failed");
-        notifyDelivery("failed", "prompt_failed");
+        this.obligations.noteTargetUnavailable(taskId);
         if (!this.isCurrentPrompt(taskId, promptId)) return;
         // Same attribution as an ACP error event: a rejected delivery prompt
         // must not leave the target marked running.
@@ -4236,7 +4243,6 @@ export class TaskManager implements ObligationHost {
         // settle rows that now belong to the replacement execution.
         if (!this.leaseCurrent(lease)) return;
         this.store.markCollaborationDeliveriesDelivered(allDeliveryIds);
-        notifyDelivery("delivered");
       }, dispatchFailed);
       return true;
     } catch (error) {

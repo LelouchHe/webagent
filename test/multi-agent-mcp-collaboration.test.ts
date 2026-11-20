@@ -32,12 +32,25 @@ const B = AGENT_B;
 function childUpdateEvents(
   harness: Harness,
   taskId: string,
-): Array<{ status?: unknown; body?: unknown }> {
+): Array<{
+  status?: unknown;
+  body?: unknown;
+  reason?: unknown;
+  sourceTaskId?: unknown;
+  targetTaskId?: unknown;
+}> {
   return harness.store
     .getEvents(taskId)
     .filter((event) => event.type === "task_update")
     .map(
-      (event) => JSON.parse(event.data) as { status?: unknown; body?: unknown },
+      (event) =>
+        JSON.parse(event.data) as {
+          status?: unknown;
+          body?: unknown;
+          reason?: unknown;
+          sourceTaskId?: unknown;
+          targetTaskId?: unknown;
+        },
     );
 }
 
@@ -110,6 +123,9 @@ describe("cross-agent collaboration", () => {
     assert.equal(updates.length, 1, "the typed update is persisted once");
     assert.equal(updates[0].status, "done");
     assert.equal(updates[0].body, "finished the review");
+    assert.equal(updates[0].reason, "settled");
+    assert.equal(updates[0].sourceTaskId, childId);
+    assert.equal(updates[0].targetTaskId, parentId);
 
     // The parent on A is woken through A's own transport with readable text.
     await waitForPrompts(harness, A, 1);
@@ -161,6 +177,13 @@ describe("cross-agent collaboration", () => {
     await waitForPrompts(harness, A, 1, "the no_update notice never reached A");
     const notice = harness.agents[A].prompts[0].text;
     assert.match(notice, /^reason: no_update$/m);
+    const targetLine = notice
+      .split("\n")
+      .find((line) => line.startsWith("target: "));
+    assert.ok(
+      targetLine?.includes(childId),
+      "the notice names the target that failed to report",
+    );
     assert.equal(notice.includes('{"'), false, "the notice is prose, not JSON");
     assert.equal(
       harness.agents[B].prompts.length,
@@ -212,6 +235,11 @@ describe("cross-agent collaboration", () => {
       harness.agents[B].prompts.length,
       1,
       "a turn that reported waiting needs no closing reminder",
+    );
+    assert.equal(
+      harness.store.getTask(childId)?.workflow_status,
+      "waiting",
+      "a turn end must not overwrite waiting",
     );
   });
 });

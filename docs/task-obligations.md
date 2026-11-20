@@ -3,12 +3,13 @@
 This document describes WebAgent's **directed-dispatch closure**: when an
 agent-authored parent Task dispatches work directly to a child Task, the
 runtime keeps one process-local account for that edge and reports the outcome to
-the source. The account is the child's typed report, `done` or `blocked`; a
-runtime notice only states a fact and never concludes for the accountable party.
-The task-semantic boundary is in
-[Task semantic authority](implementation-invariants.md#task-semantic-authority).
+the source. Only that dispatch opens an account; not every `task_send` does. The
+account is the child's typed report, `done` or `blocked`. Fact notices
+(`no_update`, `no_activity`, `target_removed`) report the runtime's stopping
+point and never conclude for the accountable party. The task-semantic boundary
+is in [Task semantic authority](implementation-invariants.md#task-semantic-authority).
 
-The mechanism is deliberately small. It guarantees one thing: **one `send`
+The mechanism is deliberately small. It guarantees one thing: **one dispatch
 eventually produces at least one typed update**, and the update status says
 whose turn it is. Everything else — how many requests share an account, whether
 the work is really done, whether a notice is worth acting on — is left to the
@@ -65,11 +66,14 @@ Turn boundaries are the only clock:
    `task_update` of any status: the target gets one closing reminder.
 2. Another such turn ends: the source gets a `no_update` notice and the runtime
    stops reminding. The account stays open, so a later update still settles it.
-3. A turn that carried any update resets the count, including `waiting`.
+3. A turn that carried any update resets the whole cycle, including `waiting`:
+   both the miss count and the stop-reminding flag.
 4. A cancelled turn triggers nothing.
 
-The reminder is a runtime-injected turn that asks for exactly one typed update.
-It is best effort: a target that cannot be woken does not get one.
+The reminder is a runtime-injected turn that asks for one typed update: `done`,
+`blocked`, or `waiting` when another Task will hand off and wake the target. It
+is queued through the normal delivery path, so it is held while the target's
+turn runs and drained at its boundary like any other item.
 
 ## Stuck turn
 
@@ -80,17 +84,21 @@ the window; a new turn gets its own notice.
 
 ## Target leaves the edge
 
-While an account is open, if the target disappears — deleted, or archive cut the
-edge from its parent — the source gets one `target_removed` notice (which wakes
-it) and the account is gone. A delivery that is queued to a deleted target is
-failed with `target_deleted` by the delivery layer; the same account removal
-covers it. This is the only notice that replaces the old separate
-delivery-failure notice.
+While an account is open, if the target disappears — deleted, archive cut the
+edge from its parent, or its queued dispatch failed (a failed prompt, `/clear`,
+or an execution owner replacement) — the source gets one `target_removed` notice
+and the account is gone. A delivery that is queued to a deleted target is failed
+with `target_deleted` by the delivery layer; the same account removal covers it.
+This is the only notice that replaces the old separate delivery-failure notice.
 
 ## Persistence and scope
 
 Reminders, notices, and settlements are persisted as Task events carrying
-source, target, and reason so later statistics can read them. The account state
+source, target, and reason so later statistics can read them. A settlement is
+distinguishable from a fallback report to the current parent. Notices and
+reminders are delivered like collaboration messages, in order, at the
+recipient's turn boundary; a notice body names the target Task id (and title
+when available) so two children with the same reason stay distinguishable. The account state
 itself is process-local: a restart forgets open accounts, does not recover
 reminders, and does not replay queued requests. Messages and delivery rows are
 durable and unaffected.

@@ -1192,6 +1192,24 @@ describe("TaskManager", () => {
   });
 
   describe("clearTask", () => {
+    it("starts the silence watchdog at prompt submission, not at the busy projection", () => {
+      store.createTask("watch-task", tmpDir, "auto", "test-agent");
+      sm.beginAgentTurn("watch-task", { origin: "interactive" });
+      assert.equal(
+        (sm as any).obligations.turns.size,
+        0,
+        "a projected busy turn alone starts no clock",
+      );
+      sm.notePromptSubmitted("watch-task");
+      assert.equal((sm as any).obligations.turns.size, 1);
+      sm.endTurn("watch-task");
+      assert.equal(
+        (sm as any).obligations.turns.size,
+        0,
+        "turn end clears the clock",
+      );
+    });
+
     it("clears the obligation watchdog on runtime rotation", async () => {
       store.createTask("parent", tmpDir, "agent", "test-agent", "agent-parent");
       store.createTask(

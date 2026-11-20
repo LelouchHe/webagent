@@ -494,7 +494,9 @@ integer milliseconds; the wire never carries the integer form.
 Schema changes before 1.0 are breaking changes. Server startup never performs
 an implicit compatibility migration for obsolete table schemas: the strict
 schema guard rejects them at boot, and operators must back up and reset their
-data directory before restarting. Four narrow, in-place schema edits are the
+data directory before restarting. This includes a `tasks.workflow_status` CHECK
+that predates `waiting`: the constraint is part of the contract, so such a
+database is refused at startup rather than at the first `task_update(waiting)`. Four narrow, in-place schema edits are the
 explicit exceptions (three column-scoped and one index swap), and all converge
 an existing database on the current schema instead of requiring a reset:
 

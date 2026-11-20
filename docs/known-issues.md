@@ -29,13 +29,6 @@ time. An entry without a "closing condition" is a wish, not an issue.
   registered its resolver, so the agent's promise is never settled.
   *Closing:* buffer restore-time requests like pending session updates, then
   route them once the restore binds.
-- **A closing reminder becomes the active turn before its resume completes.**
-  `injectRuntimePrompt` transfers the reservation to an active turn before
-  `ensureResumed`, so cancelling during that window does not clear the slot, and
-  the pre-prompt re-check (`isTurnRunning`) does not consult cancel state.
-  Present since P5-a; that step kept the ordering and did not widen it.
-  *Closing:* move the transfer after the resume, or make the re-check read the
-  cancel intent.
 - **A late request is attributed to the turn it arrives in — accepted.**
   ACP carries no correlation from a permission request to the prompt that caused
   it, so the host uses the live turn at arrival. An old request answered by a
@@ -301,6 +294,23 @@ time. An entry without a "closing condition" is a wish, not an issue.
   request the report answers from the child's prose and its own follow-ups.
   *Closing:* per-request correlation, deliberately deferred; reopen only with
   evidence that shared accounting causes wrong decisions.
+- **Live delivery marks can be missed across a reconnect.** A
+  `collaboration_delivery` SSE event is not persisted, and reconnect replay
+  carries raw event rows without the egress-derived delivery state. A sender
+  that disconnects between the send and the drain can keep `…` until a full
+  reload, which reads the delivery row. *Closing:* persist or replay delivery
+  status alongside the event, or accept the reload as the only truth.
+- **A soft-deleted recipient with an active share keeps deliveries queued.**
+  Soft deletion preserves the row for the share viewer, so the queued
+  deliveries are not failed with `target_deleted` until the tombstone is
+  reaped. They stay queued and are never claimed while the task is not live.
+  *Closing:* fail queued deliveries when a task is tombstoned, or drop them
+  when the share ends.
+- **The replay deduper can duplicate a system-message row.** A system row
+  loaded through REST history while the same live event is still queued on the
+  SSE path can render twice, because the deduper keys only the live queue and
+  not the replayed row. *Closing:* key both paths on message id, or drain the
+  queue before applying a history page.
 - **A Task that reports `waiting` but nothing will ever wake it is not
   detected.** The runtime does not know whether a child, a person, or an
   external event will actually hand off, so a misused `waiting` can stay silent

@@ -502,8 +502,11 @@ splits that subtree out into a new archived tree. Root is refused. The action
 writes exactly one `system_message` (`kind: "task_archive"`) on the detached
 task, naming the original parent's path and id; children stay attached to it
 and get no rows of their own. A pending account owed to the former parent does
-not block archiving: that edge is dropped, so a later `task_update` is recorded
-but not delivered to the parent the task left. Collaboration not yet handed to the agent between the archived subtree and
+not block archiving: that edge is dropped, the former parent receives one
+`target_removed` notice, and a later `task_update` is recorded but not delivered
+to the parent the task left. Archiving only cancels queued crossings that exist
+at that instant; a human send after the cut is allowed over REST, and a later
+`task_send` from the archived subtree to a former relative is not. Collaboration not yet handed to the agent between the archived subtree and
 anything outside it — a queued message in either direction — is marked
 `failed` with `failure_reason: "archived_edge_cut"`; the message rows are kept,
 and nothing new is delivered across the boundary. Deliveries wholly inside the

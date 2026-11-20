@@ -171,6 +171,36 @@ describe("Store", () => {
       store = new Store(tmpDir);
     });
 
+    it("refuses a database whose workflow_status CHECK predates waiting", () => {
+      const legacyDir = mkdtempSync(join(tmpdir(), "webagent-old-check-"));
+      const db = new Database(join(legacyDir, "webagent.db"));
+      db.exec(`CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        cwd TEXT NOT NULL,
+        title TEXT,
+        workflow_status TEXT NOT NULL DEFAULT 'idle'
+          CHECK (workflow_status IN ('running', 'idle', 'blocked', 'done')),
+        parent_id TEXT,
+        pending_compact_summary TEXT,
+        model TEXT,
+        mode TEXT,
+        reasoning_effort TEXT,
+        source TEXT NOT NULL DEFAULT 'auto',
+        deleted_at INTEGER,
+        created_at INTEGER NOT NULL DEFAULT 0,
+        last_active_at INTEGER NOT NULL DEFAULT 0
+      )`);
+      db.close();
+      try {
+        assert.throws(
+          () => new Store(legacyDir),
+          /Pre-1\.0 data directory detected .*CHECK does not include waiting/,
+        );
+      } finally {
+        rmSync(legacyDir, { recursive: true, force: true });
+      }
+    });
+
     it("refuses a second agent's attach to the shared Root", () => {
       // Task semantics: Root is one task with one current execution. A second
       // agent may not append a binding of its own; the ownership change has to

@@ -1853,6 +1853,7 @@ export function createRequestHandler(
         });
         const promptId =
           tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
+        tasks.notePromptSubmitted(taskId);
         const promptPromise = bridge.prompt(
           taskId,
           agentText,
@@ -2479,6 +2480,7 @@ export function createRequestHandler(
           origin: "interactive",
           submissionId,
         });
+        tasks.notePromptSubmitted(taskId);
         const previousAgentSessionId = agentSessionId;
 
         void (async () => {
@@ -3897,6 +3899,7 @@ export function createRequestHandler(
         tasks.beginAgentTurn(taskId, { origin: "interactive" });
         const betaPromptId =
           tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
+        tasks.notePromptSubmitted(taskId);
         bridge
           .prompt(taskId, text, undefined, betaPromptId)
           .catch(() => {})

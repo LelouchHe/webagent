@@ -88,6 +88,7 @@ describe("Store collaboration records", () => {
       "done",
       "complete",
       "parent",
+      "settled",
     );
     assert.ok(collaborationMessageId);
     // The in-transaction entry point reports the same fact as the normal one.

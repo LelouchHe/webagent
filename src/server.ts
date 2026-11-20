@@ -132,9 +132,11 @@ const agentRegistry = new AgentRegistry({
   createTransport: (agentId) => createAgentTransport(agentId),
 });
 const obligationController = createObligationController({
-  getGateBusyKind: (taskId) => taskManagerRef.current!.getGateBusyKind(taskId),
-  submitObligationReminder: (targetTaskId) => {
-    taskManagerRef.current!.submitObligationReminder(targetTaskId);
+  submitObligationReminder: (sourceTaskId, targetTaskId) => {
+    taskManagerRef.current!.submitObligationReminder(
+      sourceTaskId,
+      targetTaskId,
+    );
   },
   emitObligationNotice: (notice) => {
     taskManagerRef.current!.emitObligationNotice(notice);

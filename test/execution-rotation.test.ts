@@ -171,7 +171,7 @@ describe("implicit owner rotation", () => {
     assert.equal(tasks.liveTasks.has(store.rootTaskId), true);
   });
 
-  it("keeps the obligation and truncates the transport on an implicit rotation", async () => {
+  it("reports target_removed and truncates the transport on an implicit rotation", async () => {
     const store = openStore();
     store.ensureRootTask(dataDir);
     store.createTask(
@@ -209,8 +209,15 @@ describe("implicit owner rotation", () => {
 
     await tasks.resumeTask(bridge, "child");
 
-    // Rotation replaces the execution, not the account.
-    assert.ok(tasks.hasOpenObligation("parent", "child"));
+    // The old dispatch can no longer be delivered, so the edge is reported and
+    // the account closes.
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.ok(
+      store
+        .getEvents("parent")
+        .some((event) => event.type === "task_outcome_notice"),
+      "the source is told the target left the edge",
+    );
     // The old body is never handed to the replacement execution.
     const deadline = Date.now() + 2000;
     while (prompts.length === 0 && Date.now() < deadline) {

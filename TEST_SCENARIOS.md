@@ -75,9 +75,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/multi-agent-mcp-collaboration.test.ts` (same harness: production host, endpoint, REST handler, one transport per agent)
   - a parent on A dispatches to a child on B: the contract reaches B's own transport and never A's; the production manager's own collaboration observer is called exactly once for that message, and exactly one account exists for the edge
-  - the child's typed `task_update(done)` on B settles the account, persists the typed update, and wakes the parent through A's transport with readable prose (`Task status: done` + the account), not JSON; the observer count grows by exactly one
-  - an unanswered dispatch sends one closing reminder to B's transport (never A's); the next unaccounted turn delivers a `no_update` notice to A's transport with a readable block, while the machine payload stays in `task_outcome_notice`
-  - `task_update(waiting)` records the status, keeps the account open, and wakes nobody; the turn that reported it gets no closing reminder
+  - the child's typed `task_update(done)` on B settles the account, persists the typed update with `reason: settled`, source, and target, and wakes the parent through A's transport with readable prose (`Task status: done` + the account), not JSON; the observer count grows by exactly one
+  - an unanswered dispatch sends one closing reminder to B's transport (never A's); the next unaccounted turn delivers a `no_update` notice to A's transport with a readable block naming the target id, while the machine payload stays in `task_outcome_notice`
+  - `task_update(waiting)` records the status, keeps the account open, wakes nobody, and survives the turn end as `workflowStatus = waiting`; the turn that reported it gets no closing reminder
 
 - `test/multi-agent-pending.test.ts` (real ACP child process)
   - the agent connects to `/mcp` from inside `session/new`: the handshake succeeds, `task_list` answers `initializing`, nothing is created, and the same token works after the binding commits
@@ -295,8 +295,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
     both raw labels, spelled out field by field
 
 - `test/collaboration-delivery.test.ts`
-  - the receiver's collaboration row is written at drain, not at creation, and precedes the turn's own events; a message never appears in a turn that did not see it
+  - the receiver's collaboration row is written at drain, not at creation, and precedes the turn's own output event; a message never appears in a turn that did not see it
   - a delivered batch broadcasts `collaboration_delivery` with `delivered`, and a rejected prompt broadcasts `failed`
+  - a failed dispatch prompt, a resume failure, and `/clear` each fail the queued delivery and close the account with one `target_removed` notice; a resume failure leaves no row stranded in `queued`
+  - a closing reminder is queued behind a running turn and appears only at the boundary, through the same delivery path as collaboration messages
 
 - `test/collaboration-route.test.ts`
   - a human send over REST reaches a cross-tree target with exactly source and target projections, and a self target is refused
@@ -604,10 +606,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - execution write lease, fail closed: an event stamped with a replaced generation, an unknown generation, another task's lease, no lease at all, or no lease for a task with no ledger entry writes nothing — no buffer, no stored event, no broadcast, no activity timestamp
 
 - `test/obligation-controller.test.ts`
-  - arm/open/coalesce: one account per edge, a follow-up dispatch keeps it, one settle closes it
-  - turn-end check: update resets the count, one reminder, then `no_update` and no further reminders; a later updated turn restores the reminder budget; a cancelled turn triggers nothing
+  - arm/open/coalesce: one account per target, a follow-up dispatch keeps it, one close removes it
+  - turn-end check: update resets the whole cycle (miss count and stopped flag); a full cycle runs reminder → `no_update`, updates, then a second full cycle runs again; a cancelled turn triggers nothing
   - `waiting` is an update for the check but never settles
-  - silence: 15 minutes without activity reports `no_activity` once per running turn, activity resets the window, and no account means no notice
+  - silence: 15 minutes without activity reports `no_activity` once per running turn; activity before the deadline postpones it, and no account means no notice
   - target removal: deleting or archiving the target reports `target_removed`; losing the source drops the account silently; dispose stops timers
 
 - `test/turn-slot.test.ts`
@@ -640,13 +642,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - revisioned Agent command snapshot lifecycle and cleanup
   - authoritative snapshot waits for command discovery during warm-cache restore
   - rotation busy gate: a restoring task is agent-busy, a `/clear` or Root exit that arrives during the restore window is refused, and a store replacement restores nothing under a lease that moved; the compaction turn keeps its controlled internal rotation path
-  - rotation transport truncation: unfinished delivery rows fail, the open account survives, and the old dispatch body is never re-sent to the replacement execution
+  - rotation transport truncation: unfinished delivery rows fail, the target is reported as `target_removed`, the account closes, and the old dispatch body is never re-sent to the replacement execution
+  - the silence watchdog starts only when a prompt is submitted (not on the busy projection) and is cleared on turn end; it is also cleared on runtime rotation
   - a config replay re-authorizes before every request and discards a response that outlived its execution
 
 - `test/execution-rotation.test.ts`
   - implicit owner rotation: Root is taken over only when its owner left configuration, never from an owner that is still configured, and the takeover leaves a transcript line naming both agents
   - a taken-over empty slot materializes through an ordinary resume
-  - an implicit rotation truncates the transport and keeps the obligation; the queued delivery row ends as failed (`cleared_before_delivery`) while the debt survives
+  - an implicit rotation truncates the transport, fails the queued delivery (`cleared_before_delivery`), reports `target_removed`, and closes the account
   - a rotation refused because the target owns a live turn leaves the record, its state, the queued delivery, and the binding untouched
   - each rotated task gets its own empty execution slot: two ordinary tasks rotated under the same agent both succeed alongside the Root's empty slot, and each materializes later
   - the empty slot is recognised by exact equality with the value generated for that task, never by the reserved prefix: a real session id that merely shares the prefix is restored (not materialized) and stays bound
@@ -668,6 +671,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the stored cwd form: pure string folding — `.` and repeated/trailing separators removed, `..` folded logically like `cd` (`a/link/..` is `a`), HOME expanded first, a relative `~/…` directory never turned into HOME shorthand, and idempotency over every case
 
 - `test/store.test.ts`
+  - a database whose `tasks.workflow_status` CHECK predates `waiting` is refused at startup with the pre-1.0 reset message
   - task creation / deletion / updates
   - a stored cwd has no `.` and no `..`: `a/b/..` and `a/link/..` both become `a` (shell folding) and a reopen leaves them unchanged; a store opened on a database holding legacy variants merges each into its canonical row keeping its newest use, while a legacy row that still carries `..` keeps its bytes so a running task cannot move
   - config persistence, including clearing one column with `null` without touching the others

@@ -31,7 +31,8 @@ function makeHarness() {
       const index = timers.findIndex((timer) => timer.handle === handle);
       if (index !== -1) timers.splice(index, 1);
     },
-    submitReminder: (targetTaskId) => reminders.push(targetTaskId),
+    submitReminder: (_sourceTaskId, targetTaskId) =>
+      reminders.push(targetTaskId),
     emitNotice: (notice) => notices.push(notice),
   });
   return {
@@ -64,21 +65,23 @@ describe("ObligationController", () => {
 
     assert.equal(h.controller.hasOpen("parent", "child"), true);
 
-    // One settle closes the single account.
-    assert.equal(h.controller.settle("child"), "parent");
+    // One close removes the single account.
+    assert.equal(h.controller.peekSource("child"), "parent");
+    h.controller.close("child");
     assert.equal(h.controller.hasOpen("parent", "child"), false);
-    assert.equal(h.controller.settle("child"), undefined);
+    assert.equal(h.controller.peekSource("child"), undefined);
   });
 
   it("settles to the stored source even from a late turn", () => {
     const h = makeHarness();
     h.controller.arm("parent", "child");
-    h.controller.beginTurn("child", "p1");
+    h.controller.beginTurn("child");
     h.controller.onTargetTurnEnded("child");
     assert.deepEqual(h.reminders, ["child"]);
 
     // A late done still settles; no turn identity is required.
-    assert.equal(h.controller.settle("child"), "parent");
+    assert.equal(h.controller.peekSource("child"), "parent");
+    h.controller.close("child");
     assert.equal(h.reminders.length, 1);
   });
 
@@ -86,11 +89,11 @@ describe("ObligationController", () => {
     const h = makeHarness();
     h.controller.arm("parent", "child");
 
-    h.controller.beginTurn("child", "p1");
+    h.controller.beginTurn("child");
     h.controller.onTargetTurnEnded("child");
     assert.deepEqual(h.reminders, ["child"]);
 
-    h.controller.beginTurn("child", "p2");
+    h.controller.beginTurn("child");
     h.controller.onTargetTurnEnded("child");
     assert.deepEqual(h.reminders, ["child"], "only one reminder");
     assert.deepEqual(
@@ -101,7 +104,7 @@ describe("ObligationController", () => {
     assert.equal(h.notices[0].targetTaskId, "child");
 
     // Further unaccounted turns stay quiet.
-    h.controller.beginTurn("child", "p3");
+    h.controller.beginTurn("child");
     h.controller.onTargetTurnEnded("child");
     assert.equal(h.notices.length, 1);
   });
@@ -109,35 +112,50 @@ describe("ObligationController", () => {
   it("counts any update in a turn, including waiting", () => {
     const h = makeHarness();
     h.controller.arm("parent", "child");
-    h.controller.beginTurn("child", "p1");
+    h.controller.beginTurn("child");
     h.controller.noteUpdate("child");
     h.controller.onTargetTurnEnded("child");
     assert.equal(h.reminders.length, 0, "an updated turn needs no reminder");
     assert.equal(h.controller.hasOpen("parent", "child"), true);
   });
 
-  it("resets the missing-update count when a later turn reports", () => {
+  it("resets the whole cycle after an update, including the stopped flag", () => {
     const h = makeHarness();
     h.controller.arm("parent", "child");
 
-    h.controller.beginTurn("child", "p1");
+    // First full cycle: reminder, then no_update.
+    h.controller.beginTurn("child");
+    h.controller.onTargetTurnEnded("child");
+    h.controller.beginTurn("child");
     h.controller.onTargetTurnEnded("child");
     assert.deepEqual(h.reminders, ["child"]);
+    assert.deepEqual(
+      h.notices.map((notice) => notice.reason),
+      ["no_update"],
+    );
 
-    h.controller.beginTurn("child", "p2");
+    // An update resets both the miss count and the stopped flag.
+    h.controller.beginTurn("child");
     h.controller.noteUpdate("child");
     h.controller.onTargetTurnEnded("child");
+    assert.equal(h.controller.hasOpen("parent", "child"), true);
 
-    h.controller.beginTurn("child", "p3");
+    // Second full cycle: reminder, then another no_update.
+    h.controller.beginTurn("child");
     h.controller.onTargetTurnEnded("child");
-    assert.deepEqual(h.reminders, ["child", "child"], "reminder budget resets");
-    assert.equal(h.notices.length, 0);
+    h.controller.beginTurn("child");
+    h.controller.onTargetTurnEnded("child");
+    assert.deepEqual(h.reminders, ["child", "child"]);
+    assert.deepEqual(
+      h.notices.map((notice) => notice.reason),
+      ["no_update", "no_update"],
+    );
   });
 
   it("triggers nothing for a cancelled turn", () => {
     const h = makeHarness();
     h.controller.arm("parent", "child");
-    h.controller.beginTurn("child", "p1");
+    h.controller.beginTurn("child");
     h.controller.onTargetTurnEnded("child", true);
     assert.equal(h.reminders.length, 0);
     assert.equal(h.notices.length, 0);
@@ -147,7 +165,7 @@ describe("ObligationController", () => {
   it("reports silence once per running turn and resets on activity", () => {
     const h = makeHarness();
     h.controller.arm("parent", "child");
-    h.controller.beginTurn("child", "p1");
+    h.controller.beginTurn("child");
 
     h.advance(SILENCE_THRESHOLD_MS - 1);
     assert.equal(h.notices.length, 0);
@@ -162,9 +180,26 @@ describe("ObligationController", () => {
     assert.ok(h.controller.hasOpen("parent", "child"), "facts only");
   });
 
+  it("postpones the silence deadline when activity arrives before it fires", () => {
+    const h = makeHarness();
+    h.controller.arm("parent", "child");
+    h.controller.beginTurn("child");
+
+    h.advance(SILENCE_THRESHOLD_MS - 1);
+    h.controller.noteAgentActivity("child");
+    h.advance(2);
+    assert.equal(h.notices.length, 0, "activity resets the window");
+
+    h.advance(SILENCE_THRESHOLD_MS - 1);
+    assert.deepEqual(
+      h.notices.map((notice) => notice.reason),
+      ["no_activity"],
+    );
+  });
+
   it("does not report silence without an open account", () => {
     const h = makeHarness();
-    h.controller.beginTurn("child", "p1");
+    h.controller.beginTurn("child");
     h.advance(SILENCE_THRESHOLD_MS + 1);
     assert.equal(h.notices.length, 0);
   });
@@ -207,7 +242,7 @@ describe("ObligationController", () => {
   it("aborts a turn without reminding or noticing", () => {
     const h = makeHarness();
     h.controller.arm("parent", "child");
-    h.controller.beginTurn("child", "p1");
+    h.controller.beginTurn("child");
     h.controller.abortTurn("child");
     h.advance(SILENCE_THRESHOLD_MS + 1);
     assert.equal(h.reminders.length, 0);
@@ -218,7 +253,7 @@ describe("ObligationController", () => {
   it("stops timers after dispose", () => {
     const h = makeHarness();
     h.controller.arm("parent", "child");
-    h.controller.beginTurn("child", "p1");
+    h.controller.beginTurn("child");
     h.controller.dispose();
     h.advance(SILENCE_THRESHOLD_MS + 1);
     assert.equal(h.notices.length, 0);

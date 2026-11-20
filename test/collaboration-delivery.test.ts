@@ -152,11 +152,22 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.ok(deliveredRow, "the row appears when the batch is handed over");
     assert.equal(deliveredRow.role, "target");
 
-    // The row precedes everything the turn itself will write.
-    const rowSeq = store
-      .getEvents("target")
-      .find((event) => JSON.parse(event.data).messageId === "m-drain")!.seq;
-    assert.ok(rowSeq > 0);
+    // The row precedes everything the turn itself writes: an output event
+    // saved after the hand-over must have a higher seq.
+    store.saveEvent(
+      "target",
+      "assistant_message",
+      { text: "turn output" },
+      { from_ref: "agent" },
+    );
+    const rows = store.getEvents("target");
+    const rowSeq = rows.find(
+      (event) => JSON.parse(event.data).messageId === "m-drain",
+    )!.seq;
+    const outputSeq = rows.find(
+      (event) => event.type === "assistant_message",
+    )!.seq;
+    assert.ok(rowSeq < outputSeq, "the delivery row leads the turn output");
     releasePrompt();
   });
 
@@ -343,5 +354,149 @@ describe("TaskManager collaboration delivery drain", () => {
       false,
     );
     assert.equal(store.getCollaborationDelivery("d1")?.status, "queued");
+  });
+
+  function seedDispatchFamily(): void {
+    store.createTask(
+      "parent",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-parent",
+      store.rootTaskId,
+    );
+    store.createTask(
+      "child",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-child",
+      "parent",
+    );
+    store.createCollaborationMessage({
+      id: "dispatch-message",
+      deliveryId: "dispatch-delivery",
+      sourceTaskId: "parent",
+      directTargetTaskId: "child",
+      sourceActor: "agent",
+      body: "do the work",
+      createdAt: 1,
+    });
+  }
+
+  function sourceNotice(taskId: string): Record<string, unknown> | undefined {
+    const row = store
+      .getEvents(taskId)
+      .filter((event) => event.type === "task_outcome_notice")
+      .at(-1);
+    return row ? (JSON.parse(row.data) as Record<string, unknown>) : undefined;
+  }
+
+  it("reports target_removed when a dispatch prompt fails", async () => {
+    seedDispatchFamily();
+    assert.ok(tasks.hasOpenObligation("parent", "child"));
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt() {
+        throw new Error("rejected");
+      },
+    };
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", bridge),
+      true,
+    );
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.status,
+      "failed",
+    );
+    const notice = sourceNotice("parent");
+    assert.equal(notice?.reason, "target_removed");
+    assert.equal(notice.targetTaskId, "child");
+  });
+
+  it("reports target_removed when a drain cannot resume the target", async () => {
+    seedDispatchFamily();
+    const bridge = {
+      ...mockBridgeStubs(),
+      async loadSession() {
+        throw new Error("resume failed");
+      },
+    };
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", bridge),
+      false,
+    );
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.status,
+      "failed",
+      "a failed resume must not strand the row in queued",
+    );
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.failure_reason,
+      "resume_failed",
+    );
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(sourceNotice("parent")?.reason, "target_removed");
+  });
+
+  it("reports target_removed when /clear drops the queued dispatch", async () => {
+    seedDispatchFamily();
+    await tasks.clearTask(mockBridgeStubs(), "child");
+
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.status,
+      "failed",
+    );
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.failure_reason,
+      "cleared_before_delivery",
+    );
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(sourceNotice("parent")?.reason, "target_removed");
+  });
+
+  it("holds a closing reminder behind a running turn and drains it at the boundary", async () => {
+    store.createTask(
+      "parent",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-parent",
+      store.rootTaskId,
+    );
+    store.createTask(
+      "child",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-child",
+      "parent",
+    );
+    tasks.liveTasks.add("child");
+    const prompts: string[] = [];
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt(_taskId: string, text: string) {
+        prompts.push(text);
+      },
+    };
+    tasks.attachExecutionBridge(bridge);
+    tasks.beginAgentTurn("child", { origin: "interactive" });
+
+    tasks.submitObligationReminder("parent", "child");
+    assert.equal(store.countQueuedDeliveries("child"), 1);
+    assert.deepEqual(prompts, [], "a busy target is not interrupted");
+
+    tasks.endTurn("child");
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", bridge),
+      true,
+    );
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0], /runtime-injected closing turn/i);
+    assert.equal(store.countQueuedDeliveries("child"), 0);
   });
 });

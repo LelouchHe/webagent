@@ -2,21 +2,22 @@
  * Directed dispatch closure.
  *
  * An agent-authored direct parent→child dispatch opens exactly one in-process
- * account per `(sourceTaskId, targetTaskId)` edge. The account stays open until
- * the target reports `done` or `blocked` to the source, or the target leaves
- * the edge. There is no correlation token and no persisted state: a restart
- * simply forgets open accounts.
+ * account per target (a target has one parent, so one inbound account). The
+ * account stays open until the target reports `done` or `blocked`, or the
+ * target leaves the edge. There is no correlation token and no persisted state:
+ * a restart simply forgets open accounts.
  *
  * Turn boundaries are the only clock. Every target turn that ends while the
  * account is open is checked once:
  *
- * - an update of any status in that turn resets the count;
+ * - an update of any status in that turn resets the whole cycle;
  * - the first turn with no update gets one closing reminder;
  * - the next such turn reports `no_update` to the source and stops reminding.
  *
  * A separate watchdog reports a running turn that has had no agent activity for
- * 15 minutes. It only states the fact: no state change, no reminder, no
- * cancel. A cancelled turn triggers nothing.
+ * 15 minutes. It starts when the prompt is submitted, not when the UI shows a
+ * busy turn, and it is cleared on every turn end. A cancelled turn triggers
+ * nothing.
  */
 
 /** A running target turn with an open account and no activity for this long. */
@@ -40,11 +41,11 @@ export interface ObligationControllerOptions {
   setTimer: (fn: () => void, ms: number) => TimerHandle;
   clearTimer: (handle: TimerHandle) => void;
   /**
-   * Submit one closing reminder to the target. Best effort: a task that cannot
-   * be woken now simply does not get one.
+   * Queue one closing reminder from the account's source to its target. The
+   * delivery drain owns when the target actually receives it.
    */
-  submitReminder: (targetTaskId: string) => void;
-  /** Persist and deliver a runtime notice to the account's source. */
+  submitReminder: (sourceTaskId: string, targetTaskId: string) => void;
+  /** Queue a runtime notice to the account's source and close the account. */
   emitNotice: (notice: ObligationNotice) => void;
   log?: (event: string, fields: Record<string, unknown>) => void;
 }
@@ -54,30 +55,25 @@ interface Account {
   targetTaskId: string;
   /** Consecutive target turns that ended with no `task_update`. */
   noUpdateTurns: number;
-  /** `no_update` was already reported; stop reminding. */
+  /** `no_update` was already reported; stop reminding until an update. */
   stopped: boolean;
 }
 
 interface RunningTurn {
-  promptId: string;
   lastActivityAt: number;
   /** The silence notice was already emitted for this turn. */
   noticed: boolean;
-  /** A `task_update` of any status arrived during this turn. */
-  updated: boolean;
-}
-
-function edgeKey(sourceTaskId: string, targetTaskId: string): string {
-  return `${sourceTaskId}\u0000${targetTaskId}`;
 }
 
 /**
- * Process-local directed-account state. All transitions are synchronous; the
- * only asynchronous effect is handing a reminder to the task runtime.
+ * Process-local directed-account state, keyed by target. The only asynchronous
+ * effect is queueing a reminder or notice for the delivery drain.
  */
 export class ObligationController {
   private readonly accounts = new Map<string, Account>();
   private readonly turns = new Map<string, RunningTurn>();
+  /** Targets whose current turn carried a `task_update` of any status. */
+  private readonly updated = new Set<string>();
   private timer: TimerHandle | undefined;
   private disposed = false;
   private readonly opts: ObligationControllerOptions;
@@ -94,12 +90,17 @@ export class ObligationController {
     this.opts.log?.(event, fields);
   }
 
-  /** Open the edge's account, or keep the open one. */
+  /** Open the target's account, or keep the open one. */
   arm(sourceTaskId: string, targetTaskId: string): void {
     if (this.disposed) return;
-    const key = edgeKey(sourceTaskId, targetTaskId);
-    if (this.accounts.has(key)) return;
-    this.accounts.set(key, {
+    const existing = this.accounts.get(targetTaskId);
+    if (existing) {
+      if (existing.sourceTaskId === sourceTaskId) return;
+      // The target was reparented without the archive edge drop; the old edge
+      // is gone and this one replaces it.
+      this.accounts.delete(targetTaskId);
+    }
+    this.accounts.set(targetTaskId, {
       sourceTaskId,
       targetTaskId,
       noUpdateTurns: 0,
@@ -112,36 +113,52 @@ export class ObligationController {
     this.schedule();
   }
 
-  /** Any typed update resets the current turn's missing-update count. */
+  /** Any typed update resets the current turn's missing-update cycle. */
   noteUpdate(targetTaskId: string): void {
-    const turn = this.turns.get(targetTaskId);
-    if (turn) turn.updated = true;
+    this.updated.add(targetTaskId);
   }
 
-  /**
-   * Settle the target's open account and return its source. `done` and
-   * `blocked` use this; `waiting` deliberately does not.
-   */
-  settle(targetTaskId: string): string | undefined {
-    const account = this.findForTarget(targetTaskId);
-    if (!account) return undefined;
-    this.accounts.delete(edgeKey(account.sourceTaskId, targetTaskId));
+  /** Open account source for a target, without closing it. */
+  peekSource(targetTaskId: string): string | undefined {
+    return this.accounts.get(targetTaskId)?.sourceTaskId;
+  }
+
+  /** Close an account after the settlement transaction committed. */
+  close(targetTaskId: string): void {
+    const account = this.accounts.get(targetTaskId);
+    if (!account) return;
+    this.accounts.delete(targetTaskId);
     this.log("account settled", {
       sourceTaskId: account.sourceTaskId.slice(0, 8),
       targetTaskId: targetTaskId.slice(0, 8),
     });
     this.schedule();
-    return account.sourceTaskId;
   }
 
-  beginTurn(targetTaskId: string, promptId: string): void {
+  /** The target's delivery failed or it left: report and close. */
+  noteTargetUnavailable(targetTaskId: string): void {
+    const account = this.accounts.get(targetTaskId);
+    if (!account) return;
+    this.accounts.delete(targetTaskId);
+    this.updated.delete(targetTaskId);
+    this.turns.delete(targetTaskId);
+    this.emit(account, "target_removed");
+    this.schedule();
+  }
+
+  /** A prompt was actually submitted for this turn. */
+  beginTurn(targetTaskId: string): void {
     if (this.disposed) return;
     this.turns.set(targetTaskId, {
-      promptId,
       lastActivityAt: this.now(),
       noticed: false,
-      updated: false,
     });
+    this.schedule();
+  }
+
+  /** The turn stopped running without a turn-end check (release/reset). */
+  clearTurnWatcher(targetTaskId: string): void {
+    this.turns.delete(targetTaskId);
     this.schedule();
   }
 
@@ -155,12 +172,13 @@ export class ObligationController {
   /** A turn ended; check it against the open account. */
   onTargetTurnEnded(targetTaskId: string, cancelled = false): void {
     if (this.disposed) return;
-    const turn = this.turns.get(targetTaskId);
+    const hadUpdate = this.updated.delete(targetTaskId);
     this.turns.delete(targetTaskId);
-    const account = this.findForTarget(targetTaskId);
+    const account = this.accounts.get(targetTaskId);
     if (account && !cancelled) {
-      if (turn?.updated === true) {
+      if (hadUpdate) {
         account.noUpdateTurns = 0;
+        account.stopped = false;
       } else {
         account.noUpdateTurns += 1;
         if (account.noUpdateTurns === 1) {
@@ -168,7 +186,7 @@ export class ObligationController {
             sourceTaskId: account.sourceTaskId.slice(0, 8),
             targetTaskId: targetTaskId.slice(0, 8),
           });
-          this.opts.submitReminder(targetTaskId);
+          this.opts.submitReminder(account.sourceTaskId, targetTaskId);
         } else if (!account.stopped) {
           account.stopped = true;
           this.emit(account, "no_update");
@@ -178,52 +196,43 @@ export class ObligationController {
     this.schedule();
   }
 
-  /**
-   * A runtime reset ended the target's turn without a turn-end fact. It owes
-   * nothing: drop the turn so the watchdog cannot report it.
-   */
+  /** A runtime reset ended the target's turn without a turn-end check. */
   abortTurn(targetTaskId: string): void {
     this.turns.delete(targetTaskId);
+    this.updated.delete(targetTaskId);
     this.schedule();
   }
 
-  /**
-   * The task is gone. An open account whose target disappeared reports
-   * `target_removed` to its source; an account whose source disappeared just
-   * goes away.
-   */
+  /** The task is gone. A target's account reports; a source's just goes away. */
   purgeTask(taskId: string): void {
-    for (const account of [...this.accounts.values()]) {
-      if (account.targetTaskId === taskId) {
-        this.accounts.delete(
-          edgeKey(account.sourceTaskId, account.targetTaskId),
-        );
-        this.emit(account, "target_removed");
-      } else if (account.sourceTaskId === taskId) {
-        this.accounts.delete(
-          edgeKey(account.sourceTaskId, account.targetTaskId),
-        );
-      }
+    const account = this.accounts.get(taskId);
+    if (account) {
+      this.accounts.delete(taskId);
+      this.emit(account, "target_removed");
+    }
+    for (const [targetTaskId, inbound] of [...this.accounts]) {
+      if (inbound.sourceTaskId !== taskId) continue;
+      this.accounts.delete(targetTaskId);
     }
     this.turns.delete(taskId);
+    this.updated.delete(taskId);
     this.schedule();
   }
 
-  /**
-   * Archiving cut this edge. The target left the source; report it like a
-   * deletion. Other edges are untouched.
-   */
+  /** Archiving cut this edge; the target left the source. */
   dropEdge(sourceTaskId: string, targetTaskId: string): void {
-    const key = edgeKey(sourceTaskId, targetTaskId);
-    const account = this.accounts.get(key);
-    this.accounts.delete(key);
+    const account = this.accounts.get(targetTaskId);
+    if (account?.sourceTaskId === sourceTaskId) {
+      this.accounts.delete(targetTaskId);
+      this.emit(account, "target_removed");
+    }
     this.turns.delete(targetTaskId);
-    if (account) this.emit(account, "target_removed");
+    this.updated.delete(targetTaskId);
     this.schedule();
   }
 
   hasOpen(sourceTaskId: string, targetTaskId: string): boolean {
-    return this.accounts.has(edgeKey(sourceTaskId, targetTaskId));
+    return this.accounts.get(targetTaskId)?.sourceTaskId === sourceTaskId;
   }
 
   dispose(): void {
@@ -245,7 +254,7 @@ export class ObligationController {
     let earliest: number | undefined;
     for (const [targetTaskId, turn] of this.turns) {
       if (turn.noticed) continue;
-      if (!this.findForTarget(targetTaskId)) continue;
+      if (!this.accounts.has(targetTaskId)) continue;
       const deadline = turn.lastActivityAt + SILENCE_THRESHOLD_MS;
       if (earliest === undefined || deadline < earliest) earliest = deadline;
     }
@@ -265,7 +274,7 @@ export class ObligationController {
     for (const [targetTaskId, turn] of this.turns) {
       if (turn.noticed) continue;
       if (turn.lastActivityAt + SILENCE_THRESHOLD_MS > now) continue;
-      const account = this.findForTarget(targetTaskId);
+      const account = this.accounts.get(targetTaskId);
       if (!account) continue;
       turn.noticed = true;
       this.emit(account, "no_activity");
@@ -280,13 +289,6 @@ export class ObligationController {
       targetTaskId: account.targetTaskId,
       message: noticeMessage(reason),
     });
-  }
-
-  private findForTarget(targetTaskId: string): Account | undefined {
-    for (const account of this.accounts.values()) {
-      if (account.targetTaskId === targetTaskId) return account;
-    }
-    return undefined;
   }
 }
 

@@ -97,18 +97,18 @@ the child's assigned work is complete.
 
 ## Exchange a peer review
 
-When two sibling Tasks need to compare findings, send a bounded question to the
-other Task:
+MCP reaches self, parent, and direct children only; a sibling is not addressable
+from an agent. When two sibling Tasks need to compare findings, the parent
+relays:
 
-```text
-task_send(
-  target: <sibling-task-id>,
-  body: "I found a possible null-handling gap in the request path. Please check this specific path and reply with evidence or a counterexample."
-)
-```
+1. Each child sends its bounded finding to the parent with `task_send`.
+2. The parent sends the other child one focused question with `task_send`.
+3. The child answers the parent, which decides whether another round is useful.
 
-Keep the initial investigation independent when independent perspectives
-matter. Exchange findings after each Task has a concrete claim to examine.
+A person can still send a message across trees through the UI or REST, but the
+agent-side primitive is parent-mediated. Keep the initial investigation
+independent when independent perspectives matter; exchange findings after each
+Task has a concrete claim to examine.
 
 ## Resume a blocked Task
 

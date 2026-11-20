@@ -241,6 +241,27 @@ export interface CollaborationDeliveryRow {
   failure_reason: string | null;
 }
 
+export interface CollaborationDeliveryStatusChange {
+  deliveryId: string;
+  messageId: string;
+  sourceTaskId: string;
+  recipientTaskId: string;
+  status: CollaborationDeliveryStatus;
+  deliveredAt: number | null;
+  failureReason: string | null;
+}
+
+export interface SystemDeliveryInput {
+  messageId: string;
+  deliveryId: string;
+  /** Author side; may be a deleted task (for a removal notice). */
+  fromTaskId: string;
+  /** Live recipient whose turn will read the body. */
+  recipientTaskId: string;
+  body: string;
+  createdAt?: number;
+}
+
 export interface CollaborationMessageInput {
   id: string;
   deliveryId: string;
@@ -391,6 +412,9 @@ export class Store {
   /** This database's Root; it changes only when an exit replaces the Root. */
   private rootId = "";
   private readonly collaborationEmitter: CollaborationMessageEmitter;
+  private readonly deliveryStatusObservers: Array<
+    (change: CollaborationDeliveryStatusChange) => void
+  > = [];
   /**
    * Binding facts belong to the outermost successful commit, not to any one
    * recursive Store method. Every binding write registers its before/after
@@ -624,7 +648,7 @@ export class Store {
     // dropLegacyColumns). Tolerated here, then removed, so an upgraded
     // database converges on the exact schema below without a data reset.
     const legacyColumns: Record<string, string[]> = { tasks: ["brief"] };
-    const incompatible = legacy
+    let incompatible = legacy
       ? "legacy sessions table"
       : Object.entries(requiredColumns).find(([table, columns]) => {
           const exists = this.db
@@ -655,6 +679,20 @@ export class Store {
                 .get() !== undefined)
           );
         })?.[0];
+    if (!incompatible) {
+      // The CHECK constraint is part of the contract, not a column list: an
+      // older database must be reset before it can store `waiting`.
+      const tasksSql = (
+        this.db
+          .prepare(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'",
+          )
+          .get() as { sql?: string } | undefined
+      )?.sql;
+      if (tasksSql && !tasksSql.includes("'waiting'")) {
+        incompatible = "tasks.workflow_status CHECK does not include waiting";
+      }
+    }
     if (incompatible) {
       throw new Error(
         `Pre-1.0 data directory detected (${incompatible}). Back up and delete the data directory before restarting: ${this.dataDir}`,
@@ -1650,7 +1688,9 @@ export class Store {
         },
         { from_ref: "system" },
       );
-      this.markQueuedDeliveriesAcrossSubtreeBoundary(id);
+      const failedDeliveryIds =
+        this.markQueuedDeliveriesAcrossSubtreeBoundary(id);
+      this.notifyDeliveryStatus(failedDeliveryIds);
       return {
         status: "archived" as const,
         taskId: id,
@@ -1824,27 +1864,40 @@ export class Store {
    * reached ACP. Rows already handed over (or failed and awaiting a retry) are
    * left untouched; a failed row keeps its real reason.
    */
-  private markQueuedDeliveriesAcrossSubtreeBoundary(seedTaskId: string): void {
+  private markQueuedDeliveriesAcrossSubtreeBoundary(
+    seedTaskId: string,
+  ): string[] {
     const failedAt = Date.now();
-    this.db
-      .prepare(
-        `WITH RECURSIVE subtree(id) AS (
-           SELECT id FROM tasks WHERE id = ?
-           UNION
-           SELECT t.id FROM tasks t JOIN subtree s ON t.parent_id = s.id
-         )
-         UPDATE deliveries
-         SET status = 'failed', failed_at = ?, failure_reason = 'archived_edge_cut'
-         WHERE status = 'queued'
-           AND message_id IN (
-             SELECT m.id FROM messages m
-             WHERE (
-                 (m.source_task_id IN (SELECT id FROM subtree))
-                 <> (m.direct_target_task_id IN (SELECT id FROM subtree))
-               )
-           )`,
-      )
-      .run(seedTaskId, failedAt);
+    const ids = (
+      this.db
+        .prepare(
+          `WITH RECURSIVE subtree(id) AS (
+             SELECT id FROM tasks WHERE id = ?
+             UNION
+             SELECT t.id FROM tasks t JOIN subtree s ON t.parent_id = s.id
+           )
+           SELECT d.id FROM deliveries d
+           WHERE d.status = 'queued'
+             AND d.message_id IN (
+               SELECT m.id FROM messages m
+               WHERE (
+                   (m.source_task_id IN (SELECT id FROM subtree))
+                   <> (m.direct_target_task_id IN (SELECT id FROM subtree))
+                 )
+             )`,
+        )
+        .all(seedTaskId) as Array<{ id: string }>
+    ).map((row) => row.id);
+    if (ids.length === 0) return ids;
+    const fail = this.db.prepare(
+      `UPDATE deliveries
+       SET status = 'failed', failed_at = ?, failure_reason = 'archived_edge_cut'
+       WHERE id = ? AND status = 'queued'`,
+    );
+    this.db.transaction(() => {
+      for (const id of ids) fail.run(failedAt, id);
+    })();
+    return ids;
   }
 
   /**
@@ -2541,6 +2594,57 @@ export class Store {
   }
 
   /**
+   * Register the one observer for delivery status changes. Every in-process
+   * status write goes through the delivery methods below, so a sender's live
+   * mark cannot silently miss archive, clear, deletion, or prompt failure.
+   */
+  onDeliveryStatusChanged(
+    observer: (change: CollaborationDeliveryStatusChange) => void,
+  ): void {
+    this.deliveryStatusObservers.push(observer);
+  }
+
+  private notifyDeliveryStatus(ids: readonly string[]): void {
+    if (ids.length === 0 || this.deliveryStatusObservers.length === 0) return;
+    const changes: CollaborationDeliveryStatusChange[] = [];
+    for (let index = 0; index < ids.length; index += 400) {
+      const chunk = ids.slice(index, index + 400);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.db
+        .prepare(
+          `SELECT d.id AS delivery_id, d.message_id, d.recipient_task_id,
+                  d.status, d.delivered_at, d.failure_reason,
+                  m.source_task_id
+           FROM deliveries d JOIN messages m ON m.id = d.message_id
+           WHERE d.id IN (${placeholders})`,
+        )
+        .all(...chunk) as Array<{
+        delivery_id: string;
+        message_id: string;
+        recipient_task_id: string;
+        status: CollaborationDeliveryStatus;
+        delivered_at: number | null;
+        failure_reason: string | null;
+        source_task_id: string;
+      }>;
+      for (const row of rows) {
+        changes.push({
+          deliveryId: row.delivery_id,
+          messageId: row.message_id,
+          sourceTaskId: row.source_task_id,
+          recipientTaskId: row.recipient_task_id,
+          status: row.status,
+          deliveredAt: row.delivered_at,
+          failureReason: row.failure_reason,
+        });
+      }
+    }
+    for (const change of changes) {
+      for (const observer of this.deliveryStatusObservers) observer(change);
+    }
+  }
+
+  /**
    * Persist one cross-task fact, its task-timeline projections, and the sole
    * target Delivery in one SQLite transaction. Delivery mechanics live above
    * this Store API; this method never resolves paths or applies reachability
@@ -2553,6 +2657,62 @@ export class Store {
     delivery: CollaborationDeliveryRow;
   } {
     return this.collaborationEmitter.create(input);
+  }
+
+  /**
+   * Queue one runtime item for a recipient's next drain. The author side is a
+   * task id (possibly deleted) or the recipient's requester, so a removal
+   * notice remains representable; only the recipient is projected and stored.
+   * No event is written: the receiver's row appears when the drain hands it
+   * over, exactly like a collaboration message.
+   */
+  createSystemDelivery(input: SystemDeliveryInput): {
+    message: CollaborationMessageRow;
+    delivery: CollaborationDeliveryRow;
+  } {
+    if (input.fromTaskId === input.recipientTaskId) {
+      throw new Error("System delivery source and target must differ");
+    }
+    this.requireLiveTask(input.recipientTaskId);
+    const createdAt = input.createdAt ?? Date.now();
+    return this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO messages
+           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+           VALUES (?, ?, ?, 'system', ?, ?)`,
+        )
+        .run(
+          input.messageId,
+          input.fromTaskId,
+          input.recipientTaskId,
+          input.body,
+          createdAt,
+        );
+      this.db
+        .prepare(
+          `INSERT INTO message_projections (message_id, task_id, role, created_at)
+           VALUES (?, ?, 'target', ?)`,
+        )
+        .run(input.messageId, input.recipientTaskId, createdAt);
+      this.db
+        .prepare(
+          `INSERT INTO deliveries
+           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
+           VALUES (?, ?, ?, ?, 'queued', ?)`,
+        )
+        .run(
+          input.deliveryId,
+          input.messageId,
+          input.recipientTaskId,
+          `${input.messageId}:${input.recipientTaskId}`,
+          createdAt,
+        );
+      return {
+        message: this.getCollaborationMessage(input.messageId)!,
+        delivery: this.getCollaborationDelivery(input.deliveryId)!,
+      };
+    })();
   }
 
   private createCollaborationMessageInTransaction(
@@ -2645,6 +2805,7 @@ export class Store {
     status: Extract<WorkflowStatus, "waiting" | "blocked" | "done">,
     body: string,
     accountTargetTaskId: string | null,
+    reason: "settled" | "fallback" | "waiting",
   ): {
     collaborationMessageId: string | null;
   } {
@@ -2656,7 +2817,13 @@ export class Store {
       this.saveEvent(
         taskId,
         "task_update",
-        { status, body },
+        {
+          status,
+          body,
+          reason,
+          sourceTaskId: taskId,
+          targetTaskId: accountTargetTaskId,
+        },
         { from_ref: "agent" },
       );
       if (!accountTargetTaskId || accountTargetTaskId === task.id) {
@@ -2709,12 +2876,18 @@ export class Store {
   getCollaborationDeliveriesForMessages(
     messageIds: readonly string[],
   ): Map<string, CollaborationDeliveryRow> {
-    if (messageIds.length === 0) return new Map();
-    const placeholders = messageIds.map(() => "?").join(", ");
-    const rows = this.db
-      .prepare(`SELECT * FROM deliveries WHERE message_id IN (${placeholders})`)
-      .all(...messageIds) as CollaborationDeliveryRow[];
-    return new Map(rows.map((row) => [row.message_id, row]));
+    const result = new Map<string, CollaborationDeliveryRow>();
+    for (let index = 0; index < messageIds.length; index += 400) {
+      const chunk = messageIds.slice(index, index + 400);
+      const placeholders = chunk.map(() => "?").join(", ");
+      const rows = this.db
+        .prepare(
+          `SELECT * FROM deliveries WHERE message_id IN (${placeholders})`,
+        )
+        .all(...chunk) as CollaborationDeliveryRow[];
+      for (const row of rows) result.set(row.message_id, row);
+    }
+    return result;
   }
 
   /** Read-only queued count; lets a caller skip busy-turn churn entirely. */
@@ -2766,6 +2939,7 @@ export class Store {
       for (const id of ids) mark.run(deliveredAt, id);
     });
     tx();
+    this.notifyDeliveryStatus(ids);
   }
 
   failCollaborationDeliveries(
@@ -2782,10 +2956,19 @@ export class Store {
       for (const id of ids) fail.run(failedAt, failureReason, id);
     });
     tx();
+    this.notifyDeliveryStatus(ids);
   }
 
   failOutstandingDeliveriesForTaskClear(taskId: string): void {
     const failedAt = Date.now();
+    const ids = (
+      this.db
+        .prepare(
+          `SELECT id FROM deliveries
+           WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
+        )
+        .all(taskId) as Array<{ id: string }>
+    ).map((row) => row.id);
     this.db
       .prepare(
         `UPDATE deliveries
@@ -2797,10 +2980,19 @@ export class Store {
          WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
       )
       .run(failedAt, taskId);
+    this.notifyDeliveryStatus(ids);
   }
 
   /** Preserve the fact while recording that a deleted target cannot receive it. */
   private failOutstandingDeliveriesForDeletedTask(taskId: string): void {
+    const ids = (
+      this.db
+        .prepare(
+          `SELECT id FROM deliveries
+           WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
+        )
+        .all(taskId) as Array<{ id: string }>
+    ).map((row) => row.id);
     this.db
       .prepare(
         `UPDATE deliveries
@@ -2808,6 +3000,7 @@ export class Store {
          WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
       )
       .run(Date.now(), taskId);
+    this.notifyDeliveryStatus(ids);
   }
 
   // --- client-server-split M2: client_ops idempotency ---
