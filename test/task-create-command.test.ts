@@ -12,8 +12,6 @@ describe("+ title-first create", () => {
   let dom: any;
   let commands: any;
   let taskCommand: any;
-  let installTaskAgentId: (id: string, agent: string) => void;
-  let installAgentDirectory: (agents: { id: string }[], dflt: string) => void;
   let fetchCalls: Array<{ url: string; init?: any }>;
   let existingDirs: Set<string>;
   let listEntries: Array<{
@@ -33,9 +31,6 @@ describe("+ title-first create", () => {
     await import("../public/js/render.ts");
     commands = await import("../public/js/commands.ts");
     taskCommand = await import("../public/js/task-command.ts");
-    installTaskAgentId = stateMod.installTaskAgentId;
-    installAgentDirectory = (await import("../public/js/agent-directory.ts"))
-      .installAgentDirectory;
   });
 
   after(() => {
@@ -492,27 +487,6 @@ describe("+ title-first create", () => {
 
     assert.ok(primaries().includes("notes"));
     assert.equal(primaries().includes("public"), false);
-  });
-
-  it("keeps the selected directory row when the binding changes", async () => {
-    installAgentDirectory([{ id: "pi" }, { id: "copilot" }], "pi");
-    state.taskAgentId = "pi";
-    dom.input.value = "+api-fix pu";
-    commands.updateSlashMenu();
-    await settle();
-    assert.match(dom.slashMenu.textContent ?? "", /type "copilot:"/);
-
-    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
-    const selected = () =>
-      dom.slashMenu.querySelector(".slash-item.selected .slash-primary")
-        ?.textContent;
-    assert.equal(selected(), "public");
-
-    installTaskAgentId("s1", "copilot");
-    await settle();
-
-    assert.equal(selected(), "public");
-    assert.match(dom.slashMenu.textContent ?? "", /type "pi:"/);
   });
 
   it("asks for hidden directories only when the segment starts with a dot", async () => {

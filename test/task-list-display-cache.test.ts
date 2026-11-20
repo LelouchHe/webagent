@@ -2,7 +2,6 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 import {
-  beginTaskTopologyGeneration,
   loadTaskList,
   taskListWatchCountForTest,
 } from "../public/js/task-topology.ts";
@@ -78,7 +77,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
   let commands: any;
   let taskCommand: any;
   let installTaskAgentId: (id: string, agent: string) => void;
-  let installAgentDirectory: (agents: { id: string }[], dflt: string) => void;
   let fetchCalls: string[];
   let listHandler: () => Promise<unknown>;
 
@@ -88,8 +86,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
     state = stateMod.state;
     dom = stateMod.dom;
     installTaskAgentId = stateMod.installTaskAgentId;
-    installAgentDirectory = (await import("../public/js/agent-directory.ts"))
-      .installAgentDirectory;
     await import("../public/js/render.ts");
     commands = await import("../public/js/commands.ts");
     taskCommand = await import("../public/js/task-command.ts");
@@ -181,11 +177,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
   function selectedSecondary(): string | undefined {
     const row = dom.slashMenu.querySelector(".slash-item.selected");
     return row?.querySelector(".slash-secondary")?.textContent ?? undefined;
-  }
-
-  function selectedPath(): string | undefined {
-    const row = dom.slashMenu.querySelector(".slash-item.selected");
-    return row?.querySelector(".slash-path")?.textContent ?? undefined;
   }
 
   function itemByPrimary(primary: string): any {
@@ -372,146 +363,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
     // No watch was taken when `/` opened, so nothing may touch it.
     assert.equal(selectedPrimary(), selected);
     assert.equal(dom.slashMenu.querySelector(".slash-item"), row);
-  });
-
-  it("/switch repaints on a binding change and keeps the keyed selection", async () => {
-    state.taskId = "current";
-    state.taskAgentId = "pi";
-    listHandler = () =>
-      Promise.resolve(
-        okJson([
-          {
-            id: "current",
-            cwd: "/a",
-            title: "Current",
-            parent_id: null,
-            agentId: "pi",
-            workflow_status: "idle",
-            last_active_at: "2026-01-01T00:01:00.000Z",
-          },
-          {
-            id: "other",
-            cwd: "/b",
-            title: "Other",
-            parent_id: null,
-            agentId: "copilot",
-            workflow_status: "idle",
-            last_active_at: "2026-01-01T00:00:00.000Z",
-          },
-        ]),
-      );
-    openMenu("/switch ");
-    await tick();
-    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
-    assert.equal(selectedPrimary(), "Other");
-    assert.equal(selectedPath(), "copilot:/b");
-
-    installTaskAgentId("current", "copilot");
-    await tick();
-
-    assert.equal(selectedPrimary(), "Other");
-    assert.equal(selectedPath(), "/b");
-  });
-
-  it("@ repaints on a binding change and keeps the keyed selection", async () => {
-    openMenu("@");
-    await tick();
-    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
-    const selected = selectedPrimary();
-    assert.equal(selected, "unit");
-    const row = dom.slashMenu.querySelector(".slash-item.selected");
-
-    installTaskAgentId("api", "copilot");
-    await tick();
-
-    assert.equal(selectedPrimary(), selected);
-    // The watch was woken by the binding signal: the row was repainted.
-    assert.notEqual(dom.slashMenu.querySelector(".slash-item.selected"), row);
-  });
-
-  it("+ repaints the agent hint on a binding change", async () => {
-    installAgentDirectory([{ id: "pi" }, { id: "copilot" }], "pi");
-    state.taskAgentId = "pi";
-    state.taskCwd = "/work/current";
-    state.taskCwdDisplay = "~/current";
-    openMenu("+title ");
-    await tick();
-    assert.match(dom.slashMenu.textContent ?? "", /type "copilot:"/);
-    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
-    const selected = selectedPrimary();
-    assert.equal(selected, "~/current");
-
-    installTaskAgentId("api", "copilot");
-    await tick();
-
-    assert.match(dom.slashMenu.textContent ?? "", /type "pi:"/);
-    assert.equal(selectedPrimary(), selected);
-  });
-
-  for (const command of ["/new ", "/clear "]) {
-    it(`${command.trim()} repaints the agent hint on a binding change`, async () => {
-      installAgentDirectory([{ id: "pi" }, { id: "copilot" }], "pi");
-      state.taskAgentId = "pi";
-      state.taskCwd = "/work/current";
-      state.taskCwdDisplay = "~/current";
-      openMenu(command);
-      await tick();
-      assert.match(dom.slashMenu.textContent ?? "", /type "copilot:"/);
-
-      installTaskAgentId("api", "copilot");
-      await tick();
-
-      assert.match(dom.slashMenu.textContent ?? "", /type "pi:"/);
-    });
-  }
-
-  it("/switch drops agent labels when a new connection invalidates the list", async () => {
-    state.taskId = "current";
-    state.taskAgentId = "pi";
-    listHandler = () =>
-      Promise.resolve(
-        okJson([
-          {
-            id: "current",
-            cwd: "/a",
-            title: "Current",
-            parent_id: null,
-            agentId: "pi",
-            workflow_status: "idle",
-            last_active_at: "2026-01-01T00:01:00.000Z",
-          },
-          {
-            id: "other",
-            cwd: "/b",
-            title: "Other",
-            parent_id: null,
-            agentId: "copilot",
-            workflow_status: "idle",
-            last_active_at: "2026-01-01T00:00:00.000Z",
-          },
-        ]),
-      );
-    openMenu("/switch ");
-    await tick();
-    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
-    assert.equal(selectedPath(), "copilot:/b");
-
-    beginTaskTopologyGeneration();
-
-    assert.equal(selectedPrimary(), "Other");
-    assert.equal(selectedPath(), "/b");
-  });
-
-  it("a binding change after closing leaves no listener and no menu", async () => {
-    openMenu("/switch ");
-    await tick();
-    closeMenu();
-    assert.equal(taskListWatchCountForTest(), 0);
-
-    installTaskAgentId("api", "copilot");
-    await tick();
-
-    assert.ok(!dom.slashMenu.classList.contains("active"));
   });
 
   it("typing in /switch still selects the first row", async () => {

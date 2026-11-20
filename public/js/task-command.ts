@@ -25,13 +25,12 @@ import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
 import { loadTaskList, taskListSource } from "./task-topology.ts";
 import {
-  alsoOn,
   deriveLive,
   errorsAsEmpty,
   onceSource,
   type LiveSource,
 } from "./live-source.ts";
-import { onTaskAgentChanged, setInputValue, state } from "./state.ts";
+import { setInputValue, state } from "./state.ts";
 import { recentPathsSource } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
 import { isTaskCommand } from "./input-command.ts";
@@ -346,11 +345,8 @@ export function buildTaskCommandCandidates(
   }
 
   // `@` rows are a view of the shared task list: they follow it as it changes.
-  return alsoOn(
-    deriveLive(taskListSource, (tasks) =>
-      buildMessageCandidates(parsed, tasks),
-    ),
-    onTaskAgentChanged,
+  return deriveLive(taskListSource, (tasks) =>
+    buildMessageCandidates(parsed, tasks),
   );
 }
 
@@ -555,7 +551,7 @@ function buildCreateCandidates(parsed: {
   };
   // The hint names an agent the task is not running on, so a binding change is
   // another input to this list; the watch follows both.
-  return alsoOn(deriveLive(cwdCandidates, withCwdRows), onTaskAgentChanged);
+  return deriveLive(cwdCandidates, withCwdRows);
 }
 
 /** Resolve one submitted @ target using the full Task path semantics. */

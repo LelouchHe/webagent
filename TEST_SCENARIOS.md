@@ -228,13 +228,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     offers several rows selects the first
   - a watch lasts exactly as long as its menu scope: closing the menu or moving
     to another command stops it, typing within `/switch` keeps one, and each
-    `@` keystroke replaces it instead of adding one; a binding change after
-    closing wakes nothing and leaves the menu closed
+    `@` keystroke replaces it instead of adding one
   - a static `/` menu is not rebuilt by a task-list read or a binding change
     (no watch was taken, and there are no global repaint hooks)
-  - `/switch` and `@` repaint when the current binding changes while open: the
-    row label follows the new baseline and the keyed selection stays; both `+`
-    branches update their agent hint the same way
   - an `@` input the shown list has no rows for stays hidden, and appears when
     the fresh read has rows for it
   - Escape dismisses such a hidden `@` input too: its watch stops, and the read
@@ -340,8 +336,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/task-create-command.test.ts` (`+` menu pipeline)
   - a late directory listing cannot repaint a newer prefix (its source lost its
     watch when the input moved on)
-  - a binding change repaints the directory list, updates the agent hint, and
-    keeps the selected directory row by its path key
 
 - `test/agent-coordinate-entries.test.ts` (`+`, `/new`, `/clear` payloads)
   - `/clear` sends the coordinate's agent and raw cwd; `/new` and `+` send the

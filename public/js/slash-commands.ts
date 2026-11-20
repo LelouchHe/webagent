@@ -6,7 +6,6 @@
 
 import {
   state,
-  onTaskAgentChanged,
   resetTaskUI,
   requestNewTask,
   getSelectConfigOption,
@@ -69,7 +68,6 @@ import {
   viewItemSpec,
 } from "./view-command.ts";
 import {
-  alsoOn,
   deriveLive,
   errorsAsEmpty,
   refreshingSource,
@@ -549,8 +547,7 @@ export const ROOT: CmdNode = {
       name: "/clear",
       desc: "Clear context",
       help: "Clear context; history stays.",
-      // The hint row reads the current binding, so the watch listens for it.
-      fetch: () => alsoOn(recentPathsSource, onTaskAgentChanged),
+      fetch: () => recentPathsSource,
       field: (rawRemainder) => pathFieldView(rawRemainder, clearToPath),
       toSpec: (item: unknown) => {
         const p = item as PathItem;
@@ -736,26 +733,23 @@ export const ROOT: CmdNode = {
       desc: "Create a child task",
       field: (rawRemainder) => pathFieldView(rawRemainder, createAtPath),
       fetch: () =>
-        alsoOn(
-          deriveLive(errorsAsEmpty(recentPathsSource), (recents) => {
-            const base = state.taskCwd ?? "";
-            const items: PathItem[] = [];
-            if (base) {
-              items.push({
-                cwd: base,
-                cwdDisplay: state.taskCwdDisplay ?? base,
-                time: "",
-              });
-            }
-            for (const p of recents) {
-              if (base !== "" && p.cwd.toLowerCase() === base.toLowerCase())
-                continue;
-              items.push(p);
-            }
-            return items;
-          }),
-          onTaskAgentChanged,
-        ),
+        deriveLive(errorsAsEmpty(recentPathsSource), (recents) => {
+          const base = state.taskCwd ?? "";
+          const items: PathItem[] = [];
+          if (base) {
+            items.push({
+              cwd: base,
+              cwdDisplay: state.taskCwdDisplay ?? base,
+              time: "",
+            });
+          }
+          for (const p of recents) {
+            if (base !== "" && p.cwd.toLowerCase() === base.toLowerCase())
+              continue;
+            items.push(p);
+          }
+          return items;
+        }),
       toSpec: (item: unknown) => {
         const p = item as PathItem;
         const currentCwd = state.taskCwd;
@@ -904,9 +898,7 @@ export const ROOT: CmdNode = {
       name: "/switch",
       desc: "Switch task",
       // Display only: rows show the last list at once and follow newer reads.
-      // The current binding is another input to those rows, so the watch also
-      // listens for it.
-      fetch: () => alsoOn(taskListSource, onTaskAgentChanged),
+      fetch: () => taskListSource,
       matches: (item: unknown, q: string) => {
         const s = item as TaskSummary;
         const title = (s.title ?? "").toLowerCase();

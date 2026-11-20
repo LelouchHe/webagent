@@ -105,13 +105,12 @@ recent-paths source. Every other walker node keeps its one-shot `fetch`.
 A menu updates only through a subscription it took when it opened: a
 `LiveSource` watch, registered with the menu's data scope. A static menu (for
 example `/`) takes no such subscription and is never rebuilt by live activity;
-there are no global repaint hooks. A source whose rows also depend on the
-current binding takes that signal in the same watch (`alsoOn`), so `/switch`,
-`@`, and both `+` branches follow a binding change too. The directory branch is
+there are no global repaint hooks. Rows read other client state (such as the
+current task's agent) when they are drawn; a change to that state while the
+menu is open shows at the next repaint. The `+` directory branch is
 a `onceSource`: it reports its one-shot read, but a new source is made for
 each input, so a late listing has no watch left to repaint a newer prefix.
-Directory rows carry their path as `key`, so a binding repaint keeps the
-selection.
+Directory rows carry their path as `key`.
 
 Rows from a live source carry a producer-given `key` (a task id, a path): the
 producer knows what the row is, so the menu never guesses identity from the
