@@ -192,6 +192,24 @@ describe("recent-paths pickers paint from the last list, then revalidate", () =>
     assert.equal(dom.input.value, "/clear ~/two");
   });
 
+  it("a selected row without a key falls back to the first selectable row", async () => {
+    recentsHandler = () => Promise.resolve(okJson(recents("/tmp/x")));
+    await warmMenu("/clear ");
+
+    const held = holdRecents();
+    openMenu("/clear /tmp");
+    // The freeform action row carries no key; the path row carries its cwd.
+    assert.deepEqual(rows(), ["clear and start at '/tmp'", "/tmp/x"]);
+    assert.equal(selectedPrimary(), "clear and start at '/tmp'");
+
+    held.release(recents("/tmp/x"));
+    await tick();
+
+    // With no key there is nothing to follow, so the first selectable row
+    // stays selected.
+    assert.equal(selectedPrimary(), "clear and start at '/tmp'");
+  });
+
   // --- `/new` --------------------------------------------------------------
 
   it("/new still shows (loading...) when no list has been fetched", () => {

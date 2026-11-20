@@ -101,14 +101,14 @@ that fallback matters only before any list has loaded, because after that the
 last list stays. `+` keeps directory listings one-shot: only the no-cwd
 recent-paths branch is live. Every other node keeps its one-shot `fetch`.
 
-A repaint caused by a live source refresh (and, for walker menus,
-`refreshSlashMenuRows`) keeps the selected row on a best-effort basis: the row
-is matched by what it renders — kind, primary and secondary text, path, and
-fill — and, when that key repeats, by its position. If neither holds, the
-first selectable row is selected. Typing selects the first row. Placeholders
-and separators have no identity. This does not cover the `+`/`@`
-agent-binding refresh, which re-runs the input path and therefore resets the
-selection.
+Rows from a live source carry a producer-given `key` (a task id, a path): the
+producer knows what the row is, so the menu never guesses identity from the
+rendered text. A repaint caused by a live source refresh (and, for walker
+menus, `refreshSlashMenuRows`) keeps the row with the same key, wherever it
+moved in the list; otherwise it selects the first selectable row. Typing
+selects the first row, and static rows have no key. This does not cover the
+`+`/`@` agent-binding refresh, which re-runs the input path and therefore
+resets the selection.
 
 ## FieldView — a node's own argument field
 

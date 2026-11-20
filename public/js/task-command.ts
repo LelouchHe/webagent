@@ -221,6 +221,8 @@ interface CreateCandidateArgs {
   targetPath: string;
   remainder: string;
   primary: string;
+  /** Producer identity for a live repaint (the target task). */
+  key?: string;
   path?: string;
   pathSecondary?: string;
   /** Short L1 annotation (e.g. the family relation for @ rows). */
@@ -243,6 +245,7 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
   return {
     spec: {
       primary: args.primary,
+      key: args.key,
       secondary: args.secondary,
       selectedSecondary: args.selectedSecondary,
       fill,
@@ -266,6 +269,7 @@ function makeNavigationCandidate(args: {
   return {
     spec: {
       primary: args.primary,
+      key: args.taskId,
       secondary: args.secondary,
       selectedSecondary: args.selectedSecondary,
       fill: `${args.marker}${args.targetPath}`,
@@ -381,6 +385,7 @@ function buildCreateCwdCandidates(
         rows.push({
           spec: {
             primary: display,
+            key: base,
             current: true,
             fill: `+${titleWord} ${coordinatePrefix}${display}`,
             continueOnFill: true,
@@ -394,6 +399,7 @@ function buildCreateCwdCandidates(
         rows.push({
           spec: {
             primary: p.cwdDisplay,
+            key: p.cwd,
             fill: `+${titleWord} ${coordinatePrefix}${p.cwdDisplay}`,
             continueOnFill: true,
           },
@@ -574,6 +580,7 @@ function addTaskTargetEntry(args: {
         targetPath: args.targetPath,
         remainder: "",
         primary: displayPrimary,
+        key: args.node.id,
         secondary: statusLabel(args.node),
         selectedSecondary: args.scopeIds.has(args.node.id)
           ? "type message to send"

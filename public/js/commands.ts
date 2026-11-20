@@ -209,9 +209,9 @@ export function updateSlashMenu(): void {
         currentData = source.read();
         onDataScopeEnd(
           source.watch(() => {
-            const keep = { row: candidates[selectedIdx], index: selectedIdx };
+            const previous = candidates[selectedIdx];
             currentData = source.read();
-            rebuildFromInput(pathPrefix, keep);
+            rebuildFromInput(pathPrefix, previous);
           }),
         );
       } else if (result instanceof Promise) {
@@ -254,10 +254,10 @@ export function updateSlashMenu(): void {
 
 // Re-resolve the current input (used by async fetch callbacks that may fire
 // after the input changed but currentPath is still valid).
-function rebuildFromInput(pathPrefix: string, keep?: KeepRow): void {
+function rebuildFromInput(pathPrefix: string, previous?: Candidate): void {
   const input = currentMenuInput();
   const { tailQuery, rawRemainder } = resolvePath(input, rootForInput(input));
-  rebuild(tailQuery, pathPrefix, currentNode.field?.(rawRemainder), keep);
+  rebuild(tailQuery, pathPrefix, currentNode.field?.(rawRemainder), previous);
 }
 
 async function updateTaskCommandMenu(text: string): Promise<void> {
@@ -274,8 +274,8 @@ async function updateTaskCommandMenu(text: string): Promise<void> {
     paintTaskCommandMenu(source.read());
     onDataScopeEnd(
       source.watch(() => {
-        const keep = { row: candidates[selectedIdx], index: selectedIdx };
-        paintTaskCommandMenu(source.read(), keep);
+        const previous = candidates[selectedIdx];
+        paintTaskCommandMenu(source.read(), previous);
       }),
     );
     return;
@@ -303,7 +303,7 @@ async function updateTaskCommandMenu(text: string): Promise<void> {
  */
 function paintTaskCommandMenu(
   data: LiveState<Candidate[]>,
-  keep?: KeepRow,
+  previous?: Candidate,
 ): void {
   if (Array.isArray(data) && data.length === 0) {
     dom.slashMenu.classList.remove("active");
@@ -325,54 +325,28 @@ function paintTaskCommandMenu(
   } else {
     candidates = data;
     selectedIdx =
-      keep === undefined
+      previous === undefined
         ? firstSelectableIndex(data)
-        : selectedRowForLiveRepaint(keep, data);
+        : selectedRowForLiveRepaint(previous, data);
   }
   renderMenu("");
   dom.slashMenu.classList.add("active");
 }
 
-/** The row a live repaint should keep, and where it was sitting. */
-interface KeepRow {
-  row: Candidate | undefined;
-  index: number;
-}
-
-/** A row's identity across a live repaint: only what it renders. The time
- *  label (`secondary`) counts, because two rows can share a title and cwd and
- *  still be told apart by activity. */
-function rowKey(candidate: Candidate | undefined): string | null {
-  if (
-    candidate === undefined ||
-    candidate.kind === "separator" ||
-    candidate.kind === "placeholder"
-  )
-    return null;
-  return JSON.stringify([
-    candidate.kind,
-    candidate.spec.primary,
-    candidate.spec.secondary ?? null,
-    candidate.spec.path ?? null,
-    candidate.spec.fill ?? null,
-  ]);
-}
-
 /**
- * The row a live repaint keeps selected. The same rendered row is kept when it
- * is still unambiguously offered: at the same index, or as the only row with
- * that key. Two rows can render alike (two `/switch` tasks with the same title
- * and cwd), so an ambiguous key falls back to the first selectable row rather
- * than guessing. Only live repaints use this; typing and one-shot results
- * still start at the top.
+ * The row a live repaint keeps selected: the row with the same producer-given
+ * `key`, whatever its position. A row without a key, or one whose key is gone
+ * from the new list, falls back to the first selectable row. Only live
+ * repaints use this; typing and one-shot results still start at the top.
  */
-function selectedRowForLiveRepaint(keep: KeepRow, next: Candidate[]): number {
-  const key = rowKey(keep.row);
-  if (key !== null) {
-    const atIndex = next.at(keep.index);
-    if (atIndex !== undefined && rowKey(atIndex) === key) return keep.index;
-    const matches = next.filter((candidate) => rowKey(candidate) === key);
-    if (matches.length === 1) return next.indexOf(matches[0]);
+function selectedRowForLiveRepaint(
+  previous: Candidate,
+  next: Candidate[],
+): number {
+  const key = previous.spec.key;
+  if (key !== undefined) {
+    const found = next.findIndex((candidate) => candidate.spec.key === key);
+    if (found >= 0) return found;
   }
   return firstSelectableIndex(next);
 }
@@ -392,7 +366,7 @@ function rebuild(
   tailQuery: string,
   pathPrefix: string,
   field?: FieldView,
-  keep?: KeepRow,
+  previous?: Candidate,
 ): void {
   const cands = buildCandidates(currentNode, tailQuery, currentData, field);
   if (dom.input.value === "/") {
@@ -414,9 +388,9 @@ function rebuild(
   // auto-selecting it (e.g. the active task in /switch) is awkward when the
   // user opens the menu intending to switch *away* from it.
   selectedIdx =
-    keep === undefined
+    previous === undefined
       ? firstSelectableIndex(cands)
-      : selectedRowForLiveRepaint(keep, cands);
+      : selectedRowForLiveRepaint(previous, cands);
 
   renderMenu(pathPrefix);
   dom.slashMenu.classList.add("active");
@@ -657,10 +631,10 @@ export function refreshSlashMenuRows(): void {
   if (node !== currentNode) return;
   // The task list's own read also repaints through here before its live watch
   // fires, so keeping the selected row here is what makes the live repaint
-  // able to keep it. A changed or ambiguous row still falls back to the first
+  // able to keep it. A row whose key is gone still falls back to the first
   // selectable row.
-  const keep = { row: candidates[selectedIdx], index: selectedIdx };
-  rebuild(tailQuery, pathPrefix, node.field?.(rawRemainder), keep);
+  const previous = candidates[selectedIdx];
+  rebuild(tailQuery, pathPrefix, node.field?.(rawRemainder), previous);
 }
 
 /**

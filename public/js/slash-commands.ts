@@ -555,6 +555,7 @@ export const ROOT: CmdNode = {
           p.cwd.toLowerCase() === (state.taskCwd ?? "").toLowerCase();
         return {
           primary: p.cwdDisplay,
+          key: p.cwd,
           current: isCurrent,
           onSelect: () => {
             clearToPath(p, null);
@@ -757,6 +758,7 @@ export const ROOT: CmdNode = {
           p.cwd.toLowerCase() === currentCwd.toLowerCase();
         return {
           primary: p.cwdDisplay,
+          key: p.cwd,
           current: isCurrent,
           onSelect: () => {
             createAtPath(p, null);
@@ -918,6 +920,7 @@ export const ROOT: CmdNode = {
         const displayPath = taskDisplayPath(s);
         return {
           primary: label,
+          key: s.id,
           secondary: time,
           path:
             agentLabel === null ? displayPath : `${agentLabel}:${displayPath}`,

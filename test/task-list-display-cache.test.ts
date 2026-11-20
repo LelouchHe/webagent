@@ -297,7 +297,7 @@ describe("task pickers paint from the last list, then revalidate", () => {
     assert.equal(selectedPrimary(), rows()[0]);
   });
 
-  it("/switch keeps the selected twin when the identically rendered list returns", async () => {
+  it("two rows with identical text keep the selected one by key", async () => {
     listHandler = () =>
       Promise.resolve(okJson([twin("twin-a"), twin("twin-b")]));
     await warmMenu("/switch ");
@@ -313,33 +313,7 @@ describe("task pickers paint from the last list, then revalidate", () => {
     assert.equal(selectedIndex(), 1);
   });
 
-  it("/switch falls back when the selected row's rendered key is ambiguous", async () => {
-    listHandler = () =>
-      Promise.resolve(
-        okJson([task("alpha", "Alpha", null), twin("twin-a"), twin("twin-b")]),
-      );
-    await warmMenu("/switch ");
-
-    const held = holdList();
-    openMenu("/switch ");
-    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
-    assert.equal(selectedPrimary(), "Twin");
-
-    // The twins move: the previous index now holds another row, and the key
-    // matches two rows, so there is no unambiguous row to keep.
-    held.release([
-      task("alpha", "Alpha", null),
-      task("beta", "Beta", null),
-      twin("twin-a"),
-      twin("twin-b"),
-    ]);
-    await tick();
-
-    assert.equal(selectedIndex(), 0);
-    assert.equal(selectedPrimary(), "Alpha");
-  });
-
-  it("/switch does not keep the highlight on the other twin after activity re-sorts them", async () => {
+  it("/switch follows the selected task by key when activity re-sorts the list", async () => {
     const twinA = twin("twin-a", "2026-01-01T09:00:00.000Z");
     const twinB = twin("twin-b", "2026-01-01T09:01:00.000Z");
     listHandler = () => Promise.resolve(okJson([twinA, twinB]));
@@ -352,8 +326,8 @@ describe("task pickers paint from the last list, then revalidate", () => {
     assert.equal(selectedIndex(), 1);
     assert.equal(selectedSecondary(), rowSecondary(1));
 
-    // B becomes active: its minute changes and it sorts above A, so the row
-    // at the previous index is now the other twin.
+    // B becomes active and sorts above A; the row key keeps the selection on
+    // B even though its rendered time changed.
     held.release([
       twin("twin-b", "2026-01-01T09:05:00.000Z"),
       twin("twin-a", "2026-01-01T09:00:00.000Z"),

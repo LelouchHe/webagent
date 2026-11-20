@@ -219,13 +219,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a row painted from the earlier list acts at once, without waiting for the
     read
   - a leading-whitespace ` @` paints from the last list too
-  - a live `/switch` repaint keeps the selected row when the same rendered row
-    is still there (an added task leaves it selected); two identical rows keep
-    the selected one when the list is unchanged, and fall back to the first
-    selectable row when the pair moves; a twin whose activity minute changed
-    and re-sorted above the other is not mistaken for it (the match includes
-    the time label); a selected task the fresh read dropped falls back too,
-    and typing a filter that still offers several rows selects the first
+  - a live `/switch` repaint keeps the row with the same producer key (the
+    task id), wherever it moved: an added task leaves the selection alone, and
+    two rows with identical text keep the selected one; a key that is gone
+    falls back to the first selectable row, and typing a filter that still
+    offers several rows selects the first
   - a watch lasts exactly as long as its menu scope: closing the menu or moving
     to another command stops it, typing within `/switch` keeps one, and each
     `@` keystroke replaces it instead of adding one
@@ -244,8 +242,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     `(loading...)`
   - `/new` includes its current cwd row and a cached recent while the read is
     held (membership; the e2e covers their order)
-  - a live refresh keeps the selected path when the fresh list is identical or
-    only adds a path (ArrowDown to the second path, then Tab fills it)
+  - a live refresh keeps the selected path row by its key when the fresh list
+    is identical or only adds a path (ArrowDown to the second path, then Tab
+    fills it); a selected row without a key falls back to the first row
 
 - `test/task-ref-marks.test.ts` (one reference per Task, four states)
   - a live reference is completely unmarked (no strike, no appended name, no
