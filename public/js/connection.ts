@@ -35,6 +35,7 @@ import {
   loadStartupTaskList,
   loadTaskList,
   refreshTaskListBaseline,
+  setViewedTaskArchived,
 } from "./task-topology.ts";
 import { applyConnectedLogLevel, log } from "./log.ts";
 
@@ -417,6 +418,7 @@ function installTaskFromDetail(task: TaskDetail): void {
     title: task.title,
     configOptions: task.configOptions,
   });
+  setViewedTaskArchived(task.id, task.archived);
 }
 
 async function resumeAndLoad(

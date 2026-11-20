@@ -2872,6 +2872,7 @@ export function createRequestHandler(
               source: freshTask.source,
               model: freshTask.model,
               mode: freshTask.mode,
+              archived: store.isArchivedTask(freshTask.id),
               configOptions,
             },
             req,

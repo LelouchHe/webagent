@@ -10,6 +10,7 @@ import {
   setHashTaskId,
   state,
 } from "./state.ts";
+import { setViewedTaskArchived } from "./task-topology.ts";
 
 export type NavigationResult =
   "switched" | "unchanged" | "ignored" | "retryable-error" | "terminal-error";
@@ -65,6 +66,7 @@ export async function switchToTask(taskId: string): Promise<NavigationResult> {
       title: task.title,
       configOptions: task.configOptions,
     });
+    setViewedTaskArchived(task.id, task.archived);
     drainNavigationEvents(taskId);
     if (loaded) scrollToBottom(true);
     return "switched";

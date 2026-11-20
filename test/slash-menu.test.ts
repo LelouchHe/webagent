@@ -1260,7 +1260,15 @@ describe("slash menu — Tab vs Click behavior", () => {
 
   it("@ inside a non-top archived task reads the archived list", async () => {
     const topology = await import("../public/js/task-topology.ts");
+    topology.resetTaskTopologyForTest();
     state.taskId = "archived-child";
+    topology.setCurrentTask("archived-child", {
+      parentId: "archived-top",
+      agentId: null,
+    });
+    // The activation detail read supplies the server fact; the active list
+    // deliberately does not contain the viewed task.
+    topology.setViewedTaskArchived("archived-child", true);
     const active = [{ id: "active-task", title: "Active", parent_id: "root" }];
     const archived = [
       {
@@ -1308,6 +1316,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     assert.match(dom.slashMenu.textContent, /Archived grandchild/);
+    topology.resetTaskTopologyForTest();
   });
 });
 

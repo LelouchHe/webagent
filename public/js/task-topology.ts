@@ -59,6 +59,8 @@ export interface ParentHint {
 let generation = 0;
 let listLoaded = false;
 let viewedTaskId: string | null = null;
+/** The server's archived fact for the viewed task, refreshed by its detail. */
+let viewedTaskArchived = false;
 let parentRef: ParentRef | null = null;
 let pending: { generation: number; promise: Promise<TaskSummary[]> } | null =
   null;
@@ -123,6 +125,7 @@ export function beginTaskTopologyGeneration(): void {
   listLoaded = false;
   listRequiredSeq = 0;
   viewedTaskId = null;
+  viewedTaskArchived = false;
   parentRef = null;
   pending = null;
   // The shared list is also the base for "which referenced tasks still
@@ -146,6 +149,7 @@ export function setCurrentTask(taskId: string | null, hint?: ParentHint): void {
     return;
   }
   viewedTaskId = taskId;
+  viewedTaskArchived = false;
   if (taskId === null) {
     parentRef = null;
     notifyChange();
@@ -169,49 +173,38 @@ export function setCurrentTask(taskId: string | null, hint?: ParentHint): void {
  * what lets an open menu refetch instead of serving pre-archive rows.
  */
 export function noteTaskArchived(taskId: string): void {
-  if (viewedTaskId === taskId) parentRef = { taskId, status: "none" };
-  removeArchivedSubtreeFromDisplay(taskId);
+  if (viewedTaskId === taskId) {
+    viewedTaskArchived = true;
+    parentRef = { taskId, status: "none" };
+  }
   // Menus repaint from their cached rows; a menu opened after this fact reads
   // the list again. No epoch fence is kept for requests already in flight.
   notifyChange();
 }
 
-/**
- * The active display cache can predate an archive event. Drop the newly
- * archived subtree so list-membership checks (which decide "is this task in an
- * archived tree?") see the same active tree the server now reports.
- */
-function removeArchivedSubtreeFromDisplay(taskId: string): void {
-  if (displayList === null) return;
-  const removed = new Set([taskId]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const task of displayList) {
-      if (
-        task.parent_id !== null &&
-        removed.has(task.parent_id) &&
-        !removed.has(task.id)
-      ) {
-        removed.add(task.id);
-        changed = true;
-      }
-    }
-  }
-  const next = displayList.filter((task) => !removed.has(task.id));
-  if (next.length === displayList.length) return;
-  displayList = next;
-  notifyListWatchers();
-}
-
 /** A restored task re-enters the active tree; re-resolve its parent link. */
 export function noteTaskUnarchived(taskId: string): void {
   if (viewedTaskId !== taskId) return;
+  viewedTaskArchived = false;
   parentRef = { taskId, status: "unknown" };
   notifyChange();
   void resolveParentFromTaskDetail(generation, taskId);
-  // The active display cache may still exclude the restored subtree.
-  void loadTaskList().catch(() => undefined);
+}
+
+/**
+ * Record the server's archived fact for the viewed task. Every activation
+ * path that reads the task detail calls this; the fact is plain state, not a
+ * cache or watcher.
+ */
+export function setViewedTaskArchived(taskId: string, archived: boolean): void {
+  if (viewedTaskId !== taskId) return;
+  viewedTaskArchived = archived;
+  notifyChange();
+}
+
+/** Whether the viewed task is known to belong to an archived tree. */
+export function isViewedTaskArchived(): boolean {
+  return viewedTaskArchived;
 }
 
 function settleHint(taskId: string, hint: ParentHint): ParentRef {
@@ -562,6 +555,7 @@ export function resetTaskTopologyForTest(): void {
   generation = 0;
   listLoaded = false;
   viewedTaskId = null;
+  viewedTaskArchived = false;
   parentRef = null;
   pending = null;
   listRequestSeq = 0;

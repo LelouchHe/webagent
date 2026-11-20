@@ -464,6 +464,7 @@ not start one agent process per task.
   "mode": "agent",
   "parentId": "root",
   "parentAgentId": "pi",
+  "archived": false,
   "configOptions": [...],
   "busy": false,
   "busyKind": null
@@ -475,6 +476,7 @@ not start one agent process per task.
 | `configOptions` | `ConfigOption[]`            | Current config with stored overrides applied (type defined in `src/types.ts`) |
 | `parentId` | `string \| null` | Parent WebAgent Task; `null` for the Root Task, an archived tree top, or a survivor detached by a delete collision or an archive (see DELETE and archiving) |
 | `parentAgentId` | `string \| null` | The parent's confirmed binding; only meaningful with `parentId`. `null` means the parent exists but has no binding. Lets a client compare this task's agent with what it should have inherited without a second read. |
+| `archived` | boolean | True when the task belongs to an archived tree; derived from the structure, same rule as the task-list row. |
 | `busy`          | boolean                     | Whether the task has an active agent prompt or bash process                |
 | `busyKind`      | `"agent" \| "bash" \| null` | What kind of work is in progress (user-visible work only, as in `runtime.busy`; a background restore reports `null`) |
 

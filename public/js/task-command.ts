@@ -23,7 +23,11 @@ import {
 } from "./create-command.ts";
 import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
-import { loadCurrentTreeTaskList, taskListSource } from "./task-topology.ts";
+import {
+  isViewedTaskArchived,
+  loadCurrentTreeTaskList,
+  taskListSource,
+} from "./task-topology.ts";
 import {
   deriveLive,
   errorsAsEmpty,
@@ -355,16 +359,9 @@ export function buildTaskCommandCandidates(
     return [];
   }
 
-  // The active list keeps its shared live source. If it is loaded and does not
-  // contain the viewed task, the task is in an archived tree: use a plain
-  // one-shot archived read. While the active list is still loading, stay on the
-  // active source (best effort).
-  const active = taskListSource.read();
-  if (
-    Array.isArray(active) &&
-    state.taskId !== null &&
-    !active.some((task) => task.id === state.taskId)
-  ) {
+  // The active list keeps its shared live source. The server's archived fact
+  // for the viewed task selects the plain one-shot archived read instead.
+  if (isViewedTaskArchived()) {
     return onceSource(() =>
       api
         .listTasks(true)

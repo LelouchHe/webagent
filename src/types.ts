@@ -166,6 +166,8 @@ export interface TaskDetail {
   parentAgentId?: string | null;
   /** Agent that carries this task's current execution; null when unbound. */
   agentId?: string | null;
+  /** True when this task belongs to an archived tree (derived, not stored). */
+  archived: boolean;
   configOptions: ConfigOption[];
 }
 

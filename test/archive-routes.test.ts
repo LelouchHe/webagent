@@ -98,6 +98,9 @@ describe("POST /api/v1/tasks/:id/archive", () => {
     broadcasts = [];
     const fakeTasks = {
       liveTasks: new Map(),
+      configOptionsForTask: () => [],
+      applyStoredConfig: (options: unknown) => options,
+      warmTaskInBackground: () => {},
       hasOpenObligation: () => owed,
       archiveTask: (id: string) => {
         const result = store.archiveTask(id);
@@ -355,6 +358,26 @@ describe("POST /api/v1/tasks/:id/archive", () => {
     }
     // The failed call wrote nothing: the task is still attached.
     assert.equal(store.getTask("area")?.parent_id, store.rootTaskId);
+  });
+
+  it("reports archived on task detail for a non-top archived task", async () => {
+    const active = await req(port, "GET", "/api/v1/tasks/work", apiToken);
+    assert.equal(active.status, 200);
+    assert.equal(
+      (JSON.parse(active.body) as { archived: boolean }).archived,
+      false,
+    );
+
+    await req(port, "POST", "/api/v1/tasks/area/archive", apiToken);
+    for (const id of ["area", "work"]) {
+      const detail = await req(port, "GET", `/api/v1/tasks/${id}`, apiToken);
+      assert.equal(detail.status, 200);
+      assert.equal(
+        (JSON.parse(detail.body) as { archived: boolean }).archived,
+        true,
+        id,
+      );
+    }
   });
 
   it("unarchives an archived tree top under its recorded parent", async () => {

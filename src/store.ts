@@ -1385,6 +1385,15 @@ export class Store {
   }
 
   /**
+   * True when this live task belongs to an archived tree: its lineage starts
+   * at a parentless non-Root task. Cheap single-task form of the list filter.
+   */
+  isArchivedTask(id: string): boolean {
+    const lineage = this.getTaskLineage(id);
+    return lineage !== undefined && lineage[0] !== this.rootTaskId;
+  }
+
+  /**
    * Returns a task row even if soft-deleted. Used by the public share
    * viewer, which must keep working after the owner deletes the source
    * task (events stay alive as long as any active share references them).

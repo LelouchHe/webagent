@@ -61,6 +61,7 @@ import {
   observeTaskCreated,
   observeTaskDeleted,
   setCurrentTask,
+  setViewedTaskArchived,
 } from "./task-topology.ts";
 import {
   noteTaskCreated,
@@ -379,6 +380,7 @@ async function fallbackToNextTaskImpl(
         title: task.title,
         configOptions: task.configOptions,
       });
+      setViewedTaskArchived(task.id, task.archived);
       if (loaded) scrollToBottom(true);
       if (rootReplaced) addSystem(ROOT_REPLACED_NOTICE);
       return;
