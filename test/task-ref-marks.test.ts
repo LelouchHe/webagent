@@ -1016,6 +1016,73 @@ describe("task-reference marks", () => {
     }
   });
 
+  it("keeps an archived task struck when a rename follows a stale list read", async () => {
+    topology.resetTaskTopologyForTest();
+    state.taskId = "parent";
+    snapshot({ parent: "parent" });
+    marks.noteTaskCreated("child", "child");
+    const row = renderCreatedRow("child");
+    assertLive(refSpan(row), "@child");
+
+    let release!: () => void;
+    let listReads = 0;
+    const held = new Promise<Record<string, unknown>>((resolve) => {
+      release = () => {
+        resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify([
+                { id: "parent", title: "parent" },
+                { id: "child", title: "child" },
+              ]),
+            ),
+        });
+      };
+    });
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = ((url: string) => {
+      if (url.split("?")[0] === "/api/v1/tasks") {
+        listReads += 1;
+        if (listReads === 1) return held;
+        return Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify([{ id: "parent", title: "parent" }]),
+            ),
+        });
+      }
+      return Promise.resolve({ ok: true, text: () => Promise.resolve("{}") });
+    }) as typeof fetch;
+    try {
+      // A list read starts before the archive and stays in flight.
+      const inFlight = topology.loadTaskList();
+      events.handleEvent({
+        type: "system_message",
+        taskId: "child",
+        kind: "task_archive",
+        title: "Task archived",
+        body: "",
+      });
+      release();
+      await inFlight;
+      for (let i = 0; i < 20; i++) await tick();
+
+      events.handleEvent({
+        type: "task_title_updated",
+        taskId: "child",
+        title: "new",
+      });
+      await tick();
+
+      // The archived task stays exited; the rename must not resurrect it.
+      assert.equal(view(refSpan(row)).state, "exited");
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
   it("shows the renamed state after restoring an archived renamed task", async () => {
     topology.resetTaskTopologyForTest();
     state.taskId = "parent";

@@ -57,6 +57,7 @@ import {
 import * as api from "./api.ts";
 import {
   loadTaskList,
+  loadTaskListFresh,
   noteTaskArchived,
   noteTaskUnarchived,
   observeTaskCreated,
@@ -2102,14 +2103,14 @@ export function handleEvent(msg: AgentEvent) {
     // its subtree) is absent, a restored task is present again.
     if (msg.kind === "task_archive") {
       noteTaskArchived(msg.taskId);
-      void loadTaskList()
+      void loadTaskListFresh()
         .then((tasks) => {
           pruneCreatedTasksAbsentFrom(tasks);
         })
         .catch(() => undefined);
     } else {
       noteTaskUnarchived(msg.taskId);
-      void loadTaskList().catch(() => undefined);
+      void loadTaskListFresh().catch(() => undefined);
     }
   }
   if (msg.type === "inbox_count_changed") {

@@ -483,6 +483,15 @@ export async function loadTaskList(): Promise<TaskSummary[]> {
   }
 }
 
+/**
+ * A list read that never joins an in-flight request. Structural archive facts
+ * use this so a read issued before the fact cannot keep a stale membership for
+ * the refreshed marks.
+ */
+export function loadTaskListFresh(): Promise<TaskSummary[]> {
+  return readBaseline();
+}
+
 /** The list containing the current task; used by explicit `@` targets. */
 export async function loadCurrentTreeTaskList(): Promise<TaskSummary[]> {
   const active = await loadTaskList();
