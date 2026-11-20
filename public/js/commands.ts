@@ -5,7 +5,7 @@
 // plus Tab/Click/keyboard dispatch. Execution paths (onSelect handlers) live
 // in slash-commands.ts so this file stays a thin pipeline.
 
-import { state, dom, onTaskAgentChanged, setInputValue } from "./state.ts";
+import { state, dom, setInputValue } from "./state.ts";
 import {
   resolvePath,
   buildCandidates,
@@ -16,7 +16,6 @@ import {
 } from "./slash-tree.ts";
 import { renderItem } from "./slash-render.ts";
 import { ROOT } from "./slash-commands.ts";
-import { subscribeTaskTopology } from "./task-topology.ts";
 import { handleSlashCommand } from "./slash-exec.ts";
 import { buildTaskCommandCandidates, isTaskCommand } from "./task-command.ts";
 import {
@@ -151,7 +150,7 @@ export function updateSlashMenu(): void {
   }
 
   if (isTaskCommand(text)) {
-    void updateTaskCommandMenu(text);
+    updateTaskCommandMenu(text);
     return;
   }
 
@@ -260,10 +259,10 @@ function rebuildFromInput(pathPrefix: string, previous?: Candidate): void {
   rebuild(tailQuery, pathPrefix, currentNode.field?.(rawRemainder), previous);
 }
 
-async function updateTaskCommandMenu(text: string): Promise<void> {
+function updateTaskCommandMenu(text: string): void {
   currentPath = text;
   currentFetchKey = text;
-  const myFetchGeneration = beginDataScope();
+  beginDataScope();
   currentNode = TASK_COMMAND_ROOT;
   currentData = undefined;
 
@@ -280,21 +279,7 @@ async function updateTaskCommandMenu(text: string): Promise<void> {
     );
     return;
   }
-  if (!(result instanceof Promise)) {
-    paintTaskCommandMenu(result);
-    return;
-  }
-  paintTaskCommandMenu("loading");
-  try {
-    const cands = await result;
-    if (fetchGeneration !== myFetchGeneration) return;
-    paintTaskCommandMenu(cands);
-  } catch (err) {
-    if (fetchGeneration !== myFetchGeneration) return;
-    paintTaskCommandMenu({
-      error: err instanceof Error ? err.message : "error",
-    });
-  }
+  paintTaskCommandMenu(result);
 }
 
 /**
@@ -610,49 +595,6 @@ function nextSelectable(from: number, dir: 1 | -1): number {
   }
   return from;
 }
-
-/**
- * Re-render the open menu's rows from the cached data.
- *
- * Row labels are computed at render time from the current task's binding (the
- * `/switch` baseline), so a rotation that changes that binding while a menu is
- * open must not leave the old baseline on screen. Only walker menus are
- * rebuilt here; `+`/`@` rows are assembled asynchronously by their own input
- * pipeline.
- */
-export function refreshSlashMenuRows(): void {
-  if (!dom.slashMenu.classList.contains("active")) return;
-  if (currentNode === TASK_COMMAND_ROOT) return;
-  const text = currentMenuInput();
-  const { node, pathPrefix, tailQuery, rawRemainder } = resolvePath(
-    text,
-    rootForInput(text),
-  );
-  if (node !== currentNode) return;
-  // The task list's own read also repaints through here before its live watch
-  // fires, so keeping the selected row here is what makes the live repaint
-  // able to keep it. A row whose key is gone still falls back to the first
-  // selectable row.
-  const previous = candidates[selectedIdx];
-  rebuild(tailQuery, pathPrefix, node.field?.(rawRemainder), previous);
-}
-
-/**
- * Repaint an open `+`/`@` menu when the current binding changes: the agent hint
- * names an agent the task is *not* running on, so a binding that arrives (or
- * changes) after the first paint would otherwise leave the hint pointing at the
- * current agent, which demonstrates nothing.
- */
-function refreshTaskCommandMenu(): void {
-  if (!dom.slashMenu.classList.contains("active")) return;
-  if (currentNode !== TASK_COMMAND_ROOT) return;
-  const text = currentMenuInput();
-  if (isTaskCommand(text)) void updateTaskCommandMenu(text);
-}
-
-subscribeTaskTopology(refreshSlashMenuRows);
-onTaskAgentChanged(refreshSlashMenuRows);
-onTaskAgentChanged(refreshTaskCommandMenu);
 
 // --- DOM listeners ---
 

@@ -6,6 +6,7 @@
 
 import {
   state,
+  onTaskAgentChanged,
   resetTaskUI,
   requestNewTask,
   getSelectConfigOption,
@@ -68,6 +69,7 @@ import {
   viewItemSpec,
 } from "./view-command.ts";
 import {
+  alsoOn,
   deriveLive,
   errorsAsEmpty,
   refreshingSource,
@@ -898,7 +900,9 @@ export const ROOT: CmdNode = {
       name: "/switch",
       desc: "Switch task",
       // Display only: rows show the last list at once and follow newer reads.
-      fetch: () => taskListSource,
+      // The current binding is another input to those rows, so the watch also
+      // listens for it.
+      fetch: () => alsoOn(taskListSource, onTaskAgentChanged),
       matches: (item: unknown, q: string) => {
         const s = item as TaskSummary;
         const title = (s.title ?? "").toLowerCase();

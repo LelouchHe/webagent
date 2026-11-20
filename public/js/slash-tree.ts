@@ -191,7 +191,7 @@ export function buildCandidates(
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- checking truthy presence
       const hasMore = hasChildren || child.fetch || child.freeform;
       subcommands.push({
-        spec: { primary: child.name, key: child.name, secondary: child.desc },
+        spec: { primary: child.name, secondary: child.desc },
         prefix: hasMore ? "›" : "",
         kind: "subcommand",
         node: child,

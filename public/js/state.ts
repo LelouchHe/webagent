@@ -1115,9 +1115,14 @@ export function beginConnectionEpoch(): number {
  */
 const taskAgentListeners: (() => void)[] = [];
 
-/** Repaint hooks for the current task's binding (an open menu's baseline). */
-export function onTaskAgentChanged(listener: () => void): void {
+/** Repaint hooks for the current task's binding (an open menu's baseline).
+ *  Returns how to stop listening. */
+export function onTaskAgentChanged(listener: () => void): () => void {
   taskAgentListeners.push(listener);
+  return () => {
+    const index = taskAgentListeners.indexOf(listener);
+    if (index >= 0) taskAgentListeners.splice(index, 1);
+  };
 }
 
 export function installTaskAgentId(

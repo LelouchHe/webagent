@@ -25,12 +25,13 @@ import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
 import { loadTaskList, taskListSource } from "./task-topology.ts";
 import {
+  alsoOn,
   deriveLive,
   errorsAsEmpty,
-  isLiveSource,
+  onceSource,
   type LiveSource,
 } from "./live-source.ts";
-import { setInputValue, state } from "./state.ts";
+import { onTaskAgentChanged, setInputValue, state } from "./state.ts";
 import { recentPathsSource } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
 import { isTaskCommand } from "./input-command.ts";
@@ -298,7 +299,7 @@ function makeNavigationCandidate(args: {
  */
 export function buildTaskCommandCandidates(
   text: string,
-): Candidate[] | Promise<Candidate[]> | LiveSource<Candidate[]> {
+): Candidate[] | LiveSource<Candidate[]> {
   if (!isTaskCommand(text)) return [];
 
   let parsed;
@@ -345,8 +346,11 @@ export function buildTaskCommandCandidates(
   }
 
   // `@` rows are a view of the shared task list: they follow it as it changes.
-  return deriveLive(taskListSource, (tasks) =>
-    buildMessageCandidates(parsed, tasks),
+  return alsoOn(
+    deriveLive(taskListSource, (tasks) =>
+      buildMessageCandidates(parsed, tasks),
+    ),
+    onTaskAgentChanged,
   );
 }
 
@@ -373,7 +377,7 @@ function buildCreateCwdCandidates(
   /** `<agent>:` to keep glued to every fill, so completing a path after a
    *  settled coordinate never drops the chosen agent. */
   coordinatePrefix = "",
-): Promise<Candidate[]> | LiveSource<Candidate[]> {
+): LiveSource<Candidate[]> {
   const titleWord = quoteShellWord(title);
   const base = state.taskCwd ?? "";
 
@@ -411,7 +415,11 @@ function buildCreateCwdCandidates(
     });
   }
 
-  return listCreateDirectories(titleWord, rawCwd, base, coordinatePrefix);
+  // A directory listing is one-shot: each input builds a fresh source, so a
+  // late answer cannot reach a newer prefix.
+  return onceSource(() =>
+    listCreateDirectories(titleWord, rawCwd, base, coordinatePrefix),
+  );
 }
 
 /** The directory layer for a typed cwd prefix; never cached. */
@@ -451,24 +459,28 @@ async function listCreateDirectories(
         (filter === "" ||
           e.name.toLowerCase().startsWith(filter.toLowerCase())),
     )
-    .map((entry) => ({
-      spec: {
-        primary: entry.name,
-        // The cwd is verbatim, so the completed path is appended raw: a
-        // space in a directory name never needs quoting after the title.
-        fill: `+${titleWord} ${coordinatePrefix}${completedPrefix}${entry.name}/`,
-        continueOnFill: true,
-      },
-      prefix: "",
-      kind: "data",
-    }));
+    .map((entry) => {
+      const rowPath = `${completedPrefix}${entry.name}/`;
+      return {
+        spec: {
+          primary: entry.name,
+          key: rowPath,
+          // The cwd is verbatim, so the completed path is appended raw: a
+          // space in a directory name never needs quoting after the title.
+          fill: `+${titleWord} ${coordinatePrefix}${rowPath}`,
+          continueOnFill: true,
+        },
+        prefix: "",
+        kind: "data",
+      };
+    });
 }
 
 function buildCreateCandidates(parsed: {
   marker: string;
   target: string;
   remainder: string;
-}): Candidate[] | Promise<Candidate[]> | LiveSource<Candidate[]> {
+}): Candidate[] | LiveSource<Candidate[]> {
   const title = parsed.target;
   if (title.trim() === "") return bareCreateCandidates();
 
@@ -541,10 +553,9 @@ function buildCreateCandidates(parsed: {
     if (hint !== null) built.push(hint);
     return built;
   };
-  if (isLiveSource<Candidate[]>(cwdCandidates)) {
-    return deriveLive(cwdCandidates, withCwdRows);
-  }
-  return cwdCandidates.then(withCwdRows);
+  // The hint names an agent the task is not running on, so a binding change is
+  // another input to this list; the watch follows both.
+  return alsoOn(deriveLive(cwdCandidates, withCwdRows), onTaskAgentChanged);
 }
 
 /** Resolve one submitted @ target using the full Task path semantics. */

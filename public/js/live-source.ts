@@ -54,6 +54,62 @@ export function errorsAsEmpty<T>(source: LiveSource<T[]>): LiveSource<T[]> {
 }
 
 /**
+ * A source that also reports a change when `subscribe` fires. `subscribe`
+ * registers a listener and returns its stop; a watch takes both and stops both,
+ * so the extra signal cannot outlive the menu scope that took it.
+ */
+export function alsoOn<T>(
+  source: LiveSource<T>,
+  subscribe: (onChange: () => void) => () => void,
+): LiveSource<T> {
+  return {
+    read: () => source.read(),
+    watch(onChange) {
+      const stopSource = source.watch(onChange);
+      const stopSignal = subscribe(onChange);
+      return () => {
+        stopSignal();
+        stopSource();
+      };
+    },
+  };
+}
+
+/**
+ * A source for a one-shot read that starts when the caller builds it. There is
+ * no cache: a new source is made for every input, exactly like the Promise it
+ * replaces. `watch` starts nothing; it only reports the settled value or error.
+ */
+export function onceSource<T>(load: () => Promise<T>): LiveSource<T> {
+  let state: LiveState<T> = "loading";
+  const listeners = new Set<() => void>();
+  const settle = (next: LiveState<T>): void => {
+    state = next;
+    for (const onChange of [...listeners]) onChange();
+  };
+  load().then(
+    (value) => {
+      settle(value);
+    },
+    (err: unknown) => {
+      settle({
+        error:
+          err instanceof Error && err.message ? err.message : "load failed",
+      });
+    },
+  );
+  return {
+    read: () => state,
+    watch(onChange) {
+      listeners.add(onChange);
+      return () => {
+        listeners.delete(onChange);
+      };
+    },
+  };
+}
+
+/**
  * A source that shows the last value a load resolved with, and loads when a
  * watch starts. A load starts only when none is in flight, so two loads never
  * overlap. A failure is shown only while there is no value: after a successful

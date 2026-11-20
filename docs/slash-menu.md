@@ -98,17 +98,26 @@ value. `/new` and `+` still put their own cwd row ahead of the path rows
 (their action row still leads the whole menu), and treat a recent-paths
 failure as no recents (`errorsAsEmpty`), exactly as their old `catch` did;
 that fallback matters only before any list has loaded, because after that the
-last list stays. `+` keeps directory listings one-shot: only the no-cwd
-recent-paths branch is live. Every other node keeps its one-shot `fetch`.
+last list stays. `+` keeps directory listings uncached: each input builds a
+fresh one-shot source (`onceSource`), while the no-cwd branch shares the
+recent-paths source. Every other walker node keeps its one-shot `fetch`.
 
-Rows carry a producer-given `key` (a task id, a path, a command name): the
+A menu updates only through a subscription it took when it opened: a
+`LiveSource` watch, registered with the menu's data scope. A static menu (for
+example `/`) takes no such subscription and is never rebuilt by live activity;
+there are no global repaint hooks. A source whose rows also depend on the
+current binding takes that signal in the same watch (`alsoOn`), so `/switch`,
+`@`, and both `+` branches follow a binding change too. The directory branch is
+a `onceSource`: it reports its one-shot read, but a new source is made for
+each input, so a late listing has no watch left to repaint a newer prefix.
+Directory rows carry their path as `key`, so a binding repaint keeps the
+selection.
+
+Rows from a live source carry a producer-given `key` (a task id, a path): the
 producer knows what the row is, so the menu never guesses identity from the
-rendered text. Command rows use their name; live data rows set their own. A repaint caused by a live source refresh (and, for walker
-menus, `refreshSlashMenuRows`) keeps the row with the same key, wherever it
+rendered text. A live repaint keeps the row with the same key, wherever it
 moved in the list; otherwise it selects the first selectable row. Typing
-selects the first row, and a row without a key falls back the same way. This does not cover the
-`+`/`@` agent-binding refresh, which re-runs the input path and therefore
-resets the selection.
+selects the first row, and a row without a key falls back the same way.
 
 ## FieldView — a node's own argument field
 

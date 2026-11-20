@@ -10,8 +10,8 @@
 export interface SlashItemSpec {
   /** Main label, natural width, never truncated. */
   primary: string;
-  /** Producer-given identity, used by repaints to keep the row selected.
-   *  Command rows use their name; live data rows set their own. */
+  /** Producer-given identity, used by live repaints to keep the row selected.
+   *  Rows from a live source set it; static rows leave it unset. */
   key?: string;
   /** L1 right-side dim/secondary text (single & double row both use). */
   secondary?: string;

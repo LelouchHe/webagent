@@ -12,6 +12,8 @@ describe("+ title-first create", () => {
   let dom: any;
   let commands: any;
   let taskCommand: any;
+  let installTaskAgentId: (id: string, agent: string) => void;
+  let installAgentDirectory: (agents: { id: string }[], dflt: string) => void;
   let fetchCalls: Array<{ url: string; init?: any }>;
   let existingDirs: Set<string>;
   let listEntries: Array<{
@@ -31,6 +33,9 @@ describe("+ title-first create", () => {
     await import("../public/js/render.ts");
     commands = await import("../public/js/commands.ts");
     taskCommand = await import("../public/js/task-command.ts");
+    installTaskAgentId = stateMod.installTaskAgentId;
+    installAgentDirectory = (await import("../public/js/agent-directory.ts"))
+      .installAgentDirectory;
   });
 
   after(() => {
@@ -434,6 +439,80 @@ describe("+ title-first create", () => {
     await settle();
 
     assert.equal(dom.input.value, "+api-fix public/");
+  });
+
+  it("a late directory listing cannot repaint a newer prefix", async () => {
+    const baseFetch = globalThis.fetch;
+    let releaseOld!: (entries: any[]) => void;
+    let listingCalls = 0;
+    globalThis.fetch = ((url: string, init?: any) => {
+      if (url.startsWith("/api/v1/files/list?")) {
+        listingCalls += 1;
+        if (listingCalls === 1) {
+          return new Promise((resolve) => {
+            releaseOld = (entries) => {
+              resolve(
+                new Response(
+                  JSON.stringify({
+                    path: "/work",
+                    pathDisplay: "~/work",
+                    parent: "/",
+                    truncated: false,
+                    entries,
+                  }),
+                  { status: 200 },
+                ),
+              );
+            };
+          });
+        }
+      }
+      return (baseFetch as any)(url, init);
+    }) as any;
+
+    dom.input.value = "+api-fix pu";
+    commands.updateSlashMenu();
+    await settle();
+    assert.equal(listingCalls, 1);
+
+    // Type a different prefix while the first listing is still in flight.
+    listEntries = [{ name: "notes", kind: "dir", size: null, mtime: 1 }];
+    dom.input.value = "+api-fix no";
+    commands.updateSlashMenu();
+    await settle();
+    const primaries = () =>
+      [...dom.slashMenu.querySelectorAll(".slash-primary")].map(
+        (el: any) => el.textContent,
+      );
+    assert.ok(primaries().includes("notes"));
+
+    // The old prefix resolves now; its source has no watch left.
+    releaseOld([{ name: "public", kind: "dir", size: null, mtime: 1 }]);
+    await settle();
+
+    assert.ok(primaries().includes("notes"));
+    assert.equal(primaries().includes("public"), false);
+  });
+
+  it("keeps the selected directory row when the binding changes", async () => {
+    installAgentDirectory([{ id: "pi" }, { id: "copilot" }], "pi");
+    state.taskAgentId = "pi";
+    dom.input.value = "+api-fix pu";
+    commands.updateSlashMenu();
+    await settle();
+    assert.match(dom.slashMenu.textContent ?? "", /type "copilot:"/);
+
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    const selected = () =>
+      dom.slashMenu.querySelector(".slash-item.selected .slash-primary")
+        ?.textContent;
+    assert.equal(selected(), "public");
+
+    installTaskAgentId("s1", "copilot");
+    await settle();
+
+    assert.equal(selected(), "public");
+    assert.match(dom.slashMenu.textContent ?? "", /type "pi:"/);
   });
 
   it("asks for hidden directories only when the segment starts with a dot", async () => {

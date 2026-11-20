@@ -4,6 +4,7 @@ import {
   deriveLive,
   errorsAsEmpty,
   isLiveSource,
+  onceSource,
   refreshingSource,
   type LiveSource,
   type LiveState,
@@ -163,6 +164,36 @@ describe("refreshingSource", () => {
 
     assert.deepEqual(source.read(), [5]);
     assert.deepEqual(heard, [[5]]);
+  });
+});
+
+describe("onceSource", () => {
+  it("reads loading, then the value, and notifies its watch", async () => {
+    const first = deferred<number[]>();
+    const source = onceSource(() => first.promise);
+    assert.equal(source.read(), "loading");
+
+    const heard: LiveState<number[]>[] = [];
+    source.watch(() => heard.push(source.read()));
+    first.resolve([1]);
+    await tick();
+
+    assert.deepEqual(source.read(), [1]);
+    assert.deepEqual(heard, [[1]]);
+  });
+
+  it("reports a failure and stays silent after its watch stops", async () => {
+    const failed = deferred<number[]>();
+    const source = onceSource(() => failed.promise);
+    const heard: LiveState<number[]>[] = [];
+    const stop = source.watch(() => heard.push(source.read()));
+    stop();
+
+    failed.reject(new Error("down"));
+    await tick();
+
+    assert.deepEqual(source.read(), { error: "down" });
+    assert.deepEqual(heard, []);
   });
 });
 
