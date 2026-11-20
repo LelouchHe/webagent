@@ -32,19 +32,17 @@ import { HTTP_STATUS } from "../http-status.ts";
 export const MCP_SERVER_NAME = "lelouchhe_webagent";
 
 /**
- * Short, transport-level usage guidance advertised through MCP initialize.
- * Keep this generic and bounded: detailed workflow guidance belongs in tool
- * descriptions, the Task Manual, or an on-demand skill.
+ * The cross-tool model advertised through MCP initialize: reach, delivery,
+ * accounts, and history. Facts only — per-tool effects live in tool
+ * descriptions, parameter meanings in parameter descriptions, and usage policy
+ * in skills.
  */
 export const MCP_SERVER_INSTRUCTIONS = [
-  "Use task_create for a direct child, then immediately use task_send to give it its first instruction.",
-  "Use task_list to check each reachable Task's workflowStatus, executionState, lastEventAt, and lastAgentActivityAt before deciding to act; workflowStatus is per turn, not a lifecycle terminal, and executionState is the live runtime source.",
-  "Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(waiting|blocked|done) for a typed update. A done Task remains available and is not deleted or permanently closed.",
-  "task_update(waiting|blocked|done) records a typed update; done and blocked settle the open account and wake the requester, waiting only records the status. There is no correlation parameter to copy back.",
-  "After dispatching work, end the current turn; do not poll with task_query.",
-  "Task history is the event log; summaries and handoffs are self-reports, and the log outranks them.",
-  "Use task_query to index flat event history and task_read to recover complete rows; use them only for history recovery, diagnosis, or audit.",
-  "Omit task_id to inspect the current Task's persisted history.",
+  "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.",
+  "Messages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.",
+  "An agent's task_send to a direct child opens one account for that edge; the child's task_update(done|blocked) settles it.",
+  "While an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); a running turn with no agent activity for 15 minutes notifies the requester (no_activity); a removed target or failed dispatch notifies the requester (target_removed).",
+  "Task history is the event log; summaries and updates are self-reports.",
 ].join("\n");
 
 const DEFAULT_PATH = "/mcp";

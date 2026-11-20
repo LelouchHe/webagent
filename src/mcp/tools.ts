@@ -206,17 +206,13 @@ export function registerMcpTools(
     "task_list",
     {
       description:
-        "Discover Tasks available for coordination. " +
-        "Use this before choosing a Task to contact, and inspect each item's " +
-        "workflowStatus, executionState, lastEventAt, and lastAgentActivityAt. " +
-        "workflowStatus is per turn, not a lifecycle terminal: a `done` Task can " +
-        "be woken and run again. executionState is the live runtime source " +
-        "(`agent`, `bash`, or `idle`). lastEventAt is the created_at of the " +
-        "Task's latest persisted event, or null when it has none; it is a lag " +
-        "signal, not proof of work — a long silent tool call can look stale " +
-        "while the Task is still running. lastAgentActivityAt is the latest " +
-        "qualifying agent-runtime event only, so it is a silence signal for a " +
-        "running turn. This is a cheap inspection, not a polling loop.",
+        "List the current Task, its parent, and its direct children. " +
+        "workflowStatus is the last typed update or the runtime turn status " +
+        "(`running`, `idle`); it is not a lifecycle terminal. executionState is " +
+        "the live runtime (`agent`, `bash`, or `idle`). lastEventAt is the " +
+        "created_at of the latest persisted event of any type, or null. " +
+        "lastAgentActivityAt is the latest agent-runtime event (output, " +
+        "thinking, tool call, plan, or permission request), or null.",
       inputSchema: {},
     },
     async () => {
@@ -229,10 +225,9 @@ export function registerMcpTools(
     "task_query",
     {
       description:
-        "List a flat event index for this Task or a visible relative. " +
-        "Rows include task-local seq, type, byte size, and bounded projections. " +
-        "Use range to page older rows and text for fixed-string search (ASCII case folding only). " +
-        "Thinking rows are included; this is for history recovery, diagnosis, or audit, not polling.",
+        "List a flat event index for a visible Task. " +
+        "Rows include task-local seq, type, byte size, and bounded projections; thinking rows are included. " +
+        "Reads never start an execution.",
       inputSchema: {
         task_id: TASK_ID.nullable()
           .optional()
@@ -288,9 +283,9 @@ export function registerMcpTools(
     "task_read",
     {
       description:
-        "Read complete persisted event rows by task-local sequence. " +
-        "Use seqs obtained from task_query; duplicate seqs are removed and rows return in ascending order. " +
-        "Thinking events are included.",
+        "Read complete persisted event rows of a visible Task by task-local sequence. " +
+        "Duplicate seqs are removed and rows return in ascending order; thinking events are included. " +
+        "Reads never start an execution.",
       inputSchema: {
         task_id: TASK_ID.nullable()
           .optional()
@@ -382,11 +377,10 @@ export function registerMcpTools(
     "task_cancel",
     {
       description:
-        "Stop a child Task's current work when it should no longer continue. " +
-        "The Task and its history remain available.",
+        "Stop a child Task's current work. The Task and its history remain available.",
       inputSchema: {
         target: TASK_ID.describe("Stable child Task ID"),
-        reason: BODY.describe("Why the child Task should stop"),
+        reason: BODY.describe("Reason recorded with the cancellation"),
       },
     },
     async ({ target, reason }) => {
@@ -399,13 +393,12 @@ export function registerMcpTools(
     "task_send",
     {
       description:
-        "Send a durable coordination message to another Task. " +
-        "Use it for instructions, questions, findings, progress, decisions, and follow-up. " +
-        "This is communication, not a lifecycle handoff; use task_update(waiting|blocked|done) for a typed update. " +
-        "Do not wait for or poll the recipient.",
+        "Queue a durable message to a visible Task. " +
+        "It is delivered at the recipient's next turn boundary and wakes it. " +
+        "An agent's message to its direct child opens or keeps open the account for that edge.",
       inputSchema: {
         target: TASK_ID.describe("Stable target Task ID"),
-        body: BODY.describe("Verbatim coordination or handoff message"),
+        body: BODY.describe("Message body, delivered verbatim"),
       },
     },
     async ({ target, body }) => {
@@ -419,16 +412,18 @@ export function registerMcpTools(
     "task_update",
     {
       description:
-        "Record a typed update for the current Task: `done` when the assignment is complete, `blocked` when it needs input or a decision, or `waiting` when work is still in progress and another Task will hand off and wake you (typically a child you dispatched). " +
-        "`done` and `blocked` are delivered to the requester — the source of the open dispatch account, or the current parent when none is open — and wake it; a late update still settles the account. " +
-        "`waiting` is not delivered, does not wake anyone, and does not settle the account; it only records the status. " +
-        "Waiting on a human, an external event, missing information, or permission is `blocked`, not `waiting`. " +
-        "There is no correlation parameter. " +
-        "This does not delete or permanently close the Task. Use task_send for normal communication.",
+        "Record a typed update for the current Task and set its workflowStatus. " +
+        "`done` and `blocked` are delivered to the requester (the source of the open account, or the current parent when none is open), wake it, and settle the account, even when late. " +
+        "`waiting` is only recorded: it is not delivered, wakes no one, and leaves the account open. " +
+        "Any update satisfies the current turn's account check. The Task is not deleted or closed.",
       inputSchema: {
-        status: z.enum(["waiting", "blocked", "done"]),
+        status: z
+          .enum(["waiting", "blocked", "done"])
+          .describe(
+            "`done`: the work is complete. `blocked`: progress needs the requester, a human, an external event, missing information, or permission. `waiting`: another Task will hand off and wake this one.",
+          ),
         body: BODY.describe(
-          "Handoff body: explain the blocker or report the completed result",
+          "Update body, delivered verbatim with done or blocked",
         ),
       },
     },

@@ -18,8 +18,7 @@
 export const TASK_CREATE_DESCRIPTION_BUDGET = 1024;
 
 const BASE =
-  "Create a direct child Task for independent work. " +
-  "Immediately use task_send to give it the first instruction, then end the dispatch turn without polling.";
+  "Create a direct child Task. It does not run until it receives a message.";
 
 const OMIT_NOTE = "Omit `agent` to inherit this Task's agent.";
 

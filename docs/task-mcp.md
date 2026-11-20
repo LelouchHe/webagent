@@ -76,18 +76,17 @@ built from that constant.
 
 ## Server instructions
 
-The server advertises a short, generic usage contract through the MCP
-`initialize` result:
+The server advertises the cross-tool model (reach, delivery, accounts, history)
+through the MCP `initialize` result. It states facts only: per-tool effects live
+in tool descriptions, parameter meanings in parameter descriptions, and usage
+policy in skills.
 
 ```text
-Use task_create for a direct child, then immediately use task_send to give it its first instruction.
-Use task_list to check each reachable Task's workflowStatus, executionState, lastEventAt, and lastAgentActivityAt before deciding to act; workflowStatus is per turn, not a lifecycle terminal, and executionState is the live runtime source.
-Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(waiting|blocked|done) for a typed update. A done Task remains available and is not deleted or permanently closed.
-task_update(waiting|blocked|done) records a typed update; done and blocked settle the open account and wake the requester, waiting only records the status. There is no correlation parameter to copy back.
-After dispatching work, end the current turn; do not poll with task_query.
-Task history is the event log; summaries and handoffs are self-reports, and the log outranks them.
-Use task_query to index flat event history and task_read to recover complete rows; use them only for history recovery, diagnosis, or audit.
-Omit task_id to inspect the current Task's persisted history.
+Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.
+Messages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.
+An agent's task_send to a direct child opens one account for that edge; the child's task_update(done|blocked) settles it.
+While an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); a running turn with no agent activity for 15 minutes notifies the requester (no_activity); a removed target or failed dispatch notifies the requester (target_removed).
+Task history is the event log; summaries and updates are self-reports.
 ```
 
 Clients may surface these instructions through their own discovery UI or tool;
@@ -141,12 +140,12 @@ WebAgent does not automatically rebroadcast raw child reports to ancestors.
 
 | Tool | Purpose |
 | --- | --- |
-| `task_list` | List the current task and its locally reachable parent and children, each with `workflowStatus`, `executionState`, `lastEventAt`, and `lastAgentActivityAt` for triage. |
+| `task_list` | List the current task, its parent, and its direct children, each with `workflowStatus`, `executionState`, `lastEventAt`, and `lastAgentActivityAt`. |
 | `task_query` | Read a bounded, compact history page for the current task or one visible relative. |
 | `task_read` | Read complete persisted history rows by task-local sequence from the current task or one visible relative. |
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
-| `task_create` | Create a direct child Task with optional execution overrides. Use `task_send` for its first instruction. |
-| `task_send` | Send a durable coordination message, including follow-up or resume instructions for an existing Task. Use `task_update` for typed `waiting`/`blocked`/`done` updates. |
+| `task_create` | Create a direct child Task with optional execution overrides. It does not run until it receives a message. |
+| `task_send` | Queue a durable message, delivered at the recipient's next turn boundary. An agent's message to its direct child opens or keeps open that edge's account. |
 | `task_update` | Record a typed `waiting`, `blocked`, or `done` update. `done` and `blocked` are delivered to the requester and settle the open account; `waiting` only records the status. There is no correlation parameter. This does not delete or permanently close the Task. |
 
 ### `task_list`
@@ -172,8 +171,7 @@ type McpTaskListItem = {
 `workflowStatus` uses the same vocabulary as `task_list`: `running` while a turn runs, `idle` after it ended without a typed report, `waiting` when the Task says it is waiting on another Task, and `blocked`/`done` when it handed the ball back. `task_query` returns only `task_id`, `max_seq`, and flat event rows.
 It is **per turn, not a lifecycle terminal**: a `done` Task can be woken by a
 later message and run again, so `done` means the Task reported complete for that
-turn, not that it is finished forever. Use `task_list` to decide whether to act
-on a Task; use `task_query` only for history recovery or diagnosis, not to poll.
+turn, not that it is finished forever.
 
 `executionState` is the live runtime source: `agent` while an ACP turn or a
 collaboration delivery is running, `bash` while a user shell command owns the
@@ -383,16 +381,13 @@ or the target session's own current value. `inherited` appears only when a value
 genuinely cannot be determined, so a cross-agent child shows the target's
 defaults instead of claiming an inheritance that did not happen.
 
-This creates an Agent-delegated Task: immediately send its first Task Contract
-with `task_send`, including the goal, scope, completion criteria, and report
-format, then end the dispatch turn without polling. Failures return an MCP tool
-error rather than an empty ID.
+This creates an Agent-delegated Task that does not run until it receives a
+message through `task_send`. Failures return an MCP tool error rather than an empty ID.
 
 ### `task_send`
 
-Send a durable coordination message to another Task. Use it for instructions,
-questions, findings, progress, decisions, and focused follow-up, including
-continuing a Task marked `blocked` or `done`.
+Queue a durable message to a visible Task. It is delivered at the recipient's
+next turn boundary and wakes it, including a Task marked `blocked` or `done`.
 
 `task_send` is not a lifecycle handoff and does not complete the current Task.
 Use `task_update(waiting|blocked|done)` for a typed update. The recipient receives the full message body; important
