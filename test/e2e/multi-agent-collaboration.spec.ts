@@ -16,11 +16,10 @@ import {
  * transcript as a collaboration notification: it must be readable, carry the
  * same title the store persisted, and replay identically after a reload.
  *
- * The terminal runtime notices (`no_activity`, `delivery_failed`) are bounded
- * by operator thresholds (0 / 2 min / 5 min of delivered reminders) and need a
- * request-level transport failure, so their live/replay shape is proven at the
- * integration layer (`server-event-handler`, `multi-agent-mcp-collaboration`);
- * this spec proves the browser path for the same collaboration row shape.
+ * The runtime notices (`no_update`, `no_activity`, `target_removed`) are
+ * proven at the integration layer (`obligation-controller`,
+ * `multi-agent-mcp-collaboration`); this spec proves the browser path for the
+ * collaboration row shape.
  */
 
 interface Notification {

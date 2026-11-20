@@ -3794,7 +3794,7 @@ export class TaskManager implements ObligationHost {
     });
   }
 
-  /** A current target turn ended; the controller may enter `reminder_due`. */
+  /** A current target turn ended; the controller runs its turn-end check. */
   onTargetTurnEnded(taskId: string, opts?: { cancelled?: boolean }): void {
     this.obligations.onTargetTurnEnded(taskId, opts?.cancelled === true);
   }
