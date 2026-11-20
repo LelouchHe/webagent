@@ -1985,9 +1985,12 @@ describe("events", () => {
           id: "parent",
           cwd: "/tmp",
           title: "Parent",
+          parentId: null,
+          parentAgentId: null,
           configOptions: [],
           busyKind: null,
         };
+        let parentReads = 0;
         setFetch(async (url: string, init?: any) => {
           if (
             url.split("?")[0] === "/api/v1/tasks" &&
@@ -1998,8 +2001,10 @@ describe("events", () => {
               text: async () =>
                 JSON.stringify([{ id: "mru" }, { id: "parent" }]),
             };
-          if (url === "/api/v1/tasks/parent")
+          if (url === "/api/v1/tasks/parent") {
+            parentReads += 1;
             return { ok: true, text: async () => JSON.stringify(parentTask) };
+          }
           if (url.startsWith("/api/v1/tasks/parent/events"))
             return { ok: true, text: async () => "[]" };
           if (url === "/api/v1/tasks/parent/snapshot")
@@ -2024,6 +2029,8 @@ describe("events", () => {
         for (let i = 0; i < 30; i++) await Promise.resolve();
 
         assert.equal(state.taskId, "parent");
+        // The successful detail read is reused by activation, not issued twice.
+        assert.equal(parentReads, 1);
         // Landing on the parent's own transcript is self-explanatory; the
         // replacement notice belongs to a Root exit only.
         assert.equal(

@@ -92,8 +92,10 @@ import type {
   ConfigOption,
   StoredEvent,
   NormalizedEventsResponse,
+  TaskDetail,
   ToolContentItem,
 } from "../../src/types.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
 import "./plan-panel.ts";
 import { OrphanToolUpdateCache } from "./orphan-tool-updates.ts";
 import {
@@ -286,21 +288,30 @@ export function fallbackToNextTask(
   return operation;
 }
 
-/** A named parent wins when it still exists; otherwise the newest active task. */
-async function resolveFallbackTaskId(
+/**
+ * A named parent wins when it still exists; otherwise the newest active task.
+ * The named parent's detail read is reused by activation; only a 404 falls
+ * through to the list, and any other failure propagates to the existing
+ * failed-switch path.
+ */
+async function resolveFallbackTask(
   preferredTaskId: string | null | undefined,
   expiredId: string | null,
-): Promise<string | null> {
+): Promise<{ id: string; task?: TaskDetail } | null> {
   if (preferredTaskId) {
     try {
-      await api.getTask(preferredTaskId);
-      return preferredTaskId;
-    } catch {
-      // Fall through to the active list.
+      const task = await api.getTask(preferredTaskId);
+      return { id: preferredTaskId, task };
+    } catch (err) {
+      if (!(
+        err instanceof api.ApiError && err.status === HTTP_STATUS.NOT_FOUND
+      ))
+        throw err;
     }
   }
   const activeTasks = await loadTaskList();
-  return activeTasks.find((task) => task.id !== expiredId)?.id ?? null;
+  const id = activeTasks.find((task) => task.id !== expiredId)?.id;
+  return id === undefined ? null : { id };
 }
 
 async function fallbackToNextTaskImpl(
@@ -316,21 +327,28 @@ async function fallbackToNextTaskImpl(
     // The server can name an archived parent (exiting a task inside an
     // archived tree). Existence is answered by its own read; only the ordinary
     // fallback looks at the active list.
-    const nextTaskId = await resolveFallbackTaskId(preferredTaskId, expiredId);
+    const next = await resolveFallbackTask(preferredTaskId, expiredId);
     if (
       gen !== state.taskSwitchGen ||
       connectionEpoch !== state.connectionEpoch
     ) {
       return;
     }
-    if (nextTaskId) {
+    if (next) {
       resetTaskUI();
-      state.taskId = nextTaskId;
-      setHashTaskId(nextTaskId);
-      const [task, loaded] = await Promise.all([
-        api.getTask(nextTaskId),
-        loadHistory(nextTaskId),
-      ]);
+      state.taskId = next.id;
+      setHashTaskId(next.id);
+      let task: TaskDetail;
+      let loaded: boolean;
+      if (next.task) {
+        task = next.task;
+        loaded = await loadHistory(next.id);
+      } else {
+        [task, loaded] = await Promise.all([
+          api.getTask(next.id),
+          loadHistory(next.id),
+        ]);
+      }
       if (
         gen !== state.taskSwitchGen ||
         connectionEpoch !== state.connectionEpoch
@@ -338,7 +356,7 @@ async function fallbackToNextTaskImpl(
         return;
       }
       const hydrated = await hydrateTaskRuntime(
-        nextTaskId,
+        next.id,
         () =>
           gen === state.taskSwitchGen &&
           connectionEpoch === state.connectionEpoch,
