@@ -549,7 +549,11 @@ function handleError(
         recoveryOrigin: "error",
       });
       tasks.recoverUnfinishedWork(bridge, taskId, "error");
-      tasks.onTargetTurnEnded(taskId, { cancelled: cancelledTurn });
+      // A request-level rejection never reached the agent, so it is not a
+      // completed turn: the drain's rejection path is the only account path.
+      if (!event.requestLevel) {
+        tasks.onTargetTurnEnded(taskId, { cancelled: cancelledTurn });
+      }
     } else {
       clog.info("failure from a superseded turn", {
         taskId: event.taskId.slice(0, 8),
@@ -567,6 +571,7 @@ function handleError(
       {
         message: event.message,
         ...(event.promptId ? { promptId: event.promptId } : {}),
+        ...(event.requestLevel ? { requestLevel: true } : {}),
       },
       { from_ref: "agent" },
     );

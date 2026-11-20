@@ -298,7 +298,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the receiver's collaboration row is written at drain, not at creation, and precedes the turn's own output event; a message never appears in a turn that did not see it
   - a delivered batch broadcasts `collaboration_delivery` with `delivered`, and a rejected prompt broadcasts `failed`
   - a failed dispatch prompt, a resume failure, and `/clear` each fail the queued delivery and close the account with one `target_removed` notice; a resume failure leaves no row stranded in `queued`
-  - a closing reminder is queued behind a running turn and appears only at the boundary, through the same delivery path as collaboration messages
+  - a closing reminder is queued behind a running turn and appears only at the boundary through the automatic drain; the recipient gets exactly one row, labeled `WebAgent runtime`, with no pre-drain `handoff_reminder` row and no delivery mark
+  - an unrelated REST/system delivery failing does not close the dispatch account; a stale resume leaves queued work for the current execution
+  - same-time deliveries drain in insertion order, not id order
+  - a request-level error emitted before a rejection runs no turn-end check; only the rejection path (`target_removed`) applies
+  - a failed update transaction marks nothing and keeps the account open
 
 - `test/collaboration-route.test.ts`
   - a human send over REST reaches a cross-tree target with exactly source and target projections, and a self target is refused
@@ -597,23 +601,18 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the delegated condition requires a live turn, not just a recorded origin: after the turn ends, the same request prompts
   - a human turn is unchanged: default mode prompts, and our own injected MCP tools have no privilege there
   - the attachment-read interceptor approves only inside the turn the request arrived in; a turn that ended or was superseded before the realpath work finishes produces no `permission_response`
-  - directed dispatch closure: only an agent-authored direct parent→child dispatch opens one account; a user send, a child message, an update, and a runtime notice do not
-  - turn-end check: a turn with no typed update gets one closing reminder; another such turn reports `no_update` and stops reminding; any update, including `waiting`, resets the count; a cancelled turn triggers nothing
-  - settlement routing: `done`/`blocked` settles the open account to its stored source even when late, and falls back to the current parent when no account is open; `waiting` never routes
-  - the real delivery path: the dispatch is handed to the target's session, and the account arriving from that same turn settles it with no reminder
-  - releasing a task reports `target_removed` to a live source and purges the account; an account whose source disappears is dropped without a notice; archiving cuts only the former-parent edge
-  - a runtime rotation leaves the open account in place and aborts the observed turn
   - execution write lease, fail closed: an event stamped with a replaced generation, an unknown generation, another task's lease, no lease at all, or no lease for a task with no ledger entry writes nothing — no buffer, no stored event, no broadcast, no activity timestamp
 
 - `test/obligation-controller.test.ts`
   - arm/open/coalesce: one account per target, a follow-up dispatch keeps it, one close removes it
   - turn-end check: update resets the whole cycle (miss count and stopped flag); a full cycle runs reminder → `no_update`, updates, then a second full cycle runs again; a cancelled turn triggers nothing
   - `waiting` is an update for the check but never settles
+  - an update made while idle resets the cycle immediately and marks no turn; a running turn's update marks only that turn
   - silence: 15 minutes without activity reports `no_activity` once per running turn; activity before the deadline postpones it, and no account means no notice
   - target removal: deleting or archiving the target reports `target_removed`; losing the source drops the account silently; dispose stops timers
 
 - `test/turn-slot.test.ts`
-  - one turn slot per task, and every real submission assigns its own origin: the interactive route, `/compact`, and the beta quick prompt are `interactive`; a collaboration drain is `delegated` for an all-agent/system batch and `interactive` for a batch containing one user message; a closing reminder is `delegated`. Nothing inherits the previous turn's value
+  - one turn slot per task, and every real submission assigns its own origin: the interactive route, `/compact`, and the beta quick prompt are `interactive`; a collaboration drain is `delegated` for an all-agent/system batch and `interactive` for a batch containing one user message. Nothing inherits the previous turn's value
   - every per-path release point of the end-of-turn table closes the slot — `prompt_done`, agent error, drain rejection, reminder `finally`, interactive `finally`, `/compact` `finally`, `resetTaskRuntime` even under `preserveRuntimeState`, and an agent-scoped `clearAgentRuntime` — and the next turn on that task is interactive again; a cancel request alone ends nothing, because only the turn's own terminal does. The task-vanishing row is covered only through its production entries (next bullet), never by calling a private release method
   - a superseded turn's late terminal (including a late `prompt_done`) never releases or re-origins the turn that replaced it
   - the submission protocol is shared and survives awaits: a runtime reservation blocks an interactive submit and vice versa, the slot is held across `ensureResumed`, a submitter that wins during the transport resolution is the only one that reaches `bridge.prompt` (and the loser's delivery stays queued), and a reservation invalidated by a cancel during that await gives up without claiming or submitting

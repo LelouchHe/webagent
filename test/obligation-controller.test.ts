@@ -152,6 +152,52 @@ describe("ObligationController", () => {
     );
   });
 
+  it("marks only a running turn, and resets the cycle immediately", () => {
+    const h = makeHarness();
+    h.controller.arm("parent", "child");
+
+    // A late idle update resets the cycle but belongs to no turn-end check.
+    h.controller.noteUpdate("child");
+    assert.equal(
+      (h.controller as unknown as { updated: Set<string> }).updated.has(
+        "child",
+      ),
+      false,
+    );
+
+    // A run that follows an idle update starts a fresh cycle.
+    h.controller.beginTurn("child");
+    h.controller.onTargetTurnEnded("child");
+    assert.deepEqual(h.reminders, ["child"]);
+    h.controller.beginTurn("child");
+    h.controller.onTargetTurnEnded("child");
+    assert.deepEqual(
+      h.notices.map((notice) => notice.reason),
+      ["no_update"],
+    );
+
+    // An idle update after the notice resets the stopped flag and miss count.
+    h.controller.noteUpdate("child");
+    h.controller.beginTurn("child");
+    h.controller.onTargetTurnEnded("child");
+    assert.deepEqual(h.reminders, ["child", "child"]);
+  });
+
+  it("counts an update made during the running turn", () => {
+    const h = makeHarness();
+    h.controller.arm("parent", "child");
+    h.controller.beginTurn("child");
+    h.controller.noteUpdate("child");
+    assert.equal(
+      (h.controller as unknown as { updated: Set<string> }).updated.has(
+        "child",
+      ),
+      true,
+    );
+    h.controller.onTargetTurnEnded("child");
+    assert.equal(h.reminders.length, 0);
+  });
+
   it("triggers nothing for a cancelled turn", () => {
     const h = makeHarness();
     h.controller.arm("parent", "child");

@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
-import { mockBridgeStubs, waitFor } from "./fixtures.ts";
+import { handleAgentEvent } from "../src/event-handler.ts";
+import {
+  makeEventHandlerConfig,
+  mockBridgeStubs,
+  waitFor,
+} from "./fixtures.ts";
 
 describe("TaskManager collaboration delivery drain", () => {
   let store: Store;
@@ -484,19 +489,252 @@ describe("TaskManager collaboration delivery drain", () => {
       },
     };
     tasks.attachExecutionBridge(bridge);
+    const deliveryEvents: Array<{ messageId: string }> = [];
+    tasks.setDeliveryStatusBroadcast((event) => {
+      deliveryEvents.push(event);
+    });
     tasks.beginAgentTurn("child", { origin: "interactive" });
 
     tasks.submitObligationReminder("parent", "child");
     assert.equal(store.countQueuedDeliveries("child"), 1);
     assert.deepEqual(prompts, [], "a busy target is not interrupted");
+    assert.equal(
+      store
+        .getEvents("child")
+        .filter((event) => event.type === "system_message")
+        .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+        .filter((data) => data.kind === "handoff_reminder").length,
+      0,
+      "a runtime item is not visible before its drain",
+    );
 
     tasks.endTurn("child");
+    await waitFor(() => prompts.length === 1, {
+      message: "the turn boundary drains the reminder automatically",
+    });
+    assert.match(prompts[0], /From the WebAgent runtime/);
+    assert.match(prompts[0], /runtime-injected closing turn/i);
+    assert.equal(store.countQueuedDeliveries("child"), 0);
+    assert.equal(
+      store
+        .getEvents("child")
+        .filter((event) => event.type === "handoff_reminder").length,
+      1,
+      "the reminder still has audit metadata",
+    );
+
+    const rows = store
+      .getEvents("child")
+      .filter((event) => event.type === "system_message")
+      .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+      .filter((data) => data.kind === "collaboration");
+    assert.equal(rows.length, 1, "exactly one recipient-visible row");
+    assert.equal(rows[0].sourceLabel, "WebAgent runtime");
+    assert.equal("sourceTaskId" in rows[0], false);
+    assert.equal(deliveryEvents.length, 0, "no mark for a system item");
+  });
+
+  it("keeps the account when an unrelated delivery fails", async () => {
+    seedDispatchFamily();
+    const dispatch = store.claimQueuedDeliveries("child");
+    store.markCollaborationDeliveriesDelivered(
+      dispatch.map((delivery) => delivery.id),
+    );
+    store.createCollaborationMessage({
+      id: "third-party",
+      deliveryId: "third-party-delivery",
+      sourceTaskId: store.rootTaskId,
+      directTargetTaskId: "child",
+      sourceActor: "user",
+      body: "unrelated note",
+    });
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt() {
+        throw new Error("rejected");
+      },
+    };
+
     assert.equal(
       await tasks.drainCollaborationDeliveries("child", bridge),
       true,
     );
+    assert.equal(
+      store.getCollaborationDelivery("third-party-delivery")?.status,
+      "failed",
+    );
+    assert.equal(
+      tasks.hasOpenObligation("parent", "child"),
+      true,
+      "a third-party failure must not settle the dispatch account",
+    );
+    assert.equal(sourceNotice("parent"), undefined);
+  });
+
+  it("leaves queued work for the current execution after a stale resume", async () => {
+    seedDispatchFamily();
+    let released = false;
+    const bridge = {
+      ...mockBridgeStubs(),
+      async loadSession() {
+        const submissionId = tasks.pendingPromptSubmissions.get("child");
+        assert.ok(submissionId !== undefined);
+        tasks.releasePromptSubmission("child", submissionId, false);
+        released = true;
+        throw new Error("resume superseded");
+      },
+    };
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", bridge),
+      false,
+    );
+    assert.equal(released, true);
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.status,
+      "queued",
+      "a stale attempt must not fail the current queue",
+    );
+    assert.equal(tasks.hasOpenObligation("parent", "child"), true);
+    assert.equal(sourceNotice("parent"), undefined);
+  });
+
+  it("drains same-time deliveries in enqueue order", async () => {
+    store.createCollaborationMessage({
+      id: "z-first",
+      deliveryId: "zz-order-first",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "user",
+      body: "FIRST",
+      createdAt: 5,
+    });
+    store.createCollaborationMessage({
+      id: "a-second",
+      deliveryId: "aa-order-second",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "user",
+      body: "SECOND",
+      createdAt: 5,
+    });
+    const prompts: string[] = [];
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt(_taskId: string, text: string) {
+        prompts.push(text);
+      },
+    };
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("target", bridge),
+      true,
+    );
+    await waitFor(
+      () =>
+        store.getCollaborationDelivery("zz-order-first")?.status ===
+          "delivered" &&
+        store.getCollaborationDelivery("aa-order-second")?.status ===
+          "delivered",
+    );
     assert.equal(prompts.length, 1);
-    assert.match(prompts[0], /runtime-injected closing turn/i);
-    assert.equal(store.countQueuedDeliveries("child"), 0);
+    assert.ok(
+      prompts[0].indexOf("FIRST") < prompts[0].indexOf("SECOND"),
+      "same-time items keep insertion order, not id order",
+    );
+  });
+
+  it("runs the rejection path, not the turn-end check, after a request-level error", async () => {
+    seedDispatchFamily();
+    const sse = { broadcast() {} };
+    const bridge: {
+      prompt(
+        taskId: string,
+        text: string,
+        attachments?: unknown,
+        promptId?: string,
+      ): Promise<void>;
+    } & ReturnType<typeof mockBridgeStubs> = {
+      ...mockBridgeStubs(),
+      async prompt(taskId, _text, _attachments, promptId) {
+        const lease = tasks.authority.leaseFor(taskId);
+        handleAgentEvent(
+          {
+            type: "error",
+            taskId,
+            promptId,
+            message: "never handed over",
+            requestLevel: true,
+            ...(lease ? { executionLease: lease } : {}),
+          } as never,
+          tasks,
+          store,
+          bridge as never,
+          makeEventHandlerConfig(),
+          sse as never,
+        );
+        throw new Error("rejected");
+      },
+    };
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", bridge),
+      true,
+    );
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(sourceNotice("parent")?.reason, "target_removed");
+    const reminderRows = store
+      .getEvents("child")
+      .filter((event) => event.type === "system_message")
+      .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+      .filter((data) => data.kind === "handoff_reminder");
+    assert.equal(reminderRows.length, 0);
+    const visibleReminders = store
+      .getEvents("child")
+      .filter((event) => event.type === "system_message")
+      .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+      .filter(
+        (data) =>
+          data.kind === "collaboration" &&
+          typeof data.body === "string" &&
+          data.body.includes("Task Handoff Required"),
+      );
+    assert.equal(visibleReminders.length, 0);
+    assert.equal(
+      store.countQueuedDeliveries("child"),
+      0,
+      "a rejected prompt queues no reminder for the target",
+    );
+    const noUpdateRows = store
+      .getEvents("parent")
+      .filter((event) => event.type === "task_outcome_notice")
+      .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+      .filter((data) => data.reason === "no_update");
+    assert.equal(noUpdateRows.length, 0);
+  });
+
+  it("does not mark a turn when the update transaction fails", () => {
+    seedDispatchFamily();
+    tasks.beginAgentTurn("child", { origin: "interactive" });
+    tasks.notePromptSubmitted("child");
+    const original = store.recordAgentWorkflowUpdate.bind(store);
+    store.recordAgentWorkflowUpdate = () => {
+      throw new Error("transaction failed");
+    };
+    try {
+      assert.throws(
+        () => tasks.settleAgentUpdate("child", "done", "not committed"),
+        /transaction failed/,
+      );
+    } finally {
+      store.recordAgentWorkflowUpdate = original;
+    }
+    assert.equal(
+      (
+        tasks as unknown as { obligations: { updated: Set<string> } }
+      ).obligations.updated.has("child"),
+      false,
+    );
+    assert.equal(tasks.hasOpenObligation("parent", "child"), true);
   });
 });

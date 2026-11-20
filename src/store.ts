@@ -1664,7 +1664,7 @@ export class Store {
     // Everything this operation persists — detach, transcript fact, and the
     // queued cross-tree delivery marks — commits or rolls back together. The
     // caller drops the in-memory obligation edge only after this returns.
-    return this.db.transaction(() => {
+    const archived = this.db.transaction(() => {
       const parentPath = this.getTaskPath(parentId) ?? parentId;
       this.db
         .prepare(
@@ -1690,15 +1690,20 @@ export class Store {
       );
       const failedDeliveryIds =
         this.markQueuedDeliveriesAcrossSubtreeBoundary(id);
-      this.notifyDeliveryStatus(failedDeliveryIds);
       return {
-        status: "archived" as const,
-        taskId: id,
-        parentId,
-        parentPath,
-        message,
+        result: {
+          status: "archived" as const,
+          taskId: id,
+          parentId,
+          parentPath,
+          message,
+        },
+        failedDeliveryIds,
       };
     })();
+    const { result, failedDeliveryIds } = archived;
+    this.broadcastDeliveryStatus(failedDeliveryIds);
+    return result;
   }
 
   /**
@@ -2604,7 +2609,7 @@ export class Store {
     this.deliveryStatusObservers.push(observer);
   }
 
-  private notifyDeliveryStatus(ids: readonly string[]): void {
+  broadcastDeliveryStatus(ids: readonly string[]): void {
     if (ids.length === 0 || this.deliveryStatusObservers.length === 0) return;
     const changes: CollaborationDeliveryStatusChange[] = [];
     for (let index = 0; index < ids.length; index += 400) {
@@ -2616,7 +2621,7 @@ export class Store {
                   d.status, d.delivered_at, d.failure_reason,
                   m.source_task_id
            FROM deliveries d JOIN messages m ON m.id = d.message_id
-           WHERE d.id IN (${placeholders})`,
+           WHERE d.id IN (${placeholders}) AND m.source_actor <> 'system'`,
         )
         .all(...chunk) as Array<{
         delivery_id: string;
@@ -2908,7 +2913,7 @@ export class Store {
         .prepare(
           `SELECT id FROM deliveries
            WHERE recipient_task_id = ? AND status = 'queued'
-           ORDER BY queued_at, id`,
+           ORDER BY queued_at, rowid`,
         )
         .all(recipientTaskId) as Array<{ id: string }>;
       const claim = this.db.prepare(
@@ -2939,7 +2944,7 @@ export class Store {
       for (const id of ids) mark.run(deliveredAt, id);
     });
     tx();
-    this.notifyDeliveryStatus(ids);
+    this.broadcastDeliveryStatus(ids);
   }
 
   failCollaborationDeliveries(
@@ -2956,19 +2961,20 @@ export class Store {
       for (const id of ids) fail.run(failedAt, failureReason, id);
     });
     tx();
-    this.notifyDeliveryStatus(ids);
+    this.broadcastDeliveryStatus(ids);
   }
 
-  failOutstandingDeliveriesForTaskClear(taskId: string): void {
+  failOutstandingDeliveriesForTaskClear(
+    taskId: string,
+  ): Array<{ id: string; messageId: string }> {
     const failedAt = Date.now();
-    const ids = (
-      this.db
-        .prepare(
-          `SELECT id FROM deliveries
-           WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
-        )
-        .all(taskId) as Array<{ id: string }>
-    ).map((row) => row.id);
+    const rows = this.db
+      .prepare(
+        `SELECT id, message_id FROM deliveries
+         WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
+      )
+      .all(taskId) as Array<{ id: string; message_id: string }>;
+    const ids = rows.map((row) => row.id);
     this.db
       .prepare(
         `UPDATE deliveries
@@ -2980,19 +2986,12 @@ export class Store {
          WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
       )
       .run(failedAt, taskId);
-    this.notifyDeliveryStatus(ids);
+    this.broadcastDeliveryStatus(ids);
+    return rows.map((row) => ({ id: row.id, messageId: row.message_id }));
   }
 
   /** Preserve the fact while recording that a deleted target cannot receive it. */
   private failOutstandingDeliveriesForDeletedTask(taskId: string): void {
-    const ids = (
-      this.db
-        .prepare(
-          `SELECT id FROM deliveries
-           WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
-        )
-        .all(taskId) as Array<{ id: string }>
-    ).map((row) => row.id);
     this.db
       .prepare(
         `UPDATE deliveries
@@ -3000,7 +2999,21 @@ export class Store {
          WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
       )
       .run(Date.now(), taskId);
-    this.notifyDeliveryStatus(ids);
+  }
+
+  /** Delivery ids a deletion failed, for the post-commit mark broadcast. */
+  failedDeliveryIdsForRecipient(
+    recipientTaskId: string,
+    failureReason: string,
+  ): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT id FROM deliveries
+           WHERE recipient_task_id = ? AND failure_reason = ?`,
+        )
+        .all(recipientTaskId, failureReason) as Array<{ id: string }>
+    ).map((row) => row.id);
   }
 
   // --- client-server-split M2: client_ops idempotency ---

@@ -311,6 +311,14 @@ time. An entry without a "closing condition" is a wish, not an issue.
   SSE path can render twice, because the deduper keys only the live queue and
   not the replayed row. *Closing:* key both paths on message id, or drain the
   queue before applying a history page.
+- **`queued` → `draining` emits no mark update.** Both states render the same
+  `…` glyph, so the sender's mark is unchanged when a drain claims its batch.
+  Only delivered/failed refresh it. *Closing:* give draining a distinct glyph,
+  or drop the intermediate state from the UI contract.
+- **A configured agent that cannot start leaves its dispatch queued.** The
+  delivery stays `queued` and the account stays open until the agent can be
+  started; nothing fails or retries on a timer. *Closing:* start-failure
+  handling that marks the delivery failed, if this proves common.
 - **A Task that reports `waiting` but nothing will ever wake it is not
   detected.** The runtime does not know whether a child, a person, or an
   external event will actually hand off, so a misused `waiting` can stay silent

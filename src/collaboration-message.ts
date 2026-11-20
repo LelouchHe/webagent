@@ -3,6 +3,9 @@ import type { AgentEvent } from "./types.ts";
 
 export type CollaborationRole = "source" | "target" | "supervisor";
 
+/** The visible author label for a runtime-authored item. */
+export const RUNTIME_AUTHOR_LABEL = "WebAgent runtime";
+
 /**
  * The raw (unquoted) task titles a collaboration title is built from. They are
  * stored beside the rendered title because the title alone cannot be parsed
@@ -25,6 +28,8 @@ export interface CollaborationSystemMessageInput extends CollaborationLabels {
   targetTaskId: string;
   role: CollaborationRole;
   body: string;
+  /** Runtime-authored: show the runtime as author, not the named task. */
+  systemAuthor?: boolean;
 }
 
 export interface CollaborationSystemMessage {
@@ -42,15 +47,18 @@ export interface CollaborationSystemMessage {
 export function buildCollaborationSystemMessage(
   input: CollaborationSystemMessageInput,
 ): CollaborationSystemMessage {
-  const title = collaborationTitle(input);
+  const sourceLabel = input.systemAuthor
+    ? RUNTIME_AUTHOR_LABEL
+    : input.sourceLabel;
+  const title = collaborationTitle({ ...input, sourceLabel });
   return {
     title,
     body: input.body,
     data: {
       kind: "collaboration",
       messageId: input.messageId,
-      sourceTaskId: input.sourceTaskId,
-      sourceLabel: input.sourceLabel,
+      ...(input.systemAuthor ? {} : { sourceTaskId: input.sourceTaskId }),
+      sourceLabel,
       targetTaskId: input.targetTaskId,
       targetLabel: input.targetLabel,
       role: input.role,
@@ -72,6 +80,7 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
   body: string;
   taskId: string;
   role: CollaborationRole;
+  systemAuthor?: boolean;
   deliveryStatus?: "queued" | "draining" | "delivered" | "failed";
   deliveredAt?: string;
   deliveryFailureReason?: string;
@@ -102,8 +111,8 @@ export function buildCollaborationBroadcast(
     taskId: input.taskId,
     kind: "collaboration",
     messageId: input.messageId,
-    sourceTaskId: input.sourceTaskId,
-    sourceLabel: input.sourceLabel,
+    ...(input.systemAuthor ? {} : { sourceTaskId: input.sourceTaskId }),
+    sourceLabel: input.systemAuthor ? RUNTIME_AUTHOR_LABEL : input.sourceLabel,
     targetTaskId: input.targetTaskId,
     targetLabel: input.targetLabel,
     role: input.role,

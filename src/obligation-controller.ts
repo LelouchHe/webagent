@@ -113,9 +113,18 @@ export class ObligationController {
     this.schedule();
   }
 
-  /** Any typed update resets the current turn's missing-update cycle. */
+  /**
+   * A successful update resets the account cycle immediately. It marks the
+   * current running turn only when there is one; a late update made while the
+   * target is idle belongs to no turn-end check.
+   */
   noteUpdate(targetTaskId: string): void {
-    this.updated.add(targetTaskId);
+    const account = this.accounts.get(targetTaskId);
+    if (account) {
+      account.noUpdateTurns = 0;
+      account.stopped = false;
+    }
+    if (this.turns.has(targetTaskId)) this.updated.add(targetTaskId);
   }
 
   /** Open account source for a target, without closing it. */
@@ -149,6 +158,7 @@ export class ObligationController {
   /** A prompt was actually submitted for this turn. */
   beginTurn(targetTaskId: string): void {
     if (this.disposed) return;
+    this.updated.delete(targetTaskId);
     this.turns.set(targetTaskId, {
       lastActivityAt: this.now(),
       noticed: false,

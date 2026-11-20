@@ -18,6 +18,7 @@ import {
 } from "./store.ts";
 import { shouldArm } from "./task-collaboration.ts";
 import {
+  RUNTIME_AUTHOR_LABEL,
   buildCollaborationSystemMessage,
   type CollaborationBroadcastRequest,
 } from "./collaboration-message.ts";
@@ -1043,8 +1044,12 @@ export class TaskManager implements ObligationHost {
     this.clearStoredExecutionConfig(taskId);
     this.liveTasks.delete(taskId);
     this.resetTaskRuntime(taskId);
-    this.store.failOutstandingDeliveriesForTaskClear(taskId);
-    this.obligations.noteTargetUnavailable(taskId);
+    this.closeAccountIfDispatchFailed(
+      taskId,
+      this.store
+        .failOutstandingDeliveriesForTaskClear(taskId)
+        .map((failed) => failed.messageId),
+    );
     this.agents.existing(from.agentId)?.agentCommandSnapshots.delete(taskId);
     this.retireExecution(taskId, from.agentId, from.sessionId);
     if (!task) return;
@@ -2090,8 +2095,12 @@ export class TaskManager implements ObligationHost {
     reason: RotationReason | undefined,
     toAgent: string,
   ): void {
-    this.store.failOutstandingDeliveriesForTaskClear(taskId);
-    this.obligations.noteTargetUnavailable(taskId);
+    this.closeAccountIfDispatchFailed(
+      taskId,
+      this.store
+        .failOutstandingDeliveriesForTaskClear(taskId)
+        .map((failed) => failed.messageId),
+    );
     this.store.updateTaskWorkflowStatus(taskId, "idle");
     if (!reason) return;
     this.store.saveEvent(
@@ -3263,6 +3272,11 @@ export class TaskManager implements ObligationHost {
     this.pendingWorkRecoveries.delete(id);
     this.lastAgentActivityAt.delete(id);
     this.obligations.purgeTask(id);
+    // The delivery rows were failed inside the delete transaction; publish
+    // their marks only now that it committed.
+    this.store.broadcastDeliveryStatus(
+      this.store.failedDeliveryIdsForRecipient(id, "target_deleted"),
+    );
     this.compactingTasks.delete(id);
     this.rotatingTasks.delete(id);
     const pendingSubmission = this.pendingPromptSubmissions.get(id);
@@ -3901,7 +3915,6 @@ export class TaskManager implements ObligationHost {
     collaborationMessageId: string | null;
     accountTargetTaskId: string | null;
   } {
-    this.obligations.noteUpdate(targetTaskId);
     if (status === "waiting") {
       this.store.recordAgentWorkflowUpdate(
         targetTaskId,
@@ -3910,6 +3923,7 @@ export class TaskManager implements ObligationHost {
         null,
         "waiting",
       );
+      this.obligations.noteUpdate(targetTaskId);
       return { collaborationMessageId: null, accountTargetTaskId: null };
     }
     const accountSource = this.obligations.peekSource(targetTaskId);
@@ -3922,8 +3936,31 @@ export class TaskManager implements ObligationHost {
       accountTargetTaskId,
       accountSource === undefined ? "fallback" : "settled",
     );
+    // A failed transaction above leaves both the account and the marker alone.
+    this.obligations.noteUpdate(targetTaskId);
     if (accountSource !== undefined) this.obligations.close(targetTaskId);
     return { collaborationMessageId, accountTargetTaskId };
+  }
+
+  /**
+   * Close the open account only when one of the failed deliveries is the
+   * qualifying dispatch on this edge. An unrelated REST or system item failing
+   * must not settle an account the target still owes.
+   */
+  private closeAccountIfDispatchFailed(
+    targetTaskId: string,
+    messageIds: readonly string[],
+  ): void {
+    const sourceTaskId = this.obligations.peekSource(targetTaskId);
+    if (sourceTaskId === undefined) return;
+    const dispatchFailed = messageIds.some((messageId) => {
+      const message = this.store.getCollaborationMessage(messageId);
+      return (
+        message?.source_actor === "agent" &&
+        message.source_task_id === sourceTaskId
+      );
+    });
+    if (dispatchFailed) this.obligations.noteTargetUnavailable(targetTaskId);
   }
 
   /**
@@ -3932,16 +3969,15 @@ export class TaskManager implements ObligationHost {
    */
   submitObligationReminder(sourceTaskId: string, targetTaskId: string): void {
     const text = handoffReminderText();
+    // Audit metadata only: the recipient-visible row is written at drain.
     this.store.saveEvent(
       targetTaskId,
-      "system_message",
+      "handoff_reminder",
       {
-        kind: "handoff_reminder",
-        title: "Task handoff required",
-        body: text,
         reason: "closing_reminder",
         sourceTaskId,
         targetTaskId,
+        body: text,
       },
       { from_ref: "system" },
     );
@@ -3990,6 +4026,62 @@ export class TaskManager implements ObligationHost {
       body,
     });
     void this.drainCollaborationDeliveries(notice.sourceTaskId);
+  }
+
+  /** ACP envelope text for one drained item. */
+  private deliveryEntry(message: CollaborationMessageRow): string {
+    if (message.source_actor === "system") {
+      return `From the ${RUNTIME_AUTHOR_LABEL}:\n---8<---\n${message.body}\n---8<---`;
+    }
+    // The full source id is the only reliable reply handle available to the
+    // receiving agent today; label it explicitly. The quoted name is
+    // deliberately not labeled "title" — titles change and can collide, so the
+    // id stays the only thing presented as a precise handle. The body is
+    // fenced verbatim between scissor lines so the agent never reads metadata
+    // as instruction and the forwarding layer never rewrites the content.
+    const sourceName =
+      this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
+      message.source_task_id.slice(0, 8);
+    return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
+  }
+
+  /** Write the recipient's one visible row for a just-drained item. */
+  private projectDeliveredMessage(
+    taskId: string,
+    message: CollaborationMessageRow,
+    targetLabel: string,
+  ): void {
+    const systemAuthor = message.source_actor === "system";
+    const sourceLabel = systemAuthor
+      ? RUNTIME_AUTHOR_LABEL
+      : (this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
+        message.source_task_id.slice(0, 8));
+    this.store.saveEvent(
+      taskId,
+      "system_message",
+      buildCollaborationSystemMessage({
+        messageId: message.id,
+        sourceTaskId: message.source_task_id,
+        sourceLabel,
+        targetTaskId: taskId,
+        targetLabel,
+        role: "target",
+        body: message.body,
+        systemAuthor,
+      }).data,
+      { from_ref: `msg:${message.id}` },
+    );
+    this.collaborationBroadcast?.({
+      messageId: message.id,
+      sourceTaskId: message.source_task_id,
+      sourceLabel,
+      targetTaskId: taskId,
+      targetLabel,
+      role: "target",
+      taskId,
+      body: message.body,
+      systemAuthor,
+    });
   }
 
   /**
@@ -4110,6 +4202,10 @@ export class TaskManager implements ObligationHost {
           taskId: taskId.slice(0, 8),
           error,
         });
+        // A superseded attempt must leave the queue for the current execution.
+        if (!this.ownsPromptReservation(taskId, submissionId)) {
+          return false;
+        }
         // Nothing will retry these rows now; fail them and report the edge.
         const stranded = this.store.claimQueuedDeliveries(taskId);
         if (stranded.length > 0) {
@@ -4118,7 +4214,10 @@ export class TaskManager implements ObligationHost {
             "resume_failed",
           );
         }
-        this.obligations.noteTargetUnavailable(taskId);
+        this.closeAccountIfDispatchFailed(
+          taskId,
+          stranded.map((delivery) => delivery.message_id),
+        );
         return false;
       }
       // The slot is held across the resume; a cancel, reload, or rotation
@@ -4144,53 +4243,14 @@ export class TaskManager implements ObligationHost {
       });
       const allDeliveryIds = deliveries.map((delivery) => delivery.id);
       const sourceActors = claimed.map(({ message }) => message.source_actor);
-      const entries = claimed.map(({ message }) => {
-        const source = this.store.getTaskIncludingDeleted(
-          message.source_task_id,
-        );
-        // The full source id is the only reliable reply handle available to
-        // the receiving agent today; label it explicitly. The quoted name is
-        // deliberately not labeled "title" — titles change and can collide,
-        // so the id stays the only thing presented as a precise handle. The
-        // body is fenced verbatim between scissor lines so the agent never
-        // reads metadata as instruction and the forwarding layer never
-        // rewrites the content.
-        const sourceName = source?.title ?? message.source_task_id.slice(0, 8);
-        return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
-      });
+      const entries = claimed.map(({ message }) => this.deliveryEntry(message));
       // The receiver's rows appear now, at the turn boundary where the agent
       // actually gets them. Batched deliveries land together, and a row can no
       // longer sit in a turn that never saw it.
       const targetLabel =
         this.store.getTaskIncludingDeleted(taskId)?.title ?? taskId.slice(0, 8);
       for (const { message } of claimed) {
-        const sourceLabel =
-          this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
-          message.source_task_id.slice(0, 8);
-        this.store.saveEvent(
-          taskId,
-          "system_message",
-          buildCollaborationSystemMessage({
-            messageId: message.id,
-            sourceTaskId: message.source_task_id,
-            sourceLabel,
-            targetTaskId: taskId,
-            targetLabel,
-            role: "target",
-            body: message.body,
-          }).data,
-          { from_ref: `msg:${message.id}` },
-        );
-        this.collaborationBroadcast?.({
-          messageId: message.id,
-          sourceTaskId: message.source_task_id,
-          sourceLabel,
-          targetTaskId: taskId,
-          targetLabel,
-          role: "target",
-          taskId,
-          body: message.body,
-        });
+        this.projectDeliveredMessage(taskId, message, targetLabel);
       }
       this.persistCollaborationPromptAudit(
         taskId,
@@ -4231,7 +4291,10 @@ export class TaskManager implements ObligationHost {
           error,
         });
         this.store.failCollaborationDeliveries(allDeliveryIds, "prompt_failed");
-        this.obligations.noteTargetUnavailable(taskId);
+        this.closeAccountIfDispatchFailed(
+          taskId,
+          claimed.map(({ message }) => message.id),
+        );
         if (!this.isCurrentPrompt(taskId, promptId)) return;
         // Same attribution as an ACP error event: a rejected delivery prompt
         // must not leave the target marked running.

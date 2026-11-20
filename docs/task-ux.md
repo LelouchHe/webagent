@@ -112,7 +112,9 @@ enough. The mark is derived from the delivery row when the row renders or a
 read returns it, and live refreshes come from a lightweight SSE event; it is
 never written into the event. The receiver's copy of the row appears only when
 its batch is actually handed to its agent, so a batch shows up at that turn
-boundary rather than in an earlier turn.
+boundary rather than in an earlier turn. A runtime-authored item (a closing
+reminder or a runtime notice) is labeled `@WebAgent runtime`, not as sent by a
+named Task, and has no delivery mark.
 
 The reference is placed by task id, never by the shape of the title: titles
 repeat, and a title may contain quotes, spaces, or the words between two

@@ -73,7 +73,9 @@ Turn boundaries are the only clock:
 The reminder is a runtime-injected turn that asks for one typed update: `done`,
 `blocked`, or `waiting` when another Task will hand off and wake the target. It
 is queued through the normal delivery path, so it is held while the target's
-turn runs and drained at its boundary like any other item.
+turn runs and drained at its boundary like any other item. Runtime items are
+labeled as authored by the WebAgent runtime, not by the named task; the
+recipient sees exactly one row, written at drain.
 
 ## Stuck turn
 
@@ -84,10 +86,11 @@ the window; a new turn gets its own notice.
 
 ## Target leaves the edge
 
-While an account is open, if the target disappears — deleted, archive cut the
-edge from its parent, or its queued dispatch failed (a failed prompt, `/clear`,
-or an execution owner replacement) — the source gets one `target_removed` notice
-and the account is gone. A delivery that is queued to a deleted target is failed
+While an account is open, if the target actually disappears — deleted, or
+archive cut the edge from its parent — or the **qualifying dispatch delivery**
+itself failed (a failed prompt, `/clear`, or an execution owner replacement),
+the source gets one `target_removed` notice and the account is gone. An
+unrelated delivery to the same target failing does not settle the account. A delivery that is queued to a deleted target is failed
 with `target_deleted` by the delivery layer; the same account removal covers it.
 This is the only notice that replaces the old separate delivery-failure notice.
 
