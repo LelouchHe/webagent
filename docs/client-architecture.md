@@ -97,7 +97,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`render.ts`**            | DOM helpers: add messages, streaming markdown render, theme, scroll, diff HTML generation           | `addMessage()`, `addSystem()`, `scrollToBottom()`, `updateMarkdownStream()`, `resetMarkdownStream()` |
 | **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createTask()`, `sendMessage()`, `cancelTask()`, etc.                                     |
 | **`agent-directory.ts`**   | The configured agent directory from `GET /config` / bootstrap: ids in configuration order, default agent (no liveness) | `installAgentDirectory()`, `configuredAgentIds()`, `getDefaultAgentId()`                          |
-| **`task-topology.ts`**     | The current task's parent reference, the list-arrival flag, and the pickers' display cache | `loadTaskList()`, `taskListSource`, `setCurrentTask()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
+| **`task-topology.ts`**     | The current task's parent reference, the list-arrival flag, and the pickers' display cache | `loadTaskList()`, `taskListSource`, `setCurrentTask()`, `noteTaskArchived()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
 | **`create-command.ts`**    | Shared `+` / `/new` / `/clear` helpers: coordinate parsing, cwd resolution, preview, failure rescue   | `parseCoordinate()`, `resolveCreateCwd()`, `agentRescueCommand()`                                |
 | **`agent-hint.ts`**        | The menus' one-line agent hint (non-selectable): configured agents and the coordinate syntax once    | `agentHintRow()`                                                                                 |
 
@@ -414,6 +414,15 @@ every disconnect). Stream setup, handshake recovery, navigation, new-task
 requests, and fallbacks capture it and abandon their result if it moved, so
 work begun under one connection is never applied to the connection that
 replaced it, or to the gap after a disconnect.
+
+The `task_archive` structural fact is consumed before the per-view event
+filter: it clears the viewed task's parent reference and notifies list-backed
+views, whose menus read the list again when next opened. The transcript row
+stays view-scoped. A read already in flight when the fact arrives may be
+briefly stale; that is an accepted UI best-effort limit. The `/exit` fallback
+resolves the server-named `parentId` against the full topology (so a parent
+inside an archived tree is found); only its ordinary newest-task fallback stays
+in the active tree.
 
 `switchToTask` writes the requested hash before fetching detail, and
 activation (`task_created`) writes it again for the Task it installs; the hash
@@ -769,6 +778,7 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | Command             | API Call                                                    | Description                          |
 | ------------------- | ----------------------------------------------------------- | ------------------------------------ |
 | `/switch [query]`   | `api.listTasks()` + `api.getTask()` + `loadHistory()` | Switch to another task            |
+| `/archive [query]`  | `/archive` with no argument calls `api.archiveTask(taskId)`; with a query it reads `?archived=true` tops and switches. `/archive restore <query>` calls `api.unarchiveTask(taskId)` | Archive the current task, open an archived task, or restore a unique archived top |
 | `/new [agent:path]` | `requestNewTask()` → `api.createTask()`                  | Create an unnamed child task         |
 | `/exit`             | `api.deleteTask()` + task navigation                 | Exit task tree; announces the request and reports a Root replacement |
 | `/rename <title>`   | `api.setTitle(taskId, title)`                            | Rename current task               |

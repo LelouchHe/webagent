@@ -19,6 +19,7 @@ import {
   type CollaborationBroadcastRequest,
 } from "./collaboration-message.ts";
 import { createRequestHandler } from "./routes.ts";
+import { withRequestErrorBoundary } from "./request-boundary.ts";
 import { handleAgentEvent } from "./event-handler.ts";
 import { PushService } from "./push-service.ts";
 import { SseManager } from "./sse-manager.ts";
@@ -268,9 +269,7 @@ const requestHandler = createRequestHandler({
   }),
 });
 
-const server = createServer((req, res) => {
-  void requestHandler(req, res);
-});
+const server = createServer(withRequestErrorBoundary(requestHandler));
 
 const eventHandlerConfig = _buildBridgeEventHandlerConfig({
   cancelTimeout: config.limits.cancel_timeout,

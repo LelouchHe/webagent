@@ -8,6 +8,7 @@ import {
   MessageNotFoundError,
   emptyExecutionSlot,
   isEmptyExecutionSlot,
+  type ArchiveTaskResult,
   type CollaborationDeliveryRow,
   type CollaborationMessageRow,
   type TaskDelete,
@@ -1200,7 +1201,12 @@ export class TaskManager implements ObligationHost {
    * task another agent carries.
    */
   taskIdsForAgent(agentId: string): string[] {
-    return this.store.listTasks({ agentId }).map((task) => task.id);
+    // Whole-agent cleanup must see archived trees too: their executions are
+    // just as real as the active tree's.
+    return this.store
+      .listTasks({ agentId })
+      .concat(this.store.listTasks({ agentId, archived: true }))
+      .map((task) => task.id);
   }
 
   /**
@@ -2976,9 +2982,22 @@ export class TaskManager implements ObligationHost {
       mode: string | null;
       reasoning_effort: string | null;
     },
+    opts?: {
+      /**
+       * False on a pure-read path: canonicalize the displayed value without
+       * writing the legacy model identity back to the row. Writes and
+       * operation paths keep the default (true).
+       */
+      persist?: boolean;
+    },
   ): ConfigOption[] {
     const model = task.model ? canonicalModelIdentity(task.model) : task.model;
-    if (task.id && model !== task.model && model !== null) {
+    if (
+      opts?.persist !== false &&
+      task.id &&
+      model !== task.model &&
+      model !== null
+    ) {
       this.store.updateTaskConfig(task.id, "model", model);
     }
     if (!configOptions.length) return configOptions;
@@ -3860,6 +3879,36 @@ export class TaskManager implements ObligationHost {
     targetTaskId: string,
   ): DirectedObligation | undefined {
     return this.obligations.getActive(sourceTaskId, targetTaskId);
+  }
+
+  /**
+   * True when the target still owes an open account to this source. Terminal
+   * records stay in the controller for audit, so `getObligation` alone would
+   * report a settled edge as pending.
+   */
+  hasOpenObligation(sourceTaskId: string, targetTaskId: string): boolean {
+    const obligation = this.obligations.getActive(sourceTaskId, targetTaskId);
+    // `unresolved` stopped the runtime's own attempts but a late account can
+    // still settle it, so archiving must warn about that debt too. Only
+    // `settled` is finished.
+    return obligation !== undefined && obligation.state !== "settled";
+  }
+
+  /**
+   * Archive through the store's single transaction, then drop the in-memory
+   * obligation edge. If the transaction throws, nothing in memory is touched
+   * and the task stays attached.
+   */
+  archiveTask(taskId: string): ArchiveTaskResult | undefined {
+    const result = this.store.archiveTask(taskId);
+    if (result?.status !== "archived") return result;
+    if (result.parentId !== null) {
+      this.obligations.dropEdge(result.parentId, taskId);
+      // A failed dispatch from this edge must not survive to be requeued by a
+      // later retry on the same target after unarchive.
+      this.pendingDispatchRetries.delete(taskId);
+    }
+    return result;
   }
 
   /** True when `promptId` is still the task's live agent turn. */

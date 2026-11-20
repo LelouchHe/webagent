@@ -29,7 +29,12 @@ import {
   submitClearField,
   submitCreateField,
 } from "./slash-commands.ts";
-import { compactCurrentTask, exitCurrentTask } from "./task-actions.ts";
+import {
+  archiveCurrentTask,
+  compactCurrentTask,
+  exitCurrentTask,
+  unarchiveArchivedTask,
+} from "./task-actions.ts";
 import {
   createPreview,
   revokeShare,
@@ -216,6 +221,57 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
       await exitCurrentTask();
       return true;
 
+    case "/archive": {
+      if (!arg) {
+        await archiveCurrentTask();
+        return true;
+      }
+      if (arg === "restore" || arg.startsWith("restore ")) {
+        const query = arg.slice("restore".length).trim();
+        if (!query) {
+          addSystem("Usage: /archive restore <title or id prefix>");
+          return true;
+        }
+        try {
+          const archived = await api.listArchivedTaskTops();
+          const needle = query.toLowerCase();
+          const matches = archived.filter(
+            (s) =>
+              s.id.startsWith(query) || s.title?.toLowerCase().includes(needle),
+          );
+          if (matches.length !== 1) {
+            addSystem(
+              matches.length === 0
+                ? `err: No archived task matching "${query}"`
+                : `err: Multiple archived tasks match "${query}"`,
+            );
+            return true;
+          }
+          await unarchiveArchivedTask(matches[0].id);
+        } catch {
+          addSystem("err: Failed to restore archived task");
+        }
+        return true;
+      }
+      // With an argument this mirrors `/switch <query>`, but only over archived
+      // tree tops: Enter never consumes a highlighted row.
+      try {
+        const archived = await api.listArchivedTaskTops();
+        const query = arg.toLowerCase();
+        const match = archived.find(
+          (s) => s.id.startsWith(arg) || s.title?.toLowerCase().includes(query),
+        );
+        if (!match) {
+          addSystem(`err: No archived task matching "${arg}"`);
+          return true;
+        }
+        await switchToTask(match.id);
+      } catch {
+        addSystem("err: Failed to open archived task");
+      }
+      return true;
+    }
+
     case "/logout": {
       try {
         localStorage.removeItem(TOKEN_STORAGE_KEY);
@@ -315,7 +371,8 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
         return true;
       }
       try {
-        const tasks = await loadTaskList();
+        // `/switch` never targets an archived task; `/archive` is that path.
+        const tasks = (await loadTaskList()).filter((task) => !task.archived);
         const query = arg.toLowerCase();
         const match = tasks.find(
           (s) => s.id.startsWith(arg) || s.title?.toLowerCase().includes(query),

@@ -8,7 +8,8 @@
 //
 //     live      @x            the task exists and is still called x
 //     renamed   ~~@x~~ @y     the task exists and is now called y
-//     exited    ~~@x~~        the task no longer exists
+//     exited    ~~@x~~        the task is no longer in the active tree
+//                             (deleted or archived)
 //     unknown   @x            no list yet, a failed read, or a title that
 //                             cannot be attributed
 //
@@ -376,6 +377,30 @@ export function noteTaskCreated(
 /** A task was renamed while this connection was open. */
 export function noteTaskTitleUpdated(taskId: string, title: string): void {
   titleUpdates.set(taskId, title);
+  rebuildLive();
+  refreshTaskRefMarks();
+}
+
+/**
+ * Drop `createdTitles` entries that the refreshed active list no longer
+ * contains. Called after an archive refresh: the archived subtree is absent
+ * from the active list, so a task this connection created inside it must stop
+ * counting as live. A plain list read does not prune, because it may predate a
+ * create event.
+ */
+export function pruneCreatedTasksAbsentFrom(
+  tasks: Iterable<{ id: string }>,
+): void {
+  const listed = new Set<string>();
+  for (const task of tasks) listed.add(task.id);
+  let changed = false;
+  for (const id of [...createdTitles.keys()]) {
+    if (!listed.has(id)) {
+      createdTitles.delete(id);
+      changed = true;
+    }
+  }
+  if (!changed) return;
   rebuildLive();
   refreshTaskRefMarks();
 }

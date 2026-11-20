@@ -23,11 +23,16 @@ import {
 } from "./create-command.ts";
 import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
-import { loadTaskList, taskListSource } from "./task-topology.ts";
+import {
+  isViewedTaskArchived,
+  loadCurrentTreeTaskList,
+  taskListSource,
+} from "./task-topology.ts";
 import {
   deriveLive,
   errorsAsEmpty,
   onceSource,
+  refreshingSource,
   type LiveSource,
 } from "./live-source.ts";
 import { setInputValue, state } from "./state.ts";
@@ -35,6 +40,20 @@ import { recentPathsSource } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
 import { isTaskCommand } from "./input-command.ts";
 import { addSystem } from "./render.ts";
+
+/**
+ * The archived list the `@` picker shows inside an archived tree. One shared
+ * source: reopening the picker paints the last read at once and refreshes it
+ * on the next watch, matching the active list and recent-paths pickers.
+ */
+export let archivedTaskListSource: LiveSource<TaskSummary[]> = refreshingSource(
+  () => api.listTasks(true),
+);
+
+/** Test seam: a cold source between test cases. */
+export function resetArchivedTaskListSourceForTest(): void {
+  archivedTaskListSource = refreshingSource(() => api.listTasks(true));
+}
 import * as api from "./api.ts";
 import type { Candidate } from "./slash-tree.ts";
 import type { TaskSummary } from "../../src/types.ts";
@@ -184,9 +203,20 @@ function resolveTaskPathNodes(
   const current = map.get(currentId);
   if (!current) return [];
 
-  let nodes: TaskNode[] = path.absolute
-    ? [...map.values()].filter((n) => !n.parentId)
-    : [current];
+  // An absolute path starts at *this task's tree top*, not at every parentless
+  // row in the list. For the active tree that is still Root; inside an
+  // archived tree it is that archived top, so `@/child` cannot browse into
+  // another archived tree or back into the active one.
+  let root = current;
+  const climbed = new Set<string>();
+  while (root.parentId) {
+    if (climbed.has(root.id)) break;
+    climbed.add(root.id);
+    const parent = map.get(root.parentId);
+    if (!parent) break;
+    root = parent;
+  }
+  let nodes: TaskNode[] = path.absolute ? [root] : [current];
 
   for (let i = 0; i < path.segments.length; i++) {
     const seg = path.segments[i];
@@ -344,7 +374,13 @@ export function buildTaskCommandCandidates(
     return [];
   }
 
-  // `@` rows are a view of the shared task list: they follow it as it changes.
+  // The active list keeps its shared live source. The server's archived fact
+  // for the viewed task selects the archived list's shared source.
+  if (isViewedTaskArchived()) {
+    return deriveLive(archivedTaskListSource, (tasks) =>
+      buildMessageCandidates(parsed, tasks),
+    );
+  }
   return deriveLive(taskListSource, (tasks) =>
     buildMessageCandidates(parsed, tasks),
   );
@@ -791,7 +827,7 @@ async function expandBrowseInput(
   path: TaskPath,
 ): Promise<void> {
   try {
-    const tasks = await loadTaskList();
+    const tasks = await loadCurrentTreeTaskList();
     const current = buildTaskTree(tasks).get(state.taskId ?? "");
     const resolved = resolveTaskPathNodes(state.taskId, tasks, path);
     if (current && resolved.length === 1) {
@@ -899,7 +935,7 @@ async function executeMessageTask(
   }
   let tasks: TaskSummary[];
   try {
-    tasks = await loadTaskList();
+    tasks = await loadCurrentTreeTaskList();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     addSystem(`err: task list failed — ${msg}`);

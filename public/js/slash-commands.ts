@@ -46,6 +46,7 @@ import {
   compactCurrentTask,
   exitCurrentTask,
   replaceCurrentTask,
+  unarchiveArchivedTask,
 } from "./task-actions.ts";
 import {
   createPreview,
@@ -539,6 +540,75 @@ export const ROOT: CmdNode = {
   name: "<root>",
   children: [
     {
+      name: "/archive",
+      desc: "Archive task",
+      fetch: () => api.listArchivedTaskTops(),
+      matches: (item: unknown, q: string) => {
+        const s = item as TaskSummary;
+        const title = (s.title ?? "").toLowerCase();
+        return title.includes(q) || s.id.startsWith(q);
+      },
+      toSpec: (item: unknown) => {
+        const s = item as TaskSummary;
+        const label = s.title ?? s.id;
+        const time = formatLocalTime(s.last_active_at);
+        const agentLabel = entryAgentLabel(
+          s.agentId ?? null,
+          state.taskId,
+          state.taskAgentId,
+        );
+        const displayPath = taskDisplayPath(s);
+        return {
+          primary: label,
+          key: s.id,
+          secondary: time,
+          path:
+            agentLabel === null ? displayPath : `${agentLabel}:${displayPath}`,
+          current: s.id === state.taskId,
+          onSelect: async () => {
+            try {
+              await switchToTask(s.id);
+            } catch {
+              addSystem("err: Failed to open archived task");
+            }
+          },
+        };
+      },
+      children: [
+        {
+          name: "restore",
+          desc: "Restore archived task",
+          fetch: () => api.listArchivedTaskTops(),
+          matches: (item: unknown, q: string) => {
+            const s = item as TaskSummary;
+            const title = (s.title ?? "").toLowerCase();
+            return title.includes(q) || s.id.startsWith(q);
+          },
+          toSpec: (item: unknown) => {
+            const s = item as TaskSummary;
+            const label = s.title ?? s.id;
+            const time = formatLocalTime(s.last_active_at);
+            const agentLabel = entryAgentLabel(
+              s.agentId ?? null,
+              state.taskId,
+              state.taskAgentId,
+            );
+            const displayPath = taskDisplayPath(s);
+            return {
+              primary: label,
+              key: s.id,
+              secondary: time,
+              path:
+                agentLabel === null
+                  ? displayPath
+                  : `${agentLabel}:${displayPath}`,
+              onSelect: () => void unarchiveArchivedTask(s.id),
+            };
+          },
+        },
+      ],
+    },
+    {
       name: "/cancel",
       desc: "Cancel response",
       onSelect: requestAuthoritativeCancel,
@@ -897,8 +967,9 @@ export const ROOT: CmdNode = {
     {
       name: "/switch",
       desc: "Switch task",
-      // Display only: rows show the last list at once and follow newer reads.
-      fetch: () => taskListSource,
+      // Display only: rows show the active list at once and follow newer reads.
+      // Archived tasks are reached via /archive.
+      fetch: () => deriveLive(taskListSource, (tasks) => tasks),
       matches: (item: unknown, q: string) => {
         const s = item as TaskSummary;
         const title = (s.title ?? "").toLowerCase();
@@ -1001,6 +1072,11 @@ export const ROOT: CmdNode = {
     },
   ],
 };
+
+// Top-level slash commands are listed alphabetically in both the menu and
+// /help, regardless of where they are declared above. Subcommands keep their
+// declared order, which is semantic (e.g. /log levels).
+ROOT.children!.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
 function configCmdNode(
   name: string,

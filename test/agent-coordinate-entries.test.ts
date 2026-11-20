@@ -85,7 +85,7 @@ describe("coordinate entries", () => {
         mtime: 1,
       });
     }
-    if (url === "/api/v1/tasks" && init?.method === "POST") {
+    if (url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST") {
       return json({ id: "child-1", cwd: "/work", configOptions: [] }, 201);
     }
     if (
@@ -108,7 +108,7 @@ describe("coordinate entries", () => {
         agentCommands: { epoch: "", revision: 0, commands: [] },
       });
     }
-    if (url === "/api/v1/tasks") {
+    if (url.split("?")[0] === "/api/v1/tasks") {
       return json([{ id: "old-1" }, { id: "child-1" }]);
     }
     if (url.startsWith("/api/v1/recent-paths")) {
@@ -227,7 +227,9 @@ describe("coordinate entries", () => {
         await settle();
       }
       const create = calls.find(
-        (call) => call.init?.method === "POST" && call.url === "/api/v1/tasks",
+        (call) =>
+          call.init?.method === "POST" &&
+          call.url.split("?")[0] === "/api/v1/tasks",
       );
       const clear = calls.find((call) => call.url.endsWith("/clear"));
       const body = JSON.parse((create ?? clear)!.init!.body ?? "{}");
@@ -326,7 +328,7 @@ describe("coordinate entries", () => {
     assert.match(text, /directory not found: 'copliot:missing'/);
     assert.doesNotMatch(text, /not configured|未配置/);
     assert.equal(
-      calls.some((call) => call.url === "/api/v1/tasks"),
+      calls.some((call) => call.url.split("?")[0] === "/api/v1/tasks"),
       false,
       "a missing directory never reaches create",
     );
@@ -387,7 +389,7 @@ describe("coordinate entries", () => {
     state.taskAgentId = "mock";
     let releaseCreate!: (response: Response) => void;
     handler = (url, init) => {
-      if (url === "/api/v1/tasks" && init?.method === "POST") {
+      if (url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST") {
         return new Promise<Response>((resolve) => {
           releaseCreate = resolve;
         });
@@ -464,7 +466,7 @@ describe("coordinate entries", () => {
     // `/new` from a task with no binding.
     state.taskAgentId = null;
     handler = (url, init) =>
-      url === "/api/v1/tasks" && init?.method === "POST"
+      url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST"
         ? failure("pi")
         : defaultHandler(url, init);
     await commands.handleSlashCommand("/new");
@@ -482,7 +484,7 @@ describe("coordinate entries", () => {
     state.taskId = "old-1";
     state.taskAgentId = "removed";
     handler = (url, init) =>
-      url === "/api/v1/tasks" && init?.method === "POST"
+      url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST"
         ? failure("pi")
         : defaultHandler(url, init);
     await taskCommand.executeTaskCommand("+next");
@@ -550,7 +552,7 @@ describe("coordinate entries", () => {
 
   it("offers the same rescue when a create fails to start", async () => {
     handler = (url, init) => {
-      if (url === "/api/v1/tasks" && init?.method === "POST") {
+      if (url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST") {
         return json({ error: "Agent copilot is not available: nope" }, 503);
       }
       return defaultHandler(url, init);

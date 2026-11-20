@@ -77,6 +77,17 @@ describe("AuthStore", () => {
       assert.equal(parsed.tokens[0].hash, hashToken(token));
     });
 
+    it("creates a read-scope token that survives reload", async () => {
+      await store.load();
+      const { record } = await store.addToken("reader", "read");
+      assert.equal(record.scope, "read");
+      await store.reload();
+      assert.equal(
+        store.list().find((token) => token.name === "reader")?.scope,
+        "read",
+      );
+    });
+
     it("file is created with mode 0600", async () => {
       await store.load();
       await store.addToken("laptop", "admin");

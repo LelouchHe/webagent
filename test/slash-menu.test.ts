@@ -58,6 +58,11 @@ describe("slash menu — Tab vs Click behavior", () => {
   // Tab: always fills input, never executes
   // -----------------------------------------------------------------------
 
+  it("lists top-level commands alphabetically", () => {
+    const names = slashCommands.ROOT.children.map((n: any) => n.name);
+    assert.deepEqual(names, [...names].sort());
+  });
+
   it("Tab on top-level command fills input without executing", () => {
     dom.input.value = "/";
     commands.updateSlashMenu();
@@ -454,7 +459,8 @@ describe("slash menu — Tab vs Click behavior", () => {
     await new Promise((r) => setTimeout(r, 20));
 
     const createCall = fetchCalls.find(
-      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+      (c) =>
+        c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
     );
     assert.ok(createCall, "expected POST /api/v1/tasks");
     const body = JSON.parse(createCall.init.body);
@@ -540,7 +546,8 @@ describe("slash menu — Tab vs Click behavior", () => {
     await new Promise((r) => setTimeout(r, 20));
 
     const createCall = fetchCalls.find(
-      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+      (c) =>
+        c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
     );
     assert.ok(createCall, "the action row must create on click");
     const body = JSON.parse(createCall.init.body);
@@ -585,7 +592,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     state.taskCwdDisplay = "~/current";
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      if (url === "/api/v1/tasks" && !init?.method) {
+      if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
         return Promise.resolve({
           ok: true,
           text: () => Promise.resolve(JSON.stringify([{ id: "s1" }])),
@@ -635,7 +642,8 @@ describe("slash menu — Tab vs Click behavior", () => {
       `expected the task-cwd probe, got: ${JSON.stringify(fetchCalls.map((c) => c.url))}`,
     );
     const createCall = fetchCalls.find(
-      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+      (c) =>
+        c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
     );
     assert.ok(createCall, "the action row must create on click");
     assert.equal(
@@ -655,7 +663,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     state.taskCwdDisplay = "~/a";
     globalThis.fetch = (async (url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      if (url === "/api/v1/tasks" && !init?.method) {
+      if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
         return new Response(JSON.stringify([{ id: "A" }]), { status: 200 });
       }
       if (url.startsWith("/api/v1/files/info?")) {
@@ -696,7 +704,8 @@ describe("slash menu — Tab vs Click behavior", () => {
     await new Promise((r) => setTimeout(r, 20));
 
     const createCall = fetchCalls.find(
-      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+      (c) =>
+        c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
     );
     assert.ok(createCall, "the action row must create on click");
     const body = JSON.parse(createCall.init.body);
@@ -719,9 +728,9 @@ describe("slash menu — Tab vs Click behavior", () => {
     state.taskCwdDisplay = "~/a";
     globalThis.fetch = (async (url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      if (url === "/api/v1/tasks" && !init?.method) {
+      if (url === "/api/v1/tasks/A") {
         // The launching task was deleted while the probe was pending.
-        return new Response("[]", { status: 200 });
+        return new Response("{}", { status: 404 });
       }
       if (url.startsWith("/api/v1/files/info?")) {
         await infoGate;
@@ -775,7 +784,8 @@ describe("slash menu — Tab vs Click behavior", () => {
     assert.equal(state.pendingNewTaskOpId, null);
     assert.equal(
       fetchCalls.some(
-        (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+        (c) =>
+          c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
       ),
       false,
       "a deleted launching task must not reach the create endpoint",
@@ -798,7 +808,7 @@ describe("slash menu — Tab vs Click behavior", () => {
           status: 404,
         });
       }
-      if (url === "/api/v1/tasks" && !init?.method) {
+      if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
         listRequested = true;
         await listGate;
         return new Response("[]", { status: 200 });
@@ -993,7 +1003,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     ];
     globalThis.fetch = ((url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      if (url === "/api/v1/tasks") {
+      if (url.split("?")[0] === "/api/v1/tasks") {
         return Promise.resolve({
           ok: true,
           text: () => Promise.resolve(JSON.stringify(tasks)),
@@ -1226,10 +1236,10 @@ describe("slash menu — Tab vs Click behavior", () => {
             json: () => Promise.resolve(obj),
             text: () => Promise.resolve(JSON.stringify(obj)),
           });
-        if (url === "/api/v1/tasks" && !init?.method) {
+        if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
           return respond([{ id: "s1" }]);
         }
-        if (url === "/api/v1/tasks" && init?.method === "POST") {
+        if (url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST") {
           return respond({ id: "new-task" });
         }
         return respond({});
@@ -1246,6 +1256,67 @@ describe("slash menu — Tab vs Click behavior", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+
+  it("@ inside a non-top archived task reads the archived list", async () => {
+    const topology = await import("../public/js/task-topology.ts");
+    topology.resetTaskTopologyForTest();
+    state.taskId = "archived-child";
+    topology.setCurrentTask("archived-child", {
+      parentId: "archived-top",
+      agentId: null,
+    });
+    // The activation detail read supplies the server fact; the active list
+    // deliberately does not contain the viewed task.
+    topology.setViewedTaskArchived("archived-child", true);
+    const active = [{ id: "active-task", title: "Active", parent_id: "root" }];
+    const archived = [
+      {
+        id: "archived-top",
+        title: "Archived top",
+        cwd: "/work/a",
+        parent_id: null,
+        workflow_status: "idle",
+      },
+      {
+        id: "archived-child",
+        title: "Archived child",
+        cwd: "/work/a/child",
+        parent_id: "archived-top",
+        workflow_status: "idle",
+      },
+      {
+        id: "archived-sibling",
+        title: "Archived sibling",
+        cwd: "/work/a/sibling",
+        parent_id: "archived-top",
+        workflow_status: "idle",
+      },
+      {
+        id: "archived-grandchild",
+        title: "Archived grandchild",
+        cwd: "/work/a/child/grand",
+        parent_id: "archived-child",
+        workflow_status: "idle",
+      },
+    ];
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      const body = url === "/api/v1/tasks?archived=true" ? archived : active;
+      return Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify(body)),
+      });
+    }) as any;
+
+    // Load the active list first; it does not contain the viewed task.
+    await topology.loadTaskList();
+    dom.input.value = "@";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+
+    assert.match(dom.slashMenu.textContent, /Archived grandchild/);
+    topology.resetTaskTopologyForTest();
   });
 });
 

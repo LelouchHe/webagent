@@ -248,6 +248,7 @@ export type ObligationFact =
       at: number;
     }
   | { type: "released"; taskId: string }
+  | { type: "edge_dropped"; sourceTaskId: string; targetTaskId: string }
   | {
       type: "reminder_started";
       sourceTaskId: string;
@@ -467,6 +468,9 @@ export class ObligationController {
       case "released":
         this.transitionReleased(fact);
         break;
+      case "edge_dropped":
+        this.transitionEdgeDropped(fact);
+        break;
       case "reminder_started":
         this.transitionReminderStarted(fact);
         break;
@@ -617,6 +621,16 @@ export class ObligationController {
 
   purgeTask(taskId: string): void {
     this.apply({ type: "released", taskId });
+  }
+
+  /**
+   * Forget one directed edge without touching the tasks. Archiving uses this:
+   * the detached task can no longer account to the parent it left, so the
+   * record (and its reminders) must not keep aiming at that edge. Other edges
+   * of the same task — in particular its own children — are untouched.
+   */
+  dropEdge(sourceTaskId: string, targetTaskId: string): void {
+    this.apply({ type: "edge_dropped", sourceTaskId, targetTaskId });
   }
 
   dispose(): void {
@@ -994,6 +1008,14 @@ export class ObligationController {
       this.watchdog.delete(key);
       this.active.delete(key);
     }
+  }
+
+  private transitionEdgeDropped(
+    fact: Extract<ObligationFact, { type: "edge_dropped" }>,
+  ): void {
+    const key = edgeKey(fact.sourceTaskId, fact.targetTaskId);
+    this.watchdog.delete(key);
+    this.active.delete(key);
   }
 
   private transitionExecutionRotated(

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalCwd } from "./cwd-path.ts";
+import { formatFieldBlock } from "./shared/field-block.ts";
 import { formatTaskPath } from "./shared/task-reference.ts";
 import {
   buildCollaborationSystemMessage,
@@ -86,6 +87,38 @@ export interface TaskDelete {
 }
 
 export type WorkflowStatus = "running" | "idle" | "blocked" | "done";
+
+/** The system message a successful archive appends to the detached task. */
+export interface ArchiveSystemMessage {
+  kind: "task_archive";
+  title: string;
+  body: string;
+}
+
+export interface ArchiveTaskResult {
+  status: "archived" | "already_archived";
+  taskId: string;
+  /** The parent the task was detached from; null when it was already a top. */
+  parentId: string | null;
+  parentPath: string | null;
+  /** Present only when this call actually archived the task. */
+  message: ArchiveSystemMessage | null;
+}
+
+export type UnarchiveConflictReason =
+  "original_parent_unavailable" | "title_conflict";
+
+export type UnarchiveTaskResult =
+  | {
+      status: "unarchived";
+      taskId: string;
+      parentId: string;
+      parentPath: string;
+      message: { kind: "task_unarchive"; title: string; body: string };
+    }
+  | { status: "not_found" }
+  | { status: "not_archived" }
+  | { status: "conflict"; reason: UnarchiveConflictReason };
 
 export interface TaskRow {
   id: string;
@@ -1062,8 +1095,17 @@ export class Store {
    * use materializes an execution, so the read must not depend on a binding
    * row existing. `agentId` narrows the result to tasks whose current binding
    * names that agent.
+   *
+   * The range follows the HTTP list: omitted or `false` is the active tree,
+   * `true` is archived trees. There is no combined read; a caller that needs
+   * every live task concatenates the two reads.
    */
-  listTasks(opts?: { source?: string; agentId?: string }): TaskRow[] {
+  listTasks(opts?: {
+    source?: string;
+    agentId?: string;
+    /** `false`/omitted: active tree. `true`: archived trees. */
+    archived?: boolean;
+  }): TaskRow[] {
     const conditions = ["s.deleted_at IS NULL"];
     const params: unknown[] = [];
     if (opts?.source) {
@@ -1076,7 +1118,7 @@ export class Store {
       );
       params.push(opts.agentId);
     }
-    return this.db
+    const rows = this.db
       .prepare(
         `SELECT s.*,
            EXISTS (
@@ -1092,6 +1134,33 @@ export class Store {
          ORDER BY COALESCE(s.last_active_at, s.created_at) DESC`,
       )
       .all(...params) as TaskRow[];
+    const archived = opts?.archived === true;
+    const archivedIds = this.listArchivedTaskIds();
+    return rows.filter((task) =>
+      archived ? archivedIds.has(task.id) : !archivedIds.has(task.id),
+    );
+  }
+
+  /**
+   * Ids of every live task in an archived tree: a parentless non-Root task and
+   * its whole subtree. Nothing marks an archived tree; the structure is the
+   * fact, so this recursive walk is the only definition.
+   */
+  listArchivedTaskIds(): Set<string> {
+    const rows = this.db
+      .prepare(
+        `WITH RECURSIVE archived(id) AS (
+           SELECT id FROM tasks
+           WHERE deleted_at IS NULL AND parent_id IS NULL AND id != ?
+           UNION
+           SELECT t.id FROM tasks t
+           JOIN archived a ON t.parent_id = a.id
+           WHERE t.deleted_at IS NULL
+         )
+         SELECT id FROM archived`,
+      )
+      .all(this.rootTaskId) as Array<{ id: string }>;
+    return new Set(rows.map((row) => row.id));
   }
 
   /** Returns live tasks only. Soft-deleted (tombstone) rows are hidden. */
@@ -1308,6 +1377,15 @@ export class Store {
   }
 
   /**
+   * True when this live task belongs to an archived tree: its lineage starts
+   * at a parentless non-Root task. Cheap single-task form of the list filter.
+   */
+  isArchivedTask(id: string): boolean {
+    const lineage = this.getTaskLineage(id);
+    return lineage !== undefined && lineage[0] !== this.rootTaskId;
+  }
+
+  /**
    * Returns a task row even if soft-deleted. Used by the public share
    * viewer, which must keep working after the owner deletes the source
    * task (events stay alive as long as any active share references them).
@@ -1354,6 +1432,13 @@ export class Store {
           this.getTaskIncludingDeleted(taskId)?.title ?? taskId.slice(0, 8),
       ),
     );
+  }
+
+  /** Detach every direct child so each becomes the top of its own tree. */
+  private detachChildren(parentId: string): void {
+    this.db
+      .prepare("UPDATE tasks SET parent_id = NULL WHERE parent_id = ?")
+      .run(parentId);
   }
 
   /**
@@ -1513,6 +1598,255 @@ export class Store {
   }
 
   /**
+   * Detach a task (and with it its whole subtree) from the tree by clearing
+   * `parent_id`. Archive is one-way: nothing is stored, and “archived” is the
+   * structure `parent_id IS NULL` on a live non-Root task.
+   *
+   * The only record written is one `system_message` on the detached task,
+   * naming the parent it came from. Children stay attached to it, so they need
+   * no rows of their own.
+   */
+  archiveTask(id: string): ArchiveTaskResult | undefined {
+    const task = this.getTask(id);
+    if (!task) return undefined;
+    if (this.isRootTaskId(id)) {
+      throw new Error("Root task cannot be archived");
+    }
+    if (task.parent_id === null) {
+      return {
+        status: "already_archived",
+        taskId: id,
+        parentId: null,
+        parentPath: null,
+        message: null,
+      };
+    }
+    const parentId = task.parent_id;
+    // Everything this operation persists — detach, transcript fact, and the
+    // queued cross-tree delivery marks — commits or rolls back together. The
+    // caller drops the in-memory obligation edge only after this returns.
+    return this.db.transaction(() => {
+      const parentPath = this.getTaskPath(parentId) ?? parentId;
+      this.db
+        .prepare(
+          "UPDATE tasks SET parent_id = NULL WHERE id = ? AND parent_id = ?",
+        )
+        .run(id, parentId);
+      const message: ArchiveSystemMessage = {
+        kind: "task_archive",
+        title: "Task archived",
+        body: formatFieldBlock([
+          { label: "original parent", value: `${parentPath} (${parentId})` },
+        ]),
+      };
+      this.saveEvent(
+        id,
+        "system_message",
+        {
+          ...message,
+          originalParentId: parentId,
+          originalParentPath: parentPath,
+        },
+        { from_ref: "system" },
+      );
+      this.markQueuedDeliveriesAcrossSubtreeBoundary(id);
+      return {
+        status: "archived" as const,
+        taskId: id,
+        parentId,
+        parentPath,
+        message,
+      };
+    })();
+  }
+
+  /**
+   * The parent an unarchive should attach to: the recorded original while it is
+   * live in the active tree, otherwise the current Root. Null means the
+   * original exists inside an archived tree (restore that tree first).
+   */
+  private resolveUnarchiveTarget(originalParentId: string | null): {
+    parentId: string;
+    fellBackToRoot: boolean;
+    originalMissing: boolean;
+  } | null {
+    const root = this.getTask(this.rootTaskId);
+    if (!root) return null;
+    if (originalParentId === null) {
+      return {
+        parentId: root.id,
+        fellBackToRoot: true,
+        originalMissing: false,
+      };
+    }
+    const parent = this.getTaskIncludingDeleted(originalParentId);
+    if (parent?.deleted_at !== null) {
+      return { parentId: root.id, fellBackToRoot: true, originalMissing: true };
+    }
+    if (this.getTaskLineage(originalParentId)?.[0] !== this.rootTaskId) {
+      return null;
+    }
+    return {
+      parentId: originalParentId,
+      fellBackToRoot: false,
+      originalMissing: false,
+    };
+  }
+
+  /**
+   * Re-attach an archived tree top under the parent recorded by its latest
+   * `task_archive` message. Only a live parentless non-Root task qualifies.
+   * The update and the transcript fact are one transaction; nothing about the
+   * cut obligation/delivery edges is restored.
+   */
+  unarchiveTask(id: string): UnarchiveTaskResult {
+    return this.db.transaction(() => {
+      const task = this.getTask(id);
+      if (!task) return { status: "not_found" as const };
+      if (this.isRootTaskId(id) || task.parent_id !== null) {
+        return { status: "not_archived" as const };
+      }
+
+      const archivedRows = this.db
+        .prepare(
+          `SELECT data FROM events
+           WHERE task_id = ? AND type = 'system_message'
+           ORDER BY seq DESC`,
+        )
+        .all(id) as Array<{ data: string }>;
+      let originalParentId: string | null = null;
+      for (const row of archivedRows) {
+        try {
+          const data = JSON.parse(row.data) as {
+            kind?: unknown;
+            originalParentId?: unknown;
+          };
+          if (
+            data.kind === "task_archive" &&
+            typeof data.originalParentId === "string"
+          ) {
+            originalParentId = data.originalParentId;
+            break;
+          }
+        } catch {
+          // Ignore malformed rows; the latest valid archive fact still wins.
+        }
+      }
+      const target = this.resolveUnarchiveTarget(originalParentId);
+      if (!target) {
+        return {
+          status: "conflict" as const,
+          reason: "original_parent_unavailable" as const,
+        };
+      }
+      const {
+        parentId: targetParentId,
+        fellBackToRoot,
+        originalMissing,
+      } = target;
+
+      const subtree = new Set([id, ...this.getDescendantTaskIds(id)]);
+      if (subtree.has(targetParentId)) {
+        return {
+          status: "conflict" as const,
+          reason: "original_parent_unavailable" as const,
+        };
+      }
+
+      if (
+        task.title !== null &&
+        this.db
+          .prepare(
+            `SELECT 1 AS present FROM tasks
+             WHERE parent_id = ? AND title = ? AND deleted_at IS NULL AND id != ?
+             LIMIT 1`,
+          )
+          .get(targetParentId, task.title, id) !== undefined
+      ) {
+        return {
+          status: "conflict" as const,
+          reason: "title_conflict" as const,
+        };
+      }
+
+      const parentPath = this.getTaskPath(targetParentId) ?? targetParentId;
+      this.db
+        .prepare("UPDATE tasks SET parent_id = ? WHERE id = ?")
+        .run(targetParentId, id);
+      const bodyEntries: Array<{ label: string; value: string }> = [
+        { label: "parent", value: `${parentPath} (${targetParentId})` },
+      ];
+      if (fellBackToRoot) {
+        bodyEntries.push({
+          label: "original parent",
+          value:
+            originalParentId === null
+              ? "none recorded"
+              : `${originalParentId} no longer exists`,
+        });
+      }
+      const message = {
+        kind: "task_unarchive" as const,
+        title: "Task unarchived",
+        body: formatFieldBlock(bodyEntries),
+      };
+      this.saveEvent(
+        id,
+        "system_message",
+        {
+          ...message,
+          parentId: targetParentId,
+          parentPath,
+          ...(fellBackToRoot
+            ? {
+                fellBackToRoot: true,
+                originalParentId: originalParentId ?? undefined,
+                originalParentMissing: originalMissing,
+              }
+            : {}),
+        },
+        { from_ref: "system" },
+      );
+      return {
+        status: "unarchived" as const,
+        taskId: id,
+        parentId: targetParentId,
+        parentPath,
+        message,
+      };
+    })();
+  }
+
+  /**
+   * Mark queued collaboration between the archived subtree and everything
+   * outside it as interrupted, in both directions. `queued` means it has not
+   * reached ACP. Rows already handed over (or failed and awaiting a retry) are
+   * left untouched; a failed row keeps its real reason.
+   */
+  private markQueuedDeliveriesAcrossSubtreeBoundary(seedTaskId: string): void {
+    const failedAt = Date.now();
+    this.db
+      .prepare(
+        `WITH RECURSIVE subtree(id) AS (
+           SELECT id FROM tasks WHERE id = ?
+           UNION
+           SELECT t.id FROM tasks t JOIN subtree s ON t.parent_id = s.id
+         )
+         UPDATE deliveries
+         SET status = 'failed', failed_at = ?, failure_reason = 'archived_edge_cut'
+         WHERE status = 'queued'
+           AND message_id IN (
+             SELECT m.id FROM messages m
+             WHERE (
+                 (m.source_task_id IN (SELECT id FROM subtree))
+                 <> (m.direct_target_task_id IN (SELECT id FROM subtree))
+               )
+           )`,
+      )
+      .run(seedTaskId, failedAt);
+  }
+
+  /**
    * Delete a task and every descendant task recursively. The
    * parent/child hierarchy is a hard ownership link, so the deletion is
    * immediate and needs no confirmation (a confirmation step is deferred
@@ -1666,9 +2000,16 @@ export class Store {
           agentId: r.agent_key,
           sessionId: r.agent_session_id,
         };
-        // A junk task may still be someone's parent; keep the children by
-        // re-parenting them under Root instead of deleting them.
-        this.reparentChildrenToRoot(r.id);
+        // A junk task may still be someone's parent; keep the children.
+        // Outside an archived tree they go under Root; inside one they detach
+        // and become their own archived tops, so GC never pulls archived
+        // history back into the Root tree.
+        const lineage = this.getTaskLineage(r.id);
+        if (lineage !== undefined && lineage[0] !== this.rootTaskId) {
+          this.detachChildren(r.id);
+        } else {
+          this.reparentChildrenToRoot(r.id);
+        }
         this.failOutstandingDeliveriesForDeletedTask(r.id);
         del.run(r.id);
         this.collectBindingChange(r.id, beforeBinding);

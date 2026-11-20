@@ -8,6 +8,7 @@ import {
   loadTaskList,
   observeTaskCreated,
   observeTaskDeleted,
+  noteTaskArchived,
   parentOf,
   taskListSource,
   resetTaskTopologyForTest,
@@ -129,6 +130,28 @@ describe("parent reference", () => {
     }
   });
 
+  it("clears a settled parent after a structural archive", async () => {
+    const fetchStub = stubFetch((url) => {
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    try {
+      setCurrentTask("child", { parentId: "parent", agentId: "pi" });
+      // A hint can only complete an unresolved reference, so a known parent is
+      // cleared by the explicit structural fact.
+      setCurrentTask("child", { parentId: null, agentId: null });
+      assert.deepEqual(parentOf("child"), {
+        parentId: "parent",
+        agentId: "pi",
+      });
+      noteTaskArchived("child");
+      assert.equal(parentOf("child"), null);
+      assert.equal(isParentResolved("child"), true);
+      assert.deepEqual(fetchStub.urls, []);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
   it("reads the task's link and then the parent's binding without a hint", async () => {
     const fetchStub = stubFetch((url) => {
       if (url === "/api/v1/tasks/child")
@@ -231,7 +254,7 @@ describe("parent reference", () => {
       setCurrentTask("child", { parentId: "parent", agentId: "pi" });
       await tick();
       assert.equal(
-        fetchStub.urls.some((url) => url === "/api/v1/tasks"),
+        fetchStub.urls.some((url) => url.split("?")[0] === "/api/v1/tasks"),
         false,
       );
     } finally {

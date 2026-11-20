@@ -35,6 +35,7 @@ import {
   loadStartupTaskList,
   loadTaskList,
   refreshTaskListBaseline,
+  setViewedTaskArchived,
 } from "./task-topology.ts";
 import { applyConnectedLogLevel, log } from "./log.ts";
 
@@ -345,6 +346,7 @@ async function resumeFromTaskList(
   isCurrent: () => boolean,
 ): Promise<boolean> {
   try {
+    // Startup lands in the active tree; archived trees are reached explicitly.
     const tasks = await loadTaskList();
     if (!isCurrent()) return true;
     if (tasks.length === 0) return false;
@@ -416,6 +418,7 @@ function installTaskFromDetail(task: TaskDetail): void {
     title: task.title,
     configOptions: task.configOptions,
   });
+  setViewedTaskArchived(task.id, task.archived);
 }
 
 async function resumeAndLoad(

@@ -29,7 +29,11 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { handleShareRoutes } from "./share/routes.ts";
 import { handleFileRoutes } from "./files/routes.ts";
-import { authenticate, isWhitelistedPath } from "./auth-middleware.ts";
+import {
+  authenticate,
+  isReadScopeAllowedPath,
+  isWhitelistedPath,
+} from "./auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
 import { abbreviateHomePath } from "./home-path.ts";
@@ -765,6 +769,19 @@ export function createRequestHandler(
           return;
         }
         principalByRequest.set(req, result.principal);
+        // A read token is a pure-read credential. The allowlist is checked
+        // here, before any route can touch execution or storage, so a new
+        // endpoint is denied by default until it is deliberately opened.
+        if (
+          result.principal.scope === "read" &&
+          !isReadScopeAllowedPath(method, path)
+        ) {
+          res.writeHead(HTTP_STATUS.FORBIDDEN, {
+            "Content-Type": "application/json",
+          });
+          res.end(JSON.stringify({ error: "Forbidden", reason: "read_scope" }));
+          return;
+        }
       }
     }
 
@@ -830,10 +847,26 @@ export function createRequestHandler(
         // Global by default; `?agent=` narrows to tasks whose current binding
         // names that agent. Filtering is a read concern, never a gate.
         const agentFilter = params.get("agent") ?? undefined;
+        // Archived trees are the parentless non-Root subtrees. The default read
+        // is the active tree; `archived=true` selects archived trees only.
+        // There is no combined read: a caller that needs both asks twice.
+        const archivedParam = params.get("archived");
+        let archivedFilter = false;
+        if (archivedParam !== null) {
+          if (archivedParam === "true") archivedFilter = true;
+          else if (archivedParam !== "false") {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "archived must be 'true' or 'false'",
+            });
+            return;
+          }
+        }
+        const archivedIds = store.listArchivedTaskIds();
         const publicTasks = store
           .listTasks({
             ...(source ? { source } : {}),
             ...(agentFilter !== undefined ? { agentId: agentFilter } : {}),
+            archived: archivedFilter,
           })
           .map((task) => {
             const {
@@ -853,6 +886,9 @@ export function createRequestHandler(
               cwdDisplay: abbreviateHomePath(task.cwd),
               hasUserInput: Boolean(hasUserInput),
               isRoot: store.isRootTaskId(task.id),
+              // Egress fact, not a column: clients keep the full topology and
+              // decide which reads (`/switch`, path roots) exclude these.
+              archived: archivedIds.has(task.id),
             };
           });
         res.end(JSON.stringify(publicTasks));
@@ -980,16 +1016,29 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
           return;
         }
-        let body: { name?: unknown };
+        let body: { name?: unknown; scope?: unknown };
         try {
-          body = JSON.parse(await readBody(req)) as { name?: unknown };
+          body = JSON.parse(await readBody(req)) as {
+            name?: unknown;
+            scope?: unknown;
+          };
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         const name = typeof body.name === "string" ? body.name : "";
+        // REST can mint `api` (default) or the narrower `read`. `admin` is
+        // deliberately CLI-only so a compromised api/read token cannot
+        // escalate through this route.
+        const scope = body.scope === undefined ? "api" : body.scope;
+        if (scope !== "api" && scope !== "read") {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "scope must be 'api' or 'read'",
+          });
+          return;
+        }
         try {
-          const created = await deps.authStore.addToken(name, "api");
+          const created = await deps.authStore.addToken(name, scope);
           json(res, HTTP_STATUS.CREATED, {
             token: created.token,
             name: created.record.name,
@@ -1307,7 +1356,10 @@ export function createRequestHandler(
         // A read returns what is known now. Warming the execution happens in
         // the background and reports back through `task_runtime_warmed`; no
         // fixed wait can be right, because a real restore replays history.
-        if (!tasks.liveTasks.has(taskId)) {
+        if (
+          !tasks.liveTasks.has(taskId) &&
+          getPrincipal(req)?.scope !== "read"
+        ) {
           tasks.warmTaskInBackground(taskId);
         }
         // Make sure runtime reflects the current activePrompts/bash state even
@@ -1412,6 +1464,14 @@ export function createRequestHandler(
           const msg = err instanceof Error ? err.message : String(err);
           if (msg.startsWith("Live task not found")) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: msg });
+          } else if (
+            msg.startsWith("Collaboration tasks have no common ancestor")
+          ) {
+            // A concurrent archive cut the edge between the pre-check and this
+            // insert. That is an ordinary out-of-scope answer, not a 500.
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "Target task is outside the local collaboration scope",
+            });
           } else {
             json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
           }
@@ -2151,7 +2211,10 @@ export function createRequestHandler(
         if (
           task.parent_id !== null &&
           store
+            // Rename collisions are a storage constraint across the whole
+            // sibling set, including siblings inside an archived tree.
             .listTasks()
+            .concat(store.listTasks({ archived: true }))
             .some(
               (live) =>
                 live.parent_id === task.parent_id &&
@@ -2164,7 +2227,20 @@ export function createRequestHandler(
           });
           return;
         }
-        store.updateTaskTitle(taskId, title);
+        try {
+          store.updateTaskTitle(taskId, title);
+        } catch (err) {
+          // A concurrent rename can still hit the partial unique index between
+          // the check above and this write. Answer as a conflict, never as an
+          // unhandled rejection.
+          if (/UNIQUE constraint failed/i.test(String(err))) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "A sibling task already has that title",
+            });
+            return;
+          }
+          throw err;
+        }
         const titleEvent = {
           type: "task_title_updated",
           taskId,
@@ -2194,7 +2270,11 @@ export function createRequestHandler(
           // global, so asking it globally could resume a task another agent
           // carries.
           const existing = store
-            .listTasks({ agentId: taskManager.defaultAgentId })
+            // Bootstrap resumes an active task only; an archived tree is not
+            // a startup destination.
+            .listTasks({
+              agentId: taskManager.defaultAgentId,
+            })
             .at(0);
           if (existing) {
             return {
@@ -2617,6 +2697,136 @@ export function createRequestHandler(
         return;
       }
 
+      // POST /api/v1/tasks/:id/archive — detach the task (and therefore its
+      // whole subtree) from the tree by clearing `parent_id`. Nothing marks
+      // the row; the one record written is a system message on the detached
+      // task naming the parent it came from. `POST .../unarchive` can undo it.
+      const archiveMatch = url.match(
+        /^\/api\/v1\/tasks\/([^/]+)\/archive\/?(?:\?.*)?$/,
+      );
+      if (archiveMatch && req.method === "POST") {
+        const taskId = decodeURIComponent(archiveMatch[1]);
+        const task = store.getTask(taskId);
+        if (!task) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+          return;
+        }
+        if (store.isRootTaskId(taskId)) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Root cannot be archived",
+          });
+          return;
+        }
+        // A debt to the former parent does not block archiving. Archiving cuts
+        // that edge, so a later task_update is recorded but not delivered to a
+        // parent the task no longer belongs to. The response warns the caller.
+        const pendingAccount =
+          task.parent_id !== null &&
+          tasks?.hasOpenObligation(task.parent_id, taskId) === true;
+        let result: ReturnType<typeof store.archiveTask>;
+        try {
+          // With a manager, the store transaction and the post-commit memory
+          // cleanup are one operation; without one (headless store users) only
+          // the transaction applies and no in-memory edge exists.
+          result = tasks
+            ? tasks.archiveTask(taskId)
+            : store.archiveTask(taskId);
+        } catch (err) {
+          // The store's transaction rolls back on its own; report a diagnosable
+          // API error instead of an unhandled rejection.
+          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            error: `Archive failed: ${errorMessage(err)}`,
+          });
+          return;
+        }
+        if (!result) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+          return;
+        }
+        if (result.status === "archived") {
+          if (result.message) {
+            sseManager.broadcast({
+              type: "system_message",
+              taskId,
+              kind: result.message.kind,
+              title: result.message.title,
+              body: result.message.body,
+            });
+          }
+        }
+        json(res, HTTP_STATUS.OK, {
+          status: result.status,
+          taskId,
+          parentId: result.parentId,
+          parentPath: result.parentPath,
+          pendingAccount,
+        });
+        return;
+      }
+
+      // POST /api/v1/tasks/:id/unarchive — re-attach an archived tree top
+      // under the parent recorded by its latest task_archive message.
+      const unarchiveMatch = url.match(
+        /^\/api\/v1\/tasks\/([^/]+)\/unarchive\/?(?:\?.*)?$/,
+      );
+      if (unarchiveMatch && req.method === "POST") {
+        const taskId = decodeURIComponent(unarchiveMatch[1]);
+        let result: ReturnType<typeof store.unarchiveTask>;
+        try {
+          result = store.unarchiveTask(taskId);
+        } catch (err) {
+          if (/UNIQUE constraint failed/i.test(String(err))) {
+            json(res, HTTP_STATUS.CONFLICT, {
+              error:
+                "A task with that title already exists under the original parent",
+              reason: "title_conflict",
+            });
+            return;
+          }
+          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            error: `Unarchive failed: ${errorMessage(err)}`,
+          });
+          return;
+        }
+        if (result.status === "not_found") {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+          return;
+        }
+        if (result.status === "not_archived") {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Only an archived tree top can be unarchived",
+          });
+          return;
+        }
+        if (result.status === "conflict") {
+          const conflictMessage = {
+            original_parent_unavailable:
+              "The original parent is inside an archived tree; restore that tree first",
+            title_conflict:
+              "A task with that title already exists under the destination parent",
+          }[result.reason];
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: conflictMessage,
+            reason: result.reason,
+          });
+          return;
+        }
+        sseManager.broadcast({
+          type: "system_message",
+          taskId,
+          kind: result.message.kind,
+          title: result.message.title,
+          body: result.message.body,
+        });
+        json(res, HTTP_STATUS.OK, {
+          status: result.status,
+          taskId,
+          parentId: result.parentId,
+          parentPath: result.parentPath,
+        });
+        return;
+      }
+
       // --- Task CRUD: /api/v1/tasks/:id ---
       const taskIdMatch = url.match(/^\/api\/v1\/tasks\/([^/?]+)\/?(\?.*)?$/);
       if (taskIdMatch) {
@@ -2637,12 +2847,18 @@ export function createRequestHandler(
           // publishes `task_runtime_warmed`; the client never waits for ACP
           // restore, and no fixed timeout is involved.
           const wasLive = tasks?.liveTasks.has(taskId) ?? true;
-          if (tasks && !wasLive) tasks.warmTaskInBackground(taskId);
+          // A `read` token never materializes an execution: external consumers
+          // walk history and must not start one agent process per task.
+          const readOnly = principalByRequest.get(req)?.scope === "read";
+          if (tasks && !wasLive && !readOnly)
+            tasks.warmTaskInBackground(taskId);
           const freshTask = store.getTask(taskId) ?? task;
           const configOptions = tasks
             ? tasks.applyStoredConfig(
                 tasks.configOptionsForTask(freshTask.id),
                 freshTask,
+                // A read token must not write the legacy model identity back.
+                { persist: !readOnly },
               )
             : [];
           json(
@@ -2655,6 +2871,7 @@ export function createRequestHandler(
               source: freshTask.source,
               model: freshTask.model,
               mode: freshTask.mode,
+              archived: store.isArchivedTask(freshTask.id),
               configOptions,
             },
             req,
@@ -3030,9 +3247,12 @@ export function createRequestHandler(
         // Flush pending buffers so their content becomes part of the event list.
         // Track whether each buffer was non-empty so the frontend can keep the
         // last thinking/assistant element "open" for continued live streaming.
+        // A `read` token gets persisted rows only: flushing writes events and
+        // advances seq, which is not a pure read.
         let streamingThinking = false;
         let streamingAssistant = false;
-        if (tasks) {
+        const readOnly = principalByRequest.get(req)?.scope === "read";
+        if (tasks && !readOnly) {
           const runtimeStreaming = tasks.state.peekStreaming(taskId);
           streamingThinking =
             runtimeStreaming.thinking ||

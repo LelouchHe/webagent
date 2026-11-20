@@ -227,7 +227,9 @@ first `↵ navigate` command for `a` itself.
 A bare `@` lists the current path layer and its parent target when present. It
 does not invent a command for an unresolved target.
 
-The picker is a view of the shared task list and follows it while open: an
+The picker is a view of the task list that contains the current Task — the
+active list, or the archived list when the Task is archived — and follows it
+while open: an
 already-fetched list paints the first frame at once, and the rows are replaced
 when the read that every open issues (or joins) returns. With no list fetched
 yet the first frame is `(loading...)`; when the shown list has no rows for the

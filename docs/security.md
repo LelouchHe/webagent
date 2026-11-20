@@ -97,7 +97,7 @@ The CLI prints the raw token to stdout exactly once. If you lose it, revoke and 
 
 - **`hash`**: SHA-256 of the raw token. The raw value never persists server-side.
 - **`name`**: free-form label, unique per file. Used by the CLI and `/tokens` API to address a token.
-- **`scope`**: `admin` (full access, including token CRUD) or `api` (everything except `/tokens/**`). `webagent --create-token` always creates `admin`. `POST /api/v1/tokens` always creates `api`.
+- **`scope`**: `admin` (full access, including token CRUD), `api` (everything except `/tokens/**`), or `read` (pure reads only). `webagent --create-token` always creates `admin`. `POST /api/v1/tokens` creates `api` by default and accepts `read`.
 - **`lastUsedAt`**: updated on every successful auth, but buffered in memory and flushed every 60s (and on `SIGTERM`) to avoid hot-write churn. Reads from disk return the last-flushed value.
 - **File locking**: `proper-lockfile` guards every read-modify-write so the CLI (which mutates `auth.json` while the daemon is running) and the daemon's flush timer cannot interleave and lose updates.
 
@@ -110,6 +110,7 @@ Every HTTP request flows through `src/auth-middleware.ts`:
 1. If the path matches a whitelist entry → pass through unauthenticated.
 2. Otherwise extract `Authorization: Bearer <token>` from the request header.
 3. Hash the token, look up in `AuthStore`. On match, attach `principal: TokenRecord` to the request and continue. On any failure, return `401 Unauthorized`.
+4. A `read`-scope principal is then checked against an explicit read allowlist. Anything outside it — every write, plus undeclared reads such as `/api/v1/config`, `/api/v1/tokens`, and `/api/v1/files/**` — returns `403 Forbidden` with `reason: "read_scope"` before the route runs. The allowlist lives in `src/auth-middleware.ts`: task list, task detail, task events, status, permissions, version, and auth/verify. `/events` returns persisted rows only for this scope (no buffer flush, no seq advance); `/snapshot` is excluded because that path may warm an execution.
 
 Whitelisted paths (no auth required):
 
@@ -238,7 +239,7 @@ webagent --create-token phone
 webagent --create-token cli-laptop
 ```
 
-Or after the first admin token, use the `/token` slash command (or `POST /api/v1/tokens`) from an authenticated task — those default to `api` scope.
+Or after the first admin token, use the `/token` slash command (or `POST /api/v1/tokens`) from an authenticated task — those default to `api` scope. Pass `"scope": "read"` to mint a pure-read token for an external history consumer.
 
 ### Revocation
 

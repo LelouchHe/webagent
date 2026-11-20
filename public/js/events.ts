@@ -57,15 +57,20 @@ import {
 import * as api from "./api.ts";
 import {
   loadTaskList,
+  loadTaskListFresh,
+  noteTaskArchived,
+  noteTaskUnarchived,
   observeTaskCreated,
   observeTaskDeleted,
   setCurrentTask,
+  setViewedTaskArchived,
 } from "./task-topology.ts";
 import {
   noteTaskCreated,
   noteTaskDeleted,
   noteTaskTitleUpdated,
   taskRefFieldsFrom,
+  pruneCreatedTasksAbsentFrom,
 } from "./task-ref-marks.ts";
 import { applyConnectedLogLevel } from "./log.ts";
 import { log } from "./log.ts";
@@ -91,8 +96,10 @@ import type {
   ConfigOption,
   StoredEvent,
   NormalizedEventsResponse,
+  TaskDetail,
   ToolContentItem,
 } from "../../src/types.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
 import "./plan-panel.ts";
 import { OrphanToolUpdateCache } from "./orphan-tool-updates.ts";
 import {
@@ -285,6 +292,32 @@ export function fallbackToNextTask(
   return operation;
 }
 
+/**
+ * A named parent wins when it still exists; otherwise the newest active task.
+ * The named parent's detail read is reused by activation; only a 404 falls
+ * through to the list, and any other failure propagates to the existing
+ * failed-switch path.
+ */
+async function resolveFallbackTask(
+  preferredTaskId: string | null | undefined,
+  expiredId: string | null,
+): Promise<{ id: string; task?: TaskDetail } | null> {
+  if (preferredTaskId) {
+    try {
+      const task = await api.getTask(preferredTaskId);
+      return { id: preferredTaskId, task };
+    } catch (err) {
+      if (!(
+        err instanceof api.ApiError && err.status === HTTP_STATUS.NOT_FOUND
+      ))
+        throw err;
+    }
+  }
+  const activeTasks = await loadTaskList();
+  const id = activeTasks.find((task) => task.id !== expiredId)?.id;
+  return id === undefined ? null : { id };
+}
+
 async function fallbackToNextTaskImpl(
   expiredId: string | null,
   preferredTaskId: string | null | undefined,
@@ -295,25 +328,31 @@ async function fallbackToNextTaskImpl(
   state.taskSwitchGen++;
   const gen = state.taskSwitchGen;
   try {
-    const tasks = await loadTaskList();
+    // The server can name an archived parent (exiting a task inside an
+    // archived tree). Existence is answered by its own read; only the ordinary
+    // fallback looks at the active list.
+    const next = await resolveFallbackTask(preferredTaskId, expiredId);
     if (
       gen !== state.taskSwitchGen ||
       connectionEpoch !== state.connectionEpoch
     ) {
       return;
     }
-    const next =
-      (preferredTaskId
-        ? tasks.find((s) => s.id === preferredTaskId)
-        : undefined) ?? tasks.find((s) => s.id !== expiredId);
     if (next) {
       resetTaskUI();
       state.taskId = next.id;
       setHashTaskId(next.id);
-      const [task, loaded] = await Promise.all([
-        api.getTask(next.id),
-        loadHistory(next.id),
-      ]);
+      let task: TaskDetail;
+      let loaded: boolean;
+      if (next.task) {
+        task = next.task;
+        loaded = await loadHistory(next.id);
+      } else {
+        [task, loaded] = await Promise.all([
+          api.getTask(next.id),
+          loadHistory(next.id),
+        ]);
+      }
       if (
         gen !== state.taskSwitchGen ||
         connectionEpoch !== state.connectionEpoch
@@ -344,6 +383,7 @@ async function fallbackToNextTaskImpl(
         title: task.title,
         configOptions: task.configOptions,
       });
+      setViewedTaskArchived(task.id, task.archived);
       if (loaded) scrollToBottom(true);
       if (rootReplaced) addSystem(ROOT_REPLACED_NOTICE);
       return;
@@ -1436,6 +1476,14 @@ export function replayEvent(
       renderMessageCard(d as unknown as AgentEvent & { type: "message" });
       break;
     case "system_message":
+      // A replayed archive row is the same structural fact as the live event.
+      // The stored row's `task_id` is the archived task; the JSON payload holds
+      // only the message fields.
+      if (d.kind === "task_archive") {
+        const archivedTaskId = events[idx]?.task_id;
+        if (typeof archivedTaskId === "string")
+          noteTaskArchived(archivedTaskId);
+      }
       if (typeof d.title === "string" && d.title.trim()) {
         // A persisted row names the tasks it refers to in `data`.
         // `events[idx]` is this row's own task; a direct render (tests, a
@@ -2045,6 +2093,25 @@ export function handleEvent(msg: AgentEvent) {
     // it recorded may now be stale. Only the current task's own header below
     // is view-scoped.
     noteTaskTitleUpdated(msg.taskId, msg.title);
+  } else if (
+    msg.type === "system_message" &&
+    (msg.kind === "task_archive" || msg.kind === "task_unarchive")
+  ) {
+    // The structural fact changes the active tree for every view, not only the
+    // task's own transcript. Consume it before the per-view filter below. The
+    // refreshed active list decides the reference marks: an archived task (and
+    // its subtree) is absent, a restored task is present again.
+    if (msg.kind === "task_archive") {
+      noteTaskArchived(msg.taskId);
+      void loadTaskListFresh()
+        .then((tasks) => {
+          pruneCreatedTasksAbsentFrom(tasks);
+        })
+        .catch(() => undefined);
+    } else {
+      noteTaskUnarchived(msg.taskId);
+      void loadTaskListFresh().catch(() => undefined);
+    }
   }
   if (msg.type === "inbox_count_changed") {
     updateInboxCount(msg.pendingCount);

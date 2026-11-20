@@ -1869,7 +1869,7 @@ describe("events", () => {
         };
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/tasks" &&
+            url.split("?")[0] === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return {
@@ -1932,7 +1932,7 @@ describe("events", () => {
         };
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/tasks" &&
+            url.split("?")[0] === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           ) {
             listCalls++;
@@ -1973,8 +1973,9 @@ describe("events", () => {
         );
         await Promise.all([httpNavigation, sseNavigation]);
 
-        // The two navigations share one list read; activation adds none.
-        assert.equal(listCalls, 1);
+        // The two navigations share one target read; the active list is not
+        // touched when the server names an existing parent.
+        assert.equal(listCalls, 0);
         assert.equal(state.taskId, "parent-dedupe");
       });
 
@@ -1984,12 +1985,15 @@ describe("events", () => {
           id: "parent",
           cwd: "/tmp",
           title: "Parent",
+          parentId: null,
+          parentAgentId: null,
           configOptions: [],
           busyKind: null,
         };
+        let parentReads = 0;
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/tasks" &&
+            url.split("?")[0] === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return {
@@ -1997,8 +2001,10 @@ describe("events", () => {
               text: async () =>
                 JSON.stringify([{ id: "mru" }, { id: "parent" }]),
             };
-          if (url === "/api/v1/tasks/parent")
+          if (url === "/api/v1/tasks/parent") {
+            parentReads += 1;
             return { ok: true, text: async () => JSON.stringify(parentTask) };
+          }
           if (url.startsWith("/api/v1/tasks/parent/events"))
             return { ok: true, text: async () => "[]" };
           if (url === "/api/v1/tasks/parent/snapshot")
@@ -2023,12 +2029,69 @@ describe("events", () => {
         for (let i = 0; i < 30; i++) await Promise.resolve();
 
         assert.equal(state.taskId, "parent");
+        // The successful detail read is reused by activation, not issued twice.
+        assert.equal(parentReads, 1);
         // Landing on the parent's own transcript is self-explanatory; the
         // replacement notice belongs to a Root exit only.
         assert.equal(
           (dom.messages.textContent ?? "").includes("Root replaced"),
           false,
         );
+      });
+
+      it("prefers a server-named archived parent when leaving an archived tree", async () => {
+        state.taskId = "archived-child";
+        const archivedParent = {
+          id: "archived-parent",
+          cwd: "/tmp",
+          title: "Archived parent",
+          configOptions: [],
+          busyKind: null,
+        };
+        setFetch(async (url: string, init?: any) => {
+          if (
+            url.split("?")[0] === "/api/v1/tasks" &&
+            (!init?.method || init.method === "GET")
+          )
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify([
+                  { id: "mru", archived: false },
+                  { id: "archived-parent", archived: true },
+                ]),
+            };
+          if (url === "/api/v1/tasks/archived-parent")
+            return {
+              ok: true,
+              text: async () => JSON.stringify(archivedParent),
+            };
+          if (url.startsWith("/api/v1/tasks/archived-parent/events"))
+            return { ok: true, text: async () => "[]" };
+          if (url === "/api/v1/tasks/archived-parent/snapshot")
+            return {
+              ok: true,
+              text: async () =>
+                JSON.stringify({
+                  version: 1,
+                  seq: 0,
+                  task: {},
+                  runtime: { busy: null },
+                }),
+            };
+          return { ok: true, text: async () => "{}" };
+        });
+
+        events.handleEvent({
+          type: "task_deleted",
+          taskId: "archived-child",
+          parentId: "archived-parent",
+        });
+        for (let i = 0; i < 30; i++) await Promise.resolve();
+
+        // The server named an archived parent; lookup uses the full topology,
+        // while the ordinary fallback would still skip archived rows.
+        assert.equal(state.taskId, "archived-parent");
       });
 
       it("follows the old Root's deletion to the Root that replaced it", async () => {
@@ -2045,7 +2108,7 @@ describe("events", () => {
           // A more recently active task is listed first, so a client that
           // ignored `replacedBy` would land there instead.
           if (
-            url === "/api/v1/tasks" &&
+            url.split("?")[0] === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return {
@@ -2093,7 +2156,7 @@ describe("events", () => {
         state.taskId = "s1";
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/tasks" &&
+            url.split("?")[0] === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return { ok: true, text: async () => "[]" };
@@ -2133,7 +2196,7 @@ describe("events", () => {
         });
         setFetch(async (url: string, init?: any) => {
           if (
-            url === "/api/v1/tasks" &&
+            url.split("?")[0] === "/api/v1/tasks" &&
             (!init?.method || init.method === "GET")
           )
             return {
@@ -7639,7 +7702,7 @@ describe("events", () => {
           text: async () => JSON.stringify(body),
           json: async () => body,
         });
-        if (url === "/api/v1/tasks" && init?.method === "POST") {
+        if (url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST") {
           return response({
             id: "t-created",
             rootTaskId: ROOT_ID,
@@ -7669,7 +7732,7 @@ describe("events", () => {
           text: async () => JSON.stringify(body),
           json: async () => body,
         });
-        if (url === "/api/v1/tasks") {
+        if (url.split("?")[0] === "/api/v1/tasks") {
           return response([{ id: "t-next", agentId: "agent-b" }]);
         }
         if (url === "/api/v1/tasks/t-next") {

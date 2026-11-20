@@ -120,6 +120,7 @@ describe("obligation controller structure", () => {
       ["turn_aborted", "cleanup-scoped (bridge reset aborts whatever is busy)"],
       ["agent_activity", "unattributable (agent events carry no prompt id)"],
       ["released", "lifecycle"],
+      ["edge_dropped", "lifecycle: one edge, no turn identity"],
       [
         "execution_rotated",
         "target-addressed-by-sole-record; the record's own recovery generation",

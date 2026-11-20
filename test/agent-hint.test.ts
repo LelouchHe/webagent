@@ -87,7 +87,7 @@ describe("agent hint", () => {
         });
       }
       if (url.startsWith("/api/v1/recent-paths")) return json(recents);
-      if (url === "/api/v1/tasks" && init?.method === "POST") {
+      if (url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST") {
         return json({ id: "child-1", cwd: "/work", configOptions: [] }, 201);
       }
       if (

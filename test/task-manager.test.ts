@@ -114,6 +114,245 @@ describe("TaskManager", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  describe("archive-aware whole-agent listings", () => {
+    it("includes archived tasks in whole-agent cleanup", () => {
+      store.createTask("active", tmpDir, "auto", "test-agent", "s-active");
+      store.createTask("archived", tmpDir, "auto", "test-agent", "s-arch");
+      store.archiveTask("archived");
+      assert.deepEqual(sm.taskIdsForAgent("test-agent").sort(), [
+        "active",
+        "archived",
+      ]);
+
+      // Behavior, not just the id list: an archived execution must lose its
+      // runtime facts on agent restart/disconnect too.
+      sm.liveTasks.add("archived");
+      sm.activePrompts.add("archived");
+      sm.clearAgentRuntime("test-agent");
+      assert.equal(sm.liveTasks.has("archived"), false);
+      assert.equal(sm.activePrompts.has("archived"), false);
+    });
+  });
+
+  describe("archive edge cut", () => {
+    it("keeps the tree-internal edge but cuts the former-parent edge", () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      store.createTask(
+        "grandchild",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "g-session",
+        "child",
+      );
+      for (const [id, source, target] of [
+        ["incoming", "parent", "child"],
+        ["internal", "child", "grandchild"],
+      ] as const) {
+        store.createCollaborationMessage({
+          id,
+          deliveryId: `${id}-delivery`,
+          sourceTaskId: source,
+          directTargetTaskId: target,
+          sourceActor: "agent",
+          body: "work",
+        });
+      }
+      assert.ok(sm.getObligation("parent", "child"));
+      assert.ok(sm.getObligation("child", "grandchild"));
+
+      sm.archiveTask("child");
+
+      // Only the former-parent edge is gone; the task still owes its own child.
+      assert.equal(sm.getObligation("parent", "child"), undefined);
+      assert.ok(sm.getObligation("child", "grandchild"));
+
+      // A real account after archive is recorded against the current parent
+      // (none) instead of being delivered to the parent the task left.
+      const result = sm.settleAgentUpdate("child", "done", "finished", {
+        promptId: "p",
+        startedAt: Date.now(),
+      });
+      assert.equal(result.decision.kind, "current-parent");
+      assert.equal(result.accountTargetTaskId, null);
+      assert.equal(result.collaborationMessageId, null);
+    });
+
+    it("does not revive a pre-archive failed dispatch after unarchive", () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      store.createCollaborationMessage({
+        id: "dispatch-a",
+        deliveryId: "delivery-a",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch A.",
+      });
+      const claimed = store.claimQueuedDeliveries("child");
+      store.failCollaborationDeliveries(
+        claimed.map((delivery) => delivery.id),
+        "prompt_failed",
+      );
+      const retries = (
+        sm as unknown as { pendingDispatchRetries: Map<string, string[]> }
+      ).pendingDispatchRetries;
+      retries.set("child", ["delivery-a"]);
+
+      sm.archiveTask("child");
+      assert.equal(
+        retries.has("child"),
+        false,
+        "archive removes the cut edge's retry entry",
+      );
+      assert.equal(store.unarchiveTask("child").status, "unarchived");
+
+      // A new dispatch on the restored edge must not consume A's stale retry.
+      store.createCollaborationMessage({
+        id: "dispatch-b",
+        deliveryId: "delivery-b",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch B.",
+      });
+      const obligation = sm.getObligation("parent", "child");
+      assert.ok(obligation);
+      sm.retryObligationDispatch(obligation);
+
+      assert.equal(
+        store.getCollaborationDelivery("delivery-a")?.status,
+        "failed",
+      );
+      assert.equal(
+        store.getCollaborationDelivery("delivery-a")?.failure_reason,
+        "prompt_failed",
+      );
+    });
+
+    it("leaves a draining delivery to finish after archive", async () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      store.createCollaborationMessage({
+        id: "in-flight",
+        deliveryId: "in-flight-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      let releasePrompt!: () => void;
+      const promptGate = new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
+      let enteredPrompt!: () => void;
+      const inPrompt = new Promise<void>((resolve) => {
+        enteredPrompt = resolve;
+      });
+      sm.attachExecutionBridge({
+        async newSession() {
+          return { sessionId: "c-session", configOptions: [] };
+        },
+        async setConfigOption() {
+          return [];
+        },
+        async loadSession(taskId: string) {
+          return { taskId, configOptions: [] };
+        },
+        async prompt(_taskId: string, _text: string) {
+          enteredPrompt();
+          await promptGate;
+        },
+        isAvailable: () => true,
+      });
+
+      const drained = sm.drainCollaborationDeliveries("child");
+      await inPrompt;
+      // The content is already with ACP: archive must not rewrite the row.
+      assert.equal(
+        store.getCollaborationDelivery("in-flight-delivery")?.status,
+        "draining",
+      );
+      assert.equal(sm.archiveTask("child")?.status, "archived");
+      assert.equal(
+        store.getCollaborationDelivery("in-flight-delivery")?.status,
+        "draining",
+      );
+
+      releasePrompt();
+      await drained;
+      for (let i = 0; i < 10; i++) {
+        if (
+          store.getCollaborationDelivery("in-flight-delivery")?.status ===
+          "delivered"
+        ) {
+          break;
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.equal(
+        store.getCollaborationDelivery("in-flight-delivery")?.status,
+        "delivered",
+      );
+      assert.equal(
+        store.getCollaborationDelivery("in-flight-delivery")?.failure_reason,
+        null,
+      );
+    });
+
+    it("does not drain a delivery the archive interrupted", async () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      store.createCollaborationMessage({
+        id: "queued-request",
+        deliveryId: "queued-request-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      const prompts: string[] = [];
+      sm.attachExecutionBridge(makeRecoveryBridge(prompts));
+
+      assert.equal(sm.archiveTask("child")?.status, "archived");
+      assert.equal(await sm.drainCollaborationDeliveries("child"), false);
+      assert.deepEqual(prompts, [], "nothing crossed the cut edge");
+      assert.equal(
+        store.getCollaborationDelivery("queued-request-delivery")?.status,
+        "failed",
+      );
+    });
+  });
+
   describe("MCP capability lifecycle", () => {
     it("allows MCP auto-connect while a new ACP task is being created", async () => {
       const capabilities = new CapabilityStore();
@@ -3085,6 +3324,25 @@ describe("TaskManager", () => {
         isAvailable: () => true,
       });
       await expectControllerCanSubmitAgain(healed);
+    });
+
+    it("treats an unresolved account as still owed for the archive warning", () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p");
+      store.createTask("child", tmpDir, "auto", "test-agent", "c", "parent");
+      store.createCollaborationMessage({
+        id: "owed-check",
+        deliveryId: "owed-check-delivery",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch.",
+      });
+      const record = sm.getObligation("parent", "child");
+      assert.ok(record);
+      (record as { state: string }).state = "unresolved";
+      assert.equal(sm.hasOpenObligation("parent", "child"), true);
+      (record as { state: string }).state = "settled";
+      assert.equal(sm.hasOpenObligation("parent", "child"), false);
     });
   });
 

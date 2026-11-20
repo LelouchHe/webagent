@@ -196,8 +196,11 @@ export function createMcpTaskToolHost(deps: {
     list(principal) {
       authorize(principal);
       const source = requireTask(principal.taskId);
+      // A task in an archived tree still needs its own row (relation: self)
+      // and its local relatives, so both the active and archived reads are used.
       const entries = store
         .listTasks()
+        .concat(store.listTasks({ archived: true }))
         .map((task) => ({
           task,
           relation: collaborationRelation(source, task),

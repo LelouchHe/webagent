@@ -14,8 +14,10 @@ import {
   scrollToBottom,
 } from "./render.ts";
 import type { AgentCommandSnapshot, ConfigOption } from "../../src/types.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
 import * as api from "./api.ts";
 import { fallbackToNextTask } from "./events.ts";
+import { noteTaskArchived, noteTaskUnarchived } from "./task-topology.ts";
 import { taskAgentFailureLines } from "./create-command.ts";
 
 interface ClearTaskResult {
@@ -56,6 +58,62 @@ export async function exitCurrentTask(): Promise<void> {
     );
   } catch (err) {
     addSystem(`err: Failed to exit task — ${String(err)}`);
+  }
+}
+
+/**
+ * Detach the current task (and its subtree) from the tree without deleting it.
+ * The task stays current and runnable; only its place in the tree changes, so
+ * the local parent reference is settled immediately instead of waiting for the
+ * next reload. The persisted system message arrives over SSE.
+ */
+export async function archiveCurrentTask(): Promise<void> {
+  if (!state.taskId) {
+    addSystem("warn: No active task");
+    return;
+  }
+  const taskId = state.taskId;
+  try {
+    const result = await api.archiveTask(taskId);
+    if (result.status === "already_archived") {
+      addSystem("notify: already archived");
+      return;
+    }
+    noteTaskArchived(taskId);
+    addSystem(`notify: archived from ${result.parentPath ?? "its parent"}`);
+    if (result.pendingAccount) {
+      addSystem("warn: pending report to the former parent won't be delivered");
+    }
+  } catch (err) {
+    const e = err as api.ApiError;
+    if (e.status === HTTP_STATUS.BAD_REQUEST) {
+      addSystem("err: Root cannot be archived");
+    } else if (e.status === HTTP_STATUS.NOT_FOUND) {
+      addSystem("err: Task not found");
+    } else {
+      addSystem("err: Failed to archive task");
+    }
+  }
+}
+
+/** Re-attach an archived tree top under its recorded original parent. */
+export async function unarchiveArchivedTask(taskId: string): Promise<void> {
+  try {
+    const result = await api.unarchiveTask(taskId);
+    noteTaskUnarchived(taskId);
+    const destination = result.parentPath === "@/" ? "Root" : result.parentPath;
+    addSystem(`notify: restored to ${destination}`);
+  } catch (err) {
+    const e = err as api.ApiError;
+    if (e.status === HTTP_STATUS.CONFLICT) {
+      addSystem(`err: ${e.message}`);
+    } else if (e.status === HTTP_STATUS.BAD_REQUEST) {
+      addSystem("err: only an archived tree top can be restored");
+    } else if (e.status === HTTP_STATUS.NOT_FOUND) {
+      addSystem("err: task not found");
+    } else {
+      addSystem("err: failed to restore task");
+    }
   }
 }
 

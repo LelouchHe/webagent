@@ -94,6 +94,44 @@ export function isWhitelistedPath(method: string, path: string): boolean {
 }
 
 /**
+ * The pure-read surface a `read`-scope token may use. It is deliberately
+ * narrow: task metadata, stored history, and runtime state that is already in
+ * memory. Listing it here is the whole authorization decision — a new read
+ * endpoint that external consumers need must be added explicitly.
+ *
+ * `/tasks/:id/events` and the task list are the contract with external history
+ * consumers. `/status` and `/permissions` report only in-memory runtime facts.
+ * `/snapshot` is deliberately excluded: the UI snapshot path may warm a task,
+ * and `read` must not. `/version` and `/auth/verify` let a consumer discover
+ * itself without starting any agent.
+ */
+const READ_SCOPE_PATHS: readonly WhitelistEntry[] = [
+  { method: "GET", test: (p) => p === "/api/v1/version" },
+  { method: "GET", test: (p) => p === "/api/v1/auth/verify" },
+  { method: "GET", test: (p) => p === "/api/v1/tasks" },
+  { method: "GET", test: (p) => /^\/api\/v1\/tasks\/[^/]+\/?$/.test(p) },
+  {
+    method: "GET",
+    test: (p) => /^\/api\/v1\/tasks\/[^/]+\/events$/.test(p),
+  },
+  {
+    method: "GET",
+    test: (p) => /^\/api\/v1\/tasks\/[^/]+\/(status|permissions)\/?$/.test(p),
+  },
+];
+
+/**
+ * True if a `read`-scope token may call this path. Path must already be
+ * normalized by the caller (the route gate splits off the query string).
+ */
+export function isReadScopeAllowedPath(method: string, path: string): boolean {
+  const m = method.toUpperCase();
+  return READ_SCOPE_PATHS.some(
+    (entry) => entry.method === m && entry.test(path),
+  );
+}
+
+/**
  * Validate the Authorization header against the auth store.
  * Touches lastUsedAt on success. Pure header parsing + store lookup —
  * no I/O beyond the in-memory map.
@@ -126,12 +164,10 @@ export function authenticate(
 
 /**
  * Returns true if the auth result has at least the required scope.
- * admin > api (admin is a superset).
+ * admin > api > read (each is a superset of the one after it).
  */
 export function requireScope(result: AuthResult, required: Scope): boolean {
   if (!result.ok) return false;
-  const have = result.principal.scope;
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- exhaustive check for type safety
-  if (required === "api") return have === "api" || have === "admin";
-  return have === "admin";
+  const rank: Record<Scope, number> = { read: 0, api: 1, admin: 2 };
+  return rank[result.principal.scope] >= rank[required];
 }

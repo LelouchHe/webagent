@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-11-16
+Last updated: 2026-11-19
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -838,11 +838,64 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - hashless startup preserves user-input-first selection and canonical Root fallback
   - Root is addressed by its own `#<id>` deep link like every task, and stays active across a reconnect, including one whose config request fails
   - an SSE `task_deleted` for the current (old) Root follows its `replacedBy` to the new Root even when another task is more recently active (`test/events.test.ts`)
+  - a server-named archived parent is resolved in the full topology, while the ordinary fallback still skips archived rows
   - foreign `root-*` ids are ordinary 404s and never aliases; fallback selection uses the current connection's scoped task array
   - explicit switches, `/new`, and competing notification consumes use ordered navigation ownership
   - a switch whose target cannot be opened (deleted, failed read) returns to the previous task instead of leaving an empty view
   - existing-window and cold-start service-worker routing
   - terminal startup intents are cleared; retryable intents survive refresh without in-page duplication
+
+- `test/archive.test.ts`
+  - archiving detaches a task and its whole subtree; the store default range is
+    every live task, `archived=exclude` is the active tree, and
+    `archived=only` returns archived trees
+  - exactly one `system_message` is written on the detached task and it names
+    the original parent path and id; children get no rows
+  - a deeper task can be archived out of an archived tree; an archived top is a
+    no-op; Root is refused
+  - a Root exit leaves archived trees, their structure, and their history intact
+  - empty-task GC detaches children inside an archived tree and still re-parents
+    them under Root outside one
+  - detach, transcript, and delivery marks roll back together when a delivery
+    write fails; a retry then commits all of them
+  - queued work between the archived subtree and anything outside it is marked
+    interrupted, and tree-internal work is untouched
+
+- `test/archive-routes.test.ts`
+  - `POST /api/v1/tasks/:id/archive` archives, broadcasts one system message,
+    reports and cuts a pending account edge, reports an archived top as a no-op,
+    refuses Root, and 404s an unknown task
+  - queued deliveries across the cut edge fail with `archived_edge_cut`; a
+    tree-internal delivery stays queued
+  - the task list filter returns the active tree by default or with
+    `archived=false`, archived trees only with `archived=true`, rejects every
+    other value, and marks archived rows
+  - `POST /api/v1/tasks/:id/unarchive` restores an archived top to its recorded
+    parent with a `task_unarchive` message and the whole subtree; Root/deeper
+    tasks are 400, unknown 404, and the three conflicts are 409
+    (`no_original_parent`, `original_parent_unavailable`, `title_conflict`)
+  - a rename collision inside an archived tree returns 400, a concurrent
+    out-of-scope send returns 400, a lineage invariant failure stays 500, and a
+    store failure returns a diagnosable 500
+
+- `test/task-manager.test.ts` (archive edge)
+  - cutting the former-parent edge keeps the task own child edge; a later
+    `task_update` records against the current (null) parent and does not
+    deliver an account to the parent the task left
+  - a queued delivery across the cut edge is not drained
+  - a draining delivery is left alone and finishes delivered after archive
+
+- `test/read-scope.test.ts`
+  - a `read` token reaches the task list, stored history, detail, status, and
+    permissions (including trailing-slash forms the routes support), but is
+    denied every write and undeclared read, including `/snapshot`
+  - a read-token `/events` returns persisted rows only: no buffer flush, no seq
+    advance, `streaming: false`; an api-token control still flushes
+  - read-scope detail never warms an execution; an api-scope read still warms
+    (control)
+  - the task list never warms anything for any scope
+  - a read-token detail does not persist legacy model canonicalization; an api
+    read keeps the write-back (control)
 
 ### Frontend state and UI event flow
 
@@ -971,9 +1024,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - MCP registration and documentation expose task_read as the sole raw-history tool
 
 - `test/commands.test.ts`, `test/slash-menu.test.ts`
+  - `/archive restore <query>` restores a unique archived title and reports the
+    restored parent; multiple matches restore nothing and report the ambiguity
   - `/new`, `/switch`, `/exit`, `/cancel`, `/rename`
   - `/new` (typed and picker-selected) posts a child create whose parent and
     inheritance source are the launching task, keeping the id as its title
+  - `/new <cwd>` checks the launching task by id: a task outside the active list
+    is not mistaken for deleted, while a 404 still reports it gone
   - typed and menu-clicked `/cancel` remain authoritative escape hatches when frontend busy state is stale
   - `/model`, `/mode`, `/think` query / fuzzy match / ambiguity handling
   - help output and shortcut listing
@@ -1361,6 +1418,19 @@ spot gaps, and decide what still needs to be added without reading every spec.
     held, and the sibling the held read carries but the cache did not appears
     once it is released (the test awaits the intercepted request before
     asserting how many reads this open issued)
+
+- `slash-menu-archive.spec.ts`
+  - `/archive` with no argument detaches the current task, announces the
+    persisted system message, and keeps the task current
+  - archived tasks leave `/switch`; Root refuses `/archive`; the `/archive`
+    menu lists archived tops and its Enter path reopens one, which stays
+    runnable
+  - `@child` still resolves inside the archived tree, and `+` can create a
+    child there (existence is checked by id, not by the active list)
+  - a second client **viewing Root** no longer offers the archived row when
+    its `/switch` menu is opened after the archive event
+  - `/archive restore <title>` re-attaches the top under Root and it reappears
+    in `/switch`
 
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and

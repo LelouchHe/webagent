@@ -80,6 +80,7 @@ All stable endpoints are under `/api/v1/`. Beta endpoints (subject to change) ar
 | Timestamps       | Storage is unix milliseconds; **every JSON egress** renders ISO-8601 UTC with an explicit `Z`. Durations/counters (`ttl_hours`, `share_snapshot_seq`, `upload_seq`, `seq`) stay numeric. See [Timestamps](#timestamps). |
 | Gzip             | Responses > 1 KB are gzip-compressed when `Accept-Encoding: gzip` is present              |
 | Async operations | Message sends and bash commands return `202 Accepted` immediately; results arrive via SSE |
+| Malformed URL encoding | `400` `{ "error": "Invalid URL encoding" }`; any other uncaught handler failure is logged and answered `500`. |
 
 ---
 
@@ -145,15 +146,28 @@ startup the frontend selects the first task with `hasUserInput: true`, then the
 canonical Root, then the first listed task. SSE reconnects preserve the task
 already active in the browser.
 
-| Parameter | In    | Type   | Description                                                   |
-| --------- | ----- | ------ | ------------------------------------------------------------- |
-| `source`  | query | string | Optional. Filter by task source (e.g., `"auto"`)              |
-| `agent`   | query | string | Optional. Narrow to tasks whose current binding names this agent |
+By default the list is the active Root tree. An **archived tree** is a live,
+parentless, non-Root task and its whole subtree; nothing marks it, the
+structure is the fact (see [Task Lifecycle](task-lifecycle.md#archived-trees)).
+Archived trees are excluded by default, so a normal reader — and `/switch` —
+sees only active tasks. A history consumer asks for archived trees explicitly;
+there is no combined read, because the active tree is stable while archives keep
+growing.
+
+| Parameter  | In    | Type   | Description                                                   |
+| ---------- | ----- | ------ | ------------------------------------------------------------- |
+| `source`   | query | string | Optional. Filter by task source (e.g., `"auto"`)              |
+| `agent`    | query | string | Optional. Narrow to tasks whose current binding names this agent |
+| `archived` | query | string | Optional. Omitted or `"false"`: the active tree only. `"true"`: archived trees only. Any other value is `400`. |
 
 **Response** `200`: Array of `TaskSummary` (defined in `src/types.ts`). Each
 entry carries `agentId`: the agent of the task's current execution binding, or
-`null` when the task is unbound, and `isRoot`: `true` only for the workspace
-Root, so a client never has to recognise Root by its id. `created_at` and
+`null` when the task is unbound; `isRoot`: `true` only for the workspace Root,
+so a client never has to recognise Root by its id; and `archived`: `true` when
+the task belongs to an archived tree. `archived` is an egress fact derived from
+the structure, not a column. The frontend reads the active list for `/switch`
+and startup, and `archived=true` for `/archive`; inside an archived task it uses
+that archived list for `@` path resolution. `created_at` and
 `last_active_at` are rendered ISO-8601 UTC with `Z` (see
 [Timestamps](#timestamps)). The Root id itself is reported only by
 `GET /api/v1/config`.
@@ -422,7 +436,21 @@ agent really attempted — the target is inherited when the request names none)
 
 #### `GET /api/v1/tasks/:id`
 
-Get task details. **Auto-resumes** the task in the ACP agent if it's not already live (e.g., after server restart). Interrupted turns are restored without being continued automatically; the user decides whether to continue. A task whose binding agent is configured but whose execution slot is unmaterialized is materialized by that background warm, which also records the execution config the new session reports for the columns the task has no value of its own — so this read can change those columns. It never takes a task over from an agent that left the configuration; that remains an operation's job (next use or `POST /clear`).
+Get task details. A read answers with what is known now; for a UI-authenticated
+read, a task that is not live starts a **background warm** in the ACP agent
+(e.g., after a server restart), reported later through `task_runtime_warmed`.
+The response never waits for the restore and a failed restore does not fail the
+read. Interrupted turns are restored without being continued automatically; the
+user decides whether to continue. A task whose binding agent is configured but
+whose execution slot is unmaterialized is materialized by that background warm,
+which also records the execution config the new session reports for the columns
+the task has no value of its own — so this read can change those columns. It
+never takes a task over from an agent that left the configuration; that remains
+an operation's job (next use or `POST /clear`).
+
+A `read`-scope token never warms: the response is the same metadata read with no
+restore or materialization, so an external consumer walking stored tasks does
+not start one agent process per task.
 
 **Response** `200`:
 
@@ -436,6 +464,7 @@ Get task details. **Auto-resumes** the task in the ACP agent if it's not already
   "mode": "agent",
   "parentId": "root",
   "parentAgentId": "pi",
+  "archived": false,
   "configOptions": [...],
   "busy": false,
   "busyKind": null
@@ -445,12 +474,97 @@ Get task details. **Auto-resumes** the task in the ACP agent if it's not already
 | Field           | Type                        | Description                                                                   |
 | --------------- | --------------------------- | ----------------------------------------------------------------------------- |
 | `configOptions` | `ConfigOption[]`            | Current config with stored overrides applied (type defined in `src/types.ts`) |
-| `parentId` | `string \| null` | Parent WebAgent Task; `null` for the Root Task, or for a survivor detached by a delete collision (see DELETE) |
+| `parentId` | `string \| null` | Parent WebAgent Task; `null` for the Root Task, an archived tree top, or a survivor detached by a delete collision or an archive (see DELETE and archiving) |
 | `parentAgentId` | `string \| null` | The parent's confirmed binding; only meaningful with `parentId`. `null` means the parent exists but has no binding. Lets a client compare this task's agent with what it should have inherited without a second read. |
+| `archived` | boolean | True when the task belongs to an archived tree; derived from the structure, same rule as the task-list row. |
 | `busy`          | boolean                     | Whether the task has an active agent prompt or bash process                |
 | `busyKind`      | `"agent" \| "bash" \| null` | What kind of work is in progress (user-visible work only, as in `runtime.busy`; a background restore reports `null`) |
 
-**Errors:** `404` (task not found), `500` (ACP restore failed)
+**Errors:** `404` (task not found)
+
+---
+
+#### `POST /api/v1/tasks/:id/archive`
+
+Detach a task — and therefore its whole subtree — from its current parent by
+clearing `parent_id`. Nothing is added to the schema: "archived" is derived
+from the structure (a live, parentless, non-Root task is the top of an archived
+tree). The detached task stays live and runnable; it no longer appears in the
+default task list or in `/switch`, and can be re-attached only through
+`POST /api/v1/tasks/:id/unarchive`.
+
+Archiving a task that is already an archived top is a no-op (`status:
+"already_archived"`, no event). Archiving a deeper task inside an archived tree
+splits that subtree out into a new archived tree. Root is refused. The action
+writes exactly one `system_message` (`kind: "task_archive"`) on the detached
+task, naming the original parent's path and id; children stay attached to it
+and get no rows of their own. A pending account owed to the former parent does
+not block archiving: that edge is dropped, so a later `task_update` is recorded
+but not delivered to the parent the task left. Collaboration not yet handed to the agent between the archived subtree and
+anything outside it — a queued message in either direction — is marked
+`failed` with `failure_reason: "archived_edge_cut"`; the message rows are kept,
+and nothing new is delivered across the boundary. Deliveries wholly inside the
+subtree are untouched. Rows already `draining` or `failed` keep their own
+status and reason. Work already handed to the agent is not recalled. The detach, system message, and delivery
+marks are one transaction.
+
+**Response** `200`:
+
+```json
+{
+  "status": "archived",
+  "taskId": "abc-123",
+  "parentId": "def-456",
+  "parentPath": "@/area",
+  "pendingAccount": false
+}
+```
+
+| Field            | Type      | Description                                                                 |
+| ---------------- | --------- | --------------------------------------------------------------------------- |
+| `status`         | string    | `"archived"`, or `"already_archived"` when the task was already a tree top |
+| `parentId`       | `string \| null` | The parent the task was detached from; `null` for a no-op          |
+| `parentPath`     | `string \| null` | The parent's user-facing path at archive time; `null` for a no-op  |
+| `pendingAccount` | boolean   | True when the task still owed its former parent an account                  |
+
+**Errors:** `400` (Root cannot be archived), `404` (task not found)
+
+---
+
+#### `POST /api/v1/tasks/:id/unarchive`
+
+Re-attach an archived tree top under the parent recorded by its latest
+`task_archive` system message. Only a live, parentless, non-Root task is
+accepted; its whole subtree follows it. If the recorded parent is gone
+(deleted, not found, or the old Root after a Root exit), or no archive record
+exists, the task re-attaches under the current Root. A recorded parent that is
+itself inside an archived tree is refused (restore that tree first), as is a
+live title collision under the destination. The update and one
+`system_message` (`kind: "task_unarchive"`, naming the destination parent path
+and id, and the missing original id when it fell back to Root) share one
+transaction. Nothing about the obligation or delivery edges cut by the archive
+is restored.
+
+**Response** `200`:
+
+```json
+{
+  "status": "unarchived",
+  "taskId": "abc-123",
+  "parentId": "def-456",
+  "parentPath": "@/area"
+}
+```
+
+**Errors:**
+- `400` — Root, or a task that is not an archived tree top
+- `404` — task not found
+- `409` — conflict; the body carries `reason`:
+  - `original_parent_unavailable` — the recorded parent is itself inside an
+    archived tree (restore that tree first); a deleted or missing parent falls
+    back to Root instead
+  - `title_conflict` — a live task with the same title already exists under the
+    destination parent (the recorded parent, or Root on fallback)
 
 ---
 
@@ -615,7 +729,9 @@ the background and serves the snapshot from what it already knows; the restore
 can take as long as a real session replay takes. When it finishes, the restored
 schema and commands are published to the task's subscribers as
 `task_runtime_warmed` (see [Live Events](#live-events)). A missing, dead, or no
-longer configured agent simply means no such event arrives.
+longer configured agent simply means no such event arrives. A `read`-scope
+token may not call this route: the snapshot path is allowed to start that
+background warm.
 
 A write that needs the execution ready — prompt, config, compact — waits for
 that same restore instead of failing with `409 Task is busy`: the restore is
@@ -702,7 +818,9 @@ Send a user prompt to the agent. Returns immediately; the agent's response strea
 
 #### `GET /api/v1/tasks/:id/events`
 
-Retrieve stored events for a task (history). This is the primary history endpoint used during page load.
+Retrieve events for a task (history). This is the primary history endpoint used during page load, and the read contract for external consumers: it never touches execution, so it works for archived, unbound, and never-materialized tasks alike. A `read`-scope token may call it.
+
+A `read` token gets **persisted rows only**: it does not flush in-memory thinking/assistant buffers and does not advance `seq`, so repeated reads are side-effect free and `streaming` is `false`. An ordinary `api`/`admin` read still flushes pending buffers (the UI's existing behavior; tracked in [Known issues](known-issues.md)).
 
 | Parameter  | In    | Type           | Description                                                                                                      |
 | ---------- | ----- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -975,7 +1093,7 @@ This endpoint **always requires** a valid `Authorization: Bearer <token>` header
 | ------- | ------- | ---------------------------------------------------- |
 | `ok`    | boolean | Always `true` on success                             |
 | `name`  | string  | Token's human-readable name (e.g. `"laptop"`)        |
-| `scope` | string  | `"admin"` (full access) or `"api"` (no `/tokens/**`) |
+| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"read"` (pure reads only: task list, task detail, events, status, permissions, version, auth/verify; events never flushes and no read warms) |
 
 **Response** `401`:
 
@@ -1019,7 +1137,7 @@ The SSE stream re-checks the bound token on every heartbeat (≤15 s). If the to
 
 ### Tokens
 
-Manage Bearer tokens stored in `data/auth.json`. All endpoints require an admin-scope token; api-scope tokens get `403`.
+Manage Bearer tokens stored in `data/auth.json`. All endpoints require an admin-scope token; api- and read-scope tokens get `403`.
 
 #### `GET /api/v1/tokens`
 
@@ -1053,28 +1171,34 @@ Create a new token. **The raw token is returned exactly once** — the server on
 **Request body:**
 
 ```json
-{ "name": "phone" }
+{ "name": "history-reader", "scope": "read" }
 ```
 
-| Field  | Type   | Description                                  |
-| ------ | ------ | -------------------------------------------- |
-| `name` | string | 1–64 chars, `[A-Za-z0-9_-]`. Must be unique. |
+| Field   | Type   | Description                                                                 |
+| ------- | ------ | --------------------------------------------------------------------------- |
+| `name`  | string | 1–64 chars, `[A-Za-z0-9_-]`. Must be unique.                                |
+| `scope` | string | Optional. `"api"` (default) or `"read"`. `admin` is not accepted here.      |
 
-New tokens are always created with `api` scope (no access to `/tokens/**`). Use the `webagent --create-token <name>` CLI to mint admin-scope tokens.
+New tokens default to `api` scope (no access to `/tokens/**`). `read` mints the
+narrow pure-read credential used by external history consumers; it is denied by
+default on every route outside the documented read allowlist (see
+[Auth Flow](security.md#auth-flow)). `admin` is CLI-only: use
+`webagent --create-token <name>` so an api/read token cannot escalate through
+this route.
 
 **Response** `201`:
 
 ```json
 {
   "token": "wat_…",
-  "name": "phone",
-  "scope": "api"
+  "name": "history-reader",
+  "scope": "read"
 }
 ```
 
 **Errors:**
 
-- `400` — invalid name (missing, too long, illegal chars)
+- `400` — invalid name (missing, too long, illegal chars) or an unsupported scope
 - `409` — name already exists
 
 #### `DELETE /api/v1/tokens/:name`

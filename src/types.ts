@@ -139,6 +139,13 @@ export interface TaskSummary {
    * identity, so a client never has to recognise Root by its id.
    */
   isRoot: boolean;
+  /**
+   * True when this task belongs to an archived tree. An egress fact, not a
+   * column: the server derives it from the structure. Clients that show the
+   * active tree (`/switch`, startup) filter on it; topology reads keep these
+   * rows so collaboration paths still resolve inside an archived tree.
+   */
+  archived?: boolean;
 }
 
 /** Detailed task record returned by GET /api/v1/tasks/:id. */
@@ -159,6 +166,8 @@ export interface TaskDetail {
   parentAgentId?: string | null;
   /** Agent that carries this task's current execution; null when unbound. */
   agentId?: string | null;
+  /** True when this task belongs to an archived tree (derived, not stored). */
+  archived: boolean;
   configOptions: ConfigOption[];
 }
 

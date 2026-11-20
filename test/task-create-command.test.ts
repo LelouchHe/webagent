@@ -99,7 +99,7 @@ describe("+ title-first create", () => {
       if (url.startsWith("/api/v1/recent-paths")) {
         return new Response(JSON.stringify([]), { status: 200 });
       }
-      if (url === "/api/v1/tasks" && init?.method === "POST") {
+      if (url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST") {
         const body = JSON.parse(init.body);
         return new Response(
           JSON.stringify({
@@ -121,7 +121,8 @@ describe("+ title-first create", () => {
 
   function createCall(): { url: string; init: any } | undefined {
     const found = fetchCalls.find(
-      (c) => c.url === "/api/v1/tasks" && c.init?.method === "POST",
+      (c) =>
+        c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
     );
     return found ? { url: found.url, init: found.init } : undefined;
   }

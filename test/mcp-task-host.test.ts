@@ -90,6 +90,22 @@ describe("MCP Task tool host", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("lists an archived tree from one of its tasks", () => {
+    store.archiveTask("alpha");
+    const host = createMcpTaskToolHost({ store, tasks });
+    const listed = host.list(principal("alpha"));
+    // Self must survive: a task inside an archived tree still needs its own
+    // row, and its local child remains reachable. Root and beta are outside
+    // the tree and must not appear.
+    assert.deepEqual(
+      listed.map(({ id, relation }) => ({ id, relation })),
+      [
+        { id: "alpha", relation: "self" },
+        { id: "alpha-child", relation: "child" },
+      ],
+    );
+  });
+
   it("lists the family with relation and status", () => {
     store.updateTaskWorkflowStatus(store.rootTaskId, "done");
     store.updateTaskWorkflowStatus("alpha", "running");

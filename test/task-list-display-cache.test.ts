@@ -71,6 +71,9 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 10));
 }
 
+// The client reads the active task list.
+const TASK_LIST_URL = "/api/v1/tasks";
+
 describe("task pickers paint from the last list, then revalidate", () => {
   let state: any;
   let dom: any;
@@ -104,7 +107,7 @@ describe("task pickers paint from the last list, then revalidate", () => {
     listHandler = () => Promise.resolve(okJson(TASKS));
     globalThis.fetch = ((url: string) => {
       fetchCalls.push(url);
-      if (url === "/api/v1/tasks") return listHandler();
+      if (url === TASK_LIST_URL) return listHandler();
       if (url.startsWith("/api/v1/recent-paths"))
         return Promise.resolve(
           okJson([
@@ -521,7 +524,7 @@ describe("task pickers paint from the last list, then revalidate", () => {
 
     await taskCommand.executeTaskCommand("@does-not-exist");
 
-    assert.deepEqual(fetchCalls, ["/api/v1/tasks"]);
+    assert.deepEqual(fetchCalls, [TASK_LIST_URL]);
   });
 
   it("Enter on a cached target uses the fresh list, not the cache", async () => {
@@ -534,6 +537,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
     await taskCommand.executeTaskCommand("@tests hello");
 
     assert.match(dom.messages.textContent, /incomplete or not found: 'tests'/);
-    assert.deepEqual(fetchCalls, ["/api/v1/tasks"]);
+    assert.deepEqual(fetchCalls, [TASK_LIST_URL]);
   });
 });

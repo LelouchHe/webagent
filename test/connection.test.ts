@@ -325,7 +325,7 @@ describe("connection", () => {
     });
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks") {
+      if (url.split("?")[0] === "/api/v1/tasks") {
         listReads += 1;
         // The startup read races the stream registration. The child is created
         // after it and before this client is registered, so its `task_created`
@@ -381,7 +381,8 @@ describe("connection", () => {
       "a task created before the stream registered is live, not exited",
     );
     assert.equal(
-      fetchCalls.filter((call) => call.url === "/api/v1/tasks").length,
+      fetchCalls.filter((call) => call.url.split("?")[0] === "/api/v1/tasks")
+        .length,
       2,
       "one baseline read per caller: startup and handshake",
     );
@@ -400,7 +401,7 @@ describe("connection", () => {
     });
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks") {
+      if (url.split("?")[0] === "/api/v1/tasks") {
         listReads += 1;
         if (listReads === 1) {
           // The startup read predates the stream registration; its answer is
@@ -482,7 +483,7 @@ describe("connection", () => {
         await configReady;
         return mockResponse({ rootTaskId: ROOT_ID, configOptions: [] });
       }
-      if (url === "/api/v1/tasks") {
+      if (url.split("?")[0] === "/api/v1/tasks") {
         listReads += 1;
         if (listReads === 1) {
           await firstListReady;
@@ -514,7 +515,8 @@ describe("connection", () => {
     releaseConfig();
     await flush();
     assert.equal(
-      fetchCalls.filter((call) => call.url === "/api/v1/tasks").length,
+      fetchCalls.filter((call) => call.url.split("?")[0] === "/api/v1/tasks")
+        .length,
       2,
       "the startup baseline does not join the handshake read",
     );
@@ -549,7 +551,7 @@ describe("connection", () => {
         await configReady;
         return mockResponse({ rootTaskId: ROOT_ID, configOptions: [] });
       }
-      if (url === "/api/v1/tasks") {
+      if (url.split("?")[0] === "/api/v1/tasks") {
         listReads += 1;
         if (listReads === 1) {
           // Still in flight when the startup read is issued and fails, so the
@@ -619,7 +621,7 @@ describe("connection", () => {
   it("resumes the most recent user-input task when there is no hash", async () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks")
+      if (url.split("?")[0] === "/api/v1/tasks")
         return mockResponse(
           listResponse([{ id: "recent-task", hasUserInput: true }]),
         );
@@ -634,7 +636,7 @@ describe("connection", () => {
     await flush();
 
     const urls = fetchCalls.map((c) => c.url);
-    assert.ok(urls.some((u) => u === "/api/v1/tasks"));
+    assert.ok(urls.some((u) => u.split("?")[0] === "/api/v1/tasks"));
     assert.ok(urls.some((u) => u === "/api/v1/tasks/recent-task"));
     assert.equal(
       state.taskId,
@@ -651,7 +653,7 @@ describe("connection", () => {
   it("resumes the most recent user-input task even when Root exists", async () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks")
+      if (url.split("?")[0] === "/api/v1/tasks")
         return mockResponse(
           listResponse([
             { id: "recent-task", hasUserInput: true },
@@ -682,7 +684,7 @@ describe("connection", () => {
   it("falls back to Root when no task has user input", async () => {
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks")
+      if (url.split("?")[0] === "/api/v1/tasks")
         return mockResponse(
           listResponse([
             { id: "recent-task", hasUserInput: false },
@@ -744,7 +746,7 @@ describe("connection", () => {
         };
       if (url.startsWith(`/api/v1/tasks/${foreignRootId}/events`))
         return mockResponse([]);
-      if (url === "/api/v1/tasks")
+      if (url.split("?")[0] === "/api/v1/tasks")
         return mockResponse([{ id: "current-backend-task" }]);
       if (url === "/api/v1/tasks/current-backend-task")
         return mockResponse(taskResponse("current-backend-task"));
@@ -780,7 +782,10 @@ describe("connection", () => {
       if (url.startsWith("/api/v1/tasks/expired-task/events"))
         return mockResponse([]);
       // listTasks returns another available task
-      if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
+      if (
+        url.split("?")[0] === "/api/v1/tasks" &&
+        (!init?.method || init.method === "GET")
+      )
         return mockResponse(listResponse([{ id: "fallback-task" }]));
       if (url === "/api/v1/tasks/fallback-task")
         return mockResponse(
@@ -812,7 +817,10 @@ describe("connection", () => {
       if (url.startsWith("/api/v1/tasks/expired-task/events"))
         return mockResponse([]);
       // No other tasks available
-      if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
+      if (
+        url.split("?")[0] === "/api/v1/tasks" &&
+        (!init?.method || init.method === "GET")
+      )
         return mockResponse(listResponse([]));
       if (url === "/api/v1/tasks/bootstrap" && init?.method === "POST")
         return mockResponse({ id: "new-1", created: true });
@@ -829,7 +837,10 @@ describe("connection", () => {
   it("creates a new task when no previous task exists", async () => {
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks" && (!init?.method || init.method === "GET"))
+      if (
+        url.split("?")[0] === "/api/v1/tasks" &&
+        (!init?.method || init.method === "GET")
+      )
         return mockResponse(listResponse([]));
       if (url === "/api/v1/tasks/bootstrap" && init?.method === "POST")
         return mockResponse({ id: "new-1", created: true });
@@ -954,7 +965,7 @@ describe("connection", () => {
       }
       if (url.startsWith(`/api/v1/tasks/${oldRootId}/events`))
         return mockResponse({ events: [], streaming: {} });
-      if (url === "/api/v1/tasks")
+      if (url.split("?")[0] === "/api/v1/tasks")
         return mockResponse([
           { id: ROOT_ID, hasUserInput: false, isRoot: true },
         ]);
@@ -970,7 +981,9 @@ describe("connection", () => {
 
     assert.equal(state.taskId, ROOT_ID);
     assert.equal(location.hash, `#${ROOT_ID}`);
-    assert.ok(fetchCalls.some((call) => call.url === "/api/v1/tasks"));
+    assert.ok(
+      fetchCalls.some((call) => call.url.split("?")[0] === "/api/v1/tasks"),
+    );
   });
 
   it("keeps Root active when reconnect config fails", async () => {
@@ -979,7 +992,7 @@ describe("connection", () => {
     state.taskId = ROOT_ID;
     let listCalls = 0;
     setFetch(async (url: string) => {
-      if (url === "/api/v1/tasks") {
+      if (url.split("?")[0] === "/api/v1/tasks") {
         listCalls++;
         return mockResponse([
           { id: ROOT_ID, hasUserInput: false, isRoot: true },
@@ -1067,7 +1080,7 @@ describe("connection", () => {
           defaultAgentId: "new",
         });
       }
-      if (url === "/api/v1/tasks") return mockResponse([]);
+      if (url.split("?")[0] === "/api/v1/tasks") return mockResponse([]);
       if (url === "/api/v1/tasks/bootstrap") {
         return mockResponse({
           id: ROOT_ID,
@@ -1115,7 +1128,7 @@ describe("connection", () => {
     let listCalls = 0;
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks") {
+      if (url.split("?")[0] === "/api/v1/tasks") {
         listCalls++;
         return mockResponse(
           listResponse([{ id: "recent-child", hasUserInput: true }]),

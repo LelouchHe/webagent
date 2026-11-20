@@ -240,6 +240,38 @@ export async function deleteTask(
     : result;
 }
 
+export interface ArchiveTaskResult {
+  status: "archived" | "already_archived";
+  taskId: string;
+  parentId: string | null;
+  parentPath: string | null;
+  /** True when the task still owed its former parent an account.
+   *  Archiving cuts that edge; the debt is recorded but never delivered. */
+  pendingAccount: boolean;
+}
+
+export function archiveTask(id: string): Promise<ArchiveTaskResult> {
+  return post(`/api/v1/tasks/${encodeURIComponent(id)}/archive`, {});
+}
+
+export interface UnarchiveTaskResult {
+  status: "unarchived";
+  taskId: string;
+  parentId: string;
+  parentPath: string;
+}
+
+export function unarchiveTask(id: string): Promise<UnarchiveTaskResult> {
+  return post(`/api/v1/tasks/${encodeURIComponent(id)}/unarchive`, {});
+}
+
+/** Only the tops of archived trees: a live parentless non-Root task is what
+ *  the server calls an archived tree. */
+export async function listArchivedTaskTops(): Promise<TaskSummary[]> {
+  const tasks = await listTasks(true);
+  return tasks.filter((task) => task.parent_id === null && !task.isRoot);
+}
+
 export function sendCollaborationMessage(
   sourceTaskId: string,
   targetTaskId: string,
@@ -257,8 +289,9 @@ export function sendCollaborationMessage(
   );
 }
 
-export function listTasks(): Promise<TaskSummary[]> {
-  return request("/api/v1/tasks");
+/** Active tree by default; `archived` selects archived trees only. */
+export function listTasks(archived = false): Promise<TaskSummary[]> {
+  return request(archived ? "/api/v1/tasks?archived=true" : "/api/v1/tasks");
 }
 
 export function getConfig(): Promise<{

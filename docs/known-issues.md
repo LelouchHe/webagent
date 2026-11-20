@@ -43,6 +43,16 @@ time. An entry without a "closing condition" is a wish, not an issue.
   the turn-authorization invariant in
   [`implementation-invariants.md`](./implementation-invariants.md).
 
+## Read surface
+
+- **`api`/`admin` `/events` reads still flush streaming buffers.** That is the
+  UI's long-standing replay behavior: a history read writes the pending
+  thinking/assistant text as events and advances `seq`. A `read` token is
+  side-effect free, so external consumers are unaffected; the UI path was left
+  unchanged in this range on purpose. *Closing:* decide whether the UI should
+  read buffers without persisting them (or render them from a separate runtime
+  projection) and change both the route and its replay tests together.
+
 ## Task lifecycle and storage
 
 - **A Root replacement is announced only when the fallback lands normally.**
@@ -99,6 +109,23 @@ time. An entry without a "closing condition" is a wish, not an issue.
   source task is deleted during the cwd probe) leaves no active task until a
   reload. The probe's liveness guard fails open on purpose. *Closing:* clear
   only after a successful create, or restore the previous task on failure.
+- **Archive UI and late delivery are best effort.** An already-open task menu
+  on another client may keep a pre-archive row until the menu is reopened; work
+  already handed to ACP may still be delivered after archive; and a late
+  failure on a cut edge may leave a harmless retry-map entry with a
+  `prompt_failed` label. No dedicated race fence covers these windows.
+
+- **A claimed (`draining`) delivery can be stranded before the ACP handoff.**
+  `claimQueuedDeliveries` marks rows `draining`, but the prompt is handed to
+  ACP later in the same synchronous block. If the process exits or a database
+  write in that window fails, the row stays `draining` with no outcome callback
+  and no failure reason. It is not redelivered: only `queued` rows are claimable,
+  and the retry map never contains it. Archive deliberately does not relabel it,
+  because `draining` means "handed over / in flight", not "not yet submitted".
+  *Closing:* the startup sweep already planned for task collaboration — mark
+  leftover `queued`/`draining` rows from a previous process as interrupted
+  before delivery starts.
+
 - **Task-created broadcast guards lack multi-client coverage.** The live
   `task_created` / `system_message` guards are asserted in the frontend tests,
   not against two real clients. *Closing:* a two-client integration test that

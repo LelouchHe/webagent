@@ -59,6 +59,8 @@ export interface ParentHint {
 let generation = 0;
 let listLoaded = false;
 let viewedTaskId: string | null = null;
+/** The server's archived fact for the viewed task, refreshed by its detail. */
+let viewedTaskArchived = false;
 let parentRef: ParentRef | null = null;
 let pending: { generation: number; promise: Promise<TaskSummary[]> } | null =
   null;
@@ -123,6 +125,7 @@ export function beginTaskTopologyGeneration(): void {
   listLoaded = false;
   listRequiredSeq = 0;
   viewedTaskId = null;
+  viewedTaskArchived = false;
   parentRef = null;
   pending = null;
   // The shared list is also the base for "which referenced tasks still
@@ -146,6 +149,7 @@ export function setCurrentTask(taskId: string | null, hint?: ParentHint): void {
     return;
   }
   viewedTaskId = taskId;
+  viewedTaskArchived = false;
   if (taskId === null) {
     parentRef = null;
     notifyChange();
@@ -159,6 +163,48 @@ export function setCurrentTask(taskId: string | null, hint?: ParentHint): void {
   parentRef = { taskId, status: "unknown" };
   notifyChange();
   void resolveParentFromTaskDetail(generation, taskId);
+}
+
+/**
+ * An archive detached `taskId` from its parent. Every client that learns the
+ * fact — the initiator and any other client receiving the `task_archive`
+ * system message — settles the parent reference (only when it is the viewed
+ * task) and invalidates cached task-list views (`/switch`). The epoch bump is
+ * what lets an open menu refetch instead of serving pre-archive rows.
+ */
+export function noteTaskArchived(taskId: string): void {
+  if (viewedTaskId === taskId) {
+    viewedTaskArchived = true;
+    parentRef = { taskId, status: "none" };
+  }
+  // Menus repaint from their cached rows; a menu opened after this fact reads
+  // the list again. No epoch fence is kept for requests already in flight.
+  notifyChange();
+}
+
+/** A restored task re-enters the active tree; re-resolve its parent link. */
+export function noteTaskUnarchived(taskId: string): void {
+  if (viewedTaskId !== taskId) return;
+  viewedTaskArchived = false;
+  parentRef = { taskId, status: "unknown" };
+  notifyChange();
+  void resolveParentFromTaskDetail(generation, taskId);
+}
+
+/**
+ * Record the server's archived fact for the viewed task. Every activation
+ * path that reads the task detail calls this; the fact is plain state, not a
+ * cache or watcher.
+ */
+export function setViewedTaskArchived(taskId: string, archived: boolean): void {
+  if (viewedTaskId !== taskId) return;
+  viewedTaskArchived = archived;
+  notifyChange();
+}
+
+/** Whether the viewed task is known to belong to an archived tree. */
+export function isViewedTaskArchived(): boolean {
+  return viewedTaskArchived;
 }
 
 function settleHint(taskId: string, hint: ParentHint): ParentRef {
@@ -438,6 +484,27 @@ export async function loadTaskList(): Promise<TaskSummary[]> {
 }
 
 /**
+ * A list read that never joins an in-flight request. Structural archive facts
+ * use this so a read issued before the fact cannot keep a stale membership for
+ * the refreshed marks.
+ */
+export function loadTaskListFresh(): Promise<TaskSummary[]> {
+  return readBaseline();
+}
+
+/** The list containing the current task; used by explicit `@` targets. */
+export async function loadCurrentTreeTaskList(): Promise<TaskSummary[]> {
+  const active = await loadTaskList();
+  if (
+    viewedTaskId === null ||
+    active.some((task) => task.id === viewedTaskId)
+  ) {
+    return active;
+  }
+  return api.listTasks(true);
+}
+
+/**
  * Issue a baseline read that never dedupes onto an in-flight one.
  *
  * `loadTaskList` shares a pending request; a baseline read must not, because
@@ -497,6 +564,7 @@ export function resetTaskTopologyForTest(): void {
   generation = 0;
   listLoaded = false;
   viewedTaskId = null;
+  viewedTaskArchived = false;
   parentRef = null;
   pending = null;
   listRequestSeq = 0;

@@ -55,7 +55,8 @@
 - After server restart, restores task context via ACP `loadTask` so conversations can continue
 - Task titles: explicitly set via `+<title>` or `/rename`; an unnamed task falls back to its stable id
 - Task history persisted in SQLite, survives restarts
-- `/switch` lists all tasks (git-branch style, `*` marks current in green)
+- `/switch` lists active tasks (git-branch style, `*` marks current in green)
+- `/archive` detaches the current task and its subtree without deleting anything; archived tasks stay runnable but leave `/switch` and the default task list. See [Task Lifecycle](task-lifecycle.md#archived-trees).
 - Switching tasks replays full message history
 - Rows that name another task mark each reference: struck through once that task exits, struck and followed by its current name once it is renamed. See [Task UX](task-ux.md#task-paths)
 
@@ -140,6 +141,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/cle
 | `/compact`            | Summarize the current conversation; the visible history stays and the next message continues with a compacted context         |
 | `/reset`              | Reset local frontend state for this device (keeps login token)                                                                |
 | `/switch <title\|id>` | Switch task (match by title or ID prefix)                                                                                  |
+| `/archive [query]`    | No argument: archive the current task and its subtree (no confirmation; Root is refused). With a query: open a matching archived task (match by title or ID prefix). `/archive restore <query>` re-attaches a unique archived tree top to its original parent, or to Root when that parent is gone. |
 | `/rename <new title>` | Rename task                                                                                                                |
 | `/exit`               | End current task and return to its parent; on Root, reset Root and delete its descendant tree                            |
 | `/reload`             | Reload agent subprocess (pick up CLI upgrades, new skills)                                                                    |

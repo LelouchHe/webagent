@@ -531,7 +531,7 @@ describe("shared task navigation", () => {
       if (url === "/api/v1/tasks/message-task/events?limit=500") {
         return historyResponse;
       }
-      if (url === "/api/v1/tasks" && init?.method === "POST") {
+      if (url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST") {
         return response({
           id: "new-task",
           cwd: "/new",
