@@ -147,15 +147,27 @@ The module imports trigger side effects (event listeners, theme initialization).
 
 ### SSE Stream
 
-`connect()` opens a global SSE stream and starts REST initialization **in parallel**:
+`connect()` mints a stream ticket, opens the global SSE stream, and then starts
+REST initialization while the stream registers:
 
 ```
 connect()
-  ├── new EventSource('/api/v1/events/stream')   // background
-  └── initTask()                            // parallel REST calls
+  └── POST /sse-ticket                         // EventSource cannot send Bearer
+        ├── new EventSource('/api/v1/events/stream?ticket=…')
+        └── initializeTaskAndIntent()
+              ├── GET /config                  // agent directory
+              ├── GET /tasks                   // startup list baseline
+              └── initTask()                   // after /config settles
 ```
 
-The SSE stream is **not** a prerequisite for page load. It runs in the background while REST calls fetch task data.
+The `connected` frame does not gate task loading, but task loading does start
+after the ticket and `/config`, so a cold load with a hash costs six serial
+round trips (HTML, assets, ticket, config, history and detail, snapshot). The
+order is kept on purpose: history and detail are read a round trip after the
+stream opens, by which time it has registered in practice, so events persisted
+around registration reach the client one way or the other. That is relied on,
+not enforced. See the boot waterfall entry in
+[known-issues](known-issues.md).
 
 **SSE message handling:**
 
@@ -191,6 +203,7 @@ Promise.all([
   api.getTask(taskId),    // auto-resumes in ACP if needed
   loadHistory(taskId),        // GET /api/v1/tasks/:id/events
 ])
+→ hydrateTaskRuntime(taskId)  // GET /snapshot, after replay drains queued patches
 → handleEvent({ type: 'task_created', ... })
 ```
 
@@ -202,7 +215,9 @@ api.getTask(taskId)        // get config/title/busy state
 → loadNewEvents(taskId)       // GET /events?after=N
 ```
 
-This parallel loading means history rendering starts as soon as the event data arrives, without waiting for task resume.
+On a full load, history renders as soon as its events arrive, without waiting
+for task resume; the snapshot follows the replay so it is newer than any live
+patch queued during it.
 
 ### Reconnection
 
