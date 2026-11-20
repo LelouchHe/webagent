@@ -23,12 +23,17 @@ export function agentHintRow(
   if (ids.length < 2) return null;
   if (parseCoordinate(rawRemainder, ids).agentId !== null) return null;
 
-  // The example is an agent the task is not currently running on: naming the
-  // current one would demonstrate nothing. With no known binding, the first
-  // configured agent is as good an example as any.
-  const example = ids.find((id) => id !== baselineAgentId) ?? ids[0];
+  // The current agent goes last, so the first one, the example, is always an
+  // agent the task is not running on: naming the current one would
+  // demonstrate nothing. With no known binding the configured order stands.
+  const ordered = [
+    ...ids.filter((id) => id !== baselineAgentId),
+    ...ids.filter((id) => id === baselineAgentId),
+  ];
   return {
-    spec: { primary: `agents: ${ids.join(", ")} · type "${example}:"` },
+    spec: {
+      primary: `agents: ${ordered.join(", ")} · type "${ordered[0]}:"`,
+    },
     // A placeholder: not selectable, unchanged on hover, italic and dim.
     prefix: "",
     kind: "placeholder",

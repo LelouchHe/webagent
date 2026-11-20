@@ -4,11 +4,13 @@ import {
   beginTaskTopologyGeneration,
   entryAgentLabel,
   isParentResolved,
+  loadStartupTaskList,
   loadTaskList,
   observeTaskCreated,
   observeTaskDeleted,
   noteTaskArchived,
   parentOf,
+  taskListSource,
   resetTaskTopologyForTest,
   setCurrentTask,
   subscribeTaskTopology,
@@ -318,6 +320,180 @@ describe("parent reference", () => {
       assert.equal(calls, 1);
       assert.deepEqual(first, second);
       assert.equal(entryAgentLabel("copilot", "a", "pi"), "copilot");
+    } finally {
+      fetchStub.restore();
+    }
+  });
+});
+
+/**
+ * The display cache: the last list a read resolved with, kept so an
+ * already-visited picker paints before its own read returns. It is display
+ * only — it never answers "has this connection's list arrived".
+ */
+/** Ids of the list `taskListSource` shows now, or null while it has none. */
+function shownIds(): string[] | null {
+  const state = taskListSource.read();
+  return Array.isArray(state) ? state.map((t) => t.id) : null;
+}
+
+describe("task list display cache", () => {
+  beforeEach(() => {
+    resetTaskTopologyForTest();
+  });
+
+  it("records the list a read resolved with", async () => {
+    const fetchStub = stubFetch(
+      () => new Response(JSON.stringify([task("a", "pi")])),
+    );
+    try {
+      await loadTaskList();
+    } finally {
+      fetchStub.restore();
+    }
+    assert.deepEqual(shownIds(), ["a"]);
+  });
+
+  it("survives a reconnect while the baseline claim is withdrawn", async () => {
+    const fetchStub = stubFetch(
+      () => new Response(JSON.stringify([task("a", "pi")])),
+    );
+    try {
+      await loadTaskList();
+      beginTaskTopologyGeneration();
+      // The rows stay painted from the cached list...
+      assert.deepEqual(shownIds(), ["a"]);
+      // ...but it still claims nothing about this connection's baseline.
+      assert.equal(entryAgentLabel("copilot", "a", "pi"), null);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it("never replaces a newer list with an older response", async () => {
+    const releases: ((response: Response) => void)[] = [];
+    const fetchStub = stubFetch(
+      () =>
+        new Promise<Response>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+    try {
+      const first = loadStartupTaskList();
+      const second = loadStartupTaskList();
+      assert.equal(releases.length, 2);
+      releases[1](new Response(JSON.stringify([task("new", "pi")])));
+      await second;
+      releases[0](new Response(JSON.stringify([task("old", "pi")])));
+      await first;
+      assert.deepEqual(shownIds(), ["new"]);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it("keeps a list whose connection generation was superseded in flight", async () => {
+    let release!: (response: Response) => void;
+    const fetchStub = stubFetch(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    try {
+      const pending = loadTaskList();
+      beginTaskTopologyGeneration();
+      release(new Response(JSON.stringify([task("a", "pi")])));
+      await pending;
+      // The read cannot become this connection's baseline...
+      assert.equal(entryAgentLabel("copilot", "a", "pi"), null);
+      // ...but the pickers still get its rows: the cache's order rule is its
+      // own, and a newer connection has not completed a list yet.
+      assert.deepEqual(shownIds(), ["a"]);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it("keeps the last list when a later read fails", async () => {
+    let calls = 0;
+    const fetchStub = stubFetch(() => {
+      calls += 1;
+      return calls === 1
+        ? new Response(JSON.stringify([task("a", "pi")]))
+        : new Response("nope", { status: 503 });
+    });
+    try {
+      await loadTaskList();
+      await assert.rejects(loadTaskList());
+      assert.deepEqual(shownIds(), ["a"]);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it("a watch refreshes the list once and reports when it lands", async () => {
+    let release!: (response: Response) => void;
+    const fetchStub = stubFetch(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    try {
+      let changes = 0;
+      const stopFirst = taskListSource.watch(() => {
+        changes += 1;
+      });
+      // A second watch joins the read in flight instead of issuing another.
+      const stopSecond = taskListSource.watch(() => undefined);
+      assert.equal(fetchStub.urls.length, 1);
+      assert.equal(taskListSource.read(), "loading");
+
+      release(new Response(JSON.stringify([task("a", "pi")])));
+      await loadTaskList();
+      assert.equal(changes, 1);
+      assert.deepEqual(shownIds(), ["a"]);
+
+      stopFirst();
+      stopSecond();
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it("a stopped watch hears nothing more", async () => {
+    const fetchStub = stubFetch(
+      () => new Response(JSON.stringify([task("a", "pi")])),
+    );
+    try {
+      let changes = 0;
+      const stop = taskListSource.watch(() => {
+        changes += 1;
+      });
+      stop();
+      await loadTaskList();
+      assert.equal(changes, 0);
+    } finally {
+      fetchStub.restore();
+    }
+  });
+
+  it("shows the failure only while there is no list", async () => {
+    let fail = true;
+    const fetchStub = stubFetch(() =>
+      fail
+        ? new Response("nope", { status: 503 })
+        : new Response(JSON.stringify([task("a", "pi")])),
+    );
+    try {
+      await assert.rejects(loadTaskList());
+      assert.ok(typeof taskListSource.read() === "object");
+      assert.ok("error" in (taskListSource.read() as object));
+
+      fail = false;
+      await loadTaskList();
+      assert.deepEqual(shownIds(), ["a"]);
     } finally {
       fetchStub.restore();
     }

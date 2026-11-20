@@ -231,6 +231,42 @@ time. An entry without a "closing condition" is a wish, not an issue.
   a `typescript-native` alias is the only interim route and is not worth the
   ~1s it saves on a 2.2s typecheck.
 
+## Performance
+
+- **A cold page load waits six serial round trips before it settles.** With a
+  task hash: HTML → assets → `POST /sse-ticket` → `GET /config` (stream opens)
+  → history + detail → snapshot. Server time is 1–7 ms per call, so this is
+  round trips: through Cloudflare from the host (~50 ms RTT) the transcript
+  appears at ~580 ms; a far client pays six times its RTT. Task switches take
+  two rounds (history + detail, then snapshot) and are not affected.
+
+  Two of those rounds are historical: task loading has waited for the ticket
+  since Bearer auth made stream setup async (`d2ecf33`), and for `/config`
+  since Root identity needed it (`413aab6`, no longer true after `203b921`).
+  They stay because removing them is not free:
+
+  - history read before the stream registers can miss events persisted in
+    between, and the reconnect catch-up (`loadNewEvents` after the last seq)
+    cannot recover them once a live event (e.g. a compaction summary) has
+    advanced `lastEventSeq`;
+  - an early `GET /tasks/:id` can start an agent warm-up whose config-option
+    broadcast is sent once and missed; the snapshot does not restore the
+    option schema, and `applySnapshot()` does not apply a rename made in that
+    window;
+  - continuations must be fenced by connection epoch *and* navigation
+    generation (a task id misses A→B→A);
+  - `/new`, `/clear` and `+` parse `agent:path` with the directory from
+    `/config` at submission time, so a late directory turns a coordinate into
+    a plain path.
+
+  The reviewed shape, if this is ever worth it: on a cold hashed load only,
+  start `/config` and a *provisional* history render beside the ticket mint;
+  after `connected`, run the existing full load (history and detail, then
+  snapshot) and replace the provisional render. The transcript appears two
+  rounds earlier; settlement stays at six. *Closing:* cold-load latency on a
+  real client matters enough to pay for the second history read and the
+  replace step.
+
 ## Deferred features (design decided, not scheduled)
 
 - **An agent's output file has no automatic channel to a person — postponed,

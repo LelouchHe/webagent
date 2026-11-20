@@ -47,7 +47,7 @@ interface CmdNode {
   desc?: string; // shown as secondary in the parent menu
   help?: string; // fuller one-line description shown by /help
   children?: CmdNode[]; // subcommands, walker prefixes them with ›
-  fetch?: (query: string) => unknown[] | Promise<unknown[]>; // sync OR async data
+  fetch?: (query: string) => unknown[] | Promise<unknown[]> | LiveSource<unknown[]>; // sync, async, or live data
   fetchKey?: (query: string) => string; // cache partition; same key = no refetch
   toSpec?: (item: unknown) => SlashItemSpec;
   matches?: (item: unknown, q: string) => boolean; // optional non-primary filter
@@ -60,6 +60,63 @@ interface CmdNode {
 Field absence = capability not present. A node with only `children` is a pure submenu; a node with only `fetch + toSpec` is a pure list (e.g. `/mode`); a node with `freeform` plus `fetch` is a list-with-create (e.g. `/token`).
 
 `fetchKey` is what keeps a scoped list from re-fetching on every keystroke: the controller re-fetches only when the key changes and otherwise filters the cached items locally (`/view` keys on the directory).
+
+### Live data
+
+A `fetch` may return a `LiveSource` ([`live-source.ts`](../public/js/live-source.ts))
+instead of a one-shot result: a value that can change while the menu shows it.
+
+```ts
+interface LiveSource<T> {
+  read(): T | "loading" | { error: string }; // what there is now
+  watch(onChange: () => void): () => void; // returns how to stop
+}
+```
+
+The menu does not know where the value comes from. It renders `read()`, and
+re-renders from `read()` whenever the source reports a change. Whether the
+source answers with something it already has, and when it refreshes, is the
+source's own business.
+
+A watch lives exactly as long as the menu's **data scope**: the span in which
+the shown data is current. A new scope starts whenever the data would be
+fetched again — the command path or `fetchKey` changes, the menu shows a
+placeholder, or the menu closes — and starting one stops everything the
+previous scope watched. A watch registers its own stop at the moment it starts,
+so the code that ends a scope never needs to know what was watched.
+
+The pickers use it today: `/switch` returns the shared `taskListSource` from
+`task-topology.ts`, and `@` returns rows derived from it (`deriveLive`). The
+recent-paths entries (`/clear`, `/new`, and the `+` cwd rows) share one
+`refreshingSource(listRecentPaths)` from `slash-commands.ts`, so a second open
+paints the last list at once instead of waiting a round trip on
+`(loading...)`. `refreshingSource` shows the last value a load resolved with
+and loads when a watch starts, but only when no load is already in flight, so
+a later watch joins the running one and two loads never overlap. A failure is
+shown only while there is no value; after a successful read it keeps the
+value. `/new` and `+` still put their own cwd row ahead of the path rows
+(their action row still leads the whole menu), and treat a recent-paths
+failure as no recents (`errorsAsEmpty`), exactly as their old `catch` did;
+that fallback matters only before any list has loaded, because after that the
+last list stays. `+` keeps directory listings uncached: each input builds a
+fresh one-shot source (`onceSource`), while the no-cwd branch shares the
+recent-paths source. Every other walker node keeps its one-shot `fetch`.
+
+A menu updates only through a subscription it took when it opened: a
+`LiveSource` watch, registered with the menu's data scope. A static menu (for
+example `/`) takes no such subscription and is never rebuilt by live activity;
+there are no global repaint hooks. Rows read other client state (such as the
+current task's agent) when they are drawn; a change to that state while the
+menu is open shows at the next repaint. The `+` directory branch is
+a `onceSource`: it reports its one-shot read, but a new source is made for
+each input, so a late listing has no watch left to repaint a newer prefix.
+Directory rows carry their path as `key`.
+
+Rows from a live source carry a producer-given `key` (a task id, a path): the
+producer knows what the row is, so the menu never guesses identity from the
+rendered text. A live repaint keeps the row with the same key, wherever it
+moved in the list; otherwise it selects the first selectable row. Typing
+selects the first row, and a row without a key falls back the same way.
 
 ## FieldView — a node's own argument field
 
@@ -102,7 +159,7 @@ Today two walker nodes provide a field (`/clear` and `/new`), both through one h
 1. **Subcommands** (`›` prefix, hierarchical drill-in)
 2. **Freeform** (`↵` prefix, suppressed when the query matches a primary case-insensitively)
 3. **Separator** (only when both a `›`/`↵` group and a data section are present)
-4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`
+4. **Data rows** or one of the placeholders: `(loading...)`, `(error)`, `(none)`, `(no match)`. A live `fetch` renders whatever its source holds: `"loading"` is `(loading...)`, an error is `(error)`, and a value is filtered like any other array
 5. **`field.trail` rows** (only when a `field` supplied them, and never beside a placeholder)
 
 `Candidate.kind` (`subcommand` / `freeform` / `data` / `placeholder` / `separator`) is what dispatches selection and clicks; `placeholder` and `separator` are never selectable and are skipped by arrow keys.

@@ -37,7 +37,7 @@ import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
 import type { TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import { entryAgentLabel, loadTaskList } from "./task-topology.ts";
+import { entryAgentLabel, taskListSource } from "./task-topology.ts";
 import { taskDisplayPath } from "./path-display.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { resetLocalFrontendState } from "./local-reset.ts";
@@ -67,6 +67,12 @@ import {
   viewItemMatches,
   viewItemSpec,
 } from "./view-command.ts";
+import {
+  deriveLive,
+  errorsAsEmpty,
+  refreshingSource,
+  type LiveSource,
+} from "./live-source.ts";
 
 // --- shared helpers used by onSelect handlers ---
 
@@ -134,12 +140,6 @@ async function unsubscribePush(): Promise<void> {
 
 // --- shared data fetchers (keep call sites identical for /inbox + /inbox dismiss) ---
 
-/** `/switch` shows the active tree only; archived tasks are reached via
- *  `/archive`. Topology itself keeps archived rows so paths resolve. */
-async function listTasks(): Promise<TaskSummary[]> {
-  return (await loadTaskList()).filter((task) => !task.archived);
-}
-
 interface PathItem {
   cwd: string;
   cwdDisplay: string;
@@ -160,6 +160,19 @@ export async function listRecentPaths(): Promise<PathItem[]> {
     cwdDisplay: p.cwdDisplay ?? p.cwd,
     time: formatLocalTime(p.last_used_at),
   }));
+}
+
+/**
+ * The last recent-paths list a read resolved with, shared by `/clear`, `/new`
+ * and `+`: a picker opened again paints it at once and repaints when the fresh
+ * read lands instead of waiting a round trip with `(loading...)`.
+ */
+export let recentPathsSource: LiveSource<PathItem[]> =
+  refreshingSource(listRecentPaths);
+
+/** Test seam: a cold source between test cases. */
+export function resetRecentPathsSourceForTest(): void {
+  recentPathsSource = refreshingSource(listRecentPaths);
 }
 
 const listInbox = async (): Promise<api.InboxMessage[]> => {
@@ -546,6 +559,7 @@ export const ROOT: CmdNode = {
         const displayPath = taskDisplayPath(s);
         return {
           primary: label,
+          key: s.id,
           secondary: time,
           path:
             agentLabel === null ? displayPath : `${agentLabel}:${displayPath}`,
@@ -569,7 +583,7 @@ export const ROOT: CmdNode = {
       name: "/clear",
       desc: "Clear context",
       help: "Clear context; history stays.",
-      fetch: listRecentPaths,
+      fetch: () => recentPathsSource,
       field: (rawRemainder) => pathFieldView(rawRemainder, clearToPath),
       toSpec: (item: unknown) => {
         const p = item as PathItem;
@@ -577,6 +591,7 @@ export const ROOT: CmdNode = {
           p.cwd.toLowerCase() === (state.taskCwd ?? "").toLowerCase();
         return {
           primary: p.cwdDisplay,
+          key: p.cwd,
           current: isCurrent,
           onSelect: () => {
             clearToPath(p, null);
@@ -753,27 +768,24 @@ export const ROOT: CmdNode = {
       name: "/new",
       desc: "Create a child task",
       field: (rawRemainder) => pathFieldView(rawRemainder, createAtPath),
-      fetch: async () => {
-        const base = state.taskCwd ?? "";
-        const items: PathItem[] = [];
-        if (base) {
-          items.push({
-            cwd: base,
-            cwdDisplay: state.taskCwdDisplay ?? base,
-            time: "",
-          });
-        }
-        try {
-          for (const p of await listRecentPaths()) {
+      fetch: () =>
+        deriveLive(errorsAsEmpty(recentPathsSource), (recents) => {
+          const base = state.taskCwd ?? "";
+          const items: PathItem[] = [];
+          if (base) {
+            items.push({
+              cwd: base,
+              cwdDisplay: state.taskCwdDisplay ?? base,
+              time: "",
+            });
+          }
+          for (const p of recents) {
             if (base !== "" && p.cwd.toLowerCase() === base.toLowerCase())
               continue;
             items.push(p);
           }
-        } catch {
-          // Recent paths unavailable; the current cwd row still stands.
-        }
-        return items;
-      },
+          return items;
+        }),
       toSpec: (item: unknown) => {
         const p = item as PathItem;
         const currentCwd = state.taskCwd;
@@ -782,6 +794,7 @@ export const ROOT: CmdNode = {
           p.cwd.toLowerCase() === currentCwd.toLowerCase();
         return {
           primary: p.cwdDisplay,
+          key: p.cwd,
           current: isCurrent,
           onSelect: () => {
             createAtPath(p, null);
@@ -920,7 +933,13 @@ export const ROOT: CmdNode = {
     {
       name: "/switch",
       desc: "Switch task",
-      fetch: listTasks,
+      // Display only: rows show the last list at once and follow newer reads.
+      // Archived tasks are left out here and reached via /archive; topology
+      // itself keeps them so paths still resolve.
+      fetch: () =>
+        deriveLive(taskListSource, (tasks) =>
+          tasks.filter((task) => !task.archived),
+        ),
       matches: (item: unknown, q: string) => {
         const s = item as TaskSummary;
         const title = (s.title ?? "").toLowerCase();
@@ -942,6 +961,7 @@ export const ROOT: CmdNode = {
         const displayPath = taskDisplayPath(s);
         return {
           primary: label,
+          key: s.id,
           secondary: time,
           path:
             agentLabel === null ? displayPath : `${agentLabel}:${displayPath}`,

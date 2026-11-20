@@ -227,6 +227,20 @@ first `↵ navigate` command for `a` itself.
 A bare `@` lists the current path layer and its parent target when present. It
 does not invent a command for an unresolved target.
 
+The picker is a view of the shared task list and follows it while open: an
+already-fetched list paints the first frame at once, and the rows are replaced
+when the read that every open issues (or joins) returns. With no list fetched
+yet the first frame is `(loading...)`; when the shown list has no rows for the
+current input (for example it predates the current Task) the menu stays hidden
+until the fresh read has some; Escape dismisses it in the meantime too.
+
+A row painted from an earlier list acts like any other row. If its Task was deleted
+since the cached read, the switch fails like any switch to a missing Task: the
+client returns to the Task the user was on and reports the failure there,
+instead of leaving an empty view. Enter never picks a menu row: it submits what
+is typed, and that path resolves its target from a fresh read, never from what
+the menu was showing.
+
 ## Enter, Tab, and Click
 
 Enter always submits the current input value. It never silently replaces the

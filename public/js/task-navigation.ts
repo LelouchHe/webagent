@@ -72,7 +72,14 @@ export async function switchToTask(taskId: string): Promise<NavigationResult> {
     if (isCurrentNavigation()) {
       resetTaskUI();
       state.taskId = null;
-      if (previousTaskId) setHashTaskId(previousTaskId);
+      if (previousTaskId) {
+        setHashTaskId(previousTaskId);
+        // Go back to where the user was instead of leaving an empty view (a
+        // target deleted elsewhere, a failed read). Awaited before rethrowing
+        // so the caller's error line lands in the restored transcript. A
+        // failed restore has no previous task of its own, so this never loops.
+        await switchToTask(previousTaskId).catch(() => undefined);
+      }
     }
     throw error;
   }

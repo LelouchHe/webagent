@@ -4,6 +4,7 @@
 // Field absence = capability not present. To reuse data across nodes, share
 // the same JS function reference (e.g. `const listInbox = () => ...`).
 import type { SlashItemSpec, SlashPrefix } from "./slash-render.ts";
+import type { LiveSource, LiveState } from "./live-source.ts";
 
 export interface CmdNode {
   /** Command segment without leading slash for children, with slash for ROOT-level. */
@@ -16,8 +17,11 @@ export interface CmdNode {
   children?: CmdNode[];
   /** Fetch this layer's data items. Receives the current tail query; existing
    *  query-independent fetchers may ignore it. May return a plain array (for
-   *  state-backed lists) or a Promise. */
-  fetch?: (query: string) => unknown[] | Promise<unknown[]>;
+   *  state-backed lists), a Promise, or a `LiveSource` — a value the menu
+   *  renders now and re-renders whenever the source reports a change. */
+  fetch?: (
+    query: string,
+  ) => unknown[] | Promise<unknown[]> | LiveSource<unknown[]>;
   /** Optional cache-partition key for query-dependent data. The controller
    *  refetches only when this key changes; otherwise it reuses the current
    *  data and applies local filtering. Absent preserves the historical
@@ -44,7 +48,7 @@ export interface CmdNode {
 
 /** Walker's data-state for a fetch node. Either a resolved array, the
  *  "loading" sentinel, or an error wrapper carrying the message to display. */
-export type FetchData = unknown[] | "loading" | { error: string };
+export type FetchData = LiveState<unknown[]>;
 
 /** Data states that already render a placeholder row of their own. */
 const PLACEHOLDER_STATES = new Set(["loading", "error", "empty", "no-match"]);

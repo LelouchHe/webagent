@@ -225,7 +225,7 @@ describe("agent hint", () => {
       "create 'api-fix'",
       "~/work",
       "~/work/rel",
-      'agents: pi, copilot · type "copilot:"',
+      'agents: copilot, pi · type "copilot:"',
     ]);
     // The submit row keeps the default selection, and the current cwd row is
     // still the field's `current` value (the star means that alone again).
@@ -245,11 +245,11 @@ describe("agent hint", () => {
         row.primary,
         `the hint is the last row for ${JSON.stringify(text)}`,
       );
-      assert.equal(row.primary, 'agents: pi, copilot · type "copilot:"');
+      assert.equal(row.primary, 'agents: copilot, pi · type "copilot:"');
     }
   });
 
-  it("names an example other than the current binding", async () => {
+  it("lists the current agent last and names the first as the example", async () => {
     state.taskAgentId = "copilot";
     const list = await open("+api-fix ");
     assert.equal(

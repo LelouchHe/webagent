@@ -97,7 +97,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`render.ts`**            | DOM helpers: add messages, streaming markdown render, theme, scroll, diff HTML generation           | `addMessage()`, `addSystem()`, `scrollToBottom()`, `updateMarkdownStream()`, `resetMarkdownStream()` |
 | **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createTask()`, `sendMessage()`, `cancelTask()`, etc.                                     |
 | **`agent-directory.ts`**   | The configured agent directory from `GET /config` / bootstrap: ids in configuration order, default agent (no liveness) | `installAgentDirectory()`, `configuredAgentIds()`, `getDefaultAgentId()`                          |
-| **`task-topology.ts`**     | The current task's parent reference and the list-arrival flag          | `loadTaskList()`, `setCurrentTask()`, `noteTaskArchived()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
+| **`task-topology.ts`**     | The current task's parent reference, the list-arrival flag, and the pickers' display cache | `loadTaskList()`, `taskListSource`, `setCurrentTask()`, `noteTaskArchived()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
 | **`create-command.ts`**    | Shared `+` / `/new` / `/clear` helpers: coordinate parsing, cwd resolution, preview, failure rescue   | `parseCoordinate()`, `resolveCreateCwd()`, `agentRescueCommand()`                                |
 | **`agent-hint.ts`**        | The menus' one-line agent hint (non-selectable): configured agents and the coordinate syntax once    | `agentHintRow()`                                                                                 |
 
@@ -147,15 +147,27 @@ The module imports trigger side effects (event listeners, theme initialization).
 
 ### SSE Stream
 
-`connect()` opens a global SSE stream and starts REST initialization **in parallel**:
+`connect()` mints a stream ticket, opens the global SSE stream, and then starts
+REST initialization while the stream registers:
 
 ```
 connect()
-  ├── new EventSource('/api/v1/events/stream')   // background
-  └── initTask()                            // parallel REST calls
+  └── POST /sse-ticket                         // EventSource cannot send Bearer
+        ├── new EventSource('/api/v1/events/stream?ticket=…')
+        └── initializeTaskAndIntent()
+              ├── GET /config                  // agent directory
+              ├── GET /tasks                   // startup list baseline
+              └── initTask()                   // after /config settles
 ```
 
-The SSE stream is **not** a prerequisite for page load. It runs in the background while REST calls fetch task data.
+The `connected` frame does not gate task loading, but task loading does start
+after the ticket and `/config`, so a cold load with a hash costs six serial
+round trips (HTML, assets, ticket, config, history and detail, snapshot). The
+order is kept on purpose: history and detail are read a round trip after the
+stream opens, by which time it has registered in practice, so events persisted
+around registration reach the client one way or the other. That is relied on,
+not enforced. See the boot waterfall entry in
+[known-issues](known-issues.md).
 
 **SSE message handling:**
 
@@ -191,6 +203,7 @@ Promise.all([
   api.getTask(taskId),    // auto-resumes in ACP if needed
   loadHistory(taskId),        // GET /api/v1/tasks/:id/events
 ])
+→ hydrateTaskRuntime(taskId)  // GET /snapshot, after replay drains queued patches
 → handleEvent({ type: 'task_created', ... })
 ```
 
@@ -202,7 +215,9 @@ api.getTask(taskId)        // get config/title/busy state
 → loadNewEvents(taskId)       // GET /events?after=N
 ```
 
-This parallel loading means history rendering starts as soon as the event data arrives, without waiting for task resume.
+On a full load, history renders as soon as its events arrive, without waiting
+for task resume; the snapshot follows the replay so it is newer than any live
+patch queued during it.
 
 ### Reconnection
 
@@ -507,12 +522,14 @@ are an open set that must be completed. Therefore no menu offers agent rows:
 - **The hint (discovery).** A `placeholder` row at the very bottom, styled by
   the existing `.slash-placeholder` (italic, dim, unselectable, no hover): the
   configured agents and the syntax once, e.g.
-  `agents: pi, copilot · type "copilot:"`. It appears only when at least two
+  `agents: copilot, pi · type "copilot:"` on a task running on pi. It appears only when at least two
   agents are configured (a single-agent menu is byte-for-byte unchanged), only
   while the field is not already a coordinate, and never underneath a `(none)` /
   `(no match)` / loading / error placeholder — there the list itself already
-  explains the empty result. The example names an agent the task is not
-  running on, and the line stays on one line at 390px (a `.slash-primary`
+  explains the empty result. The task's current agent is listed last
+  and the example is the first agent, so it never names the one the task is
+  running on; the line reads the current binding when it is drawn and is not
+  repainted when the binding changes while the menu is open. The line stays on one line at 390px (a `.slash-primary`
   neither wraps nor scrolls by design).
   It carries no availability: whether an agent can start is decided when it is
   used, with the real reason.
@@ -563,8 +580,8 @@ activates a task carries the answer with it:
    status bar draws no coordinate rather than guessing. Both reads are owned by
    the connection generation and the task they were issued for.
 4. **The shared task list is never consulted for this.** `loadTaskList` exists
-   for the pickers and for the list-arrival flag only, so switching or
-   activating a task produces no list read.
+   for the pickers, for the list-arrival flag, and for the pickers' display
+   cache only, so switching or activating a task produces no list read.
 5. **A task switch or a new connection** resets the reference (a new connection
    also clears the list-arrival flag). Until it is resolved, the status bar
    draws no coordinate: "not looked up yet" is not "no parent".
@@ -575,6 +592,32 @@ agent". `entryAgentLabel` combines it with the current task's binding; a row
 with no binding, or a connection without a list, states nothing. `/switch` rows
 recompute this at render time, so a menu opened after a switch (or after the
 current binding changes while it is open) uses the new baseline.
+
+### Task-List Display Cache
+
+The `@` picker and `/switch` show the shared list through `taskListSource`, a
+`LiveSource` (see [Slash Menu](slash-menu.md#live-data)). Its value is the last
+list a read resolved with; starting a watch refreshes it with `loadTaskList()`,
+which issues a read or joins one already in flight. An already-visited menu
+therefore paints at once and repaints when the fresh result lands, and the
+watch stops with the menu's data scope. With nothing fetched yet the value is
+`"loading"`, and a failure is shown only while there is no list at all.
+
+The shown list is display only and deliberately separate from the baseline
+machinery above:
+
+- It never stands in for an answer about a connection: `listLoaded`,
+  `listAppliedSeq` / `listRequiredSeq`, `applyTaskListSnapshot` and the
+  generation guards keep their own meaning.
+- It survives reconnects and task switches, because a reconnect is exactly when
+  the round trip would otherwise be visible; every watch refreshes it.
+- One rule decides its order: a read may replace it only if it was issued after
+  the read that produced the current entry, so a late response cannot overwrite
+  a newer list. A failed read leaves the previous one in place.
+- Typed-input execution never reads it: Enter on an `@` target and every
+  execution path call `loadTaskList()` themselves. A clicked row painted from
+  an earlier list acts at once; a target deleted in the meantime fails the switch,
+  which returns to the previous Task (`switchToTask`).
 
 ---
 

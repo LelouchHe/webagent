@@ -78,8 +78,46 @@ describe("shared task navigation", () => {
           runtime: { busy: null },
         });
       }
+      if (url === "/api/v1/tasks/back-task") {
+        return response({
+          id: "back-task",
+          cwd: "/tmp",
+          title: "Back",
+          configOptions: [],
+        });
+      }
+      if (url.startsWith("/api/v1/tasks/back-task/events?limit=")) {
+        return response({ events: [], streaming: {} });
+      }
+      if (url === "/api/v1/tasks/back-task/snapshot") {
+        return response({
+          version: 1,
+          seq: 0,
+          task: {},
+          runtime: { busy: null },
+        });
+      }
+      if (url.startsWith("/api/v1/tasks/gone")) {
+        return response({ error: "Not found" }, 404);
+      }
       throw new Error(`Unexpected fetch: ${url}`);
     }) as typeof fetch;
+  });
+
+  it("returns to the previous task when the target cannot be opened", async () => {
+    state.taskId = "back-task";
+    history.replaceState(null, "", "/#back-task");
+
+    await assert.rejects(navigation.switchToTask("gone"));
+
+    // Back where the user was, not on an empty view.
+    assert.equal(state.taskId, "back-task");
+    assert.equal(location.hash, "#back-task");
+    assert.equal(state.pendingNavigationTaskId, null);
+    assert.ok(
+      fetchCalls.some((c) => c.url === "/api/v1/tasks/back-task"),
+      "the previous task is reloaded",
+    );
   });
 
   it("consumes a message using the current task and then shares task switching", async () => {
