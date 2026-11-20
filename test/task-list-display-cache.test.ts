@@ -71,8 +71,8 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 10));
 }
 
-// The client reads the full topology, archived trees included.
-const TASK_LIST_URL = "/api/v1/tasks?archived=include";
+// The client reads the active task list.
+const TASK_LIST_URL = "/api/v1/tasks";
 
 describe("task pickers paint from the last list, then revalidate", () => {
   let state: any;
@@ -243,20 +243,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
   });
 
   // --- `/switch` -----------------------------------------------------------
-
-  it("/switch leaves out archived tasks", async () => {
-    listHandler = () =>
-      Promise.resolve(
-        okJson([
-          ...TASKS,
-          { ...task("old", "old-area", null), archived: true },
-        ]),
-      );
-    const settled = await warmMenu("/switch ");
-
-    assert.ok(settled.includes("backend"));
-    assert.equal(settled.includes("old-area"), false);
-  });
 
   it("/switch paints the cached list before its own read returns", async () => {
     const settled = await warmMenu("/switch ");

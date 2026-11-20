@@ -233,10 +233,7 @@ describe("commands", () => {
       const infoGate = new Promise<void>((resolve) => {
         releaseInfo = resolve;
       });
-      setFetch(async (url, init) => {
-        if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
-          return { ok: true, text: async () => '[{"id":"A"}]' };
-        }
+      setFetch(async (url) => {
         if (url.startsWith("/api/v1/files/info?")) {
           await infoGate;
           return {
@@ -282,10 +279,10 @@ describe("commands", () => {
       const infoGate = new Promise<void>((resolve) => {
         releaseInfo = resolve;
       });
-      setFetch(async (url, init) => {
-        if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
+      setFetch(async (url) => {
+        if (url === "/api/v1/tasks/A") {
           // The launching task was deleted while the probe was pending.
-          return { ok: true, text: async () => "[]" };
+          return { ok: false, status: 404, text: async () => "{}" };
         }
         if (url.startsWith("/api/v1/files/info?")) {
           await infoGate;

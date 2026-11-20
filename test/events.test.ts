@@ -1973,8 +1973,9 @@ describe("events", () => {
         );
         await Promise.all([httpNavigation, sseNavigation]);
 
-        // The two navigations share one list read; activation adds none.
-        assert.equal(listCalls, 1);
+        // The two navigations share one target read; the active list is not
+        // touched when the server names an existing parent.
+        assert.equal(listCalls, 0);
         assert.equal(state.taskId, "parent-dedupe");
       });
 

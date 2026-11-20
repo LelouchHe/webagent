@@ -257,7 +257,7 @@ export function archiveTask(id: string): Promise<ArchiveTaskResult> {
 /** Only the tops of archived trees: a live parentless non-Root task is what
  *  the server calls an archived tree. */
 export async function listArchivedTaskTops(): Promise<TaskSummary[]> {
-  const tasks = await request<TaskSummary[]>("/api/v1/tasks?archived=only");
+  const tasks = await listTasks(true);
   return tasks.filter((task) => task.parent_id === null && !task.isRoot);
 }
 
@@ -278,10 +278,9 @@ export function sendCollaborationMessage(
   );
 }
 
-export function listTasks(): Promise<TaskSummary[]> {
-  // The client keeps the full topology: archived trees must resolve inside
-  // themselves (`@child`, path roots). Active-only views filter on `archived`.
-  return request("/api/v1/tasks?archived=include");
+/** Active tree by default; `archived` selects archived trees only. */
+export function listTasks(archived = false): Promise<TaskSummary[]> {
+  return request(archived ? "/api/v1/tasks?archived=true" : "/api/v1/tasks");
 }
 
 export function getConfig(): Promise<{

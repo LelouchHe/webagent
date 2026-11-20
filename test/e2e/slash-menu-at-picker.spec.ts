@@ -74,8 +74,8 @@ async function holdTaskListReads(
     markReadStarted = resolve;
   });
   let reads = 0;
-  // The client reads the full topology, archived trees included.
-  const pattern = /\/api\/v1\/tasks\?archived=include$/;
+  // The client reads the active task list for browsing.
+  const pattern = /\/api\/v1\/tasks$/;
   await page.route(pattern, async (route) => {
     reads += 1;
     markReadStarted();

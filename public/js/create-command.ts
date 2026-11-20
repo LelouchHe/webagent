@@ -9,7 +9,6 @@
 import { state } from "./state.ts";
 import { foldCwdPath, resolveViewPath } from "./file-browser.ts";
 import * as api from "./api.ts";
-import { loadTaskList } from "./task-topology.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import { getDefaultAgentId } from "./agent-directory.ts";
 
@@ -233,9 +232,9 @@ export async function isSourceTaskMissing(
 ): Promise<boolean> {
   if (!sourceTaskId) return false;
   try {
-    const tasks = await loadTaskList();
-    return !tasks.some((task) => task.id === sourceTaskId);
-  } catch {
+    await api.getTask(sourceTaskId);
     return false;
+  } catch (err) {
+    return err instanceof api.ApiError && err.status === HTTP_STATUS.NOT_FOUND;
   }
 }

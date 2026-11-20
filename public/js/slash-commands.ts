@@ -933,13 +933,9 @@ export const ROOT: CmdNode = {
     {
       name: "/switch",
       desc: "Switch task",
-      // Display only: rows show the last list at once and follow newer reads.
-      // Archived tasks are left out here and reached via /archive; topology
-      // itself keeps them so paths still resolve.
-      fetch: () =>
-        deriveLive(taskListSource, (tasks) =>
-          tasks.filter((task) => !task.archived),
-        ),
+      // Display only: rows show the active list at once and follow newer reads.
+      // Archived tasks are reached via /archive.
+      fetch: () => deriveLive(taskListSource, (tasks) => tasks),
       matches: (item: unknown, q: string) => {
         const s = item as TaskSummary;
         const title = (s.title ?? "").toLowerCase();

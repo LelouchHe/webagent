@@ -77,6 +77,15 @@ test("slash-menu /archive detaches a task and reopens it", async ({ page }) => {
   ).toHaveCount(0);
   await second.close();
 
+  // Creating a child inside the archived tree is not mistaken for a deleted
+  // launching task.
+  const kidAfterArchive = "e2e-archive-kid2-" + Date.now().toString(36);
+  await input.fill(`+${kidAfterArchive}`);
+  await input.press("Enter");
+  await expect(page.locator("#messages")).toContainText(
+    `Created task @${kidAfterArchive}`,
+  );
+
   // Messaging a child from inside the archived tree still resolves.
   await input.fill(`@${kid} inside archived tree`);
   await input.press("Enter");

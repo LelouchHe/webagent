@@ -23,7 +23,10 @@ import {
 } from "./create-command.ts";
 import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
-import { loadTaskList, taskListSource } from "./task-topology.ts";
+import {
+  currentTreeTaskListSource,
+  loadCurrentTreeTaskList,
+} from "./task-topology.ts";
 import {
   deriveLive,
   errorsAsEmpty,
@@ -356,7 +359,7 @@ export function buildTaskCommandCandidates(
   }
 
   // `@` rows are a view of the shared task list: they follow it as it changes.
-  return deriveLive(taskListSource, (tasks) =>
+  return deriveLive(currentTreeTaskListSource, (tasks) =>
     buildMessageCandidates(parsed, tasks),
   );
 }
@@ -802,7 +805,7 @@ async function expandBrowseInput(
   path: TaskPath,
 ): Promise<void> {
   try {
-    const tasks = await loadTaskList();
+    const tasks = await loadCurrentTreeTaskList();
     const current = buildTaskTree(tasks).get(state.taskId ?? "");
     const resolved = resolveTaskPathNodes(state.taskId, tasks, path);
     if (current && resolved.length === 1) {
@@ -910,7 +913,7 @@ async function executeMessageTask(
   }
   let tasks: TaskSummary[];
   try {
-    tasks = await loadTaskList();
+    tasks = await loadCurrentTreeTaskList();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     addSystem(`err: task list failed — ${msg}`);

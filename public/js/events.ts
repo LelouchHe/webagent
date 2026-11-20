@@ -286,6 +286,23 @@ export function fallbackToNextTask(
   return operation;
 }
 
+/** A named parent wins when it still exists; otherwise the newest active task. */
+async function resolveFallbackTaskId(
+  preferredTaskId: string | null | undefined,
+  expiredId: string | null,
+): Promise<string | null> {
+  if (preferredTaskId) {
+    try {
+      await api.getTask(preferredTaskId);
+      return preferredTaskId;
+    } catch {
+      // Fall through to the active list.
+    }
+  }
+  const activeTasks = await loadTaskList();
+  return activeTasks.find((task) => task.id !== expiredId)?.id ?? null;
+}
+
 async function fallbackToNextTaskImpl(
   expiredId: string | null,
   preferredTaskId: string | null | undefined,
@@ -296,29 +313,23 @@ async function fallbackToNextTaskImpl(
   state.taskSwitchGen++;
   const gen = state.taskSwitchGen;
   try {
-    const allTasks = await loadTaskList();
+    // The server can name an archived parent (exiting a task inside an
+    // archived tree). Existence is answered by its own read; only the ordinary
+    // fallback looks at the active list.
+    const nextTaskId = await resolveFallbackTaskId(preferredTaskId, expiredId);
     if (
       gen !== state.taskSwitchGen ||
       connectionEpoch !== state.connectionEpoch
     ) {
       return;
     }
-    // The server can name an archived parent (exiting a task inside an
-    // archived tree). Look it up in the full topology; only the ordinary
-    // fallback stays in the active tree.
-    const preferred = preferredTaskId
-      ? allTasks.find((s) => s.id === preferredTaskId)
-      : undefined;
-    const next =
-      preferred ??
-      allTasks.filter((task) => !task.archived).find((s) => s.id !== expiredId);
-    if (next) {
+    if (nextTaskId) {
       resetTaskUI();
-      state.taskId = next.id;
-      setHashTaskId(next.id);
+      state.taskId = nextTaskId;
+      setHashTaskId(nextTaskId);
       const [task, loaded] = await Promise.all([
-        api.getTask(next.id),
-        loadHistory(next.id),
+        api.getTask(nextTaskId),
+        loadHistory(nextTaskId),
       ]);
       if (
         gen !== state.taskSwitchGen ||
@@ -327,7 +338,7 @@ async function fallbackToNextTaskImpl(
         return;
       }
       const hydrated = await hydrateTaskRuntime(
-        next.id,
+        nextTaskId,
         () =>
           gen === state.taskSwitchGen &&
           connectionEpoch === state.connectionEpoch,

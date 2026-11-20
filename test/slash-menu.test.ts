@@ -728,9 +728,9 @@ describe("slash menu — Tab vs Click behavior", () => {
     state.taskCwdDisplay = "~/a";
     globalThis.fetch = (async (url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      if (url.split("?")[0] === "/api/v1/tasks" && !init?.method) {
+      if (url === "/api/v1/tasks/A") {
         // The launching task was deleted while the probe was pending.
-        return new Response("[]", { status: 200 });
+        return new Response("{}", { status: 404 });
       }
       if (url.startsWith("/api/v1/files/info?")) {
         await infoGate;
