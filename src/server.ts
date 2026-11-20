@@ -133,15 +133,11 @@ const agentRegistry = new AgentRegistry({
 });
 const obligationController = createObligationController({
   getGateBusyKind: (taskId) => taskManagerRef.current!.getGateBusyKind(taskId),
-  isTurnRunning: (taskId, promptId) =>
-    taskManagerRef.current!.isTurnRunning(taskId, promptId),
-  submitObligationReminder: (obligation) =>
-    taskManagerRef.current!.submitObligationReminder(obligation),
-  retryObligationDispatch: (obligation) => {
-    taskManagerRef.current!.retryObligationDispatch(obligation);
+  submitObligationReminder: (targetTaskId) => {
+    taskManagerRef.current!.submitObligationReminder(targetTaskId);
   },
-  emitObligationNotice: (notice, obligation) => {
-    taskManagerRef.current!.emitObligationNotice(notice, obligation);
+  emitObligationNotice: (notice) => {
+    taskManagerRef.current!.emitObligationNotice(notice);
   },
 });
 const tasks = new TaskManager({

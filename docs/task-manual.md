@@ -129,14 +129,14 @@ automatically require a lifecycle handoff after each turn.
 After a parent accepts a result, the Task remains available for history and
 follow-up. A retrospective may be recorded after acceptance, but it is not a
 prerequisite for accepting the result. If an agent-authored direct parent→child
-dispatch turn ends without an account, WebAgent may send up to three closing
-reminders; this is a recovery aid, not a substitute for the Agent's typed
-account. A plain `task_update(done|blocked)` closes that edge when it comes from
-an active current turn; there is no correlation parameter to copy back. There
-is no expectation level, per-counterparty ledger, or extra lifecycle status. A
-user prompt, a sibling or child message, and a runtime notice never create an
-obligation, so a lateral turn neither arms nor clears one. The mechanism's
-details are in [Task Obligations](task-obligations.md).
+dispatch turn ends without any typed update, WebAgent injects one closing
+reminder; another such turn reports `no_update` to the parent and stops
+reminding. This is a recovery aid, not a substitute for the Agent's typed
+update. `task_update(done|blocked)` closes that edge and wakes the requester;
+`waiting` records that the child is still working and settles nothing. There is
+no correlation parameter to copy back. A user prompt, a child message, and a
+runtime notice never open an account. The mechanism's details are in
+[Task Obligations](task-obligations.md).
 
 ## Communicate through messages
 

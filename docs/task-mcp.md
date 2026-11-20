@@ -82,8 +82,8 @@ The server advertises a short, generic usage contract through the MCP
 ```text
 Use task_create for a direct child, then immediately use task_send to give it its first instruction.
 Use task_list to check each reachable Task's workflowStatus, executionState, lastEventAt, and lastAgentActivityAt before deciding to act; workflowStatus is per turn, not a lifecycle terminal, and executionState is the live runtime source.
-Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
-task_update(done|blocked) settles the directed obligation when it comes from the current active turn; there is no correlation parameter to copy back.
+Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(waiting|blocked|done) for a typed update. A done Task remains available and is not deleted or permanently closed.
+task_update(waiting|blocked|done) records a typed update; done and blocked settle the open account and wake the requester, waiting only records the status. There is no correlation parameter to copy back.
 After dispatching work, end the current turn; do not poll with task_query.
 Task history is the event log; summaries and handoffs are self-reports, and the log outranks them.
 Use task_query to index flat event history and task_read to recover complete rows; use them only for history recovery, diagnosis, or audit.
@@ -96,21 +96,17 @@ they are not a replacement for the individual tool descriptions.
 ### Directed dispatch closure
 
 When an agent-authored parent Task dispatches work directly to a child Task, the
-runtime keeps one process-local obligation for that edge and reports its outcome
-to the source: the child's typed account, or a factual notice that the runtime
-stopped its own attempts without one. A notice is not a verdict — a late account
-still settles the edge. It records and reports
-facts — a dispatch was handed over, a turn ended, a request was rejected, a timer
-elapsed, delivery failed — and never turns them into a conclusion about the work.
-The full mechanism, identities, state machine, budgets, and notices are in
-[Task Obligations](task-obligations.md); the semantic boundary is in
-[Task semantic authority](implementation-invariants.md#task-semantic-authority).
+runtime opens one process-local account for that edge. The account is settled by
+the child's `done` or `blocked`; `waiting` is an update, not an account. Turn
+boundaries are the only clock: a turn ends with no update, the target gets one
+closing reminder; another such turn reports `no_update` and stops reminding. A
+running turn silent for 15 minutes reports `no_activity`, and a target that
+leaves the edge reports `target_removed`. Notices state facts, not verdicts. The
+full rules are in [Task Obligations](task-obligations.md); the semantic boundary
+is in [Task semantic authority](implementation-invariants.md#task-semantic-authority).
 
-One process-local record exists per accepted direct source→target edge, driven
-exclusively by named facts through a single `apply(fact)` transition point. The
-record opens when the dispatch is handed to the target's session, settles from an
-active current turn, and otherwise reaches a factual notice after bounded
-recovery. There is no correlation token and no new parameter on `task_update`.
+There is no correlation token and no new parameter on `task_update`. State is
+process-local: a restart forgets open accounts.
 
 ## Lifecycle at a glance
 
@@ -150,8 +146,8 @@ WebAgent does not automatically rebroadcast raw child reports to ancestors.
 | `task_read` | Read complete persisted history rows by task-local sequence from the current task or one visible relative. |
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
 | `task_create` | Create a direct child Task with optional execution overrides. Use `task_send` for its first instruction. |
-| `task_send` | Send a durable coordination message, including follow-up or resume instructions for an existing Task. Use `task_update` for typed `blocked`/`done` status. |
-| `task_update` | Send a typed `blocked` or `done` lifecycle account for the current Task. A plain `(status, body)` call settles the directed obligation when it comes from an active current turn; there is no correlation parameter. This does not delete or permanently close the Task. |
+| `task_send` | Send a durable coordination message, including follow-up or resume instructions for an existing Task. Use `task_update` for typed `waiting`/`blocked`/`done` updates. |
+| `task_update` | Record a typed `waiting`, `blocked`, or `done` update. `done` and `blocked` are delivered to the requester and settle the open account; `waiting` only records the status. There is no correlation parameter. This does not delete or permanently close the Task. |
 
 ### `task_list`
 
@@ -166,14 +162,14 @@ type McpTaskListItem = {
   id: string;
   title: string;
   relation: "self" | "parent" | "child";
-  workflowStatus: "running" | "idle" | "blocked" | "done";
+  workflowStatus: "running" | "idle" | "waiting" | "blocked" | "done";
   executionState: "idle" | "agent" | "bash";
   lastEventAt: string | null;
   lastAgentActivityAt: string | null;
 };
 ```
 
-`workflowStatus` uses the same vocabulary as `task_list`; `task_query` returns only `task_id`, `max_seq`, and flat event rows.
+`workflowStatus` uses the same vocabulary as `task_list`: `running` while a turn runs, `idle` after it ended without a typed report, `waiting` when the Task says it is waiting on another Task, and `blocked`/`done` when it handed the ball back. `task_query` returns only `task_id`, `max_seq`, and flat event rows.
 It is **per turn, not a lifecycle terminal**: a `done` Task can be woken by a
 later message and run again, so `done` means the Task reported complete for that
 turn, not that it is finished forever. Use `task_list` to decide whether to act
@@ -336,14 +332,8 @@ keeps its normal contrast.
 `@X` is the Task's title, falling back to its short id, exactly like a
 collaboration row. A user-initiated cancel writes neither row.
 
-A cancelled turn does not trigger a closing reminder: the task-obligation
-controller treats the cancellation itself as the end fact (the `cancelled` stop
-reason, the intent the host stamps on the turn before the transport round trip,
-or the busy cancel marker). The edge then stays quiet — no closing reminder, no
-advisory of any kind, no notice — until new work arrives on it; a late account
-still settles. This includes a closing-reminder turn that is itself cancelled:
-that submission is fenced, so no attempt is counted, nothing is re-armed, and no
-notice is emitted.
+A cancelled turn triggers no closing reminder and no notice. The account stays
+open, so a later `done` or `blocked` still settles it.
 
 ### `task_create`
 
@@ -405,49 +395,42 @@ questions, findings, progress, decisions, and focused follow-up, including
 continuing a Task marked `blocked` or `done`.
 
 `task_send` is not a lifecycle handoff and does not complete the current Task.
-Use `task_update(done|blocked)` when the current assignment is complete or
-cannot continue. The recipient receives the full message body; important
+Use `task_update(waiting|blocked|done)` for a typed update. The recipient receives the full message body; important
 findings are not discarded because the message is coordination.
 
 ### `task_update`
 
-Submit a typed lifecycle account for the current Task:
+Record a typed update for the current Task:
 
 ```ts
-task_update(status: "blocked" | "done", body: string)
+task_update(status: "waiting" | "blocked" | "done", body: string)
 ```
 
-- `blocked`: explain the missing input or decision and how the Task can resume;
-- `done`: provide the result, completion evidence, limitations, and useful next
-  step.
+- `done`: the result, completion evidence, limitations, and a useful next step.
+- `blocked`: the missing input or decision, and how the Task can resume.
+- `waiting`: work is still in progress and another Task will hand off and wake
+  this one, typically a child it dispatched. Waiting on a human, an external
+  event, missing information, or a permission is `blocked`, not `waiting`,
+  because nothing will wake the Task by itself.
 
-There is **no new parameter**. The runtime identifies the target's sole directed
-obligation itself and settles it only from an active current turn: the record
-must be `open`, `reminder_due`, `reminder_submitting`, or `unresolved`, and the
-target must have an active agent turn. A settleable call is one atomic step that
-records the update, changes the reported status, creates the account to the
-**stored source**, and cancels the record's timers.
+`done` and `blocked` are delivered to the requester and wake it. The requester
+is the source of the open account on this edge; with no open account, the update
+goes to the current parent. A late update still settles an open account. The
+call also records the update event and changes the reported status.
 
-When a record exists but those conditions do not hold — `awaiting_delivery`, an
-already-`settled` record, or no active turn — the update is still recorded and
-routed to the stored source, without settling. When no record
-exists for the target, the update is an ordinary report to the current parent
-and settles nothing. A terminal record is never re-settled and its earlier
-`no_account` notice is never retracted.
+`waiting` is **not** delivered, does not wake anyone, and does not settle the
+account. It only records `workflowStatus = waiting` and an event. It still
+counts as this turn's update, so a turn that reports `waiting` gets no closing
+reminder.
 
-There is deliberately no timestamp guard, because the delivery turn is stamped
-before `bridge.prompt` is issued and the record opens at hand-over; comparing
-turn start against the hand-off time would reject the legitimate dispatch
-account.
+There is **no new parameter** and no correlation id. One account exists per
+parent→child edge, so several requests share it and one `done` or `blocked`
+settles all of them; the Tasks clarify the mapping in prose. A turn end never
+overwrites `waiting`.
 
-Because settlement is judged from the current turn, a call delayed from an
-earlier turn that arrives while a later turn is current settles the
-record and the source receives the earlier turn's content. That is an accepted
-boundary, not a bug.
-
-When a dispatch turn ends without an account, the runtime may inject a closing
-reminder turn asking the target to close that turn out; its exact text and the
-recovery contract are in [Task Obligations](task-obligations.md#what-a-target-does).
+When a dispatch turn ends without any update, the runtime may inject one closing
+reminder turn; another such turn reports `no_update` and stops reminding. The
+rules are in [Task Obligations](task-obligations.md#turn-end-check).
 
 A `done` account is a result submission, not proof that the parent has accepted
 it. The parent or verifier checks the original Task Contract and may accept it,

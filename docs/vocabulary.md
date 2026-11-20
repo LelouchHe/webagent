@@ -20,7 +20,7 @@ execution unit (the ACP session and its matching CLI session).**
 task (product layer, stable, user-facing)
   ├── history / attachments / title / cwd / config
   ├── parent_id (Root / child task relationships)
-  ├── workflow status (running | blocked | done — S3)
+  ├── workflow status (running | idle | waiting | blocked | done)
   ├── delivery / approval endpoints (S3)
   └── current execution binding (internal, rotatable)
 
@@ -90,11 +90,11 @@ entity; they name the runtime's bookkeeping.
 
 | Term | Means |
 |---|---|
-| **directed obligation** | A process-local record that one source Task awaits one account from a target, armed by an agent-authored direct parent→child dispatch. Not a persisted entity, and not a Task. |
-| **account** | The target's typed `done` or `blocked` report submitted with `task_update`. A result submission, not proof that the parent accepted it. |
-| **settlement** | The atomic transition that records the account, updates the reported status, creates the account message to the stored source, and marks the record `settled`. There is no correlation parameter. |
-| **stored source** | The source Task recorded when the obligation was armed. Accounts and notices route there even if the task tree changed afterwards. |
-| **closing reminder** | A runtime-injected closing turn that asks the target to account for the turn it just ran. It is a recovery aid, not a lifecycle verdict. |
+| **directed obligation** | The process-local account one source Task keeps for one target, opened by an agent-authored direct parent→child dispatch. Not a persisted entity, and not a Task. |
+| **account** | The target's typed `done` or `blocked` report submitted with `task_update`; it settles the open obligation. A result submission, not proof that the parent accepted it. `waiting` is an update, not an account: it records status without settling. |
+| **settlement** | The atomic step that records a `done` or `blocked`, updates the reported status, creates the account message to the stored source, and deletes the open account. There is no correlation parameter. |
+| **stored source** | The source Task recorded when the account was opened. A settlement routes there even if the task tree changed afterwards. |
+| **closing reminder** | A runtime-injected closing turn that asks the target for a typed update after a turn that carried none. It is a recovery aid, not a lifecycle verdict. |
 
 **`handoff` stays reserved.** It continues to mean the provider/lifecycle handoff
 and the session-compaction handoff (for example `pending_compact_summary`); it is

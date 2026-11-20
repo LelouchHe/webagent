@@ -20,7 +20,6 @@ import { createRequestHandler } from "../src/routes.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import type { AgentEvent } from "../src/types.ts";
-import type { DirectedObligation } from "../src/obligation-controller.ts";
 import {
   makeEventHandlerConfig,
   mockBridgeStubs,
@@ -388,22 +387,6 @@ describe("turn slot", () => {
       await waitFor(() => tasks.getTurn("target") === null);
     });
 
-    it("opens a closing reminder's turn as delegated", async () => {
-      const obligation = seedReminder();
-      const pending = deferred();
-      openPrompts.push(pending);
-
-      const submission = tasks.submitObligationReminder(obligation);
-      await waitFor(() => tasks.getTurn("child") !== null, {
-        message: "the reminder turn opened",
-      });
-      assert.equal(tasks.getTurn("child")?.origin, "delegated");
-
-      pending.resolve();
-      assert.deepEqual(await submission, { status: "delivered" });
-      assert.equal(tasks.getTurn("child"), null);
-    });
-
     it("opens /compact's turn as interactive", async () => {
       const id = createTask("compact");
       const pending = deferred();
@@ -509,26 +492,6 @@ describe("turn slot", () => {
           pending.reject(new Error("prompt rejected"));
           await waitFor(() => tasks.getTurn(id) === null);
           return id;
-        },
-      },
-      {
-        name: "reminder finally",
-        run: async () => {
-          const obligation = seedReminder();
-          bridge.loadSession = async () => {
-            throw new Error("load failed");
-          };
-          assert.deepEqual(await tasks.submitObligationReminder(obligation), {
-            status: "deferred",
-            reason: "resume_failed",
-          });
-          // Restored for the follow-up turn the table runs after this row: it
-          // needs a resume, and this row is the one that breaks it.
-          bridge.loadSession = async (taskId: string) => ({
-            taskId,
-            configOptions: [],
-          });
-          return "child";
         },
       },
       {
@@ -1006,160 +969,6 @@ describe("turn slot", () => {
       await waitFor(() => tasks.getTurn(id) === null);
     });
 
-    it("gives up the closing reminder when a submitter takes the slot while the transport resolves", async () => {
-      const obligation = seedReminder({ live: true });
-      unbindTransport();
-      const releaseResolve = parkNextResolve();
-
-      const reminder = tasks.submitObligationReminder(obligation);
-      await waitFor(
-        () => environment.resolveCalls === 1 && environment.holdCalls === 0,
-        { message: "the reminder reached the transport await" },
-      );
-      assert.equal(
-        tasks.getTurn("child"),
-        null,
-        "the reminder has not opened a turn or taken the slot yet",
-      );
-
-      tasks.attachExecutionBridge(bridge);
-      const interactive = deferred();
-      openPrompts.push(interactive);
-      const res = await makeRequest(
-        port,
-        "POST",
-        "/api/v1/tasks/child/prompt",
-        JSON.stringify({ text: "mine" }),
-      );
-      assert.equal(res.status, 202);
-      const interactiveTurn = tasks.getTurn("child");
-      assert.ok(interactiveTurn);
-      assert.equal(interactiveTurn.origin, "interactive");
-
-      releaseResolve();
-      assert.deepEqual(
-        await reminder,
-        { status: "deferred", reason: "busy" },
-        "the reminder defers instead of submitting alongside the person's turn",
-      );
-      assert.equal(
-        promptCallsFor("child").length,
-        1,
-        "only the person's prompt reached the bridge",
-      );
-      assert.equal(tasks.getTurn("child")?.origin, "interactive");
-
-      // Freed again, the reminder still gets its own turn. Its submission
-      // resolves at the end of that turn, so the prompt is settled first.
-      finishPrompt("child");
-      await waitFor(() => tasks.getTurn("child") === null);
-      const reminderPrompt = deferred();
-      openPrompts.push(reminderPrompt);
-      const submission = tasks.submitObligationReminder(obligation);
-      await waitFor(() => tasks.getTurn("child")?.origin === "delegated", {
-        message: "the reminder opens its own delegated turn",
-      });
-      const reminderTurn = tasks.getTurn("child");
-      assert.ok(reminderTurn);
-      const reminderCall = lastPromptCall("child");
-      assert.ok(reminderCall?.promptId);
-      assert.equal(reminderCall.promptId, reminderTurn.promptId);
-      assert.notEqual(reminderCall.promptId, interactiveTurn.promptId);
-      reminderPrompt.resolve();
-      assert.deepEqual(await submission, { status: "delivered" });
-      await waitFor(() => tasks.getTurn("child") === null);
-    });
-  });
-
-  describe("admission matrix", () => {
-    /** Every busy source, armed through its own API where one exists. */
-    function busySources(): Array<{
-      name: string;
-      arm: (taskId: string) => void;
-      disarm: (taskId: string) => void;
-    }> {
-      const reservations = new Map<string, number>();
-      return [
-        {
-          name: "a creation",
-          arm: (id) => tasks.creatingTasks.add(id),
-          disarm: (id) => tasks.creatingTasks.delete(id),
-        },
-        {
-          name: "a restore",
-          arm: (id) => tasks.restoringTasks.add(id),
-          disarm: (id) => tasks.restoringTasks.delete(id),
-        },
-        {
-          name: "a reserved submission",
-          arm: (id) => {
-            const reservation = tasks.reservePromptSubmission(id);
-            assert.notEqual(reservation, null);
-            reservations.set(id, reservation!);
-          },
-          disarm: (id) => {
-            tasks.releasePromptSubmission(id, reservations.get(id)!);
-            reservations.delete(id);
-          },
-        },
-        {
-          name: "a live turn",
-          arm: (id) => {
-            tasks.beginAgentTurn(id, { origin: "delegated" });
-          },
-          disarm: (id) => tasks.endTurn(id),
-        },
-        {
-          name: "compaction",
-          arm: (id) => tasks.compactingTasks.add(id),
-          disarm: (id) => tasks.compactingTasks.delete(id),
-        },
-        {
-          name: "a Root rebuild",
-          arm: (id) => tasks.rebuildingTasks.add(id),
-          disarm: (id) => tasks.rebuildingTasks.delete(id),
-        },
-        {
-          name: "a rotation",
-          arm: (id) => tasks.rotatingTasks.add(id),
-          disarm: (id) => tasks.rotatingTasks.delete(id),
-        },
-        {
-          name: "a drain in progress",
-          arm: (id) => tasks.drainingCollaborationTasks.add(id),
-          disarm: (id) => tasks.drainingCollaborationTasks.delete(id),
-        },
-      ];
-    }
-
-    for (const source of busySources()) {
-      it(`refuses both admission routes while ${source.name} holds the task`, () => {
-        const id = createTask(`matrix-${source.name.replaceAll(" ", "-")}`);
-        source.arm(id);
-        try {
-          // The gate face: a restore is busy here but invisible to rendering.
-          assert.equal(tasks.getGateBusyKind(id), "agent");
-          assert.equal(
-            tasks.reservePromptSubmission(id),
-            null,
-            "the interactive route is refused",
-          );
-          assert.equal(
-            tasks.reservePromptSubmission(id, { allowBash: true }),
-            null,
-            "the runtime route is refused too: allowBash opens only bash",
-          );
-        } finally {
-          source.disarm(id);
-        }
-        assert.equal(
-          tasks.getGateBusyKind(id),
-          null,
-          "the source is gone again",
-        );
-      });
-    }
-
     it("opens bash for a runtime submission and nothing else", () => {
       const id = createTask("matrix-bash");
       // Only membership in `runningBashProcs` matters here; the slot logic
@@ -1413,29 +1222,4 @@ describe("turn slot", () => {
       assert.equal(tasks.liveTasks.has(swept), false);
     });
   });
-
-  /**
-   * Seed a real directed obligation on parent→child, with the delivery row
-   * already settled so the idle edge does not start a delivery drain.
-   */
-  function seedReminder(opts: { live?: boolean } = {}): DirectedObligation {
-    store.createTask("parent", tmpDir, "auto", "test-agent", "agent-parent");
-    createTask("child", "parent");
-    if (!opts.live) tasks.liveTasks.delete("child");
-    store.createCollaborationMessage({
-      id: "turn-ownership",
-      deliveryId: "turn-ownership-delivery",
-      sourceTaskId: "parent",
-      directTargetTaskId: "child",
-      sourceActor: "agent",
-      body: "Dispatch.",
-    });
-    const claimed = store.claimQueuedDeliveries("child");
-    store.markCollaborationDeliveriesDelivered(
-      claimed.map((delivery) => delivery.id),
-    );
-    const obligation = tasks.getObligation("parent", "child");
-    assert.ok(obligation);
-    return obligation;
-  }
 });

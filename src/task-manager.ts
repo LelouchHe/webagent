@@ -36,11 +36,8 @@ import {
 import { TaskStateManager } from "./task-state.ts";
 import {
   ObligationController,
-  type ActiveAgentTurn,
-  type DeliveryOutcome,
-  type DirectedObligation,
   type ObligationNotice,
-  type SettlementDecision,
+  type TimerHandle,
 } from "./obligation-controller.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
 import { ExecutionAdapter } from "./execution-adapter.ts";
@@ -389,24 +386,9 @@ export interface ConsumeMessageResult {
 export interface ObligationHost {
   /** Gate face: a restore defers a reminder submission, so it is included. */
   getGateBusyKind(taskId: string): "agent" | "bash" | null;
-  isTurnRunning(taskId: string, promptId: string): boolean;
-  submitObligationReminder(
-    obligation: DirectedObligation,
-  ): Promise<ObligationSubmissionOutcome>;
-  retryObligationDispatch(obligation: DirectedObligation): void;
-  emitObligationNotice(
-    notice: ObligationNotice,
-    obligation: DirectedObligation,
-  ): void;
+  submitObligationReminder(targetTaskId: string): void;
+  emitObligationNotice(notice: ObligationNotice): void;
 }
-
-/**
- * How one reminder/dispatch submission ended. `deferred` is not a failure: the
- * transport was unavailable (no live execution, a rotation in progress, a
- * stale lease), so the debt keeps waiting without consuming its failure
- * budget and without pretending the agent rejected the work.
- */
-export type ObligationSubmissionOutcome = DeliveryOutcome;
 
 /**
  * Which party opened a turn: a person at that task's own UI, or the runtime / an
@@ -519,23 +501,19 @@ export function createObligationController(
     now: () => Date.now(),
     setTimer: (fn, ms) => {
       const handle = setTimeout(fn, ms);
-      // Reminder/watchdog timers must never hold the process open; the server
-      // is long-lived and a stalled timer is recoverable on the next turn
-      // boundary anyway.
+      // The watchdog must never hold the process open; a missing notice is
+      // recoverable and the next turn boundary is authoritative anyway.
       handle.unref();
       return handle;
     },
-    clearTimer: (handle) => {
+    clearTimer: (handle: TimerHandle) => {
       clearTimeout(handle);
     },
-    isAgentBusy: (taskId) => host.getGateBusyKind(taskId) === "agent",
-    isTurnRunning: (taskId, promptId) => host.isTurnRunning(taskId, promptId),
-    submitReminder: (obligation) => host.submitObligationReminder(obligation),
-    retryDispatch: (obligation) => {
-      host.retryObligationDispatch(obligation);
+    submitReminder: (targetTaskId) => {
+      host.submitObligationReminder(targetTaskId);
     },
-    emitNotice: (notice, obligation) => {
-      host.emitObligationNotice(notice, obligation);
+    emitNotice: (notice) => {
+      host.emitObligationNotice(notice);
     },
     log: (event, fields) => {
       slog.debug(event, fields);
@@ -669,15 +647,10 @@ export function createTaskManager(
  * lost: it remains the `task_outcome_notice` event this body accompanies, which
  * is what audit and tooling read.
  */
-function noticeBody(payload: {
-  reason: string;
-  message: string;
-  openingMessageId: string;
-}): string {
+function noticeBody(payload: { reason: string; message: string }): string {
   return formatFieldBlock([
     { label: "reason", value: payload.reason },
     { label: "message", value: payload.message },
-    { label: "openingMessageId", value: payload.openingMessageId },
   ]);
 }
 
@@ -710,8 +683,6 @@ export class TaskManager implements ObligationHost {
   readonly activePrompts: Set<string> = new TurnSlotSet(this.openTurns);
   /** One microtask recovery per task while an unfinished-work retry is active. */
   private readonly pendingWorkRecoveries = new Set<string>();
-  /** Claimed dispatch deliveries awaiting a bounded controller retry. */
-  private readonly pendingDispatchRetries = new Map<string, string[]>();
   /** Latest qualifying agent-runtime activity per task, epoch ms. */
   private readonly lastAgentActivityAt = new Map<string, number>();
   /**
@@ -871,7 +842,7 @@ export class TaskManager implements ObligationHost {
    */
   private onCollaborationMessageCreated(
     message: CollaborationMessageRow,
-    delivery: CollaborationDeliveryRow,
+    _delivery: CollaborationDeliveryRow,
   ): void {
     const source = this.store.getTaskIncludingDeleted(message.source_task_id);
     const target = this.store.getTaskIncludingDeleted(
@@ -879,12 +850,7 @@ export class TaskManager implements ObligationHost {
     );
     if (!source || !target) return;
     if (!shouldArm(message, source, target)) return;
-    this.obligations.arm({
-      sourceTaskId: message.source_task_id,
-      targetTaskId: message.direct_target_task_id,
-      messageId: message.id,
-      deliveryId: delivery.id,
-    });
+    this.obligations.arm(message.source_task_id, message.direct_target_task_id);
   }
 
   /**
@@ -1069,9 +1035,7 @@ export class TaskManager implements ObligationHost {
     this.clearStoredExecutionConfig(taskId);
     this.liveTasks.delete(taskId);
     this.resetTaskRuntime(taskId);
-    this.pendingDispatchRetries.delete(taskId);
     this.store.failOutstandingDeliveriesForTaskClear(taskId);
-    this.obligations.noteExecutionRotated(taskId);
     this.agents.existing(from.agentId)?.agentCommandSnapshots.delete(taskId);
     this.retireExecution(taskId, from.agentId, from.sessionId);
     if (!task) return;
@@ -2106,12 +2070,10 @@ export class TaskManager implements ObligationHost {
 
   /**
    * The synchronous tail of every binding replacement: truncate the old
-   * transport, keep the debt, and (when the trigger is named) leave a
-   * transcript line. `resetTaskRuntime` has already dropped the in-flight
-   * prompt state; the retry ids, the unfinished delivery rows and the
-   * obligation's dispatch phase still point at the execution that no longer
-   * exists, and the debt survives as a closing reminder aimed at the
-   * replacement.
+   * transport and (when the trigger is named) leave a transcript line.
+   * `resetTaskRuntime` has already dropped the in-flight prompt state; the
+   * unfinished delivery rows point at an execution that no longer exists and
+   * are failed. An open account survives the rotation.
    */
   private commitRotation(
     taskId: string,
@@ -2119,9 +2081,7 @@ export class TaskManager implements ObligationHost {
     reason: RotationReason | undefined,
     toAgent: string,
   ): void {
-    this.pendingDispatchRetries.delete(taskId);
     this.store.failOutstandingDeliveriesForTaskClear(taskId);
-    this.obligations.noteExecutionRotated(taskId);
     this.store.updateTaskWorkflowStatus(taskId, "idle");
     if (!reason) return;
     this.store.saveEvent(
@@ -3292,7 +3252,6 @@ export class TaskManager implements ObligationHost {
     this.endTurn(id, { sync: false });
     this.pendingWorkRecoveries.delete(id);
     this.lastAgentActivityAt.delete(id);
-    this.pendingDispatchRetries.delete(id);
     this.obligations.purgeTask(id);
     this.compactingTasks.delete(id);
     this.rotatingTasks.delete(id);
@@ -3829,12 +3788,8 @@ export class TaskManager implements ObligationHost {
   }
 
   /** A current target turn ended; the controller may enter `reminder_due`. */
-  onTargetTurnEnded(
-    taskId: string,
-    turnId?: string,
-    opts?: { cancelled?: boolean },
-  ): void {
-    this.obligations.onTargetTurnEnded(taskId, turnId, opts);
+  onTargetTurnEnded(taskId: string, opts?: { cancelled?: boolean }): void {
+    this.obligations.onTargetTurnEnded(taskId, opts?.cancelled === true);
   }
 
   /** Qualifying agent-runtime activity for the watchdog and telemetry. */
@@ -3873,25 +3828,9 @@ export class TaskManager implements ObligationHost {
     this.taskCreatedBroadcast = broadcast;
   }
 
-  /** Active directed obligation for a source→target edge, when one exists. */
-  getObligation(
-    sourceTaskId: string,
-    targetTaskId: string,
-  ): DirectedObligation | undefined {
-    return this.obligations.getActive(sourceTaskId, targetTaskId);
-  }
-
-  /**
-   * True when the target still owes an open account to this source. Terminal
-   * records stay in the controller for audit, so `getObligation` alone would
-   * report a settled edge as pending.
-   */
+  /** True when the target still owes an open account to this source. */
   hasOpenObligation(sourceTaskId: string, targetTaskId: string): boolean {
-    const obligation = this.obligations.getActive(sourceTaskId, targetTaskId);
-    // `unresolved` stopped the runtime's own attempts but a late account can
-    // still settle it, so archiving must warn about that debt too. Only
-    // `settled` is finished.
-    return obligation !== undefined && obligation.state !== "settled";
+    return this.obligations.hasOpen(sourceTaskId, targetTaskId);
   }
 
   /**
@@ -3904,9 +3843,6 @@ export class TaskManager implements ObligationHost {
     if (result?.status !== "archived") return result;
     if (result.parentId !== null) {
       this.obligations.dropEdge(result.parentId, taskId);
-      // A failed dispatch from this edge must not survive to be requeued by a
-      // later retry on the same target after unarchive.
-      this.pendingDispatchRetries.delete(taskId);
     }
     return result;
   }
@@ -3922,253 +3858,129 @@ export class TaskManager implements ObligationHost {
     this.obligations.abortTurn(taskId);
   }
 
-  /** The target's current live agent turn, if any, with its start time. */
-  getActiveAgentTurn(taskId: string): ActiveAgentTurn | null {
-    const busy = this.state.getState(taskId).runtime.busy;
-    if (busy?.kind !== "agent" || !busy.promptId) return null;
-    const startedAt = Date.parse(busy.since);
-    if (Number.isNaN(startedAt)) return null;
-    return { promptId: busy.promptId, startedAt };
-  }
-
   /** Cancel all process-local obligation scheduling (shutdown/tests). */
   dispose(): void {
     this.obligations.dispose();
   }
 
   /**
-   * Route one typed agent update for `targetTaskId`. The controller decides
-   * whether the target's sole record settles from an eligible turn; either way
-   * the account addresses the stored source when a record exists, and the
-   * caller's current parent when none does.
+   * Record one typed agent update for `targetTaskId`. `waiting` only records
+   * the status; `done` and `blocked` settle the target's open account (or fall
+   * back to the current parent when none is open) and are delivered there.
    */
   settleAgentUpdate(
     targetTaskId: string,
-    status: "blocked" | "done",
+    status: "waiting" | "blocked" | "done",
     body: string,
-    activeTurn: ActiveAgentTurn | null,
   ): {
-    decision: SettlementDecision;
     collaborationMessageId: string | null;
     accountTargetTaskId: string | null;
   } {
-    const routed = this.obligations.settleReport({
+    this.obligations.noteUpdate(targetTaskId);
+    if (status === "waiting") {
+      this.store.recordAgentWorkflowUpdate(targetTaskId, status, body, null);
+      return { collaborationMessageId: null, accountTargetTaskId: null };
+    }
+    const accountSource = this.obligations.settle(targetTaskId);
+    const accountTargetTaskId =
+      accountSource ?? this.store.getTask(targetTaskId)?.parent_id ?? null;
+    const { collaborationMessageId } = this.store.recordAgentWorkflowUpdate(
       targetTaskId,
-      activeTurn,
-      run: (decision) => {
-        const accountTargetTaskId =
-          decision.kind === "current-parent"
-            ? (this.store.getTask(targetTaskId)?.parent_id ?? null)
-            : decision.sourceTaskId;
-        const { collaborationMessageId } = this.store.recordAgentWorkflowUpdate(
-          targetTaskId,
-          status,
-          body,
-          accountTargetTaskId,
-        );
-        return { collaborationMessageId, accountTargetTaskId };
-      },
-    });
-    if (routed.decision.kind === "settle") {
-      this.pendingDispatchRetries.delete(targetTaskId);
-    }
-    return { decision: routed.decision, ...routed.result };
-  }
-
-  /**
-   * Retry the original dispatch at an idle boundary. The claimed rows are
-   * requeued only when a bridge exists; without one the debt keeps waiting and
-   * the bounded retry simply does not start.
-   */
-  retryObligationDispatch(obligation: DirectedObligation): void {
-    // A target has one record, so its pending retry is keyed by target.
-    const deliveryIds = this.pendingDispatchRetries.get(
-      obligation.targetTaskId,
+      status,
+      body,
+      accountTargetTaskId,
     );
-    if (deliveryIds?.length) {
-      this.pendingDispatchRetries.delete(obligation.targetTaskId);
-      this.store.requeueCollaborationDeliveries(deliveryIds);
-    }
-    void this.drainCollaborationDeliveries(obligation.targetTaskId);
+    return { collaborationMessageId, accountTargetTaskId };
   }
 
   /**
-   * Submit one closing accounting prompt and record a truthful accepted
-   * reminder event. Returns false when the bridge rejects the submission; a
-   * rejection never records a successful reminder and never consumes an
-   * attempt.
+   * Submit one closing reminder to the target. Best effort: no live execution
+   * or a busy target simply means the reminder is not delivered.
    */
-  async submitObligationReminder(
-    obligation: DirectedObligation,
-  ): Promise<ObligationSubmissionOutcome> {
-    const task = this.liveTask(obligation.targetTaskId);
-    if (!task) {
-      // The target is gone; its debt is purged with the task lifecycle, which
-      // is not a delivery failure.
-      return { status: "deferred", reason: "task_gone" };
-    }
-    const bridge = await this.resolveDeliveryTransport(obligation.targetTaskId);
-    if (!bridge) {
-      // No execution to submit to. Nothing was attempted, so this must not
-      // consume the failure budget: the debt keeps waiting.
-      return { status: "deferred", reason: "no_execution" };
-    }
-    if (this.rotatingTasks.has(task.id)) {
-      return { status: "deferred", reason: "rotating" };
-    }
-    if (!this.isExecutionAvailable(bridge)) {
-      return { status: "deferred", reason: "agent_unavailable" };
-    }
-    // Submission protocol: take the ACP prompt slot here, in one synchronous
-    // admission check over every busy source, so an interactive submit or a
-    // collaboration drain that raced the transport resolution above either
-    // won the slot (this reminder defers) or lost it to this reservation.
-    // bash is allowed: it does not occupy this slot.
-    const submissionId = this.reservePromptSubmission(task.id, {
-      allowBash: true,
-    });
-    if (submissionId === null) {
-      return { status: "deferred", reason: "busy" };
-    }
+  submitObligationReminder(targetTaskId: string): void {
     const text = handoffReminderText();
+    this.store.saveEvent(
+      targetTaskId,
+      "system_message",
+      {
+        kind: "handoff_reminder",
+        title: "Task handoff required",
+        body: text,
+      },
+      { from_ref: "system" },
+    );
+    void this.injectRuntimePrompt(targetTaskId, text);
+  }
+
+  /**
+   * Persist and deliver one runtime notice to the account's source. The event
+   * carries source, target, and reason; waking the source is best effort.
+   */
+  emitObligationNotice(notice: ObligationNotice): void {
+    if (!this.store.getTask(notice.sourceTaskId)) return;
+    const payload = {
+      reason: notice.reason,
+      sourceTaskId: notice.sourceTaskId,
+      targetTaskId: notice.targetTaskId,
+      message: notice.message,
+    };
+    this.store.saveEvent(notice.sourceTaskId, "task_outcome_notice", payload, {
+      from_ref: "system",
+    });
+    void this.injectRuntimePrompt(notice.sourceTaskId, noticeBody(payload));
+  }
+
+  /**
+   * Run one runtime-authored turn on `taskId`: reserve the ACP slot, open the
+   * turn, and submit `text`. Failures are logged and dropped; nothing waits on
+   * the outcome.
+   */
+  private async injectRuntimePrompt(
+    taskId: string,
+    text: string,
+  ): Promise<void> {
+    let submissionId: number | null = null;
     let promptId: string | undefined;
     let turnOpen = false;
     try {
-      // Single ownership of the turn: one open, one guarded close below. Every
-      // outcome — resume failure, replaced execution, unavailable agent,
-      // delivered, rejected — leaves the task idle, so a deferral can never
-      // strand `busy=agent` and block later submissions.
-      //
-      // The reservation→active transfer is synchronous: once it runs, this
-      // attempt holds the ACP prompt slot continuously instead of splitting
-      // its claim across two windows.
+      const task = this.liveTask(taskId);
+      if (!task) return;
+      const bridge = await this.resolveDeliveryTransport(taskId);
+      if (!bridge) return;
+      if (this.rotatingTasks.has(task.id)) return;
+      if (!this.isExecutionAvailable(bridge)) return;
+      submissionId = this.reservePromptSubmission(task.id, {
+        allowBash: true,
+      });
+      if (submissionId === null) return;
       this.releasePromptSubmission(task.id, submissionId, false);
       this.beginAgentTurn(task.id, { origin: "delegated", submissionId });
       turnOpen = true;
-      // The turn's own record, held across the prompt so a cancellation stamped
-      // onto it remains readable after `endTurn` has dropped the slot entry.
-      const reminderTurn = this.openTurns.get(task.id);
       promptId =
         this.state.getState(task.id).runtime.busy?.promptId ?? undefined;
-      try {
-        await this.ensureResumed(bridge, task.id);
-      } catch (error) {
-        slog.warn("handoff reminder could not resume the target", {
-          taskId: task.id.slice(0, 8),
-          error,
-        });
-        return { status: "deferred", reason: "resume_failed" };
-      }
-      // The slot is held across the resume, so ownership is re-checked before
-      // the one call that reaches ACP: a cancel, reload, or rotation during the
-      // await invalidates this attempt rather than letting it submit into the
-      // replacement execution.
-      if (!promptId || !this.isTurnRunning(task.id, promptId)) {
-        return { status: "deferred", reason: "turn_superseded" };
-      }
-      const lease = this.currentLease(task.id);
+      await this.ensureResumed(bridge, task.id);
+      if (!promptId || !this.isTurnRunning(task.id, promptId)) return;
       await bridge.prompt(task.id, text, undefined, promptId);
-      if (!this.leaseCurrent(lease)) {
-        // The prompt reached an execution that has already been replaced, so
-        // it is not a delivered attempt for the task's current debt.
-        return { status: "deferred", reason: "execution_replaced" };
-      }
-      // A cancelled turn is not a delivered reminder: the prompt resolved
-      // because the agent was stopped, not because it read the closing text.
-      // Fence the outcome — no attempt is spent, nothing is re-armed, and no
-      // notice is emitted — and leave the record `open` for the next dispatch.
-      // The row below is the durable evidence of a *delivered* attempt, so a
-      // fenced reminder writes none.
-      if (reminderTurn?.cancelRequested === true) {
-        return { status: "cancelled" };
-      }
-      // Truthful: the reminder text reached the target, so record it now. A
-      // request-level failure throws `PromptNotDeliveredError` and records
-      // nothing; an in-turn agent error resolves and is a delivered attempt.
-      this.store.saveEvent(
-        task.id,
-        "system_message",
-        {
-          kind: "handoff_reminder",
-          title: "Task handoff required",
-          body: text,
-          sourceTaskId: obligation.sourceTaskId,
-          targetTaskId: obligation.targetTaskId,
-          openingMessageId: obligation.openingMessageId,
-          openingDeliveryId: obligation.openingDeliveryId,
-        },
-        { from_ref: "system" },
-      );
-      return { status: "delivered" };
     } catch (error) {
-      if (!this.isExecutionAvailable(bridge)) {
-        // The agent died or disconnected mid-submission; that is the
-        // transport's problem, not the target's debt.
-        return { status: "deferred", reason: "agent_unavailable" };
-      }
-      slog.warn("handoff reminder failed", {
-        taskId: task.id.slice(0, 8),
-        sourceTaskId: obligation.sourceTaskId.slice(0, 8),
-        targetTaskId: obligation.targetTaskId.slice(0, 8),
+      slog.warn("runtime prompt failed", {
+        taskId: taskId.slice(0, 8),
         error,
       });
-      return { status: "failed", reason: "prompt_rejected" };
     } finally {
-      // Release only the submission this attempt still holds; after the
-      // synchronous transfer it is already gone, and a replacement keeps its
-      // own reservation.
-      this.releasePromptSubmission(task.id, submissionId, false);
-      // Same late-cleanup guard as before: a superseded turn's failure must not
-      // close the turn that replaced it.
-      if (turnOpen) this.endTurn(task.id, { promptId });
+      try {
+        if (submissionId !== null) {
+          this.releasePromptSubmission(taskId, submissionId, false);
+        }
+        if (turnOpen) this.endTurn(taskId, { promptId });
+      } catch (error) {
+        // Shutdown or a test closing the store can land here; the turn is
+        // already gone with the runtime.
+        slog.debug("runtime prompt cleanup failed", {
+          taskId: taskId.slice(0, 8),
+          error,
+        });
+      }
     }
-  }
-
-  /** Emit a runtime outcome notice; implemented with the notice dispatcher. */
-  emitObligationNotice(
-    notice: ObligationNotice,
-    obligation: DirectedObligation,
-  ): void {
-    const payload = {
-      sourceTaskId: obligation.sourceTaskId,
-      targetTaskId: obligation.targetTaskId,
-      openingMessageId: obligation.openingMessageId,
-      openingDeliveryId: obligation.openingDeliveryId,
-      reason: notice.reason,
-      message: notice.message,
-      evidence: notice.evidence,
-    };
-    const body = noticeBody(payload);
-    // The notice is ordinary parent-facing collaboration from the target to
-    // the stored source, with a system actor. The emitter observer sees it and
-    // declines to arm it (system actor), independently of direction.
-    const created = this.store.createCollaborationMessage({
-      id: randomUUID(),
-      deliveryId: randomUUID(),
-      sourceTaskId: obligation.targetTaskId,
-      directTargetTaskId: obligation.sourceTaskId,
-      sourceActor: "system",
-      body,
-    });
-    this.store.saveEvent(
-      obligation.targetTaskId,
-      "task_outcome_notice",
-      payload,
-      { from_ref: "system" },
-    );
-    const source = this.store.getTaskIncludingDeleted(obligation.targetTaskId);
-    const target = this.store.getTaskIncludingDeleted(obligation.sourceTaskId);
-    this.collaborationBroadcast?.({
-      messageId: created.message.id,
-      sourceTaskId: obligation.targetTaskId,
-      targetTaskId: obligation.sourceTaskId,
-      // Same raw labels the persisted twin is built from, so a live row and its
-      // replayed copy cannot show different titles or unrecoverable references.
-      sourceLabel: source?.title ?? obligation.targetTaskId.slice(0, 8),
-      targetLabel: target?.title ?? obligation.sourceTaskId.slice(0, 8),
-      body,
-    });
-    void this.drainCollaborationDeliveries(obligation.sourceTaskId);
   }
 
   /**
@@ -4202,50 +4014,6 @@ export class TaskManager implements ObligationHost {
         error,
       });
     }
-  }
-
-  /**
-   * Record this attempt's turn identity on the target's obligation before the
-   * resume, so a resume failure is attributed to this attempt and a coalescing
-   * or replacing dispatch cannot be mutated by this attempt's late failure.
-   * Only a queued direct-parent dispatch qualifies.
-   */
-  private beginResumeAttempt(
-    taskId: string,
-  ): { sourceTaskId: string; promptId: string } | null {
-    const promptId = this.state.getState(taskId).runtime.busy?.promptId;
-    if (!promptId) return null;
-    const parentId = this.store.getTask(taskId)?.parent_id;
-    if (!parentId) return null;
-    if (!this.obligations.isOwed(parentId, taskId)) return null;
-    if (!this.store.queuedDeliverySources(taskId).includes(parentId)) {
-      return null;
-    }
-    this.obligations.beginDispatch(parentId, taskId, promptId);
-    return { sourceTaskId: parentId, promptId };
-  }
-
-  /**
-   * A resume failed, so the dispatch was never handed over. Consume the
-   * transport budget so the bounded initial-delivery retry can end in
-   * `unresolved` plus `no_account`; the controller also arms a dispatch
-   * deadline as a second backstop.
-   */
-  private failResumeAttempt(
-    taskId: string,
-    attempt: { sourceTaskId: string; promptId: string } | null,
-    error: unknown,
-  ): void {
-    slog.error("collaboration delivery resume failed", {
-      taskId: taskId.slice(0, 8),
-      error,
-    });
-    if (!attempt) return;
-    this.obligations.markDeliveryFailed(
-      attempt.sourceTaskId,
-      taskId,
-      attempt.promptId,
-    );
   }
 
   /**
@@ -4302,12 +4070,14 @@ export class TaskManager implements ObligationHost {
     }
     this.drainingCollaborationTasks.add(taskId);
     this.syncBusy(taskId);
-    const resumeAttempt = this.beginResumeAttempt(taskId);
     try {
       try {
         await this.ensureResumed(bridge, taskId);
       } catch (error) {
-        this.failResumeAttempt(taskId, resumeAttempt, error);
+        slog.error("collaboration delivery resume failed", {
+          taskId: taskId.slice(0, 8),
+          error,
+        });
         return false;
       }
       // The slot is held across the resume; a cancel, reload, or rotation
@@ -4322,12 +4092,6 @@ export class TaskManager implements ObligationHost {
       }
       const deliveries = this.store.claimQueuedDeliveries(taskId);
       if (deliveries.length === 0) return false;
-      const task = this.liveTask(taskId);
-      // Only a direct parent dispatch participates in the directed obligation;
-      // unrelated messages are ordinary collaboration and carry no obligation
-      // state or settlement role.
-      const qualifyingSources = new Set<string>();
-      const qualifyingDeliveryIds: string[] = [];
       const allDeliveryIds = deliveries.map((delivery) => delivery.id);
       const sourceActors: string[] = [];
       const entries = deliveries.map((delivery) => {
@@ -4349,16 +4113,6 @@ export class TaskManager implements ObligationHost {
         // reads metadata as instruction and the forwarding layer never
         // rewrites the content.
         const sourceName = source?.title ?? message.source_task_id.slice(0, 8);
-        if (message.source_task_id === task?.parent_id) {
-          const obligation = this.obligations.getActive(
-            message.source_task_id,
-            taskId,
-          );
-          if (obligation) {
-            qualifyingSources.add(message.source_task_id);
-            qualifyingDeliveryIds.push(delivery.id);
-          }
-        }
         return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
       });
       this.persistCollaborationPromptAudit(
@@ -4387,13 +4141,6 @@ export class TaskManager implements ObligationHost {
         undefined,
         promptId,
       );
-      // The record opens when the content is handed to the target's session,
-      // not when the prompt promise resolves: `bridge.prompt` resolves at the
-      // end of the turn, so a resolution-time open would leave the dispatch
-      // turn itself `awaiting_delivery` and refuse the account it produces.
-      for (const sourceTaskId of qualifyingSources) {
-        this.obligations.markDelivered(sourceTaskId, taskId, promptId);
-      }
       const dispatchFailed = (error: unknown) => {
         if (!this.leaseCurrent(lease)) {
           slog.debug("ignored dispatch failure from a replaced execution", {
@@ -4406,16 +4153,6 @@ export class TaskManager implements ObligationHost {
           error,
         });
         this.store.failCollaborationDeliveries(allDeliveryIds, "prompt_failed");
-        // A qualifying dispatch is not abandoned on one request-level failure.
-        // Hold its claimed rows for the controller's bounded initial-delivery
-        // retry, which requeues and resubmits them under backoff; an immediate
-        // idle drain would bypass that budget.
-        if (qualifyingDeliveryIds.length > 0) {
-          this.pendingDispatchRetries.set(taskId, qualifyingDeliveryIds);
-        }
-        for (const sourceTaskId of qualifyingSources) {
-          this.obligations.markDeliveryFailed(sourceTaskId, taskId, promptId);
-        }
         if (!this.isCurrentPrompt(taskId, promptId)) return;
         // Same attribution as an ACP error event: a rejected delivery prompt
         // must not leave the target marked running.
@@ -4427,16 +4164,6 @@ export class TaskManager implements ObligationHost {
         // settle rows that now belong to the replacement execution.
         if (!this.leaseCurrent(lease)) return;
         this.store.markCollaborationDeliveriesDelivered(allDeliveryIds);
-        for (const sourceTaskId of qualifyingSources) {
-          this.obligations.markDispatchSucceeded(
-            sourceTaskId,
-            taskId,
-            promptId,
-          );
-        }
-        if (qualifyingSources.size > 0) {
-          this.pendingDispatchRetries.delete(taskId);
-        }
       }, dispatchFailed);
       return true;
     } catch (error) {

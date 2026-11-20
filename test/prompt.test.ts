@@ -258,8 +258,8 @@ describe("Prompt REST API", () => {
         // Mutation evidence: arming on the prompt route (the pre-change
         // behaviour) puts an active obligation on this parent edge.
         assert.equal(
-          tasks.getObligation("prompt-parent", agentTaskId),
-          undefined,
+          tasks.hasOpenObligation("prompt-parent", agentTaskId),
+          false,
         );
       } finally {
         releasePrompt();

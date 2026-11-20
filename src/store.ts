@@ -2641,7 +2641,7 @@ export class Store {
    */
   recordAgentWorkflowUpdate(
     taskId: string,
-    status: Extract<WorkflowStatus, "blocked" | "done">,
+    status: Extract<WorkflowStatus, "waiting" | "blocked" | "done">,
     body: string,
     accountTargetTaskId: string | null,
   ): {
@@ -2714,23 +2714,6 @@ export class Store {
     return row.count;
   }
 
-  /**
-   * Distinct source task ids of a target's queued deliveries. Lets a caller
-   * decide whether a qualifying parent dispatch is waiting before it claims
-   * anything, so a pre-resume failure is not attributed to an unrelated edge.
-   */
-  queuedDeliverySources(recipientTaskId: string): string[] {
-    const rows = this.db
-      .prepare(
-        `SELECT DISTINCT m.source_task_id AS source
-         FROM deliveries d
-         JOIN messages m ON m.id = d.message_id
-         WHERE d.recipient_task_id = ? AND d.status = 'queued'`,
-      )
-      .all(recipientTaskId) as Array<{ source: string }>;
-    return rows.map((row) => row.source);
-  }
-
   /** Atomically claim every currently queued Delivery for one target task. */
   claimQueuedDeliveries(recipientTaskId: string): CollaborationDeliveryRow[] {
     const claimedAt = Date.now();
@@ -2786,24 +2769,6 @@ export class Store {
       for (const id of ids) fail.run(failedAt, failureReason, id);
     });
     tx();
-  }
-
-  /**
-   * Return claimed or failed deliveries to the queue so the bounded
-   * initial-delivery retry can resubmit them. Rows resolved since the failure
-   * are left untouched.
-   */
-  requeueCollaborationDeliveries(ids: readonly string[]): void {
-    if (ids.length === 0) return;
-    const requeue = this.db.prepare(
-      `UPDATE deliveries
-       SET status = 'queued', claimed_at = NULL, delivered_at = NULL,
-           failed_at = NULL, failure_reason = NULL
-       WHERE id = ? AND status IN ('draining', 'failed')`,
-    );
-    this.db.transaction(() => {
-      for (const id of ids) requeue.run(id);
-    })();
   }
 
   failOutstandingDeliveriesForTaskClear(taskId: string): void {

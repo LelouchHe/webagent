@@ -515,17 +515,11 @@ export function createMcpTaskToolHost(deps: {
     async update(principal, status, body) {
       authorize(principal);
       const sourceTaskId = principal.taskId;
-      // The controller decides whether this update settles the target's sole
-      // record (eligible current turn) or is only routed: to the stored source
-      // when a record exists, or to the current parent when none does.
-      const activeTurn = tasks.getActiveAgentTurn(sourceTaskId);
-      const routed = tasks.settleAgentUpdate(
-        sourceTaskId,
-        status,
-        body,
-        activeTurn,
-      );
-      const { collaborationMessageId, accountTargetTaskId } = routed;
+      // `waiting` only records the status. `done` and `blocked` settle the
+      // target's open account and are delivered to its source, or fall back to
+      // the current parent when no account is open.
+      const { collaborationMessageId, accountTargetTaskId } =
+        tasks.settleAgentUpdate(sourceTaskId, status, body);
       if (collaborationMessageId && accountTargetTaskId) {
         const source = requireTask(sourceTaskId);
         const target = requireTask(accountTargetTaskId);

@@ -299,46 +299,6 @@ describe("POST /api/v1/tasks/:id/archive", () => {
     assert.equal(store.getTask("work2")?.title, "work2");
   });
 
-  it("reports a concurrent out-of-scope send as 4xx, not 500", async () => {
-    const original = store.createCollaborationMessage.bind(store);
-    store.createCollaborationMessage = () => {
-      throw new Error("Collaboration tasks have no common ancestor");
-    };
-    try {
-      const res = await req(
-        port,
-        "POST",
-        "/api/v1/tasks/area/messages",
-        apiToken,
-        JSON.stringify({ targetTaskId: "work", body: "hi" }),
-      );
-      assert.equal(res.status, 400, res.body);
-      assert.match(res.body, /outside the local collaboration scope/);
-    } finally {
-      store.createCollaborationMessage = original;
-    }
-  });
-
-  it("keeps lineage invariant failures as 5xx", async () => {
-    const original = store.createCollaborationMessage.bind(store);
-    store.createCollaborationMessage = () => {
-      throw new Error("Cannot determine collaboration task lineage");
-    };
-    try {
-      const res = await req(
-        port,
-        "POST",
-        "/api/v1/tasks/area/messages",
-        apiToken,
-        JSON.stringify({ targetTaskId: "work", body: "hi" }),
-      );
-      assert.equal(res.status, 500, res.body);
-      assert.match(res.body, /lineage/);
-    } finally {
-      store.createCollaborationMessage = original;
-    }
-  });
-
   it("answers a store failure as a diagnosable archive error", async () => {
     const original = store.archiveTask.bind(store);
     store.archiveTask = () => {

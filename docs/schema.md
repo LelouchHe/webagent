@@ -72,7 +72,7 @@ configured default cwd.
 | `id` | TEXT PRIMARY KEY | UUIDs. The Root's id is the one `workspace.root_task_id` names; ordinary creation, generic delete, tombstone reaping, and empty-task GC all refuse it. Prefix-shaped ids such as `root-forged` are ordinary tasks. |
 | `cwd` | TEXT NOT NULL | Working directory passed to the agent |
 | `title` | TEXT | Display/name title; defaults to the stable task id when creation supplies none. User/parent sets it via `+… ` or `/rename` |
-| `workflow_status` | TEXT NOT NULL DEFAULT `'idle'` | `running`, `idle`, `blocked`, or `done` |
+| `workflow_status` | TEXT NOT NULL DEFAULT `'idle'` | `running`, `idle`, `waiting`, `blocked`, or `done` |
 | `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds; writers pass `Date.now()` explicitly |
 | `last_active_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds; updated on every prompt |
 | `model` | TEXT | Last selected model id |

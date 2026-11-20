@@ -545,7 +545,7 @@ itself inside an archived tree is refused (restore that tree first), as is a
 live title collision under the destination. The update and one
 `system_message` (`kind: "task_unarchive"`, naming the destination parent path
 and id, and the missing original id when it fell back to Root) share one
-transaction. Nothing about the obligation or delivery edges cut by the archive
+transaction. Nothing about the account or delivery edges cut by the archive
 is restored.
 
 **Response** `200`:

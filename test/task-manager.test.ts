@@ -23,7 +23,6 @@ import {
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
 import type { ConfigOption } from "../src/types.ts";
-import type { DirectedObligation } from "../src/obligation-controller.ts";
 
 async function startMcpTestServer(
   capabilities: CapabilityStore,
@@ -166,83 +165,20 @@ describe("TaskManager", () => {
           body: "work",
         });
       }
-      assert.ok(sm.getObligation("parent", "child"));
-      assert.ok(sm.getObligation("child", "grandchild"));
+      assert.ok(sm.hasOpenObligation("parent", "child"));
+      assert.ok(sm.hasOpenObligation("child", "grandchild"));
 
       sm.archiveTask("child");
 
       // Only the former-parent edge is gone; the task still owes its own child.
-      assert.equal(sm.getObligation("parent", "child"), undefined);
-      assert.ok(sm.getObligation("child", "grandchild"));
+      assert.equal(sm.hasOpenObligation("parent", "child"), false);
+      assert.ok(sm.hasOpenObligation("child", "grandchild"));
 
       // A real account after archive is recorded against the current parent
       // (none) instead of being delivered to the parent the task left.
-      const result = sm.settleAgentUpdate("child", "done", "finished", {
-        promptId: "p",
-        startedAt: Date.now(),
-      });
-      assert.equal(result.decision.kind, "current-parent");
+      const result = sm.settleAgentUpdate("child", "done", "finished");
       assert.equal(result.accountTargetTaskId, null);
       assert.equal(result.collaborationMessageId, null);
-    });
-
-    it("does not revive a pre-archive failed dispatch after unarchive", () => {
-      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
-      store.createTask(
-        "child",
-        tmpDir,
-        "auto",
-        "test-agent",
-        "c-session",
-        "parent",
-      );
-      store.createCollaborationMessage({
-        id: "dispatch-a",
-        deliveryId: "delivery-a",
-        sourceTaskId: "parent",
-        directTargetTaskId: "child",
-        sourceActor: "agent",
-        body: "Dispatch A.",
-      });
-      const claimed = store.claimQueuedDeliveries("child");
-      store.failCollaborationDeliveries(
-        claimed.map((delivery) => delivery.id),
-        "prompt_failed",
-      );
-      const retries = (
-        sm as unknown as { pendingDispatchRetries: Map<string, string[]> }
-      ).pendingDispatchRetries;
-      retries.set("child", ["delivery-a"]);
-
-      sm.archiveTask("child");
-      assert.equal(
-        retries.has("child"),
-        false,
-        "archive removes the cut edge's retry entry",
-      );
-      assert.equal(store.unarchiveTask("child").status, "unarchived");
-
-      // A new dispatch on the restored edge must not consume A's stale retry.
-      store.createCollaborationMessage({
-        id: "dispatch-b",
-        deliveryId: "delivery-b",
-        sourceTaskId: "parent",
-        directTargetTaskId: "child",
-        sourceActor: "agent",
-        body: "Dispatch B.",
-      });
-      const obligation = sm.getObligation("parent", "child");
-      assert.ok(obligation);
-      sm.retryObligationDispatch(obligation);
-
-      assert.equal(
-        store.getCollaborationDelivery("delivery-a")?.status,
-        "failed",
-      );
-      assert.equal(
-        store.getCollaborationDelivery("delivery-a")?.failure_reason,
-        "prompt_failed",
-      );
     });
 
     it("leaves a draining delivery to finish after archive", async () => {
@@ -550,13 +486,19 @@ describe("TaskManager", () => {
         sourceActor: "agent",
         body: "Dispatch.",
       });
-      assert.ok(sm.getObligation("source", "target"));
+      assert.ok(sm.hasOpenObligation("source", "target"));
 
       await sm.deleteTask(undefined, "target");
 
       // Mutation evidence: without releaseTaskRuntime purging the controller,
-      // the deleted task's record survives in the edge-keyed map.
-      assert.equal(sm.getObligation("source", "target"), undefined);
+      // the deleted task's record survives.
+      assert.equal(sm.hasOpenObligation("source", "target"), false);
+      assert.ok(
+        store
+          .getEvents("source")
+          .some((event) => event.type === "task_outcome_notice"),
+        "the source is told the target left the edge",
+      );
     });
 
     it("cascades to descendants, cleaning their runtime state and retiring executions", async () => {
@@ -1277,7 +1219,7 @@ describe("TaskManager", () => {
       sm.activePrompts.delete("child");
       sm.syncBusy("child");
       (sm as any).obligations.beginTurn("child", "prompt-1");
-      assert.equal((sm as any).obligations.watchdog.size, 1);
+      assert.equal((sm as any).obligations.turns.size, 1);
 
       const bridge = {
         async newSession() {
@@ -1304,9 +1246,9 @@ describe("TaskManager", () => {
 
       await sm.clearTask(bridge, "child");
 
-      // Mutation evidence: without abortTurn in resetTaskRuntime the watchdog
-      // survives the rotation and later emits for an idle task.
-      assert.equal((sm as any).obligations.watchdog.size, 0);
+      // Mutation evidence: without abortTurn in resetTaskRuntime the observed
+      // turn survives the rotation and later reports for an idle task.
+      assert.equal((sm as any).obligations.turns.size, 0);
     });
 
     it("rotates the ACP execution while preserving the WebAgent task", async () => {
@@ -2984,370 +2926,6 @@ describe("TaskManager", () => {
     });
   });
 
-  // Rotation keeps the debt and truncates the transport.
-  describe("rotation transport truncation", () => {
-    const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
-
-    function seedDispatch(target: Store) {
-      target.createTask(
-        "parent",
-        tmpDir,
-        "agent",
-        "test-agent",
-        "agent-parent",
-      );
-      target.createTask(
-        "child",
-        tmpDir,
-        "agent",
-        "test-agent",
-        "agent-child",
-        "parent",
-      );
-      target.createCollaborationMessage({
-        id: "rotation-dispatch",
-        deliveryId: "rotation-dispatch-delivery",
-        sourceTaskId: "parent",
-        directTargetTaskId: "child",
-        sourceActor: "agent",
-        body: "ORIGINAL DISPATCH BODY",
-      });
-    }
-
-    it("truncates the old transport and never redelivers the old body", async () => {
-      seedDispatch(store);
-      sm.liveTasks.add("child");
-      const prompts: string[] = [];
-      let deliveryAttempts = 0;
-      const bridge = {
-        async newSession() {
-          // A real ACP session id: the empty string is Root's reserved slot.
-          return { sessionId: "replacement-session", configOptions: [] };
-        },
-        async setConfigOption() {
-          return [];
-        },
-        async loadSession(taskId: string) {
-          return { taskId, configOptions: [] };
-        },
-        async prompt(_taskId: string, text: string) {
-          prompts.push(text);
-          deliveryAttempts += 1;
-          // The first submission is the original dispatch and is rejected at
-          // the request level; later ones must be closing reminders only.
-          if (deliveryAttempts === 1) throw new Error("prompt rejected");
-        },
-      };
-
-      assert.equal(
-        await sm.drainCollaborationDeliveries("child", {
-          ...bridge,
-          cancel: async () => {},
-          resolvePermission: () => {},
-          denyPermission: () => {},
-        }),
-        true,
-      );
-      await flush();
-      const armed = sm.getObligation("parent", "child");
-      assert.ok(armed);
-      assert.equal(armed.state, "awaiting_delivery");
-      const retried = (sm as any).pendingDispatchRetries.get("child") as
-        string[] | undefined;
-      assert.ok(retried?.includes("rotation-dispatch-delivery"));
-
-      // A message queued after the failed dispatch never reached the old
-      // execution; the rotation must still finalize it instead of leaving it
-      // available to a later drain.
-      store.createCollaborationMessage({
-        id: "rotation-queued",
-        deliveryId: "rotation-queued-delivery",
-        sourceTaskId: "parent",
-        directTargetTaskId: "child",
-        sourceActor: "agent",
-        body: "QUEUED BODY",
-      });
-
-      await sm.clearTask(bridge, "child");
-
-      // The retry ids are gone and the row is finalized, so a later drain
-      // cannot hand the old body to the replacement execution.
-      assert.equal((sm as any).pendingDispatchRetries.has("child"), false);
-      const rowOf = (id: string) =>
-        store["db"]
-          .prepare("SELECT status, failure_reason FROM deliveries WHERE id = ?")
-          .get(id) as { status: string; failure_reason: string };
-      // The rejected dispatch row is already terminal; the queued one is
-      // finalized by the rotation itself.
-      assert.equal(rowOf("rotation-dispatch-delivery").status, "failed");
-      assert.equal(
-        rowOf("rotation-queued-delivery").failure_reason,
-        "cleared_before_delivery",
-      );
-
-      // Same record, same endpoints, debt intact, nothing terminal.
-      const rotated = sm.getObligation("parent", "child");
-      assert.ok(rotated);
-      assert.equal(rotated.openingMessageId, armed.openingMessageId);
-      assert.equal(rotated.openingDeliveryId, armed.openingDeliveryId);
-      assert.equal(rotated.state, "reminder_due");
-      assert.equal(rotated.deliveredAttempts, 0);
-
-      // The replacement execution receives a closing reminder, never the old
-      // dispatch body.
-      const deadline = Date.now() + 2000;
-      while (prompts.length < 2 && Date.now() < deadline) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 5));
-      }
-      assert.equal(prompts.length, 2);
-      assert.match(prompts[1], /Task Handoff Required/);
-      assert.equal(prompts[1].includes("ORIGINAL DISPATCH BODY"), false);
-      for (const text of prompts) {
-        assert.equal(
-          text.includes("ORIGINAL DISPATCH BODY") && prompts.indexOf(text) > 0,
-          false,
-        );
-      }
-      const after = sm.getObligation("parent", "child");
-      assert.ok(after);
-      assert.equal(after.deliveredAttempts, 1);
-      assert.equal(after.state, "reminder_due");
-    });
-
-    it("defers the closing reminder when no execution can accept it", async () => {
-      seedDispatch(store);
-      // No recovery bridge is installed: the transport does not exist.
-      (sm as any).obligations.markDelivered("parent", "child");
-      sm.onTargetTurnEnded("child", "prompt-1");
-
-      const deadline = Date.now() + 2000;
-      while (
-        (sm.getObligation("parent", "child")?.deferrals ?? 0) === 0 &&
-        Date.now() < deadline
-      ) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 5));
-      }
-
-      const record = sm.getObligation("parent", "child");
-      assert.ok(record);
-      // Deferred: waiting again, with neither attempt nor failure consumed.
-      assert.equal(record.state, "reminder_due");
-      assert.equal(record.deferrals, 1);
-      assert.equal(record.deliveredAttempts, 0);
-      assert.equal(record.consecutiveSubmissionFailures, 0);
-      assert.equal(
-        store
-          .getEvents("child")
-          .some(
-            (event) =>
-              event.type === "system_message" &&
-              (JSON.parse(event.data) as { kind?: string }).kind ===
-                "handoff_reminder",
-          ),
-        false,
-        "no reminder was recorded, because none was delivered",
-      );
-    });
-  });
-
-  // F1: a deferred reminder must not strand the task's turn.
-  describe("reminder turn ownership", () => {
-    function seedReminder(): DirectedObligation {
-      store.createTask("parent", tmpDir, "auto", "test-agent", "agent-parent");
-      store.createTask(
-        "child",
-        tmpDir,
-        "auto",
-        "test-agent",
-        "agent-child",
-        "parent",
-      );
-      sm.liveTasks.add("child");
-      store.createCollaborationMessage({
-        id: "turn-ownership",
-        deliveryId: "turn-ownership-delivery",
-        sourceTaskId: "parent",
-        directTargetTaskId: "child",
-        sourceActor: "agent",
-        body: "Dispatch.",
-      });
-      // Settle the delivery row so the idle edge does not start a delivery
-      // drain: this test is about the reminder turn's ownership.
-      const claimed = store.claimQueuedDeliveries("child");
-      store.markCollaborationDeliveriesDelivered(
-        claimed.map((delivery) => delivery.id),
-      );
-      const obligation = sm.getObligation("parent", "child");
-      assert.ok(obligation);
-      return obligation;
-    }
-
-    async function expectControllerCanSubmitAgain(
-      prompts: string[],
-    ): Promise<void> {
-      // The controller still owns the record and can drive another attempt once
-      // the transport is back: a turn-boundary reminder is due immediately.
-      (sm as any).obligations.markDelivered("parent", "child");
-      sm.onTargetTurnEnded("child");
-      const deadline = Date.now() + 2000;
-      while (prompts.length === 0 && Date.now() < deadline) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 5));
-      }
-      assert.equal(prompts.length, 1, "the controller submitted again");
-      const record = sm.getObligation("parent", "child");
-      assert.ok(record);
-      assert.equal(record.deliveredAttempts, 1);
-      assert.equal(sm.getBusyKind("child"), null);
-    }
-
-    it("releases the turn when the reminder cannot resume the target", async () => {
-      const obligation = seedReminder();
-      const prompts: string[] = [];
-      let loads = 0;
-      const bridge = {
-        async newSession() {
-          throw new Error("not part of a restore");
-        },
-        async setConfigOption() {
-          return [];
-        },
-        async loadSession() {
-          loads += 1;
-          throw new Error("load failed");
-        },
-        async prompt(_taskId: string, text: string) {
-          prompts.push(text);
-        },
-        isAvailable: () => true,
-      };
-      sm.liveTasks.delete("child");
-      sm.attachExecutionBridge(bridge);
-
-      const outcome = await sm.submitObligationReminder(obligation);
-
-      assert.deepEqual(outcome, {
-        status: "deferred",
-        reason: "resume_failed",
-      });
-      assert.equal(loads, 1);
-      assert.equal(prompts.length, 0);
-      // The leak would leave busy=agent with no running prompt.
-      assert.equal(sm.getBusyKind("child"), null);
-
-      sm.liveTasks.add("child");
-      await expectControllerCanSubmitAgain(prompts);
-    });
-
-    it("releases the turn when the execution is replaced mid-submission", async () => {
-      const obligation = seedReminder();
-      const prompts: string[] = [];
-      const bridge = {
-        async newSession() {
-          return { sessionId: "", configOptions: [] };
-        },
-        async setConfigOption() {
-          return [];
-        },
-        async loadSession(taskId: string) {
-          return { taskId, configOptions: [] };
-        },
-        async prompt(_taskId: string, text: string) {
-          prompts.push(text);
-          // The task is rotated while the reminder turn is in flight.
-          store.replaceAgentSession("child", "test-agent", "agent-new");
-        },
-        isAvailable: () => true,
-      };
-      sm.attachExecutionBridge(bridge);
-
-      const outcome = await sm.submitObligationReminder(obligation);
-
-      assert.deepEqual(outcome, {
-        status: "deferred",
-        reason: "execution_replaced",
-      });
-      assert.equal(sm.getBusyKind("child"), null);
-      // The reminder text reached the old execution only; nothing was recorded
-      // as a delivered attempt for the task's current debt.
-      assert.equal(
-        store
-          .getEvents("child")
-          .some(
-            (event) =>
-              event.type === "system_message" &&
-              (JSON.parse(event.data) as { kind?: string }).kind ===
-                "handoff_reminder",
-          ),
-        false,
-        "the reminder was not recorded as delivered",
-      );
-    });
-
-    it("releases the turn when the agent dies during submission", async () => {
-      const obligation = seedReminder();
-      const prompts: string[] = [];
-      let available = true;
-      const bridge = {
-        async newSession() {
-          return { sessionId: "", configOptions: [] };
-        },
-        async setConfigOption() {
-          return [];
-        },
-        async loadSession(taskId: string) {
-          return { taskId, configOptions: [] };
-        },
-        async prompt(_taskId: string, text: string) {
-          prompts.push(text);
-          available = false;
-          throw new Error("agent died");
-        },
-        isAvailable: () => available,
-      };
-      sm.attachExecutionBridge(bridge);
-
-      const outcome = await sm.submitObligationReminder(obligation);
-
-      assert.deepEqual(outcome, {
-        status: "deferred",
-        reason: "agent_unavailable",
-      });
-      assert.equal(sm.getBusyKind("child"), null);
-
-      // Transport recovers: the controller can still submit.
-      const healed: string[] = [];
-      sm.attachExecutionBridge({
-        ...bridge,
-        async prompt(_taskId: string, text: string) {
-          healed.push(text);
-        },
-        isAvailable: () => true,
-      });
-      await expectControllerCanSubmitAgain(healed);
-    });
-
-    it("treats an unresolved account as still owed for the archive warning", () => {
-      store.createTask("parent", tmpDir, "auto", "test-agent", "p");
-      store.createTask("child", tmpDir, "auto", "test-agent", "c", "parent");
-      store.createCollaborationMessage({
-        id: "owed-check",
-        deliveryId: "owed-check-delivery",
-        sourceTaskId: "parent",
-        directTargetTaskId: "child",
-        sourceActor: "agent",
-        body: "Dispatch.",
-      });
-      const record = sm.getObligation("parent", "child");
-      assert.ok(record);
-      (record as { state: string }).state = "unresolved";
-      assert.equal(sm.hasOpenObligation("parent", "child"), true);
-      (record as { state: string }).state = "settled";
-      assert.equal(sm.hasOpenObligation("parent", "child"), false);
-    });
-  });
-
-  // The restore window must be busy, and the rotation claim must happen in
-  // the same synchronous block as the final busy recheck.
   describe("rotation busy gate", () => {
     function deferred<T>() {
       let resolve!: (value: T) => void;

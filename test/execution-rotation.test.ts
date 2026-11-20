@@ -205,26 +205,12 @@ describe("implicit owner rotation", () => {
       sourceActor: "agent",
       body: "OLD BODY",
     });
-    const armed = tasks.getObligation("parent", "child");
-    assert.ok(armed);
-    (
-      tasks as unknown as { pendingDispatchRetries: Map<string, string[]> }
-    ).pendingDispatchRetries.set("child", ["implicit-rotation-delivery"]);
+    assert.ok(tasks.hasOpenObligation("parent", "child"));
 
     await tasks.resumeTask(bridge, "child");
 
-    const rotated = tasks.getObligation("parent", "child");
-    assert.ok(rotated);
-    assert.equal(rotated.openingMessageId, armed.openingMessageId);
-    assert.equal(rotated.state, "reminder_due");
-    assert.equal(
-      (
-        tasks as unknown as {
-          pendingDispatchRetries: Map<string, string[]>;
-        }
-      ).pendingDispatchRetries.has("child"),
-      false,
-    );
+    // Rotation replaces the execution, not the account.
+    assert.ok(tasks.hasOpenObligation("parent", "child"));
     // The old body is never handed to the replacement execution.
     const deadline = Date.now() + 2000;
     while (prompts.length === 0 && Date.now() < deadline) {
@@ -282,8 +268,7 @@ describe("implicit owner rotation", () => {
       sourceActor: "agent",
       body: "STILL PENDING",
     });
-    const armed = tasks.getObligation("parent", "child");
-    assert.ok(armed);
+    assert.ok(tasks.hasOpenObligation("parent", "child"));
     assert.equal(
       store.getCollaborationDelivery("refused-rotation-delivery")?.status,
       "queued",
@@ -297,11 +282,9 @@ describe("implicit owner rotation", () => {
       /Cancel active work/,
     );
 
-    // Nothing was truncated by the failed attempt: same record, same debt
-    // state, same queue, same binding.
-    const after = tasks.getObligation("parent", "child");
-    assert.equal(after, armed);
-    assert.equal(after.state, "awaiting_delivery");
+    // Nothing was truncated by the failed attempt: same open account, queue,
+    // and binding.
+    assert.ok(tasks.hasOpenObligation("parent", "child"));
     assert.equal(
       store.getCollaborationDelivery("refused-rotation-delivery")?.status,
       "queued",

@@ -74,10 +74,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - ids that cannot fit are dropped entirely, leaving the omission note and, when not even one fits, a "too long to list here" explanation
 
 - `test/multi-agent-mcp-collaboration.test.ts` (same harness: production host, endpoint, REST handler, one transport per agent)
-  - a parent on A dispatches to a child on B: the contract reaches B's own transport and never A's; the production manager's own collaboration observer is called exactly once for that message (measured by wrapping the store registration the manager makes), and exactly one obligation record exists for the edge
-  - the child's typed `task_update(done)` on B settles the record from its live turn, persists the typed update, and wakes the parent through A's transport with readable prose (`Task status: done` + the account), not JSON; the observer count grows by exactly one
-  - an unanswered dispatch sends its closing reminder to B's transport (never A's), and after the transport budget is spent the terminal `delivery_failed` notice is delivered to A's transport with the readable block, while the machine payload stays in `task_outcome_notice`
-  - a token minted for the generation that was current just before the child's execution was replaced is refused with `execution_replaced` even though the replacement owns a live, settleable turn: no settlement, no attempt spent, no re-enqueue, no account message; the current generation's token settles the same turn (control)
+  - a parent on A dispatches to a child on B: the contract reaches B's own transport and never A's; the production manager's own collaboration observer is called exactly once for that message, and exactly one account exists for the edge
+  - the child's typed `task_update(done)` on B settles the account, persists the typed update, and wakes the parent through A's transport with readable prose (`Task status: done` + the account), not JSON; the observer count grows by exactly one
+  - an unanswered dispatch sends one closing reminder to B's transport (never A's); the next unaccounted turn delivers a `no_update` notice to A's transport with a readable block, while the machine payload stays in `task_outcome_notice`
+  - `task_update(waiting)` records the status, keeps the account open, and wakes nobody; the turn that reported it gets no closing reminder
 
 - `test/multi-agent-pending.test.ts` (real ACP child process)
   - the agent connects to `/mcp` from inside `session/new`: the handshake succeeds, `task_list` answers `initializing`, nothing is created, and the same token works after the binding commits
@@ -587,35 +587,20 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the delegated condition requires a live turn, not just a recorded origin: after the turn ends, the same request prompts
   - a human turn is unchanged: default mode prompts, and our own injected MCP tools have no privilege there
   - the attachment-read interceptor approves only inside the turn the request arrived in; a turn that ended or was superseded before the realpath work finishes produces no `permission_response`
-  - directed dispatch closure: only an agent-authored direct parent→child dispatch arms an obligation; a user send, a sibling/child message, an account, and a runtime notice do not
-  - settlement predicate: a plain `task_update` settles only an `open|reminder_due|reminder_submitting` record when the target has an active current agent turn; `awaiting_delivery`, a terminal record, and no active turn do not settle and still route to the stored source
-  - an `unresolved` record is settled by a late account without retracting its notice, while a `settled` record is never re-settled; with no record the report goes to the current parent and settles nothing
-  - the real delivery path: the dispatch is handed to the target's session (opening the record at hand-off, not at prompt resolution), and the account arriving from that same dispatch turn settles it with no reminder issued (this is the assertion that fails if the record opens at turn end or if a timestamp guard is reintroduced)
-  - the accepted boundary: a delayed call from an earlier turn arriving while a later turn is current settles the record, and the source receives the earlier turn's content
-  - releasing a task purges every record where it is either endpoint and cancels their timers
-  - a queued sibling delivery claims the next turn without erasing the open obligation, and the reminder is recovered on the next turn boundary
-  - a request-level prompt failure (error event plus `PromptNotDeliveredError` rejection) consumes the transport budget, while an in-turn agent error (error event plus resolution) does not
-  - a rejected initial dispatch is retried under the transport bound (backoff, no immediate idle re-drain) and ends in one factual `delivery_failed` notice with `delivery_unavailable` evidence; a resume that keeps failing exhausts the same budget, and a still-queued dispatch produces a non-terminal `still_waiting` advisory rather than a terminal deadline
-  - a late callback from a superseded dispatch prompt identity is ignored, including a failing resume and a stale hand-off; the still-waiting and age advisories are non-terminal and cleared on terminal states; an in-flight reminder from a previous epoch is ignored after a coalescing follow-up; a runtime rotation (and bridge restart, including a draining turn) aborts the watchdog and a silence notice requires a live current turn
-  - the closing reminder scopes its prohibition to the runtime-injected closing turn, resumes a non-live session before reminding, records no successful reminder on rejection, persists a bounded audit copy of the drained prompt, and logs obligation lifecycle decisions
-  - a cancelled turn owes no closing reminder: the ACP `cancelled` stop reason, the cancel intent stamped on the turn before the transport round trip, and the busy cancel marker each end the turn without a `handoff_reminder` or `task_outcome_notice`, and the record stays `open`; a later dispatch that ends without an account still reminds
-  - the cancel intent is stamped before `bridge.cancel` awaits: a turn that finishes with an ordinary `end_turn` while the cancel is still in flight is still treated as cancelled (no reminder), and it dies with that turn — the same task's next turn is not cancelled and its unaccounted end reminds normally
-  - a closing-reminder turn that is itself cancelled is fenced: no delivered attempt is counted, nothing is re-armed, no `task_outcome_notice` is emitted, no delivered-attempt `handoff_reminder` row is written, and the record returns to `open`; a later dispatch still reminds
-  - a runtime notice is delivered as a readable `reason:` / `message:` / `openingMessageId:` block (the text the parent agent actually receives, fenced verbatim), while its machine payload stays in the `task_outcome_notice` event; the live broadcast title and the persisted twin share one `messageId` and one title
+  - directed dispatch closure: only an agent-authored direct parent→child dispatch opens one account; a user send, a child message, an update, and a runtime notice do not
+  - turn-end check: a turn with no typed update gets one closing reminder; another such turn reports `no_update` and stops reminding; any update, including `waiting`, resets the count; a cancelled turn triggers nothing
+  - settlement routing: `done`/`blocked` settles the open account to its stored source even when late, and falls back to the current parent when no account is open; `waiting` never routes
+  - the real delivery path: the dispatch is handed to the target's session, and the account arriving from that same turn settles it with no reminder
+  - releasing a task reports `target_removed` to a live source and purges the account; an account whose source disappears is dropped without a notice; archiving cuts only the former-parent edge
+  - a runtime rotation leaves the open account in place and aborts the observed turn
   - execution write lease, fail closed: an event stamped with a replaced generation, an unknown generation, another task's lease, no lease at all, or no lease for a task with no ledger entry writes nothing — no buffer, no stored event, no broadcast, no activity timestamp
 
 - `test/obligation-controller.test.ts`
-  - awaiting_delivery → open timing, coalescing without a fresh record, +2m/+5m delivered-reminder schedule, transport-bound exhaustion, idle wait, the two-condition settlement predicate and its guards (awaiting_delivery, no active turn, terminal records), stored-source/current-parent routing, the accepted boundary, superseded-dispatch identity, abort and advisory backstops, live-turn requirement, process-local loss on reconstruction, terminal records never watched, and independent watchdog/no-account epochs
-  - tri-state submission: a `deferred` outcome leaves `reminder_submitting`, keeps both counters, and retries on a growing bounded backoff; a permanently deferring transport never exhausts the record and emits no notice
-  - `execution_rotated` keeps the same record (endpoints, attempts) in a waitable state and never requests a re-dispatch
-  - a pre-rotation watchdog with a live turn emits its silence notice (control), and the same steps after a rotation emit none — the rotation ends that watchdog epoch (the retained-callback case is covered by the next bullet)
-  - a retry callback that is still queued when the rotation lands is run explicitly after it (the clock keeps callbacks after `clearTimer`): it re-derives from the record, so the old body is never re-enqueued and a closing reminder for the replacement is what it submits
-  - a reminder result from the replaced execution (old recovery generation) cannot settle the record, spend an attempt, or re-enqueue the dispatch
-  - a cancelled boundary quiets the edge and nothing gets through: hours later there is no closing reminder, no `still_waiting` advisory (neither the queued-dispatch nor the age form), no notice, and no armed deadline at all; a timer that was already armed is dropped at dispatch time, and a rotation is not new work (no timer, no sound)
-  - new work on the same edge lifts the silence and restarts the clocks: a fresh dispatch arm + hand-off produces the age advisory only after a full `AGE_ADVISORY_MS` from that arrival, and its closing reminder follows once the target is idle; another task's edge is unaffected and keeps its own reminder
-  - a quiet record still settles on a late typed account, then stays silent
-  - a cancellation never reopens a terminal record: a settled edge stays `settled` (not `open`/quiet), and a later user message handed to it plus a normal unaccounted end produces no reminder and no notice
-  - a hand-off lifts the silence from any state, including `reminder_due` after a rotation (the reminder and the advisory run again); a rotation with no new work leaves the edge quiet with no timer
+  - arm/open/coalesce: one account per edge, a follow-up dispatch keeps it, one settle closes it
+  - turn-end check: update resets the count, one reminder, then `no_update` and no further reminders; a later updated turn restores the reminder budget; a cancelled turn triggers nothing
+  - `waiting` is an update for the check but never settles
+  - silence: 15 minutes without activity reports `no_activity` once per running turn, activity resets the window, and no account means no notice
+  - target removal: deleting or archiving the target reports `target_removed`; losing the source drops the account silently; dispose stops timers
 
 - `test/turn-slot.test.ts`
   - one turn slot per task, and every real submission assigns its own origin: the interactive route, `/compact`, and the beta quick prompt are `interactive`; a collaboration drain is `delegated` for an all-agent/system batch and `interactive` for a batch containing one user message; a closing reminder is `delegated`. Nothing inherits the previous turn's value

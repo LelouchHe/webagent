@@ -30,7 +30,7 @@ time. An entry without a "closing condition" is a wish, not an issue.
   *Closing:* buffer restore-time requests like pending session updates, then
   route them once the restore binds.
 - **A closing reminder becomes the active turn before its resume completes.**
-  `submitObligationReminder` transfers the reservation to an active turn before
+  `injectRuntimePrompt` transfers the reservation to an active turn before
   `ensureResumed`, so cancelling during that window does not clear the slot, and
   the pre-prompt re-check (`isTurnRunning`) does not consult cancel state.
   Present since P5-a; that step kept the ordering and did not widen it.
@@ -292,6 +292,23 @@ time. An entry without a "closing condition" is a wish, not an issue.
 
   *Closing:* a transcript row whose file reference previews and downloads
   through the existing signed-URL path.
+
+## Collaboration accounting limits
+
+- **One account per parent→child edge, with no correlation id.** If a parent
+  dispatches several requests before the child reports, they share one account.
+  One `done` or `blocked` settles all of them, so the requester must infer which
+  request the report answers from the child's prose and its own follow-ups.
+  *Closing:* per-request correlation, deliberately deferred; reopen only with
+  evidence that shared accounting causes wrong decisions.
+- **A Task that reports `waiting` but nothing will ever wake it is not
+  detected.** The runtime does not know whether a child, a person, or an
+  external event will actually hand off, so a misused `waiting` can stay silent
+  while the source waits. The status is visible in `task_list`, and the
+  `task_update` description says waiting on a person or an external event is
+  `blocked`. *Closing:* event data showing this misclassification in practice,
+  then a rule that treats a `waiting` turn with no open downstream account as a
+  missing update.
 
 ## Accepted as designed
 

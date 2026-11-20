@@ -448,10 +448,15 @@ describe("createMcpEndpoint", () => {
       (tool) => tool.name === "task_send",
     )?.description;
     assert.match(sendDescription ?? "", /task_update/);
-    assert.match(sendDescription ?? "", /blocked/);
+    assert.match(sendDescription ?? "", /waiting\|blocked\|done/);
     const updateDescription =
       tools.find((tool) => tool.name === "task_update")?.description ?? "";
-    assert.match(updateDescription, /typed lifecycle account/);
+    assert.match(updateDescription, /Record a typed update/);
+    assert.match(updateDescription, /`waiting`/);
+    assert.match(
+      updateDescription,
+      /human, an external event, missing information, or permission is `blocked`/,
+    );
     assert.match(updateDescription, /no correlation parameter/);
     assert.match(updateDescription, /not delete or permanently close/);
     // Mutation evidence: re-adding a correlation parameter flips this check.

@@ -146,7 +146,7 @@ export interface McpTaskToolHost {
   ): Promise<void>;
   update(
     principal: McpCallerPrincipal,
-    status: "blocked" | "done",
+    status: "waiting" | "blocked" | "done",
     body: string,
   ): Promise<void>;
 }
@@ -401,7 +401,7 @@ export function registerMcpTools(
       description:
         "Send a durable coordination message to another Task. " +
         "Use it for instructions, questions, findings, progress, decisions, and follow-up. " +
-        "This is communication, not a lifecycle handoff; use task_update(done|blocked) for completion or blocking. " +
+        "This is communication, not a lifecycle handoff; use task_update(waiting|blocked|done) for a typed update. " +
         "Do not wait for or poll the recipient.",
       inputSchema: {
         target: TASK_ID.describe("Stable target Task ID"),
@@ -419,12 +419,14 @@ export function registerMcpTools(
     "task_update",
     {
       description:
-        "Send a typed lifecycle account for the current Task: `done` when the assignment is complete, `blocked` when it needs input or a decision. " +
-        "There is no correlation parameter: the runtime identifies the directed obligation from the current Task's sole record and closes it when this update comes from an eligible current turn. " +
-        "The parent receives the account and decides the next step; an update outside an eligible turn is still recorded and reported without closing the obligation. " +
+        "Record a typed update for the current Task: `done` when the assignment is complete, `blocked` when it needs input or a decision, or `waiting` when work is still in progress and another Task will hand off and wake you (typically a child you dispatched). " +
+        "`done` and `blocked` are delivered to the requester — the source of the open dispatch account, or the current parent when none is open — and wake it; a late update still settles the account. " +
+        "`waiting` is not delivered, does not wake anyone, and does not settle the account; it only records the status. " +
+        "Waiting on a human, an external event, missing information, or permission is `blocked`, not `waiting`. " +
+        "There is no correlation parameter. " +
         "This does not delete or permanently close the Task. Use task_send for normal communication.",
       inputSchema: {
-        status: z.enum(["blocked", "done"]),
+        status: z.enum(["waiting", "blocked", "done"]),
         body: BODY.describe(
           "Handoff body: explain the blocker or report the completed result",
         ),

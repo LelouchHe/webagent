@@ -103,8 +103,8 @@ Task makes that turn unattended — including a Task you are watching.
 Stop dispatched work with `task_cancel` (the agent-side tool) or the cancel
 button: it ends the current execution, keeps the Task and its history, and
 leaves a two-sided transcript row naming who cancelled what and why. A
-cancelled turn does not owe a closing reminder, and an edge silenced that way
-stays quiet until new work arrives on it.
+cancelled turn gets no closing reminder and no notice; the account stays open
+for a later typed update.
 
 Only agents that consume the injected `mcpServers` entry can collaborate; one
 that ignores it still works as a chat backend, it just cannot call `task_*`

@@ -39,8 +39,8 @@ export const MCP_SERVER_NAME = "lelouchhe_webagent";
 export const MCP_SERVER_INSTRUCTIONS = [
   "Use task_create for a direct child, then immediately use task_send to give it its first instruction.",
   "Use task_list to check each reachable Task's workflowStatus, executionState, lastEventAt, and lastAgentActivityAt before deciding to act; workflowStatus is per turn, not a lifecycle terminal, and executionState is the live runtime source.",
-  "Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.",
-  "task_update(done|blocked) settles the directed obligation when it comes from the current active turn; there is no correlation parameter to copy back.",
+  "Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(waiting|blocked|done) for a typed update. A done Task remains available and is not deleted or permanently closed.",
+  "task_update(waiting|blocked|done) records a typed update; done and blocked settle the open account and wake the requester, waiting only records the status. There is no correlation parameter to copy back.",
   "After dispatching work, end the current turn; do not poll with task_query.",
   "Task history is the event log; summaries and handoffs are self-reports, and the log outranks them.",
   "Use task_query to index flat event history and task_read to recover complete rows; use them only for history recovery, diagnosis, or audit.",
