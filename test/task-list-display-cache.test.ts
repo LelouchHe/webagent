@@ -340,6 +340,18 @@ describe("task pickers paint from the last list, then revalidate", () => {
     assert.equal(selectedSecondary(), rowSecondary(0));
   });
 
+  it("a background repaint of the command list keeps the selected command", () => {
+    openMenu("/");
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    const selected = selectedPrimary();
+    assert.ok(selected);
+    assert.notEqual(selected, rows()[0]);
+
+    commands.refreshSlashMenuRows();
+
+    assert.equal(selectedPrimary(), selected);
+  });
+
   it("typing in /switch still selects the first row", async () => {
     listHandler = () =>
       Promise.resolve(
