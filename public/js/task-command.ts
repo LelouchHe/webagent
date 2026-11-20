@@ -32,6 +32,7 @@ import {
   deriveLive,
   errorsAsEmpty,
   onceSource,
+  refreshingSource,
   type LiveSource,
 } from "./live-source.ts";
 import { setInputValue, state } from "./state.ts";
@@ -39,6 +40,20 @@ import { recentPathsSource } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
 import { isTaskCommand } from "./input-command.ts";
 import { addSystem } from "./render.ts";
+
+/**
+ * The archived list the `@` picker shows inside an archived tree. One shared
+ * source: reopening the picker paints the last read at once and refreshes it
+ * on the next watch, matching the active list and recent-paths pickers.
+ */
+export let archivedTaskListSource: LiveSource<TaskSummary[]> = refreshingSource(
+  () => api.listTasks(true),
+);
+
+/** Test seam: a cold source between test cases. */
+export function resetArchivedTaskListSourceForTest(): void {
+  archivedTaskListSource = refreshingSource(() => api.listTasks(true));
+}
 import * as api from "./api.ts";
 import type { Candidate } from "./slash-tree.ts";
 import type { TaskSummary } from "../../src/types.ts";
@@ -360,12 +375,10 @@ export function buildTaskCommandCandidates(
   }
 
   // The active list keeps its shared live source. The server's archived fact
-  // for the viewed task selects the plain one-shot archived read instead.
+  // for the viewed task selects the archived list's shared source.
   if (isViewedTaskArchived()) {
-    return onceSource(() =>
-      api
-        .listTasks(true)
-        .then((tasks) => buildMessageCandidates(parsed, tasks)),
+    return deriveLive(archivedTaskListSource, (tasks) =>
+      buildMessageCandidates(parsed, tasks),
     );
   }
   return deriveLive(taskListSource, (tasks) =>
