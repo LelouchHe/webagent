@@ -1113,18 +1113,10 @@ export function beginConnectionEpoch(): number {
  *   not downgrade the binding the client already knows, or the reload guard
  *   would silently stop working.
  */
-const taskAgentListeners: (() => void)[] = [];
-
-/** Repaint hooks for the current task's binding (an open menu's baseline). */
-export function onTaskAgentChanged(listener: () => void): void {
-  taskAgentListeners.push(listener);
-}
-
 export function installTaskAgentId(
   taskId: string | null | undefined,
   agentId: string | null | undefined,
 ): void {
-  const previousAgent = state.taskAgentId;
   const payloadAgent = typeof agentId === "string" ? agentId : null;
   const sameTask =
     typeof taskId === "string" &&
@@ -1139,9 +1131,6 @@ export function installTaskAgentId(
   ) {
     state.agentReloading = false;
     state.agentReloadingAgentId = null;
-  }
-  if (state.taskAgentId !== previousAgent) {
-    for (const listener of taskAgentListeners) listener();
   }
 }
 

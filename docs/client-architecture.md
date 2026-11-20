@@ -498,12 +498,14 @@ are an open set that must be completed. Therefore no menu offers agent rows:
 - **The hint (discovery).** A `placeholder` row at the very bottom, styled by
   the existing `.slash-placeholder` (italic, dim, unselectable, no hover): the
   configured agents and the syntax once, e.g.
-  `agents: pi, copilot · type "copilot:"`. It appears only when at least two
+  `agents: copilot, pi · type "copilot:"` on a task running on pi. It appears only when at least two
   agents are configured (a single-agent menu is byte-for-byte unchanged), only
   while the field is not already a coordinate, and never underneath a `(none)` /
   `(no match)` / loading / error placeholder — there the list itself already
-  explains the empty result. The example names an agent the task is not
-  running on, and the line stays on one line at 390px (a `.slash-primary`
+  explains the empty result. The task's current agent is listed last
+  and the example is the first agent, so it never names the one the task is
+  running on; the line reads the current binding when it is drawn and is not
+  repainted when the binding changes while the menu is open. The line stays on one line at 390px (a `.slash-primary`
   neither wraps nor scrolls by design).
   It carries no availability: whether an agent can start is decided when it is
   used, with the real reason.

@@ -436,6 +436,59 @@ describe("+ title-first create", () => {
     assert.equal(dom.input.value, "+api-fix public/");
   });
 
+  it("a late directory listing cannot repaint a newer prefix", async () => {
+    const baseFetch = globalThis.fetch;
+    let releaseOld!: (entries: any[]) => void;
+    let listingCalls = 0;
+    globalThis.fetch = ((url: string, init?: any) => {
+      if (url.startsWith("/api/v1/files/list?")) {
+        listingCalls += 1;
+        if (listingCalls === 1) {
+          return new Promise((resolve) => {
+            releaseOld = (entries) => {
+              resolve(
+                new Response(
+                  JSON.stringify({
+                    path: "/work",
+                    pathDisplay: "~/work",
+                    parent: "/",
+                    truncated: false,
+                    entries,
+                  }),
+                  { status: 200 },
+                ),
+              );
+            };
+          });
+        }
+      }
+      return (baseFetch as any)(url, init);
+    }) as any;
+
+    dom.input.value = "+api-fix pu";
+    commands.updateSlashMenu();
+    await settle();
+    assert.equal(listingCalls, 1);
+
+    // Type a different prefix while the first listing is still in flight.
+    listEntries = [{ name: "notes", kind: "dir", size: null, mtime: 1 }];
+    dom.input.value = "+api-fix no";
+    commands.updateSlashMenu();
+    await settle();
+    const primaries = () =>
+      [...dom.slashMenu.querySelectorAll(".slash-primary")].map(
+        (el: any) => el.textContent,
+      );
+    assert.ok(primaries().includes("notes"));
+
+    // The old prefix resolves now; its source has no watch left.
+    releaseOld([{ name: "public", kind: "dir", size: null, mtime: 1 }]);
+    await settle();
+
+    assert.ok(primaries().includes("notes"));
+    assert.equal(primaries().includes("public"), false);
+  });
+
   it("asks for hidden directories only when the segment starts with a dot", async () => {
     listEntries = [
       { name: "public", kind: "dir", size: null, mtime: 1 },

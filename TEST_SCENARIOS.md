@@ -205,7 +205,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/live-source.test.ts`
   - a derived source derives a value, passes loading and errors through, and
-    watches through to its origin
+    watches through to its origin; an error maps to no rows without hiding
+    loading
+  - `refreshingSource`: loading until the first load lands; a watch starts a
+    load only when none is in flight, so a second watch joins it; listeners
+    are notified; a stopped watch hears nothing; a failure is shown only while
+    there is no value (a failed load after a success keeps the value)
+  - `onceSource`: loading until its one-shot read settles, then the value or
+    error; a watch is notified when it settles and hears nothing after it stops
 
 - `test/task-list-display-cache.test.ts` (the pickers follow the shared list)
   - a second `@` / `/switch` open paints the last list before its own read
@@ -214,9 +221,16 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a row painted from the earlier list acts at once, without waiting for the
     read
   - a leading-whitespace ` @` paints from the last list too
+  - a live `/switch` repaint keeps the row with the same producer key (the
+    task id), wherever it moved: an added task leaves the selection alone, and
+    two rows with identical text keep the selected one; a key that is gone
+    falls back to the first selectable row, and typing a filter that still
+    offers several rows selects the first
   - a watch lasts exactly as long as its menu scope: closing the menu or moving
     to another command stops it, typing within `/switch` keeps one, and each
     `@` keystroke replaces it instead of adding one
+  - a static `/` menu is not rebuilt by a task-list read or a binding change
+    (no watch was taken, and there are no global repaint hooks)
   - an `@` input the shown list has no rows for stays hidden, and appears when
     the fresh read has rows for it
   - Escape dismisses such a hidden `@` input too: its watch stops, and the read
@@ -224,6 +238,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - Enter on an `@` target still reads the list instead of resolving against
     the cache, and a target the fresh read dropped is reported rather than
     messaged
+
+- `test/recent-paths-display-cache.test.ts` (the path pickers follow one list)
+  - a second `/clear`, `/new`, or `+title ` open paints the last recent paths
+    before its own read returns, and the fresh read repaints it
+  - a first `/clear` or `/new` open with nothing fetched still shows
+    `(loading...)`
+  - `/new` includes its current cwd row and a cached recent while the read is
+    held (membership; the e2e covers their order)
+  - a live refresh keeps the selected path row by its key when the fresh list
+    is identical or only adds a path (ArrowDown to the second path, then Tab
+    fills it); a selected row without a key falls back to the first row
 
 - `test/task-ref-marks.test.ts` (one reference per Task, four states)
   - a live reference is completely unmarked (no strike, no appended name, no
@@ -307,6 +332,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
     request binds that agent; `/clear` and `/new` filter recent paths by the
     coordinate's suffix and send the agent with the directory; a suffix with a
     TAB or double space keeps its bytes
+
+- `test/task-create-command.test.ts` (`+` menu pipeline)
+  - a late directory listing cannot repaint a newer prefix (its source lost its
+    watch when the input moved on)
 
 - `test/agent-coordinate-entries.test.ts` (`+`, `/new`, `/clear` payloads)
   - `/clear` sends the coordinate's agent and raw cwd; `/new` and `+` send the
@@ -1339,6 +1368,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the `/new` picker leads with the `create task` action row, then the current
     cwd — marked `*` on that row itself — and only then other recent
     directories (a second recent directory makes the order real, not vacuous)
+  - a second `/new` open paints the last recent paths (the cwd row and a
+    cached recent included) while its recent-paths read is held, and the path
+    that read carries appears once it is released
   - `/new <relative>` resolves against the current task cwd on both Enter and
     the picker action row, and the preview names the resolved directory
   - `+<title>` creates a titled child without switching; `@<title> <body>` then

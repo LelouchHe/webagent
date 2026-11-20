@@ -5,7 +5,7 @@
 // plus Tab/Click/keyboard dispatch. Execution paths (onSelect handlers) live
 // in slash-commands.ts so this file stays a thin pipeline.
 
-import { state, dom, onTaskAgentChanged, setInputValue } from "./state.ts";
+import { state, dom, setInputValue } from "./state.ts";
 import {
   resolvePath,
   buildCandidates,
@@ -16,7 +16,6 @@ import {
 } from "./slash-tree.ts";
 import { renderItem } from "./slash-render.ts";
 import { ROOT } from "./slash-commands.ts";
-import { subscribeTaskTopology } from "./task-topology.ts";
 import { handleSlashCommand } from "./slash-exec.ts";
 import { buildTaskCommandCandidates, isTaskCommand } from "./task-command.ts";
 import {
@@ -151,7 +150,7 @@ export function updateSlashMenu(): void {
   }
 
   if (isTaskCommand(text)) {
-    void updateTaskCommandMenu(text);
+    updateTaskCommandMenu(text);
     return;
   }
 
@@ -209,8 +208,9 @@ export function updateSlashMenu(): void {
         currentData = source.read();
         onDataScopeEnd(
           source.watch(() => {
+            const previous = candidates[selectedIdx];
             currentData = source.read();
-            rebuildFromInput(pathPrefix);
+            rebuildFromInput(pathPrefix, previous);
           }),
         );
       } else if (result instanceof Promise) {
@@ -253,16 +253,16 @@ export function updateSlashMenu(): void {
 
 // Re-resolve the current input (used by async fetch callbacks that may fire
 // after the input changed but currentPath is still valid).
-function rebuildFromInput(pathPrefix: string): void {
+function rebuildFromInput(pathPrefix: string, previous?: Candidate): void {
   const input = currentMenuInput();
   const { tailQuery, rawRemainder } = resolvePath(input, rootForInput(input));
-  rebuild(tailQuery, pathPrefix, currentNode.field?.(rawRemainder));
+  rebuild(tailQuery, pathPrefix, currentNode.field?.(rawRemainder), previous);
 }
 
-async function updateTaskCommandMenu(text: string): Promise<void> {
+function updateTaskCommandMenu(text: string): void {
   currentPath = text;
   currentFetchKey = text;
-  const myFetchGeneration = beginDataScope();
+  beginDataScope();
   currentNode = TASK_COMMAND_ROOT;
   currentData = undefined;
 
@@ -273,33 +273,23 @@ async function updateTaskCommandMenu(text: string): Promise<void> {
     paintTaskCommandMenu(source.read());
     onDataScopeEnd(
       source.watch(() => {
-        paintTaskCommandMenu(source.read());
+        const previous = candidates[selectedIdx];
+        paintTaskCommandMenu(source.read(), previous);
       }),
     );
     return;
   }
-  if (!(result instanceof Promise)) {
-    paintTaskCommandMenu(result);
-    return;
-  }
-  paintTaskCommandMenu("loading");
-  try {
-    const cands = await result;
-    if (fetchGeneration !== myFetchGeneration) return;
-    paintTaskCommandMenu(cands);
-  } catch (err) {
-    if (fetchGeneration !== myFetchGeneration) return;
-    paintTaskCommandMenu({
-      error: err instanceof Error ? err.message : "error",
-    });
-  }
+  paintTaskCommandMenu(result);
 }
 
 /**
  * Paint `+`/`@` rows. No rows hides the view but keeps the data scope, so a
  * source that later has rows for this input can still show them.
  */
-function paintTaskCommandMenu(data: LiveState<Candidate[]>): void {
+function paintTaskCommandMenu(
+  data: LiveState<Candidate[]>,
+  previous?: Candidate,
+): void {
   if (Array.isArray(data) && data.length === 0) {
     dom.slashMenu.classList.remove("active");
     dom.slashMenu.innerHTML = "";
@@ -319,13 +309,38 @@ function paintTaskCommandMenu(data: LiveState<Candidate[]>): void {
     selectedIdx = 0;
   } else {
     candidates = data;
-    const firstSelectable = data.findIndex(
-      (c) => c.kind !== "separator" && c.kind !== "placeholder",
-    );
-    selectedIdx = firstSelectable >= 0 ? firstSelectable : 0;
+    selectedIdx =
+      previous === undefined
+        ? firstSelectableIndex(data)
+        : selectedRowForLiveRepaint(previous, data);
   }
   renderMenu("");
   dom.slashMenu.classList.add("active");
+}
+
+/**
+ * The row a live repaint keeps selected: the row with the same producer-given
+ * `key`, whatever its position. A row without a key, or one whose key is gone
+ * from the new list, falls back to the first selectable row. Only live
+ * repaints use this; typing and one-shot results still start at the top.
+ */
+function selectedRowForLiveRepaint(
+  previous: Candidate,
+  next: Candidate[],
+): number {
+  const key = previous.spec.key;
+  if (key !== undefined) {
+    const found = next.findIndex((candidate) => candidate.spec.key === key);
+    if (found >= 0) return found;
+  }
+  return firstSelectableIndex(next);
+}
+
+function firstSelectableIndex(rows: Candidate[]): number {
+  const first = rows.findIndex(
+    (c) => c.kind !== "separator" && c.kind !== "placeholder",
+  );
+  return first >= 0 ? first : 0;
 }
 
 function fetchErrorMessage(err: unknown): string {
@@ -336,6 +351,7 @@ function rebuild(
   tailQuery: string,
   pathPrefix: string,
   field?: FieldView,
+  previous?: Candidate,
 ): void {
   const cands = buildCandidates(currentNode, tailQuery, currentData, field);
   if (dom.input.value === "/") {
@@ -356,10 +372,10 @@ function rebuild(
   // the `current` item — its `*` marker is already a strong visual cue, and
   // auto-selecting it (e.g. the active task in /switch) is awkward when the
   // user opens the menu intending to switch *away* from it.
-  const firstSelectable = cands.findIndex(
-    (c) => c.kind !== "separator" && c.kind !== "placeholder",
-  );
-  selectedIdx = firstSelectable >= 0 ? firstSelectable : 0;
+  selectedIdx =
+    previous === undefined
+      ? firstSelectableIndex(cands)
+      : selectedRowForLiveRepaint(previous, cands);
 
   renderMenu(pathPrefix);
   dom.slashMenu.classList.add("active");
@@ -579,44 +595,6 @@ function nextSelectable(from: number, dir: 1 | -1): number {
   }
   return from;
 }
-
-/**
- * Re-render the open menu's rows from the cached data.
- *
- * Row labels are computed at render time from the current task's binding (the
- * `/switch` baseline), so a rotation that changes that binding while a menu is
- * open must not leave the old baseline on screen. Only walker menus are
- * rebuilt here; `+`/`@` rows are assembled asynchronously by their own input
- * pipeline.
- */
-export function refreshSlashMenuRows(): void {
-  if (!dom.slashMenu.classList.contains("active")) return;
-  if (currentNode === TASK_COMMAND_ROOT) return;
-  const text = currentMenuInput();
-  const { node, pathPrefix, tailQuery, rawRemainder } = resolvePath(
-    text,
-    rootForInput(text),
-  );
-  if (node !== currentNode) return;
-  rebuild(tailQuery, pathPrefix, node.field?.(rawRemainder));
-}
-
-/**
- * Repaint an open `+`/`@` menu when the current binding changes: the agent hint
- * names an agent the task is *not* running on, so a binding that arrives (or
- * changes) after the first paint would otherwise leave the hint pointing at the
- * current agent, which demonstrates nothing.
- */
-function refreshTaskCommandMenu(): void {
-  if (!dom.slashMenu.classList.contains("active")) return;
-  if (currentNode !== TASK_COMMAND_ROOT) return;
-  const text = currentMenuInput();
-  if (isTaskCommand(text)) void updateTaskCommandMenu(text);
-}
-
-subscribeTaskTopology(refreshSlashMenuRows);
-onTaskAgentChanged(refreshSlashMenuRows);
-onTaskAgentChanged(refreshTaskCommandMenu);
 
 // --- DOM listeners ---
 

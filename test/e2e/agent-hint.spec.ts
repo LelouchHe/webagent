@@ -264,7 +264,7 @@ test("menus never offer agent rows and end with one hint line", async ({
       const currentCwd = plus.find((row) => row.prefix === "*");
       expect(currentCwd?.primary ?? "").not.toBe("");
       const hint = hintRow(plus);
-      expect(hint?.primary).toBe('agents: mock, mock2 · type "mock2:"');
+      expect(hint?.primary).toBe('agents: mock2, mock · type "mock2:"');
       expect(plus.at(-1)?.primary).toBe(hint?.primary);
 
       // A typed coordinate removes the hint: it is already in use.
@@ -436,7 +436,7 @@ test("the directory carries ids only, and a missing command is not marked", asyn
       const list = await openMenu(page, "+work ").then(() => rows(page));
       const hint = hintRow(list);
       // No availability claim anywhere in the menu.
-      expect(hint?.primary).toBe('agents: mock, ghost · type "ghost:"');
+      expect(hint?.primary).toBe('agents: ghost, mock · type "ghost:"');
       expect(list.map((row) => row.secondary).join(" ")).not.toMatch(
         /unavailable/i,
       );
@@ -519,7 +519,7 @@ test("at 390px the hint stays on one line without overflowing", async ({
       );
       expect(metrics.hint!.boxRight).toBeLessThanOrEqual(metrics.menuRight + 1);
       // With this fixture the full form fits, example included.
-      expect(metrics.hint!.text).toBe('agents: mock, mock2 · type "mock2:"');
+      expect(metrics.hint!.text).toBe('agents: mock2, mock · type "mock2:"');
 
       await page.screenshot({
         path: testInfo.outputPath("agent-hint-390.png"),

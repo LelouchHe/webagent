@@ -85,12 +85,38 @@ placeholder, or the menu closes — and starting one stops everything the
 previous scope watched. A watch registers its own stop at the moment it starts,
 so the code that ends a scope never needs to know what was watched.
 
-Only the task pickers use it today: `/switch` returns the shared
-`taskListSource` from `task-topology.ts`, and `@` returns rows derived from it
-(`deriveLive`). That source shows the last list a read resolved with and
-refreshes when a watch starts, so an already-visited picker paints at once and
-repaints when the fresh read lands. Every other node keeps its one-shot
-`fetch`. A repaint selects the first selectable row, like any other rebuild.
+The pickers use it today: `/switch` returns the shared `taskListSource` from
+`task-topology.ts`, and `@` returns rows derived from it (`deriveLive`). The
+recent-paths entries (`/clear`, `/new`, and the `+` cwd rows) share one
+`refreshingSource(listRecentPaths)` from `slash-commands.ts`, so a second open
+paints the last list at once instead of waiting a round trip on
+`(loading...)`. `refreshingSource` shows the last value a load resolved with
+and loads when a watch starts, but only when no load is already in flight, so
+a later watch joins the running one and two loads never overlap. A failure is
+shown only while there is no value; after a successful read it keeps the
+value. `/new` and `+` still put their own cwd row ahead of the path rows
+(their action row still leads the whole menu), and treat a recent-paths
+failure as no recents (`errorsAsEmpty`), exactly as their old `catch` did;
+that fallback matters only before any list has loaded, because after that the
+last list stays. `+` keeps directory listings uncached: each input builds a
+fresh one-shot source (`onceSource`), while the no-cwd branch shares the
+recent-paths source. Every other walker node keeps its one-shot `fetch`.
+
+A menu updates only through a subscription it took when it opened: a
+`LiveSource` watch, registered with the menu's data scope. A static menu (for
+example `/`) takes no such subscription and is never rebuilt by live activity;
+there are no global repaint hooks. Rows read other client state (such as the
+current task's agent) when they are drawn; a change to that state while the
+menu is open shows at the next repaint. The `+` directory branch is
+a `onceSource`: it reports its one-shot read, but a new source is made for
+each input, so a late listing has no watch left to repaint a newer prefix.
+Directory rows carry their path as `key`.
+
+Rows from a live source carry a producer-given `key` (a task id, a path): the
+producer knows what the row is, so the menu never guesses identity from the
+rendered text. A live repaint keeps the row with the same key, wherever it
+moved in the list; otherwise it selects the first selectable row. Typing
+selects the first row, and a row without a key falls back the same way.
 
 ## FieldView — a node's own argument field
 

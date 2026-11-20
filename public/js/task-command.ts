@@ -24,9 +24,14 @@ import {
 import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
 import { loadTaskList, taskListSource } from "./task-topology.ts";
-import { deriveLive, type LiveSource } from "./live-source.ts";
+import {
+  deriveLive,
+  errorsAsEmpty,
+  onceSource,
+  type LiveSource,
+} from "./live-source.ts";
 import { setInputValue, state } from "./state.ts";
-import { listRecentPaths } from "./slash-commands.ts";
+import { recentPathsSource } from "./slash-commands.ts";
 import { switchToTask } from "./task-navigation.ts";
 import { isTaskCommand } from "./input-command.ts";
 import { addSystem } from "./render.ts";
@@ -216,6 +221,8 @@ interface CreateCandidateArgs {
   targetPath: string;
   remainder: string;
   primary: string;
+  /** Producer identity for a live repaint (the target task). */
+  key?: string;
   path?: string;
   pathSecondary?: string;
   /** Short L1 annotation (e.g. the family relation for @ rows). */
@@ -238,6 +245,7 @@ function makeCandidate(args: CreateCandidateArgs): Candidate {
   return {
     spec: {
       primary: args.primary,
+      key: args.key,
       secondary: args.secondary,
       selectedSecondary: args.selectedSecondary,
       fill,
@@ -261,6 +269,7 @@ function makeNavigationCandidate(args: {
   return {
     spec: {
       primary: args.primary,
+      key: args.taskId,
       secondary: args.secondary,
       selectedSecondary: args.selectedSecondary,
       fill: `${args.marker}${args.targetPath}`,
@@ -283,11 +292,13 @@ function makeNavigationCandidate(args: {
  *
  * Returns an empty array when the input is not a task command or the parser
  * rejects it; the caller decides whether to hide the menu. `@` target rows come
- * back as a live source over the shared task list, `+` rows as a promise.
+ * back as a live source over the shared task list. `+` rows are a live source
+ * when no cwd is typed yet, and a promise for a typed directory prefix, whose
+ * listing is never cached.
  */
 export function buildTaskCommandCandidates(
   text: string,
-): Candidate[] | Promise<Candidate[]> | LiveSource<Candidate[]> {
+): Candidate[] | LiveSource<Candidate[]> {
   if (!isTaskCommand(text)) return [];
 
   let parsed;
@@ -352,40 +363,43 @@ function bareCreateCandidates(): Candidate[] {
 
 /**
  * cwd rows for `+`: the current cwd plus recents when no cwd is typed yet, or
- * the real directory layer to drill into once a prefix is present.
+ * the real directory layer to drill into once a prefix is present. The recents
+ * are a live source, so a picker paints the last list and follows the refresh;
+ * a directory listing stays a one-shot read.
  */
-async function buildCreateCwdCandidates(
+function buildCreateCwdCandidates(
   title: string,
   rawCwd: string,
   /** `<agent>:` to keep glued to every fill, so completing a path after a
    *  settled coordinate never drops the chosen agent. */
   coordinatePrefix = "",
-): Promise<Candidate[]> {
+): LiveSource<Candidate[]> {
   const titleWord = quoteShellWord(title);
   const base = state.taskCwd ?? "";
 
   if (rawCwd === "") {
-    const candidates: Candidate[] = [];
     const display = state.taskCwdDisplay ?? base;
-    if (base) {
-      candidates.push({
-        spec: {
-          primary: display,
-          current: true,
-          fill: `+${titleWord} ${coordinatePrefix}${display}`,
-          continueOnFill: true,
-        },
-        prefix: "*",
-        kind: "data",
-      });
-    }
-    try {
-      const recents = await listRecentPaths();
+    return deriveLive(errorsAsEmpty(recentPathsSource), (recents) => {
+      const rows: Candidate[] = [];
+      if (base) {
+        rows.push({
+          spec: {
+            primary: display,
+            key: base,
+            current: true,
+            fill: `+${titleWord} ${coordinatePrefix}${display}`,
+            continueOnFill: true,
+          },
+          prefix: "*",
+          kind: "data",
+        });
+      }
       for (const p of recents) {
         if (p.cwd.toLowerCase() === base.toLowerCase()) continue;
-        candidates.push({
+        rows.push({
           spec: {
             primary: p.cwdDisplay,
+            key: p.cwd,
             fill: `+${titleWord} ${coordinatePrefix}${p.cwdDisplay}`,
             continueOnFill: true,
           },
@@ -393,12 +407,24 @@ async function buildCreateCwdCandidates(
           kind: "data",
         });
       }
-    } catch {
-      // Recent paths unavailable; the current cwd row still stands.
-    }
-    return candidates;
+      return rows;
+    });
   }
 
+  // A directory listing is one-shot: each input builds a fresh source, so a
+  // late answer cannot reach a newer prefix.
+  return onceSource(() =>
+    listCreateDirectories(titleWord, rawCwd, base, coordinatePrefix),
+  );
+}
+
+/** The directory layer for a typed cwd prefix; never cached. */
+async function listCreateDirectories(
+  titleWord: string,
+  rawCwd: string,
+  base: string,
+  coordinatePrefix: string,
+): Promise<Candidate[]> {
   let directory: string;
   let filter: string;
   try {
@@ -429,24 +455,28 @@ async function buildCreateCwdCandidates(
         (filter === "" ||
           e.name.toLowerCase().startsWith(filter.toLowerCase())),
     )
-    .map((entry) => ({
-      spec: {
-        primary: entry.name,
-        // The cwd is verbatim, so the completed path is appended raw: a
-        // space in a directory name never needs quoting after the title.
-        fill: `+${titleWord} ${coordinatePrefix}${completedPrefix}${entry.name}/`,
-        continueOnFill: true,
-      },
-      prefix: "",
-      kind: "data",
-    }));
+    .map((entry) => {
+      const rowPath = `${completedPrefix}${entry.name}/`;
+      return {
+        spec: {
+          primary: entry.name,
+          key: rowPath,
+          // The cwd is verbatim, so the completed path is appended raw: a
+          // space in a directory name never needs quoting after the title.
+          fill: `+${titleWord} ${coordinatePrefix}${rowPath}`,
+          continueOnFill: true,
+        },
+        prefix: "",
+        kind: "data",
+      };
+    });
 }
 
-async function buildCreateCandidates(parsed: {
+function buildCreateCandidates(parsed: {
   marker: string;
   target: string;
   remainder: string;
-}): Promise<Candidate[]> {
+}): Candidate[] | LiveSource<Candidate[]> {
   const title = parsed.target;
   if (title.trim() === "") return bareCreateCandidates();
 
@@ -502,20 +532,26 @@ async function buildCreateCandidates(parsed: {
   // every fill re-states `<agent>:` instead of dropping it.
   const pathInput =
     coordinate.agentId === null ? rawCwd.trim() : coordinate.cwd;
-  const cwdCandidates = await buildCreateCwdCandidates(
+  const cwdCandidates = buildCreateCwdCandidates(
     title,
     pathInput,
     coordinatePrefix,
   );
-  if (cwdCandidates.length > 0) {
-    candidates.push({ spec: { primary: "" }, prefix: "", kind: "separator" });
-    candidates.push(...cwdCandidates);
-  }
-  // The menu ends with the one-line hint: agents are typed, paths are
-  // completed, and no agent row is ever offered.
-  const hint = agentHintRow(rawCwd, configuredAgentIds(), state.taskAgentId);
-  if (hint !== null) candidates.push(hint);
-  return candidates;
+  const withCwdRows = (rows: Candidate[]): Candidate[] => {
+    const built = [...candidates];
+    if (rows.length > 0) {
+      built.push({ spec: { primary: "" }, prefix: "", kind: "separator" });
+      built.push(...rows);
+    }
+    // The menu ends with the one-line hint: agents are typed, paths are
+    // completed, and no agent row is ever offered.
+    const hint = agentHintRow(rawCwd, configuredAgentIds(), state.taskAgentId);
+    if (hint !== null) built.push(hint);
+    return built;
+  };
+  // The hint names an agent the task is not running on, so a binding change is
+  // another input to this list; the watch follows both.
+  return deriveLive(cwdCandidates, withCwdRows);
 }
 
 /** Resolve one submitted @ target using the full Task path semantics. */
@@ -551,6 +587,7 @@ function addTaskTargetEntry(args: {
         targetPath: args.targetPath,
         remainder: "",
         primary: displayPrimary,
+        key: args.node.id,
         secondary: statusLabel(args.node),
         selectedSecondary: args.scopeIds.has(args.node.id)
           ? "type message to send"
