@@ -2597,22 +2597,23 @@ export class Store {
     const targetLabel =
       this.getTask(input.directTargetTaskId)?.title ??
       input.directTargetTaskId.slice(0, 8);
-    for (const projection of this.listCollaborationProjections(input.id)) {
-      this.saveEvent(
-        projection.task_id,
-        "system_message",
-        buildCollaborationSystemMessage({
-          messageId: input.id,
-          sourceTaskId: input.sourceTaskId,
-          sourceLabel,
-          targetTaskId: input.directTargetTaskId,
-          targetLabel,
-          role: projection.role,
-          body: input.body,
-        }).data,
-        { from_ref: `msg:${input.id}` },
-      );
-    }
+    // The sender's row is written and shown now. The receiver's row is written
+    // when the delivery is actually handed to its agent, so the event log
+    // matches that turn's input order instead of an earlier turn.
+    this.saveEvent(
+      input.sourceTaskId,
+      "system_message",
+      buildCollaborationSystemMessage({
+        messageId: input.id,
+        sourceTaskId: input.sourceTaskId,
+        sourceLabel,
+        targetTaskId: input.directTargetTaskId,
+        targetLabel,
+        role: "source",
+        body: input.body,
+      }).data,
+      { from_ref: `msg:${input.id}` },
+    );
     this.db
       .prepare(
         `INSERT INTO deliveries
@@ -2702,6 +2703,18 @@ export class Store {
   getCollaborationDelivery(id: string): CollaborationDeliveryRow | undefined {
     return this.db.prepare("SELECT * FROM deliveries WHERE id = ?").get(id) as
       CollaborationDeliveryRow | undefined;
+  }
+
+  /** Delivery rows for a set of messages, keyed by message id. */
+  getCollaborationDeliveriesForMessages(
+    messageIds: readonly string[],
+  ): Map<string, CollaborationDeliveryRow> {
+    if (messageIds.length === 0) return new Map();
+    const placeholders = messageIds.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(`SELECT * FROM deliveries WHERE message_id IN (${placeholders})`)
+      .all(...messageIds) as CollaborationDeliveryRow[];
+    return new Map(rows.map((row) => [row.message_id, row]));
   }
 
   /** Read-only queued count; lets a caller skip busy-turn churn entirely. */

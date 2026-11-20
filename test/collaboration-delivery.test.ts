@@ -102,6 +102,126 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(store.getTask("target")?.workflow_status, "running");
   });
 
+  it("writes the receiver's row at drain, not at creation", async () => {
+    store.createCollaborationMessage({
+      id: "m-drain",
+      deliveryId: "d-drain",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "user",
+      body: "deliver at the boundary",
+      createdAt: 1,
+    });
+
+    // The sender's row exists immediately; the receiver's does not yet.
+    const systemRows = (taskId: string) =>
+      store
+        .getEvents(taskId)
+        .filter((event) => event.type === "system_message")
+        .map((event) => JSON.parse(event.data) as Record<string, unknown>);
+    assert.equal(
+      systemRows("source").some((row) => row.messageId === "m-drain"),
+      true,
+    );
+    assert.equal(
+      systemRows("target").some((row) => row.messageId === "m-drain"),
+      false,
+      "a message must not sit in a turn that never saw it",
+    );
+
+    let releasePrompt!: () => void;
+    const promptGate = new Promise<void>((resolve) => {
+      releasePrompt = resolve;
+    });
+    let enteredPrompt!: () => void;
+    const inPrompt = new Promise<void>((resolve) => {
+      enteredPrompt = resolve;
+    });
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt() {
+        enteredPrompt();
+        await promptGate;
+      },
+    };
+    const draining = tasks.drainCollaborationDeliveries("target", bridge);
+    assert.equal(await draining, true);
+    await inPrompt;
+    const targetRows = systemRows("target");
+    const deliveredRow = targetRows.find((row) => row.messageId === "m-drain");
+    assert.ok(deliveredRow, "the row appears when the batch is handed over");
+    assert.equal(deliveredRow.role, "target");
+
+    // The row precedes everything the turn itself will write.
+    const rowSeq = store
+      .getEvents("target")
+      .find((event) => JSON.parse(event.data).messageId === "m-drain")!.seq;
+    assert.ok(rowSeq > 0);
+    releasePrompt();
+  });
+
+  it("broadcasts delivered after the prompt and failed after a rejection", async () => {
+    const events: Array<{ messageId: string; status: string }> = [];
+    tasks.setDeliveryStatusBroadcast((event) => {
+      events.push({ messageId: event.messageId, status: event.status });
+    });
+    store.createCollaborationMessage({
+      id: "m-status",
+      deliveryId: "d-status",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "user",
+      body: "status please",
+      createdAt: 1,
+    });
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("target", {
+        ...mockBridgeStubs(),
+        async prompt() {},
+      }),
+      true,
+    );
+    await waitFor(() => events.length === 1);
+    assert.deepEqual(events[0], {
+      messageId: "m-status",
+      status: "delivered",
+    });
+
+    store.createTask(
+      "target2",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-target2",
+      store.rootTaskId,
+    );
+    tasks.liveTasks.add("target2");
+    store.createCollaborationMessage({
+      id: "m-failed",
+      deliveryId: "d-failed",
+      sourceTaskId: "source",
+      directTargetTaskId: "target2",
+      sourceActor: "user",
+      body: "this one fails",
+      createdAt: 2,
+    });
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("target2", {
+        ...mockBridgeStubs(),
+        async prompt() {
+          throw new Error("rejected");
+        },
+      }),
+      true,
+    );
+    await waitFor(() => events.length === 2);
+    assert.deepEqual(events[1], {
+      messageId: "m-failed",
+      status: "failed",
+    });
+  });
+
   it("does not churn the busy turn when nothing is queued", async () => {
     const busyPatches: Array<string | null> = [];
     const unsubscribe = tasks.state.onPatch((event) => {

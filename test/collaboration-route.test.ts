@@ -10,6 +10,7 @@ import { SseManager } from "../src/sse-manager.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
+import { buildCollaborationBroadcast } from "../src/collaboration-message.ts";
 import {
   buildTaskCreatedBroadcast,
   buildTaskCreatedSystemMessage,
@@ -47,6 +48,29 @@ function request(
   });
 }
 
+function get(
+  port: number,
+  path: string,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: "127.0.0.1", port, method: "GET", path },
+      (res) => {
+        let source = "";
+        res.on("data", (chunk: Buffer) => (source += chunk.toString()));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            body: JSON.parse(source) as Record<string, unknown>,
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 describe("S3 collaboration write routes", () => {
   let store: Store;
   let tasks: TaskManager;
@@ -69,6 +93,12 @@ describe("S3 collaboration write routes", () => {
     promptCalls.length = 0;
     store = new Store(tmpDir);
     tasks = createTaskManager(store, tmpDir, tmpDir);
+    tasks.setCollaborationBroadcast((event) => {
+      broadcasts.push(buildCollaborationBroadcast(event));
+    });
+    tasks.setDeliveryStatusBroadcast((event) => {
+      broadcasts.push(event);
+    });
     let sequence = 0;
     bridge = {
       ...mockBridgeStubs(),
@@ -394,6 +424,7 @@ describe("S3 collaboration write routes", () => {
           role: "source",
           title: "@parent sent @sibling",
           body: "请检查接口定义",
+          deliveryStatus: "queued",
         },
         {
           type: "system_message",
@@ -560,5 +591,58 @@ describe("S3 collaboration write routes", () => {
 
     assert.equal(response.status, 400);
     assert.equal(response.body.error, "Source and target task must differ");
+  });
+
+  it("attaches the sender's delivery status at egress and never writes it back", async () => {
+    store.createCollaborationMessage({
+      id: "egress-message",
+      deliveryId: "egress-delivery",
+      sourceTaskId: "parent",
+      directTargetTaskId: "sibling",
+      sourceActor: "user",
+      body: "egress",
+    });
+    const read = async () => {
+      const response = await get(port, "/api/v1/tasks/parent/events");
+      assert.equal(response.status, 200);
+      const events = response.body.events as Array<{
+        type: string;
+        data: string;
+      }>;
+      const row = events.find((event) => {
+        if (event.type !== "system_message") return false;
+        return (
+          (JSON.parse(event.data) as { messageId?: string }).messageId ===
+          "egress-message"
+        );
+      });
+      assert.ok(row);
+      return JSON.parse(row.data) as {
+        deliveryStatus?: string;
+        deliveredAt?: string;
+      };
+    };
+
+    const queued = await read();
+    assert.equal(queued.deliveryStatus, "queued");
+    assert.equal(queued.deliveredAt, undefined);
+
+    const claimed = store.claimQueuedDeliveries("sibling");
+    store.markCollaborationDeliveriesDelivered(
+      claimed.map((delivery) => delivery.id),
+      1_700_000_000_000,
+    );
+
+    const delivered = await read();
+    assert.equal(delivered.deliveryStatus, "delivered");
+    assert.equal(delivered.deliveredAt, "2023-11-14T22:13:20.000Z");
+    // Egress derives the mark; the stored event is untouched.
+    const stored = store
+      .getEvents("parent")
+      .find((event) => event.data.includes("egress-message"))!;
+    assert.equal(
+      "deliveryStatus" in (JSON.parse(stored.data) as Record<string, unknown>),
+      false,
+    );
   });
 });

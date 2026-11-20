@@ -52,6 +52,12 @@ export interface McpTaskCollaborationEvent {
   sourceLabel: string;
   targetLabel: string;
   body: string;
+  /** The task this projection renders into. */
+  taskId: string;
+  role: "source" | "target" | "supervisor";
+  deliveryStatus?: "queued" | "draining" | "delivered" | "failed";
+  deliveredAt?: string;
+  deliveryFailureReason?: string;
 }
 
 export interface McpTaskCreatedEvent {
@@ -508,6 +514,9 @@ export function createMcpTaskToolHost(deps: {
         sourceLabel,
         targetLabel,
         body: created.message.body,
+        taskId: sourceTaskId,
+        role: "source",
+        deliveryStatus: "queued",
       });
       void tasks.drainCollaborationDeliveries(target.id);
     },
@@ -530,6 +539,9 @@ export function createMcpTaskToolHost(deps: {
           sourceLabel: source.title ?? source.id.slice(0, 8),
           targetLabel: target.title ?? target.id.slice(0, 8),
           body: `Task status: ${status}\n${body}`,
+          taskId: sourceTaskId,
+          role: "source",
+          deliveryStatus: "queued",
         });
         void tasks.drainCollaborationDeliveries(accountTargetTaskId);
       }

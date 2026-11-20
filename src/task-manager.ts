@@ -17,7 +17,10 @@ import {
   type WorkflowStatus,
 } from "./store.ts";
 import { shouldArm } from "./task-collaboration.ts";
-import type { CollaborationBroadcastRequest } from "./collaboration-message.ts";
+import {
+  buildCollaborationSystemMessage,
+  type CollaborationBroadcastRequest,
+} from "./collaboration-message.ts";
 import { formatFieldBlock } from "./shared/field-block.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
@@ -703,6 +706,10 @@ export class TaskManager implements ObligationHost {
   /** SSE broadcast hook for runtime collaboration messages. */
   private collaborationBroadcast:
     ((event: CollaborationBroadcastRequest) => void) | null = null;
+  /** Live-only delivery status refresh for a sender's message mark. */
+  private deliveryStatusBroadcast:
+    | ((event: Extract<AgentEvent, { type: "collaboration_delivery" }>) => void)
+    | null = null;
   /**
    * SSE broadcast hook for a task that just became live. Every creation that
    * goes through `createTask` (HTTP, quick prompt, message consume, agent
@@ -3816,6 +3823,17 @@ export class TaskManager implements ObligationHost {
     this.collaborationBroadcast = broadcast;
   }
 
+  /** Install the live delivery-status hook (sender mark refresh only). */
+  setDeliveryStatusBroadcast(
+    broadcast:
+      | ((
+          event: Extract<AgentEvent, { type: "collaboration_delivery" }>,
+        ) => void)
+      | null,
+  ): void {
+    this.deliveryStatusBroadcast = broadcast;
+  }
+
   /**
    * Install the SSE broadcast hook for a newly created task. Every creation
    * entry point (HTTP create, quick prompt, agent `task_create`) announces
@@ -4092,16 +4110,18 @@ export class TaskManager implements ObligationHost {
       }
       const deliveries = this.store.claimQueuedDeliveries(taskId);
       if (deliveries.length === 0) return false;
-      const allDeliveryIds = deliveries.map((delivery) => delivery.id);
-      const sourceActors: string[] = [];
-      const entries = deliveries.map((delivery) => {
+      const claimed = deliveries.map((delivery) => {
         const message = this.store.getCollaborationMessage(delivery.message_id);
         if (!message) {
           throw new Error(
             `Collaboration message missing: ${delivery.message_id}`,
           );
         }
-        sourceActors.push(message.source_actor);
+        return { delivery, message };
+      });
+      const allDeliveryIds = deliveries.map((delivery) => delivery.id);
+      const sourceActors = claimed.map(({ message }) => message.source_actor);
+      const entries = claimed.map(({ message }) => {
         const source = this.store.getTaskIncludingDeleted(
           message.source_task_id,
         );
@@ -4115,6 +4135,57 @@ export class TaskManager implements ObligationHost {
         const sourceName = source?.title ?? message.source_task_id.slice(0, 8);
         return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
       });
+      // The receiver's rows appear now, at the turn boundary where the agent
+      // actually gets them. Batched deliveries land together, and a row can no
+      // longer sit in a turn that never saw it.
+      const targetLabel =
+        this.store.getTaskIncludingDeleted(taskId)?.title ?? taskId.slice(0, 8);
+      for (const { message } of claimed) {
+        const sourceLabel =
+          this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
+          message.source_task_id.slice(0, 8);
+        this.store.saveEvent(
+          taskId,
+          "system_message",
+          buildCollaborationSystemMessage({
+            messageId: message.id,
+            sourceTaskId: message.source_task_id,
+            sourceLabel,
+            targetTaskId: taskId,
+            targetLabel,
+            role: "target",
+            body: message.body,
+          }).data,
+          { from_ref: `msg:${message.id}` },
+        );
+        this.collaborationBroadcast?.({
+          messageId: message.id,
+          sourceTaskId: message.source_task_id,
+          sourceLabel,
+          targetTaskId: taskId,
+          targetLabel,
+          role: "target",
+          taskId,
+          body: message.body,
+        });
+      }
+      const notifyDelivery = (
+        status: "delivered" | "failed",
+        failureReason?: string,
+      ) => {
+        const deliveredAt =
+          status === "delivered" ? new Date().toISOString() : undefined;
+        for (const { message } of claimed) {
+          this.deliveryStatusBroadcast?.({
+            type: "collaboration_delivery",
+            taskId: message.source_task_id,
+            messageId: message.id,
+            status,
+            ...(deliveredAt === undefined ? {} : { deliveredAt }),
+            ...(failureReason === undefined ? {} : { failureReason }),
+          });
+        }
+      };
       this.persistCollaborationPromptAudit(
         taskId,
         deliveries.map((delivery) => delivery.message_id),
@@ -4153,6 +4224,7 @@ export class TaskManager implements ObligationHost {
           error,
         });
         this.store.failCollaborationDeliveries(allDeliveryIds, "prompt_failed");
+        notifyDelivery("failed", "prompt_failed");
         if (!this.isCurrentPrompt(taskId, promptId)) return;
         // Same attribution as an ACP error event: a rejected delivery prompt
         // must not leave the target marked running.
@@ -4164,6 +4236,7 @@ export class TaskManager implements ObligationHost {
         // settle rows that now belong to the replacement execution.
         if (!this.leaseCurrent(lease)) return;
         this.store.markCollaborationDeliveriesDelivered(allDeliveryIds);
+        notifyDelivery("delivered");
       }, dispatchFailed);
       return true;
     } catch (error) {

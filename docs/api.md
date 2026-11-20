@@ -870,6 +870,38 @@ GET /api/v1/tasks/:id/events?limit=200&before=50 → 200 events before seq 50
 GET /api/v1/tasks/:id/events?after=7000      → all events after seq 7000 (incremental sync, no limit)
 ```
 
+**Collaboration delivery marks.** A stored `system_message` whose `data.kind`
+is `collaboration` and `data.role` is `source` is the sender's own row. At
+egress the endpoint attaches the delivery state derived from the `deliveries`
+row for that `messageId`:
+
+| Field | Values |
+| --- | --- |
+| `deliveryStatus` | `queued`, `draining`, `delivered`, or `failed` |
+| `deliveredAt` | ISO-8601 time, only when delivered |
+| `deliveryFailureReason` | the stored failure reason, only when failed |
+
+These fields are derived at read time and are never written back to the event.
+A load therefore always reflects storage truth. The receiver's row (`role:
+"target"`) is written only when its batch is handed to the receiver's agent, so
+it carries no delivery mark.
+
+Live status changes arrive as a lightweight task-scoped SSE event, not a stored
+row:
+
+```json
+{
+  "type": "collaboration_delivery",
+  "taskId": "source-task-id",
+  "messageId": "message-id",
+  "status": "delivered",
+  "deliveredAt": "2025-01-15T10:32:00.000Z"
+}
+```
+
+A failed delivery carries `failureReason` instead of `deliveredAt`. The event is
+best effort; a reload reads the delivery row.
+
 ````
 
 The `streaming` flags indicate whether unflushed buffers were present when the request was made. If `true`, the corresponding buffer was flushed into the event list and the frontend should keep the last element open for continued live streaming (to avoid duplicate thinking/assistant blocks on reconnect).

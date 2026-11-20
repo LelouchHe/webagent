@@ -190,19 +190,12 @@ tasks.state.onPatch((event) => {
 });
 
 const broadcastCollaboration = (input: CollaborationBroadcastRequest): void => {
-  for (const projection of store.listCollaborationProjections(
-    input.messageId,
-  )) {
-    sseManager.broadcast(
-      buildCollaborationBroadcast({
-        ...input,
-        taskId: projection.task_id,
-        role: projection.role,
-      }),
-    );
-  }
+  sseManager.broadcast(buildCollaborationBroadcast(input));
 };
 tasks.setCollaborationBroadcast(broadcastCollaboration);
+tasks.setDeliveryStatusBroadcast((event) => {
+  sseManager.broadcast(event);
+});
 // A read no longer waits for its task's execution to warm up; this is how the
 // client learns the schema and commands once the restore finishes.
 tasks.setRuntimeWarmBroadcast((event) => {

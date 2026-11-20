@@ -52,6 +52,7 @@ import {
   escHtml,
   finishBash,
   appendMessageElement,
+  updateDeliveryMark,
   flushStreamingRender,
 } from "./render.ts";
 import * as api from "./api.ts";
@@ -1445,6 +1446,34 @@ function renderMessageCard(msg: AgentEvent & { type: "message" }) {
   if (content) enhanceCodeBlocks(content);
 }
 
+/** Read the egress-attached delivery state from one stored system row. */
+function deliveryStateFrom(d: Record<string, unknown>):
+  | {
+      status: "queued" | "draining" | "delivered" | "failed";
+      deliveredAt?: string;
+      failureReason?: string;
+    }
+  | undefined {
+  const status = d.deliveryStatus;
+  if (
+    status !== "queued" &&
+    status !== "draining" &&
+    status !== "delivered" &&
+    status !== "failed"
+  ) {
+    return undefined;
+  }
+  return {
+    status,
+    ...(typeof d.deliveredAt === "string"
+      ? { deliveredAt: d.deliveredAt }
+      : {}),
+    ...(typeof d.deliveryFailureReason === "string"
+      ? { failureReason: d.deliveryFailureReason }
+      : {}),
+  };
+}
+
 export function replayEvent(
   type: string,
   data: unknown,
@@ -1496,6 +1525,8 @@ export function replayEvent(
             d,
             typeof storedTaskId === "string" ? storedTaskId : null,
           ),
+          messageId: typeof d.messageId === "string" ? d.messageId : undefined,
+          delivery: deliveryStateFrom(d),
         });
       }
       break;
@@ -2747,8 +2778,26 @@ export function handleEvent(msg: AgentEvent) {
             targetTaskId: msg.targetTaskId,
             targetLabel: msg.targetLabel,
           },
+          messageId: msg.messageId,
+          delivery: msg.deliveryStatus
+            ? {
+                status: msg.deliveryStatus,
+                deliveredAt: msg.deliveredAt,
+                failureReason: msg.deliveryFailureReason,
+              }
+            : undefined,
         });
         scrollToBottom();
+      }
+      break;
+
+    case "collaboration_delivery":
+      if (msg.taskId === state.taskId) {
+        updateDeliveryMark(msg.messageId, {
+          status: msg.status,
+          deliveredAt: msg.deliveredAt,
+          failureReason: msg.failureReason,
+        });
       }
       break;
 

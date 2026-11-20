@@ -832,7 +832,7 @@ describe("MCP Task tool host", () => {
     const host = createMcpTaskToolHost({ store, tasks });
     await host.send(principal(), "alpha-child", "hello child");
     const messages = store
-      .getEvents("alpha-child")
+      .getEvents("alpha")
       .filter((event) => event.type === "system_message");
     assert.equal(messages.length, 1);
     assert.match(messages[0].data, /hello child/);

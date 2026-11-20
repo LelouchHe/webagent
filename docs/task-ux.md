@@ -103,6 +103,17 @@ titles a cancellation row is written as (`@a cancelled @b`, `Cancelled by @a`).
 A row written before the raw labels existed, or one whose reference cannot be
 placed, is left fully unmarked.
 
+A collaboration row also carries the sender's delivery mark, after the title:
+`…` while queued, `✓` when delivered, and `✗` when delivery failed. The symbol
+is the only visible text; the tooltip (`title`, with the same text in
+`aria-label`) says `Queued`, `Delivered · <time>`, or `Delivery failed: <reason>`.
+There is no tap-to-expand, because a phone has no hover and the symbol is
+enough. The mark is derived from the delivery row when the row renders or a
+read returns it, and live refreshes come from a lightweight SSE event; it is
+never written into the event. The receiver's copy of the row appears only when
+its batch is actually handed to its agent, so a batch shows up at that turn
+boundary rather than in an earlier turn.
+
 The reference is placed by task id, never by the shape of the title: titles
 repeat, and a title may contain quotes, spaces, or the words between two
 references. A mark is applied only when the rebuilt reference lands exactly

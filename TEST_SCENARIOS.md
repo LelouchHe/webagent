@@ -294,6 +294,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the persisted payload and the wire envelope carry the same title, body, and
     both raw labels, spelled out field by field
 
+- `test/collaboration-delivery.test.ts`
+  - the receiver's collaboration row is written at drain, not at creation, and precedes the turn's own events; a message never appears in a turn that did not see it
+  - a delivered batch broadcasts `collaboration_delivery` with `delivered`, and a rejected prompt broadcasts `failed`
+
+- `test/collaboration-route.test.ts`
+  - a human send over REST reaches a cross-tree target with exactly source and target projections, and a self target is refused
+  - the sender's read attaches `queued` and then `delivered` plus an ISO `deliveredAt` at egress, while the stored event never carries delivery state
+
 - `test/api-module.test.ts` (request building)
   - `createTask`/`clearTask` send a named `agentId`, omit it for `null` or an
     omitted option, and refuse an empty string locally before any request
@@ -632,9 +640,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - revisioned Agent command snapshot lifecycle and cleanup
   - authoritative snapshot waits for command discovery during warm-cache restore
   - rotation busy gate: a restoring task is agent-busy, a `/clear` or Root exit that arrives during the restore window is refused, and a store replacement restores nothing under a lease that moved; the compaction turn keeps its controlled internal rotation path
-  - rotation transport truncation: dispatch retry ids and unfinished delivery rows are finalized, the obligation record survives as a reminder, and the old dispatch body is never re-sent to the replacement execution
-  - a closing reminder with no execution to accept it is deferred: waiting again with neither attempt nor failure consumed and no reminder event recorded
-  - reminder turn ownership: a resume failure, a replaced execution and a dead agent each return the task to idle (one `activePrompts` add, one guarded release), and the controller can still submit afterwards
+  - rotation transport truncation: unfinished delivery rows fail, the open account survives, and the old dispatch body is never re-sent to the replacement execution
   - a config replay re-authorizes before every request and discards a response that outlived its execution
 
 - `test/execution-rotation.test.ts`

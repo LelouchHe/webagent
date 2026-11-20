@@ -445,6 +445,22 @@ body {
   color: var(--text);
   white-space: pre-wrap;
 }
+/* Sender-side delivery mark for a collaboration row. Scoped to the new
+   `delivery-mark` class; the shared system-message base is untouched. */
+.system-msg .delivery-mark {
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: default;
+}
+.system-msg .delivery-mark.delivered {
+  color: var(--green);
+  opacity: 0.8;
+}
+.system-msg .delivery-mark.failed {
+  color: var(--red);
+}
+
 .system-msg a {
   color: var(--accent);
   text-decoration: underline;

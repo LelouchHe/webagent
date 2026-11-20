@@ -372,6 +372,13 @@ export type AgentEvent =
       targetTaskId?: string;
       role?: "source" | "target" | "supervisor";
       /**
+       * Delivery state of a collaboration message, attached at render/egress
+       * for the sender's own projection. Never persisted in the event.
+       */
+      deliveryStatus?: "queued" | "draining" | "delivered" | "failed";
+      deliveredAt?: string;
+      deliveryFailureReason?: string;
+      /**
        * Raw (unquoted) task titles the rendered row names. They travel with the
        * event so a client can anchor a reference in `title` by task id instead
        * of guessing its span from the text; the `title` stays the only
@@ -380,6 +387,18 @@ export type AgentEvent =
       taskTitle?: string;
       sourceLabel?: string;
       targetLabel?: string;
+    }
+  | {
+      /**
+       * Lightweight live refresh of one sender-side delivery mark. Broadcast
+       * only; never persisted. A reload reads the delivery row instead.
+       */
+      type: "collaboration_delivery";
+      taskId: string;
+      messageId: string;
+      status: "queued" | "draining" | "delivered" | "failed";
+      deliveredAt?: string;
+      failureReason?: string;
     }
   | {
       type: "permission_response";

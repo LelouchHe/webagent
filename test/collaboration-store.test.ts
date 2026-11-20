@@ -182,7 +182,7 @@ describe("Store collaboration records", () => {
     store.updateTaskTitle("a2", "修复");
     store.createCollaborationMessage(messageInput());
     const system = store
-      .getEvents("a2")
+      .getEvents("a1")
       .find((row) => row.type === "system_message");
     assert.ok(system);
     const data = JSON.parse(system.data) as {

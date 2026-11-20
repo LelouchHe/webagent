@@ -11,6 +11,7 @@ import { generateShareToken } from "../tokens.ts";
 import { SanitizeError, sanitizeEventsForShare } from "./sanitize.ts";
 import { buildContentDisposition, isInlineMime } from "../attachments.ts";
 import { enrichStoredEventsForDisplay } from "../attachment-labels.ts";
+import { attachCollaborationDeliveryStatus } from "../collaboration-message.ts";
 import {
   projectMarkdownImageReferences,
   projectShareMarkdownImageReferences,
@@ -484,6 +485,20 @@ async function handlePreviewRead(
   if (deps.tasks) {
     enrichStoredEventsForDisplay(allEvents, deps.tasks.getLabelMap(taskId));
   }
+  attachCollaborationDeliveryStatus(allEvents, (messageIds) => {
+    const rows = deps.store.getCollaborationDeliveriesForMessages(messageIds);
+    return new Map(
+      [...rows].map(([messageId, delivery]) => [
+        messageId,
+        {
+          status: delivery.status,
+          deliveredAt: delivery.delivered_at,
+          failureReason: delivery.failure_reason,
+        },
+      ]),
+    );
+  });
+
   const currentLastSeq = deps.store
     .getEvents(taskId)
     .reduce((m, e) => Math.max(m, e.seq), 0);
@@ -789,6 +804,19 @@ async function handleSharedEvents(
       deps.tasks.getLabelMap(row.task_id),
     );
   }
+  attachCollaborationDeliveryStatus(allEvents, (messageIds) => {
+    const rows = deps.store.getCollaborationDeliveriesForMessages(messageIds);
+    return new Map(
+      [...rows].map(([messageId, delivery]) => [
+        messageId,
+        {
+          status: delivery.status,
+          deliveredAt: delivery.delivered_at,
+          failureReason: delivery.failure_reason,
+        },
+      ]),
+    );
+  });
 
   try {
     const { events } = sanitizeEventsForShare({
