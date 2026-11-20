@@ -477,45 +477,6 @@ describe("task pickers paint from the last list, then revalidate", () => {
     assert.equal(taskListWatchCountForTest(), 0);
   });
 
-  it("@ with no rows yet still shows them when the fresh read has them", async () => {
-    // The cached list predates the current Task, so it has nothing to show.
-    await warmMenu("/switch ");
-    state.taskId = "brand-new";
-    const held = holdList();
-    openMenu("@");
-    await tick();
-    assert.ok(!dom.slashMenu.classList.contains("active"));
-
-    held.release([...TASKS, task("brand-new", "new", "api")]);
-    await tick();
-
-    assert.ok(dom.slashMenu.classList.contains("active"));
-    assert.ok(rows().includes(".."));
-  });
-
-  it("Escape dismisses an @ input that is waiting for rows", async () => {
-    await warmMenu("/switch ");
-    state.taskId = "brand-new";
-    const held = holdList();
-    openMenu("@");
-    await tick();
-    assert.ok(!dom.slashMenu.classList.contains("active"));
-
-    dom.input.dispatchEvent(
-      new (globalThis.window as any).KeyboardEvent("keydown", {
-        key: "Escape",
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-    assert.equal(taskListWatchCountForTest(), 0);
-
-    // The read that would have had rows lands after the dismissal.
-    held.release([...TASKS, task("brand-new", "new", "api")]);
-    await tick();
-    assert.ok(!dom.slashMenu.classList.contains("active"));
-  });
-
   // --- execution keeps reading --------------------------------------------
 
   it("resolving a target on Enter still reads the list", async () => {

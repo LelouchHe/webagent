@@ -1257,6 +1257,58 @@ describe("slash menu — Tab vs Click behavior", () => {
       process.off("unhandledRejection", onUnhandled);
     }
   });
+
+  it("@ inside a non-top archived task reads the archived list", async () => {
+    const topology = await import("../public/js/task-topology.ts");
+    state.taskId = "archived-child";
+    const active = [{ id: "active-task", title: "Active", parent_id: "root" }];
+    const archived = [
+      {
+        id: "archived-top",
+        title: "Archived top",
+        cwd: "/work/a",
+        parent_id: null,
+        workflow_status: "idle",
+      },
+      {
+        id: "archived-child",
+        title: "Archived child",
+        cwd: "/work/a/child",
+        parent_id: "archived-top",
+        workflow_status: "idle",
+      },
+      {
+        id: "archived-sibling",
+        title: "Archived sibling",
+        cwd: "/work/a/sibling",
+        parent_id: "archived-top",
+        workflow_status: "idle",
+      },
+      {
+        id: "archived-grandchild",
+        title: "Archived grandchild",
+        cwd: "/work/a/child/grand",
+        parent_id: "archived-child",
+        workflow_status: "idle",
+      },
+    ];
+    globalThis.fetch = ((url: string, init?: any) => {
+      fetchCalls.push({ url, init });
+      const body = url === "/api/v1/tasks?archived=true" ? archived : active;
+      return Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve(JSON.stringify(body)),
+      });
+    }) as any;
+
+    // Load the active list first; it does not contain the viewed task.
+    await topology.loadTaskList();
+    dom.input.value = "@";
+    commands.updateSlashMenu();
+    await new Promise((r) => setTimeout(r, 10));
+
+    assert.match(dom.slashMenu.textContent, /Archived grandchild/);
+  });
 });
 
 describe("inbox consume — switches task via switchToTask", () => {

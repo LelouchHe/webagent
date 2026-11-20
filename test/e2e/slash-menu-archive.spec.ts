@@ -101,6 +101,17 @@ test("slash-menu /archive detaches a task and reopens it", async ({ page }) => {
     "Current task not found",
   );
 
+  // Navigate into the child (a non-top archived task) and verify @ still
+  // resolves from the archived list, not the active one.
+  await input.fill(`@${kid}`);
+  await input.press("Enter");
+  await expect.poll(() => currentTaskId(page)).not.toBe(archivedId);
+  await input.fill("@");
+  await expect(
+    page.locator("#slash-menu.active .slash-item").first(),
+  ).toBeVisible();
+  await input.press("Escape");
+
   // Archived tasks leave `/switch`.
   await input.fill("/switch ");
   await expect(
@@ -113,7 +124,7 @@ test("slash-menu /archive detaches a task and reopens it", async ({ page }) => {
   // Back to Root, where archiving is refused.
   await input.fill("/switch root");
   await input.press("Enter");
-  await expect.poll(() => currentTaskId(page)).not.toBe(archivedId);
+  await expect(page.locator("#task-info")).toContainText("root");
   await input.fill("/archive");
   await input.press("Enter");
   await expect(page.locator("#messages")).toContainText(
