@@ -549,7 +549,8 @@ export const ROOT: CmdNode = {
       name: "/clear",
       desc: "Clear context",
       help: "Clear context; history stays.",
-      fetch: () => recentPathsSource,
+      // The hint row reads the current binding, so the watch listens for it.
+      fetch: () => alsoOn(recentPathsSource, onTaskAgentChanged),
       field: (rawRemainder) => pathFieldView(rawRemainder, clearToPath),
       toSpec: (item: unknown) => {
         const p = item as PathItem;
@@ -735,23 +736,26 @@ export const ROOT: CmdNode = {
       desc: "Create a child task",
       field: (rawRemainder) => pathFieldView(rawRemainder, createAtPath),
       fetch: () =>
-        deriveLive(errorsAsEmpty(recentPathsSource), (recents) => {
-          const base = state.taskCwd ?? "";
-          const items: PathItem[] = [];
-          if (base) {
-            items.push({
-              cwd: base,
-              cwdDisplay: state.taskCwdDisplay ?? base,
-              time: "",
-            });
-          }
-          for (const p of recents) {
-            if (base !== "" && p.cwd.toLowerCase() === base.toLowerCase())
-              continue;
-            items.push(p);
-          }
-          return items;
-        }),
+        alsoOn(
+          deriveLive(errorsAsEmpty(recentPathsSource), (recents) => {
+            const base = state.taskCwd ?? "";
+            const items: PathItem[] = [];
+            if (base) {
+              items.push({
+                cwd: base,
+                cwdDisplay: state.taskCwdDisplay ?? base,
+                time: "",
+              });
+            }
+            for (const p of recents) {
+              if (base !== "" && p.cwd.toLowerCase() === base.toLowerCase())
+                continue;
+              items.push(p);
+            }
+            return items;
+          }),
+          onTaskAgentChanged,
+        ),
       toSpec: (item: unknown) => {
         const p = item as PathItem;
         const currentCwd = state.taskCwd;

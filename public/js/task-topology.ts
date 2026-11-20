@@ -129,6 +129,9 @@ export function beginTaskTopologyGeneration(): void {
   // exist"; a new connection re-learns it and may have missed events.
   resetTaskRefMarks();
   notifyChange();
+  // Picker rows read whether the list has arrived (agent labels are claimed
+  // only against a baseline), so the open picker repaints too.
+  notifyListWatchers();
 }
 
 /**

@@ -2,6 +2,7 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 import {
+  beginTaskTopologyGeneration,
   loadTaskList,
   taskListWatchCountForTest,
 } from "../public/js/task-topology.ts";
@@ -108,6 +109,12 @@ describe("task pickers paint from the last list, then revalidate", () => {
     globalThis.fetch = ((url: string) => {
       fetchCalls.push(url);
       if (url === "/api/v1/tasks") return listHandler();
+      if (url.startsWith("/api/v1/recent-paths"))
+        return Promise.resolve(
+          okJson([
+            { cwd: "/work/one", last_used_at: "2026-01-01T00:00:00.000Z" },
+          ]),
+        );
       return Promise.resolve(okJson({}));
     }) as any;
     state.clientId = "cl-cache";
@@ -439,6 +446,60 @@ describe("task pickers paint from the last list, then revalidate", () => {
 
     assert.match(dom.slashMenu.textContent ?? "", /type "pi:"/);
     assert.equal(selectedPrimary(), selected);
+  });
+
+  for (const command of ["/new ", "/clear "]) {
+    it(`${command.trim()} repaints the agent hint on a binding change`, async () => {
+      installAgentDirectory([{ id: "pi" }, { id: "copilot" }], "pi");
+      state.taskAgentId = "pi";
+      state.taskCwd = "/work/current";
+      state.taskCwdDisplay = "~/current";
+      openMenu(command);
+      await tick();
+      assert.match(dom.slashMenu.textContent ?? "", /type "copilot:"/);
+
+      installTaskAgentId("api", "copilot");
+      await tick();
+
+      assert.match(dom.slashMenu.textContent ?? "", /type "pi:"/);
+    });
+  }
+
+  it("/switch drops agent labels when a new connection invalidates the list", async () => {
+    state.taskId = "current";
+    state.taskAgentId = "pi";
+    listHandler = () =>
+      Promise.resolve(
+        okJson([
+          {
+            id: "current",
+            cwd: "/a",
+            title: "Current",
+            parent_id: null,
+            agentId: "pi",
+            workflow_status: "idle",
+            last_active_at: "2026-01-01T00:01:00.000Z",
+          },
+          {
+            id: "other",
+            cwd: "/b",
+            title: "Other",
+            parent_id: null,
+            agentId: "copilot",
+            workflow_status: "idle",
+            last_active_at: "2026-01-01T00:00:00.000Z",
+          },
+        ]),
+      );
+    openMenu("/switch ");
+    await tick();
+    commands.handleSlashMenuKey({ key: "ArrowDown", preventDefault() {} });
+    assert.equal(selectedPath(), "copilot:/b");
+
+    beginTaskTopologyGeneration();
+
+    assert.equal(selectedPrimary(), "Other");
+    assert.equal(selectedPath(), "/b");
   });
 
   it("a binding change after closing leaves no listener and no menu", async () => {
