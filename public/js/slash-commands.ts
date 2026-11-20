@@ -37,7 +37,11 @@ import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
 import type { TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import { entryAgentLabel, taskListSource } from "./task-topology.ts";
+import {
+  entryAgentLabel,
+  noteOpeningArchivedTask,
+  taskListSource,
+} from "./task-topology.ts";
 import { taskDisplayPath } from "./path-display.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
 import { resetLocalFrontendState } from "./local-reset.ts";
@@ -567,6 +571,7 @@ export const ROOT: CmdNode = {
           current: s.id === state.taskId,
           onSelect: async () => {
             try {
+              noteOpeningArchivedTask(s.id);
               await switchToTask(s.id);
             } catch {
               addSystem("err: Failed to open archived task");

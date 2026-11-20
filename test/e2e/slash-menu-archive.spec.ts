@@ -86,6 +86,13 @@ test("slash-menu /archive detaches a task and reopens it", async ({ page }) => {
     `Created task @${kidAfterArchive}`,
   );
 
+  // The @ menu reads the archived tree one-shot and lists its children.
+  await input.fill("@");
+  await expect(
+    page.locator("#slash-menu.active .slash-item", { hasText: kid }).first(),
+  ).toBeVisible();
+  await input.press("Escape");
+
   // Messaging a child from inside the archived tree still resolves.
   await input.fill(`@${kid} inside archived tree`);
   await input.press("Enter");

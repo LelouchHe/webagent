@@ -24,8 +24,9 @@ import {
 import { configuredAgentIds } from "./agent-directory.ts";
 import { agentHintRow } from "./agent-hint.ts";
 import {
-  currentTreeTaskListSource,
+  isViewedTaskArchived,
   loadCurrentTreeTaskList,
+  taskListSource,
 } from "./task-topology.ts";
 import {
   deriveLive,
@@ -358,8 +359,17 @@ export function buildTaskCommandCandidates(
     return [];
   }
 
-  // `@` rows are a view of the shared task list: they follow it as it changes.
-  return deriveLive(currentTreeTaskListSource, (tasks) =>
+  // The active list keeps its shared live source. Inside an archived tree the
+  // archived list is a plain one-shot read, so the menu accepts its loading
+  // window instead of keeping a second live collection.
+  if (isViewedTaskArchived()) {
+    return onceSource(() =>
+      api
+        .listTasks(true)
+        .then((tasks) => buildMessageCandidates(parsed, tasks)),
+    );
+  }
+  return deriveLive(taskListSource, (tasks) =>
     buildMessageCandidates(parsed, tasks),
   );
 }

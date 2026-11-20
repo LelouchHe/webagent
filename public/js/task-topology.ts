@@ -59,6 +59,8 @@ export interface ParentHint {
 let generation = 0;
 let listLoaded = false;
 let viewedTaskId: string | null = null;
+let viewedTaskArchived = false;
+let pendingArchivedOpen: string | null = null;
 let parentRef: ParentRef | null = null;
 let pending: { generation: number; promise: Promise<TaskSummary[]> } | null =
   null;
@@ -102,20 +104,6 @@ function notifyListWatchers(): void {
   for (const onChange of [...listWatchers]) onChange();
 }
 
-/** Display cache for archived trees, separate from the active list. */
-let archivedDisplayList: TaskSummary[] | null = null;
-let archivedDisplaySeq = 0;
-let archivedDisplayError: string | null = null;
-const archivedListWatchers = new Set<() => void>();
-let archivedPending: {
-  generation: number;
-  promise: Promise<TaskSummary[]>;
-} | null = null;
-
-function notifyArchivedListWatchers(): void {
-  for (const onChange of [...archivedListWatchers]) onChange();
-}
-
 const changeListeners: (() => void)[] = [];
 
 /** Repaint hooks (the status bar, an open menu) run after any change. */
@@ -137,9 +125,10 @@ export function beginTaskTopologyGeneration(): void {
   listLoaded = false;
   listRequiredSeq = 0;
   viewedTaskId = null;
+  viewedTaskArchived = false;
+  pendingArchivedOpen = null;
   parentRef = null;
   pending = null;
-  archivedPending = null;
   // The shared list is also the base for "which referenced tasks still
   // exist"; a new connection re-learns it and may have missed events.
   resetTaskRefMarks();
@@ -161,6 +150,8 @@ export function setCurrentTask(taskId: string | null, hint?: ParentHint): void {
     return;
   }
   viewedTaskId = taskId;
+  viewedTaskArchived = taskId !== null && pendingArchivedOpen === taskId;
+  if (pendingArchivedOpen !== null) pendingArchivedOpen = null;
   if (taskId === null) {
     parentRef = null;
     notifyChange();
@@ -184,7 +175,10 @@ export function setCurrentTask(taskId: string | null, hint?: ParentHint): void {
  * what lets an open menu refetch instead of serving pre-archive rows.
  */
 export function noteTaskArchived(taskId: string): void {
-  if (viewedTaskId === taskId) parentRef = { taskId, status: "none" };
+  if (viewedTaskId === taskId) {
+    viewedTaskArchived = true;
+    parentRef = { taskId, status: "none" };
+  }
   // Menus repaint from their cached rows; a menu opened after this fact reads
   // the list again. No epoch fence is kept for requests already in flight.
   notifyChange();
@@ -193,6 +187,7 @@ export function noteTaskArchived(taskId: string): void {
 /** A restored task re-enters the active tree; re-resolve its parent link. */
 export function noteTaskUnarchived(taskId: string): void {
   if (viewedTaskId !== taskId) return;
+  viewedTaskArchived = false;
   parentRef = { taskId, status: "unknown" };
   notifyChange();
   void resolveParentFromTaskDetail(generation, taskId);
@@ -390,58 +385,40 @@ async function resolveParentFromDetail(
  * read from a dead stream out, and the sequence guard keeps a read issued
  * before the stream registered from overwriting the baseline taken after it.
  */
-function startTaskListRequest(archived: boolean): {
+function startTaskListRequest(): {
   generation: number;
   promise: Promise<TaskSummary[]>;
 } {
   const requestGeneration = generation;
   const seq = ++listRequestSeq;
-  const promise = (archived ? api.listTasks(true) : api.listTasks()).then(
-    (tasks) => {
-      if (archived) {
-        if (seq > archivedDisplaySeq) {
-          archivedDisplaySeq = seq;
-          archivedDisplayList = tasks;
-          archivedDisplayError = null;
-          notifyArchivedListWatchers();
-        }
-        return tasks;
-      }
-      // The shown list is under its own guard: it is fed by every read
-      // (including one whose generation has already been replaced), and only a
-      // read issued later may replace it.
-      const shown = seq > displaySeq;
-      if (shown) {
-        displaySeq = seq;
-        displayList = tasks;
-        displayError = null;
-      }
-      if (
-        requestGeneration === generation &&
-        seq > listAppliedSeq &&
-        seq >= listRequiredSeq
-      ) {
-        listAppliedSeq = seq;
-        listLoaded = true;
-        applyTaskListSnapshot(tasks);
-        notifyChange();
-      }
-      // Display watchers last, so a repaint can never stand between a read and
-      // its baseline.
-      if (shown) notifyListWatchers();
-      return tasks;
-    },
-  );
+  const promise = api.listTasks().then((tasks) => {
+    // The shown list is under its own guard: it is fed by every read
+    // (including one whose generation has already been replaced), and only a
+    // read issued later may replace it.
+    const shown = seq > displaySeq;
+    if (shown) {
+      displaySeq = seq;
+      displayList = tasks;
+      displayError = null;
+    }
+    if (
+      requestGeneration === generation &&
+      seq > listAppliedSeq &&
+      seq >= listRequiredSeq
+    ) {
+      listAppliedSeq = seq;
+      listLoaded = true;
+      applyTaskListSnapshot(tasks);
+      notifyChange();
+    }
+    // Display watchers last, so a repaint can never stand between a read and
+    // its baseline.
+    if (shown) notifyListWatchers();
+    return tasks;
+  });
   // A failure only matters to watchers when there is nothing to show; a list
   // that is already there stays up. Callers still see the rejection.
   promise.catch((err: unknown) => {
-    if (archived) {
-      if (archivedDisplayList !== null) return;
-      archivedDisplayError =
-        err instanceof Error && err.message ? err.message : "error";
-      notifyArchivedListWatchers();
-      return;
-    }
     if (displayList !== null) return;
     displayError = err instanceof Error && err.message ? err.message : "error";
     notifyListWatchers();
@@ -473,59 +450,19 @@ export const taskListSource: LiveSource<TaskSummary[]> = {
   },
 };
 
-/** Archived-tree list, used by `/archive` and by `@` inside an archived task. */
-export const archivedTaskListSource: LiveSource<TaskSummary[]> = {
-  read(): LiveState<TaskSummary[]> {
-    if (archivedDisplayList !== null) return archivedDisplayList;
-    return archivedDisplayError !== null
-      ? { error: archivedDisplayError }
-      : "loading";
-  },
-  watch(onChange) {
-    archivedListWatchers.add(onChange);
-    loadArchivedTaskList().catch(() => undefined);
-    return () => {
-      archivedListWatchers.delete(onChange);
-    };
-  },
-};
-
-/** True once the active list has loaded and does not contain the viewed task. */
-function viewedTaskIsArchived(): boolean {
-  return (
-    viewedTaskId !== null &&
-    displayList !== null &&
-    !displayList.some((task) => task.id === viewedTaskId)
-  );
+/**
+ * Mark the task the next activation enters as an archived tree top. Used by
+ * `/archive` selection; an archive event while the task is current sets the
+ * same fact directly.
+ */
+export function noteOpeningArchivedTask(taskId: string): void {
+  pendingArchivedOpen = taskId;
 }
 
-/**
- * The list that contains the current task: active normally, archived when the
- * viewed task is not in the active list.
- */
-export const currentTreeTaskListSource: LiveSource<TaskSummary[]> = {
-  read(): LiveState<TaskSummary[]> {
-    return viewedTaskIsArchived()
-      ? archivedTaskListSource.read()
-      : taskListSource.read();
-  },
-  watch(onChange) {
-    if (viewedTaskIsArchived()) {
-      return archivedTaskListSource.watch(onChange);
-    }
-    let stopArchived: (() => void) | null = null;
-    const stopActive = taskListSource.watch(() => {
-      if (stopArchived === null && viewedTaskIsArchived()) {
-        stopArchived = archivedTaskListSource.watch(onChange);
-      }
-      onChange();
-    });
-    return () => {
-      stopActive();
-      stopArchived?.();
-    };
-  },
-};
+/** Whether the viewed task is known to be an archived tree top. */
+export function isViewedTaskArchived(): boolean {
+  return viewedTaskArchived;
+}
 
 /**
  * Fetch the task list and apply it to this generation. Concurrent callers in
@@ -537,25 +474,12 @@ export async function loadTaskList(): Promise<TaskSummary[]> {
   if (pending?.generation === generation) {
     return pending.promise;
   }
-  const request = startTaskListRequest(false);
+  const request = startTaskListRequest();
   pending = request;
   try {
     return await request.promise;
   } finally {
     if (pending === request) pending = null;
-  }
-}
-
-export async function loadArchivedTaskList(): Promise<TaskSummary[]> {
-  if (archivedPending?.generation === generation) {
-    return archivedPending.promise;
-  }
-  const request = startTaskListRequest(true);
-  archivedPending = request;
-  try {
-    return await request.promise;
-  } finally {
-    if (archivedPending === request) archivedPending = null;
   }
 }
 
@@ -568,7 +492,7 @@ export async function loadCurrentTreeTaskList(): Promise<TaskSummary[]> {
   ) {
     return active;
   }
-  return loadArchivedTaskList();
+  return api.listTasks(true);
 }
 
 /**
@@ -584,7 +508,7 @@ export async function loadCurrentTreeTaskList(): Promise<TaskSummary[]> {
  * guards above.
  */
 async function readBaseline(): Promise<TaskSummary[]> {
-  const request = startTaskListRequest(false);
+  const request = startTaskListRequest();
   pending = request;
   try {
     return await request.promise;
@@ -631,12 +555,10 @@ export function resetTaskTopologyForTest(): void {
   generation = 0;
   listLoaded = false;
   viewedTaskId = null;
+  viewedTaskArchived = false;
+  pendingArchivedOpen = null;
   parentRef = null;
   pending = null;
-  archivedPending = null;
-  archivedDisplayList = null;
-  archivedDisplaySeq = 0;
-  archivedDisplayError = null;
   listRequestSeq = 0;
   listAppliedSeq = 0;
   listRequiredSeq = 0;

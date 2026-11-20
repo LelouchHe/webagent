@@ -15,6 +15,7 @@ import {
 } from "./state.ts";
 import { addSystem, formatLocalTime } from "./render.ts";
 import { switchToTask } from "./task-navigation.ts";
+import { noteOpeningArchivedTask } from "./task-topology.ts";
 import * as api from "./api.ts";
 import { log, type LogLevel } from "./log.ts";
 import { TOKEN_STORAGE_KEY } from "./login-core.ts";
@@ -265,6 +266,7 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
           addSystem(`err: No archived task matching "${arg}"`);
           return true;
         }
+        noteOpeningArchivedTask(match.id);
         await switchToTask(match.id);
       } catch {
         addSystem("err: Failed to open archived task");
