@@ -186,6 +186,65 @@ describe("TaskManager", () => {
       assert.equal(result.collaborationMessageId, null);
     });
 
+    it("does not revive a pre-archive failed dispatch after unarchive", () => {
+      store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
+      store.createTask(
+        "child",
+        tmpDir,
+        "auto",
+        "test-agent",
+        "c-session",
+        "parent",
+      );
+      store.createCollaborationMessage({
+        id: "dispatch-a",
+        deliveryId: "delivery-a",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch A.",
+      });
+      const claimed = store.claimQueuedDeliveries("child");
+      store.failCollaborationDeliveries(
+        claimed.map((delivery) => delivery.id),
+        "prompt_failed",
+      );
+      const retries = (
+        sm as unknown as { pendingDispatchRetries: Map<string, string[]> }
+      ).pendingDispatchRetries;
+      retries.set("child", ["delivery-a"]);
+
+      sm.archiveTask("child");
+      assert.equal(
+        retries.has("child"),
+        false,
+        "archive removes the cut edge's retry entry",
+      );
+      assert.equal(store.unarchiveTask("child").status, "unarchived");
+
+      // A new dispatch on the restored edge must not consume A's stale retry.
+      store.createCollaborationMessage({
+        id: "dispatch-b",
+        deliveryId: "delivery-b",
+        sourceTaskId: "parent",
+        directTargetTaskId: "child",
+        sourceActor: "agent",
+        body: "Dispatch B.",
+      });
+      const obligation = sm.getObligation("parent", "child");
+      assert.ok(obligation);
+      sm.retryObligationDispatch(obligation);
+
+      assert.equal(
+        store.getCollaborationDelivery("delivery-a")?.status,
+        "failed",
+      );
+      assert.equal(
+        store.getCollaborationDelivery("delivery-a")?.failure_reason,
+        "prompt_failed",
+      );
+    });
+
     it("leaves a draining delivery to finish after archive", async () => {
       store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
       store.createTask(

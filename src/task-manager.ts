@@ -3903,6 +3903,9 @@ export class TaskManager implements ObligationHost {
     if (result?.status !== "archived") return result;
     if (result.parentId !== null) {
       this.obligations.dropEdge(result.parentId, taskId);
+      // A failed dispatch from this edge must not survive to be requeued by a
+      // later retry on the same target after unarchive.
+      this.pendingDispatchRetries.delete(taskId);
     }
     return result;
   }
