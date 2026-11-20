@@ -108,6 +108,21 @@ export interface ArchiveTaskResult {
   message: ArchiveSystemMessage | null;
 }
 
+export type UnarchiveConflictReason =
+  "no_original_parent" | "original_parent_unavailable" | "title_conflict";
+
+export type UnarchiveTaskResult =
+  | {
+      status: "unarchived";
+      taskId: string;
+      parentId: string;
+      parentPath: string;
+      message: { kind: "task_unarchive"; title: string; body: string };
+    }
+  | { status: "not_found" }
+  | { status: "not_archived" }
+  | { status: "conflict"; reason: UnarchiveConflictReason };
+
 export interface TaskRow {
   id: string;
   cwd: string;
@@ -1638,6 +1653,116 @@ export class Store {
         status: "archived" as const,
         taskId: id,
         parentId,
+        parentPath,
+        message,
+      };
+    })();
+  }
+
+  /**
+   * Re-attach an archived tree top under the parent recorded by its latest
+   * `task_archive` message. Only a live parentless non-Root task qualifies.
+   * The update and the transcript fact are one transaction; nothing about the
+   * cut obligation/delivery edges is restored.
+   */
+  unarchiveTask(id: string): UnarchiveTaskResult {
+    return this.db.transaction(() => {
+      const task = this.getTask(id);
+      if (!task) return { status: "not_found" as const };
+      if (this.isRootTaskId(id) || task.parent_id !== null) {
+        return { status: "not_archived" as const };
+      }
+
+      const archivedRows = this.db
+        .prepare(
+          `SELECT data FROM events
+           WHERE task_id = ? AND type = 'system_message'
+           ORDER BY seq DESC`,
+        )
+        .all(id) as Array<{ data: string }>;
+      let originalParentId: string | null = null;
+      for (const row of archivedRows) {
+        try {
+          const data = JSON.parse(row.data) as {
+            kind?: unknown;
+            originalParentId?: unknown;
+          };
+          if (
+            data.kind === "task_archive" &&
+            typeof data.originalParentId === "string"
+          ) {
+            originalParentId = data.originalParentId;
+            break;
+          }
+        } catch {
+          // Ignore malformed rows; the latest valid archive fact still wins.
+        }
+      }
+      if (originalParentId === null) {
+        return {
+          status: "conflict" as const,
+          reason: "no_original_parent" as const,
+        };
+      }
+
+      const parent = this.getTaskIncludingDeleted(originalParentId);
+      const parentLineage = this.getTaskLineage(originalParentId);
+      const subtree = new Set([id, ...this.getDescendantTaskIds(id)]);
+      if (
+        parent?.deleted_at !== null ||
+        parentLineage?.[0] !== this.rootTaskId ||
+        subtree.has(originalParentId)
+      ) {
+        return {
+          status: "conflict" as const,
+          reason: "original_parent_unavailable" as const,
+        };
+      }
+
+      if (
+        task.title !== null &&
+        this.db
+          .prepare(
+            `SELECT 1 AS present FROM tasks
+             WHERE parent_id = ? AND title = ? AND deleted_at IS NULL AND id != ?
+             LIMIT 1`,
+          )
+          .get(originalParentId, task.title, id) !== undefined
+      ) {
+        return {
+          status: "conflict" as const,
+          reason: "title_conflict" as const,
+        };
+      }
+
+      const parentPath = this.getTaskPath(originalParentId) ?? originalParentId;
+      this.db
+        .prepare("UPDATE tasks SET parent_id = ? WHERE id = ?")
+        .run(originalParentId, id);
+      const message = {
+        kind: "task_unarchive" as const,
+        title: "Task unarchived",
+        body: formatFieldBlock([
+          {
+            label: "parent",
+            value: `${parentPath} (${originalParentId})`,
+          },
+        ]),
+      };
+      this.saveEvent(
+        id,
+        "system_message",
+        {
+          ...message,
+          parentId: originalParentId,
+          parentPath,
+        },
+        { from_ref: "system" },
+      );
+      return {
+        status: "unarchived" as const,
+        taskId: id,
+        parentId: originalParentId,
         parentPath,
         message,
       };

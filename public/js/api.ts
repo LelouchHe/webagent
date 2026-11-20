@@ -254,6 +254,17 @@ export function archiveTask(id: string): Promise<ArchiveTaskResult> {
   return post(`/api/v1/tasks/${encodeURIComponent(id)}/archive`, {});
 }
 
+export interface UnarchiveTaskResult {
+  status: "unarchived";
+  taskId: string;
+  parentId: string;
+  parentPath: string;
+}
+
+export function unarchiveTask(id: string): Promise<UnarchiveTaskResult> {
+  return post(`/api/v1/tasks/${encodeURIComponent(id)}/unarchive`, {});
+}
+
 /** Only the tops of archived trees: a live parentless non-Root task is what
  *  the server calls an archived tree. */
 export async function listArchivedTaskTops(): Promise<TaskSummary[]> {

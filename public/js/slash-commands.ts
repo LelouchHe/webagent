@@ -46,6 +46,7 @@ import {
   compactCurrentTask,
   exitCurrentTask,
   replaceCurrentTask,
+  unarchiveArchivedTask,
 } from "./task-actions.ts";
 import {
   createPreview,
@@ -573,6 +574,39 @@ export const ROOT: CmdNode = {
           },
         };
       },
+      children: [
+        {
+          name: "restore",
+          desc: "Restore archived task",
+          fetch: () => api.listArchivedTaskTops(),
+          matches: (item: unknown, q: string) => {
+            const s = item as TaskSummary;
+            const title = (s.title ?? "").toLowerCase();
+            return title.includes(q) || s.id.startsWith(q);
+          },
+          toSpec: (item: unknown) => {
+            const s = item as TaskSummary;
+            const label = s.title ?? s.id;
+            const time = formatLocalTime(s.last_active_at);
+            const agentLabel = entryAgentLabel(
+              s.agentId ?? null,
+              state.taskId,
+              state.taskAgentId,
+            );
+            const displayPath = taskDisplayPath(s);
+            return {
+              primary: label,
+              key: s.id,
+              secondary: time,
+              path:
+                agentLabel === null
+                  ? displayPath
+                  : `${agentLabel}:${displayPath}`,
+              onSelect: () => void unarchiveArchivedTask(s.id),
+            };
+          },
+        },
+      ],
     },
     {
       name: "/cancel",

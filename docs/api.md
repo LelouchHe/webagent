@@ -484,11 +484,11 @@ not start one agent process per task.
 #### `POST /api/v1/tasks/:id/archive`
 
 Detach a task — and therefore its whole subtree — from its current parent by
-clearing `parent_id`. Archive is **one-way**: nothing is stored, no field or
-table is added, and "archived" is derived from the structure (a live,
-parentless, non-Root task is the top of an archived tree). The detached task
-stays live and runnable; it no longer appears in the default task list or in
-`/switch`, and it never re-attaches to Root.
+clearing `parent_id`. Nothing is added to the schema: "archived" is derived
+from the structure (a live, parentless, non-Root task is the top of an archived
+tree). The detached task stays live and runnable; it no longer appears in the
+default task list or in `/switch`, and can be re-attached only through
+`POST /api/v1/tasks/:id/unarchive`.
 
 Archiving a task that is already an archived top is a no-op (`status:
 "already_archived"`, no event). Archiving a deeper task inside an archived tree
@@ -525,6 +525,40 @@ marks are one transaction.
 | `pendingAccount` | boolean   | True when the task still owed its former parent an account                  |
 
 **Errors:** `400` (Root cannot be archived), `404` (task not found)
+
+---
+
+#### `POST /api/v1/tasks/:id/unarchive`
+
+Re-attach an archived tree top under the parent recorded by its latest
+`task_archive` system message. Only a live, parentless, non-Root task is
+accepted; its whole subtree follows it. The parent may not be deleted, may not
+itself be inside an archived tree, and may not already contain a live task with
+the same title. The update and one `system_message` (`kind: "task_unarchive"`,
+naming the parent path and id) share one transaction. Nothing about the
+obligation or delivery edges cut by the archive is restored.
+
+**Response** `200`:
+
+```json
+{
+  "status": "unarchived",
+  "taskId": "abc-123",
+  "parentId": "def-456",
+  "parentPath": "@/area"
+}
+```
+
+**Errors:**
+- `400` — Root, or a task that is not an archived tree top
+- `404` — task not found
+- `409` — conflict; the body carries `reason`:
+  - `no_original_parent` — no archive record (for example an orphan detached by
+    a delete collision)
+  - `original_parent_unavailable` — the original parent is deleted or itself
+    inside an archived tree
+  - `title_conflict` — a live task with the same title already exists under the
+    original parent
 
 ---
 

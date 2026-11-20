@@ -131,4 +131,17 @@ test("slash-menu /archive detaches a task and reopens it", async ({ page }) => {
     "Echo: after archive",
   );
   await expect(page.locator("#messages")).toContainText("before archive");
+
+  // Restore the top from Root and verify it re-enters the active tree.
+  await input.fill("/switch root");
+  await input.press("Enter");
+  await expect.poll(() => currentTaskId(page)).not.toBe(archivedId);
+  await input.fill(`/archive restore ${title}`);
+  await input.press("Enter");
+  await expect(page.locator("#messages")).toContainText("restored to @/");
+  await input.fill("/switch ");
+  await expect(
+    page.locator("#slash-menu.active .slash-item", { hasText: title }).first(),
+  ).toBeVisible();
+  await input.press("Escape");
 });

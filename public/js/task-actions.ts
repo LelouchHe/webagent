@@ -17,7 +17,7 @@ import type { AgentCommandSnapshot, ConfigOption } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import * as api from "./api.ts";
 import { fallbackToNextTask } from "./events.ts";
-import { noteTaskArchived } from "./task-topology.ts";
+import { noteTaskArchived, noteTaskUnarchived } from "./task-topology.ts";
 import { taskAgentFailureLines } from "./create-command.ts";
 
 interface ClearTaskResult {
@@ -92,6 +92,26 @@ export async function archiveCurrentTask(): Promise<void> {
       addSystem("err: Task not found");
     } else {
       addSystem("err: Failed to archive task");
+    }
+  }
+}
+
+/** Re-attach an archived tree top under its recorded original parent. */
+export async function unarchiveArchivedTask(taskId: string): Promise<void> {
+  try {
+    const result = await api.unarchiveTask(taskId);
+    noteTaskUnarchived(taskId);
+    addSystem(`notify: restored to ${result.parentPath}`);
+  } catch (err) {
+    const e = err as api.ApiError;
+    if (e.status === HTTP_STATUS.CONFLICT) {
+      addSystem(`err: ${e.message}`);
+    } else if (e.status === HTTP_STATUS.BAD_REQUEST) {
+      addSystem("err: only an archived tree top can be restored");
+    } else if (e.status === HTTP_STATUS.NOT_FOUND) {
+      addSystem("err: task not found");
+    } else {
+      addSystem("err: failed to restore task");
     }
   }
 }

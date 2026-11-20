@@ -1134,6 +1134,114 @@ describe("commands", () => {
       );
     });
 
+    it("restores an archived task by unique title from /archive restore", async () => {
+      state.taskId = "root-current";
+      setFetch(async (url: string, init?: any) => {
+        if (url === "/api/v1/tasks?archived=true") {
+          const tasks = [
+            { id: "old-area", title: "Old Area", parent_id: null },
+            { id: "old-two", title: "Old Two", parent_id: null },
+          ];
+          return { ok: true, text: async () => JSON.stringify(tasks) };
+        }
+        if (
+          url === "/api/v1/tasks/old-area/unarchive" &&
+          init?.method === "POST"
+        ) {
+          return {
+            ok: true,
+            text: async () =>
+              JSON.stringify({
+                status: "unarchived",
+                taskId: "old-area",
+                parentId: "root-row",
+                parentPath: "@/",
+              }),
+          };
+        }
+        return { ok: true, text: async () => "{}" };
+      });
+
+      assert.equal(
+        await commands.handleSlashCommand("/archive restore Old Area"),
+        true,
+      );
+      assert.ok(
+        fetchCalls.some(
+          (call) =>
+            call.url === "/api/v1/tasks/old-area/unarchive" &&
+            call.init?.method === "POST",
+        ),
+        "expected the unarchive request",
+      );
+      assert.match(dom.messages.textContent ?? "", /restored to @\//);
+    });
+
+    it("requires a unique match for /archive restore", async () => {
+      state.taskId = "root-current";
+      setFetch(async (url: string) => {
+        if (url === "/api/v1/tasks?archived=true") {
+          const tasks = [
+            { id: "old-area", title: "Old Area", parent_id: null },
+            { id: "old-other", title: "Other Area", parent_id: null },
+          ];
+          return { ok: true, text: async () => JSON.stringify(tasks) };
+        }
+        return { ok: true, text: async () => "{}" };
+      });
+
+      await commands.handleSlashCommand("/archive restore area");
+      assert.match(
+        dom.messages.textContent ?? "",
+        /Multiple archived tasks match/,
+      );
+      assert.equal(
+        fetchCalls.some(
+          (call) =>
+            call.url.includes("/unarchive") && call.init?.method === "POST",
+        ),
+        false,
+      );
+    });
+
+    it("keeps a launching task that is absent from the active list", async () => {
+      state.taskId = "A";
+      state.taskCwd = "/a";
+      setFetch(async (url: string, init?: any) => {
+        if (url === "/api/v1/tasks" && !init?.method) {
+          return { ok: true, text: async () => "[]" };
+        }
+        if (url === "/api/v1/tasks/A") {
+          return { ok: true, text: async () => '{"id":"A"}' };
+        }
+        if (url.startsWith("/api/v1/files/info?")) {
+          return {
+            ok: true,
+            text: async () =>
+              '{"path":"/a/rel","kind":"dir","name":"rel","size":0,"mtime":1}',
+          };
+        }
+        if (url.startsWith("/api/v1/recent-paths")) {
+          return { ok: true, text: async () => "[]" };
+        }
+        return { ok: true, text: async () => '{"id":"new-5"}' };
+      });
+
+      const pending = commands.handleSlashCommand("/new ./rel");
+      await pending;
+
+      const createCall = fetchCalls.find(
+        (c) =>
+          c.url.split("?")[0] === "/api/v1/tasks" && c.init?.method === "POST",
+      );
+      assert.ok(createCall, "expected POST /api/v1/tasks");
+      assert.equal(JSON.parse(createCall.init.body).parentId, "A");
+      assert.doesNotMatch(
+        dom.messages.textContent ?? "",
+        /launching task no longer exists/,
+      );
+    });
+
     it("sends cancel when /cancel is used while busy", async () => {
       setFetch(() => ({
         ok: true,

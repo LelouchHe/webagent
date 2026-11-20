@@ -190,6 +190,14 @@ export function noteTaskArchived(taskId: string): void {
   notifyChange();
 }
 
+/** A restored task re-enters the active tree; re-resolve its parent link. */
+export function noteTaskUnarchived(taskId: string): void {
+  if (viewedTaskId !== taskId) return;
+  parentRef = { taskId, status: "unknown" };
+  notifyChange();
+  void resolveParentFromTaskDetail(generation, taskId);
+}
+
 function settleHint(taskId: string, hint: ParentHint): ParentRef {
   return hint.parentId === null
     ? { taskId, status: "none" }

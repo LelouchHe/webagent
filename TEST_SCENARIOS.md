@@ -867,8 +867,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
     refuses Root, and 404s an unknown task
   - queued deliveries across the cut edge fail with `archived_edge_cut`; a
     tree-internal delivery stays queued
-  - the task list filter accepts `archived=exclude|include|only`, rejects an
-    unknown value, and marks archived rows
+  - the task list filter returns the active tree by default or with
+    `archived=false`, archived trees only with `archived=true`, rejects every
+    other value, and marks archived rows
+  - `POST /api/v1/tasks/:id/unarchive` restores an archived top to its recorded
+    parent with a `task_unarchive` message and the whole subtree; Root/deeper
+    tasks are 400, unknown 404, and the three conflicts are 409
+    (`no_original_parent`, `original_parent_unavailable`, `title_conflict`)
   - a rename collision inside an archived tree returns 400, a concurrent
     out-of-scope send returns 400, a lineage invariant failure stays 500, and a
     store failure returns a diagnosable 500
@@ -1019,9 +1024,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - MCP registration and documentation expose task_read as the sole raw-history tool
 
 - `test/commands.test.ts`, `test/slash-menu.test.ts`
+  - `/archive restore <query>` restores a unique archived title and reports the
+    restored parent; multiple matches restore nothing and report the ambiguity
   - `/new`, `/switch`, `/exit`, `/cancel`, `/rename`
   - `/new` (typed and picker-selected) posts a child create whose parent and
     inheritance source are the launching task, keeping the id as its title
+  - `/new <cwd>` checks the launching task by id: a task outside the active list
+    is not mistaken for deleted, while a 404 still reports it gone
   - typed and menu-clicked `/cancel` remain authoritative escape hatches when frontend busy state is stale
   - `/model`, `/mode`, `/think` query / fuzzy match / ambiguity handling
   - help output and shortcut listing
@@ -1416,9 +1425,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - archived tasks leave `/switch`; Root refuses `/archive`; the `/archive`
     menu lists archived tops and its Enter path reopens one, which stays
     runnable
-  - `@child` still resolves inside the archived tree
+  - `@child` still resolves inside the archived tree, and `+` can create a
+    child there (existence is checked by id, not by the active list)
   - a second client **viewing Root** no longer offers the archived row when
     its `/switch` menu is opened after the archive event
+  - `/archive restore <title>` re-attaches the top under Root and it reappears
+    in `/switch`
 
 - `slash-menu-new-picker.spec.ts`
   - `/new` creates an unnamed child in the current cwd or an explicit cwd, and

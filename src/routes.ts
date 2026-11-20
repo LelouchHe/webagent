@@ -2698,9 +2698,9 @@ export function createRequestHandler(
       }
 
       // POST /api/v1/tasks/:id/archive — detach the task (and therefore its
-      // whole subtree) from the tree by clearing `parent_id`. Archive is
-      // one-way; nothing marks the row. The one record written is a system
-      // message on the detached task naming the parent it came from.
+      // whole subtree) from the tree by clearing `parent_id`. Nothing marks
+      // the row; the one record written is a system message on the detached
+      // task naming the parent it came from. `POST .../unarchive` can undo it.
       const archiveMatch = url.match(
         /^\/api\/v1\/tasks\/([^/]+)\/archive\/?(?:\?.*)?$/,
       );
@@ -2760,6 +2760,70 @@ export function createRequestHandler(
           parentId: result.parentId,
           parentPath: result.parentPath,
           pendingAccount,
+        });
+        return;
+      }
+
+      // POST /api/v1/tasks/:id/unarchive — re-attach an archived tree top
+      // under the parent recorded by its latest task_archive message.
+      const unarchiveMatch = url.match(
+        /^\/api\/v1\/tasks\/([^/]+)\/unarchive\/?(?:\?.*)?$/,
+      );
+      if (unarchiveMatch && req.method === "POST") {
+        const taskId = decodeURIComponent(unarchiveMatch[1]);
+        let result: ReturnType<typeof store.unarchiveTask>;
+        try {
+          result = store.unarchiveTask(taskId);
+        } catch (err) {
+          if (/UNIQUE constraint failed/i.test(String(err))) {
+            json(res, HTTP_STATUS.CONFLICT, {
+              error:
+                "A task with that title already exists under the original parent",
+              reason: "title_conflict",
+            });
+            return;
+          }
+          json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, {
+            error: `Unarchive failed: ${errorMessage(err)}`,
+          });
+          return;
+        }
+        if (result.status === "not_found") {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+          return;
+        }
+        if (result.status === "not_archived") {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "Only an archived tree top can be unarchived",
+          });
+          return;
+        }
+        if (result.status === "conflict") {
+          const conflictMessage = {
+            no_original_parent: "Task has no archive record",
+            original_parent_unavailable:
+              "The original parent is no longer available",
+            title_conflict:
+              "A task with that title already exists under the original parent",
+          }[result.reason];
+          json(res, HTTP_STATUS.CONFLICT, {
+            error: conflictMessage,
+            reason: result.reason,
+          });
+          return;
+        }
+        sseManager.broadcast({
+          type: "system_message",
+          taskId,
+          kind: result.message.kind,
+          title: result.message.title,
+          body: result.message.body,
+        });
+        json(res, HTTP_STATUS.OK, {
+          status: result.status,
+          taskId,
+          parentId: result.parentId,
+          parentPath: result.parentPath,
         });
         return;
       }

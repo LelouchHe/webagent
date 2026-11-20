@@ -356,6 +356,142 @@ describe("POST /api/v1/tasks/:id/archive", () => {
     assert.equal(store.getTask("area")?.parent_id, store.rootTaskId);
   });
 
+  it("unarchives an archived tree top under its recorded parent", async () => {
+    await req(port, "POST", "/api/v1/tasks/area/archive", apiToken);
+    const res = await req(
+      port,
+      "POST",
+      "/api/v1/tasks/area/unarchive",
+      apiToken,
+    );
+    assert.equal(res.status, 200, res.body);
+    assert.deepEqual(JSON.parse(res.body), {
+      status: "unarchived",
+      taskId: "area",
+      parentId: store.rootTaskId,
+      parentPath: "@/",
+    });
+    assert.equal(store.getTask("area")?.parent_id, store.rootTaskId);
+    assert.equal(store.getTask("work")?.parent_id, "area");
+    const events = store.getEvents("area");
+    const last = JSON.parse(events.at(-1)!.data) as { kind: string };
+    assert.equal(last.kind, "task_unarchive");
+    const active = await req(port, "GET", "/api/v1/tasks", apiToken);
+    assert.ok(
+      (JSON.parse(active.body) as Array<{ id: string }>).some(
+        (task) => task.id === "area",
+      ),
+    );
+  });
+
+  it("refuses to unarchive Root or a deeper archived task", async () => {
+    const rootRes = await req(
+      port,
+      "POST",
+      `/api/v1/tasks/${store.rootTaskId}/unarchive`,
+      apiToken,
+    );
+    assert.equal(rootRes.status, 400);
+
+    await req(port, "POST", "/api/v1/tasks/area/archive", apiToken);
+    const deepRes = await req(
+      port,
+      "POST",
+      "/api/v1/tasks/work/unarchive",
+      apiToken,
+    );
+    assert.equal(deepRes.status, 400);
+  });
+
+  it("returns 404 for unarchiving an unknown task", async () => {
+    const res = await req(
+      port,
+      "POST",
+      "/api/v1/tasks/missing/unarchive",
+      apiToken,
+    );
+    assert.equal(res.status, 404);
+  });
+
+  it("reports the three unarchive conflicts", async () => {
+    // No archive record: a parentless task from a delete collision.
+    store.createTask("orphan", dir, "auto", "agent-a", "orphan-session");
+    store["db"]
+      .prepare("UPDATE tasks SET parent_id = NULL WHERE id = ?")
+      .run("orphan");
+    const orphan = await req(
+      port,
+      "POST",
+      "/api/v1/tasks/orphan/unarchive",
+      apiToken,
+    );
+    assert.equal(orphan.status, 409);
+    assert.equal(
+      (JSON.parse(orphan.body) as { reason: string }).reason,
+      "no_original_parent",
+    );
+
+    // Original parent deleted.
+    store.createTask("holder", dir, "auto", "agent-a", "holder-session");
+    store.createTask("leaf", dir, "auto", "agent-a", "leaf-session", "holder");
+    await req(port, "POST", "/api/v1/tasks/leaf/archive", apiToken);
+    store["db"]
+      .prepare("UPDATE tasks SET deleted_at = ? WHERE id = ?")
+      .run(Date.now(), "holder");
+    const unavailable = await req(
+      port,
+      "POST",
+      "/api/v1/tasks/leaf/unarchive",
+      apiToken,
+    );
+    assert.equal(unavailable.status, 409);
+    assert.equal(
+      (JSON.parse(unavailable.body) as { reason: string }).reason,
+      "original_parent_unavailable",
+    );
+
+    // Original parent itself inside an archived tree.
+    store.createTask("grand", dir, "auto", "agent-a", "grand-session");
+    store.createTask("mid", dir, "auto", "agent-a", "mid-session", "grand");
+    store.createTask("leaf2", dir, "auto", "agent-a", "leaf2-session", "mid");
+    await req(port, "POST", "/api/v1/tasks/grand/archive", apiToken);
+    await req(port, "POST", "/api/v1/tasks/leaf2/archive", apiToken);
+    const archivedParent = await req(
+      port,
+      "POST",
+      "/api/v1/tasks/leaf2/unarchive",
+      apiToken,
+    );
+    assert.equal(archivedParent.status, 409);
+    assert.equal(
+      (JSON.parse(archivedParent.body) as { reason: string }).reason,
+      "original_parent_unavailable",
+    );
+
+    // Title collision under the original parent.
+    await req(port, "POST", "/api/v1/tasks/work/archive", apiToken);
+    store.createTask(
+      "work-copy",
+      dir,
+      "auto",
+      "agent-a",
+      "work-copy-session",
+      "area",
+      { title: "work" },
+    );
+    const conflict = await req(
+      port,
+      "POST",
+      "/api/v1/tasks/work/unarchive",
+      apiToken,
+    );
+    assert.equal(conflict.status, 409);
+    assert.equal(
+      (JSON.parse(conflict.body) as { reason: string }).reason,
+      "title_conflict",
+    );
+  });
+
   it("rejects an unknown archived filter", async () => {
     for (const value of ["bogus", "include", "only", "exclude"]) {
       const res = await req(

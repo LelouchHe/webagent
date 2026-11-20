@@ -778,7 +778,7 @@ Triggered by `/` prefix in input. Handled in `commands.ts`.
 | Command             | API Call                                                    | Description                          |
 | ------------------- | ----------------------------------------------------------- | ------------------------------------ |
 | `/switch [query]`   | `api.listTasks()` + `api.getTask()` + `loadHistory()` | Switch to another task            |
-| `/archive [query]`  | `/archive` with no argument calls `api.archiveTask(taskId)`; with a query it reads `?archived=true` tops and switches | Archive the current task, or open an archived task |
+| `/archive [query]`  | `/archive` with no argument calls `api.archiveTask(taskId)`; with a query it reads `?archived=true` tops and switches. `/archive restore <query>` calls `api.unarchiveTask(taskId)` | Archive the current task, open an archived task, or restore a unique archived top |
 | `/new [agent:path]` | `requestNewTask()` → `api.createTask()`                  | Create an unnamed child task         |
 | `/exit`             | `api.deleteTask()` + task navigation                 | Exit task tree; announces the request and reports a Root replacement |
 | `/rename <title>`   | `api.setTitle(taskId, title)`                            | Rename current task               |

@@ -249,6 +249,7 @@ describe("read-scope auth", () => {
     seed("t1");
     const cases: Array<[string, string]> = [
       ["POST", "/api/v1/tasks/t1/archive"],
+      ["POST", "/api/v1/tasks/t1/unarchive"],
       ["POST", "/api/v1/tasks/t1/prompt"],
       ["DELETE", "/api/v1/tasks/t1"],
       ["POST", "/api/v1/tasks"],

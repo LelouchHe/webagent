@@ -33,6 +33,7 @@ import {
   archiveCurrentTask,
   compactCurrentTask,
   exitCurrentTask,
+  unarchiveArchivedTask,
 } from "./task-actions.ts";
 import {
   createPreview,
@@ -223,6 +224,33 @@ export async function handleSlashCommand(text: string): Promise<boolean> {
     case "/archive": {
       if (!arg) {
         await archiveCurrentTask();
+        return true;
+      }
+      if (arg === "restore" || arg.startsWith("restore ")) {
+        const query = arg.slice("restore".length).trim();
+        if (!query) {
+          addSystem("Usage: /archive restore <title or id prefix>");
+          return true;
+        }
+        try {
+          const archived = await api.listArchivedTaskTops();
+          const needle = query.toLowerCase();
+          const matches = archived.filter(
+            (s) =>
+              s.id.startsWith(query) || s.title?.toLowerCase().includes(needle),
+          );
+          if (matches.length !== 1) {
+            addSystem(
+              matches.length === 0
+                ? `err: No archived task matching "${query}"`
+                : `err: Multiple archived tasks match "${query}"`,
+            );
+            return true;
+          }
+          await unarchiveArchivedTask(matches[0].id);
+        } catch {
+          addSystem("err: Failed to restore archived task");
+        }
         return true;
       }
       // With an argument this mirrors `/switch <query>`, but only over archived
