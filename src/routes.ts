@@ -2800,11 +2800,10 @@ export function createRequestHandler(
         }
         if (result.status === "conflict") {
           const conflictMessage = {
-            no_original_parent: "Task has no archive record",
             original_parent_unavailable:
-              "The original parent is no longer available",
+              "The original parent is inside an archived tree; restore that tree first",
             title_conflict:
-              "A task with that title already exists under the original parent",
+              "A task with that title already exists under the destination parent",
           }[result.reason];
           json(res, HTTP_STATUS.CONFLICT, {
             error: conflictMessage,

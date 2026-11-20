@@ -156,7 +156,7 @@ test("slash-menu /archive detaches a task and reopens it", async ({ page }) => {
   await expect.poll(() => currentTaskId(page)).not.toBe(archivedId);
   await input.fill(`/archive restore ${title}`);
   await input.press("Enter");
-  await expect(page.locator("#messages")).toContainText("restored to @/");
+  await expect(page.locator("#messages")).toContainText("restored to Root");
   await input.fill("/switch ");
   await expect(
     page.locator("#slash-menu.active .slash-item", { hasText: title }).first(),

@@ -466,7 +466,7 @@ describe("POST /api/v1/tasks/:id/archive", () => {
     assert.equal(res.status, 404);
   });
 
-  it("reports the three unarchive conflicts", async () => {
+  it("falls back to Root when the recorded parent is gone", async () => {
     // No archive record: a parentless task from a delete collision.
     store.createTask("orphan", dir, "auto", "agent-a", "orphan-session");
     store["db"]
@@ -478,11 +478,12 @@ describe("POST /api/v1/tasks/:id/archive", () => {
       "/api/v1/tasks/orphan/unarchive",
       apiToken,
     );
-    assert.equal(orphan.status, 409);
+    assert.equal(orphan.status, 200, orphan.body);
     assert.equal(
-      (JSON.parse(orphan.body) as { reason: string }).reason,
-      "no_original_parent",
+      (JSON.parse(orphan.body) as { parentId: string }).parentId,
+      store.rootTaskId,
     );
+    assert.match(store.getEvents("orphan").at(-1)!.data, /none recorded/);
 
     // Original parent deleted.
     store.createTask("holder", dir, "auto", "agent-a", "holder-session");
@@ -497,12 +498,42 @@ describe("POST /api/v1/tasks/:id/archive", () => {
       "/api/v1/tasks/leaf/unarchive",
       apiToken,
     );
-    assert.equal(unavailable.status, 409);
+    assert.equal(unavailable.status, 200, unavailable.body);
     assert.equal(
-      (JSON.parse(unavailable.body) as { reason: string }).reason,
-      "original_parent_unavailable",
+      (JSON.parse(unavailable.body) as { parentId: string }).parentId,
+      store.rootTaskId,
     );
+    assert.match(
+      store.getEvents("leaf").at(-1)!.data,
+      /holder no longer exists/,
+    );
+  });
 
+  it("restores under the new Root after a Root exit", async () => {
+    await req(port, "POST", "/api/v1/tasks/area/archive", apiToken);
+    const oldRoot = store.rootTaskId;
+    const { rootTaskId: newRoot } = store.replaceRoot(oldRoot);
+    assert.notEqual(newRoot, oldRoot);
+
+    const restored = await req(
+      port,
+      "POST",
+      "/api/v1/tasks/area/unarchive",
+      apiToken,
+    );
+    assert.equal(restored.status, 200, restored.body);
+    assert.equal(
+      (JSON.parse(restored.body) as { parentId: string }).parentId,
+      newRoot,
+    );
+    assert.equal(store.getTask("area")?.parent_id, newRoot);
+    assert.match(
+      store.getEvents("area").at(-1)!.data,
+      new RegExp(`${oldRoot} no longer exists`),
+    );
+  });
+
+  it("reports archived-parent and Root title conflicts", async () => {
     // Original parent itself inside an archived tree.
     store.createTask("grand", dir, "auto", "agent-a", "grand-session");
     store.createTask("mid", dir, "auto", "agent-a", "mid-session", "grand");
@@ -536,6 +567,31 @@ describe("POST /api/v1/tasks/:id/archive", () => {
       port,
       "POST",
       "/api/v1/tasks/work/unarchive",
+      apiToken,
+    );
+    assert.equal(conflict.status, 409);
+    assert.equal(
+      (JSON.parse(conflict.body) as { reason: string }).reason,
+      "title_conflict",
+    );
+  });
+
+  it("reports a title conflict when falling back to Root", async () => {
+    await req(port, "POST", "/api/v1/tasks/area/archive", apiToken);
+    store.replaceRoot(store.rootTaskId);
+    store.createTask(
+      "area-copy",
+      dir,
+      "auto",
+      "agent-a",
+      "area-copy-session",
+      undefined,
+      { title: "area" },
+    );
+    const conflict = await req(
+      port,
+      "POST",
+      "/api/v1/tasks/area/unarchive",
       apiToken,
     );
     assert.equal(conflict.status, 409);

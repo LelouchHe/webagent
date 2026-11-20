@@ -1174,7 +1174,7 @@ describe("commands", () => {
         ),
         "expected the unarchive request",
       );
-      assert.match(dom.messages.textContent ?? "", /restored to @\//);
+      assert.match(dom.messages.textContent ?? "", /restored to Root/);
     });
 
     it("requires a unique match for /archive restore", async () => {

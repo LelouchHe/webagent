@@ -535,11 +535,15 @@ marks are one transaction.
 
 Re-attach an archived tree top under the parent recorded by its latest
 `task_archive` system message. Only a live, parentless, non-Root task is
-accepted; its whole subtree follows it. The parent may not be deleted, may not
-itself be inside an archived tree, and may not already contain a live task with
-the same title. The update and one `system_message` (`kind: "task_unarchive"`,
-naming the parent path and id) share one transaction. Nothing about the
-obligation or delivery edges cut by the archive is restored.
+accepted; its whole subtree follows it. If the recorded parent is gone
+(deleted, not found, or the old Root after a Root exit), or no archive record
+exists, the task re-attaches under the current Root. A recorded parent that is
+itself inside an archived tree is refused (restore that tree first), as is a
+live title collision under the destination. The update and one
+`system_message` (`kind: "task_unarchive"`, naming the destination parent path
+and id, and the missing original id when it fell back to Root) share one
+transaction. Nothing about the obligation or delivery edges cut by the archive
+is restored.
 
 **Response** `200`:
 
@@ -556,12 +560,11 @@ obligation or delivery edges cut by the archive is restored.
 - `400` — Root, or a task that is not an archived tree top
 - `404` — task not found
 - `409` — conflict; the body carries `reason`:
-  - `no_original_parent` — no archive record (for example an orphan detached by
-    a delete collision)
-  - `original_parent_unavailable` — the original parent is deleted or itself
-    inside an archived tree
+  - `original_parent_unavailable` — the recorded parent is itself inside an
+    archived tree (restore that tree first); a deleted or missing parent falls
+    back to Root instead
   - `title_conflict` — a live task with the same title already exists under the
-    original parent
+    destination parent (the recorded parent, or Root on fallback)
 
 ---
 

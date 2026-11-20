@@ -101,7 +101,8 @@ export async function unarchiveArchivedTask(taskId: string): Promise<void> {
   try {
     const result = await api.unarchiveTask(taskId);
     noteTaskUnarchived(taskId);
-    addSystem(`notify: restored to ${result.parentPath}`);
+    const destination = result.parentPath === "@/" ? "Root" : result.parentPath;
+    addSystem(`notify: restored to ${destination}`);
   } catch (err) {
     const e = err as api.ApiError;
     if (e.status === HTTP_STATUS.CONFLICT) {

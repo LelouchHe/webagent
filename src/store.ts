@@ -109,7 +109,7 @@ export interface ArchiveTaskResult {
 }
 
 export type UnarchiveConflictReason =
-  "no_original_parent" | "original_parent_unavailable" | "title_conflict";
+  "original_parent_unavailable" | "title_conflict";
 
 export type UnarchiveTaskResult =
   | {
@@ -1669,6 +1669,39 @@ export class Store {
   }
 
   /**
+   * The parent an unarchive should attach to: the recorded original while it is
+   * live in the active tree, otherwise the current Root. Null means the
+   * original exists inside an archived tree (restore that tree first).
+   */
+  private resolveUnarchiveTarget(originalParentId: string | null): {
+    parentId: string;
+    fellBackToRoot: boolean;
+    originalMissing: boolean;
+  } | null {
+    const root = this.getTask(this.rootTaskId);
+    if (!root) return null;
+    if (originalParentId === null) {
+      return {
+        parentId: root.id,
+        fellBackToRoot: true,
+        originalMissing: false,
+      };
+    }
+    const parent = this.getTaskIncludingDeleted(originalParentId);
+    if (parent?.deleted_at !== null) {
+      return { parentId: root.id, fellBackToRoot: true, originalMissing: true };
+    }
+    if (this.getTaskLineage(originalParentId)?.[0] !== this.rootTaskId) {
+      return null;
+    }
+    return {
+      parentId: originalParentId,
+      fellBackToRoot: false,
+      originalMissing: false,
+    };
+  }
+
+  /**
    * Re-attach an archived tree top under the parent recorded by its latest
    * `task_archive` message. Only a live parentless non-Root task qualifies.
    * The update and the transcript fact are one transaction; nothing about the
@@ -1707,21 +1740,21 @@ export class Store {
           // Ignore malformed rows; the latest valid archive fact still wins.
         }
       }
-      if (originalParentId === null) {
+      const target = this.resolveUnarchiveTarget(originalParentId);
+      if (!target) {
         return {
           status: "conflict" as const,
-          reason: "no_original_parent" as const,
+          reason: "original_parent_unavailable" as const,
         };
       }
+      const {
+        parentId: targetParentId,
+        fellBackToRoot,
+        originalMissing,
+      } = target;
 
-      const parent = this.getTaskIncludingDeleted(originalParentId);
-      const parentLineage = this.getTaskLineage(originalParentId);
       const subtree = new Set([id, ...this.getDescendantTaskIds(id)]);
-      if (
-        parent?.deleted_at !== null ||
-        parentLineage?.[0] !== this.rootTaskId ||
-        subtree.has(originalParentId)
-      ) {
+      if (subtree.has(targetParentId)) {
         return {
           status: "conflict" as const,
           reason: "original_parent_unavailable" as const,
@@ -1736,7 +1769,7 @@ export class Store {
              WHERE parent_id = ? AND title = ? AND deleted_at IS NULL AND id != ?
              LIMIT 1`,
           )
-          .get(originalParentId, task.title, id) !== undefined
+          .get(targetParentId, task.title, id) !== undefined
       ) {
         return {
           status: "conflict" as const,
@@ -1744,34 +1777,48 @@ export class Store {
         };
       }
 
-      const parentPath = this.getTaskPath(originalParentId) ?? originalParentId;
+      const parentPath = this.getTaskPath(targetParentId) ?? targetParentId;
       this.db
         .prepare("UPDATE tasks SET parent_id = ? WHERE id = ?")
-        .run(originalParentId, id);
+        .run(targetParentId, id);
+      const bodyEntries: Array<{ label: string; value: string }> = [
+        { label: "parent", value: `${parentPath} (${targetParentId})` },
+      ];
+      if (fellBackToRoot) {
+        bodyEntries.push({
+          label: "original parent",
+          value:
+            originalParentId === null
+              ? "none recorded"
+              : `${originalParentId} no longer exists`,
+        });
+      }
       const message = {
         kind: "task_unarchive" as const,
         title: "Task unarchived",
-        body: formatFieldBlock([
-          {
-            label: "parent",
-            value: `${parentPath} (${originalParentId})`,
-          },
-        ]),
+        body: formatFieldBlock(bodyEntries),
       };
       this.saveEvent(
         id,
         "system_message",
         {
           ...message,
-          parentId: originalParentId,
+          parentId: targetParentId,
           parentPath,
+          ...(fellBackToRoot
+            ? {
+                fellBackToRoot: true,
+                originalParentId: originalParentId ?? undefined,
+                originalParentMissing: originalMissing,
+              }
+            : {}),
         },
         { from_ref: "system" },
       );
       return {
         status: "unarchived" as const,
         taskId: id,
-        parentId: originalParentId,
+        parentId: targetParentId,
         parentPath,
         message,
       };

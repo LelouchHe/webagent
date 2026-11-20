@@ -141,7 +141,7 @@ Commands with submenus (`/model`, `/mode`, `/think`, `/notify`, `/switch`, `/cle
 | `/compact`            | Summarize the current conversation; the visible history stays and the next message continues with a compacted context         |
 | `/reset`              | Reset local frontend state for this device (keeps login token)                                                                |
 | `/switch <title\|id>` | Switch task (match by title or ID prefix)                                                                                  |
-| `/archive [query]`    | No argument: archive the current task and its subtree (no confirmation; Root is refused). With a query: open a matching archived task (match by title or ID prefix). `/archive restore <query>` re-attaches a unique archived tree top to its original parent. |
+| `/archive [query]`    | No argument: archive the current task and its subtree (no confirmation; Root is refused). With a query: open a matching archived task (match by title or ID prefix). `/archive restore <query>` re-attaches a unique archived tree top to its original parent, or to Root when that parent is gone. |
 | `/rename <new title>` | Rename task                                                                                                                |
 | `/exit`               | End current task and return to its parent; on Root, reset Root and delete its descendant tree                            |
 | `/reload`             | Reload agent subprocess (pick up CLI upgrades, new skills)                                                                    |
