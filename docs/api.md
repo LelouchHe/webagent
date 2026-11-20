@@ -80,6 +80,7 @@ All stable endpoints are under `/api/v1/`. Beta endpoints (subject to change) ar
 | Timestamps       | Storage is unix milliseconds; **every JSON egress** renders ISO-8601 UTC with an explicit `Z`. Durations/counters (`ttl_hours`, `share_snapshot_seq`, `upload_seq`, `seq`) stay numeric. See [Timestamps](#timestamps). |
 | Gzip             | Responses > 1 KB are gzip-compressed when `Accept-Encoding: gzip` is present              |
 | Async operations | Message sends and bash commands return `202 Accepted` immediately; results arrive via SSE |
+| Malformed URL encoding | `400` `{ "error": "Invalid URL encoding" }`; any other uncaught handler failure is logged and answered `500`. |
 
 ---
 

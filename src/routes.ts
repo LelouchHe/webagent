@@ -2770,13 +2770,7 @@ export function createRequestHandler(
         /^\/api\/v1\/tasks\/([^/]+)\/unarchive\/?(?:\?.*)?$/,
       );
       if (unarchiveMatch && req.method === "POST") {
-        let taskId: string;
-        try {
-          taskId = decodeURIComponent(unarchiveMatch[1]);
-        } catch {
-          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid task id" });
-          return;
-        }
+        const taskId = decodeURIComponent(unarchiveMatch[1]);
         let result: ReturnType<typeof store.unarchiveTask>;
         try {
           result = store.unarchiveTask(taskId);

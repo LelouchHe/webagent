@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
+import { withRequestErrorBoundary } from "../src/request-boundary.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import type { AgentEvent } from "../src/types.ts";
 
@@ -117,7 +118,7 @@ describe("POST /api/v1/tasks/:id/archive", () => {
       dataDir: dir,
       limits: { bash_output: 1024, image_upload: 1024 },
     });
-    ({ server, port } = await listen(handler));
+    ({ server, port } = await listen(withRequestErrorBoundary(handler)));
   });
 
   afterEach(async () => {
@@ -382,6 +383,22 @@ describe("POST /api/v1/tasks/:id/archive", () => {
         (task) => task.id === "area",
       ),
     );
+  });
+
+  it("answers malformed encoding from an existing route centrally", async () => {
+    const res = await req(
+      port,
+      "GET",
+      "/api/v1/tasks/%E0%A4%A/status",
+      apiToken,
+    );
+    assert.equal(res.status, 400);
+    assert.equal(
+      (JSON.parse(res.body) as { error: string }).error,
+      "Invalid URL encoding",
+    );
+    const list = await req(port, "GET", "/api/v1/tasks", apiToken);
+    assert.equal(list.status, 200);
   });
 
   it("answers malformed task-id encoding without crashing", async () => {
