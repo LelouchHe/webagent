@@ -255,9 +255,10 @@ async function openStream(
     void api.postVisibility(state.clientId, true, state.taskId ?? undefined);
   });
 
-  // Load task immediately via REST — parallel with SSE connection. Every
-  // activated task carries its hash, so the URL alone says which task to
-  // restore.
+  // Load the task once the stream exists (after the ticket mint), alongside
+  // its registration. Every activated task carries its hash, so the URL alone
+  // says which task to restore. Starting earlier would read history before the
+  // stream registers; see the boot waterfall entry in docs/known-issues.md.
   void initializeTaskAndIntent(connectionEpoch);
 }
 
