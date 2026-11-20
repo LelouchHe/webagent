@@ -197,7 +197,7 @@ export function createMcpTaskToolHost(deps: {
       authorize(principal);
       const source = requireTask(principal.taskId);
       // A task in an archived tree still needs its own row (relation: self)
-      // and its local relatives; the default store range is every live task.
+      // and its local relatives, so both the active and archived reads are used.
       const entries = store
         .listTasks()
         .concat(store.listTasks({ archived: true }))
