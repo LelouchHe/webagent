@@ -384,6 +384,19 @@ describe("POST /api/v1/tasks/:id/archive", () => {
     );
   });
 
+  it("answers malformed task-id encoding without crashing", async () => {
+    const res = await req(
+      port,
+      "POST",
+      "/api/v1/tasks/%E0%A4%A/unarchive",
+      apiToken,
+    );
+    assert.equal(res.status, 400);
+    // The listener still serves after the bad request.
+    const list = await req(port, "GET", "/api/v1/tasks", apiToken);
+    assert.equal(list.status, 200);
+  });
+
   it("refuses to unarchive Root or a deeper archived task", async () => {
     const rootRes = await req(
       port,
