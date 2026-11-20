@@ -74,7 +74,7 @@ falls under the same definition and is therefore reachable from `/archive`.
   non-null `parent_id`, so different archived trees cannot see each other;
   collaboration inside one archived tree works as before.
 - **List visibility is a read filter.** `GET /api/v1/tasks` excludes archived
-  trees by default and can include or select them with `archived=include|only`.
+  trees by default and can select them with `archived=true`.
   No read depends on execution, and a `read`-scope token never warms one.
 
 ## Three operations that look alike

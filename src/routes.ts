@@ -848,25 +848,25 @@ export function createRequestHandler(
         // names that agent. Filtering is a read concern, never a gate.
         const agentFilter = params.get("agent") ?? undefined;
         // Archived trees are the parentless non-Root subtrees. The default read
-        // is the active Root tree; `archived=include|only` widens it for
-        // history consumers and the `/archive` menu.
-        const archivedRaw = params.get("archived") ?? "exclude";
-        if (
-          archivedRaw !== "exclude" &&
-          archivedRaw !== "include" &&
-          archivedRaw !== "only"
-        ) {
-          json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "archived must be one of: exclude, include, only",
-          });
-          return;
+        // is the active tree; `archived=true` selects archived trees only.
+        // There is no combined read: a caller that needs both asks twice.
+        const archivedParam = params.get("archived");
+        let archivedFilter: "exclude" | "only" = "exclude";
+        if (archivedParam !== null) {
+          if (archivedParam === "true") archivedFilter = "only";
+          else if (archivedParam !== "false") {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "archived must be 'true' or 'false'",
+            });
+            return;
+          }
         }
         const archivedIds = store.listArchivedTaskIds();
         const publicTasks = store
           .listTasks({
             ...(source ? { source } : {}),
             ...(agentFilter !== undefined ? { agentId: agentFilter } : {}),
-            archived: archivedRaw,
+            archived: archivedFilter,
           })
           .map((task) => {
             const {

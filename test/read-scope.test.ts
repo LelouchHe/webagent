@@ -150,7 +150,7 @@ describe("read-scope auth", () => {
     const archived = await req(
       port,
       "GET",
-      "/api/v1/tasks?archived=only",
+      "/api/v1/tasks?archived=true",
       readToken,
     );
     assert.equal(archived.status, 200);

@@ -149,22 +149,24 @@ By default the list is the active Root tree. An **archived tree** is a live,
 parentless, non-Root task and its whole subtree; nothing marks it, the
 structure is the fact (see [Task Lifecycle](task-lifecycle.md#archived-trees)).
 Archived trees are excluded by default, so a normal reader — and `/switch` —
-sees only active tasks. History consumers opt in with `archived`.
+sees only active tasks. A history consumer asks for archived trees explicitly;
+there is no combined read, because the active tree is stable while archives keep
+growing.
 
 | Parameter  | In    | Type   | Description                                                   |
 | ---------- | ----- | ------ | ------------------------------------------------------------- |
 | `source`   | query | string | Optional. Filter by task source (e.g., `"auto"`)              |
 | `agent`    | query | string | Optional. Narrow to tasks whose current binding names this agent |
-| `archived` | query | string | Optional. `exclude` (default): only the active Root tree. `include`: active and archived tasks. `only`: archived trees only. Any other value is `400`. |
+| `archived` | query | string | Optional. Omitted or `"false"`: the active tree only. `"true"`: archived trees only. Any other value is `400`. |
 
 **Response** `200`: Array of `TaskSummary` (defined in `src/types.ts`). Each
 entry carries `agentId`: the agent of the task's current execution binding, or
 `null` when the task is unbound; `isRoot`: `true` only for the workspace Root,
 so a client never has to recognise Root by its id; and `archived`: `true` when
 the task belongs to an archived tree. `archived` is an egress fact derived from
-the structure, not a column. The frontend requests `archived=include` for its
-topology (so `@`/`+` paths resolve inside an archived tree) and filters the
-`/switch` rows on `archived`. `created_at` and
+the structure, not a column. The frontend reads the active list for `/switch`
+and startup, and `archived=true` for `/archive`; inside an archived task it uses
+that archived list for `@` path resolution. `created_at` and
 `last_active_at` are rendered ISO-8601 UTC with `Z` (see
 [Timestamps](#timestamps)). The Root id itself is reported only by
 `GET /api/v1/config`.

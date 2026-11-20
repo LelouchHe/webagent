@@ -163,7 +163,7 @@ describe("POST /api/v1/tasks/:id/archive", () => {
     const only = await req(
       port,
       "GET",
-      "/api/v1/tasks?archived=only",
+      "/api/v1/tasks?archived=true",
       apiToken,
     );
     assert.deepEqual(
@@ -171,6 +171,18 @@ describe("POST /api/v1/tasks/:id/archive", () => {
         .map((task) => task.id)
         .sort(),
       ["area", "work"],
+    );
+    const explicitActive = await req(
+      port,
+      "GET",
+      "/api/v1/tasks?archived=false",
+      apiToken,
+    );
+    assert.deepEqual(
+      (JSON.parse(explicitActive.body) as Array<{ id: string }>)
+        .map((task) => task.id)
+        .sort(),
+      ids.sort(),
     );
   });
 
@@ -345,12 +357,14 @@ describe("POST /api/v1/tasks/:id/archive", () => {
   });
 
   it("rejects an unknown archived filter", async () => {
-    const res = await req(
-      port,
-      "GET",
-      "/api/v1/tasks?archived=bogus",
-      apiToken,
-    );
-    assert.equal(res.status, 400);
+    for (const value of ["bogus", "include", "only", "exclude"]) {
+      const res = await req(
+        port,
+        "GET",
+        `/api/v1/tasks?archived=${value}`,
+        apiToken,
+      );
+      assert.equal(res.status, 400, value);
+    }
   });
 });
