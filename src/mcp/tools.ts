@@ -3,12 +3,13 @@ import { z } from "zod";
 import type { McpTaskHistoryRow } from "./task-history.ts";
 import { buildTaskCreateDescription } from "./task-create-description.ts";
 
-export type McpWorkflowStatus = "running" | "idle" | "blocked" | "done";
+export type McpWorkflowStatus =
+  "running" | "idle" | "waiting" | "blocked" | "done";
 
 export interface McpTaskListItem {
   id: string;
   title: string;
-  relation: "self" | "parent" | "child" | "sibling";
+  relation: "self" | "parent" | "child";
   /**
    * Lifecycle status of the Task's last turn, matching `task_query`'s
    * `workflowStatus`. `done` is per turn, not a lifecycle terminal.

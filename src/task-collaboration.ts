@@ -1,6 +1,6 @@
 import type { CollaborationMessageRow, TaskRow } from "./store.ts";
 
-export type CollaborationRelation = "self" | "parent" | "child" | "sibling";
+export type CollaborationRelation = "self" | "parent" | "child";
 
 export function collaborationRelation(
   source: Pick<TaskRow, "id" | "parent_id">,
@@ -9,9 +9,6 @@ export function collaborationRelation(
   if (source.id === target.id) return "self";
   if (source.parent_id === target.id) return "parent";
   if (target.parent_id === source.id) return "child";
-  if (source.parent_id !== null && source.parent_id === target.parent_id) {
-    return "sibling";
-  }
   return null;
 }
 
@@ -30,8 +27,8 @@ export function isLocalCollaborationTarget(
  * body inspection.
  *
  * Only an agent-authored direct parent→child dispatch asks for an account.
- * A user send (even from the parent session), a sibling or child message, a
- * correlated account, and a runtime notice all fail one of the two conditions.
+ * A user send (even from the parent session), a child message, a correlated
+ * account, and a runtime notice all fail one of the two conditions.
  */
 export function shouldArm(
   message: Pick<CollaborationMessageRow, "source_actor">,

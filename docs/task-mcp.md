@@ -15,8 +15,9 @@ The server is a Streamable HTTP endpoint at `/mcp`. Each ACP session receives a
 fresh capability token; WebAgent sends it as an `Authorization: Bearer` header.
 A capability names one task **and** the agent whose execution it belongs to, and
 is checked before MCP protocol handling. It can access only that task plus its
-parent, direct children, and siblings — the family check is the cross-agent read
-boundary, so a capability never widens into another agent's tasks.
+parent and direct children — the family check is the cross-agent read boundary,
+so a capability never widens into another agent's tasks or sideways to a
+sibling.
 
 A token starts **initializing** while the session that carries it is still being
 created: the MCP handshake and tool discovery work (a real agent connects from
@@ -144,7 +145,7 @@ WebAgent does not automatically rebroadcast raw child reports to ancestors.
 
 | Tool | Purpose |
 | --- | --- |
-| `task_list` | List the current task and its locally reachable parent, children, and siblings, each with `workflowStatus`, `executionState`, `lastEventAt`, and `lastAgentActivityAt` for triage. |
+| `task_list` | List the current task and its locally reachable parent and children, each with `workflowStatus`, `executionState`, `lastEventAt`, and `lastAgentActivityAt` for triage. |
 | `task_query` | Read a bounded, compact history page for the current task or one visible relative. |
 | `task_read` | Read complete persisted history rows by task-local sequence from the current task or one visible relative. |
 | `task_cancel` | Stop the current execution of a child Task while preserving its history. |
@@ -154,17 +155,17 @@ WebAgent does not automatically rebroadcast raw child reports to ancestors.
 
 ### `task_list`
 
-Takes no arguments and returns the current Task plus every locally reachable
-parent, child, and sibling. The whole family gets the same fields, with no
-special-casing. Ordering is relation-then-id (`self`, `parent`, `child`,
-`sibling`) and is deliberately not status-sorted, so the caller reads the
-statuses instead of inheriting a second prioritization policy.
+Takes no arguments and returns the current Task plus its parent and direct
+children. The whole family gets the same fields, with no special-casing.
+Ordering is relation-then-id (`self`, `parent`, `child`) and is deliberately not
+status-sorted, so the caller reads the statuses instead of inheriting a second
+prioritization policy. A sibling is not visible.
 
 ```ts
 type McpTaskListItem = {
   id: string;
   title: string;
-  relation: "self" | "parent" | "child" | "sibling";
+  relation: "self" | "parent" | "child";
   workflowStatus: "running" | "idle" | "blocked" | "done";
   executionState: "idle" | "agent" | "bash";
   lastEventAt: string | null;
@@ -300,9 +301,9 @@ are rejected without partial data and report `response_too_large` with the
 exact `required_bytes`. That value is always
 `Buffer.byteLength(JSON.stringify({task_id, rows}), "utf8")`.
 
-Both history tools authorize only the current Task, its parent, direct children,
-or siblings. Tombstones, nonexistent tasks, and out-of-family task IDs all
-return `target_not_allowed`.
+Both history tools authorize only the current Task, its parent, or its direct
+children. A sibling is outside the family. Tombstones, nonexistent tasks, and
+out-of-family task IDs all return `target_not_allowed`.
 
 ### `task_cancel`
 

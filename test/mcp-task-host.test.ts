@@ -130,7 +130,6 @@ describe("MCP Task tool host", () => {
         { id: "alpha", relation: "self" },
         { id: store.rootTaskId, relation: "parent" },
         { id: "alpha-child", relation: "child" },
-        { id: "beta", relation: "sibling" },
       ],
     );
     assert.equal(
@@ -150,9 +149,8 @@ describe("MCP Task tool host", () => {
         ?.executionState,
       "agent",
     );
-    assert.equal(listed.find((item) => item.id === "beta")?.lastEventAt, null);
     assert.equal(
-      listed.find((item) => item.id === "beta")?.lastAgentActivityAt,
+      listed.find((item) => item.id === "alpha")?.lastAgentActivityAt,
       null,
     );
     assert.equal(
@@ -814,13 +812,29 @@ describe("MCP Task tool host", () => {
     }
   });
 
+  it("rejects a sibling target everywhere it is addressable", async () => {
+    const host = createMcpTaskToolHost({ store, tasks });
+    await assert.rejects(
+      () => host.send(principal(), "beta", "hello sibling"),
+      /target_not_allowed/,
+    );
+    assert.throws(
+      () => host.query(principal(), { taskId: "beta" }),
+      /target_not_allowed/,
+    );
+    assert.throws(
+      () => host.read(principal(), { taskId: "beta", seqs: [1] }),
+      /target_not_allowed/,
+    );
+  });
+
   it("queues an agent message without returning delivery metadata", async () => {
     const host = createMcpTaskToolHost({ store, tasks });
-    await host.send(principal(), "beta", "hello beta");
+    await host.send(principal(), "alpha-child", "hello child");
     const messages = store
-      .getEvents("beta")
+      .getEvents("alpha-child")
       .filter((event) => event.type === "system_message");
     assert.equal(messages.length, 1);
-    assert.match(messages[0].data, /hello beta/);
+    assert.match(messages[0].data, /hello child/);
   });
 });

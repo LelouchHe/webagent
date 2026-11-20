@@ -512,7 +512,7 @@ describe("S3 collaboration write routes", () => {
     }
   });
 
-  it("rejects a target outside the direct family policy", async () => {
+  it("allows a cross-tree target with only source and target projections", async () => {
     store.createTask(
       "other-parent",
       tmpDir,
@@ -531,16 +531,34 @@ describe("S3 collaboration write routes", () => {
     );
     store.updateTaskTitle("other-parent", "other parent");
     store.updateTaskTitle("other", "other");
+    tasks.liveTasks.add("other");
 
     const response = await request(port, "/api/v1/tasks/parent/messages", {
       targetTaskId: "other",
-      body: "不允许跨子树",
+      body: "跨树派活",
+    });
+
+    assert.equal(response.status, 202);
+    const messageId = response.body.messageId as string;
+    assert.deepEqual(store.listCollaborationProjections(messageId), [
+      { task_id: "parent", role: "source" },
+      { task_id: "other", role: "target" },
+    ]);
+    await waitFor(
+      () =>
+        store.getCollaborationDelivery(response.body.deliveryId as string)
+          ?.status === "delivered",
+      { message: "expected the cross-tree delivery to submit" },
+    );
+  });
+
+  it("rejects sending a task a message addressed to itself", async () => {
+    const response = await request(port, "/api/v1/tasks/parent/messages", {
+      targetTaskId: "parent",
+      body: "self",
     });
 
     assert.equal(response.status, 400);
-    assert.equal(
-      response.body.error,
-      "Target task is outside the local collaboration scope",
-    );
+    assert.equal(response.body.error, "Source and target task must differ");
   });
 });

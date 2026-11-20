@@ -94,7 +94,7 @@ describe("Store collaboration records", () => {
     assert.deepEqual(seen, [collaborationMessageId]);
   });
 
-  it("creates one message with source, target, and LCA projections", () => {
+  it("creates one message with only source and target projections", () => {
     const created = store.createCollaborationMessage(messageInput());
 
     assert.equal(created.message.id, "message-a1-a2");
@@ -103,7 +103,6 @@ describe("Store collaboration records", () => {
     assert.deepEqual(store.listCollaborationProjections(created.message.id), [
       { task_id: "a1", role: "source" },
       { task_id: "a2", role: "target" },
-      { task_id: "parent", role: "supervisor" },
     ]);
   });
 
@@ -225,7 +224,6 @@ describe("Store collaboration records", () => {
     );
     assert.deepEqual(store.listCollaborationProjections("message-a1-a2"), [
       { task_id: "a2", role: "target" },
-      { task_id: "parent", role: "supervisor" },
     ]);
     assert.equal(
       store.getCollaborationDelivery("delivery-a1-a2")?.status,
@@ -237,9 +235,7 @@ describe("Store collaboration records", () => {
       store.getCollaborationMessage("message-a1-a2")?.body,
       "请检查接口定义",
     );
-    assert.deepEqual(store.listCollaborationProjections("message-a1-a2"), [
-      { task_id: "parent", role: "supervisor" },
-    ]);
+    assert.deepEqual(store.listCollaborationProjections("message-a1-a2"), []);
     const delivery = store.getCollaborationDelivery("delivery-a1-a2");
     assert.ok(delivery);
     assert.equal(delivery.status, "failed");

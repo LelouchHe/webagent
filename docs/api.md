@@ -287,9 +287,12 @@ text and ignores client-supplied routing metadata.
 | `targetTaskId` | string | Yes | Stable target task ID selected by the client |
 | `body` | string | Yes | Non-empty collaboration message body |
 
-The server verifies that target is the source's direct parent, direct child, or
-same-parent sibling; computes the LCA itself; and atomically writes one
-Message, source/target/LCA projections, and a queued Delivery.
+The server verifies only that the target task exists, is live, and differs from
+the source; it does not check a relationship, so a cross-branch or
+cross-archived-tree target is allowed. It atomically writes one Message,
+source and target projections, and a queued Delivery. The sender's projection
+is written and shown at send time; the receiver's is written when the pending
+deliveries are handed to its agent.
 
 **Response** `202`:
 
@@ -301,8 +304,8 @@ Message, source/target/LCA projections, and a queued Delivery.
 }
 ```
 
-**Errors:** `400` (invalid body or target outside local collaboration scope),
-`404` (source or target task absent).
+**Errors:** `400` (invalid body or the target is the source itself), `404`
+(source or target task absent or deleted).
 
 ---
 

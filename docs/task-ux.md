@@ -97,8 +97,8 @@ not depend on color alone; a screen-reader note spells out `(renamed)` or
 `(exited)`.
 
 This covers the creation row (`Created task @x`), every reference of a
-collaboration row (`@a sent @b`, including the `supervisor` copy projected to
-the common ancestor, where each reference is judged on its own id), and both
+collaboration row (`@a sent @b`, where each reference is judged on its own id),
+and both
 titles a cancellation row is written as (`@a cancelled @b`, `Cancelled by @a`).
 A row written before the raw labels existed, or one whose reference cannot be
 placed, is left fully unmarked.

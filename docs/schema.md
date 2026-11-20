@@ -200,9 +200,10 @@ deleted. No reply/thread chain exists in S3.0.
 
 ### `message_projections`
 
-Per-task visibility rows for one collaboration message. S3.0 creates source,
-target, and (when distinct) lowest-common-ancestor `supervisor` projections.
-They are timeline/UI records only, never automatic ACP context injection.
+Per-task visibility rows for one collaboration message: the source and the
+direct target. New writes never create a `supervisor` row; the role remains
+readable for historical data. They are timeline/UI records only, never
+automatic ACP context injection.
 
 | Column | Type | Notes |
 |---|---|---|

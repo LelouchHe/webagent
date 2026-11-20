@@ -86,7 +86,8 @@ export interface TaskDelete {
   agentId: string | null;
 }
 
-export type WorkflowStatus = "running" | "idle" | "blocked" | "done";
+export type WorkflowStatus =
+  "running" | "idle" | "waiting" | "blocked" | "done";
 
 /** The system message a successful archive appends to the detached task. */
 export interface ArchiveSystemMessage {
@@ -668,7 +669,7 @@ export class Store {
         cwd TEXT NOT NULL,
         title TEXT,
         workflow_status TEXT NOT NULL DEFAULT 'idle'
-          CHECK (workflow_status IN ('running', 'idle', 'blocked', 'done')),
+          CHECK (workflow_status IN ('running', 'idle', 'waiting', 'blocked', 'done')),
         parent_id TEXT REFERENCES tasks(id),
         pending_compact_summary TEXT,
         model TEXT,
@@ -2531,23 +2532,6 @@ export class Store {
     return task;
   }
 
-  private lowestCommonAncestor(
-    sourceTaskId: string,
-    targetTaskId: string,
-  ): string {
-    const sourceLineage = this.getTaskLineage(sourceTaskId);
-    const targetLineage = this.getTaskLineage(targetTaskId);
-    if (!sourceLineage || !targetLineage) {
-      throw new Error("Cannot determine collaboration task lineage");
-    }
-    const sourceAncestors = new Set(sourceLineage);
-    for (let index = targetLineage.length - 1; index >= 0; index--) {
-      const taskId = targetLineage[index];
-      if (sourceAncestors.has(taskId)) return taskId;
-    }
-    throw new Error("Collaboration tasks have no common ancestor");
-  }
-
   /**
    * Register the single post-commit collaboration-message observer. The Store
    * emits a neutral fact; reachability and obligation policy stay above it.
@@ -2583,10 +2567,6 @@ export class Store {
     }
     this.requireLiveTask(input.sourceTaskId);
     this.requireLiveTask(input.directTargetTaskId);
-    const lcaTaskId = this.lowestCommonAncestor(
-      input.sourceTaskId,
-      input.directTargetTaskId,
-    );
     this.db
       .prepare(
         `INSERT INTO messages
@@ -2612,12 +2592,6 @@ export class Store {
       "target",
       createdAt,
     );
-    if (
-      lcaTaskId !== input.sourceTaskId &&
-      lcaTaskId !== input.directTargetTaskId
-    ) {
-      insertProjection.run(input.id, lcaTaskId, "supervisor", createdAt);
-    }
     const sourceLabel =
       this.getTask(input.sourceTaskId)?.title ?? input.sourceTaskId.slice(0, 8);
     const targetLabel =

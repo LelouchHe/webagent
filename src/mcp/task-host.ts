@@ -81,7 +81,7 @@ export type McpTaskCancelNotice = Extract<
 >;
 
 function relationOrder(relation: McpTaskListItem["relation"]): number {
-  return { self: 0, parent: 1, child: 2, sibling: 3 }[relation];
+  return { self: 0, parent: 1, child: 2 }[relation];
 }
 
 export function createMcpTaskToolHost(deps: {

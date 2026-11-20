@@ -277,9 +277,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     viewing, and applies to a row rendered after it; the current Task's header
     is untouched by another Task's rename
   - each reference of a collaboration row is judged on its own id on every
-    copy, including the supervisor projection (the LCA, which is neither side):
-    one side's rename or exit never marks the other; the live envelope marks
-    the same references its replayed copy does
+    copy: one side's rename or exit never marks the other; the live envelope
+    marks the same references its replayed copy does
   - both sides of a cancellation row mark the other Task, and the source side
     marks both of its references by id
   - a row whose raw labels are missing, or whose reference does not sit at its
@@ -1012,7 +1011,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
     inline block is `unknown` and echoes no payload
   - fixed-string search returns a visible matching window and real JSON field path
   - task_read returns batched decoded event data, including large single rows
-  - self/parent/child/sibling authorization, tombstone/nonexistent target convergence, unknown sequence rejection
+  - self/parent/child authorization with sibling rejection, tombstone/nonexistent target convergence, unknown sequence rejection
   - omitting the target reads the current Task's own history
   - explicit response_too_large errors report required_bytes without partial rows
   - a successful `task_cancel` writes one `system_message` row per side (each
