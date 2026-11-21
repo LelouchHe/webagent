@@ -131,17 +131,20 @@ const agentRegistry = new AgentRegistry({
   defaultAgentId: config.default_agent,
   createTransport: (agentId) => createAgentTransport(agentId),
 });
-const obligationController = createObligationController({
-  submitObligationReminder: (sourceTaskId, targetTaskId) => {
-    taskManagerRef.current!.submitObligationReminder(
-      sourceTaskId,
-      targetTaskId,
-    );
+const obligationController = createObligationController(
+  {
+    submitObligationReminder: (sourceTaskId, targetTaskId) => {
+      taskManagerRef.current!.submitObligationReminder(
+        sourceTaskId,
+        targetTaskId,
+      );
+    },
+    emitObligationNotice: (notice) => {
+      taskManagerRef.current!.emitObligationNotice(notice);
+    },
   },
-  emitObligationNotice: (notice) => {
-    taskManagerRef.current!.emitObligationNotice(notice);
-  },
-});
+  { silenceMs: config.limits.silence_timeout },
+);
 const tasks = new TaskManager({
   store,
   defaultCwd: config.default_cwd,

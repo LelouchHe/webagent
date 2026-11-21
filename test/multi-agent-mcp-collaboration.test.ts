@@ -205,28 +205,26 @@ describe("cross-agent collaboration", () => {
     assert.equal(payload.targetTaskId, childId);
   });
 
-  it("rejects waiting when nothing will wake the task", async () => {
-    const { childId, childToken } = await dispatchToChildOnB();
+  it("accepts waiting with no visible wake source and says it is watched", async () => {
+    const { parentId, childId, childToken } = await dispatchToChildOnB();
 
     const waiting = await callTool(harness, childToken, "task_update", {
       status: "waiting",
-      body: "waiting on nothing",
+      body: "waiting on my own background build",
     });
     const result = toolResult(waiting.json);
-    assert.equal(result.isError, true);
-    assert.match(JSON.stringify(result), /Nothing will wake this Task/);
-    assert.notEqual(harness.store.getTask(childId)?.workflow_status, "waiting");
-    assert.equal(childUpdateEvents(harness, childId).length, 0);
+    assert.equal(result.isError, undefined);
+    assert.match(JSON.stringify(result), /cannot see what will wake it/);
+    assert.match(JSON.stringify(result), /15 minutes/);
+    assert.equal(harness.store.getTask(childId)?.workflow_status, "waiting");
+    assert.ok(harness.tasks.hasOpenObligation(parentId, childId));
 
-    // A rejected waiting does not satisfy the turn: the reminder still follows.
+    // It still satisfies the turn: no closing reminder follows.
     const dispatchPrompt = harness.agents[B].prompts[0];
     dispatchPrompt.resolve();
     harness.endTurn(childId, dispatchPrompt.promptId);
-    await waitForPrompts(harness, B, 2);
-    assert.match(
-      harness.agents[B].prompts[1].text,
-      /runtime-injected closing turn/i,
-    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(harness.agents[B].prompts.length, 1);
   });
 
   it("accepts waiting while a message to the task is queued", async () => {
@@ -249,6 +247,11 @@ describe("cross-agent collaboration", () => {
       body: "waiting for the queued message",
     });
     assert.equal(toolResult(waiting.json).isError, undefined);
+    assert.doesNotMatch(
+      JSON.stringify(toolResult(waiting.json)),
+      /cannot see what will wake it/,
+      "a queued message is a visible wake source",
+    );
     assert.equal(harness.store.getTask(childId)?.workflow_status, "waiting");
   });
 

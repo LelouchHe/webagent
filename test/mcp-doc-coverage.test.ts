@@ -73,7 +73,7 @@ function registeredTools(): Record<string, RegisteredTool> {
     }),
     create: async () => ({ taskId: "child" }),
     send: async () => {},
-    update: async () => {},
+    update: async () => ({}),
   };
   registerMcpTools(
     server,

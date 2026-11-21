@@ -14,13 +14,16 @@
  * - the first turn with no update gets one closing reminder;
  * - the next such turn reports `no_update` to the source and stops reminding.
  *
- * A separate watchdog reports a running turn that has had no agent activity for
- * 15 minutes. It starts when the prompt is submitted, not when the UI shows a
- * busy turn, and it is cleared on every turn end. A cancelled turn triggers
- * nothing.
+ * A separate watchdog reports a target that has had no agent activity for the
+ * silence threshold while it owes the account: during a running turn (from the
+ * prompt submission, cleared on every turn end), or after it reported
+ * `waiting` with nothing the runtime can see that will wake it (cleared by the
+ * next update or turn). Any agent activity resets the window, including
+ * activity the agent starts on its own outside a prompt. A cancelled turn
+ * triggers nothing.
  */
 
-/** A running target turn with an open account and no activity for this long. */
+/** Default silence threshold; deployments override it with `limits.silence_timeout`. */
 export const SILENCE_THRESHOLD_MS = 15 * 60_000;
 
 export type ObligationNoticeReason =
@@ -47,6 +50,8 @@ export interface ObligationControllerOptions {
   submitReminder: (sourceTaskId: string, targetTaskId: string) => void;
   /** Queue a runtime notice to the account's source and close the account. */
   emitNotice: (notice: ObligationNotice) => void;
+  /** No-activity threshold in milliseconds; defaults to {@link SILENCE_THRESHOLD_MS}. */
+  silenceMs?: number;
   log?: (event: string, fields: Record<string, unknown>) => void;
 }
 
@@ -59,9 +64,10 @@ interface Account {
   stopped: boolean;
 }
 
-interface RunningTurn {
+/** A silence window: a running turn, or a `waiting` with no visible wake source. */
+interface SilenceWatch {
   lastActivityAt: number;
-  /** The silence notice was already emitted for this turn. */
+  /** The silence notice was already emitted for this window. */
   noticed: boolean;
 }
 
@@ -71,7 +77,9 @@ interface RunningTurn {
  */
 export class ObligationController {
   private readonly accounts = new Map<string, Account>();
-  private readonly turns = new Map<string, RunningTurn>();
+  private readonly turns = new Map<string, SilenceWatch>();
+  /** Targets that reported `waiting` with no runtime-visible wake source. */
+  private readonly waits = new Map<string, SilenceWatch>();
   /** Targets whose current turn carried a `task_update` of any status. */
   private readonly updated = new Set<string>();
   private timer: TimerHandle | undefined;
@@ -84,6 +92,10 @@ export class ObligationController {
 
   private now(): number {
     return this.opts.now();
+  }
+
+  get silenceMs(): number {
+    return this.opts.silenceMs ?? SILENCE_THRESHOLD_MS;
   }
 
   private log(event: string, fields: Record<string, unknown>): void {
@@ -125,6 +137,22 @@ export class ObligationController {
       account.stopped = false;
     }
     if (this.turns.has(targetTaskId)) this.updated.add(targetTaskId);
+    if (this.waits.delete(targetTaskId)) this.schedule();
+  }
+
+  /**
+   * The target reported `waiting` and the runtime sees nothing that will wake
+   * it. While its account is open, watch it for silence like a running turn.
+   * Call after {@link noteUpdate}.
+   */
+  noteUnwatchedWaiting(targetTaskId: string): boolean {
+    if (this.disposed || !this.accounts.has(targetTaskId)) return false;
+    this.waits.set(targetTaskId, {
+      lastActivityAt: this.now(),
+      noticed: false,
+    });
+    this.schedule();
+    return true;
   }
 
   /** Open account source for a target, without closing it. */
@@ -137,6 +165,7 @@ export class ObligationController {
     const account = this.accounts.get(targetTaskId);
     if (!account) return;
     this.accounts.delete(targetTaskId);
+    this.waits.delete(targetTaskId);
     this.log("account settled", {
       sourceTaskId: account.sourceTaskId.slice(0, 8),
       targetTaskId: targetTaskId.slice(0, 8),
@@ -151,6 +180,7 @@ export class ObligationController {
     this.accounts.delete(targetTaskId);
     this.updated.delete(targetTaskId);
     this.turns.delete(targetTaskId);
+    this.waits.delete(targetTaskId);
     this.emit(account, "target_removed");
     this.schedule();
   }
@@ -159,6 +189,8 @@ export class ObligationController {
   beginTurn(targetTaskId: string): void {
     if (this.disposed) return;
     this.updated.delete(targetTaskId);
+    // A real turn takes over: its end is checked against the account.
+    this.waits.delete(targetTaskId);
     this.turns.set(targetTaskId, {
       lastActivityAt: this.now(),
       noticed: false,
@@ -174,8 +206,11 @@ export class ObligationController {
 
   noteAgentActivity(targetTaskId: string): void {
     const turn = this.turns.get(targetTaskId);
-    if (!turn) return;
-    turn.lastActivityAt = this.now();
+    const wait = this.waits.get(targetTaskId);
+    if (!turn && !wait) return;
+    const now = this.now();
+    if (turn) turn.lastActivityAt = now;
+    if (wait) wait.lastActivityAt = now;
     this.schedule();
   }
 
@@ -184,6 +219,9 @@ export class ObligationController {
     if (this.disposed) return;
     const hadUpdate = this.updated.delete(targetTaskId);
     this.turns.delete(targetTaskId);
+    // A waiting reported in this turn is watched from the turn's end.
+    const wait = this.waits.get(targetTaskId);
+    if (wait) wait.lastActivityAt = this.now();
     const account = this.accounts.get(targetTaskId);
     if (account && !cancelled) {
       if (hadUpdate) {
@@ -226,6 +264,7 @@ export class ObligationController {
     }
     this.turns.delete(taskId);
     this.updated.delete(taskId);
+    this.waits.delete(taskId);
     this.schedule();
   }
 
@@ -238,6 +277,7 @@ export class ObligationController {
     }
     this.turns.delete(targetTaskId);
     this.updated.delete(targetTaskId);
+    this.waits.delete(targetTaskId);
     this.schedule();
   }
 
@@ -263,6 +303,14 @@ export class ObligationController {
 
   // --- The single watchdog timer ---
 
+  /** A running turn's own watch supersedes the target's waiting watch. */
+  private *silenceWatches(): Iterable<[string, SilenceWatch]> {
+    yield* this.turns;
+    for (const entry of this.waits) {
+      if (!this.turns.has(entry[0])) yield entry;
+    }
+  }
+
   private schedule(): void {
     if (this.timer !== undefined) {
       this.opts.clearTimer(this.timer);
@@ -270,10 +318,10 @@ export class ObligationController {
     }
     if (this.disposed) return;
     let earliest: number | undefined;
-    for (const [targetTaskId, turn] of this.turns) {
-      if (turn.noticed) continue;
+    for (const [targetTaskId, watch] of this.silenceWatches()) {
+      if (watch.noticed) continue;
       if (!this.accounts.has(targetTaskId)) continue;
-      const deadline = turn.lastActivityAt + SILENCE_THRESHOLD_MS;
+      const deadline = watch.lastActivityAt + this.silenceMs;
       if (earliest === undefined || deadline < earliest) earliest = deadline;
     }
     if (earliest === undefined) return;
@@ -289,12 +337,12 @@ export class ObligationController {
   private fireSilence(): void {
     if (this.disposed) return;
     const now = this.now();
-    for (const [targetTaskId, turn] of this.turns) {
-      if (turn.noticed) continue;
-      if (turn.lastActivityAt + SILENCE_THRESHOLD_MS > now) continue;
+    for (const [targetTaskId, watch] of this.silenceWatches()) {
+      if (watch.noticed) continue;
+      if (watch.lastActivityAt + this.silenceMs > now) continue;
       const account = this.accounts.get(targetTaskId);
       if (!account) continue;
-      turn.noticed = true;
+      watch.noticed = true;
       this.emit(account, "no_activity");
     }
     this.schedule();
@@ -305,17 +353,28 @@ export class ObligationController {
       reason,
       sourceTaskId: account.sourceTaskId,
       targetTaskId: account.targetTaskId,
-      message: noticeMessage(reason),
+      message: noticeMessage(reason, this.silenceMs),
     });
   }
 }
 
-export function noticeMessage(reason: ObligationNoticeReason): string {
+export function formatSilence(ms: number): string {
+  const minutes = ms / 60_000;
+  if (Number.isInteger(minutes)) {
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  return `${Math.round(ms / 1000)} seconds`;
+}
+
+export function noticeMessage(
+  reason: ObligationNoticeReason,
+  silenceMs = SILENCE_THRESHOLD_MS,
+): string {
   switch (reason) {
     case "no_update":
       return "The target ended another turn without any task_update; the runtime stopped reminding.";
     case "no_activity":
-      return `No agent activity for ${SILENCE_THRESHOLD_MS / 60_000} minutes; the turn is still running.`;
+      return `No agent activity for ${formatSilence(silenceMs)} while the account is open.`;
     case "target_removed":
       return "The target left this edge (deleted or archived); the account is gone.";
   }

@@ -42,17 +42,18 @@ settles that one account, even if several requests arrived in the meantime.
 | `blocked` | yes, wakes it | yes |
 | `waiting` | no | no |
 
-`waiting` records that the target is still working and something will hand off
-and wake it later, typically a child it dispatched. It is not delivered, does
-not wake anyone, and does not settle; it only writes the Task's
+`waiting` records that the target is still working and something will wake it
+later: a child it dispatched, or its own background work. It is not delivered,
+does not wake anyone, and does not settle; it only writes the Task's
 `workflowStatus = waiting` and an event. It still satisfies the current turn's
-update check (below). It is refused, with nothing recorded, unless something
-will wake the Task: an open account it is the source of, or a delivery already
-queued to it. A refused `waiting` does not count as the turn's update.
+update check (below). The runtime can see two wake sources — an open account
+the target is the source of, or a delivery already queued to it. With neither,
+the target is watched for silence (below) and the tool result says so.
 
 What each status means to the agent is the `status` parameter description in
-[`src/mcp/tools.ts`](../src/mcp/tools.ts). In short: `waiting` is only for
-waiting on another Task; anything else that stops progress is `blocked`.
+[`src/mcp/tools.ts`](../src/mcp/tools.ts). In short: `waiting` means the work
+continues without the requester; anything that needs the requester, a person,
+or an external event is `blocked`.
 
 Runtime-set status stays separate: a drain sets `running`, and a finished turn
 turns `running` into `idle`. A turn end never overwrites `waiting`.
@@ -80,12 +81,21 @@ turn runs and drained at its boundary like any other item. Runtime items are
 labeled as authored by the WebAgent runtime, not by the named task; the
 recipient sees exactly one row, written at drain.
 
-## Stuck turn
+## Silence
 
-While the account is open, a running target turn with no agent activity for 15
-minutes makes the source receive one `no_activity` notice for that turn. It
-states the fact only: no state change, no reminder, no cancel. Activity resets
-the window; a new turn gets its own notice.
+While the account is open, the source receives one `no_activity` notice when
+the target has had no agent activity for the silence threshold
+(`limits.silence_timeout`, 15 minutes by default) in either window:
+
+- a running turn, from its prompt submission until it ends;
+- a `waiting` with no visible wake source, from the update (or the end of the
+  turn that carried it) until the next update or turn.
+
+Any agent activity resets the window, including activity the agent starts on
+its own outside a prompt, such as a harness waking it after a background
+command. Each window notifies at most once; a new turn or a new `waiting` opens
+a new window. The notice states the fact only: no state change, no reminder,
+no cancel.
 
 ## Target leaves the edge
 

@@ -262,6 +262,7 @@ describe("createMcpEndpoint", () => {
     },
     update: async (...args: unknown[]) => {
       calls.push({ kind: "update", args });
+      return {};
     },
   };
 
@@ -468,7 +469,7 @@ describe("createMcpEndpoint", () => {
     assert.match(updateDescription, /not deleted or closed/);
     assert.match(
       paramDescription(tools, "task_update", "status"),
-      /another Task will hand off/,
+      /its own background work will wake it/,
     );
     // Mutation evidence: re-adding a correlation parameter flips this check.
     assert.equal(

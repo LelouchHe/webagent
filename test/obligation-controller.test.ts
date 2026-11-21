@@ -243,6 +243,101 @@ describe("ObligationController", () => {
     );
   });
 
+  it("watches an unwatched waiting for silence, reset by activity outside a prompt", () => {
+    const h = makeHarness();
+    h.controller.arm("parent", "child");
+    h.controller.beginTurn("child");
+    h.controller.noteUpdate("child");
+    assert.equal(h.controller.noteUnwatchedWaiting("child"), true);
+    h.controller.onTargetTurnEnded("child");
+    assert.equal(h.reminders.length, 0, "waiting satisfied the turn");
+
+    // The agent's own background work wakes it: activity with no prompt.
+    h.advance(SILENCE_THRESHOLD_MS - 1);
+    h.controller.noteAgentActivity("child");
+    h.advance(SILENCE_THRESHOLD_MS - 1);
+    assert.equal(h.notices.length, 0, "activity resets the window");
+
+    h.advance(1);
+    assert.deepEqual(
+      h.notices.map((notice) => notice.reason),
+      ["no_activity"],
+    );
+    h.advance(SILENCE_THRESHOLD_MS * 2);
+    assert.equal(h.notices.length, 1, "once per waiting");
+    assert.ok(h.controller.hasOpen("parent", "child"), "facts only");
+  });
+
+  it("re-arms the waiting watch on the next waiting and clears it on any update", () => {
+    const h = makeHarness();
+    h.controller.arm("parent", "child");
+    h.controller.noteUpdate("child");
+    h.controller.noteUnwatchedWaiting("child");
+    h.advance(SILENCE_THRESHOLD_MS);
+    assert.equal(h.notices.length, 1);
+
+    // The requester asks; the child explains and waits again.
+    h.controller.beginTurn("child");
+    h.controller.noteUpdate("child");
+    h.controller.noteUnwatchedWaiting("child");
+    h.controller.onTargetTurnEnded("child");
+    h.advance(SILENCE_THRESHOLD_MS);
+    assert.equal(h.notices.length, 2, "a new waiting gets a new window");
+
+    h.controller.noteUpdate("child");
+    h.controller.noteUnwatchedWaiting("child");
+    h.controller.noteUpdate("child");
+    h.advance(SILENCE_THRESHOLD_MS * 2);
+    assert.equal(h.notices.length, 2, "a later update clears the watch");
+  });
+
+  it("reports one notice when a waiting is reported inside a silent turn", () => {
+    const h = makeHarness();
+    h.controller.arm("parent", "child");
+    h.controller.beginTurn("child");
+    h.controller.noteUpdate("child");
+    h.controller.noteUnwatchedWaiting("child");
+    h.advance(SILENCE_THRESHOLD_MS);
+    assert.equal(h.notices.length, 1, "the turn's watch fires");
+
+    // After the turn ends, the waiting is watched from the turn end.
+    h.controller.onTargetTurnEnded("child");
+    h.advance(SILENCE_THRESHOLD_MS - 1);
+    assert.equal(h.notices.length, 1);
+    h.advance(1);
+    assert.equal(h.notices.length, 2);
+  });
+
+  it("does not watch a waiting without an open account", () => {
+    const h = makeHarness();
+    assert.equal(h.controller.noteUnwatchedWaiting("child"), false);
+    h.advance(SILENCE_THRESHOLD_MS * 2);
+    assert.equal(h.notices.length, 0);
+  });
+
+  it("uses the configured silence threshold", () => {
+    const notices: ObligationNotice[] = [];
+    let fire: (() => void) | undefined;
+    let delay = -1;
+    const controller = new ObligationController({
+      now: () => 0,
+      setTimer: (fn, ms) => {
+        fire = fn;
+        delay = ms;
+        return 1 as unknown as TimerHandle;
+      },
+      clearTimer: () => {},
+      submitReminder: () => {},
+      emitNotice: (notice) => notices.push(notice),
+      silenceMs: 90_000,
+    });
+    controller.arm("parent", "child");
+    controller.beginTurn("child");
+    assert.equal(delay, 90_000);
+    assert.equal(controller.silenceMs, 90_000);
+    void fire;
+  });
+
   it("does not report silence without an open account", () => {
     const h = makeHarness();
     h.controller.beginTurn("child");

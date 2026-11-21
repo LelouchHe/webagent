@@ -55,6 +55,7 @@ export const ConfigSchema = z
         image_upload: z.number().int().positive().default(10_485_760), // 10 MB
         file_upload: z.number().int().positive().default(52_428_800), // 50 MB — non-image attachments
         cancel_timeout: z.number().int().nonnegative().default(10_000), // 10s; 0 disables
+        silence_timeout: z.number().int().positive().default(900_000), // 15 min without agent activity while an account is open
         recent_paths: z.number().int().nonnegative().default(10), // /new + path-picker display limit; 0 = show all
         recent_paths_ttl: z.number().int().nonnegative().default(30), // days before auto-cleanup; 0 = keep forever
       })
@@ -63,6 +64,7 @@ export const ConfigSchema = z
         image_upload: 10_485_760,
         file_upload: 52_428_800,
         cancel_timeout: 10_000,
+        silence_timeout: 900_000,
         recent_paths: 10,
         recent_paths_ttl: 30,
       }),

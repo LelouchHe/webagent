@@ -148,7 +148,7 @@ export interface McpTaskToolHost {
     principal: McpCallerPrincipal,
     status: "waiting" | "blocked" | "done",
     body: string,
-  ): Promise<void>;
+  ): Promise<{ note?: string }>;
 }
 
 const TASK_ID = z.string().trim().min(1).max(256);
@@ -414,13 +414,13 @@ export function registerMcpTools(
       description:
         "Record a typed update for the current Task and set its workflowStatus. " +
         "`done` and `blocked` are delivered to the requester (the source of the open account, or the current parent when none is open), wake it, and settle the account, even when late. " +
-        "`waiting` is only recorded: it is not delivered, wakes no one, and leaves the account open. It is refused unless this Task is the source of an open account or has a queued message. " +
+        "`waiting` is only recorded: it is not delivered, wakes no one, and leaves the account open; the result says when the runtime cannot see what will wake this Task. " +
         "Any update satisfies the current turn's account check. The Task is not deleted or closed.",
       inputSchema: {
         status: z
           .enum(["waiting", "blocked", "done"])
           .describe(
-            "`done`: the work is complete. `blocked`: progress needs the requester, a human, an external event, missing information, or permission. `waiting`: another Task will hand off and wake this one.",
+            "`done`: the work is complete. `blocked`: progress needs the requester, a human, an external event, missing information, or permission. `waiting`: work continues without the requester, and a Task this one dispatched or its own background work will wake it.",
           ),
         body: BODY.describe(
           "Update body, delivered verbatim with done or blocked",
@@ -429,8 +429,8 @@ export function registerMcpTools(
     },
     async ({ status, body }) => {
       guard();
-      await host!.update(principal, status, body);
-      return accepted();
+      const { note } = await host!.update(principal, status, body);
+      return jsonContent({ accepted: true, ...(note ? { note } : {}) });
     },
   );
 }

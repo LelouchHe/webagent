@@ -266,8 +266,9 @@ function handoffReminderText(): string {
     "Report what this turn established, then call exactly one of:",
     "- `task_update(done, ...)` with the completion report.",
     "- `task_update(blocked, ...)` and explain what is missing.",
-    "- `task_update(waiting, ...)` only when another Task will hand off and wake",
-    "  you; waiting on a person or an external event is `blocked`.",
+    "- `task_update(waiting, ...)` only when a Task you dispatched or your own",
+    "  background work will wake you; waiting on a person or an external event",
+    "  is `blocked`.",
     "",
     "If the user cancelled this turn, say so plainly in that report instead of",
     "resuming the cancelled work. Do not start new work, and do not end this turn",
@@ -501,9 +502,13 @@ interface OpenTurn {
 /** Build the process-local obligation controller for one task runtime. */
 export function createObligationController(
   host: ObligationHost,
+  options: { silenceMs?: number } = {},
 ): ObligationController {
   return new ObligationController({
     now: () => Date.now(),
+    ...(options.silenceMs === undefined
+      ? {}
+      : { silenceMs: options.silenceMs }),
     setTimer: (fn, ms) => {
       const handle = setTimeout(fn, ms);
       // The watchdog must never hold the process open; a missing notice is
@@ -3915,18 +3920,13 @@ export class TaskManager implements ObligationHost {
   ): {
     collaborationMessageId: string | null;
     accountTargetTaskId: string | null;
+    /**
+     * For `waiting` with nothing visible to wake the task while it owes an
+     * account: the silence window after which the requester is notified.
+     */
+    silenceWatchMs?: number;
   } {
     if (status === "waiting") {
-      // Waiting is only true while something will wake this task: a child that
-      // owes it an update, or a delivery already queued to it.
-      if (
-        !this.obligations.hasOpenAsSource(targetTaskId) &&
-        this.store.countQueuedDeliveries(targetTaskId) === 0
-      ) {
-        throw new Error(
-          "Nothing will wake this Task: it has no open request to a child and no queued message. `waiting` was not recorded.",
-        );
-      }
       this.store.recordAgentWorkflowUpdate(
         targetTaskId,
         status,
@@ -3935,7 +3935,20 @@ export class TaskManager implements ObligationHost {
         "waiting",
       );
       this.obligations.noteUpdate(targetTaskId);
-      return { collaborationMessageId: null, accountTargetTaskId: null };
+      // A child that owes this task an update, or a delivery already queued to
+      // it, will wake it. Anything else (the agent's own background work, a
+      // harness wakeup) is invisible here, so the silence watch covers it.
+      const wakeSourceVisible =
+        this.obligations.hasOpenAsSource(targetTaskId) ||
+        this.store.countQueuedDeliveries(targetTaskId) > 0;
+      const watched =
+        !wakeSourceVisible &&
+        this.obligations.noteUnwatchedWaiting(targetTaskId);
+      return {
+        collaborationMessageId: null,
+        accountTargetTaskId: null,
+        ...(watched ? { silenceWatchMs: this.obligations.silenceMs } : {}),
+      };
     }
     const accountSource = this.obligations.peekSource(targetTaskId);
     const accountTargetTaskId =

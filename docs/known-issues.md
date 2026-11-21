@@ -310,11 +310,14 @@ time. An entry without a "closing condition" is a wish, not an issue.
   delivery stays `queued` and the account stays open until the agent can be
   started; nothing fails or retries on a timer. *Closing:* start-failure
   handling that marks the delivery failed, if this proves common.
-- **After a restart, a Task whose child is still working cannot report
-  `waiting`.** Open accounts are process-local, so the wake-source check finds
-  none until the Task dispatches again; the child's `done` or `blocked` still
-  reaches it through the current-parent fallback. *Closing:* persisted
-  accounts, if restarts during delegated work prove common.
+- **A turn the agent starts on its own is not a WebAgent turn.** When a harness
+  wakes the agent without a prompt (a finished background command, a scheduled
+  wakeup, idle compaction), its events are recorded and count as activity for
+  the silence watch, but the Task is not marked busy, its turn end is not
+  checked, a queued delivery can be handed over while it runs, and its final
+  text is persisted only when the next turn starts. ACP has no portable signal
+  for when such work ends. *Closing:* a standard ACP signal for agent-initiated
+  turns.
 
 ## Accepted as designed
 

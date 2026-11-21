@@ -17,6 +17,7 @@ import { formatFieldBlock } from "../shared/field-block.ts";
 import { formatTaskReference } from "../shared/task-reference.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
+import { formatSilence } from "../obligation-controller.ts";
 import type {
   McpCallerPrincipal,
   McpTaskQueryResult,
@@ -527,7 +528,7 @@ export function createMcpTaskToolHost(deps: {
       // `waiting` only records the status. `done` and `blocked` settle the
       // target's open account and are delivered to its source, or fall back to
       // the current parent when no account is open.
-      const { collaborationMessageId, accountTargetTaskId } =
+      const { collaborationMessageId, accountTargetTaskId, silenceWatchMs } =
         tasks.settleAgentUpdate(sourceTaskId, status, body);
       if (collaborationMessageId && accountTargetTaskId) {
         const source = requireTask(sourceTaskId);
@@ -545,6 +546,12 @@ export function createMcpTaskToolHost(deps: {
         });
         void tasks.drainCollaborationDeliveries(accountTargetTaskId);
       }
+      if (silenceWatchMs === undefined) return {};
+      return {
+        note:
+          "No child owes this Task an update and no message is queued to it, so the runtime cannot see what will wake it. " +
+          `If there is no agent activity for ${formatSilence(silenceWatchMs)}, the requester is notified (no_activity).`,
+      };
     },
   };
 }

@@ -158,9 +158,11 @@ deletes or closes the Task.
 - Report `blocked` when the next move belongs to the requester or a person:
   say what you need and what happens once you have it. The requester resumes
   you with a message; a blocked state is not a reason to poll.
-- Report `waiting` when you have dispatched work to a child and will continue
-  once it hands off. Then end the turn, and finish later with `done` or
-  `blocked`.
+- Report `waiting` when work continues without the requester — a child you
+  dispatched, or your own background command — and you will resume when it
+  finishes. Then end the turn, and finish later with `done` or `blocked`. If
+  the requester asks while you wait, answer with `task_send`: `waiting` is not
+  delivered.
 
 Create a new Task for follow-up work only when it needs a separate boundary,
 context, owner, or execution policy.
