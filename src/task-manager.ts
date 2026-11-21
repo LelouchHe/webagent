@@ -22,6 +22,7 @@ import {
   buildCollaborationSystemMessage,
   isRuntimeItemKind,
   type CollaborationBroadcastRequest,
+  type RuntimeItemKind,
 } from "./collaboration-message.ts";
 import { isoFromMillis } from "./shared/time.ts";
 import { formatFieldBlock } from "./shared/field-block.ts";
@@ -4083,19 +4084,25 @@ export class TaskManager implements ObligationHost {
     targetLabel: string,
   ): void {
     // The delivery row is one shape for every message, so a runtime item
-    // recovers which item it is from the audit event that queued it.
-    const runtimeItem =
-      message.source_actor === "system"
-        ? this.store.getRuntimeItemKind(taskId, message.id, RUNTIME_ITEM_KINDS)
-        : null;
-    if (message.source_actor === "system" && !isRuntimeItemKind(runtimeItem)) {
-      // No record says what this item is, so there is no honest row to write.
-      // The body still reaches the agent; only the transcript entry is skipped.
-      slog.warn("runtime item record missing", {
-        taskId: taskId.slice(0, 8),
-        messageId: message.id.slice(0, 8),
-      });
-      return;
+    // recovers which item it is from the audit event that queued it. Absent a
+    // record there is no item to name, and nothing is projected.
+    let runtimeItem: RuntimeItemKind | undefined;
+    if (message.source_actor === "system") {
+      const recorded = this.store.getRuntimeItemKind(
+        taskId,
+        message.id,
+        RUNTIME_ITEM_KINDS,
+      );
+      if (!isRuntimeItemKind(recorded)) {
+        // No record says what this item is, so there is no honest row to write.
+        // The body still reaches the agent; only the transcript entry is skipped.
+        slog.warn("runtime item record missing", {
+          taskId: taskId.slice(0, 8),
+          messageId: message.id.slice(0, 8),
+        });
+        return;
+      }
+      runtimeItem = recorded;
     }
     const sourceLabel =
       this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
@@ -4111,7 +4118,7 @@ export class TaskManager implements ObligationHost {
         targetLabel,
         role: "target",
         body: message.body,
-        runtimeItem: isRuntimeItemKind(runtimeItem) ? runtimeItem : undefined,
+        runtimeItem,
       }).data,
       { from_ref: `msg:${message.id}` },
     );
@@ -4124,7 +4131,7 @@ export class TaskManager implements ObligationHost {
       role: "target",
       taskId,
       body: message.body,
-      runtimeItem: isRuntimeItemKind(runtimeItem) ? runtimeItem : undefined,
+      runtimeItem,
     });
   }
 
