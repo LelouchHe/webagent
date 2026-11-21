@@ -9,7 +9,7 @@ export type McpTaskCancelNotice = Extract<
   { type: "system_message" }
 >;
 
-export async function cancelMcpTask(
+export function cancelMcpTask(
   tasks: TaskManager,
   targetTaskId: string,
   cancelTimeoutMs: number,
@@ -18,63 +18,75 @@ export async function cancelMcpTask(
   return tasks.cancelTaskExecution(targetTaskId, bridge, cancelTimeoutMs);
 }
 
-export function persistMcpTaskCancelAudit(
+export interface McpTaskCancelFact {
+  sourceTaskId: string;
+  targetTaskId: string;
+  sourceLabel: string;
+  targetLabel: string;
+  reason: string;
+  status: TaskCancelResult["status"];
+}
+
+export function buildMcpTaskCancelFact(
   store: Store,
   input: {
     sourceTaskId: string;
     targetTaskId: string;
     reason: string;
     result: TaskCancelResult;
-    broadcast?: (event: McpTaskCancelNotice) => void;
   },
-): void {
+): McpTaskCancelFact {
   const sourceTask = store.getTaskIncludingDeleted(input.sourceTaskId);
   const targetTask = store.getTaskIncludingDeleted(input.targetTaskId);
-  const sourceLabel = sourceTask?.title ?? input.sourceTaskId.slice(0, 8);
-  const targetLabel = targetTask?.title ?? input.targetTaskId.slice(0, 8);
-  const sourceRef = formatTaskReference(sourceLabel);
-  const targetRef = formatTaskReference(targetLabel);
+  return {
+    sourceTaskId: input.sourceTaskId,
+    targetTaskId: input.targetTaskId,
+    sourceLabel: sourceTask?.title ?? input.sourceTaskId.slice(0, 8),
+    targetLabel: targetTask?.title ?? input.targetTaskId.slice(0, 8),
+    reason: input.reason,
+    status: input.result.status,
+  };
+}
+
+export function persistMcpTaskCancelAuditSide(
+  store: Store,
+  fact: McpTaskCancelFact,
+  role: "source" | "target",
+  broadcast?: (event: McpTaskCancelNotice) => void,
+): void {
+  const sourceRef = formatTaskReference(fact.sourceLabel);
+  const targetRef = formatTaskReference(fact.targetLabel);
   const body = formatFieldBlock([
-    { label: "reason", value: input.reason },
-    { label: "status", value: input.result.status },
+    { label: "reason", value: fact.reason },
+    { label: "status", value: fact.status },
   ]);
-  const rows = [
-    {
-      taskId: input.sourceTaskId,
-      role: "source" as const,
-      title: `${sourceRef} cancelled ${targetRef}`,
-    },
-    {
-      taskId: input.targetTaskId,
-      role: "target" as const,
-      title: `Cancelled by ${sourceRef}`,
-    },
-  ];
-  for (const row of rows) {
-    const data = {
-      kind: "task_cancel" as const,
-      role: row.role,
-      sourceTaskId: input.sourceTaskId,
-      sourceLabel,
-      targetTaskId: input.targetTaskId,
-      targetLabel,
-      reason: input.reason,
-      status: input.result.status,
-      title: row.title,
-      body,
-    };
-    store.saveEvent(row.taskId, "system_message", data, { from_ref: "agent" });
-    input.broadcast?.({
-      type: "system_message",
-      taskId: row.taskId,
-      kind: data.kind,
-      role: data.role,
-      sourceTaskId: data.sourceTaskId,
-      sourceLabel: data.sourceLabel,
-      targetTaskId: data.targetTaskId,
-      targetLabel: data.targetLabel,
-      title: data.title,
-      body: data.body,
-    });
-  }
+  const taskId = role === "source" ? fact.sourceTaskId : fact.targetTaskId;
+  const data = {
+    kind: "task_cancel" as const,
+    role,
+    sourceTaskId: fact.sourceTaskId,
+    sourceLabel: fact.sourceLabel,
+    targetTaskId: fact.targetTaskId,
+    targetLabel: fact.targetLabel,
+    reason: fact.reason,
+    status: fact.status,
+    title:
+      role === "source"
+        ? `${sourceRef} cancelled ${targetRef}`
+        : `Cancelled by ${sourceRef}`,
+    body,
+  };
+  store.saveEvent(taskId, "system_message", data, { from_ref: "agent" });
+  broadcast?.({
+    type: "system_message",
+    taskId,
+    kind: data.kind,
+    role: data.role,
+    sourceTaskId: data.sourceTaskId,
+    sourceLabel: data.sourceLabel,
+    targetTaskId: data.targetTaskId,
+    targetLabel: data.targetLabel,
+    title: data.title,
+    body: data.body,
+  });
 }

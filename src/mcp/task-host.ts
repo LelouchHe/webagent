@@ -27,8 +27,9 @@ import type {
 } from "./tools.ts";
 import { queryTaskHistory, readTaskHistory } from "./task-history.ts";
 import {
+  buildMcpTaskCancelFact,
   cancelMcpTask,
-  persistMcpTaskCancelAudit,
+  persistMcpTaskCancelAuditSide,
   type McpTaskCancelNotice,
 } from "./task-cancel.ts";
 import {
@@ -347,13 +348,24 @@ export function createMcpTaskToolHost(deps: {
       // from the live task rows, with the same short-id fallback collaboration
       // uses; a cancelled task may already be soft-deleted, hence
       // `getTaskIncludingDeleted`.
-      persistMcpTaskCancelAudit(store, {
+      const fact = buildMcpTaskCancelFact(store, {
         sourceTaskId,
         targetTaskId: target.id,
         reason,
         result,
-        broadcast: broadcastTaskCancelNotice,
       });
+      persistMcpTaskCancelAuditSide(
+        store,
+        fact,
+        "source",
+        broadcastTaskCancelNotice,
+      );
+      persistMcpTaskCancelAuditSide(
+        store,
+        fact,
+        "target",
+        broadcastTaskCancelNotice,
+      );
       return { accepted: true, taskId: target.id, status: result.status };
     },
 
