@@ -194,7 +194,7 @@ describe("Store collaboration records", () => {
     assert.equal(data.targetLabel, "修复");
   });
 
-  it("claims each queued delivery once and completes the claimed batch", () => {
+  it("claims each queued delivery once and marks it delivered at handover", () => {
     store.createCollaborationMessage(messageInput());
 
     const claimed = store.claimQueuedDeliveries("a2");
@@ -203,16 +203,10 @@ describe("Store collaboration records", () => {
       ["delivery-a1-a2"],
     );
     assert.deepEqual(store.claimQueuedDeliveries("a2"), []);
-    assert.equal(
-      store.getCollaborationDelivery("delivery-a1-a2")?.status,
-      "draining",
-    );
-
-    store.markCollaborationDeliveriesDelivered(["delivery-a1-a2"], 200);
     const delivery = store.getCollaborationDelivery("delivery-a1-a2");
     assert.ok(delivery);
     assert.equal(delivery.status, "delivered");
-    assert.equal(delivery.delivered_at, 200);
+    assert.equal(typeof delivery.delivered_at, "number");
   });
 
   it("keeps collaboration facts in surviving task timelines after hard delete", () => {

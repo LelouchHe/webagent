@@ -154,7 +154,7 @@ function fillSystemTitle(
 }
 
 const DELIVERY_SYMBOL: Record<DeliveryState["status"], string> = {
-  queued: "…",
+  queued: "⋯",
   delivered: "✓",
   failed: "✗",
 };

@@ -104,7 +104,7 @@ A row written before the raw labels existed, or one whose reference cannot be
 placed, is left fully unmarked.
 
 A collaboration row also carries the sender's delivery mark, after the title:
-`…` while queued, `✓` when delivered, and `✗` when delivery failed. The symbol
+`⋯` while queued, `✓` when delivered, and `✗` when delivery failed. The symbol
 is the only visible text; the tooltip (`title`, with the same text in
 `aria-label`) says `Queued`, `Delivered · <time>`, or `Delivery failed: <reason>`.
 There is no tap-to-expand, because a phone has no hover and the symbol is

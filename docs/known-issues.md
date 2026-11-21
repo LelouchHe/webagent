@@ -108,16 +108,11 @@ time. An entry without a "closing condition" is a wish, not an issue.
   failure on a cut edge may leave a harmless retry-map entry with a
   `prompt_failed` label. No dedicated race fence covers these windows.
 
-- **A claimed (`draining`) delivery can be stranded before the ACP handoff.**
-  `claimQueuedDeliveries` marks rows `draining`, but the prompt is handed to
-  ACP later in the same synchronous block. If the process exits or a database
-  write in that window fails, the row stays `draining` with no outcome callback
-  and no failure reason. It is not redelivered: only `queued` rows are claimable,
-  and the retry map never contains it. Archive deliberately does not relabel it,
-  because `draining` means "handed over / in flight", not "not yet submitted".
-  *Closing:* the startup sweep already planned for task collaboration — mark
-  leftover `queued`/`draining` rows from a previous process as interrupted
-  before delivery starts.
+- **A crash between handover and the ACP request leaves a delivered row the
+  agent never saw.** The drain marks rows `delivered` and calls the agent in
+  the same synchronous step, so only a process exit or a failed database write
+  inside that step can strand one. It is not redelivered. *Closing:* a startup
+  sweep, if this is ever observed.
 
 - **Task-created broadcast guards lack multi-client coverage.** The live
   `task_created` / `system_message` guards are asserted in the frontend tests,
@@ -297,7 +292,7 @@ time. An entry without a "closing condition" is a wish, not an issue.
 - **Live delivery marks can be missed across a reconnect.** A
   `collaboration_delivery` SSE event is not persisted, and reconnect replay
   carries raw event rows without the egress-derived delivery state. A sender
-  that disconnects between the send and the drain can keep `…` until a full
+  that disconnects between the send and the drain can keep `⋯` until a full
   reload, which reads the delivery row. *Closing:* persist or replay delivery
   status alongside the event, or accept the reload as the only truth.
 - **A soft-deleted recipient with an active share keeps deliveries queued.**

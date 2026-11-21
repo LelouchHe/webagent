@@ -510,7 +510,7 @@ at that instant; a human send after the cut is allowed over REST, and a later
 anything outside it — a queued message in either direction — is marked
 `failed` with `failure_reason: "archived_edge_cut"`; the message rows are kept,
 and nothing new is delivered across the boundary. Deliveries wholly inside the
-subtree are untouched. Rows already `draining` or `failed` keep their own
+subtree are untouched. Rows already `delivered` or `failed` keep their own
 status and reason. Work already handed to the agent is not recalled. The detach, system message, and delivery
 marks are one transaction.
 
@@ -884,8 +884,10 @@ row for that `messageId`:
 | `deliveredAt` | ISO-8601 UTC time (the shared timestamp format), only when delivered |
 | `deliveryFailureReason` | the stored failure reason, only when failed |
 
-A delivery the drain has claimed but not yet handed over still reads `queued`;
-the store's internal `draining` state is not exposed. These fields are derived
+A message is `delivered` when the drain hands it to the recipient's agent, not
+when the recipient's turn ends; it is `failed` only when it could not be handed
+over (for example, the agent rejected the request), never because of what the
+recipient's turn did. These fields are derived
 at read time and are never written back to the event.
 A load therefore always reflects storage truth. The receiver's row (`role:
 "target"`) is written only when its batch is handed to the receiver's agent, so

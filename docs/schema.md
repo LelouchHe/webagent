@@ -227,11 +227,10 @@ on target task deletion; deletion explicitly terminalizes pending rows as
 | `message_id` | TEXT NOT NULL | FK to `messages`, cascade on Message deletion |
 | `recipient_task_id` | TEXT NOT NULL | Stable target task ID, retained for history after deletion |
 | `idempotency_key` | TEXT NOT NULL UNIQUE | Message/recipient delivery identity |
-| `status` | TEXT NOT NULL | `queued`, `draining`, `delivered`, or `failed` |
+| `status` | TEXT NOT NULL | `queued`, `delivered`, or `failed` |
 | `queued_at` | INTEGER NOT NULL | Unix milliseconds |
-| `claimed_at` | INTEGER | Set when queue drain atomically claims the row |
-| `delivered_at` | INTEGER | Set once ACP prompt submission succeeds |
-| `failed_at` | INTEGER | Set on terminal failure |
+| `delivered_at` | INTEGER | Set when the drain hands the row to the recipient's agent, not when its turn ends; cleared if the agent rejects the request |
+| `failed_at` | INTEGER | Set when the row could not be handed over |
 | `failure_reason` | TEXT | Stable terminal failure reason, e.g. `target_deleted` |
 
 ### `client_ops`
@@ -496,7 +495,9 @@ an implicit compatibility migration for obsolete table schemas: the strict
 schema guard rejects them at boot, and operators must back up and reset their
 data directory before restarting. This includes a `tasks.workflow_status` CHECK
 that predates `waiting`: the constraint is part of the contract, so such a
-database is refused at startup rather than at the first `task_update(waiting)`. Four narrow, in-place schema edits are the
+database is refused at startup rather than at the first `task_update(waiting)`.
+Likewise a `deliveries` table that still has `claimed_at` or a `draining`
+status is refused. Four narrow, in-place schema edits are the
 explicit exceptions (three column-scoped and one index swap), and all converge
 an existing database on the current schema instead of requiring a reset:
 

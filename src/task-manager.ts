@@ -780,8 +780,6 @@ export class TaskManager implements ObligationHost {
     // The Store owns every delivery status write, so one observer covers the
     // drain, archive, clear, deletion, and failure paths for the sender mark.
     this.store.onDeliveryStatusChanged((change) => {
-      // `draining` is internal; the sender's mark still reads `queued`.
-      if (change.status === "draining") return;
       this.deliveryStatusBroadcast?.({
         type: "collaboration_delivery",
         taskId: change.sourceTaskId,
@@ -4220,13 +4218,10 @@ export class TaskManager implements ObligationHost {
           return false;
         }
         // Nothing will retry these rows now; fail them and report the edge.
-        const stranded = this.store.claimQueuedDeliveries(taskId);
-        if (stranded.length > 0) {
-          this.store.failCollaborationDeliveries(
-            stranded.map((delivery) => delivery.id),
-            "resume_failed",
-          );
-        }
+        const stranded = this.store.failQueuedDeliveries(
+          taskId,
+          "resume_failed",
+        );
         this.closeAccountIfDispatchFailed(
           taskId,
           stranded.map((delivery) => delivery.message_id),
@@ -4254,7 +4249,6 @@ export class TaskManager implements ObligationHost {
         }
         return { delivery, message };
       });
-      const allDeliveryIds = deliveries.map((delivery) => delivery.id);
       const sourceActors = claimed.map(({ message }) => message.source_actor);
       const entries = claimed.map(({ message }) => this.deliveryEntry(message));
       // The receiver's rows appear now, at the turn boundary where the agent
@@ -4292,18 +4286,24 @@ export class TaskManager implements ObligationHost {
         undefined,
         promptId,
       );
-      const dispatchFailed = (error: unknown) => {
+      // `bridge.prompt` resolves when the turn ends and rejects only when the
+      // agent refused the request before accepting it. Only that rejection
+      // undoes the delivery; a turn that fails after acceptance stays delivered.
+      const dispatchRejected = (error: unknown) => {
         if (!this.leaseCurrent(lease)) {
-          slog.debug("ignored dispatch failure from a replaced execution", {
+          slog.debug("ignored dispatch rejection from a replaced execution", {
             taskId: taskId.slice(0, 8),
           });
           return;
         }
-        slog.error("collaboration delivery failed", {
+        slog.error("collaboration delivery rejected", {
           taskId: taskId.slice(0, 8),
           error,
         });
-        this.store.failCollaborationDeliveries(allDeliveryIds, "prompt_failed");
+        this.store.failRejectedDeliveries(
+          deliveries.map((delivery) => delivery.id),
+          "prompt_failed",
+        );
         this.closeAccountIfDispatchFailed(
           taskId,
           claimed.map(({ message }) => message.id),
@@ -4314,12 +4314,7 @@ export class TaskManager implements ObligationHost {
         this.store.updateTaskWorkflowStatus(taskId, "idle");
         this.endTurn(taskId, { promptId });
       };
-      void promptPromise.then(() => {
-        // A rotation truncated this transport; its late success must not
-        // settle rows that now belong to the replacement execution.
-        if (!this.leaseCurrent(lease)) return;
-        this.store.markCollaborationDeliveriesDelivered(allDeliveryIds);
-      }, dispatchFailed);
+      void promptPromise.catch(dispatchRejected);
       return true;
     } catch (error) {
       slog.error("collaboration delivery drain failed", {

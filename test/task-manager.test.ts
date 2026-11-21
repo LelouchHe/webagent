@@ -181,7 +181,7 @@ describe("TaskManager", () => {
       assert.equal(result.collaborationMessageId, null);
     });
 
-    it("leaves a draining delivery to finish after archive", async () => {
+    it("keeps a handed-over delivery delivered across archive", async () => {
       store.createTask("parent", tmpDir, "auto", "test-agent", "p-session");
       store.createTask(
         "child",
@@ -229,12 +229,12 @@ describe("TaskManager", () => {
       // The content is already with ACP: archive must not rewrite the row.
       assert.equal(
         store.getCollaborationDelivery("in-flight-delivery")?.status,
-        "draining",
+        "delivered",
       );
       assert.equal(sm.archiveTask("child")?.status, "archived");
       assert.equal(
         store.getCollaborationDelivery("in-flight-delivery")?.status,
-        "draining",
+        "delivered",
       );
 
       releasePrompt();

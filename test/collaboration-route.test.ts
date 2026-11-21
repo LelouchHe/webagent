@@ -627,22 +627,18 @@ describe("S3 collaboration write routes", () => {
     assert.equal(queued.deliveryStatus, "queued");
     assert.equal(queued.deliveredAt, undefined);
 
-    // A claimed (`draining`) delivery is internal and still reads queued.
-    const claimed = store.claimQueuedDeliveries("sibling");
-    assert.equal(
-      store.getCollaborationDelivery("egress-delivery")?.status,
-      "draining",
-    );
-    assert.equal((await read()).deliveryStatus, "queued");
-
-    store.markCollaborationDeliveriesDelivered(
-      claimed.map((delivery) => delivery.id),
-      1_700_000_000_000,
-    );
+    // Handing the batch to the recipient's agent is the delivery.
+    store.claimQueuedDeliveries("sibling");
+    const deliveredAtMs =
+      store.getCollaborationDelivery("egress-delivery")?.delivered_at;
+    assert.equal(typeof deliveredAtMs, "number");
 
     const delivered = await read();
     assert.equal(delivered.deliveryStatus, "delivered");
-    assert.equal(delivered.deliveredAt, "2023-11-14T22:13:20.000Z");
+    assert.equal(
+      delivered.deliveredAt,
+      new Date(deliveredAtMs as number).toISOString(),
+    );
     // Egress derives the mark; the stored event is untouched.
     const stored = store
       .getEvents("parent")

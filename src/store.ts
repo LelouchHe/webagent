@@ -209,8 +209,12 @@ export class MessageNotFoundError extends Error {
 
 export type CollaborationActor = "user" | "agent" | "system";
 export type CollaborationProjectionRole = "source" | "target" | "supervisor";
-export type CollaborationDeliveryStatus =
-  "queued" | "draining" | "delivered" | "failed";
+/**
+ * Whether the message reached the recipient's agent. `delivered` is set when
+ * the drain hands it over, not when the recipient's turn ends; `failed` means
+ * it could not be handed over. What the recipient does with it is not tracked.
+ */
+export type CollaborationDeliveryStatus = "queued" | "delivered" | "failed";
 
 export interface CollaborationMessageRow {
   id: string;
@@ -235,7 +239,6 @@ export interface CollaborationDeliveryRow {
   idempotency_key: string;
   status: CollaborationDeliveryStatus;
   queued_at: number;
-  claimed_at: number | null;
   delivered_at: number | null;
   failed_at: number | null;
   failure_reason: string | null;
@@ -638,7 +641,6 @@ export class Store {
         "idempotency_key",
         "status",
         "queued_at",
-        "claimed_at",
         "delivered_at",
         "failed_at",
         "failure_reason",
@@ -691,6 +693,16 @@ export class Store {
       )?.sql;
       if (tasksSql && !tasksSql.includes("'waiting'")) {
         incompatible = "tasks.workflow_status CHECK does not include waiting";
+      }
+      const deliveriesSql = (
+        this.db
+          .prepare(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'deliveries'",
+          )
+          .get() as { sql?: string } | undefined
+      )?.sql;
+      if (deliveriesSql?.includes("'draining'")) {
+        incompatible = "deliveries.status CHECK still includes draining";
       }
     }
     if (incompatible) {
@@ -816,9 +828,8 @@ export class Store {
         message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
         recipient_task_id TEXT NOT NULL,
         idempotency_key TEXT NOT NULL UNIQUE,
-        status TEXT NOT NULL CHECK (status IN ('queued', 'draining', 'delivered', 'failed')),
+        status TEXT NOT NULL CHECK (status IN ('queued', 'delivered', 'failed')),
         queued_at INTEGER NOT NULL,
-        claimed_at INTEGER,
         delivered_at INTEGER,
         failed_at INTEGER,
         failure_reason TEXT
@@ -2911,10 +2922,14 @@ export class Store {
     return row.count;
   }
 
-  /** Atomically claim every currently queued Delivery for one target task. */
+  /**
+   * Atomically hand over every currently queued Delivery for one target task:
+   * the rows become `delivered` now, because the caller passes them to the
+   * recipient's agent in the same synchronous step.
+   */
   claimQueuedDeliveries(recipientTaskId: string): CollaborationDeliveryRow[] {
-    const claimedAt = Date.now();
-    return this.db.transaction(() => {
+    const deliveredAt = Date.now();
+    const claimed = this.db.transaction(() => {
       const ids = this.db
         .prepare(
           `SELECT id FROM deliveries
@@ -2924,50 +2939,70 @@ export class Store {
         .all(recipientTaskId) as Array<{ id: string }>;
       const claim = this.db.prepare(
         `UPDATE deliveries
-         SET status = 'draining', claimed_at = ?
+         SET status = 'delivered', delivered_at = ?
          WHERE id = ? AND status = 'queued'`,
       );
-      const claimed: CollaborationDeliveryRow[] = [];
+      const rows: CollaborationDeliveryRow[] = [];
       for (const { id } of ids) {
-        if (claim.run(claimedAt, id).changes !== 1) continue;
+        if (claim.run(deliveredAt, id).changes !== 1) continue;
         const delivery = this.getCollaborationDelivery(id);
-        if (delivery) claimed.push(delivery);
+        if (delivery) rows.push(delivery);
       }
-      return claimed;
+      return rows;
     })();
+    this.broadcastDeliveryStatus(claimed.map((delivery) => delivery.id));
+    return claimed;
   }
 
-  markCollaborationDeliveriesDelivered(
-    ids: string[],
-    deliveredAt = Date.now(),
-  ): void {
-    const mark = this.db.prepare(
-      `UPDATE deliveries
-       SET status = 'delivered', delivered_at = ?, failure_reason = NULL, failed_at = NULL
-       WHERE id = ? AND status = 'draining'`,
-    );
-    const tx = this.db.transaction(() => {
-      for (const id of ids) mark.run(deliveredAt, id);
-    });
-    tx();
-    this.broadcastDeliveryStatus(ids);
-  }
-
-  failCollaborationDeliveries(
+  /**
+   * The agent refused a handed-over batch before accepting it (a request-level
+   * rejection), so those rows were never actually delivered.
+   */
+  failRejectedDeliveries(
     ids: string[],
     failureReason: string,
     failedAt = Date.now(),
   ): void {
     const fail = this.db.prepare(
       `UPDATE deliveries
-       SET status = 'failed', failed_at = ?, failure_reason = ?
-       WHERE id = ? AND status = 'draining'`,
+       SET status = 'failed', failed_at = ?, failure_reason = ?, delivered_at = NULL
+       WHERE id = ? AND status = 'delivered'`,
     );
-    const tx = this.db.transaction(() => {
+    this.db.transaction(() => {
       for (const id of ids) fail.run(failedAt, failureReason, id);
-    });
-    tx();
+    })();
     this.broadcastDeliveryStatus(ids);
+  }
+
+  /** Fail every Delivery still queued for one target; returns the failed rows. */
+  failQueuedDeliveries(
+    recipientTaskId: string,
+    failureReason: string,
+    failedAt = Date.now(),
+  ): CollaborationDeliveryRow[] {
+    const failed = this.db.transaction(() => {
+      const ids = this.db
+        .prepare(
+          `SELECT id FROM deliveries
+           WHERE recipient_task_id = ? AND status = 'queued'
+           ORDER BY queued_at, rowid`,
+        )
+        .all(recipientTaskId) as Array<{ id: string }>;
+      const fail = this.db.prepare(
+        `UPDATE deliveries
+         SET status = 'failed', failed_at = ?, failure_reason = ?
+         WHERE id = ? AND status = 'queued'`,
+      );
+      const rows: CollaborationDeliveryRow[] = [];
+      for (const { id } of ids) {
+        if (fail.run(failedAt, failureReason, id).changes !== 1) continue;
+        const delivery = this.getCollaborationDelivery(id);
+        if (delivery) rows.push(delivery);
+      }
+      return rows;
+    })();
+    this.broadcastDeliveryStatus(failed.map((delivery) => delivery.id));
+    return failed;
   }
 
   failOutstandingDeliveriesForTaskClear(
@@ -2977,19 +3012,16 @@ export class Store {
     const rows = this.db
       .prepare(
         `SELECT id, message_id FROM deliveries
-         WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
+         WHERE recipient_task_id = ? AND status = 'queued'`,
       )
       .all(taskId) as Array<{ id: string; message_id: string }>;
     const ids = rows.map((row) => row.id);
     this.db
       .prepare(
         `UPDATE deliveries
-         SET status = 'failed', failed_at = ?, failure_reason =
-           CASE status
-             WHEN 'queued' THEN 'cleared_before_delivery'
-             ELSE 'cleared_during_delivery'
-           END
-         WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
+         SET status = 'failed', failed_at = ?,
+           failure_reason = 'cleared_before_delivery'
+         WHERE recipient_task_id = ? AND status = 'queued'`,
       )
       .run(failedAt, taskId);
     this.broadcastDeliveryStatus(ids);
@@ -3002,7 +3034,7 @@ export class Store {
       .prepare(
         `UPDATE deliveries
          SET status = 'failed', failed_at = ?, failure_reason = 'target_deleted'
-         WHERE recipient_task_id = ? AND status IN ('queued', 'draining')`,
+         WHERE recipient_task_id = ? AND status = 'queued'`,
       )
       .run(Date.now(), taskId);
   }

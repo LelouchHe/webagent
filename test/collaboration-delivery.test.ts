@@ -176,7 +176,7 @@ describe("TaskManager collaboration delivery drain", () => {
     releasePrompt();
   });
 
-  it("broadcasts delivered after the prompt and failed after a rejection", async () => {
+  it("broadcasts delivered at handover, before the turn ends, and failed after a rejection", async () => {
     const events: Array<{ messageId: string; status: string }> = [];
     tasks.setDeliveryStatusBroadcast((event) => {
       events.push({ messageId: event.messageId, status: event.status });
@@ -191,18 +191,26 @@ describe("TaskManager collaboration delivery drain", () => {
       createdAt: 1,
     });
 
+    let endTurn!: () => void;
+    const turnRunning = new Promise<void>((resolve) => {
+      endTurn = resolve;
+    });
     assert.equal(
       await tasks.drainCollaborationDeliveries("target", {
         ...mockBridgeStubs(),
-        async prompt() {},
+        async prompt() {
+          await turnRunning;
+        },
       }),
       true,
     );
-    await waitFor(() => events.length === 1);
-    assert.deepEqual(events[0], {
-      messageId: "m-status",
-      status: "delivered",
-    });
+    // The recipient's turn is still running: delivery is already settled.
+    assert.deepEqual(events, [{ messageId: "m-status", status: "delivered" }]);
+    assert.equal(
+      store.getCollaborationDelivery("d-status")?.status,
+      "delivered",
+    );
+    endTurn();
 
     store.createTask(
       "target2",
@@ -231,11 +239,11 @@ describe("TaskManager collaboration delivery drain", () => {
       }),
       true,
     );
-    await waitFor(() => events.length === 2);
-    assert.deepEqual(events[1], {
-      messageId: "m-failed",
-      status: "failed",
-    });
+    await waitFor(() => events.length === 3);
+    assert.deepEqual(events.slice(1), [
+      { messageId: "m-failed", status: "delivered" },
+      { messageId: "m-failed", status: "failed" },
+    ]);
   });
 
   it("does not churn the busy turn when nothing is queued", async () => {
@@ -295,10 +303,10 @@ describe("TaskManager collaboration delivery drain", () => {
     );
   });
 
-  it("terminates all outstanding deliveries when clear replaces the execution", async () => {
+  it("fails queued deliveries but keeps handed-over ones when clear replaces the execution", async () => {
     store.createCollaborationMessage({
-      id: "draining-message",
-      deliveryId: "draining-delivery",
+      id: "handed-message",
+      deliveryId: "handed-delivery",
       sourceTaskId: "source",
       directTargetTaskId: "target",
       sourceActor: "user",
@@ -333,12 +341,8 @@ describe("TaskManager collaboration delivery drain", () => {
       "cleared_before_delivery",
     );
     assert.equal(
-      store.getCollaborationDelivery("draining-delivery")?.status,
-      "failed",
-    );
-    assert.equal(
-      store.getCollaborationDelivery("draining-delivery")?.failure_reason,
-      "cleared_during_delivery",
+      store.getCollaborationDelivery("handed-delivery")?.status,
+      "delivered",
     );
     assert.equal(store.getTask("target")?.workflow_status, "idle");
   });
@@ -536,10 +540,7 @@ describe("TaskManager collaboration delivery drain", () => {
 
   it("keeps the account when an unrelated delivery fails", async () => {
     seedDispatchFamily();
-    const dispatch = store.claimQueuedDeliveries("child");
-    store.markCollaborationDeliveriesDelivered(
-      dispatch.map((delivery) => delivery.id),
-    );
+    store.claimQueuedDeliveries("child");
     store.createCollaborationMessage({
       id: "third-party",
       deliveryId: "third-party-delivery",
