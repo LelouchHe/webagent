@@ -1520,3 +1520,22 @@ math:not(.tml-display) {
 .math-error {
   color: var(--text-dim);
 }
+
+/* --- Reduced motion ---
+   Every loop above is an opacity/color cycle, never a transform, and every one
+   of them duplicates information the surrounding text already carries ("⋯" vs
+   "✓", the braille spinner next to a busy prompt). So honouring the OS setting
+   costs no information: the glyph stays, only the breathing stops. Anything
+   new that animates indefinitely must be listed here too; the contract is
+   pinned by `test/styles-reduced-motion.test.ts`. */
+@media (prefers-reduced-motion: reduce) {
+  #status.is-connecting,
+  .thinking summary.active,
+  .system-msg .delivery-mark.queued,
+  .tool-call,
+  .bash-block .bash-cmd.running,
+  #input-prompt.busy::before,
+  #waiting .cursor {
+    animation: none;
+  }
+}
