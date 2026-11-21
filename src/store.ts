@@ -2831,7 +2831,7 @@ export class Store {
         targetLabel,
         role: "source",
         body: input.body,
-      }).data,
+      }),
       { from_ref: `msg:${input.id}` },
     );
     this.db

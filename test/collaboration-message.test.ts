@@ -37,11 +37,11 @@ describe("collaboration row and envelope builders", () => {
   });
 
   it("persists every field a replayed row needs, including both labels", () => {
-    const message = buildCollaborationSystemMessage({
+    const row = buildCollaborationSystemMessage({
       ...input,
       role: "source",
     });
-    assert.deepEqual(message.data, {
+    assert.deepEqual(row, {
       kind: "collaboration",
       messageId: "m-1",
       sourceTaskId: "task-a",
@@ -52,8 +52,32 @@ describe("collaboration row and envelope builders", () => {
       title: '@Alpha sent @"Beta child"',
       body: "hello",
     });
-    assert.equal(message.title, message.data.title);
-    assert.equal(message.body, message.data.body);
+  });
+
+  it("derives the live envelope from the persisted row, runtime items included", () => {
+    const runtimeItem = "handoff_reminder" as const;
+    const persisted = buildCollaborationSystemMessage({
+      ...input,
+      role: "target",
+      runtimeItem,
+    });
+    const live = buildCollaborationBroadcast({
+      ...input,
+      taskId: "task-b",
+      role: "target",
+      runtimeItem,
+    });
+    assert.deepEqual(live, {
+      type: "system_message",
+      taskId: "task-b",
+      ...persisted,
+    });
+    // A runtime item has no source handle, and the envelope cannot invent one:
+    // both consumers read the same row.
+    assert.equal("sourceTaskId" in persisted, false);
+    assert.equal("sourceLabel" in persisted, false);
+    assert.equal(persisted.kind, "handoff_reminder");
+    assert.equal(persisted.title, "Task handoff required");
   });
 
   it("carries the raw labels on the wire so a live client can place a reference", () => {
@@ -93,8 +117,8 @@ describe("collaboration row and envelope builders", () => {
       [
         persisted.title,
         persisted.body,
-        persisted.data.sourceLabel,
-        persisted.data.targetLabel,
+        persisted.sourceLabel,
+        persisted.targetLabel,
       ],
     );
   });

@@ -57,12 +57,23 @@ export interface CollaborationSystemMessageInput extends CollaborationLabels {
   runtimeItem?: RuntimeItemKind;
 }
 
-export interface CollaborationSystemMessage {
+/**
+ * The persisted payload of one projected row, and the live envelope's fields.
+ * A `type` rather than an `interface` so it keeps the implicit index signature
+ * `saveEvent` accepts as `Record<string, unknown>`.
+ */
+export type CollaborationSystemMessageData = {
+  kind: string;
+  messageId: string;
+  /** Absent on a runtime item: nothing sent it, so there is no handle. */
+  sourceTaskId?: string;
+  sourceLabel?: string;
+  targetTaskId: string;
+  targetLabel: string;
+  role: CollaborationRole;
   title: string;
   body: string;
-  /** Payload for the persisted `system_message` event. */
-  data: Record<string, unknown>;
-}
+};
 
 /**
  * `kind` names the fact, so a runtime item names itself rather than
@@ -83,27 +94,22 @@ export function projectionKind(input: {
 
 export function buildCollaborationSystemMessage(
   input: CollaborationSystemMessageInput,
-): CollaborationSystemMessage {
+): CollaborationSystemMessageData {
   // A runtime item has no source handle: nothing sent it, so a `sourceLabel`
   // here would describe an author that cannot be referenced or replied to.
-  const title = input.runtimeItem
-    ? RUNTIME_ITEM_TITLES[input.runtimeItem]
-    : collaborationTitle(input);
   return {
-    title,
+    kind: projectionKind(input),
+    messageId: input.messageId,
+    ...(input.runtimeItem
+      ? {}
+      : { sourceTaskId: input.sourceTaskId, sourceLabel: input.sourceLabel }),
+    targetTaskId: input.targetTaskId,
+    targetLabel: input.targetLabel,
+    role: input.role,
+    title: input.runtimeItem
+      ? RUNTIME_ITEM_TITLES[input.runtimeItem]
+      : collaborationTitle(input),
     body: input.body,
-    data: {
-      kind: projectionKind(input),
-      messageId: input.messageId,
-      ...(input.runtimeItem
-        ? {}
-        : { sourceTaskId: input.sourceTaskId, sourceLabel: input.sourceLabel }),
-      targetTaskId: input.targetTaskId,
-      targetLabel: input.targetLabel,
-      role: input.role,
-      title,
-      body: input.body,
-    },
   };
 }
 
@@ -125,9 +131,6 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
   deliveryFailureReason?: string;
 }
 
-/** One projection of one collaboration message. */
-export type CollaborationBroadcastInput = CollaborationBroadcastRequest;
-
 export interface CollaborationDeliverySnapshot {
   status: CollaborationDeliveryStatus;
   deliveredAt: number | null;
@@ -142,32 +145,25 @@ export interface CollaborationDeliverySnapshot {
  * builder is the only place that may spell the envelope out.
  */
 export function buildCollaborationBroadcast(
-  input: CollaborationBroadcastInput,
+  input: CollaborationBroadcastRequest,
 ): Extract<AgentEvent, { type: "system_message" }> {
-  const message = buildCollaborationSystemMessage(input);
-  return {
+  // The envelope is the persisted payload plus what only a live client needs,
+  // so which fields a runtime item drops is stated once, in the row builder.
+  const envelope: Extract<AgentEvent, { type: "system_message" }> = {
     type: "system_message",
     taskId: input.taskId,
-    kind: projectionKind(input),
-    messageId: input.messageId,
-    ...(input.runtimeItem
-      ? {}
-      : { sourceTaskId: input.sourceTaskId, sourceLabel: input.sourceLabel }),
-    targetTaskId: input.targetTaskId,
-    targetLabel: input.targetLabel,
-    role: input.role,
-    title: message.title,
-    body: message.body,
-    ...(input.deliveryStatus === undefined
-      ? {}
-      : { deliveryStatus: input.deliveryStatus }),
-    ...(input.deliveredAt === undefined
-      ? {}
-      : { deliveredAt: input.deliveredAt }),
-    ...(input.deliveryFailureReason === undefined
-      ? {}
-      : { deliveryFailureReason: input.deliveryFailureReason }),
+    ...buildCollaborationSystemMessage(input),
   };
+  if (input.deliveryStatus !== undefined) {
+    envelope.deliveryStatus = input.deliveryStatus;
+  }
+  if (input.deliveredAt !== undefined) {
+    envelope.deliveredAt = input.deliveredAt;
+  }
+  if (input.deliveryFailureReason !== undefined) {
+    envelope.deliveryFailureReason = input.deliveryFailureReason;
+  }
+  return envelope;
 }
 
 /**

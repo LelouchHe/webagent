@@ -4119,7 +4119,7 @@ export class TaskManager implements ObligationHost {
         role: "target",
         body: message.body,
         runtimeItem,
-      }).data,
+      }),
       { from_ref: `msg:${message.id}` },
     );
     this.collaborationBroadcast?.({
