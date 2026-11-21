@@ -131,7 +131,7 @@ export function extractToolCallContent(content: ToolContentItem[]): string {
 
 /** Map a tool_call_update status to display icon and CSS class. */
 export function getStatusIcon(status: string): StatusIconResult {
-  const icon = status === "completed" ? "✓" : status === "failed" ? "✗" : "…";
+  const icon = status === "completed" ? "✓" : status === "failed" ? "✗" : "⋯";
   return { icon, className: `tool-call ${status}` };
 }
 

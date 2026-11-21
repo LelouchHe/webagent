@@ -446,16 +446,20 @@ body {
   white-space: pre-wrap;
 }
 /* Sender-side delivery mark for a collaboration row. Scoped to the new
-   `delivery-mark` class; the shared system-message base is untouched. */
+   `delivery-mark` class; the shared system-message base is untouched. Sized in
+   the parent's 15px like the tool-call and plan marks, so it reads as one of
+   the app's status glyphs rather than as a footnote. */
 .system-msg .delivery-mark {
   margin-left: 6px;
-  font-size: 12px;
   color: var(--text-dim);
   cursor: default;
 }
+/* Queued is the in-flight state, so it breathes like a running tool call. */
+.system-msg .delivery-mark.queued {
+  animation: pulse 1.5s ease-in-out infinite;
+}
 .system-msg .delivery-mark.delivered {
   color: var(--green);
-  opacity: 0.8;
 }
 .system-msg .delivery-mark.failed {
   color: var(--red);

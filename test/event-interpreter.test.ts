@@ -266,9 +266,9 @@ describe("getStatusIcon", () => {
     assert.equal(result.className, "tool-call failed");
   });
 
-  it("returns ellipsis for other status", () => {
+  it("returns midline ellipsis for other status", () => {
     const result = getStatusIcon("running");
-    assert.equal(result.icon, "…");
+    assert.equal(result.icon, "⋯");
     assert.equal(result.className, "tool-call running");
   });
 });
