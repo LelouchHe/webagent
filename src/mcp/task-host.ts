@@ -55,7 +55,7 @@ export interface McpTaskCollaborationEvent {
   /** The task this projection renders into. */
   taskId: string;
   role: "source" | "target" | "supervisor";
-  deliveryStatus?: "queued" | "draining" | "delivered" | "failed";
+  deliveryStatus?: "queued" | "delivered" | "failed";
   deliveredAt?: string;
   deliveryFailureReason?: string;
 }

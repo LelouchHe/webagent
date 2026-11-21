@@ -380,7 +380,7 @@ export type AgentEvent =
        * Delivery state of a collaboration message, attached at render/egress
        * for the sender's own projection. Never persisted in the event.
        */
-      deliveryStatus?: "queued" | "draining" | "delivered" | "failed";
+      deliveryStatus?: "queued" | "delivered" | "failed";
       deliveredAt?: string;
       deliveryFailureReason?: string;
       /**
@@ -401,7 +401,7 @@ export type AgentEvent =
       type: "collaboration_delivery";
       taskId: string;
       messageId: string;
-      status: "queued" | "draining" | "delivered" | "failed";
+      status: "queued" | "delivered" | "failed";
       deliveredAt?: string;
       failureReason?: string;
     }

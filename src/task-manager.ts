@@ -22,6 +22,7 @@ import {
   buildCollaborationSystemMessage,
   type CollaborationBroadcastRequest,
 } from "./collaboration-message.ts";
+import { isoFromMillis } from "./shared/time.ts";
 import { formatFieldBlock } from "./shared/field-block.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
@@ -779,6 +780,8 @@ export class TaskManager implements ObligationHost {
     // The Store owns every delivery status write, so one observer covers the
     // drain, archive, clear, deletion, and failure paths for the sender mark.
     this.store.onDeliveryStatusChanged((change) => {
+      // `draining` is internal; the sender's mark still reads `queued`.
+      if (change.status === "draining") return;
       this.deliveryStatusBroadcast?.({
         type: "collaboration_delivery",
         taskId: change.sourceTaskId,
@@ -786,7 +789,7 @@ export class TaskManager implements ObligationHost {
         status: change.status,
         ...(change.deliveredAt === null
           ? {}
-          : { deliveredAt: new Date(change.deliveredAt).toISOString() }),
+          : { deliveredAt: isoFromMillis(change.deliveredAt) }),
         ...(change.failureReason === null
           ? {}
           : { failureReason: change.failureReason }),

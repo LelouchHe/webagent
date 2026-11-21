@@ -142,19 +142,19 @@ describe("MCP documentation coverage", () => {
     assert.doesNotMatch(section, /required title\s+and brief/i);
   });
 
-  it("quotes the advertised server instructions verbatim", () => {
-    const { headings, fences } = scanMarkdown(MCP_DOC);
+  it("points to the advertised server instructions instead of copying them", () => {
+    const { headings } = scanMarkdown(MCP_DOC);
     const heading = headings.find(
       (item) => item.text === "## Server instructions",
     );
     assert.ok(heading, "docs/task-mcp.md must document the instructions");
-    const nextSection =
-      headings.find((item) => item.line > heading.line)?.line ?? Infinity;
-    const quoted = fences.filter(
-      (item) => item.line > heading.line && item.line < nextSection,
+    assert.match(MCP_DOC, /`MCP_SERVER_INSTRUCTIONS`/);
+    assert.match(MCP_DOC, /\(\.\.\/src\/mcp\/server\.ts\)/);
+    assert.ok(MCP_SERVER_INSTRUCTIONS.length > 0);
+    assert.equal(
+      MCP_DOC.includes(MCP_SERVER_INSTRUCTIONS.split("\n")[0]),
+      false,
+      "the doc must not copy the instruction text",
     );
-    assert.equal(quoted.length, 1, "expected exactly one quoted block");
-    assert.equal(quoted[0].info, "text");
-    assert.equal(quoted[0].content, `${MCP_SERVER_INSTRUCTIONS}\n`);
   });
 });

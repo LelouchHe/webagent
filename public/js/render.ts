@@ -46,7 +46,7 @@ export function addMessage(role: string, text: string): HTMLDivElement {
 }
 
 export interface DeliveryState {
-  status: "queued" | "draining" | "delivered" | "failed";
+  status: "queued" | "delivered" | "failed";
   deliveredAt?: string;
   failureReason?: string;
 }
@@ -155,7 +155,6 @@ function fillSystemTitle(
 
 const DELIVERY_SYMBOL: Record<DeliveryState["status"], string> = {
   queued: "…",
-  draining: "…",
   delivered: "✓",
   failed: "✗",
 };
@@ -163,7 +162,6 @@ const DELIVERY_SYMBOL: Record<DeliveryState["status"], string> = {
 function deliveryTooltip(delivery: DeliveryState): string {
   switch (delivery.status) {
     case "queued":
-    case "draining":
       return "Queued";
     case "delivered": {
       const at = delivery.deliveredAt

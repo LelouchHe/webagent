@@ -627,7 +627,14 @@ describe("S3 collaboration write routes", () => {
     assert.equal(queued.deliveryStatus, "queued");
     assert.equal(queued.deliveredAt, undefined);
 
+    // A claimed (`draining`) delivery is internal and still reads queued.
     const claimed = store.claimQueuedDeliveries("sibling");
+    assert.equal(
+      store.getCollaborationDelivery("egress-delivery")?.status,
+      "draining",
+    );
+    assert.equal((await read()).deliveryStatus, "queued");
+
     store.markCollaborationDeliveriesDelivered(
       claimed.map((delivery) => delivery.id),
       1_700_000_000_000,

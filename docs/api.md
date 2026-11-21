@@ -880,11 +880,13 @@ row for that `messageId`:
 
 | Field | Values |
 | --- | --- |
-| `deliveryStatus` | `queued`, `draining`, `delivered`, or `failed` |
-| `deliveredAt` | ISO-8601 time, only when delivered |
+| `deliveryStatus` | `queued`, `delivered`, or `failed` |
+| `deliveredAt` | ISO-8601 UTC time (the shared timestamp format), only when delivered |
 | `deliveryFailureReason` | the stored failure reason, only when failed |
 
-These fields are derived at read time and are never written back to the event.
+A delivery the drain has claimed but not yet handed over still reads `queued`;
+the store's internal `draining` state is not exposed. These fields are derived
+at read time and are never written back to the event.
 A load therefore always reflects storage truth. The receiver's row (`role:
 "target"`) is written only when its batch is handed to the receiver's agent, so
 it carries no delivery mark.

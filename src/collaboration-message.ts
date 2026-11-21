@@ -1,5 +1,18 @@
 import { formatTaskReference } from "./shared/task-reference.ts";
+import { isoFromMillis } from "./shared/time.ts";
 import type { AgentEvent } from "./types.ts";
+
+/**
+ * The delivery mark a sender sees. `draining` is a storage-internal claim
+ * between queued and delivered; outside the store it reads as `queued`.
+ */
+export type DeliveryMarkStatus = "queued" | "delivered" | "failed";
+
+export function deliveryMarkStatus(
+  status: "queued" | "draining" | "delivered" | "failed",
+): DeliveryMarkStatus {
+  return status === "draining" ? "queued" : status;
+}
 
 export type CollaborationRole = "source" | "target" | "supervisor";
 
@@ -81,7 +94,7 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
   taskId: string;
   role: CollaborationRole;
   systemAuthor?: boolean;
-  deliveryStatus?: "queued" | "draining" | "delivered" | "failed";
+  deliveryStatus?: DeliveryMarkStatus;
   deliveredAt?: string;
   deliveryFailureReason?: string;
 }
@@ -176,9 +189,9 @@ export function attachCollaborationDeliveryStatus<
       }
       const delivery = statuses.get(data.messageId);
       if (!delivery) continue;
-      data.deliveryStatus = delivery.status;
+      data.deliveryStatus = deliveryMarkStatus(delivery.status);
       if (delivery.deliveredAt !== null) {
-        data.deliveredAt = new Date(delivery.deliveredAt).toISOString();
+        data.deliveredAt = isoFromMillis(delivery.deliveredAt);
       }
       if (delivery.failureReason !== null) {
         data.deliveryFailureReason = delivery.failureReason;

@@ -1449,18 +1449,13 @@ function renderMessageCard(msg: AgentEvent & { type: "message" }) {
 /** Read the egress-attached delivery state from one stored system row. */
 function deliveryStateFrom(d: Record<string, unknown>):
   | {
-      status: "queued" | "draining" | "delivered" | "failed";
+      status: "queued" | "delivered" | "failed";
       deliveredAt?: string;
       failureReason?: string;
     }
   | undefined {
   const status = d.deliveryStatus;
-  if (
-    status !== "queued" &&
-    status !== "draining" &&
-    status !== "delivered" &&
-    status !== "failed"
-  ) {
+  if (status !== "queued" && status !== "delivered" && status !== "failed") {
     return undefined;
   }
   return {

@@ -81,13 +81,9 @@ through the MCP `initialize` result. It states facts only: per-tool effects live
 in tool descriptions, parameter meanings in parameter descriptions, and usage
 policy in skills.
 
-```text
-Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.
-Messages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.
-An agent's task_send to a direct child opens one account for that edge; the child's task_update(done|blocked) settles it.
-While an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); a running turn with no agent activity for 15 minutes notifies the requester (no_activity); a removed target or failed dispatch notifies the requester (target_removed).
-Task history is the event log; summaries and updates are self-reports.
-```
+The text is `MCP_SERVER_INSTRUCTIONS` in
+[`src/mcp/server.ts`](../src/mcp/server.ts); it is not copied here so the two
+cannot drift.
 
 Clients may surface these instructions through their own discovery UI or tool;
 they are not a replacement for the individual tool descriptions.
