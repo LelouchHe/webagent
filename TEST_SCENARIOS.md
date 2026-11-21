@@ -78,6 +78,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the child's typed `task_update(done)` on B settles the account, persists the typed update with `reason: settled`, source, and target, and wakes the parent through A's transport with readable prose (`Task status: done` + the account), not JSON; the observer count grows by exactly one
   - an unanswered dispatch sends one closing reminder to B's transport (never A's); the next unaccounted turn delivers a `no_update` notice to A's transport with a readable block naming the target id, while the machine payload stays in `task_outcome_notice`
   - `task_update(waiting)` records the status, keeps the account open, wakes nobody, and survives the turn end as `workflowStatus = waiting`; the turn that reported it gets no closing reminder
+  - `waiting` is accepted without a visible wake source and its result carries the silence note; a queued message or a child that owes an update is a visible wake source and adds no note
 
 - `test/multi-agent-pending.test.ts` (real ACP child process)
   - the agent connects to `/mcp` from inside `session/new`: the handshake succeeds, `task_list` answers `initializing`, nothing is created, and the same token works after the binding commits
@@ -296,8 +297,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/collaboration-delivery.test.ts`
   - the receiver's collaboration row is written at drain, not at creation, and precedes the turn's own output event; a message never appears in a turn that did not see it
-  - a delivered batch broadcasts `collaboration_delivery` with `delivered`, and a rejected prompt broadcasts `failed`
-  - a failed dispatch prompt, a resume failure, and `/clear` each fail the queued delivery and close the account with one `target_removed` notice; a resume failure leaves no row stranded in `queued`
+  - a batch is `delivered` at handover, broadcast while the recipient's turn is still running; a request-level rejection flips it to `failed`
+  - a rejected dispatch prompt, a resume failure, and `/clear` each fail the dispatch and close the account with one `target_removed` notice; a resume failure leaves no row stranded in `queued`, and `/clear` keeps an already handed-over row `delivered`
   - a closing reminder is queued behind a running turn and appears only at the boundary through the automatic drain; the recipient gets exactly one row, labeled `WebAgent runtime`, with no pre-drain `handoff_reminder` row and no delivery mark
   - an unrelated REST/system delivery failing does not close the dispatch account; a stale resume leaves queued work for the current execution
   - same-time deliveries drain in insertion order, not id order
@@ -306,7 +307,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/collaboration-route.test.ts`
   - a human send over REST reaches a cross-tree target with exactly source and target projections, and a self target is refused
-  - the sender's read attaches `queued` and then `delivered` plus an ISO `deliveredAt` at egress, while the stored event never carries delivery state
+  - the sender's read attaches `queued` and then, after handover, `delivered` plus an ISO `deliveredAt` at egress, while the stored event never carries delivery state
 
 - `test/api-module.test.ts` (request building)
   - `createTask`/`clearTask` send a named `agentId`, omit it for `null` or an
@@ -610,7 +611,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - turn-end check: update resets the whole cycle (miss count and stopped flag); a full cycle runs reminder → `no_update`, updates, then a second full cycle runs again; a cancelled turn triggers nothing
   - `waiting` is an update for the check but never settles
   - an update made while idle resets the cycle immediately and marks no turn; a running turn's update marks only that turn
-  - silence: 15 minutes without activity reports `no_activity` once per running turn; activity before the deadline postpones it, and no account means no notice
+  - silence: the threshold without activity reports `no_activity` once per window; activity before the deadline postpones it, and no account means no notice; the threshold is configurable
+  - a `waiting` with no visible wake source keeps a watch after its turn: activity outside a prompt resets it, it notifies once, a new waiting re-arms it, any later update clears it, and a silent turn that reported it notifies once for the turn and once after it
   - target removal: deleting or archiving the target reports `target_removed`; losing the source drops the account silently; dispose stops timers
 
 - `test/turn-slot.test.ts`
@@ -672,7 +674,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the stored cwd form: pure string folding — `.` and repeated/trailing separators removed, `..` folded logically like `cd` (`a/link/..` is `a`), HOME expanded first, a relative `~/…` directory never turned into HOME shorthand, and idempotency over every case
 
 - `test/store.test.ts`
-  - a database whose `tasks.workflow_status` CHECK predates `waiting` is refused at startup with the pre-1.0 reset message
+  - a database whose `tasks.workflow_status` CHECK predates `waiting`, or whose `deliveries` CHECK still has `draining`, is refused at startup with the pre-1.0 reset message
   - task creation / deletion / updates
   - a stored cwd has no `.` and no `..`: `a/b/..` and `a/link/..` both become `a` (shell folding) and a reopen leaves them unchanged; a store opened on a database holding legacy variants merges each into its canonical row keeping its newest use, while a legacy row that still carries `..` keeps its bytes so a running task cannot move
   - config persistence, including clearing one column with `null` without touching the others
@@ -878,7 +880,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
     `task_update` records against the current (null) parent and does not
     deliver an account to the parent the task left
   - a queued delivery across the cut edge is not drained
-  - a draining delivery is left alone and finishes delivered after archive
+  - a handed-over delivery stays `delivered` across archive
 
 - `test/read-scope.test.ts`
   - a `read` token reaches the task list, stored history, detail, status, and

@@ -118,7 +118,7 @@ type McpTaskListItem = {
 };
 ```
 
-`workflowStatus` uses the same vocabulary as `task_list`: `running` while a turn runs, `idle` after it ended without a typed report, `waiting` when the Task says it is waiting on another Task, and `blocked`/`done` when it handed the ball back. `task_query` returns only `task_id`, `max_seq`, and flat event rows.
+`workflowStatus` uses the same vocabulary as `task_list`: `running` while a turn runs, `idle` after it ended without a typed report, `waiting` when the Task says its work continues without the requester, and `blocked`/`done` when it handed the ball back. `task_query` returns only `task_id`, `max_seq`, and flat event rows.
 It is **per turn, not a lifecycle terminal**: a `done` Task can be woken by a
 later message and run again, so `done` means the Task reported complete for that
 turn, not that it is finished forever.
