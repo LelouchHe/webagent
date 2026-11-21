@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { Store, type CollaborationMessageInput } from "../src/store.ts";
-import { RUNTIME_ITEM_KINDS } from "../src/collaboration-message.ts";
+import { RUNTIME_MESSAGE_KINDS } from "../src/collaboration-message.ts";
 
 describe("Store collaboration records", () => {
   let store: Store;
@@ -261,8 +261,8 @@ describe("Store collaboration records", () => {
     assert.equal("brief" in task, false);
   });
 
-  it("recovers a runtime item kind only from the system-authored record", () => {
-    // The drain recovers which runtime item a delivery is from the audit event
+  it("recovers a runtime message kind only from the system-authored record", () => {
+    // The drain recovers which runtime message a delivery is from the audit event
     // the producer wrote. Two assertions, each with exactly one candidate for
     // its message id, so neither depends on the order rows come back in.
     const database = (store as unknown as { db: Database.Database }).db;
@@ -288,25 +288,25 @@ describe("Store collaboration records", () => {
 
     insertEvent("handoff_reminder", "agent", { messageId: "only-agent" });
     assert.equal(
-      store.getRuntimeItemKind("a1", "only-agent", RUNTIME_ITEM_KINDS),
+      store.getRuntimeMessageKind("a1", "only-agent", RUNTIME_MESSAGE_KINDS),
       null,
-      "a message from a task is not a runtime item's record",
+      "a message from a Task does not record a runtime message's kind",
     );
 
     insertEvent("task_outcome_notice", "system", {
       messageId: "only-system",
     });
     assert.equal(
-      store.getRuntimeItemKind("a1", "only-system", RUNTIME_ITEM_KINDS),
+      store.getRuntimeMessageKind("a1", "only-system", RUNTIME_MESSAGE_KINDS),
       "task_outcome_notice",
       "the runtime's own record still supplies the kind",
     );
 
     insertEvent("user_message", "user", { messageId: "other-type" });
     assert.equal(
-      store.getRuntimeItemKind("a1", "other-type", RUNTIME_ITEM_KINDS),
+      store.getRuntimeMessageKind("a1", "other-type", RUNTIME_MESSAGE_KINDS),
       null,
-      "an event outside the candidate kinds is not a runtime item either",
+      "an event outside the candidate kinds is not a runtime message either",
     );
   });
 });

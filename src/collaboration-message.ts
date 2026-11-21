@@ -6,25 +6,27 @@ import type { AgentEvent } from "./types.ts";
 export type CollaborationRole = "source" | "target";
 
 /**
- * The visible title of a runtime item, keyed by the audit event type written
- * when the item is queued. The key is that event type so the row cannot
- * describe a different item than the one an operator can audit.
+ * The visible title of a runtime message, keyed by the audit event type written
+ * when the message is queued. The key is that event type so the row cannot
+ * describe a different message than the one an operator can audit.
  */
-export const RUNTIME_ITEM_TITLES = {
+export const RUNTIME_MESSAGE_TITLES = {
   handoff_reminder: "Task handoff required",
   task_outcome_notice: "Task handoff notice",
 } as const;
 
-export type RuntimeItemKind = keyof typeof RUNTIME_ITEM_TITLES;
+export type RuntimeMessageKind = keyof typeof RUNTIME_MESSAGE_TITLES;
 
-/** The item kinds whose titles this module knows, for storage queries. */
-export const RUNTIME_ITEM_KINDS: readonly RuntimeItemKind[] = Object.keys(
-  RUNTIME_ITEM_TITLES,
-) as RuntimeItemKind[];
+/** The message kinds whose titles this module knows, for storage queries. */
+export const RUNTIME_MESSAGE_KINDS: readonly RuntimeMessageKind[] = Object.keys(
+  RUNTIME_MESSAGE_TITLES,
+) as RuntimeMessageKind[];
 
-/** Whether `value` names a runtime item whose title this module knows. */
-export function isRuntimeItemKind(value: unknown): value is RuntimeItemKind {
-  return typeof value === "string" && value in RUNTIME_ITEM_TITLES;
+/** Whether `value` names a runtime message whose title this module knows. */
+export function isRuntimeMessageKind(
+  value: unknown,
+): value is RuntimeMessageKind {
+  return typeof value === "string" && value in RUNTIME_MESSAGE_TITLES;
 }
 
 /**
@@ -50,11 +52,11 @@ export interface CollaborationSystemMessageInput extends CollaborationLabels {
   role: CollaborationRole;
   body: string;
   /**
-   * Which runtime item this is. Its presence is what makes the row a runtime
-   * item: it selects the title, gives the row its own `kind`, and drops the
-   * source handle, because nothing sent it.
+   * Which runtime message this is. Its presence is what makes the row a runtime
+   * message: it selects the title, gives the row its own `kind`, and drops the
+   * source handle, because the runtime is not a Task to reference.
    */
-  runtimeItem?: RuntimeItemKind;
+  runtimeMessage?: RuntimeMessageKind;
 }
 
 /**
@@ -65,7 +67,7 @@ export interface CollaborationSystemMessageInput extends CollaborationLabels {
 export type CollaborationSystemMessageData = {
   kind: string;
   messageId: string;
-  /** Absent on a runtime item: nothing sent it, so there is no handle. */
+  /** Absent on a runtime message: the runtime is not a Task to name here. */
   sourceTaskId?: string;
   sourceLabel?: string;
   targetTaskId: string;
@@ -76,14 +78,14 @@ export type CollaborationSystemMessageData = {
 };
 
 /**
- * `kind` names the fact, so a runtime item names itself rather than
+ * `kind` names the fact, so a runtime message names itself rather than
  * `collaboration`: its title carries no task reference, and a client that
  * dispatches on `kind` must not go looking for one.
  */
 export function projectionKind(input: {
-  runtimeItem?: RuntimeItemKind;
+  runtimeMessage?: RuntimeMessageKind;
 }): string {
-  return input.runtimeItem ?? "collaboration";
+  return input.runtimeMessage ?? "collaboration";
 }
 
 /**
@@ -95,19 +97,19 @@ export function projectionKind(input: {
 export function buildCollaborationSystemMessage(
   input: CollaborationSystemMessageInput,
 ): CollaborationSystemMessageData {
-  // A runtime item has no source handle: nothing sent it, so a `sourceLabel`
-  // here would describe an author that cannot be referenced or replied to.
+  // A runtime message has no source handle: the runtime is not a Task, so a
+  // `sourceLabel` here would describe a correspondent that cannot be replied to.
   return {
     kind: projectionKind(input),
     messageId: input.messageId,
-    ...(input.runtimeItem
+    ...(input.runtimeMessage
       ? {}
       : { sourceTaskId: input.sourceTaskId, sourceLabel: input.sourceLabel }),
     targetTaskId: input.targetTaskId,
     targetLabel: input.targetLabel,
     role: input.role,
-    title: input.runtimeItem
-      ? RUNTIME_ITEM_TITLES[input.runtimeItem]
+    title: input.runtimeMessage
+      ? RUNTIME_MESSAGE_TITLES[input.runtimeMessage]
       : collaborationTitle(input),
     body: input.body,
   };
@@ -125,7 +127,7 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
   body: string;
   taskId: string;
   role: CollaborationRole;
-  runtimeItem?: RuntimeItemKind;
+  runtimeMessage?: RuntimeMessageKind;
   deliveryStatus?: CollaborationDeliveryStatus;
   deliveredAt?: string;
   deliveryFailureReason?: string;
@@ -148,7 +150,7 @@ export function buildCollaborationBroadcast(
   input: CollaborationBroadcastRequest,
 ): Extract<AgentEvent, { type: "system_message" }> {
   // The envelope is the persisted payload plus what only a live client needs,
-  // so which fields a runtime item drops is stated once, in the row builder.
+  // so which fields a runtime message drops is stated once, in the row builder.
   const envelope: Extract<AgentEvent, { type: "system_message" }> = {
     type: "system_message",
     taskId: input.taskId,

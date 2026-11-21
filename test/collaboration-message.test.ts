@@ -54,25 +54,25 @@ describe("collaboration row and envelope builders", () => {
     });
   });
 
-  it("derives the live envelope from the persisted row, runtime items included", () => {
-    const runtimeItem = "handoff_reminder" as const;
+  it("derives the live envelope from the persisted row, runtime messages included", () => {
+    const runtimeMessage = "handoff_reminder" as const;
     const persisted = buildCollaborationSystemMessage({
       ...input,
       role: "target",
-      runtimeItem,
+      runtimeMessage,
     });
     const live = buildCollaborationBroadcast({
       ...input,
       taskId: "task-b",
       role: "target",
-      runtimeItem,
+      runtimeMessage,
     });
     assert.deepEqual(live, {
       type: "system_message",
       taskId: "task-b",
       ...persisted,
     });
-    // A runtime item has no source handle, and the envelope cannot invent one:
+    // A runtime message has no source handle, and the envelope cannot invent one:
     // both consumers read the same row.
     assert.equal("sourceTaskId" in persisted, false);
     assert.equal("sourceLabel" in persisted, false);

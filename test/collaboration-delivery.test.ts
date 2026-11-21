@@ -571,14 +571,14 @@ describe("TaskManager collaboration delivery drain", () => {
         .map((event) => JSON.parse(event.data) as Record<string, unknown>)
         .filter((data) => data.kind === "handoff_reminder").length,
       0,
-      "a runtime item is not visible before its drain",
+      "a runtime message is not visible before its drain",
     );
 
     tasks.endTurn("child");
     await waitFor(() => prompts.length === 1, {
       message: "the turn boundary drains the reminder automatically",
     });
-    assert.match(prompts[0], /Runtime item:/);
+    assert.match(prompts[0], /Runtime message:/);
     assert.match(prompts[0], /runtime-injected closing turn/i);
     assert.equal(store.countQueuedDeliveries("child"), 0);
     assert.equal(
@@ -598,7 +598,7 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(
       "sourceLabel" in rows[0],
       false,
-      "nothing sent a runtime item, so it carries no source handle",
+      "the runtime is not a Task, so the row carries no source handle",
     );
     assert.equal(
       rows[0].kind,
@@ -609,19 +609,19 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(
       rows[0].title,
       "Task handoff required",
-      "a runtime item is titled in the runtime's own voice",
+      "a runtime message is titled in the runtime's own voice",
     );
     assert.doesNotMatch(
       String(rows[0].title),
       / sent /,
-      "a runtime item must not borrow the correspondence sentence: it has no " +
+      "a runtime message must not borrow the correspondence sentence: it has no " +
         "sender, and the recipient the sentence would name is the reader",
     );
     assert.equal("sourceTaskId" in rows[0], false);
     assert.equal(deliveryEvents.length, 0, "no mark for a system item");
   });
 
-  it("delivers a runtime item that has no record without inventing a row", async () => {
+  it("delivers a runtime message that has no record without inventing a row", async () => {
     store.createTask(
       "parent",
       tmpDir,
@@ -661,9 +661,9 @@ describe("TaskManager collaboration delivery drain", () => {
 
     tasks.endTurn("child");
     await waitFor(() => prompts.length === 1, {
-      message: "an unrecorded runtime item must still reach the agent",
+      message: "an unrecorded runtime message must still reach the agent",
     });
-    assert.match(prompts[0], /Runtime item:/);
+    assert.match(prompts[0], /Runtime message:/);
     assert.match(prompts[0], /unrecorded runtime text/);
 
     const rows = store
@@ -673,7 +673,7 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.deepEqual(rows, [], "an unnamed item claims no transcript row");
   });
 
-  it("drains a runtime item past an unrelated row holding malformed JSON", async () => {
+  it("drains a runtime message past an unrelated row holding malformed JSON", async () => {
     store.createTask(
       "parent",
       tmpDir,

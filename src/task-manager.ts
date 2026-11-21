@@ -18,11 +18,11 @@ import {
 } from "./store.ts";
 import { shouldArm } from "./task-collaboration.ts";
 import {
-  RUNTIME_ITEM_KINDS,
+  RUNTIME_MESSAGE_KINDS,
   buildCollaborationSystemMessage,
-  isRuntimeItemKind,
+  isRuntimeMessageKind,
   type CollaborationBroadcastRequest,
-  type RuntimeItemKind,
+  type RuntimeMessageKind,
 } from "./collaboration-message.ts";
 import { isoFromMillis } from "./shared/time.ts";
 import { formatFieldBlock } from "./shared/field-block.ts";
@@ -3962,7 +3962,7 @@ export class TaskManager implements ObligationHost {
   /**
    * An agent's message that could not be delivered is reported to its sender.
    * When it is the dispatch behind the target's open account, that account
-   * closes with the report. User and runtime items report nothing.
+   * closes with the report. User and runtime messages report nothing.
    */
   private onDeliveryFailed(change: CollaborationDeliveryStatusChange): void {
     const message = this.store.getCollaborationMessage(change.messageId);
@@ -3991,8 +3991,8 @@ export class TaskManager implements ObligationHost {
     const text = handoffReminderText();
     const messageId = randomUUID();
     // Audit metadata only: the recipient-visible row is written at drain. The
-    // message id is recorded here so that row can recover which runtime item it
-    // describes; the delivery row itself carries no item kind.
+    // message id is recorded here so that row can recover which runtime message it
+    // describes; the delivery row itself carries no kind.
     this.store.saveEvent(
       targetTaskId,
       "handoff_reminder",
@@ -4057,13 +4057,14 @@ export class TaskManager implements ObligationHost {
     void this.drainCollaborationDeliveries(notice.sourceTaskId);
   }
 
-  /** ACP envelope text for one drained item. */
+  /** ACP envelope text for one drained message. */
   private deliveryEntry(message: CollaborationMessageRow): string {
     if (message.source_actor === "system") {
-      // Not a message from a task, and nothing sent it: the marker says which
-      // kind of thing this is without inventing a correspondent. The fences
-      // still mark the body as quoted content, exactly as for a peer.
-      return `Runtime item:\n---8<---\n${message.body}\n---8<---`;
+      // Not a message from a Task: the marker names the sender as the runtime,
+      // which is what it is, without borrowing the task-reference grammar that
+      // would make it look like a Task — titles repeat and would collide. The
+      // fences still mark the body as quoted content, exactly as for a peer.
+      return `Runtime message:\n---8<---\n${message.body}\n---8<---`;
     }
     // The full source id is the only reliable reply handle available to the
     // receiving agent today; label it explicitly. The quoted name is
@@ -4077,32 +4078,32 @@ export class TaskManager implements ObligationHost {
     return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
   }
 
-  /** Write the recipient's one visible row for a just-drained item. */
+  /** Write the recipient's one visible row for a just-drained message. */
   private projectDeliveredMessage(
     taskId: string,
     message: CollaborationMessageRow,
     targetLabel: string,
   ): void {
-    // The delivery row is one shape for every message, so a runtime item
-    // recovers which item it is from the audit event that queued it. Absent a
-    // record there is no item to name, and nothing is projected.
-    let runtimeItem: RuntimeItemKind | undefined;
+    // The delivery row is one shape for every message, so a runtime message
+    // recovers which message it is from the audit event that queued it. Absent
+    // a record there is no runtime message to name, and nothing is projected.
+    let runtimeMessage: RuntimeMessageKind | undefined;
     if (message.source_actor === "system") {
-      const recorded = this.store.getRuntimeItemKind(
+      const recorded = this.store.getRuntimeMessageKind(
         taskId,
         message.id,
-        RUNTIME_ITEM_KINDS,
+        RUNTIME_MESSAGE_KINDS,
       );
-      if (!isRuntimeItemKind(recorded)) {
-        // No record says what this item is, so there is no honest row to write.
+      if (!isRuntimeMessageKind(recorded)) {
+        // No record says what this message is, so there is no honest row to write.
         // The body still reaches the agent; only the transcript entry is skipped.
-        slog.warn("runtime item record missing", {
+        slog.warn("runtime message record missing", {
           taskId: taskId.slice(0, 8),
           messageId: message.id.slice(0, 8),
         });
         return;
       }
-      runtimeItem = recorded;
+      runtimeMessage = recorded;
     }
     const sourceLabel =
       this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
@@ -4118,7 +4119,7 @@ export class TaskManager implements ObligationHost {
         targetLabel,
         role: "target",
         body: message.body,
-        runtimeItem,
+        runtimeMessage,
       }),
       { from_ref: `msg:${message.id}` },
     );
@@ -4131,7 +4132,7 @@ export class TaskManager implements ObligationHost {
       role: "target",
       taskId,
       body: message.body,
-      runtimeItem,
+      runtimeMessage,
     });
   }
 
