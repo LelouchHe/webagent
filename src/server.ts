@@ -143,7 +143,7 @@ const obligationController = createObligationController(
       taskManagerRef.current!.emitObligationNotice(notice);
     },
   },
-  { silenceMs: config.limits.silence_timeout },
+  { silenceMs: config.limits.silence_timeout * 60_000 },
 );
 const tasks = new TaskManager({
   store,

@@ -52,11 +52,11 @@ file_upload = 52_428_800
 # does not respond within this time the UI resets to idle. Set to 0 to disable.
 cancel_timeout = 10_000
 
-# No-activity notice threshold (ms, default 15 min). While a dispatch account is
+# No-activity notice threshold (minutes, default 15). While a dispatch account is
 # open, the requester is notified once when the target shows no agent activity
 # for this long during a running turn, or after it reported `waiting` with no
 # wake source the runtime can see.
-silence_timeout = 900_000
+silence_timeout = 15
 
 # Max recent paths shown in the /new and + path pickers (default 10, 0 = show all)
 recent_paths = 10

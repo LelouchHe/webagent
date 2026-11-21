@@ -95,7 +95,7 @@ recent_paths_ttl = 60
       image_upload: 4096,
       file_upload: 52_428_800,
       cancel_timeout: 5000,
-      silence_timeout: 900_000,
+      silence_timeout: 15,
       recent_paths: 20,
       recent_paths_ttl: 60,
     });
