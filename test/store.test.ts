@@ -1065,7 +1065,7 @@ describe("Store", () => {
       // fails: the replacement is rolled back, so its fact must not survive
       // into the next successful commit.
       assert.throws(() =>
-        store["writeScope"](() => {
+        store["writeBindings"](() => {
           store.replaceAgentSession("t1", "test-agent", "session-b");
           throw new Error("outer failure");
         }),

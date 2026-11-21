@@ -779,12 +779,10 @@ export class TaskManager implements ObligationHost {
     this.authority = options.authority;
     this.agents = options.agents;
     this.obligations = options.obligations ?? createObligationController(this);
-    // Delivery transitions and UI publication are separate: failure semantics
-    // run first, while the receiver helper owns arming at the actual handoff.
-    this.store.onDeliveryStatusTransition((change) => {
+    // The one Store observer runs failure semantics before UI publication;
+    // the receiver helper owns arming at the actual handoff.
+    this.store.onDeliveryStatusChanged((change) => {
       if (change.status === "failed") this.onDeliveryFailed(change);
-    });
-    this.store.onDeliveryStatusBroadcast((change) => {
       this.deliveryStatusBroadcast?.({
         type: "collaboration_delivery",
         taskId: change.sourceTaskId,
@@ -3253,7 +3251,7 @@ export class TaskManager implements ObligationHost {
     // their marks only now that it committed. This runs before the purge, so a
     // failed dispatch reports once and closes its account; the purge then
     // reports only an account whose dispatch was already delivered.
-    this.store.publishDeliveryStatusChanges(
+    this.store.broadcastDeliveryStatus(
       this.store.failedDeliveryIdsForRecipient(id, "target_deleted"),
     );
     this.obligations.purgeTask(id);

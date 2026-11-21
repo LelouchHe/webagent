@@ -331,13 +331,12 @@ time. An entry without a "closing condition" is a wish, not an issue.
   for when such work ends. *Closing:* a standard ACP signal for agent-initiated
   turns.
 - **Delivery handoff and failure are top-level operations only.**
-  `claimQueuedDeliveries`, `failRejectedDeliveries`, `failQueuedDeliveries`,
-  and `handoffQueuedDeliveries` publish their status change after their own
-  write commits and arm the account immediately. Called inside a larger Store
-  write scope, publication waits for the outer commit and reads the rows as
-  they stand then, and a rollback does not undo the arm. No caller composes
-  them today. *Closing:* the first caller that needs to compose them defines
-  its committed facts, post-commit effects, and rollback order.
+  `claimQueuedDeliveries`, `failRejectedDeliveries`,
+  `failQueuedDeliveries`, and `handoffQueuedDeliveries` publish and arm before
+  an enclosing database transaction commits. A later rollback therefore does
+  not undo those effects. No caller composes them today. *Closing:* the first
+  caller that needs to compose them defines committed facts, post-commit
+  effects, and rollback order.
 
 ## Accepted as designed
 
