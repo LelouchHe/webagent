@@ -18,9 +18,11 @@ import {
 } from "./store.ts";
 import { shouldArm } from "./task-collaboration.ts";
 import {
-  RUNTIME_AUTHOR_LABEL,
+  RUNTIME_MESSAGE_KINDS,
   buildCollaborationSystemMessage,
+  isRuntimeMessageKind,
   type CollaborationBroadcastRequest,
+  type RuntimeMessageKind,
 } from "./collaboration-message.ts";
 import { isoFromMillis } from "./shared/time.ts";
 import { formatFieldBlock } from "./shared/field-block.ts";
@@ -3960,7 +3962,7 @@ export class TaskManager implements ObligationHost {
   /**
    * An agent's message that could not be delivered is reported to its sender.
    * When it is the dispatch behind the target's open account, that account
-   * closes with the report. User and runtime items report nothing.
+   * closes with the report. User and runtime messages report nothing.
    */
   private onDeliveryFailed(change: CollaborationDeliveryStatusChange): void {
     const message = this.store.getCollaborationMessage(change.messageId);
@@ -3987,11 +3989,15 @@ export class TaskManager implements ObligationHost {
    */
   submitObligationReminder(sourceTaskId: string, targetTaskId: string): void {
     const text = handoffReminderText();
-    // Audit metadata only: the recipient-visible row is written at drain.
+    const messageId = randomUUID();
+    // Audit metadata only: the recipient-visible row is written at drain. The
+    // message id is recorded here so that row can recover which runtime message it
+    // describes; the delivery row itself carries no kind.
     this.store.saveEvent(
       targetTaskId,
       "handoff_reminder",
       {
+        messageId,
         reason: "closing_reminder",
         sourceTaskId,
         targetTaskId,
@@ -4000,7 +4006,7 @@ export class TaskManager implements ObligationHost {
       { from_ref: "system" },
     );
     this.store.createSystemDelivery({
-      messageId: randomUUID(),
+      messageId,
       deliveryId: randomUUID(),
       fromTaskId: sourceTaskId,
       recipientTaskId: targetTaskId,
@@ -4017,7 +4023,9 @@ export class TaskManager implements ObligationHost {
   emitObligationNotice(notice: ObligationNotice): void {
     if (!this.store.getTask(notice.sourceTaskId)) return;
     const target = this.store.getTaskIncludingDeleted(notice.targetTaskId);
+    const messageId = randomUUID();
     const payload = {
+      messageId,
       reason: notice.reason,
       sourceTaskId: notice.sourceTaskId,
       targetTaskId: notice.targetTaskId,
@@ -4026,8 +4034,11 @@ export class TaskManager implements ObligationHost {
     this.store.saveEvent(notice.sourceTaskId, "task_outcome_notice", payload, {
       from_ref: "system",
     });
+    // The machine fields stay on the audit event above. The body a person and
+    // an agent read carries only what they cannot audit: the `message` sentence
+    // already states what happened, and `target` names which child it happened
+    // to. A `reason:` line would restate the sentence in machine shorthand.
     const body = formatFieldBlock([
-      { label: "reason", value: notice.reason },
       {
         label: "target",
         value: target?.title
@@ -4037,7 +4048,7 @@ export class TaskManager implements ObligationHost {
       { label: "message", value: notice.message },
     ]);
     this.store.createSystemDelivery({
-      messageId: randomUUID(),
+      messageId,
       deliveryId: randomUUID(),
       fromTaskId: notice.targetTaskId,
       recipientTaskId: notice.sourceTaskId,
@@ -4046,10 +4057,14 @@ export class TaskManager implements ObligationHost {
     void this.drainCollaborationDeliveries(notice.sourceTaskId);
   }
 
-  /** ACP envelope text for one drained item. */
+  /** ACP envelope text for one drained message. */
   private deliveryEntry(message: CollaborationMessageRow): string {
     if (message.source_actor === "system") {
-      return `From the ${RUNTIME_AUTHOR_LABEL}:\n---8<---\n${message.body}\n---8<---`;
+      // Not a message from a Task: the marker names the sender as the runtime,
+      // which is what it is, without borrowing the task-reference grammar that
+      // would make it look like a Task — titles repeat and would collide. The
+      // fences still mark the body as quoted content, exactly as for a peer.
+      return `Runtime message:\n---8<---\n${message.body}\n---8<---`;
     }
     // The full source id is the only reliable reply handle available to the
     // receiving agent today; label it explicitly. The quoted name is
@@ -4063,17 +4078,36 @@ export class TaskManager implements ObligationHost {
     return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
   }
 
-  /** Write the recipient's one visible row for a just-drained item. */
+  /** Write the recipient's one visible row for a just-drained message. */
   private projectDeliveredMessage(
     taskId: string,
     message: CollaborationMessageRow,
     targetLabel: string,
   ): void {
-    const systemAuthor = message.source_actor === "system";
-    const sourceLabel = systemAuthor
-      ? RUNTIME_AUTHOR_LABEL
-      : (this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
-        message.source_task_id.slice(0, 8));
+    // The delivery row is one shape for every message, so a runtime message
+    // recovers which message it is from the audit event that queued it. Absent
+    // a record there is no runtime message to name, and nothing is projected.
+    let runtimeMessage: RuntimeMessageKind | undefined;
+    if (message.source_actor === "system") {
+      const recorded = this.store.getRuntimeMessageKind(
+        taskId,
+        message.id,
+        RUNTIME_MESSAGE_KINDS,
+      );
+      if (!isRuntimeMessageKind(recorded)) {
+        // No record says what this message is, so there is no honest row to write.
+        // The body still reaches the agent; only the transcript entry is skipped.
+        slog.warn("runtime message record missing", {
+          taskId: taskId.slice(0, 8),
+          messageId: message.id.slice(0, 8),
+        });
+        return;
+      }
+      runtimeMessage = recorded;
+    }
+    const sourceLabel =
+      this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
+      message.source_task_id.slice(0, 8);
     this.store.saveEvent(
       taskId,
       "system_message",
@@ -4085,8 +4119,8 @@ export class TaskManager implements ObligationHost {
         targetLabel,
         role: "target",
         body: message.body,
-        systemAuthor,
-      }).data,
+        runtimeMessage,
+      }),
       { from_ref: `msg:${message.id}` },
     );
     this.collaborationBroadcast?.({
@@ -4098,7 +4132,7 @@ export class TaskManager implements ObligationHost {
       role: "target",
       taskId,
       body: message.body,
-      systemAuthor,
+      runtimeMessage,
     });
   }
 

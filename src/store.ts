@@ -2666,7 +2666,7 @@ export class Store {
   }
 
   /**
-   * Queue one runtime item for a recipient's next drain. The author side is a
+   * Queue one runtime message for a recipient's next drain. The author side is a
    * task id (possibly deleted) or the recipient's requester, so a removal
    * notice remains representable; only the recipient is projected and stored.
    * No event is written: the receiver's row appears when the drain hands it
@@ -2719,6 +2719,60 @@ export class Store {
         delivery: this.getCollaborationDelivery(input.deliveryId)!,
       };
     })();
+  }
+
+  /**
+   * The audit event type of the runtime message that queued `messageId`, if any.
+   * The delivery row carries no kind — it is one row shape for every message —
+   * so the row written at drain recovers it from the audit event the producer
+   * wrote on the same task when it queued the message. Both use
+   * `from_ref: "system"`, and the producer stores the message id in that event.
+   *
+   * `types` are the caller's candidate kinds, so storage binds them
+   * instead of naming collaboration vocabulary. Three properties matter here:
+   * the `(task_id, type, created_at)` index bounds the scan to those types,
+   * `from_ref = 'system'` keeps the audit origin the producer states, and the
+   * JSON is parsed here rather than by `json_extract` — one malformed `data`
+   * blob in an unrelated row must not fail the drain that calls this, because a
+   * throw there loses a batch already claimed as delivered.
+   *
+   * The rows stream and the match ends the scan, so the work follows the rows
+   * actually read rather than materializing every candidate first. There is
+   * deliberately no ordering: a message id addresses exactly one audit event,
+   * so no candidate is more authoritative than another.
+   */
+  getRuntimeMessageKind(
+    taskId: string,
+    messageId: string,
+    types: readonly string[],
+  ): string | null {
+    if (types.length === 0) return null;
+    const placeholders = types.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT type, data FROM events
+         WHERE task_id = ? AND from_ref = 'system' AND type IN (${placeholders})`,
+      )
+      .iterate(taskId, ...types) as IterableIterator<{
+      type: string;
+      data: string;
+    }>;
+    for (const row of rows) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(row.data);
+      } catch {
+        continue; // A malformed audit row is not this delivery's message.
+      }
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        (parsed as { messageId?: unknown }).messageId === messageId
+      ) {
+        return row.type;
+      }
+    }
+    return null;
   }
 
   private createCollaborationMessageInTransaction(
@@ -2777,7 +2831,7 @@ export class Store {
         targetLabel,
         role: "source",
         body: input.body,
-      }).data,
+      }),
       { from_ref: `msg:${input.id}` },
     );
     this.db

@@ -166,8 +166,18 @@ describe("cross-agent collaboration", () => {
     harness.endTurn(childId, reminder.promptId);
     await waitForPrompts(harness, A, 1, "the no_update notice never reached A");
     const notice = harness.agents[A].prompts[0].text;
-    assert.match(notice, /From the WebAgent runtime/);
-    assert.match(notice, /^reason: no_update$/m);
+    assert.match(notice, /Runtime message:/);
+    assert.match(
+      notice,
+      /no agent activity|ended another turn without any task_update/i,
+      "the body states the fact in prose",
+    );
+    assert.doesNotMatch(
+      notice,
+      /^reason:/m,
+      "the machine reason stays on the audit event; the delivered body states " +
+        "the fact in a sentence instead of repeating it as a field",
+    );
     const targetLine = notice
       .split("\n")
       .find((line) => line.startsWith("target: "));
@@ -193,6 +203,19 @@ describe("cross-agent collaboration", () => {
     assert.equal(payload.reason, "no_update");
     assert.equal(payload.sourceTaskId, parentId);
     assert.equal(payload.targetTaskId, childId);
+
+    // The row a person reads is not correspondence: it is titled in the
+    // runtime's own voice, so it cannot be mistaken for a message from a Task.
+    const noticeRow = harness.store
+      .getEvents(parentId)
+      .filter((event) => event.type === "system_message")
+      .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+      .filter((data) => data.kind === "task_outcome_notice")
+      .at(-1);
+    assert.ok(noticeRow, "the notice has one visible row on the source");
+    assert.equal(noticeRow.kind, "task_outcome_notice");
+    assert.equal(noticeRow.title, "Task handoff notice");
+    assert.doesNotMatch(String(noticeRow.title), / sent /);
   });
 
   it("accepts waiting with no visible wake source and says it is watched", async () => {

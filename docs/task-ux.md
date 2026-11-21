@@ -112,9 +112,13 @@ enough. The mark is derived from the delivery row when the row renders or a
 read returns it, and live refreshes come from a lightweight SSE event; it is
 never written into the event. The receiver's copy of the row appears only when
 its batch is actually handed to its agent, so a batch shows up at that turn
-boundary rather than in an earlier turn. A runtime-authored item (a closing
-reminder or a runtime notice) is labeled `@WebAgent runtime`, not as sent by a
-named Task, and has no delivery mark.
+boundary rather than in an earlier turn. A runtime message (a closing reminder
+or a fact notice) is not correspondence and does not borrow the `@a sent @b`
+sentence: it is titled in the runtime's own voice
+(`Task handoff required`, `Task handoff notice`), names itself in `kind`, carries
+no source handle or task references for a client to mark, and has no delivery
+mark. That sentence claims a sender and a recipient, and the recipient it would
+name is the reader.
 
 The reference is placed by task id, never by the shape of the title: titles
 repeat, and a title may contain quotes, spaces, or the words between two

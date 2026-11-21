@@ -93,12 +93,16 @@ entity; they name the runtime's bookkeeping.
 | **account** | The process-local record one source Task keeps for one target, opened when an agent-authored direct parent→child dispatch is delivered and settled by the target's `done` or `blocked`. Not a persisted entity, and not a Task. |
 | **settlement** | The atomic step that records a `done` or `blocked`, updates the reported status, delivers the update to the stored source, and closes the open account. A result submission, not proof that the source accepted it. |
 | **stored source** | The source Task recorded when the account was opened. A settlement routes there even if the task tree changed afterwards. |
-| **closing reminder** | A runtime-injected closing turn that asks the target for a typed update after a turn that carried none. It is a recovery aid, not a lifecycle verdict. |
+| **runtime message** | A message the runtime queues for one Task about its own bookkeeping — a closing reminder or a fact notice. Delivered like any other message, but not correspondence: no source handle, no delivery mark, and its `kind` names the item instead of `collaboration`. Its title never uses the task-reference grammar, because a source title would repeat and would read as a Task talking. |
+| **closing reminder** | A runtime message delivered as a runtime-injected closing turn that asks the target for a typed update after a turn that carried none. It is a recovery aid, not a lifecycle verdict. |
 
 **`handoff` stays reserved.** It continues to mean the provider/lifecycle handoff
 and the session-compaction handoff (for example `pending_compact_summary`); it is
 not another name for the account or settlement. Prefer *account*
-or *settlement* for this mechanism.
+or *settlement* for this mechanism. The reservation is about naming that record:
+the act of reporting one is still a handoff in product prose, as the Task Manual
+and the closing reminder's own text say, so a transcript row may be titled after
+the act (`Task handoff required`, `Task handoff notice`).
 
 ## Execution authority vocabulary
 

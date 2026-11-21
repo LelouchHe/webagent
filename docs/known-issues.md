@@ -89,6 +89,17 @@ time. An entry without a "closing condition" is a wish, not an issue.
   fail. `shares.task_id` is the one task FK with no `ON DELETE`, which is also
   what keeps the tombstone reap explicit. *Closing:* give the share row a
   cascade or reap the share before the task.
+- **A claimed delivery batch is not repaired if the drain throws after the
+  claim.** `claimQueuedDeliveries` marks the batch delivered before the rows are
+  projected and before the ACP prompt, so an exception in between (a database
+  error writing a projected row, say) leaves the batch marked delivered while
+  the agent never receives it; the catch logs and returns without requeueing or
+  failing. The runtime message lookup no longer throws on unreadable data — it
+  parses per row and skips what it cannot read — but a failed `sqlite3_step`, a
+  projection write, or any other throw in that window still reaches this catch,
+  and the claim-before-prompt window is by design. *Closing:* repair or
+  requeue the batch in the drain's catch, or claim after the prompt is
+  accepted.
 - **A soft-deleted task's share cannot be revoked.** The tombstone path keeps
   history but leaves the published snapshot addressable. *Closing:* revoke on
   tombstone and record the revocation in the share row.

@@ -5,8 +5,29 @@ import type { AgentEvent } from "./types.ts";
 
 export type CollaborationRole = "source" | "target";
 
-/** The visible author label for a runtime-authored item. */
-export const RUNTIME_AUTHOR_LABEL = "WebAgent runtime";
+/**
+ * The visible title of a runtime message, keyed by the audit event type written
+ * when the message is queued. The key is that event type so the row cannot
+ * describe a different message than the one an operator can audit.
+ */
+export const RUNTIME_MESSAGE_TITLES = {
+  handoff_reminder: "Task handoff required",
+  task_outcome_notice: "Task handoff notice",
+} as const;
+
+export type RuntimeMessageKind = keyof typeof RUNTIME_MESSAGE_TITLES;
+
+/** The message kinds whose titles this module knows, for storage queries. */
+export const RUNTIME_MESSAGE_KINDS: readonly RuntimeMessageKind[] = Object.keys(
+  RUNTIME_MESSAGE_TITLES,
+) as RuntimeMessageKind[];
+
+/** Whether `value` names a runtime message whose title this module knows. */
+export function isRuntimeMessageKind(
+  value: unknown,
+): value is RuntimeMessageKind {
+  return typeof value === "string" && value in RUNTIME_MESSAGE_TITLES;
+}
 
 /**
  * The raw (unquoted) task titles a collaboration title is built from. They are
@@ -30,15 +51,41 @@ export interface CollaborationSystemMessageInput extends CollaborationLabels {
   targetTaskId: string;
   role: CollaborationRole;
   body: string;
-  /** Runtime-authored: show the runtime as author, not the named task. */
-  systemAuthor?: boolean;
+  /**
+   * Which runtime message this is. Its presence is what makes the row a runtime
+   * message: it selects the title, gives the row its own `kind`, and drops the
+   * source handle, because the runtime is not a Task to reference.
+   */
+  runtimeMessage?: RuntimeMessageKind;
 }
 
-export interface CollaborationSystemMessage {
+/**
+ * The persisted payload of one projected row, and the live envelope's fields.
+ * A `type` rather than an `interface` so it keeps the implicit index signature
+ * `saveEvent` accepts as `Record<string, unknown>`.
+ */
+export type CollaborationSystemMessageData = {
+  kind: string;
+  messageId: string;
+  /** Absent on a runtime message: the runtime is not a Task to name here. */
+  sourceTaskId?: string;
+  sourceLabel?: string;
+  targetTaskId: string;
+  targetLabel: string;
+  role: CollaborationRole;
   title: string;
   body: string;
-  /** Payload for the persisted `system_message` event. */
-  data: Record<string, unknown>;
+};
+
+/**
+ * `kind` names the fact, so a runtime message names itself rather than
+ * `collaboration`: its title carries no task reference, and a client that
+ * dispatches on `kind` must not go looking for one.
+ */
+export function projectionKind(input: {
+  runtimeMessage?: RuntimeMessageKind;
+}): string {
+  return input.runtimeMessage ?? "collaboration";
 }
 
 /**
@@ -46,27 +93,25 @@ export interface CollaborationSystemMessage {
  * Store's persisted copies, the agent tool, the user routes, runtime notices)
  * goes through it, so a title and the labels it was built from cannot drift.
  */
+
 export function buildCollaborationSystemMessage(
   input: CollaborationSystemMessageInput,
-): CollaborationSystemMessage {
-  const sourceLabel = input.systemAuthor
-    ? RUNTIME_AUTHOR_LABEL
-    : input.sourceLabel;
-  const title = collaborationTitle({ ...input, sourceLabel });
+): CollaborationSystemMessageData {
+  // A runtime message has no source handle: the runtime is not a Task, so a
+  // `sourceLabel` here would describe a correspondent that cannot be replied to.
   return {
-    title,
+    kind: projectionKind(input),
+    messageId: input.messageId,
+    ...(input.runtimeMessage
+      ? {}
+      : { sourceTaskId: input.sourceTaskId, sourceLabel: input.sourceLabel }),
+    targetTaskId: input.targetTaskId,
+    targetLabel: input.targetLabel,
+    role: input.role,
+    title: input.runtimeMessage
+      ? RUNTIME_MESSAGE_TITLES[input.runtimeMessage]
+      : collaborationTitle(input),
     body: input.body,
-    data: {
-      kind: "collaboration",
-      messageId: input.messageId,
-      ...(input.systemAuthor ? {} : { sourceTaskId: input.sourceTaskId }),
-      sourceLabel,
-      targetTaskId: input.targetTaskId,
-      targetLabel: input.targetLabel,
-      role: input.role,
-      title,
-      body: input.body,
-    },
   };
 }
 
@@ -82,14 +127,11 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
   body: string;
   taskId: string;
   role: CollaborationRole;
-  systemAuthor?: boolean;
+  runtimeMessage?: RuntimeMessageKind;
   deliveryStatus?: CollaborationDeliveryStatus;
   deliveredAt?: string;
   deliveryFailureReason?: string;
 }
-
-/** One projection of one collaboration message. */
-export type CollaborationBroadcastInput = CollaborationBroadcastRequest;
 
 export interface CollaborationDeliverySnapshot {
   status: CollaborationDeliveryStatus;
@@ -105,31 +147,25 @@ export interface CollaborationDeliverySnapshot {
  * builder is the only place that may spell the envelope out.
  */
 export function buildCollaborationBroadcast(
-  input: CollaborationBroadcastInput,
+  input: CollaborationBroadcastRequest,
 ): Extract<AgentEvent, { type: "system_message" }> {
-  const message = buildCollaborationSystemMessage(input);
-  return {
+  // The envelope is the persisted payload plus what only a live client needs,
+  // so which fields a runtime message drops is stated once, in the row builder.
+  const envelope: Extract<AgentEvent, { type: "system_message" }> = {
     type: "system_message",
     taskId: input.taskId,
-    kind: "collaboration",
-    messageId: input.messageId,
-    ...(input.systemAuthor ? {} : { sourceTaskId: input.sourceTaskId }),
-    sourceLabel: input.systemAuthor ? RUNTIME_AUTHOR_LABEL : input.sourceLabel,
-    targetTaskId: input.targetTaskId,
-    targetLabel: input.targetLabel,
-    role: input.role,
-    title: message.title,
-    body: message.body,
-    ...(input.deliveryStatus === undefined
-      ? {}
-      : { deliveryStatus: input.deliveryStatus }),
-    ...(input.deliveredAt === undefined
-      ? {}
-      : { deliveredAt: input.deliveredAt }),
-    ...(input.deliveryFailureReason === undefined
-      ? {}
-      : { deliveryFailureReason: input.deliveryFailureReason }),
+    ...buildCollaborationSystemMessage(input),
   };
+  if (input.deliveryStatus !== undefined) {
+    envelope.deliveryStatus = input.deliveryStatus;
+  }
+  if (input.deliveredAt !== undefined) {
+    envelope.deliveredAt = input.deliveredAt;
+  }
+  if (input.deliveryFailureReason !== undefined) {
+    envelope.deliveryFailureReason = input.deliveryFailureReason;
+  }
+  return envelope;
 }
 
 /**

@@ -2,7 +2,7 @@
 
 A general-purpose **structured-notification primitive** built into WebAgent. External tools — cron jobs, file watchers, CI hooks, other agents — can `POST` a message to WebAgent; the user decides when to engage with it. This is the "push doorbell" for the agent UI: the sender gets delivery without stealing the user's current context.
 
-Endpoint-level contract and schemas: [API Reference → Inbox (Messages Primitive)](api.md#inbox-messages-primitive). This doc covers the design, conventions, and integration patterns.
+Endpoint-level contract and schemas: [API Reference → Inbox (Messages Primitive)](api.md#inbox). This doc covers the design, conventions, and integration patterns.
 
 ---
 

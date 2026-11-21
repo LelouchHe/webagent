@@ -81,9 +81,13 @@ Turn boundaries are the only clock:
 The reminder is a runtime-injected turn asking for one typed update; its text
 is `handoffReminderText()` in [`src/task-manager.ts`](../src/task-manager.ts).
 It is queued through the normal delivery path, so it is held while the target's
-turn runs and drained at its boundary like any other item. Runtime items are
-labeled as authored by the WebAgent runtime, not by the named task; the
-recipient sees exactly one row, written at drain.
+turn runs and drained at its boundary like any other message. A runtime message
+is not correspondence: the recipient sees exactly one row, written at drain,
+titled in the runtime's own voice (`Task handoff required` for a closing
+reminder, `Task handoff notice` for a fact notice), and named in `kind` rather
+than in the `collaboration` sentence. The delivery row carries no kind, so the
+title is recovered from the audit event that queued it — the producer records
+the message id there.
 
 ## Silence
 
@@ -108,7 +112,7 @@ or archived away, `/clear` or an execution replacement dropped it, a resume
 failed, or the agent rejected the request — sends its sender one
 `target_removed` notice naming the failure reason. If it was the dispatch
 behind the target's open account, that account closes with the same notice.
-A user or runtime item failing reports nothing, and an unrelated failure does
+A user or runtime message failing reports nothing, and an unrelated failure does
 not close an account.
 
 While an account is open, a target that is deleted or archived away with no
@@ -122,7 +126,9 @@ source, target, and reason so later statistics can read them. A settlement is
 distinguishable from a fallback report to the current parent. Notices and
 reminders are delivered like collaboration messages, in order, at the
 recipient's turn boundary; a notice body names the target Task id (and title
-when available) so two children with the same reason stay distinguishable. The account state
+when available) so two children with the same reason stay distinguishable, and
+states the fact in the `message` sentence. The machine `reason` stays on the
+event: the delivered body repeats it in prose rather than as a field. The account state
 itself is process-local: a restart forgets open accounts and does not recover
 reminders. Messages and delivery rows are durable, so a dispatch still queued
 at restart opens its account when it is handed over afterwards.
