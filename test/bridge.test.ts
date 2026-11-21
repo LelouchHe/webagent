@@ -453,12 +453,14 @@ describe("AgentBridge", () => {
     // The agent never received the prompt, so the failure must be visible to
     // transport accounting as a rejection, after the error event.
     await assert.rejects(
-      () => bridge.prompt("s2", "hello"),
+      () => bridge.prompt("s2", "hello", undefined, "prompt-42"),
       (error: unknown) => error instanceof PromptNotDeliveredError,
     );
     const err = events.find((e: any) => e.type === "error");
     assert.ok(err, "expected error event");
     assert.equal(err.taskId, "s2");
+    assert.equal(err.promptId, "prompt-42");
+    assert.equal(err.requestLevel, true);
     assert.match(err.message, /exited unexpectedly/);
   });
 

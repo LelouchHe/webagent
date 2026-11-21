@@ -73,7 +73,7 @@ function registeredTools(): Record<string, RegisteredTool> {
     }),
     create: async () => ({ taskId: "child" }),
     send: async () => {},
-    update: async () => {},
+    update: async () => ({}),
   };
   registerMcpTools(
     server,
@@ -89,15 +89,13 @@ function registeredTools(): Record<string, RegisteredTool> {
 }
 
 function documentedToolNames(): string[] {
-  const toolsStart = MCP_DOC.indexOf("## Tools");
-  const nextHeading = MCP_DOC.indexOf("\n### ", toolsStart + 1);
+  const toolsStart = MCP_DOC.indexOf("\n## Tools");
+  const nextTopHeading = MCP_DOC.indexOf("\n## ", toolsStart + 1);
   const section = MCP_DOC.slice(
     toolsStart,
-    nextHeading < 0 ? MCP_DOC.length : nextHeading,
+    nextTopHeading < 0 ? MCP_DOC.length : nextTopHeading,
   );
-  return [...section.matchAll(/^\|\s*`([^`]+)`\s*\|/gm)].map(
-    (match) => match[1],
-  );
+  return [...section.matchAll(/^### `([^`]+)`$/gm)].map((match) => match[1]);
 }
 
 describe("MCP documentation coverage", () => {
@@ -132,29 +130,19 @@ describe("MCP documentation coverage", () => {
     });
   }
 
-  it("keeps task_create as a two-step operation", () => {
-    const sectionStart = MCP_DOC.indexOf("### `task_create`");
-    const section = MCP_DOC.slice(
-      sectionStart,
-      MCP_DOC.indexOf("\n### ", sectionStart + 1),
-    );
-    assert.match(section, /task_send/);
-    assert.doesNotMatch(section, /required title\s+and brief/i);
-  });
-
-  it("quotes the advertised server instructions verbatim", () => {
-    const { headings, fences } = scanMarkdown(MCP_DOC);
+  it("points to the advertised server instructions instead of copying them", () => {
+    const { headings } = scanMarkdown(MCP_DOC);
     const heading = headings.find(
       (item) => item.text === "## Server instructions",
     );
     assert.ok(heading, "docs/task-mcp.md must document the instructions");
-    const nextSection =
-      headings.find((item) => item.line > heading.line)?.line ?? Infinity;
-    const quoted = fences.filter(
-      (item) => item.line > heading.line && item.line < nextSection,
+    assert.match(MCP_DOC, /`MCP_SERVER_INSTRUCTIONS`/);
+    assert.match(MCP_DOC, /\(\.\.\/src\/mcp\/server\.ts\)/);
+    assert.ok(MCP_SERVER_INSTRUCTIONS.length > 0);
+    assert.equal(
+      MCP_DOC.includes(MCP_SERVER_INSTRUCTIONS.split("\n")[0]),
+      false,
+      "the doc must not copy the instruction text",
     );
-    assert.equal(quoted.length, 1, "expected exactly one quoted block");
-    assert.equal(quoted[0].info, "text");
-    assert.equal(quoted[0].content, `${MCP_SERVER_INSTRUCTIONS}\n`);
   });
 });

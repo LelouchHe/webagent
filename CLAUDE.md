@@ -38,6 +38,21 @@ Configuration is TOML, passed with `--config`. See `config.toml` for reference
 defaults and [`docs/configuration.md`](./docs/configuration.md) for the full
 schema and operations guide.
 
+## Mechanism, not policy
+
+WebAgent provides mechanisms: low-level, orthogonal primitives that compose.
+Deciding how and when to use them is policy, and policy belongs to replaceable
+layers above the mechanism (clients, skills, prompts, configuration), not to
+WebAgent itself.
+
+- Each capability guarantees a fact and documents its effects; it does not
+  assume or enforce a particular workflow.
+- Prefer one general rule over special cases. When a case seems to need an
+  exception, expose an explicit primitive for the caller instead of inferring
+  intent.
+- Keep capabilities independent, so each can be used, replaced, or removed
+  without the others.
+
 ## Required invariants
 
 - Bearer authentication is required. Public-route whitelist changes belong in

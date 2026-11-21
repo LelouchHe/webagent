@@ -1,423 +1,133 @@
 # Task Obligations
 
-This document describes WebAgent's **directed-dispatch closure** mechanism: when
-an agent-authored parent Task dispatches work directly to a child Task, the
-runtime keeps one process-local obligation for that edge and reports its outcome
-to the source: the child's typed account, or a factual notice that the runtime
-stopped its own attempts without one. A notice is not a verdict — a late account
-still settles the edge. The runtime records and reports facts; it never concludes
-for the accountable party. The task-semantic principle behind that boundary is in
-[Task semantic authority](implementation-invariants.md#task-semantic-authority).
+This document describes WebAgent's **directed-dispatch closure**: when an
+agent-authored parent Task dispatches work directly to a child Task, the
+runtime keeps one process-local account for that edge and reports the outcome to
+the source. Only that dispatch opens an account; not every `task_send` does. The
+account is the child's typed report, `done` or `blocked`. Fact notices
+(`no_update`, `no_activity`, `target_removed`) report the runtime's stopping
+point and never conclude for the accountable party. The task-semantic boundary
+is in [Task semantic authority](implementation-invariants.md#task-semantic-authority).
 
-## Purpose and semantic boundary
+The mechanism is deliberately small. It guarantees one thing: **one dispatch
+eventually produces at least one typed update**, and the update status says
+whose turn it is. Everything else — how many requests share an account, whether
+the work is really done, whether a notice is worth acting on — is left to the
+Tasks and their prose.
 
-An **account** is the child's typed lifecycle report, `done` or `blocked`. The
-one-account rule is: one accepted direct dispatch creates one obligation, and the
-source stops waiting when either
+## Opening an account
 
-- the child's typed account arrives, or
-- one runtime notice reports that the runtime stopped its own attempts and the
-  outcome is unknown — after which a late account still settles the edge.
-
-The runtime supervises and keeps the books. It records that a dispatch was
-handed over, that a turn ended, that a submission was rejected or deferred, that
-a deadline passed, or that delivery failed, and it reports those facts with their
-evidence.
-It never turns a fact into a conclusion about the work — not complete, not
-failed, not abandoned, not worth continuing — and it never starts, continues, or
-stops work on the accountable party's behalf. The accountable party is the
-parent Task that dispatched the work; for a user-owned Task it is the user.
-
-## When an account is owed
-
-An obligation is armed only for an **agent-authored direct parent→child
-dispatch**. The runtime decides this at the single collaboration-message
-boundary with the pure policy (`src/task-collaboration.ts`):
+An account opens when an **agent-authored direct parent→child dispatch** is
+handed to the target's agent, not when it is queued. A target cannot owe an
+update for a request it has not received:
 
 ```ts
 message.source_actor === "agent" && target.parent_id === source.id
 ```
 
-A user send (including a human message in the parent session), a sibling or
-child message, a typed account, and a runtime outcome notice never arm an
-obligation. The policy is derived from data the rows already carry: there is no
-classification field at message creation and no body inspection.
+A user send (including a human message typed in the parent's session), a child
+message, a typed update, and a runtime notice never open one. The predicate is
+derived from the rows already stored; there is no classification field and no
+body inspection. A target has at most one parent, so at most one account can be
+open for it.
 
-**One observation seam.** A collaboration message created through
-`Store.createCollaborationMessage` is reported exactly once after commit by
-`CollaborationMessageEmitter` (`src/collaboration-emitter.ts`); the raw insert
-is private to the Store, so no creation path can bypass the seam. `TaskManager`
-registers the single observer and applies the arming predicate
-(`src/task-manager.ts`). This is structural enforcement, not convention.
+At most one account exists per `(source, target)` edge. A dispatch handed over
+while the account is open keeps it open (coalesces); it does not create a
+second request record and there is no correlation id. A `done` or `blocked`
+settles that one account, covering every request the target has received. A
+dispatch still queued behind the target's running turn is not covered: it opens
+a new account when it is handed over.
 
-There is **no correlation token**. A target has one direct parent, so the
-target's sole record is unambiguous and a plain `task_update(status, body)`
-decides settlement from the record and the caller's turn. There is no
-expectation level, no per-counterparty ledger, and no extra lifecycle status
-beyond the existing `running`/`idle`/`blocked`/`done` report.
+## `task_update` statuses
 
-## What a target does
+| Status | Delivered to the requester? | Settles the account? |
+|---|---|---|
+| `done` | yes, wakes it | yes |
+| `blocked` | yes, wakes it | yes |
+| `waiting` | no | no |
 
-Submit a typed account for the current Task:
+`waiting` records that the target is still working and something will wake it
+later: a child it dispatched, or its own background work. It is not delivered,
+does not wake anyone, and does not settle; it only writes the Task's
+`workflowStatus = waiting` and an event. It still satisfies the current turn's
+update check (below). The runtime can see two wake sources — an open account
+the target is the source of, or a delivery already queued to it. With neither,
+the target is watched for silence (below) and the tool result says so.
 
-```ts
-task_update(status: "blocked" | "done", body: string)
-```
+What each status means to the agent is the `status` parameter description in
+[`src/mcp/tools.ts`](../src/mcp/tools.ts). In short: `waiting` means the work
+continues without the requester; anything that needs the requester, a person,
+or an external event is `blocked`.
 
-The tool contract and schema live in
-[Task MCP Control Plane](task-mcp.md#task_update); there is no correlation
-parameter to copy back.
+Runtime-set status stays separate: a drain sets `running`, and a finished turn
+turns `running` into `idle`. A turn end never overwrites `waiting`.
 
-A record **settles** when its state is `open`, `reminder_due`,
-`reminder_submitting`, or `unresolved`, and the target has an active current
-agent turn. Settlement is one atomic step: the update is persisted, the reported
-`workflow_status` changes, the account message is created to the **stored
-source**, the record becomes `settled`, and its timers are cancelled.
+`done` and `blocked` are delivered to the account's stored source, which wakes
+it. A late update still settles. With no open account, they fall back to the
+Task's current parent (or nowhere when it has none). `waiting` never routes.
 
-It is refused without settling when the state is `awaiting_delivery` (the
-dispatch was never handed over) or `settled` (already resolved), or when no
-agent turn is active. A record that exists but is not settleable still routes
-its account to the stored source, without settling. With no record for the
-target, the update is an ordinary report to the caller's **current parent** and
-settles nothing. An `unresolved` record *does* settle on a late account, without
-retracting the historical notice.
+## Turn-end check
 
-An account is a result submission, not proof that the parent accepted it. The
-parent checks the original Task Contract and may accept it, request focused
-follow-up with `task_send`, or keep it blocked. The Task and its history remain
-available after either status.
+Turn boundaries are the only clock:
 
-**Closing reminder.** When a dispatch turn ends without an account, the runtime
-may inject a closing turn. It is not a lifecycle verdict; it asks the target to
-close *that* turn out and account for it. A target that receives it should not
-begin new work as part of the closing turn.
+1. A target turn ends while the account is open and the turn carried no
+   `task_update` of any status: the target gets one closing reminder.
+2. Another such turn ends: the source gets a `no_update` notice and the runtime
+   stops reminding. The account stays open, so a later update still settles it.
+3. A turn that carried any update resets the whole cycle, including `waiting`:
+   both the miss count and the stop-reminding flag.
+4. A cancelled turn triggers nothing.
 
-```text
-## Task Handoff Required
+The reminder is a runtime-injected turn asking for one typed update; its text
+is `handoffReminderText()` in [`src/task-manager.ts`](../src/task-manager.ts).
+It is queued through the normal delivery path, so it is held while the target's
+turn runs and drained at its boundary like any other item. Runtime items are
+labeled as authored by the WebAgent runtime, not by the named task; the
+recipient sees exactly one row, written at drain.
 
-This is a runtime-injected closing turn: report what this turn established
-and end it.
+## Silence
 
-Do not begin new work as part of this closing turn.
+While the account is open, the source receives one `no_activity` notice when
+the target has had no agent activity for the silence threshold
+(`limits.silence_timeout`, 15 minutes by default) in either window:
 
-Report what this turn established, then call exactly one of:
-- `task_update(done, ...)` with the completion report.
-- `task_update(blocked, ...)` and explain what is missing.
+- a running turn, from its prompt submission until it ends;
+- a `waiting` with no visible wake source, from the update (or the end of the
+  turn that carried it) until the next update or turn.
 
-If the user cancelled this turn, say so plainly in that report instead of
-resuming the cancelled work. Do not start new work, and do not end this turn
-with a prose answer only.
-```
+Any agent activity resets the window, including activity the agent starts on
+its own outside a prompt, such as a harness waking it after a background
+command. Each window notifies at most once; a new turn or a new `waiting` opens
+a new window. The notice states the fact only: no state change, no reminder,
+no cancel.
 
-## State, identities, and facts
+## Undelivered messages and a target that leaves
 
-There is one process-local record per accepted direct source→target edge, held in
-an in-memory map and never persisted. A later dispatch replaces a record only
-once that record is terminal.
+Any agent-authored message that cannot be delivered — the target was deleted
+or archived away, `/clear` or an execution replacement dropped it, a resume
+failed, or the agent rejected the request — sends its sender one
+`target_removed` notice naming the failure reason. If it was the dispatch
+behind the target's open account, that account closes with the same notice.
+A user or runtime item failing reports nothing, and an unrelated failure does
+not close an account.
 
-**States.** `awaiting_delivery` (armed, not yet handed over), `open` (handed
-over), `reminder_due`, `reminder_submitting`, `unresolved` (the runtime stopped
-its own attempts; the outcome is unknown, and a late account still settles it),
-and `settled` (resolved).
+While an account is open, a target that is deleted or archived away with no
+undelivered dispatch also sends the source one `target_removed` notice, and
+the account is gone.
 
-**Identities.** Three distinct names, deliberately not merged
-(`src/obligation-controller.ts`):
+## Persistence and scope
 
-- `attemptId` — hand-off ownership: the turn identity of the live dispatch
-  attempt. Installed by an `attempt_begun` fact and kept across a coalescing
-  follow-up. Dispatch-scoped facts must match it or they are no-ops.
-- `turnId` — the observed target turn. Recorded by `turn_begun`; `turn_ended`
-  rejects a boundary whose identity is present and differs. The comparison fails
-  open when the fact carries no id (older stored events) or no turn was observed
-  (an obligation armed mid-turn); see [Limits](#observability-lifetime-and-limits).
-- `recoveryGeneration` — the recovery-budget generation. A coalescing follow-up
-  bumps it, so an in-flight reminder resolution from the previous generation is
-  ignored instead of spending the refreshed budget.
+Reminders, notices, and settlements are persisted as Task events carrying
+source, target, and reason so later statistics can read them. A settlement is
+distinguishable from a fallback report to the current parent. Notices and
+reminders are delivered like collaboration messages, in order, at the
+recipient's turn boundary; a notice body names the target Task id (and title
+when available) so two children with the same reason stay distinguishable. The account state
+itself is process-local: a restart forgets open accounts and does not recover
+reminders. Messages and delivery rows are durable, so a dispatch still queued
+at restart opens its account when it is handed over afterwards.
 
-**Facts.** Every external event enters through `apply(fact)`. The complete
-vocabulary:
+## Known edges
 
-| Fact | Identity | Effect |
-| --- | --- | --- |
-| `armed` | — (record-creating) | Create the record, or coalesce onto a live one; reset budgets and advisories. |
-| `attempt_begun` | `attemptId` | Install dispatch hand-off ownership. |
-| `handed_over` | `attemptId` | `awaiting_delivery`/`open` → `open`; cancel the queued advisory. |
-| `dispatch_succeeded` | `attemptId` | Clear the transport failure streak. |
-| `dispatch_failed` | `attemptId` | A submission of the original dispatch was actually attempted and rejected (a request-level prompt failure, including a dead bridge). Return to `awaiting_delivery`, count one submission failure, and retry under the transport bound, or end in `unresolved`. A transport that is not available is not this fact: the retry is simply not started. |
-| `execution_rotated` | — (target-addressed by the sole record) | The target's execution was replaced. Cancel the watchdog and hand-off ownership, bump the recovery generation (invalidating any in-flight submission), keep the record and its attempts, and return to `reminder_due` so the next attempt addresses the replacement. |
-| `turn_begun` | `turnId` | Observe the target turn and start the watchdog. |
-| `turn_ended` | `turnId` (optional), `cancelled?` | A boundary: clear the watchdog, observe the end, and schedule recovery. A boundary marked `cancelled` withdraws the still-unspent closing reminder and leaves the record `open` with no timer. |
-| `turn_aborted` | — (cleanup-scoped) | Cancel the watchdog; the only emitter is the reset/restart path. |
-| `agent_activity` | — (unattributable) | Reset the watchdog's activity clock. |
-| `released` | — (lifecycle) | Purge records at either endpoint and cancel their timers. |
-| `reminder_started` | `recoveryGeneration` | Enter `reminder_submitting`. |
-| `reminder_resolved` | `recoveryGeneration` | Delivered-attempt or transport accounting. |
-| `timer_due` | — (kind-scoped) | Dispatch a derived deadline (attempt, watchdog, or advisory). |
-| `settle_requested` | — (target-addressed) | Apply the settlement predicate and route the account. |
-| `disposed` | — (lifecycle) | Stop scheduling. |
-
-**Invariants.** `apply(fact)` is the only place that mutates a record or arms or
-cancels a timer; the record type is unexported and callers observe a read-only
-view. There is one state-derived scheduler: the controller computes each
-record's pending deadlines from state and arms a single timer for the earliest.
-A fact added to the vocabulary without a transition fails the type check: the
-switch is exhaustiveness-checked, so the transition table cannot fall behind the
-fact list.
-No timer's expiry decides an outcome — timers emit `timer_due`, and terminal
-transitions come only from a real account or from bounded accounting of real
-submission failures. A deferral is never terminal and never counts as one. The transition diagram:
-
-```mermaid
-stateDiagram-v2
-    [*] --> awaiting_delivery: agent parent→child dispatch posted
-    awaiting_delivery --> open: dispatch handed to the target's session
-    awaiting_delivery --> awaiting_delivery: submission rejected before hand-off, retry with backoff
-    open --> awaiting_delivery: submission rejected after hand-off, transport retry
-    open --> unresolved: 3 consecutive submission failures
-    reminder_due --> awaiting_delivery: dispatch submission rejected with no delivered reminder
-    reminder_due --> unresolved: 3 consecutive submission failures
-    open --> reminder_due: current target turn ends without an account
-    reminder_due --> reminder_submitting: target idle, closing prompt submitted
-    reminder_submitting --> reminder_due: submission rejected (no delivered attempt)
-    reminder_submitting --> reminder_due: submission deferred (nothing attempted)
-    reminder_submitting --> open: the reminder turn itself was cancelled
-    reminder_due --> open: boundary ended in cancellation, edge quiet
-    reminder_submitting --> reminder_due: delivered attempt 1 or 2, schedule +2m / +5m
-    awaiting_delivery --> reminder_due: execution replaced, debt kept, old body never re-sent
-    open --> reminder_due: execution replaced, debt kept, old body never re-sent
-    reminder_submitting --> unresolved: 3 delivered attempts finished
-    reminder_submitting --> unresolved: 3 consecutive submission failures
-    open --> settled: task_update from an active current turn
-    reminder_due --> settled: task_update from an active current turn
-    reminder_submitting --> settled: task_update from an active current turn
-    note right of unresolved
-      The runtime stopped its own attempts; the outcome is unknown.
-      A later account still settles it without retracting the notice.
-    end note
-```
-
-## Delivery, settlement, and accepted boundaries
-
-**Open at hand-over.** The record opens when the dispatch is handed to the
-target's session, immediately after `ensureResumed` and the prompt call — not
-when the prompt promise resolves. `bridge.prompt` resolves at the end of the
-turn, after it emits `prompt_done`, so a resolution-time open would leave the
-dispatch turn itself `awaiting_delivery` and refuse the account that turn
-produces (`src/task-manager.ts`).
-
-**Delivery outcomes.** Every submission ends in exactly one of four outcomes,
-and the bookkeeping differs per outcome:
-
-| Outcome | Means | Accounting |
-| --- | --- | --- |
-| `delivered` | The prompt was handed to the target's execution. | Counts one delivered attempt; clears the submission-failure streak and the deferral backoff. |
-| `deferred` | The target could not be submitted to at all: it is rotating or resetting, the bridge is unavailable, the lease was replaced, or no execution is bound. Nothing was attempted. | Changes neither the attempt count nor the failure count. The record stays waitable and retries on a capped deferral backoff. |
-| `failed` | A submission was attempted and the agent rejected it at the request level. | Increments `consecutiveSubmissionFailures`, bounded by `MAX_REMINDER_SUBMISSION_FAILURES`. |
-| `cancelled` | The submission's own turn was explicitly cancelled while the prompt was in flight. The target resolved the prompt because it was stopped, not because it read the closing reminder. | Spends no attempt, re-arms nothing, and emits no notice: the edge goes quiet (`open`, no timer) until new work arrives. The delivered-attempt `handoff_reminder` row is not written. |
-
-`deferred` is not a verdict about the work and must never be reported as one:
-the record keeps waiting and the age advisory keeps reporting how long it has
-waited. It is also not a licence to spin: a deferral retries on a geometric
-backoff derived from the number of consecutive deferrals, sharing the
-`REMINDER_RETRY_BASE_MS` / `REMINDER_RETRY_MAX_MS` base and ceiling with a
-rejected submission. A permanently unavailable execution therefore neither fakes
-three transport failures nor hammers the scheduler.
-
-**No timestamp guard.** Deliberately, settlement does not compare the current
-turn's start against the hand-off time. The delivery turn is stamped before the
-prompt is handed to the bridge, so any such comparison would reject the
-legitimate dispatch account. Do not reintroduce one.
-
-### Rotation does not end the debt
-
-Replacing a task's execution — an explicit
-`/clear`, `/compact`, or an implicit takeover when the owner left configuration —
-is a change of environment, not a settlement. What the task itself keeps across
-that transition is the [Task Lifecycle](task-lifecycle.md#transitions) page; what
-the *debt* keeps is this section. The binding commit truncates the
-old transport in one synchronous step: claimed dispatch retry ids are dropped,
-unfinished delivery rows are finalized, and the same obligation record moves to
-`reminder_due` aimed at the replacement execution.
-
-- The record keeps its identity, its opening audit references, and its
-  `deliveredAttempts`. A rotation never makes it terminal.
-- The silence watchdog is cancelled, because the turn it observed died with the
-  old execution; the attempt and age deadlines keep advancing on the same
-  reminder ladder.
-- The original dispatch body is **never** re-sent to the new execution. The debt
-  is recovered with a closing reminder, never with a replay.
-- Any submission still in flight from the old execution is invalidated: the
-  recovery generation moved, so its late result is a no-op.
-
-**Accepted boundaries.** Settlement is judged from the *current* turn, not from
-the turn that produced the content. A call delayed from an earlier turn that
-arrives while a later turn is current therefore settles the record, and the
-source receives the earlier turn's content — a mis-attributed account, not
-silence. Closing this would need prompt-scoped transport attribution, which is
-larger than the token echoing that was rejected.
-
-**Coalescing.** A same-source follow-up while the record is live coalesces onto
-it: the record, its `attemptId`, and its opening audit references are preserved,
-the delivered-attempt and submission-failure budgets and the advisory anchors
-are refreshed, and the recovery generation is bumped. The follow-up's message
-joins the batch the live attempt will deliver. A fact carrying a stale identity
-is a no-op and cannot mutate the record that replaced it.
-
-## Recovery and notices (operator policy)
-
-> The thresholds in this section are **operator policy set in advance**. They are
-> hard-coded module constants, not exposed configuration, so changing one is a
-> code change. They are not validated against usage data: they are the
-> mechanism's current values, and the runtime never uses them to declare an
-> outcome. The mechanism only reports facts.
-
-**Initial delivery and transport retry.** A request-level prompt failure — the
-request never reached the agent session — is a `PromptNotDeliveredError`, thrown
-after the error event. It consumes the transport-failure budget and returns the
-record to `awaiting_delivery` for a bounded retry under the attempt's identity.
-An agent error *inside a delivered turn* emits an error event but resolves, so it
-is not a transport failure. A resume failure while submitting the original
-dispatch consumes the same budget; a resume failure while submitting a closing
-reminder is a deferral instead, because nothing was handed over.
-
-**Delivered reminders.** When a dispatch turn ends without an account, the
-controller submits up to `MAX_REMINDER_ATTEMPTS` closing prompts: one at the turn
-boundary, then delayed from the preceding **delivered** reminder. Only a resolved
-`bridge.prompt` counts as a delivered attempt; a rejected submission is retried
-with backoff and consumes the separate transport budget instead.
-
-**An obligation whose boundary ended in cancellation stays quiet.** The end fact
-is the turn's own: the ACP `cancelled` stop reason, the cancel intent the host
-stamps on the turn *before* the transport round trip (so a turn that finishes
-with an ordinary stop reason while `cancel` is still awaiting is still known to
-be cancelled), or the busy cancel marker a cancellation sets. UI and MCP
-cancellation share one controller path.
-
-Quiet is one rule for the whole edge, not one exception per nudge: a quiet
-record produces **nothing outward** — no closing reminder, no dispatch advisory,
-no age advisory, no notice of any kind — and holds **no timer**. It is not a
-terminal state: the record still settles when a typed account arrives, and
-`task_list` / `task_query` read it as usual.
-
-Cancellation only stops nudges; it never reopens a record. `settled` and
-`unresolved` are final, so a cancellation that arrives after the account (the
-same turn, or a later interactive turn with no new dispatch) leaves the terminal
-state untouched. Rewriting it as `open` would let a later unarmed user message
-revive debt the target already accounted for. The rule is enforced at the three
-shared outlets, so a future nudge inherits it without re-deciding:
-
-- **Scheduling:** a quiet record contributes no deadline, so no timer is armed.
-- **Due dispatch:** a deadline already armed when the edge went quiet is dropped.
-- **Emission:** every notice goes through one gate that refuses to speak while
-  quiet.
-
-New work on the same edge — a fresh dispatch arm or a hand-off — lifts the
-silence. A hand-off does so from **any** state, including `reminder_due` after a
-rotation: the delivery was really handed to the target, so the release point
-must be reachable, or a new delivery on a rotated quiet edge would stay silent
-forever. A fresh dispatch arm also restarts every clock from that arrival. Edges
-are independent: one edge going quiet never affects another task's edge.
-
-The rule covers a **closing-reminder turn itself**: if the turn submitting a
-reminder is cancelled, that submission is fenced as `cancelled` — it is not
-counted as a delivered attempt, no next reminder is armed, and no notice is
-emitted. Otherwise cancelling a reminder would restart unattended execution or
-exhaust the record into a `no_account` notice on a task that was explicitly
-stopped. A dispatch still queued in `awaiting_delivery` has not been handed
-over, so a cancelled boundary elsewhere on the task is not its work: it keeps
-its retry and its queued-dispatch advisory.
-
-The intent lives on the turn record, so it is released with that turn and can
-never mark the next one: every other unaccounted end — the agent finishing with
-prose and no `task_update` — still reminds, and a later dispatch that ends
-without an account reminds normally.
-
-**Advisories.** A dispatch still queued at `DISPATCH_ADVISORY_MS` and a record
-still without an account at `AGE_ADVISORY_MS` each emit one non-terminal
-`still_waiting` notice per epoch. Both pending advisories are cleared on
-settlement, exhaustion, or release. The record is unchanged and the accountable
-party decides.
-
-**Watchdog.** While a target turn with a non-terminal record is running, a quiet
-stretch of `SILENCE_THRESHOLD_S` emits one heuristic `no_activity` notice per
-target×turn. It never changes the record, never reminds the target, and never
-cancels or retries. Its limiter is independent of the exhaustion notice, so
-silence cannot suppress the factual `no_account` outcome. Runtime resets and
-`bridge.restart` abort the watchdog, and a notice requires the observed turn to
-still be live.
-
-### Thresholds and budgets
-
-| Constant | Value | Meaning |
-| --- | --- | --- |
-| `MAX_REMINDER_ATTEMPTS` | 3 | Delivered closing reminders before `unresolved`. |
-| `REMINDER_DELAYS_MS` | 0, 2 min, 5 min | Delay before reminder *n* from the preceding delivered reminder. |
-| `MAX_REMINDER_SUBMISSION_FAILURES` | 3 | Consecutive **failed** submissions before `delivery_failed`. A `deferred` submission does not count; only an attempted-and-rejected one does. |
-| `REMINDER_RETRY_BASE_MS` / `REMINDER_RETRY_MAX_MS` | 1 s / 60 s | Exponential backoff for a rejected or busy submission, and the floor/ceiling for the deferral backoff. |
-| `DISPATCH_ADVISORY_MS` | 60 min | Still queued (not handed over) → `still_waiting`. |
-| `AGE_ADVISORY_MS` | 4 h | No typed account → `still_waiting`. |
-| `SILENCE_THRESHOLD_S` | 900 s | No qualifying agent activity → `no_activity`. |
-
-### Notices
-
-A notice is a `task_outcome_notice` collaboration message with a system actor,
-routed target→stored source, carrying `sourceTaskId`, `targetTaskId`,
-`openingMessageId`, `openingDeliveryId`, `reason`, `message` (the fact, safe to
-show verbatim), and `evidence`. That payload is the `task_outcome_notice` event,
-so audit and tooling read the machine form. The collaboration body the recipient
-agent is prompted with is a readable `key: value` block of `reason`, `message`,
-and `openingMessageId`; the live broadcast title and the persisted row use the
-same `@reference sent @reference` formatter, so a reloaded copy never shows a
-different title. A notice cannot arm an obligation.
-
-| Reason | When | Evidence shape | Recipient's action |
-| --- | --- | --- | --- |
-| `no_account` | Bounded delivered reminders finished without an account. | `deliveredAttempts`, `consecutiveSubmissionFailures`, `lastDeliveredAttemptAt`. | The outcome is unknown; the parent may follow up with `task_send` or `task_cancel`. A later account still settles. |
-| `delivery_failed` | The transport bound was reached. | The above plus `deliveryUnavailable: true`. | The runtime could not deliver; the parent decides whether to re-dispatch or cancel. |
-| `no_activity` | A running turn produced no qualifying activity for the threshold. | `runningSince`, `lastAgentActivityAt`, `promptId`. | Heuristic only; the parent may `task_cancel` a turn that looks stalled. |
-| `still_waiting` | A dispatch advisory or age advisory elapsed. | `phase`, plus per phase: `not_handed_over` carries `waitingMs`; `no_account` carries `openForMs`, `deliveredAttempts`, `lastAgentActivityAt`. | The runtime is still waiting; the parent decides whether to keep waiting or cancel. |
-
-## Observability, lifetime, and limits
-
-**Audit trail.** Every drained collaboration prompt is persisted on the target as
-a `collaboration_prompt` audit event: the batch message ids plus at most
-**16 KiB** of the text. A larger batch records only a prefix and a
-`truncated`/`rawSize` marker, so for an oversized prompt the prefix and its size
-are provable, not the full rendered text. The closing reminder persists its own
-full text as a `handoff_reminder` system message. Neither record participates in
-the agent's control flow.
-
-**Lifetime.** Obligation state is process-local runtime memory. It is not
-persisted, does not survive a restart, and a fresh controller reconstructs no
-records; there is no restart recovery and Tasks do not auto-start. Terminal
-records stay in the edge-keyed map for late-account routing until a later
-dispatch replaces them. Releasing a Task purges every record where it is either
-endpoint and cancels their timers — hygiene, not deletion recovery.
-
-**Limits.** These are named boundaries, not defects:
-
-- The watchdog covers only a running target turn that already has a non-terminal
-  obligation record. A user-started `/bash` runaway on a Task with no obligation
-  is therefore unwatched, and a Task whose agent-runtime events carry no prompt
-  id cannot attribute trailing activity to a turn; a superseded turn's late
-  activity can extend the current turn's report-only silence window.
-- A `delivery_failed` notice travels through the same collaboration delivery as
-  any other message, so it cannot repair a dead bridge or reach a source that
-  never consumes its queue.
-- Resource limits — wall-clock caps, turn caps, depth, or fan-out admission —
-  are unimplemented. If added, they belong at the execution or tool-call layer;
-  the obligation mechanism reports facts and does not decide them.
-- The `turn_ended` identity comparison fails open when the fact or the observed
-  turn is unknown, so one stale boundary can pass in that window. Both
-  production emitters are gated on the current turn, so this is defensive
-  tolerance rather than a live hole.
-
-## Verification and related documents
-
-- [`TEST_SCENARIOS.md`](../TEST_SCENARIOS.md) maps the mechanism's coverage,
-  including the controller unit tests, the real-path integration tests, and the
-  structural checks that prove the single transition point and single scheduler.
-- [Task Manual](task-manual.md) is the user-facing principles guide.
-- [Task MCP Control Plane](task-mcp.md#task_update) is the tool contract.
-- [Implementation Invariants](implementation-invariants.md) is the normative
-  authority for the task-semantic boundary and the runtime invariants.
+The limits of this mechanism (shared accounts per edge, process-local state)
+are recorded in [Known issues](known-issues.md#collaboration-accounting-limits).

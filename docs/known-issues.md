@@ -29,13 +29,6 @@ time. An entry without a "closing condition" is a wish, not an issue.
   registered its resolver, so the agent's promise is never settled.
   *Closing:* buffer restore-time requests like pending session updates, then
   route them once the restore binds.
-- **A closing reminder becomes the active turn before its resume completes.**
-  `submitObligationReminder` transfers the reservation to an active turn before
-  `ensureResumed`, so cancelling during that window does not clear the slot, and
-  the pre-prompt re-check (`isTurnRunning`) does not consult cancel state.
-  Present since P5-a; that step kept the ordering and did not widen it.
-  *Closing:* move the transfer after the resume, or make the re-check read the
-  cancel intent.
 - **A late request is attributed to the turn it arrives in — accepted.**
   ACP carries no correlation from a permission request to the prompt that caused
   it, so the host uses the live turn at arrival. An old request answered by a
@@ -115,16 +108,11 @@ time. An entry without a "closing condition" is a wish, not an issue.
   failure on a cut edge may leave a harmless retry-map entry with a
   `prompt_failed` label. No dedicated race fence covers these windows.
 
-- **A claimed (`draining`) delivery can be stranded before the ACP handoff.**
-  `claimQueuedDeliveries` marks rows `draining`, but the prompt is handed to
-  ACP later in the same synchronous block. If the process exits or a database
-  write in that window fails, the row stays `draining` with no outcome callback
-  and no failure reason. It is not redelivered: only `queued` rows are claimable,
-  and the retry map never contains it. Archive deliberately does not relabel it,
-  because `draining` means "handed over / in flight", not "not yet submitted".
-  *Closing:* the startup sweep already planned for task collaboration — mark
-  leftover `queued`/`draining` rows from a previous process as interrupted
-  before delivery starts.
+- **A crash between handover and the ACP request leaves a delivered row the
+  agent never saw.** The drain marks rows `delivered` and calls the agent in
+  the same synchronous step, so only a process exit or a failed database write
+  inside that step can strand one. It is not redelivered. *Closing:* a startup
+  sweep, if this is ever observed.
 
 - **Task-created broadcast guards lack multi-client coverage.** The live
   `task_created` / `system_message` guards are asserted in the frontend tests,
@@ -292,6 +280,45 @@ time. An entry without a "closing condition" is a wish, not an issue.
 
   *Closing:* a transcript row whose file reference previews and downloads
   through the existing signed-URL path.
+
+## Collaboration accounting limits
+
+- **One account per parent→child edge, with no correlation id.** If a parent
+  dispatches several requests before the child reports, they share one account.
+  One `done` or `blocked` settles all of them, so the requester must infer which
+  request the report answers from the child's prose and its own follow-ups.
+  *Closing:* per-request correlation, deliberately deferred; reopen only with
+  evidence that shared accounting causes wrong decisions.
+- **Live delivery marks can be missed across a reconnect.** A
+  `collaboration_delivery` SSE event is not persisted, and reconnect replay
+  carries raw event rows without the egress-derived delivery state. A sender
+  that disconnects between the send and the drain can keep `⋯` until a full
+  reload, which reads the delivery row. *Closing:* persist or replay delivery
+  status alongside the event, or accept the reload as the only truth.
+- **A soft-deleted recipient with an active share keeps deliveries queued.**
+  Soft deletion preserves the row for the share viewer, so the queued
+  deliveries are not failed with `target_deleted` until the tombstone is
+  reaped. They stay queued and are never claimed while the task is not live.
+  *Closing:* fail queued deliveries when a task is tombstoned, or drop them
+  when the share ends.
+- **The replay deduper can duplicate a system-message row.** A system row
+  loaded through REST history while the same live event is still queued on the
+  SSE path can render twice, because the deduper keys only the live queue and
+  not the replayed row. *Closing:* key both paths on message id, or drain the
+  queue before applying a history page.
+- **A configured agent that cannot start leaves its dispatch queued.** The
+  delivery stays `queued` until the agent can be started; nothing fails or
+  retries on a timer. No account opens and the source gets no notice, so only
+  the sender's `⋯` mark shows it. *Closing:* start-failure handling that marks
+  the delivery failed, if this proves common.
+- **A turn the agent starts on its own is not a WebAgent turn.** When a harness
+  wakes the agent without a prompt (a finished background command, a scheduled
+  wakeup, idle compaction), its events are recorded and count as activity for
+  the silence watch, but the Task is not marked busy, its turn end is not
+  checked, a queued delivery can be handed over while it runs, and its final
+  text is persisted only when the next turn starts. ACP has no portable signal
+  for when such work ends. *Closing:* a standard ACP signal for agent-initiated
+  turns.
 
 ## Accepted as designed
 

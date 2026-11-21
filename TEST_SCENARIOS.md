@@ -74,10 +74,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - ids that cannot fit are dropped entirely, leaving the omission note and, when not even one fits, a "too long to list here" explanation
 
 - `test/multi-agent-mcp-collaboration.test.ts` (same harness: production host, endpoint, REST handler, one transport per agent)
-  - a parent on A dispatches to a child on B: the contract reaches B's own transport and never A's; the production manager's own collaboration observer is called exactly once for that message (measured by wrapping the store registration the manager makes), and exactly one obligation record exists for the edge
-  - the child's typed `task_update(done)` on B settles the record from its live turn, persists the typed update, and wakes the parent through A's transport with readable prose (`Task status: done` + the account), not JSON; the observer count grows by exactly one
-  - an unanswered dispatch sends its closing reminder to B's transport (never A's), and after the transport budget is spent the terminal `delivery_failed` notice is delivered to A's transport with the readable block, while the machine payload stays in `task_outcome_notice`
-  - a token minted for the generation that was current just before the child's execution was replaced is refused with `execution_replaced` even though the replacement owns a live, settleable turn: no settlement, no attempt spent, no re-enqueue, no account message; the current generation's token settles the same turn (control)
+  - a parent on A dispatches to a child on B: the contract reaches B's own transport and never A's, and the handed-over dispatch opens exactly one account for the edge
+  - the child's typed `task_update(done)` on B settles the account, persists the typed update with `reason: settled`, source, and target, and wakes the parent through A's transport with readable prose (`Task status: done` + the account), not JSON; the observer count grows by exactly one
+  - an unanswered dispatch sends one closing reminder to B's transport (never A's); the next unaccounted turn delivers a `no_update` notice to A's transport with a readable block naming the target id, while the machine payload stays in `task_outcome_notice`
+  - `task_update(waiting)` records the status, keeps the account open, wakes nobody, and survives the turn end as `workflowStatus = waiting`; the turn that reported it gets no closing reminder
+  - `waiting` is accepted without a visible wake source and its result carries the silence note; a queued message or a child that owes an update is a visible wake source and adds no note
 
 - `test/multi-agent-pending.test.ts` (real ACP child process)
   - the agent connects to `/mcp` from inside `session/new`: the handshake succeeds, `task_list` answers `initializing`, nothing is created, and the same token works after the binding commits
@@ -277,9 +278,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     viewing, and applies to a row rendered after it; the current Task's header
     is untouched by another Task's rename
   - each reference of a collaboration row is judged on its own id on every
-    copy, including the supervisor projection (the LCA, which is neither side):
-    one side's rename or exit never marks the other; the live envelope marks
-    the same references its replayed copy does
+    copy: one side's rename or exit never marks the other; the live envelope
+    marks the same references its replayed copy does
   - both sides of a cancellation row mark the other Task, and the source side
     marks both of its references by id
   - a row whose raw labels are missing, or whose reference does not sit at its
@@ -294,6 +294,21 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the title is built from the raw labels, shell-quoting when needed
   - the persisted payload and the wire envelope carry the same title, body, and
     both raw labels, spelled out field by field
+
+- `test/collaboration-delivery.test.ts`
+  - the receiver's collaboration row is written at drain, not at creation, and precedes the turn's own output event; a message never appears in a turn that did not see it
+  - a batch is `delivered` at handover, broadcast while the recipient's turn is still running; a request-level rejection flips it to `failed`
+  - an account opens at handover, not at enqueue: a queued dispatch has none, and a dispatch queued behind a turn whose `done` settled the account opens a new one when it is handed over
+  - a rejected dispatch prompt, a resume failure, and `/clear` each fail the agent's message and send its sender one `target_removed` notice, closing the account when the message was its dispatch; a resume failure leaves no row stranded in `queued`, and `/clear` keeps an already handed-over row `delivered`
+  - a closing reminder is queued behind a running turn and appears only at the boundary through the automatic drain; the recipient gets exactly one row, labeled `WebAgent runtime`, with no pre-drain `handoff_reminder` row and no delivery mark
+  - an unrelated REST/system delivery failing does not close the dispatch account; a stale resume leaves queued work for the current execution
+  - same-time deliveries drain in insertion order, not id order
+  - a request-level error emitted before a rejection runs no turn-end check, queues no reminder and writes no `handoff_reminder` audit row; only the rejection path (`target_removed`) applies
+  - a failed update transaction marks nothing and keeps the account open
+
+- `test/collaboration-route.test.ts`
+  - a human send over REST reaches a cross-tree target with exactly source and target projections, and a self target is refused
+  - the sender's read attaches `queued` and then, after handover, `delivered` plus an ISO `deliveredAt` at egress, while the stored event never carries delivery state
 
 - `test/api-module.test.ts` (request building)
   - `createTask`/`clearTask` send a named `agentId`, omit it for `null` or an
@@ -521,6 +536,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/bridge.test.ts`
   - prompt success / failure / cancellation
+  - a dead-agent fast-path prompt error carries its prompt id and
+    `requestLevel` before rejecting, so the turn-end check is skipped
   - silent prompt buffering for compact summarization
   - mapping a session to a real Task lifts any internal silence, so later updates stream; `promptForText` restores pre-existing persistent silence instead of unmuting it
   - permission request resolution ordering
@@ -588,39 +605,20 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the delegated condition requires a live turn, not just a recorded origin: after the turn ends, the same request prompts
   - a human turn is unchanged: default mode prompts, and our own injected MCP tools have no privilege there
   - the attachment-read interceptor approves only inside the turn the request arrived in; a turn that ended or was superseded before the realpath work finishes produces no `permission_response`
-  - directed dispatch closure: only an agent-authored direct parent→child dispatch arms an obligation; a user send, a sibling/child message, an account, and a runtime notice do not
-  - settlement predicate: a plain `task_update` settles only an `open|reminder_due|reminder_submitting` record when the target has an active current agent turn; `awaiting_delivery`, a terminal record, and no active turn do not settle and still route to the stored source
-  - an `unresolved` record is settled by a late account without retracting its notice, while a `settled` record is never re-settled; with no record the report goes to the current parent and settles nothing
-  - the real delivery path: the dispatch is handed to the target's session (opening the record at hand-off, not at prompt resolution), and the account arriving from that same dispatch turn settles it with no reminder issued (this is the assertion that fails if the record opens at turn end or if a timestamp guard is reintroduced)
-  - the accepted boundary: a delayed call from an earlier turn arriving while a later turn is current settles the record, and the source receives the earlier turn's content
-  - releasing a task purges every record where it is either endpoint and cancels their timers
-  - a queued sibling delivery claims the next turn without erasing the open obligation, and the reminder is recovered on the next turn boundary
-  - a request-level prompt failure (error event plus `PromptNotDeliveredError` rejection) consumes the transport budget, while an in-turn agent error (error event plus resolution) does not
-  - a rejected initial dispatch is retried under the transport bound (backoff, no immediate idle re-drain) and ends in one factual `delivery_failed` notice with `delivery_unavailable` evidence; a resume that keeps failing exhausts the same budget, and a still-queued dispatch produces a non-terminal `still_waiting` advisory rather than a terminal deadline
-  - a late callback from a superseded dispatch prompt identity is ignored, including a failing resume and a stale hand-off; the still-waiting and age advisories are non-terminal and cleared on terminal states; an in-flight reminder from a previous epoch is ignored after a coalescing follow-up; a runtime rotation (and bridge restart, including a draining turn) aborts the watchdog and a silence notice requires a live current turn
-  - the closing reminder scopes its prohibition to the runtime-injected closing turn, resumes a non-live session before reminding, records no successful reminder on rejection, persists a bounded audit copy of the drained prompt, and logs obligation lifecycle decisions
-  - a cancelled turn owes no closing reminder: the ACP `cancelled` stop reason, the cancel intent stamped on the turn before the transport round trip, and the busy cancel marker each end the turn without a `handoff_reminder` or `task_outcome_notice`, and the record stays `open`; a later dispatch that ends without an account still reminds
-  - the cancel intent is stamped before `bridge.cancel` awaits: a turn that finishes with an ordinary `end_turn` while the cancel is still in flight is still treated as cancelled (no reminder), and it dies with that turn — the same task's next turn is not cancelled and its unaccounted end reminds normally
-  - a closing-reminder turn that is itself cancelled is fenced: no delivered attempt is counted, nothing is re-armed, no `task_outcome_notice` is emitted, no delivered-attempt `handoff_reminder` row is written, and the record returns to `open`; a later dispatch still reminds
-  - a runtime notice is delivered as a readable `reason:` / `message:` / `openingMessageId:` block (the text the parent agent actually receives, fenced verbatim), while its machine payload stays in the `task_outcome_notice` event; the live broadcast title and the persisted twin share one `messageId` and one title
   - execution write lease, fail closed: an event stamped with a replaced generation, an unknown generation, another task's lease, no lease at all, or no lease for a task with no ledger entry writes nothing — no buffer, no stored event, no broadcast, no activity timestamp
 
 - `test/obligation-controller.test.ts`
-  - awaiting_delivery → open timing, coalescing without a fresh record, +2m/+5m delivered-reminder schedule, transport-bound exhaustion, idle wait, the two-condition settlement predicate and its guards (awaiting_delivery, no active turn, terminal records), stored-source/current-parent routing, the accepted boundary, superseded-dispatch identity, abort and advisory backstops, live-turn requirement, process-local loss on reconstruction, terminal records never watched, and independent watchdog/no-account epochs
-  - tri-state submission: a `deferred` outcome leaves `reminder_submitting`, keeps both counters, and retries on a growing bounded backoff; a permanently deferring transport never exhausts the record and emits no notice
-  - `execution_rotated` keeps the same record (endpoints, attempts) in a waitable state and never requests a re-dispatch
-  - a pre-rotation watchdog with a live turn emits its silence notice (control), and the same steps after a rotation emit none — the rotation ends that watchdog epoch (the retained-callback case is covered by the next bullet)
-  - a retry callback that is still queued when the rotation lands is run explicitly after it (the clock keeps callbacks after `clearTimer`): it re-derives from the record, so the old body is never re-enqueued and a closing reminder for the replacement is what it submits
-  - a reminder result from the replaced execution (old recovery generation) cannot settle the record, spend an attempt, or re-enqueue the dispatch
-  - a cancelled boundary quiets the edge and nothing gets through: hours later there is no closing reminder, no `still_waiting` advisory (neither the queued-dispatch nor the age form), no notice, and no armed deadline at all; a timer that was already armed is dropped at dispatch time, and a rotation is not new work (no timer, no sound)
-  - new work on the same edge lifts the silence and restarts the clocks: a fresh dispatch arm + hand-off produces the age advisory only after a full `AGE_ADVISORY_MS` from that arrival, and its closing reminder follows once the target is idle; another task's edge is unaffected and keeps its own reminder
-  - a quiet record still settles on a late typed account, then stays silent
-  - a cancellation never reopens a terminal record: a settled edge stays `settled` (not `open`/quiet), and a later user message handed to it plus a normal unaccounted end produces no reminder and no notice
-  - a hand-off lifts the silence from any state, including `reminder_due` after a rotation (the reminder and the advisory run again); a rotation with no new work leaves the edge quiet with no timer
+  - arm/open/coalesce: one account per target, a follow-up dispatch keeps it, one close removes it
+  - turn-end check: update resets the whole cycle (miss count and stopped flag); a full cycle runs reminder → `no_update`, updates, then a second full cycle runs again; a cancelled turn triggers nothing
+  - `waiting` is an update for the check but never settles
+  - an update made while idle resets the cycle immediately and marks no turn; a running turn's update marks only that turn
+  - silence: the threshold without activity reports `no_activity` once per window; activity before the deadline postpones it, and no account means no notice; the threshold is configurable
+  - a `waiting` with no visible wake source keeps a watch after its turn: activity outside a prompt resets it, it notifies once, a new waiting re-arms it, any later update clears it, and a silent turn that reported it notifies once for the turn and once after it
+  - target removal: deleting or archiving the target reports `target_removed`; losing the source drops the account silently; dispose stops timers
 
 - `test/turn-slot.test.ts`
-  - one turn slot per task, and every real submission assigns its own origin: the interactive route, `/compact`, and the beta quick prompt are `interactive`; a collaboration drain is `delegated` for an all-agent/system batch and `interactive` for a batch containing one user message; a closing reminder is `delegated`. Nothing inherits the previous turn's value
-  - every per-path release point of the end-of-turn table closes the slot — `prompt_done`, agent error, drain rejection, reminder `finally`, interactive `finally`, `/compact` `finally`, `resetTaskRuntime` even under `preserveRuntimeState`, and an agent-scoped `clearAgentRuntime` — and the next turn on that task is interactive again; a cancel request alone ends nothing, because only the turn's own terminal does. The task-vanishing row is covered only through its production entries (next bullet), never by calling a private release method
+  - one turn slot per task, and every real submission assigns its own origin: the interactive route, `/compact`, and the beta quick prompt are `interactive`; a collaboration drain is `delegated` for an all-agent/system batch and `interactive` for a batch containing one user message. Nothing inherits the previous turn's value
+  - every per-path release point of the end-of-turn table closes the slot — `prompt_done`, agent error, drain rejection, interactive `finally`, `/compact` `finally`, `resetTaskRuntime` even under `preserveRuntimeState`, and an agent-scoped `clearAgentRuntime` — and the next turn on that task is interactive again; a cancel request alone ends nothing, because only the turn's own terminal does. The task-vanishing row is covered only through its production entries (next bullet), never by calling a private release method
   - a superseded turn's late terminal (including a late `prompt_done`) never releases or re-origins the turn that replaced it
   - the submission protocol is shared and survives awaits: a runtime reservation blocks an interactive submit and vice versa, the slot is held across `ensureResumed`, a submitter that wins during the transport resolution is the only one that reaches `bridge.prompt` (and the loser's delivery stays queued), and a reservation invalidated by a cancel during that await gives up without claiming or submitting
   - admission is one check over every busy source, for both the interactive and the runtime route; `allowBash` opens bash and nothing else, and only an explicit `allowRestoring` waives a restore
@@ -629,9 +627,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/task-collaboration.test.ts`
   - pure `shouldArm` policy: agent parent→child only; user, system, and non-parent relations never arm
-
-- `test/collaboration-store.test.ts`
-  - the collaboration-message emitter reports exactly one post-commit fact for both the normal and in-transaction creation entry points
 
 - `test/task-manager.test.ts`
   - busy has two faces: a restoring task is agent-busy for the gate (`getGateBusyKind`) and idle for rendering (`getBusyKind`); a Root exit under a restoring descendant and a rotation during the restore window are both refused
@@ -648,15 +643,14 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - revisioned Agent command snapshot lifecycle and cleanup
   - authoritative snapshot waits for command discovery during warm-cache restore
   - rotation busy gate: a restoring task is agent-busy, a `/clear` or Root exit that arrives during the restore window is refused, and a store replacement restores nothing under a lease that moved; the compaction turn keeps its controlled internal rotation path
-  - rotation transport truncation: dispatch retry ids and unfinished delivery rows are finalized, the obligation record survives as a reminder, and the old dispatch body is never re-sent to the replacement execution
-  - a closing reminder with no execution to accept it is deferred: waiting again with neither attempt nor failure consumed and no reminder event recorded
-  - reminder turn ownership: a resume failure, a replaced execution and a dead agent each return the task to idle (one `activePrompts` add, one guarded release), and the controller can still submit afterwards
+  - rotation transport truncation: unfinished delivery rows fail, the target is reported as `target_removed`, the account closes, and the old dispatch body is never re-sent to the replacement execution
+  - the silence watchdog starts only when a prompt is submitted (not on the busy projection) and is cleared on turn end; it is also cleared on runtime rotation
   - a config replay re-authorizes before every request and discards a response that outlived its execution
 
 - `test/execution-rotation.test.ts`
   - implicit owner rotation: Root is taken over only when its owner left configuration, never from an owner that is still configured, and the takeover leaves a transcript line naming both agents
   - a taken-over empty slot materializes through an ordinary resume
-  - an implicit rotation truncates the transport and keeps the obligation; the queued delivery row ends as failed (`cleared_before_delivery`) while the debt survives
+  - an implicit rotation truncates the transport, fails the queued delivery (`cleared_before_delivery`), reports `target_removed`, and closes the account
   - a rotation refused because the target owns a live turn leaves the record, its state, the queued delivery, and the binding untouched
   - each rotated task gets its own empty execution slot: two ordinary tasks rotated under the same agent both succeed alongside the Root's empty slot, and each materializes later
   - the empty slot is recognised by exact equality with the value generated for that task, never by the reserved prefix: a real session id that merely shares the prefix is restored (not materialized) and stays bound
@@ -678,6 +672,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the stored cwd form: pure string folding — `.` and repeated/trailing separators removed, `..` folded logically like `cd` (`a/link/..` is `a`), HOME expanded first, a relative `~/…` directory never turned into HOME shorthand, and idempotency over every case
 
 - `test/store.test.ts`
+  - a database whose `tasks.workflow_status` CHECK predates `waiting`, or whose `deliveries` CHECK still has `draining`, is refused at startup with the pre-1.0 reset message
   - task creation / deletion / updates
   - a stored cwd has no `.` and no `..`: `a/b/..` and `a/link/..` both become `a` (shell folding) and a reopen leaves them unchanged; a store opened on a database holding legacy variants merges each into its canonical row keeping its newest use, while a legacy row that still carries `..` keeps its bytes so a running task cannot move
   - config persistence, including clearing one column with `null` without touching the others
@@ -883,7 +878,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
     `task_update` records against the current (null) parent and does not
     deliver an account to the parent the task left
   - a queued delivery across the cut edge is not drained
-  - a draining delivery is left alone and finishes delivered after archive
+  - a handed-over delivery stays `delivered` across archive
 
 - `test/read-scope.test.ts`
   - a `read` token reaches the task list, stored history, detail, status, and
@@ -958,8 +953,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     cancelled page each render exactly one line, live and from replay
   - a replayed collaboration row anchors **both** of its references from the
     stored ids, on every projection: the source reference at the front and the
-    target reference at the end of `@source sent @target`, on the source, target,
-    and supervisor copies alike
+    target reference at the end of `@source sent @target`, on the source and
+    target copies alike
   - live events queued during a replay are dropped when the connection
     generation changes before the drain, and a disconnect discards the armed
     replay gate, its queue, and any history read still in flight
@@ -1012,7 +1007,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
     inline block is `unknown` and echoes no payload
   - fixed-string search returns a visible matching window and real JSON field path
   - task_read returns batched decoded event data, including large single rows
-  - self/parent/child/sibling authorization, tombstone/nonexistent target convergence, unknown sequence rejection
+  - self/parent/child authorization with sibling rejection, tombstone/nonexistent target convergence, unknown sequence rejection
   - omitting the target reads the current Task's own history
   - explicit response_too_large errors report required_bytes without partial rows
   - a successful `task_cancel` writes one `system_message` row per side (each
@@ -1186,6 +1181,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - `reapTombstoneIfOrphaned`: no-op while an active share remains, no-op on a
     live task, cascades attachment rows, and repeating it after a successful
     reap is a no-op
+  - reaping the last share of a soft-deleted recipient fails its queued
+    deliveries and publishes the sender mark after the writes land
 
 - `test/share-sanitize.test.ts` / `test/share-sanitize-secrets.test.ts`
   - secret detection → hard-reject with `event_id` + `rule`

@@ -97,11 +97,24 @@ not depend on color alone; a screen-reader note spells out `(renamed)` or
 `(exited)`.
 
 This covers the creation row (`Created task @x`), every reference of a
-collaboration row (`@a sent @b`, including the `supervisor` copy projected to
-the common ancestor, where each reference is judged on its own id), and both
+collaboration row (`@a sent @b`, where each reference is judged on its own id),
+and both
 titles a cancellation row is written as (`@a cancelled @b`, `Cancelled by @a`).
 A row written before the raw labels existed, or one whose reference cannot be
 placed, is left fully unmarked.
+
+A collaboration row also carries the sender's delivery mark, after the title:
+`⋯` while queued, `✓` when delivered, and `✗` when delivery failed. The symbol
+is the only visible text; the tooltip (`title`, with the same text in
+`aria-label`) says `Queued`, `Delivered · <time>`, or `Delivery failed: <reason>`.
+There is no tap-to-expand, because a phone has no hover and the symbol is
+enough. The mark is derived from the delivery row when the row renders or a
+read returns it, and live refreshes come from a lightweight SSE event; it is
+never written into the event. The receiver's copy of the row appears only when
+its batch is actually handed to its agent, so a batch shows up at that turn
+boundary rather than in an earlier turn. A runtime-authored item (a closing
+reminder or a runtime notice) is labeled `@WebAgent runtime`, not as sent by a
+named Task, and has no delivery mark.
 
 The reference is placed by task id, never by the shape of the title: titles
 repeat, and a title may contain quotes, spaces, or the words between two
@@ -114,8 +127,8 @@ the Task is gone or renamed.
 
 A `+`-created Task is user-owned and interactive. It can receive messages and
 child results, but the runtime does not automatically require a typed
-`task_update(done|blocked)` handoff after each turn. Agent-created delegated
-Tasks follow the lifecycle handoff contract described in the [Task Manual](task-manual.md).
+`task_update(done|blocked)` handoff after each turn; only an agent's dispatch
+opens an account ([Task Obligations](task-obligations.md)).
 
 Autocomplete serves the second field. Once a title is present the menu leads
 with the action row for the current input — `↵ create 'api-fix'`, extended to

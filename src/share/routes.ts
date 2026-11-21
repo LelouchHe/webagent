@@ -789,7 +789,6 @@ async function handleSharedEvents(
       deps.tasks.getLabelMap(row.task_id),
     );
   }
-
   try {
     const { events } = sanitizeEventsForShare({
       events: allEvents,

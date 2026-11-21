@@ -45,6 +45,12 @@ export function addMessage(role: string, text: string): HTMLDivElement {
   return el;
 }
 
+export interface DeliveryState {
+  status: "queued" | "delivered" | "failed";
+  deliveredAt?: string;
+  failureReason?: string;
+}
+
 export interface SystemMessageOptions {
   title: string;
   body?: string;
@@ -56,6 +62,10 @@ export interface SystemMessageOptions {
    * `resolveTaskRefs`).
    */
   taskRef?: Omit<TaskRefRowInput, "title">;
+  /** The collaboration message this row projects, for live mark updates. */
+  messageId?: string;
+  /** Sender-side delivery state, derived at egress or sent live. */
+  delivery?: DeliveryState;
 }
 
 /** Render a system message. Messages with a body use the same native
@@ -65,6 +75,8 @@ export function addSystemMessage({
   title,
   body,
   taskRef,
+  messageId,
+  delivery,
 }: SystemMessageOptions): HTMLElement {
   const hasBody = body !== undefined && body.length > 0;
   const el = document.createElement(hasBody ? "details" : "div");
@@ -82,6 +94,7 @@ export function addSystemMessage({
   const anchors = resolved.map((target) => target.anchor);
   let spansByAnchor: Map<TaskRefAnchor, HTMLElement>;
 
+  let titleHost: HTMLElement;
   if (hasBody) {
     const summary = document.createElement("summary");
     const content = document.createElement("div");
@@ -89,9 +102,13 @@ export function addSystemMessage({
     content.textContent = body;
     el.append(summary, content);
     spansByAnchor = fillSystemTitle(summary, title, anchors);
+    titleHost = summary;
   } else {
     spansByAnchor = fillSystemTitle(el, title, anchors);
+    titleHost = el;
   }
+  if (messageId !== undefined) el.dataset.messageId = messageId;
+  if (delivery !== undefined) titleHost.append(createDeliveryMark(delivery));
 
   // A naming reference is re-evaluated on every later collection change (list
   // read, title update, delete) through the id it names. The mark is
@@ -134,6 +151,62 @@ function fillSystemTitle(
   }
   if (cursor < title.length) target.append(title.slice(cursor));
   return spans;
+}
+
+const DELIVERY_SYMBOL: Record<DeliveryState["status"], string> = {
+  queued: "⋯",
+  delivered: "✓",
+  failed: "✗",
+};
+
+function deliveryTooltip(delivery: DeliveryState): string {
+  switch (delivery.status) {
+    case "queued":
+      return "Queued";
+    case "delivered": {
+      const at = delivery.deliveredAt
+        ? new Date(delivery.deliveredAt).toLocaleString()
+        : "";
+      return at ? `Delivered · ${at}` : "Delivered";
+    }
+    case "failed":
+      return delivery.failureReason
+        ? `Delivery failed: ${delivery.failureReason}`
+        : "Delivery failed";
+  }
+}
+
+function deliveryClass(delivery: DeliveryState): string {
+  if (delivery.status === "delivered") return "delivered";
+  if (delivery.status === "failed") return "failed";
+  return "queued";
+}
+
+function createDeliveryMark(delivery: DeliveryState): HTMLElement {
+  const mark = document.createElement("span");
+  mark.className = `delivery-mark ${deliveryClass(delivery)}`;
+  mark.textContent = DELIVERY_SYMBOL[delivery.status];
+  const tooltip = deliveryTooltip(delivery);
+  mark.title = tooltip;
+  mark.setAttribute("aria-label", tooltip);
+  return mark;
+}
+
+/** Refresh one sender's mark after a live delivery-status event. */
+export function updateDeliveryMark(
+  messageId: string,
+  delivery: DeliveryState,
+): void {
+  const rows = document.querySelectorAll<HTMLElement>(
+    ".system-msg[data-message-id]",
+  );
+  for (const row of rows) {
+    if (row.dataset.messageId !== messageId) continue;
+    const current = row.querySelector(".delivery-mark");
+    const next = createDeliveryMark(delivery);
+    if (current) current.replaceWith(next);
+    else (row.querySelector("summary") ?? row).append(next);
+  }
 }
 
 export function addSystem(text: string): HTMLDivElement {

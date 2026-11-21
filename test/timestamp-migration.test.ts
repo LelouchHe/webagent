@@ -255,7 +255,7 @@ const HISTORICAL_TABLE_SQL: Readonly<Record<string, string>> = {
         id TEXT PRIMARY KEY,
         cwd TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      , title TEXT, last_active_at TEXT, model TEXT, mode TEXT, reasoning_effort TEXT, source TEXT NOT NULL DEFAULT 'auto', deleted_at INTEGER, parent_id TEXT REFERENCES "tasks"(id), pending_compact_summary TEXT, workflow_status TEXT NOT NULL DEFAULT 'idle' CHECK (workflow_status IN ('running', 'idle', 'blocked', 'done')))`,
+      , title TEXT, last_active_at TEXT, model TEXT, mode TEXT, reasoning_effort TEXT, source TEXT NOT NULL DEFAULT 'auto', deleted_at INTEGER, parent_id TEXT REFERENCES "tasks"(id), pending_compact_summary TEXT, workflow_status TEXT NOT NULL DEFAULT 'idle' CHECK (workflow_status IN ('running', 'idle', 'waiting', 'blocked', 'done')))`,
   events: `CREATE TABLE events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id TEXT NOT NULL REFERENCES "tasks"(id),

@@ -64,37 +64,7 @@ describe("Store collaboration records", () => {
     };
   }
 
-  it("emits exactly one post-commit fact per created message", () => {
-    const seen: Array<{ messageId: string; deliveryId: string }> = [];
-    store.onCollaborationMessageCreated(({ message, delivery }) => {
-      seen.push({ messageId: message.id, deliveryId: delivery.id });
-    });
-
-    store.createCollaborationMessage(messageInput());
-
-    // Mutation evidence: a second emission, or an emission before the insert
-    // committed, changes this list.
-    assert.deepEqual(seen, [
-      { messageId: "message-a1-a2", deliveryId: "delivery-a1-a2" },
-    ]);
-  });
-
-  it("emits the account message created inside the workflow-update transaction", () => {
-    const seen: string[] = [];
-    store.onCollaborationMessageCreated(({ message }) => seen.push(message.id));
-
-    const { collaborationMessageId } = store.recordAgentWorkflowUpdate(
-      "a1",
-      "done",
-      "complete",
-      "parent",
-    );
-    assert.ok(collaborationMessageId);
-    // The in-transaction entry point reports the same fact as the normal one.
-    assert.deepEqual(seen, [collaborationMessageId]);
-  });
-
-  it("creates one message with source, target, and LCA projections", () => {
+  it("creates one message with only source and target projections", () => {
     const created = store.createCollaborationMessage(messageInput());
 
     assert.equal(created.message.id, "message-a1-a2");
@@ -103,7 +73,6 @@ describe("Store collaboration records", () => {
     assert.deepEqual(store.listCollaborationProjections(created.message.id), [
       { task_id: "a1", role: "source" },
       { task_id: "a2", role: "target" },
-      { task_id: "parent", role: "supervisor" },
     ]);
   });
 
@@ -183,7 +152,7 @@ describe("Store collaboration records", () => {
     store.updateTaskTitle("a2", "修复");
     store.createCollaborationMessage(messageInput());
     const system = store
-      .getEvents("a2")
+      .getEvents("a1")
       .find((row) => row.type === "system_message");
     assert.ok(system);
     const data = JSON.parse(system.data) as {
@@ -194,7 +163,7 @@ describe("Store collaboration records", () => {
     assert.equal(data.targetLabel, "修复");
   });
 
-  it("claims each queued delivery once and completes the claimed batch", () => {
+  it("claims each queued delivery once and marks it delivered at handover", () => {
     store.createCollaborationMessage(messageInput());
 
     const claimed = store.claimQueuedDeliveries("a2");
@@ -203,16 +172,10 @@ describe("Store collaboration records", () => {
       ["delivery-a1-a2"],
     );
     assert.deepEqual(store.claimQueuedDeliveries("a2"), []);
-    assert.equal(
-      store.getCollaborationDelivery("delivery-a1-a2")?.status,
-      "draining",
-    );
-
-    store.markCollaborationDeliveriesDelivered(["delivery-a1-a2"], 200);
     const delivery = store.getCollaborationDelivery("delivery-a1-a2");
     assert.ok(delivery);
     assert.equal(delivery.status, "delivered");
-    assert.equal(delivery.delivered_at, 200);
+    assert.equal(typeof delivery.delivered_at, "number");
   });
 
   it("keeps collaboration facts in surviving task timelines after hard delete", () => {
@@ -225,7 +188,6 @@ describe("Store collaboration records", () => {
     );
     assert.deepEqual(store.listCollaborationProjections("message-a1-a2"), [
       { task_id: "a2", role: "target" },
-      { task_id: "parent", role: "supervisor" },
     ]);
     assert.equal(
       store.getCollaborationDelivery("delivery-a1-a2")?.status,
@@ -237,9 +199,7 @@ describe("Store collaboration records", () => {
       store.getCollaborationMessage("message-a1-a2")?.body,
       "请检查接口定义",
     );
-    assert.deepEqual(store.listCollaborationProjections("message-a1-a2"), [
-      { task_id: "parent", role: "supervisor" },
-    ]);
+    assert.deepEqual(store.listCollaborationProjections("message-a1-a2"), []);
     const delivery = store.getCollaborationDelivery("delivery-a1-a2");
     assert.ok(delivery);
     assert.equal(delivery.status, "failed");

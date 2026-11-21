@@ -166,9 +166,8 @@ interface Candidate {
  * `task_created` names its task at the end of `Created task @x`.
  *
  * `collaboration` names both sides in `@source sent @target`, and the same
- * title is projected to all three copies (source, target, and the supervisor
- * that is neither). Both references are resolved on every copy: each is judged
- * by its own id, and the reference that survives is the one that matters.
+ * title is projected to the source and the target copy. Both references are
+ * resolved on each copy: each is judged by its own id.
  *
  * `task_cancel` projects two different titles: the canceller reads
  * `@source cancelled @target`, the cancelled task reads `Cancelled by

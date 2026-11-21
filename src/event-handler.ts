@@ -480,9 +480,8 @@ function handlePromptDone(
   }
   // The turn's own end fact, read before the turn is released: the ACP stop
   // reason, the cancel intent stamped on the turn before the transport round
-  // trip, or our pending cancel marker. An obligation reads this so an explicit
-  // cancellation is not mistaken for a missing account and answered with a
-  // closing reminder.
+  // trip, or our pending cancel marker. A cancelled turn triggers no closing
+  // reminder and no notice.
   const cancelledTurn =
     event.stopReason === "cancelled" ||
     cancelStatus !== null ||
@@ -499,9 +498,7 @@ function handlePromptDone(
       recoveryOrigin: "prompt_done",
     });
     tasks.recoverUnfinishedWork(bridge, event.taskId, "prompt_done");
-    tasks.onTargetTurnEnded(event.taskId, event.promptId, {
-      cancelled: cancelledTurn,
-    });
+    tasks.onTargetTurnEnded(event.taskId, { cancelled: cancelledTurn });
   } else {
     clog.info("completion from a superseded turn", {
       taskId: event.taskId.slice(0, 8),
@@ -552,9 +549,11 @@ function handleError(
         recoveryOrigin: "error",
       });
       tasks.recoverUnfinishedWork(bridge, taskId, "error");
-      tasks.onTargetTurnEnded(taskId, event.promptId, {
-        cancelled: cancelledTurn,
-      });
+      // A request-level rejection never reached the agent, so it is not a
+      // completed turn: the drain's rejection path is the only account path.
+      if (!event.requestLevel) {
+        tasks.onTargetTurnEnded(taskId, { cancelled: cancelledTurn });
+      }
     } else {
       clog.info("failure from a superseded turn", {
         taskId: event.taskId.slice(0, 8),
@@ -572,6 +571,7 @@ function handleError(
       {
         message: event.message,
         ...(event.promptId ? { promptId: event.promptId } : {}),
+        ...(event.requestLevel ? { requestLevel: true } : {}),
       },
       { from_ref: "agent" },
     );

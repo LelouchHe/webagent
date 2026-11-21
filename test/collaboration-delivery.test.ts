@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
-import { mockBridgeStubs, waitFor } from "./fixtures.ts";
+import { handleAgentEvent } from "../src/event-handler.ts";
+import {
+  makeEventHandlerConfig,
+  mockBridgeStubs,
+  waitFor,
+} from "./fixtures.ts";
 
 describe("TaskManager collaboration delivery drain", () => {
   let store: Store;
@@ -102,6 +107,145 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(store.getTask("target")?.workflow_status, "running");
   });
 
+  it("writes the receiver's row at drain, not at creation", async () => {
+    store.createCollaborationMessage({
+      id: "m-drain",
+      deliveryId: "d-drain",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "user",
+      body: "deliver at the boundary",
+      createdAt: 1,
+    });
+
+    // The sender's row exists immediately; the receiver's does not yet.
+    const systemRows = (taskId: string) =>
+      store
+        .getEvents(taskId)
+        .filter((event) => event.type === "system_message")
+        .map((event) => JSON.parse(event.data) as Record<string, unknown>);
+    assert.equal(
+      systemRows("source").some((row) => row.messageId === "m-drain"),
+      true,
+    );
+    assert.equal(
+      systemRows("target").some((row) => row.messageId === "m-drain"),
+      false,
+      "a message must not sit in a turn that never saw it",
+    );
+
+    let releasePrompt!: () => void;
+    const promptGate = new Promise<void>((resolve) => {
+      releasePrompt = resolve;
+    });
+    let enteredPrompt!: () => void;
+    const inPrompt = new Promise<void>((resolve) => {
+      enteredPrompt = resolve;
+    });
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt() {
+        enteredPrompt();
+        await promptGate;
+      },
+    };
+    const draining = tasks.drainCollaborationDeliveries("target", bridge);
+    assert.equal(await draining, true);
+    await inPrompt;
+    const targetRows = systemRows("target");
+    const deliveredRow = targetRows.find((row) => row.messageId === "m-drain");
+    assert.ok(deliveredRow, "the row appears when the batch is handed over");
+    assert.equal(deliveredRow.role, "target");
+
+    // The row precedes everything the turn itself writes: an output event
+    // saved after the hand-over must have a higher seq.
+    store.saveEvent(
+      "target",
+      "assistant_message",
+      { text: "turn output" },
+      { from_ref: "agent" },
+    );
+    const rows = store.getEvents("target");
+    const rowSeq = rows.find(
+      (event) => JSON.parse(event.data).messageId === "m-drain",
+    )!.seq;
+    const outputSeq = rows.find(
+      (event) => event.type === "assistant_message",
+    )!.seq;
+    assert.ok(rowSeq < outputSeq, "the delivery row leads the turn output");
+    releasePrompt();
+  });
+
+  it("broadcasts delivered at handover, before the turn ends, and failed after a rejection", async () => {
+    const events: Array<{ messageId: string; status: string }> = [];
+    tasks.setDeliveryStatusBroadcast((event) => {
+      events.push({ messageId: event.messageId, status: event.status });
+    });
+    store.createCollaborationMessage({
+      id: "m-status",
+      deliveryId: "d-status",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "user",
+      body: "status please",
+      createdAt: 1,
+    });
+
+    let endTurn!: () => void;
+    const turnRunning = new Promise<void>((resolve) => {
+      endTurn = resolve;
+    });
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("target", {
+        ...mockBridgeStubs(),
+        async prompt() {
+          await turnRunning;
+        },
+      }),
+      true,
+    );
+    // The recipient's turn is still running: delivery is already settled.
+    assert.deepEqual(events, [{ messageId: "m-status", status: "delivered" }]);
+    assert.equal(
+      store.getCollaborationDelivery("d-status")?.status,
+      "delivered",
+    );
+    endTurn();
+
+    store.createTask(
+      "target2",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-target2",
+      store.rootTaskId,
+    );
+    tasks.liveTasks.add("target2");
+    store.createCollaborationMessage({
+      id: "m-failed",
+      deliveryId: "d-failed",
+      sourceTaskId: "source",
+      directTargetTaskId: "target2",
+      sourceActor: "user",
+      body: "this one fails",
+      createdAt: 2,
+    });
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("target2", {
+        ...mockBridgeStubs(),
+        async prompt() {
+          throw new Error("rejected");
+        },
+      }),
+      true,
+    );
+    await waitFor(() => events.length === 3);
+    assert.deepEqual(events.slice(1), [
+      { messageId: "m-failed", status: "delivered" },
+      { messageId: "m-failed", status: "failed" },
+    ]);
+  });
+
   it("does not churn the busy turn when nothing is queued", async () => {
     const busyPatches: Array<string | null> = [];
     const unsubscribe = tasks.state.onPatch((event) => {
@@ -159,10 +303,10 @@ describe("TaskManager collaboration delivery drain", () => {
     );
   });
 
-  it("terminates all outstanding deliveries when clear replaces the execution", async () => {
+  it("fails queued deliveries but keeps handed-over ones when clear replaces the execution", async () => {
     store.createCollaborationMessage({
-      id: "draining-message",
-      deliveryId: "draining-delivery",
+      id: "handed-message",
+      deliveryId: "handed-delivery",
       sourceTaskId: "source",
       directTargetTaskId: "target",
       sourceActor: "user",
@@ -197,12 +341,8 @@ describe("TaskManager collaboration delivery drain", () => {
       "cleared_before_delivery",
     );
     assert.equal(
-      store.getCollaborationDelivery("draining-delivery")?.status,
-      "failed",
-    );
-    assert.equal(
-      store.getCollaborationDelivery("draining-delivery")?.failure_reason,
-      "cleared_during_delivery",
+      store.getCollaborationDelivery("handed-delivery")?.status,
+      "delivered",
     );
     assert.equal(store.getTask("target")?.workflow_status, "idle");
   });
@@ -223,5 +363,443 @@ describe("TaskManager collaboration delivery drain", () => {
       false,
     );
     assert.equal(store.getCollaborationDelivery("d1")?.status, "queued");
+  });
+
+  function seedDispatchFamily(): void {
+    store.createTask(
+      "parent",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-parent",
+      store.rootTaskId,
+    );
+    store.createTask(
+      "child",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-child",
+      "parent",
+    );
+    store.createCollaborationMessage({
+      id: "dispatch-message",
+      deliveryId: "dispatch-delivery",
+      sourceTaskId: "parent",
+      directTargetTaskId: "child",
+      sourceActor: "agent",
+      body: "do the work",
+      createdAt: 1,
+    });
+  }
+
+  /** An account as a delivered dispatch leaves it, without running a drain. */
+  function armDeliveredDispatch(): void {
+    store.claimQueuedDeliveries("child");
+    (
+      tasks as unknown as {
+        obligations: { arm(source: string, target: string): void };
+      }
+    ).obligations.arm("parent", "child");
+  }
+
+  function sourceNotice(taskId: string): Record<string, unknown> | undefined {
+    const row = store
+      .getEvents(taskId)
+      .filter((event) => event.type === "task_outcome_notice")
+      .at(-1);
+    return row ? (JSON.parse(row.data) as Record<string, unknown>) : undefined;
+  }
+
+  it("reports target_removed when a dispatch prompt fails", async () => {
+    seedDispatchFamily();
+    assert.equal(
+      tasks.hasOpenObligation("parent", "child"),
+      false,
+      "a queued dispatch opens no account",
+    );
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt() {
+        throw new Error("rejected");
+      },
+    };
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", bridge),
+      true,
+    );
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.status,
+      "failed",
+    );
+    const notice = sourceNotice("parent");
+    assert.equal(notice?.reason, "target_removed");
+    assert.equal(notice.targetTaskId, "child");
+  });
+
+  it("opens the account at handover, so a dispatch queued behind a settled turn gets its own", async () => {
+    seedDispatchFamily();
+    let endTurn!: () => void;
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt() {
+        await new Promise<void>((resolve) => {
+          endTurn = resolve;
+        });
+      },
+    };
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", bridge),
+      true,
+    );
+    assert.ok(tasks.hasOpenObligation("parent", "child"));
+
+    // A second dispatch arrives while the child's turn runs; the child settles
+    // before it sees it.
+    store.createCollaborationMessage({
+      id: "second-message",
+      deliveryId: "second-delivery",
+      sourceTaskId: "parent",
+      directTargetTaskId: "child",
+      sourceActor: "agent",
+      body: "one more",
+    });
+    tasks.settleAgentUpdate("child", "done", "first only");
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(
+      store.getCollaborationDelivery("second-delivery")?.status,
+      "queued",
+    );
+
+    endTurn();
+    tasks.endTurn("child");
+    await tasks.drainCollaborationDeliveries("child", bridge);
+    assert.equal(
+      store.getCollaborationDelivery("second-delivery")?.status,
+      "delivered",
+    );
+    assert.ok(
+      tasks.hasOpenObligation("parent", "child"),
+      "the second dispatch opens a new account when it is handed over",
+    );
+  });
+
+  it("reports target_removed when a drain cannot resume the target", async () => {
+    seedDispatchFamily();
+    const bridge = {
+      ...mockBridgeStubs(),
+      async loadSession() {
+        throw new Error("resume failed");
+      },
+    };
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", bridge),
+      false,
+    );
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.status,
+      "failed",
+      "a failed resume must not strand the row in queued",
+    );
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.failure_reason,
+      "resume_failed",
+    );
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(sourceNotice("parent")?.reason, "target_removed");
+  });
+
+  it("reports target_removed when /clear drops the queued dispatch", async () => {
+    seedDispatchFamily();
+    await tasks.clearTask(mockBridgeStubs(), "child");
+
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.status,
+      "failed",
+    );
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.failure_reason,
+      "cleared_before_delivery",
+    );
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(sourceNotice("parent")?.reason, "target_removed");
+  });
+
+  it("holds a closing reminder behind a running turn and drains it at the boundary", async () => {
+    store.createTask(
+      "parent",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-parent",
+      store.rootTaskId,
+    );
+    store.createTask(
+      "child",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-child",
+      "parent",
+    );
+    tasks.liveTasks.add("child");
+    const prompts: string[] = [];
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt(_taskId: string, text: string) {
+        prompts.push(text);
+      },
+    };
+    tasks.attachExecutionBridge(bridge);
+    const deliveryEvents: Array<{ messageId: string }> = [];
+    tasks.setDeliveryStatusBroadcast((event) => {
+      deliveryEvents.push(event);
+    });
+    tasks.beginAgentTurn("child", { origin: "interactive" });
+
+    tasks.submitObligationReminder("parent", "child");
+    assert.equal(store.countQueuedDeliveries("child"), 1);
+    assert.deepEqual(prompts, [], "a busy target is not interrupted");
+    assert.equal(
+      store
+        .getEvents("child")
+        .filter((event) => event.type === "system_message")
+        .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+        .filter((data) => data.kind === "handoff_reminder").length,
+      0,
+      "a runtime item is not visible before its drain",
+    );
+
+    tasks.endTurn("child");
+    await waitFor(() => prompts.length === 1, {
+      message: "the turn boundary drains the reminder automatically",
+    });
+    assert.match(prompts[0], /From the WebAgent runtime/);
+    assert.match(prompts[0], /runtime-injected closing turn/i);
+    assert.equal(store.countQueuedDeliveries("child"), 0);
+    assert.equal(
+      store
+        .getEvents("child")
+        .filter((event) => event.type === "handoff_reminder").length,
+      1,
+      "the reminder still has audit metadata",
+    );
+
+    const rows = store
+      .getEvents("child")
+      .filter((event) => event.type === "system_message")
+      .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+      .filter((data) => data.kind === "collaboration");
+    assert.equal(rows.length, 1, "exactly one recipient-visible row");
+    assert.equal(rows[0].sourceLabel, "WebAgent runtime");
+    assert.equal("sourceTaskId" in rows[0], false);
+    assert.equal(deliveryEvents.length, 0, "no mark for a system item");
+  });
+
+  it("keeps the account when an unrelated delivery fails", async () => {
+    seedDispatchFamily();
+    armDeliveredDispatch();
+    store.createCollaborationMessage({
+      id: "third-party",
+      deliveryId: "third-party-delivery",
+      sourceTaskId: store.rootTaskId,
+      directTargetTaskId: "child",
+      sourceActor: "user",
+      body: "unrelated note",
+    });
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt() {
+        throw new Error("rejected");
+      },
+    };
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", bridge),
+      true,
+    );
+    assert.equal(
+      store.getCollaborationDelivery("third-party-delivery")?.status,
+      "failed",
+    );
+    assert.equal(
+      tasks.hasOpenObligation("parent", "child"),
+      true,
+      "a third-party failure must not settle the dispatch account",
+    );
+    assert.equal(sourceNotice("parent"), undefined);
+  });
+
+  it("leaves queued work for the current execution after a stale resume", async () => {
+    seedDispatchFamily();
+    let released = false;
+    const bridge = {
+      ...mockBridgeStubs(),
+      async loadSession() {
+        const submissionId = tasks.pendingPromptSubmissions.get("child");
+        assert.ok(submissionId !== undefined);
+        tasks.releasePromptSubmission("child", submissionId, false);
+        released = true;
+        throw new Error("resume superseded");
+      },
+    };
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", bridge),
+      false,
+    );
+    assert.equal(released, true);
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.status,
+      "queued",
+      "a stale attempt must not fail the current queue",
+    );
+    assert.equal(
+      tasks.hasOpenObligation("parent", "child"),
+      false,
+      "still queued, so no account yet",
+    );
+    assert.equal(sourceNotice("parent"), undefined);
+  });
+
+  it("drains same-time deliveries in enqueue order", async () => {
+    store.createCollaborationMessage({
+      id: "z-first",
+      deliveryId: "zz-order-first",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "user",
+      body: "FIRST",
+      createdAt: 5,
+    });
+    store.createCollaborationMessage({
+      id: "a-second",
+      deliveryId: "aa-order-second",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "user",
+      body: "SECOND",
+      createdAt: 5,
+    });
+    const prompts: string[] = [];
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt(_taskId: string, text: string) {
+        prompts.push(text);
+      },
+    };
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("target", bridge),
+      true,
+    );
+    await waitFor(
+      () =>
+        store.getCollaborationDelivery("zz-order-first")?.status ===
+          "delivered" &&
+        store.getCollaborationDelivery("aa-order-second")?.status ===
+          "delivered",
+    );
+    assert.equal(prompts.length, 1);
+    assert.ok(
+      prompts[0].indexOf("FIRST") < prompts[0].indexOf("SECOND"),
+      "same-time items keep insertion order, not id order",
+    );
+  });
+
+  it("runs the rejection path, not the turn-end check, after a request-level error", async () => {
+    seedDispatchFamily();
+    const sse = { broadcast() {} };
+    const bridge: {
+      prompt(
+        taskId: string,
+        text: string,
+        attachments?: unknown,
+        promptId?: string,
+      ): Promise<void>;
+    } & ReturnType<typeof mockBridgeStubs> = {
+      ...mockBridgeStubs(),
+      async prompt(taskId, _text, _attachments, promptId) {
+        const lease = tasks.authority.leaseFor(taskId);
+        handleAgentEvent(
+          {
+            type: "error",
+            taskId,
+            promptId,
+            message: "never handed over",
+            requestLevel: true,
+            ...(lease ? { executionLease: lease } : {}),
+          } as never,
+          tasks,
+          store,
+          bridge as never,
+          makeEventHandlerConfig(),
+          sse as never,
+        );
+        throw new Error("rejected");
+      },
+    };
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", bridge),
+      true,
+    );
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(sourceNotice("parent")?.reason, "target_removed");
+    const reminderRows = store
+      .getEvents("child")
+      .filter((event) => event.type === "handoff_reminder");
+    assert.equal(reminderRows.length, 0);
+    const visibleReminders = store
+      .getEvents("child")
+      .filter((event) => event.type === "system_message")
+      .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+      .filter(
+        (data) =>
+          data.kind === "collaboration" &&
+          typeof data.body === "string" &&
+          data.body.includes("Task Handoff Required"),
+      );
+    assert.equal(visibleReminders.length, 0);
+    assert.equal(
+      store.countQueuedDeliveries("child"),
+      0,
+      "a rejected prompt queues no reminder for the target",
+    );
+    const noUpdateRows = store
+      .getEvents("parent")
+      .filter((event) => event.type === "task_outcome_notice")
+      .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+      .filter((data) => data.reason === "no_update");
+    assert.equal(noUpdateRows.length, 0);
+  });
+
+  it("does not mark a turn when the update transaction fails", () => {
+    seedDispatchFamily();
+    armDeliveredDispatch();
+    tasks.beginAgentTurn("child", { origin: "interactive" });
+    tasks.notePromptSubmitted("child");
+    const original = store.recordAgentWorkflowUpdate.bind(store);
+    store.recordAgentWorkflowUpdate = () => {
+      throw new Error("transaction failed");
+    };
+    try {
+      assert.throws(
+        () => tasks.settleAgentUpdate("child", "done", "not committed"),
+        /transaction failed/,
+      );
+    } finally {
+      store.recordAgentWorkflowUpdate = original;
+    }
+    assert.equal(
+      (
+        tasks as unknown as { obligations: { updated: Set<string> } }
+      ).obligations.updated.has("child"),
+      false,
+    );
+    assert.equal(tasks.hasOpenObligation("parent", "child"), true);
   });
 });

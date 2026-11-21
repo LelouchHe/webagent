@@ -334,6 +334,53 @@ describe("shares store", () => {
       assert.equal(store.reapTombstoneIfOrphaned(taskId), false);
     });
 
+    it("publishes the failed delivery mark after reaping the last share", () => {
+      const sourceId = "share-source";
+      store.createTask(sourceId, "/tmp", "auto", "test-agent");
+      store.createCollaborationMessage({
+        id: "reap-message",
+        deliveryId: "reap-delivery",
+        sourceTaskId: sourceId,
+        directTargetTaskId: taskId,
+        sourceActor: "user",
+        body: "queued before the tombstone",
+      });
+      const changes: Array<{
+        messageId: string;
+        sourceTaskId: string;
+        status: string;
+      }> = [];
+      store.onDeliveryStatusChanged((change) => {
+        changes.push(change);
+      });
+      const token = generateShareToken();
+      store.insertSharePreview({ token, taskId, snapshotSeq: 1 });
+      store.activateShare(token);
+      assert.equal(store.deleteTask(taskId).mode, "soft");
+      assert.equal(
+        store.getCollaborationDelivery("reap-delivery")?.status,
+        "queued",
+        "a soft delete keeps the delivery for the surviving share",
+      );
+
+      store.revokeShare(token);
+      assert.equal(store.reapTombstoneIfOrphaned(taskId), true);
+      const delivery = store.getCollaborationDelivery("reap-delivery");
+      assert.equal(delivery?.status, "failed");
+      assert.equal(delivery.failure_reason, "target_deleted");
+      assert.deepEqual(changes, [
+        {
+          deliveryId: "reap-delivery",
+          messageId: "reap-message",
+          sourceTaskId: sourceId,
+          recipientTaskId: taskId,
+          status: "failed",
+          deliveredAt: null,
+          failureReason: "target_deleted",
+        },
+      ]);
+    });
+
     it("reapTombstoneIfOrphaned is a no-op on a live (not-tombstoned) task", () => {
       const tok = generateShareToken();
       store.insertSharePreview({ token: tok, taskId, snapshotSeq: 1 });

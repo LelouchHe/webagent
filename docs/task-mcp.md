@@ -6,8 +6,16 @@ session. The name is a client-visible label (some clients namespace tools as
 lets an agent inspect and coordinate with tasks in its local task family without
 granting access to unrelated tasks.
 
-This document is the tool reference. For the user-facing principles and
-examples, see the [Task Manual](task-manual.md) and [Task Examples](task-examples.md).
+This document is the reference for what the code does not say to the agent:
+authentication, transport, result shapes, limits, errors, and the rows each
+call records. Each fact has one home:
+
+| Fact | Home |
+| --- | --- |
+| What each tool and parameter does, as the agent sees it | tool and parameter descriptions in [`src/mcp/tools.ts`](../src/mcp/tools.ts) and [`src/mcp/task-create-description.ts`](../src/mcp/task-create-description.ts) |
+| The cross-tool model advertised at `initialize` | `MCP_SERVER_INSTRUCTIONS` in [`src/mcp/server.ts`](../src/mcp/server.ts) |
+| Accounts, reminders, notices, and settlement | [Task Obligations](task-obligations.md) |
+| How to use Tasks well | [Task Manual](task-manual.md) and [Task Examples](task-examples.md) |
 
 ## Scope and authentication
 
@@ -15,8 +23,9 @@ The server is a Streamable HTTP endpoint at `/mcp`. Each ACP session receives a
 fresh capability token; WebAgent sends it as an `Authorization: Bearer` header.
 A capability names one task **and** the agent whose execution it belongs to, and
 is checked before MCP protocol handling. It can access only that task plus its
-parent, direct children, and siblings — the family check is the cross-agent read
-boundary, so a capability never widens into another agent's tasks.
+parent and direct children — the family check is the cross-agent read boundary,
+so a capability never widens into another agent's tasks or sideways to a
+sibling.
 
 A token starts **initializing** while the session that carries it is still being
 created: the MCP handshake and tool discovery work (a real agent connects from
@@ -75,108 +84,44 @@ built from that constant.
 
 ## Server instructions
 
-The server advertises a short, generic usage contract through the MCP
-`initialize` result:
+The server advertises the cross-tool model (reach, delivery, accounts, history)
+through the MCP `initialize` result. It states facts only: per-tool effects live
+in tool descriptions, parameter meanings in parameter descriptions, and usage
+policy in skills.
 
-```text
-Use task_create for a direct child, then immediately use task_send to give it its first instruction.
-Use task_list to check each reachable Task's workflowStatus, executionState, lastEventAt, and lastAgentActivityAt before deciding to act; workflowStatus is per turn, not a lifecycle terminal, and executionState is the live runtime source.
-Use task_send for normal coordination and for continuing or resuming existing Tasks; task_send is not a lifecycle handoff. Use task_update(done|blocked) for typed lifecycle handoffs. A done Task remains available and is not deleted or permanently closed.
-task_update(done|blocked) settles the directed obligation when it comes from the current active turn; there is no correlation parameter to copy back.
-After dispatching work, end the current turn; do not poll with task_query.
-Task history is the event log; summaries and handoffs are self-reports, and the log outranks them.
-Use task_query to index flat event history and task_read to recover complete rows; use them only for history recovery, diagnosis, or audit.
-Omit task_id to inspect the current Task's persisted history.
-```
+The text is `MCP_SERVER_INSTRUCTIONS` in
+[`src/mcp/server.ts`](../src/mcp/server.ts); it is not copied here so the two
+cannot drift.
 
 Clients may surface these instructions through their own discovery UI or tool;
 they are not a replacement for the individual tool descriptions.
 
-### Directed dispatch closure
-
-When an agent-authored parent Task dispatches work directly to a child Task, the
-runtime keeps one process-local obligation for that edge and reports its outcome
-to the source: the child's typed account, or a factual notice that the runtime
-stopped its own attempts without one. A notice is not a verdict — a late account
-still settles the edge. It records and reports
-facts — a dispatch was handed over, a turn ended, a request was rejected, a timer
-elapsed, delivery failed — and never turns them into a conclusion about the work.
-The full mechanism, identities, state machine, budgets, and notices are in
-[Task Obligations](task-obligations.md); the semantic boundary is in
-[Task semantic authority](implementation-invariants.md#task-semantic-authority).
-
-One process-local record exists per accepted direct source→target edge, driven
-exclusively by named facts through a single `apply(fact)` transition point. The
-record opens when the dispatch is handed to the target's session, settles from an
-active current turn, and otherwise reaches a factual notice after bounded
-recovery. There is no correlation token and no new parameter on `task_update`.
-
-## Lifecycle at a glance
-
-The MCP surface participates in this loop:
-
-```mermaid
-sequenceDiagram
-    participant P as Parent Task
-    participant C as Child Task
-
-    P->>C: task_create
-    P->>C: task_send(Task Contract)
-    C->>C: Execute work
-    C-->>P: task_update(done|blocked)
-    P->>P: Verify contract, result, and evidence
-    alt Accepted
-        P->>P: Complete its own Task when ready
-    else Follow-up needed
-        P->>C: task_send(focused follow-up)
-        C->>C: Continue work
-    else Blocked
-        P->>C: task_send(missing decision or input)
-        C->>C: Resume work
-    end
-```
-
-`task_send` does not complete the current Task. A `done` Task remains available
-for history and follow-up. Parent Tasks receive direct child handoffs only;
-WebAgent does not automatically rebroadcast raw child reports to ancestors.
-
 ## Tools
-
-| Tool | Purpose |
-| --- | --- |
-| `task_list` | List the current task and its locally reachable parent, children, and siblings, each with `workflowStatus`, `executionState`, `lastEventAt`, and `lastAgentActivityAt` for triage. |
-| `task_query` | Read a bounded, compact history page for the current task or one visible relative. |
-| `task_read` | Read complete persisted history rows by task-local sequence from the current task or one visible relative. |
-| `task_cancel` | Stop the current execution of a child Task while preserving its history. |
-| `task_create` | Create a direct child Task with optional execution overrides. Use `task_send` for its first instruction. |
-| `task_send` | Send a durable coordination message, including follow-up or resume instructions for an existing Task. Use `task_update` for typed `blocked`/`done` status. |
-| `task_update` | Send a typed `blocked` or `done` lifecycle account for the current Task. A plain `(status, body)` call settles the directed obligation when it comes from an active current turn; there is no correlation parameter. This does not delete or permanently close the Task. |
 
 ### `task_list`
 
-Takes no arguments and returns the current Task plus every locally reachable
-parent, child, and sibling. The whole family gets the same fields, with no
-special-casing. Ordering is relation-then-id (`self`, `parent`, `child`,
-`sibling`) and is deliberately not status-sorted, so the caller reads the
-statuses instead of inheriting a second prioritization policy.
+Takes no arguments and returns the current Task plus its parent and direct
+children. The whole family gets the same fields, with no special-casing.
+Ordering is relation-then-id (`self`, `parent`, `child`) and is deliberately not
+status-sorted, so the caller reads the statuses instead of inheriting a second
+prioritization policy. A sibling is not visible.
 
 ```ts
 type McpTaskListItem = {
   id: string;
   title: string;
-  relation: "self" | "parent" | "child" | "sibling";
-  workflowStatus: "running" | "idle" | "blocked" | "done";
+  relation: "self" | "parent" | "child";
+  workflowStatus: "running" | "idle" | "waiting" | "blocked" | "done";
   executionState: "idle" | "agent" | "bash";
   lastEventAt: string | null;
   lastAgentActivityAt: string | null;
 };
 ```
 
-`workflowStatus` uses the same vocabulary as `task_list`; `task_query` returns only `task_id`, `max_seq`, and flat event rows.
+`workflowStatus` uses the same vocabulary as `task_list`: `running` while a turn runs, `idle` after it ended without a typed report, `waiting` when the Task says its work continues without the requester, and `blocked`/`done` when it handed the ball back. `task_query` returns only `task_id`, `max_seq`, and flat event rows.
 It is **per turn, not a lifecycle terminal**: a `done` Task can be woken by a
 later message and run again, so `done` means the Task reported complete for that
-turn, not that it is finished forever. Use `task_list` to decide whether to act
-on a Task; use `task_query` only for history recovery or diagnosis, not to poll.
+turn, not that it is finished forever.
 
 `executionState` is the live runtime source: `agent` while an ACP turn or a
 collaboration delivery is running, `bash` while a user shell command owns the
@@ -300,9 +245,9 @@ are rejected without partial data and report `response_too_large` with the
 exact `required_bytes`. That value is always
 `Buffer.byteLength(JSON.stringify({task_id, rows}), "utf8")`.
 
-Both history tools authorize only the current Task, its parent, direct children,
-or siblings. Tombstones, nonexistent tasks, and out-of-family task IDs all
-return `target_not_allowed`.
+Both history tools authorize only the current Task, its parent, or its direct
+children. A sibling is outside the family. Tombstones, nonexistent tasks, and
+out-of-family task IDs all return `target_not_allowed`.
 
 ### `task_cancel`
 
@@ -335,14 +280,8 @@ keeps its normal contrast.
 `@X` is the Task's title, falling back to its short id, exactly like a
 collaboration row. A user-initiated cancel writes neither row.
 
-A cancelled turn does not trigger a closing reminder: the task-obligation
-controller treats the cancellation itself as the end fact (the `cancelled` stop
-reason, the intent the host stamps on the turn before the transport round trip,
-or the busy cancel marker). The edge then stays quiet — no closing reminder, no
-advisory of any kind, no notice — until new work arrives on it; a late account
-still settles. This includes a closing-reminder turn that is itself cancelled:
-that submission is fenced, so no attempt is counted, nothing is re-armed, and no
-notice is emitted.
+How a cancelled turn affects an open account is defined in
+[Task Obligations](task-obligations.md#turn-end-check).
 
 ### `task_create`
 
@@ -392,63 +331,20 @@ or the target session's own current value. `inherited` appears only when a value
 genuinely cannot be determined, so a cross-agent child shows the target's
 defaults instead of claiming an inheritance that did not happen.
 
-This creates an Agent-delegated Task: immediately send its first Task Contract
-with `task_send`, including the goal, scope, completion criteria, and report
-format, then end the dispatch turn without polling. Failures return an MCP tool
-error rather than an empty ID.
 
 ### `task_send`
 
-Send a durable coordination message to another Task. Use it for instructions,
-questions, findings, progress, decisions, and focused follow-up, including
-continuing a Task marked `blocked` or `done`.
-
-`task_send` is not a lifecycle handoff and does not complete the current Task.
-Use `task_update(done|blocked)` when the current assignment is complete or
-cannot continue. The recipient receives the full message body; important
-findings are not discarded because the message is coordination.
+The message is stored before the call returns, so it survives a restart, and is
+delivered in order with any other queued items. Whether it opens an account is
+defined in [Task Obligations](task-obligations.md#opening-an-account).
 
 ### `task_update`
 
-Submit a typed lifecycle account for the current Task:
-
 ```ts
-task_update(status: "blocked" | "done", body: string)
+task_update(status: "waiting" | "blocked" | "done", body: string)
 ```
 
-- `blocked`: explain the missing input or decision and how the Task can resume;
-- `done`: provide the result, completion evidence, limitations, and useful next
-  step.
-
-There is **no new parameter**. The runtime identifies the target's sole directed
-obligation itself and settles it only from an active current turn: the record
-must be `open`, `reminder_due`, `reminder_submitting`, or `unresolved`, and the
-target must have an active agent turn. A settleable call is one atomic step that
-records the update, changes the reported status, creates the account to the
-**stored source**, and cancels the record's timers.
-
-When a record exists but those conditions do not hold — `awaiting_delivery`, an
-already-`settled` record, or no active turn — the update is still recorded and
-routed to the stored source, without settling. When no record
-exists for the target, the update is an ordinary report to the current parent
-and settles nothing. A terminal record is never re-settled and its earlier
-`no_account` notice is never retracted.
-
-There is deliberately no timestamp guard, because the delivery turn is stamped
-before `bridge.prompt` is issued and the record opens at hand-over; comparing
-turn start against the hand-off time would reject the legitimate dispatch
-account.
-
-Because settlement is judged from the current turn, a call delayed from an
-earlier turn that arrives while a later turn is current settles the
-record and the source receives the earlier turn's content. That is an accepted
-boundary, not a bug.
-
-When a dispatch turn ends without an account, the runtime may inject a closing
-reminder turn asking the target to close that turn out; its exact text and the
-recovery contract are in [Task Obligations](task-obligations.md#what-a-target-does).
-
-A `done` account is a result submission, not proof that the parent has accepted
-it. The parent or verifier checks the original Task Contract and may accept it,
-request focused follow-up with `task_send`, or keep it blocked. The Task and its
-history remain available after either status.
+The call records one `task_update` event on the current Task and sets its
+`workflowStatus`. Routing, settlement, the `waiting` precondition, and the
+turn-end check are defined in [Task Obligations](task-obligations.md). A
+refused `waiting` is an MCP tool error and records nothing.

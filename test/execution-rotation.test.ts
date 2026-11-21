@@ -171,7 +171,7 @@ describe("implicit owner rotation", () => {
     assert.equal(tasks.liveTasks.has(store.rootTaskId), true);
   });
 
-  it("keeps the obligation and truncates the transport on an implicit rotation", async () => {
+  it("reports target_removed and truncates the transport on an implicit rotation", async () => {
     const store = openStore();
     store.ensureRootTask(dataDir);
     store.createTask(
@@ -205,25 +205,18 @@ describe("implicit owner rotation", () => {
       sourceActor: "agent",
       body: "OLD BODY",
     });
-    const armed = tasks.getObligation("parent", "child");
-    assert.ok(armed);
-    (
-      tasks as unknown as { pendingDispatchRetries: Map<string, string[]> }
-    ).pendingDispatchRetries.set("child", ["implicit-rotation-delivery"]);
+    // Still queued, so no account yet; its failure is reported all the same.
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
 
     await tasks.resumeTask(bridge, "child");
 
-    const rotated = tasks.getObligation("parent", "child");
-    assert.ok(rotated);
-    assert.equal(rotated.openingMessageId, armed.openingMessageId);
-    assert.equal(rotated.state, "reminder_due");
-    assert.equal(
-      (
-        tasks as unknown as {
-          pendingDispatchRetries: Map<string, string[]>;
-        }
-      ).pendingDispatchRetries.has("child"),
-      false,
+    // The old dispatch can no longer be delivered, so the source is told.
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.ok(
+      store
+        .getEvents("parent")
+        .some((event) => event.type === "task_outcome_notice"),
+      "the source is told the target left the edge",
     );
     // The old body is never handed to the replacement execution.
     const deadline = Date.now() + 2000;
@@ -282,8 +275,7 @@ describe("implicit owner rotation", () => {
       sourceActor: "agent",
       body: "STILL PENDING",
     });
-    const armed = tasks.getObligation("parent", "child");
-    assert.ok(armed);
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
     assert.equal(
       store.getCollaborationDelivery("refused-rotation-delivery")?.status,
       "queued",
@@ -297,11 +289,15 @@ describe("implicit owner rotation", () => {
       /Cancel active work/,
     );
 
-    // Nothing was truncated by the failed attempt: same record, same debt
-    // state, same queue, same binding.
-    const after = tasks.getObligation("parent", "child");
-    assert.equal(after, armed);
-    assert.equal(after.state, "awaiting_delivery");
+    // Nothing was truncated by the failed attempt: same queue and binding, and
+    // no account or notice from a dispatch that is still queued.
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(
+      store
+        .getEvents("parent")
+        .some((event) => event.type === "task_outcome_notice"),
+      false,
+    );
     assert.equal(
       store.getCollaborationDelivery("refused-rotation-delivery")?.status,
       "queued",

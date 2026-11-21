@@ -20,6 +20,19 @@ function toolDescription(
   return tools.find((tool) => tool.name === name)?.description ?? "";
 }
 
+function paramDescription(
+  tools: Array<{
+    name: string;
+    inputSchema?: { properties?: Record<string, unknown> };
+  }>,
+  toolName: string,
+  param: string,
+): string {
+  const properties = tools.find((tool) => tool.name === toolName)?.inputSchema
+    ?.properties as Record<string, { description?: string }> | undefined;
+  return properties?.[param]?.description ?? "";
+}
+
 function toolHasProperty(
   tools: Array<{
     name: string;
@@ -249,6 +262,7 @@ describe("createMcpEndpoint", () => {
     },
     update: async (...args: unknown[]) => {
       calls.push({ kind: "update", args });
+      return {};
     },
   };
 
@@ -447,13 +461,16 @@ describe("createMcpEndpoint", () => {
     const sendDescription = tools.find(
       (tool) => tool.name === "task_send",
     )?.description;
-    assert.match(sendDescription ?? "", /task_update/);
-    assert.match(sendDescription ?? "", /blocked/);
+    assert.match(sendDescription ?? "", /next turn boundary/);
     const updateDescription =
       tools.find((tool) => tool.name === "task_update")?.description ?? "";
-    assert.match(updateDescription, /typed lifecycle account/);
-    assert.match(updateDescription, /no correlation parameter/);
-    assert.match(updateDescription, /not delete or permanently close/);
+    assert.match(updateDescription, /Record a typed update/);
+    assert.match(updateDescription, /`waiting` is only recorded/);
+    assert.match(updateDescription, /not deleted or closed/);
+    assert.match(
+      paramDescription(tools, "task_update", "status"),
+      /its own background work will wake it/,
+    );
     // Mutation evidence: re-adding a correlation parameter flips this check.
     assert.equal(
       toolHasProperty(tools, "task_update", "obligationId"),
@@ -468,19 +485,20 @@ describe("createMcpEndpoint", () => {
       "MCP callers cannot choose task ids",
     );
     assert.match(toolDescription(tools, "task_query"), /flat event index/);
-    assert.match(toolDescription(tools, "task_query"), /ASCII case folding/);
-    // `task_list` is the cheap triage surface: state fields plus the per-turn
-    // meaning of `done`, without weakening task_query's no-poll guidance.
+    // Parameter meaning lives in the parameter description, not the tool text.
+    assert.match(
+      paramDescription(tools, "task_query", "text"),
+      /ASCII case folding/,
+    );
+    // `task_list` reports state fields and the per-turn meaning of status.
     assert.match(toolDescription(tools, "task_list"), /workflowStatus/);
     assert.match(toolDescription(tools, "task_list"), /executionState/);
     assert.match(toolDescription(tools, "task_list"), /lastEventAt/);
     assert.match(toolDescription(tools, "task_list"), /lastAgentActivityAt/);
-    assert.match(toolDescription(tools, "task_list"), /per turn/);
     assert.match(
       toolDescription(tools, "task_list"),
       /not a lifecycle terminal/,
     );
-    assert.match(toolDescription(tools, "task_list"), /lag signal/);
     const querySchema = tools.find(
       (tool) => tool.name === "task_query",
     )?.inputSchema;

@@ -1,7 +1,12 @@
 import { formatTaskReference } from "./shared/task-reference.ts";
+import { isoFromMillis } from "./shared/time.ts";
+import type { CollaborationDeliveryStatus } from "./store.ts";
 import type { AgentEvent } from "./types.ts";
 
-export type CollaborationRole = "source" | "target" | "supervisor";
+export type CollaborationRole = "source" | "target";
+
+/** The visible author label for a runtime-authored item. */
+export const RUNTIME_AUTHOR_LABEL = "WebAgent runtime";
 
 /**
  * The raw (unquoted) task titles a collaboration title is built from. They are
@@ -25,6 +30,8 @@ export interface CollaborationSystemMessageInput extends CollaborationLabels {
   targetTaskId: string;
   role: CollaborationRole;
   body: string;
+  /** Runtime-authored: show the runtime as author, not the named task. */
+  systemAuthor?: boolean;
 }
 
 export interface CollaborationSystemMessage {
@@ -42,15 +49,18 @@ export interface CollaborationSystemMessage {
 export function buildCollaborationSystemMessage(
   input: CollaborationSystemMessageInput,
 ): CollaborationSystemMessage {
-  const title = collaborationTitle(input);
+  const sourceLabel = input.systemAuthor
+    ? RUNTIME_AUTHOR_LABEL
+    : input.sourceLabel;
+  const title = collaborationTitle({ ...input, sourceLabel });
   return {
     title,
     body: input.body,
     data: {
       kind: "collaboration",
       messageId: input.messageId,
-      sourceTaskId: input.sourceTaskId,
-      sourceLabel: input.sourceLabel,
+      ...(input.systemAuthor ? {} : { sourceTaskId: input.sourceTaskId }),
+      sourceLabel,
       targetTaskId: input.targetTaskId,
       targetLabel: input.targetLabel,
       role: input.role,
@@ -60,18 +70,31 @@ export function buildCollaborationSystemMessage(
   };
 }
 
-/** What one producer knows about a collaboration message, before projections. */
+/**
+ * What one producer knows about one projection of a collaboration message.
+ * `taskId`/`role` name the projection; the delivery fields, when present, are
+ * live-only hints for the sender's mark.
+ */
 export interface CollaborationBroadcastRequest extends CollaborationLabels {
   messageId: string;
   sourceTaskId: string;
   targetTaskId: string;
   body: string;
-}
-
-export interface CollaborationBroadcastInput extends CollaborationBroadcastRequest {
-  /** The task this projection renders into. */
   taskId: string;
   role: CollaborationRole;
+  systemAuthor?: boolean;
+  deliveryStatus?: CollaborationDeliveryStatus;
+  deliveredAt?: string;
+  deliveryFailureReason?: string;
+}
+
+/** One projection of one collaboration message. */
+export type CollaborationBroadcastInput = CollaborationBroadcastRequest;
+
+export interface CollaborationDeliverySnapshot {
+  status: CollaborationDeliveryStatus;
+  deliveredAt: number | null;
+  failureReason: string | null;
 }
 
 /**
@@ -90,12 +113,82 @@ export function buildCollaborationBroadcast(
     taskId: input.taskId,
     kind: "collaboration",
     messageId: input.messageId,
-    sourceTaskId: input.sourceTaskId,
-    sourceLabel: input.sourceLabel,
+    ...(input.systemAuthor ? {} : { sourceTaskId: input.sourceTaskId }),
+    sourceLabel: input.systemAuthor ? RUNTIME_AUTHOR_LABEL : input.sourceLabel,
     targetTaskId: input.targetTaskId,
     targetLabel: input.targetLabel,
     role: input.role,
     title: message.title,
     body: message.body,
+    ...(input.deliveryStatus === undefined
+      ? {}
+      : { deliveryStatus: input.deliveryStatus }),
+    ...(input.deliveredAt === undefined
+      ? {}
+      : { deliveredAt: input.deliveredAt }),
+    ...(input.deliveryFailureReason === undefined
+      ? {}
+      : { deliveryFailureReason: input.deliveryFailureReason }),
   };
+}
+
+/**
+ * Attach the sender-side delivery state to stored collaboration rows at egress.
+ * The event itself never carries it: a refresh reads the deliveries table.
+ */
+export function attachCollaborationDeliveryStatus<
+  T extends { type: string; data: string },
+>(
+  events: T[],
+  lookup: (messageIds: string[]) => Map<string, CollaborationDeliverySnapshot>,
+): T[] {
+  const messageIds: string[] = [];
+  for (const event of events) {
+    if (event.type !== "system_message") continue;
+    try {
+      const data = JSON.parse(event.data) as {
+        kind?: unknown;
+        role?: unknown;
+        messageId?: unknown;
+      };
+      if (
+        data.kind === "collaboration" &&
+        data.role === "source" &&
+        typeof data.messageId === "string"
+      ) {
+        messageIds.push(data.messageId);
+      }
+    } catch {
+      // A malformed stored row is left untouched; egress never repairs data.
+    }
+  }
+  if (messageIds.length === 0) return events;
+  const statuses = lookup(messageIds);
+  if (statuses.size === 0) return events;
+  for (const event of events) {
+    if (event.type !== "system_message") continue;
+    try {
+      const data = JSON.parse(event.data) as Record<string, unknown>;
+      if (
+        data.kind !== "collaboration" ||
+        data.role !== "source" ||
+        typeof data.messageId !== "string"
+      ) {
+        continue;
+      }
+      const delivery = statuses.get(data.messageId);
+      if (!delivery) continue;
+      data.deliveryStatus = delivery.status;
+      if (delivery.deliveredAt !== null) {
+        data.deliveredAt = isoFromMillis(delivery.deliveredAt);
+      }
+      if (delivery.failureReason !== null) {
+        data.deliveryFailureReason = delivery.failureReason;
+      }
+      event.data = JSON.stringify(data);
+    } catch {
+      // Leave a malformed row as stored.
+    }
+  }
+  return events;
 }

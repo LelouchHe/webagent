@@ -38,8 +38,10 @@ import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
 import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
-import { isLocalCollaborationTarget } from "./task-collaboration.ts";
-import { buildCollaborationBroadcast } from "./collaboration-message.ts";
+import {
+  attachCollaborationDeliveryStatus,
+  buildCollaborationBroadcast,
+} from "./collaboration-message.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "./shared/time.ts";
 import {
   buildTaskCreatedBroadcast,
@@ -1439,9 +1441,9 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Target task not found" });
           return;
         }
-        if (!isLocalCollaborationTarget(sourceTask, targetTask)) {
+        if (targetTask.id === sourceTask.id) {
           json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "Target task is outside the local collaboration scope",
+            error: "Source and target task must differ",
           });
           return;
         }
@@ -1464,14 +1466,6 @@ export function createRequestHandler(
           const msg = err instanceof Error ? err.message : String(err);
           if (msg.startsWith("Live task not found")) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: msg });
-          } else if (
-            msg.startsWith("Collaboration tasks have no common ancestor")
-          ) {
-            // A concurrent archive cut the edge between the pre-check and this
-            // insert. That is an ordinary out-of-scope answer, not a 500.
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "Target task is outside the local collaboration scope",
-            });
           } else {
             json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
           }
@@ -1482,22 +1476,19 @@ export function createRequestHandler(
         store.updateTaskLastActive(sourceTaskId);
         const sourceLabel = sourceTask.title ?? sourceTask.id.slice(0, 8);
         const targetLabel = targetTask.title ?? targetTask.id.slice(0, 8);
-        for (const projection of store.listCollaborationProjections(
-          messageId,
-        )) {
-          sseManager.broadcast(
-            buildCollaborationBroadcast({
-              messageId,
-              sourceTaskId,
-              sourceLabel,
-              targetTaskId: targetTask.id,
-              targetLabel,
-              role: projection.role,
-              taskId: projection.task_id,
-              body: created.message.body,
-            }),
-          );
-        }
+        sseManager.broadcast(
+          buildCollaborationBroadcast({
+            messageId,
+            sourceTaskId,
+            sourceLabel,
+            targetTaskId: targetTask.id,
+            targetLabel,
+            role: "source",
+            taskId: sourceTaskId,
+            body: created.message.body,
+            deliveryStatus: "queued",
+          }),
+        );
         const result = {
           messageId,
           deliveryId,
@@ -1862,6 +1853,7 @@ export function createRequestHandler(
         });
         const promptId =
           tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
+        tasks.notePromptSubmitted(taskId);
         const promptPromise = bridge.prompt(
           taskId,
           agentText,
@@ -2488,6 +2480,7 @@ export function createRequestHandler(
           origin: "interactive",
           submissionId,
         });
+        tasks.notePromptSubmitted(taskId);
         const previousAgentSessionId = agentSessionId;
 
         void (async () => {
@@ -3270,6 +3263,21 @@ export function createRequestHandler(
           beforeSeq,
           limit,
         });
+        // Derive the sender's delivery mark from the deliveries row. The event
+        // is never rewritten in storage.
+        attachCollaborationDeliveryStatus(events, (messageIds) => {
+          const rows = store.getCollaborationDeliveriesForMessages(messageIds);
+          return new Map(
+            [...rows].map(([messageId, row]) => [
+              messageId,
+              {
+                status: row.status,
+                deliveredAt: row.delivered_at,
+                failureReason: row.failure_reason,
+              },
+            ]),
+          );
+        });
         // Replace internal uuid attachment paths with `<name> [#<id4>]`
         // labels at egress (CLAUDE.md "Attachment label egress
         // rewrite"). DB rows still hold raw paths.
@@ -3891,6 +3899,7 @@ export function createRequestHandler(
         tasks.beginAgentTurn(taskId, { origin: "interactive" });
         const betaPromptId =
           tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
+        tasks.notePromptSubmitted(taskId);
         bridge
           .prompt(taskId, text, undefined, betaPromptId)
           .catch(() => {})

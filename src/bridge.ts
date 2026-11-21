@@ -83,6 +83,21 @@ export class PromptNotDeliveredError extends Error {
   }
 }
 
+/** Error-event fields for a request that never reached the agent. */
+function requestLevelFields(handedOver: boolean): { requestLevel?: true } {
+  return handedOver ? {} : { requestLevel: true };
+}
+
+function promptErrorFields(
+  promptId: string | undefined,
+  handedOver: boolean,
+): { promptId?: string; requestLevel?: true } {
+  return {
+    ...(promptId ? { promptId } : {}),
+    ...requestLevelFields(handedOver),
+  };
+}
+
 export class AgentBridge extends EventEmitter {
   private proc: ChildProcess | null = null;
   private connection: acp.ClientContext | null = null;
@@ -738,6 +753,7 @@ export class AgentBridge extends EventEmitter {
         type: "error",
         taskId,
         message: this.deadReason,
+        ...promptErrorFields(promptId, false),
       } satisfies AgentEvent);
       throw new PromptNotDeliveredError(this.deadReason);
     }
@@ -818,6 +834,7 @@ export class AgentBridge extends EventEmitter {
           taskId,
           message: reason,
           ...(promptId ? { promptId } : {}),
+          ...requestLevelFields(handedOver),
         } satisfies AgentEvent);
         this.markAgentDead(reason);
         if (!handedOver) throw new PromptNotDeliveredError(reason);
@@ -828,6 +845,7 @@ export class AgentBridge extends EventEmitter {
         taskId,
         message,
         ...(promptId ? { promptId } : {}),
+        ...requestLevelFields(handedOver),
       } satisfies AgentEvent);
       // A failure before the request was handed over is request-level and must
       // reject so callers do not account for it as a delivered turn. A failure

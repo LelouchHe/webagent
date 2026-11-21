@@ -208,11 +208,10 @@ The operational form of that sentence:
   ignores it running unmanaged, and an unconditional delete by task id lets a
   stale process take the replacement's handle with it.
 - **A rotation does not end the task's debt.** It truncates the old transport
-  (claimed retry ids, unfinished delivery rows), keeps the same obligation
-  record with its attempts and age, cancels only the silence watchdog (its turn
-  died), and re-aims the next reminder at the new execution. The old dispatch
-  body is never re-sent. *Why:* the debt belongs to the task, while the
-  dispatch belongs to an execution that no longer exists.
+  (unfinished delivery rows fail), keeps the open account, and stops the
+  observed turn (its execution died). The old dispatch body is never re-sent.
+  *Why:* the debt belongs to the task, while the dispatch belongs to an
+  execution that no longer exists.
 
 ## Architecture Notes
 

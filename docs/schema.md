@@ -72,7 +72,7 @@ configured default cwd.
 | `id` | TEXT PRIMARY KEY | UUIDs. The Root's id is the one `workspace.root_task_id` names; ordinary creation, generic delete, tombstone reaping, and empty-task GC all refuse it. Prefix-shaped ids such as `root-forged` are ordinary tasks. |
 | `cwd` | TEXT NOT NULL | Working directory passed to the agent |
 | `title` | TEXT | Display/name title; defaults to the stable task id when creation supplies none. User/parent sets it via `+… ` or `/rename` |
-| `workflow_status` | TEXT NOT NULL DEFAULT `'idle'` | `running`, `idle`, `blocked`, or `done` |
+| `workflow_status` | TEXT NOT NULL DEFAULT `'idle'` | `running`, `idle`, `waiting`, `blocked`, or `done` |
 | `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds; writers pass `Date.now()` explicitly |
 | `last_active_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds; updated on every prompt |
 | `model` | TEXT | Last selected model id |
@@ -200,15 +200,16 @@ deleted. No reply/thread chain exists in S3.0.
 
 ### `message_projections`
 
-Per-task visibility rows for one collaboration message. S3.0 creates source,
-target, and (when distinct) lowest-common-ancestor `supervisor` projections.
-They are timeline/UI records only, never automatic ACP context injection.
+Per-task visibility rows for one collaboration message: the source and the
+direct target. They are timeline/UI records only, never automatic ACP context
+injection. A database created before the `supervisor` role was retired keeps
+the wider CHECK; nothing writes that role.
 
 | Column | Type | Notes |
 |---|---|---|
 | `message_id` | TEXT NOT NULL | FK to `messages`, cascade on Message deletion |
 | `task_id` | TEXT NOT NULL | FK to `tasks`, cascade only when this task hard-deletes |
-| `role` | TEXT NOT NULL | `source`, `target`, or `supervisor` |
+| `role` | TEXT NOT NULL | `source` or `target` |
 | `created_at` | INTEGER NOT NULL | Unix milliseconds |
 
 PK: `(message_id, task_id)`.
@@ -226,11 +227,10 @@ on target task deletion; deletion explicitly terminalizes pending rows as
 | `message_id` | TEXT NOT NULL | FK to `messages`, cascade on Message deletion |
 | `recipient_task_id` | TEXT NOT NULL | Stable target task ID, retained for history after deletion |
 | `idempotency_key` | TEXT NOT NULL UNIQUE | Message/recipient delivery identity |
-| `status` | TEXT NOT NULL | `queued`, `draining`, `delivered`, or `failed` |
+| `status` | TEXT NOT NULL | `queued`, `delivered`, or `failed` |
 | `queued_at` | INTEGER NOT NULL | Unix milliseconds |
-| `claimed_at` | INTEGER | Set when queue drain atomically claims the row |
-| `delivered_at` | INTEGER | Set once ACP prompt submission succeeds |
-| `failed_at` | INTEGER | Set on terminal failure |
+| `delivered_at` | INTEGER | Set when the drain hands the row to the recipient's agent, not when its turn ends; cleared if the agent rejects the request |
+| `failed_at` | INTEGER | Set when the row could not be handed over |
 | `failure_reason` | TEXT | Stable terminal failure reason, e.g. `target_deleted` |
 
 ### `client_ops`
@@ -493,7 +493,11 @@ integer milliseconds; the wire never carries the integer form.
 Schema changes before 1.0 are breaking changes. Server startup never performs
 an implicit compatibility migration for obsolete table schemas: the strict
 schema guard rejects them at boot, and operators must back up and reset their
-data directory before restarting. Four narrow, in-place schema edits are the
+data directory before restarting. This includes a `tasks.workflow_status` CHECK
+that predates `waiting`: the constraint is part of the contract, so such a
+database is refused at startup rather than at the first `task_update(waiting)`.
+Likewise a `deliveries` table that still has `claimed_at` or a `draining`
+status is refused. Four narrow, in-place schema edits are the
 explicit exceptions (three column-scoped and one index swap), and all converge
 an existing database on the current schema instead of requiring a reset:
 

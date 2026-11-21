@@ -287,9 +287,12 @@ text and ignores client-supplied routing metadata.
 | `targetTaskId` | string | Yes | Stable target task ID selected by the client |
 | `body` | string | Yes | Non-empty collaboration message body |
 
-The server verifies that target is the source's direct parent, direct child, or
-same-parent sibling; computes the LCA itself; and atomically writes one
-Message, source/target/LCA projections, and a queued Delivery.
+The server verifies only that the target task exists, is live, and differs from
+the source; it does not check a relationship, so a cross-branch or
+cross-archived-tree target is allowed. It atomically writes one Message,
+source and target projections, and a queued Delivery. The sender's projection
+is written and shown at send time; the receiver's is written when the pending
+deliveries are handed to its agent.
 
 **Response** `202`:
 
@@ -301,8 +304,8 @@ Message, source/target/LCA projections, and a queued Delivery.
 }
 ```
 
-**Errors:** `400` (invalid body or target outside local collaboration scope),
-`404` (source or target task absent).
+**Errors:** `400` (invalid body or the target is the source itself), `404`
+(source or target task absent or deleted).
 
 ---
 
@@ -499,12 +502,15 @@ splits that subtree out into a new archived tree. Root is refused. The action
 writes exactly one `system_message` (`kind: "task_archive"`) on the detached
 task, naming the original parent's path and id; children stay attached to it
 and get no rows of their own. A pending account owed to the former parent does
-not block archiving: that edge is dropped, so a later `task_update` is recorded
-but not delivered to the parent the task left. Collaboration not yet handed to the agent between the archived subtree and
+not block archiving: that edge is dropped, the former parent receives one
+`target_removed` notice, and a later `task_update` is recorded but not delivered
+to the parent the task left. Archiving only cancels queued crossings that exist
+at that instant; a human send after the cut is allowed over REST, and a later
+`task_send` from the archived subtree to a former relative is not. Collaboration not yet handed to the agent between the archived subtree and
 anything outside it — a queued message in either direction — is marked
 `failed` with `failure_reason: "archived_edge_cut"`; the message rows are kept,
 and nothing new is delivered across the boundary. Deliveries wholly inside the
-subtree are untouched. Rows already `draining` or `failed` keep their own
+subtree are untouched. Rows already `delivered` or `failed` keep their own
 status and reason. Work already handed to the agent is not recalled. The detach, system message, and delivery
 marks are one transaction.
 
@@ -542,7 +548,7 @@ itself inside an archived tree is refused (restore that tree first), as is a
 live title collision under the destination. The update and one
 `system_message` (`kind: "task_unarchive"`, naming the destination parent path
 and id, and the missing original id when it fell back to Root) share one
-transaction. Nothing about the obligation or delivery edges cut by the archive
+transaction. Nothing about the account or delivery edges cut by the archive
 is restored.
 
 **Response** `200`:
@@ -866,6 +872,42 @@ GET /api/v1/tasks/:id/events?limit=200           → latest 200 events
 GET /api/v1/tasks/:id/events?limit=200&before=50 → 200 events before seq 50
 GET /api/v1/tasks/:id/events?after=7000      → all events after seq 7000 (incremental sync, no limit)
 ```
+
+**Collaboration delivery marks.** A stored `system_message` whose `data.kind`
+is `collaboration` and `data.role` is `source` is the sender's own row. At
+egress the endpoint attaches the delivery state derived from the `deliveries`
+row for that `messageId`:
+
+| Field | Values |
+| --- | --- |
+| `deliveryStatus` | `queued`, `delivered`, or `failed` |
+| `deliveredAt` | ISO-8601 UTC time (the shared timestamp format), only when delivered |
+| `deliveryFailureReason` | the stored failure reason, only when failed |
+
+A message is `delivered` when the drain hands it to the recipient's agent, not
+when the recipient's turn ends; it is `failed` only when it could not be handed
+over (for example, the agent rejected the request), never because of what the
+recipient's turn did. These fields are derived
+at read time and are never written back to the event.
+A load therefore always reflects storage truth. The receiver's row (`role:
+"target"`) is written only when its batch is handed to the receiver's agent, so
+it carries no delivery mark.
+
+Live status changes arrive as a lightweight task-scoped SSE event, not a stored
+row:
+
+```json
+{
+  "type": "collaboration_delivery",
+  "taskId": "source-task-id",
+  "messageId": "message-id",
+  "status": "delivered",
+  "deliveredAt": "2025-01-15T10:32:00.000Z"
+}
+```
+
+A failed delivery carries `failureReason` instead of `deliveredAt`. The event is
+best effort; a reload reads the delivery row.
 
 ````
 

@@ -17,6 +17,7 @@ import { formatFieldBlock } from "../shared/field-block.ts";
 import { formatTaskReference } from "../shared/task-reference.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
+import { formatSilence } from "../obligation-controller.ts";
 import type {
   McpCallerPrincipal,
   McpTaskQueryResult,
@@ -52,6 +53,12 @@ export interface McpTaskCollaborationEvent {
   sourceLabel: string;
   targetLabel: string;
   body: string;
+  /** The task this projection renders into. */
+  taskId: string;
+  role: "source" | "target";
+  deliveryStatus?: "queued" | "delivered" | "failed";
+  deliveredAt?: string;
+  deliveryFailureReason?: string;
 }
 
 export interface McpTaskCreatedEvent {
@@ -81,7 +88,7 @@ export type McpTaskCancelNotice = Extract<
 >;
 
 function relationOrder(relation: McpTaskListItem["relation"]): number {
-  return { self: 0, parent: 1, child: 2, sibling: 3 }[relation];
+  return { self: 0, parent: 1, child: 2 }[relation];
 }
 
 export function createMcpTaskToolHost(deps: {
@@ -508,6 +515,9 @@ export function createMcpTaskToolHost(deps: {
         sourceLabel,
         targetLabel,
         body: created.message.body,
+        taskId: sourceTaskId,
+        role: "source",
+        deliveryStatus: "queued",
       });
       void tasks.drainCollaborationDeliveries(target.id);
     },
@@ -515,17 +525,11 @@ export function createMcpTaskToolHost(deps: {
     async update(principal, status, body) {
       authorize(principal);
       const sourceTaskId = principal.taskId;
-      // The controller decides whether this update settles the target's sole
-      // record (eligible current turn) or is only routed: to the stored source
-      // when a record exists, or to the current parent when none does.
-      const activeTurn = tasks.getActiveAgentTurn(sourceTaskId);
-      const routed = tasks.settleAgentUpdate(
-        sourceTaskId,
-        status,
-        body,
-        activeTurn,
-      );
-      const { collaborationMessageId, accountTargetTaskId } = routed;
+      // `waiting` only records the status. `done` and `blocked` settle the
+      // target's open account and are delivered to its source, or fall back to
+      // the current parent when no account is open.
+      const { collaborationMessageId, accountTargetTaskId, silenceWatchMs } =
+        tasks.settleAgentUpdate(sourceTaskId, status, body);
       if (collaborationMessageId && accountTargetTaskId) {
         const source = requireTask(sourceTaskId);
         const target = requireTask(accountTargetTaskId);
@@ -536,9 +540,16 @@ export function createMcpTaskToolHost(deps: {
           sourceLabel: source.title ?? source.id.slice(0, 8),
           targetLabel: target.title ?? target.id.slice(0, 8),
           body: `Task status: ${status}\n${body}`,
+          taskId: sourceTaskId,
+          role: "source",
+          deliveryStatus: "queued",
         });
         void tasks.drainCollaborationDeliveries(accountTargetTaskId);
       }
+      if (silenceWatchMs === undefined) return {};
+      return {
+        note: `No visible wake source; the requester is notified after ${formatSilence(silenceWatchMs)} without agent activity.`,
+      };
     },
   };
 }
