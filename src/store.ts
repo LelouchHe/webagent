@@ -2729,11 +2729,17 @@ export class Store {
    * `from_ref: "system"`, and the producer stores the message id in that event.
    *
    * `types` are the caller's candidate item kinds, so storage binds them
-   * instead of naming collaboration vocabulary. Two properties matter here:
-   * the `(task_id, type, created_at)` index bounds the scan to those types, and
-   * the JSON is parsed here rather than by `json_extract` — one malformed
-   * `data` blob in an unrelated row must not fail the drain that calls this,
-   * because a throw there loses a batch already claimed as delivered.
+   * instead of naming collaboration vocabulary. Three properties matter here:
+   * the `(task_id, type, created_at)` index bounds the scan to those types,
+   * `from_ref = 'system'` keeps the audit origin the producer states, and the
+   * JSON is parsed here rather than by `json_extract` — one malformed `data`
+   * blob in an unrelated row must not fail the drain that calls this, because a
+   * throw there loses a batch already claimed as delivered.
+   *
+   * The rows stream and the match ends the scan, so the work follows the rows
+   * actually read rather than materializing every candidate first. There is
+   * deliberately no ordering: a message id addresses exactly one audit event,
+   * so no candidate is more authoritative than another.
    */
   getRuntimeItemKind(
     taskId: string,
@@ -2745,10 +2751,12 @@ export class Store {
     const rows = this.db
       .prepare(
         `SELECT type, data FROM events
-         WHERE task_id = ? AND type IN (${placeholders})
-         ORDER BY seq DESC`,
+         WHERE task_id = ? AND from_ref = 'system' AND type IN (${placeholders})`,
       )
-      .all(taskId, ...types) as Array<{ type: string; data: string }>;
+      .iterate(taskId, ...types) as IterableIterator<{
+      type: string;
+      data: string;
+    }>;
     for (const row of rows) {
       let parsed: unknown;
       try {

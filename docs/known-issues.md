@@ -99,6 +99,15 @@ time. An entry without a "closing condition" is a wish, not an issue.
   candidate event types only and parses their data in JS, so one unreadable row
   cannot fail a drain. *Closing:* write the audit event inside
   `createSystemDelivery`, so the item record and its delivery cannot diverge.
+- **A claimed delivery batch is not repaired if the drain throws after the
+  claim.** `claimQueuedDeliveries` marks the batch delivered before the rows are
+  projected and before the ACP prompt, so an exception in between (a database
+  error writing a projected row, say) leaves the batch marked delivered while
+  the agent never receives it; the catch logs and returns without requeueing or
+  failing. The runtime item lookup no longer throws — it parses per row and
+  skips what it cannot read — but the claim-before-prompt window is by design.
+  *Closing:* repair or requeue the batch in the drain's catch, or claim after
+  the prompt is accepted.
 - **A soft-deleted task's share cannot be revoked.** The tombstone path keeps
   history but leaves the published snapshot addressable. *Closing:* revoke on
   tombstone and record the revocation in the share row.

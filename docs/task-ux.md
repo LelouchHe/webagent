@@ -118,7 +118,9 @@ reminder or a runtime notice) is not correspondence and never borrows the
 (`Task handoff required`, `Task handoff notice`), names itself in `kind`,
 carries no task references for a client to mark, and has no delivery mark.
 That sentence claims a sender and a recipient, and the recipient it would name
-is the reader.
+is the reader. A row whose item kind cannot be recovered is the one exception:
+it keeps `collaboration` and the bare `WebAgent runtime` title, and is recorded
+in [Known Issues](./known-issues.md).
 
 The reference is placed by task id, never by the shape of the title: titles
 repeat, and a title may contain quotes, spaces, or the words between two
