@@ -2625,7 +2625,8 @@ export class Store {
 
   /**
    * Register a committed delivery transition observer. This is the semantic
-   * hook: every in-process status write reaches it independently of UI output.
+   * hook, separate from UI output; it sees the same changes the UI does, so a
+   * system-authored delivery's status change reaches neither.
    */
   onDeliveryStatusTransition(
     observer: (change: CollaborationDeliveryStatusChange) => void,
@@ -3064,8 +3065,9 @@ export class Store {
   /**
    * Atomically hand over every currently queued Delivery for one target task:
    * the rows become `delivered` now, because the caller passes them to the
-   * recipient's agent in the same synchronous step. Do not compose this with a
-   * larger Store write scope: publication is deferred only to this write.
+   * recipient's agent in the same synchronous step. It is meant for top-level use:
+   * inside a larger Store write scope its publication waits for the outer
+   * commit and reads the rows as they stand then, which is not supported.
    */
   claimQueuedDeliveries(recipientTaskId: string): CollaborationDeliveryRow[] {
     const deliveredAt = Date.now();
@@ -3101,8 +3103,8 @@ export class Store {
 
   /**
    * The agent refused a handed-over batch before accepting it (a request-level
-   * rejection), so those rows were never actually delivered. Like claim, this
-   * entry publishes after its own write and is not an outer-scope composition.
+   * rejection), so those rows were never actually delivered. Like claim, it is meant
+   * for top-level use and publishes once its write commits.
    */
   failRejectedDeliveries(
     ids: string[],
@@ -3126,8 +3128,8 @@ export class Store {
 
   /**
    * Fail every Delivery still queued for one target; returns the failed rows.
-   * This entry also publishes after its own write, not as part of a composed
-   * outer Store write.
+   * Like claim, it is meant for top-level use and publishes once its write
+   * commits.
    */
   failQueuedDeliveries(
     recipientTaskId: string,

@@ -66,8 +66,8 @@ function deliveryFailureNotice(
 /**
  * One reducer for every failure fact that may produce an obligation notice.
  * A matching delivery closes its account; an unrelated failed delivery still
- * reports once without touching the account. An already-computed account
- * outcome is persisted as-is.
+ * reports once without touching the account. Account facts from the
+ * controller (target gone, unreported turn, silence) become their notice here.
  */
 export function reduceObligationOutcome(
   fact: ObligationOutcomeFact,
