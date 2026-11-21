@@ -94,7 +94,7 @@ time. An entry without a "closing condition" is a wish, not an issue.
   projected and before the ACP prompt, so an exception in between (a database
   error writing a projected row, say) leaves the batch marked delivered while
   the agent never receives it; the catch logs and returns without requeueing or
-  failing. The runtime item lookup no longer throws on unreadable data — it
+  failing. The runtime message lookup no longer throws on unreadable data — it
   parses per row and skips what it cannot read — but a failed `sqlite3_step`, a
   projection write, or any other throw in that window still reaches this catch,
   and the claim-before-prompt window is by design. *Closing:* repair or

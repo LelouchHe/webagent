@@ -189,6 +189,13 @@ Immutable cross-task collaboration facts. A row is not owned by either task:
 not FK-cascade, so a surviving task retains the record after a peer is hard
 deleted. No reply/thread chain exists in S3.0.
 
+A message the runtime queues (`source_actor = 'system'`: a closing reminder or a
+fact notice) is stored the same way, and **which one it is has no column**. The
+delivery row is one shape for every message, so the row written at drain
+recovers the subtype from the audit event that queued it
+([Task Obligations](task-obligations.md#turn-end-check)). A column here would
+copy a fact the `events` table already holds.
+
 | Column | Type | Notes |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | Stable collaboration message ID |

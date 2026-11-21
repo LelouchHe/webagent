@@ -294,13 +294,21 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the title is built from the raw labels, shell-quoting when needed
   - the persisted payload and the wire envelope carry the same title, body, and
     both raw labels, spelled out field by field
+  - the live envelope is the persisted row plus the live-only delivery hints,
+    proven on a runtime message: whatever the row drops, the envelope cannot
+    carry
+
+- `test/collaboration-store.test.ts`
+  - a runtime message's kind is recovered only from the runtime's own audit
+    record: another actor's row, a row outside the candidate kinds, and a
+    malformed row all yield none
 
 - `test/collaboration-delivery.test.ts`
   - the receiver's collaboration row is written at drain, not at creation, and precedes the turn's own output event; a message never appears in a turn that did not see it
   - a batch is `delivered` at handover, broadcast while the recipient's turn is still running; a request-level rejection flips it to `failed`
   - an account opens at handover, not at enqueue: a queued dispatch has none, and a dispatch queued behind a turn whose `done` settled the account opens a new one when it is handed over
   - a rejected dispatch prompt, a resume failure, and `/clear` each fail the agent's message and send its sender one `target_removed` notice, closing the account when the message was its dispatch; a resume failure leaves no row stranded in `queued`, and `/clear` keeps an already handed-over row `delivered`
-  - a closing reminder is queued behind a running turn and appears only at the boundary through the automatic drain; the recipient gets exactly one row, labeled `WebAgent runtime`, with no pre-drain `handoff_reminder` row and no delivery mark
+  - a closing reminder is queued behind a running turn and appears only at the boundary through the automatic drain; the recipient gets exactly one row, `kind: handoff_reminder` and titled `Task handoff required` in the runtime's own voice, with no pre-drain `handoff_reminder` row, no source handle, and no delivery mark
   - an unrelated REST/system delivery failing does not close the dispatch account; a stale resume leaves queued work for the current execution
   - same-time deliveries drain in insertion order, not id order
   - a request-level error emitted before a rejection runs no turn-end check, queues no reminder and writes no `handoff_reminder` audit row; only the rejection path (`target_removed`) applies
