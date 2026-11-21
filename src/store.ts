@@ -9,10 +9,6 @@ import {
   buildCollaborationSystemMessage,
   collaborationTitle,
 } from "./collaboration-message.ts";
-import {
-  CollaborationMessageEmitter,
-  type CollaborationMessageObserver,
-} from "./collaboration-emitter.ts";
 import { migrateTimestampsToMillis } from "./timestamp-migration.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { assertNotLegacyDatabase } from "./legacy-database.ts";
@@ -414,7 +410,6 @@ export class Store {
   private readonly dataDir: string;
   /** This database's Root; it changes only when an exit replaces the Root. */
   private rootId = "";
-  private readonly collaborationEmitter: CollaborationMessageEmitter;
   private readonly deliveryStatusObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
   > = [];
@@ -449,10 +444,6 @@ export class Store {
     assertNotLegacyDatabase(dataDir);
     mkdirSync(dataDir, { recursive: true });
     this.db = new Database(join(dataDir, "webagent.db"));
-    this.collaborationEmitter = new CollaborationMessageEmitter({
-      write: (input) => this.createCollaborationMessageInTransaction(input),
-      transaction: (fn) => this.db.transaction(fn)(),
-    });
     try {
       this.db.pragma("journal_mode = WAL");
       this.db.pragma("foreign_keys = ON");
@@ -2608,14 +2599,6 @@ export class Store {
   }
 
   /**
-   * Register the single post-commit collaboration-message observer. The Store
-   * emits a neutral fact; reachability and obligation policy stay above it.
-   */
-  onCollaborationMessageCreated(observer: CollaborationMessageObserver): void {
-    this.collaborationEmitter.onCreated(observer);
-  }
-
-  /**
    * Register the one observer for delivery status changes. Every in-process
    * status write goes through the delivery methods below, so a sender's live
    * mark cannot silently miss archive, clear, deletion, or prompt failure.
@@ -2670,15 +2653,16 @@ export class Store {
    * Persist one cross-task fact, its task-timeline projections, and the sole
    * target Delivery in one SQLite transaction. Delivery mechanics live above
    * this Store API; this method never resolves paths or applies reachability
-   * policy. It is the sole application entry point for message creation: the
-   * raw insert below is private, and every created message is reported once
-   * through the collaboration emitter after commit.
+   * policy. It is the sole application entry point for message creation; the
+   * raw insert below is private.
    */
   createCollaborationMessage(input: CollaborationMessageInput): {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
   } {
-    return this.collaborationEmitter.create(input);
+    return this.db.transaction(() =>
+      this.createCollaborationMessageInTransaction(input),
+    )();
   }
 
   /**
@@ -2852,7 +2836,7 @@ export class Store {
         return { collaborationMessageId: null };
       }
       const collaborationMessageId = randomUUID();
-      this.collaborationEmitter.createInTransaction({
+      this.createCollaborationMessageInTransaction({
         id: collaborationMessageId,
         deliveryId: randomUUID(),
         sourceTaskId: taskId,
@@ -2862,7 +2846,6 @@ export class Store {
       });
       return { collaborationMessageId };
     })();
-    this.collaborationEmitter.afterCommit();
     return result;
   }
 

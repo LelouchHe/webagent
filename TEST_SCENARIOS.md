@@ -74,7 +74,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - ids that cannot fit are dropped entirely, leaving the omission note and, when not even one fits, a "too long to list here" explanation
 
 - `test/multi-agent-mcp-collaboration.test.ts` (same harness: production host, endpoint, REST handler, one transport per agent)
-  - a parent on A dispatches to a child on B: the contract reaches B's own transport and never A's; the production manager's own collaboration observer is called exactly once for that message, and exactly one account exists for the edge
+  - a parent on A dispatches to a child on B: the contract reaches B's own transport and never A's, and the handed-over dispatch opens exactly one account for the edge
   - the child's typed `task_update(done)` on B settles the account, persists the typed update with `reason: settled`, source, and target, and wakes the parent through A's transport with readable prose (`Task status: done` + the account), not JSON; the observer count grows by exactly one
   - an unanswered dispatch sends one closing reminder to B's transport (never A's); the next unaccounted turn delivers a `no_update` notice to A's transport with a readable block naming the target id, while the machine payload stays in `task_outcome_notice`
   - `task_update(waiting)` records the status, keeps the account open, wakes nobody, and survives the turn end as `workflowStatus = waiting`; the turn that reported it gets no closing reminder
@@ -627,9 +627,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/task-collaboration.test.ts`
   - pure `shouldArm` policy: agent parent→child only; user, system, and non-parent relations never arm
-
-- `test/collaboration-store.test.ts`
-  - the collaboration-message emitter reports exactly one post-commit fact for both the normal and in-transaction creation entry points
 
 - `test/task-manager.test.ts`
   - busy has two faces: a restoring task is agent-busy for the gate (`getGateBusyKind`) and idle for rendering (`getBusyKind`); a Root exit under a restoring descendant and a rotation during the restore window are both refused
