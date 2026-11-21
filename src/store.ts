@@ -204,7 +204,7 @@ export class MessageNotFoundError extends Error {
 }
 
 export type CollaborationActor = "user" | "agent" | "system";
-export type CollaborationProjectionRole = "source" | "target" | "supervisor";
+export type CollaborationProjectionRole = "source" | "target";
 /**
  * Whether the message reached the recipient's agent. `delivered` is set when
  * the drain hands it over, not when the recipient's turn ends; `failed` means
@@ -807,7 +807,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS message_projections (
         message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
         task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-        role TEXT NOT NULL CHECK (role IN ('source', 'target', 'supervisor')),
+        role TEXT NOT NULL CHECK (role IN ('source', 'target')),
         created_at INTEGER NOT NULL,
         PRIMARY KEY (message_id, task_id)
       );

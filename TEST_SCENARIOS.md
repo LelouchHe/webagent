@@ -953,8 +953,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     cancelled page each render exactly one line, live and from replay
   - a replayed collaboration row anchors **both** of its references from the
     stored ids, on every projection: the source reference at the front and the
-    target reference at the end of `@source sent @target`, on the source, target,
-    and supervisor copies alike
+    target reference at the end of `@source sent @target`, on the source and
+    target copies alike
   - live events queued during a replay are dropped when the connection
     generation changes before the drain, and a disconnect discards the armed
     replay gate, its queue, and any history read still in flight

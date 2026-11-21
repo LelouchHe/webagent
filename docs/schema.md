@@ -201,15 +201,15 @@ deleted. No reply/thread chain exists in S3.0.
 ### `message_projections`
 
 Per-task visibility rows for one collaboration message: the source and the
-direct target. New writes never create a `supervisor` row; the role remains
-readable for historical data. They are timeline/UI records only, never
-automatic ACP context injection.
+direct target. They are timeline/UI records only, never automatic ACP context
+injection. A database created before the `supervisor` role was retired keeps
+the wider CHECK; nothing writes that role.
 
 | Column | Type | Notes |
 |---|---|---|
 | `message_id` | TEXT NOT NULL | FK to `messages`, cascade on Message deletion |
 | `task_id` | TEXT NOT NULL | FK to `tasks`, cascade only when this task hard-deletes |
-| `role` | TEXT NOT NULL | `source`, `target`, or `supervisor` |
+| `role` | TEXT NOT NULL | `source` or `target` |
 | `created_at` | INTEGER NOT NULL | Unix milliseconds |
 
 PK: `(message_id, task_id)`.

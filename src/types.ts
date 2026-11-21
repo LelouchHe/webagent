@@ -375,7 +375,7 @@ export type AgentEvent =
       messageId?: string;
       sourceTaskId?: string;
       targetTaskId?: string;
-      role?: "source" | "target" | "supervisor";
+      role?: "source" | "target";
       /**
        * Delivery state of a collaboration message, attached at render/egress
        * for the sender's own projection. Never persisted in the event.

@@ -3,7 +3,7 @@ import { isoFromMillis } from "./shared/time.ts";
 import type { CollaborationDeliveryStatus } from "./store.ts";
 import type { AgentEvent } from "./types.ts";
 
-export type CollaborationRole = "source" | "target" | "supervisor";
+export type CollaborationRole = "source" | "target";
 
 /** The visible author label for a runtime-authored item. */
 export const RUNTIME_AUTHOR_LABEL = "WebAgent runtime";

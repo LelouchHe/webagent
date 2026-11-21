@@ -515,32 +515,6 @@ describe("task-reference marks", () => {
       assertLive(spans[1], "@b");
     });
 
-    it("judges both references of a supervisor copy, which is neither side", () => {
-      // A message between tasks under different parents is also projected to
-      // their common ancestor. That row is neither endpoint, but each reference
-      // still belongs to a task id, so each is judged on its own.
-      snapshot({});
-      const row = renderCollaborationRow({
-        title: "@a sent @b",
-        ownTaskId: "lca",
-      });
-      const spans = refSpans(row);
-      assert.deepEqual(
-        spans.map((span) => view(span).state),
-        ["exited", "exited"],
-      );
-
-      marks.resetTaskRefMarks();
-      snapshot({ a: "a" });
-      const liveSource = renderCollaborationRow({
-        title: "@a sent @b",
-        ownTaskId: "lca",
-      });
-      const revived = refSpans(liveSource);
-      assertLive(revived[0], "@a");
-      assert.equal(view(revived[1]).state, "exited");
-    });
-
     it("marks the other task on both sides of a cancellation row", () => {
       snapshot({ a: "a", b: "b" });
       const sourceSide = render.addSystemMessage({

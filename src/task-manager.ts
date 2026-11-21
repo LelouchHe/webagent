@@ -861,7 +861,7 @@ export class TaskManager implements ObligationHost {
     const target = this.store.getTaskIncludingDeleted(recipientTaskId);
     if (!target) return;
     for (const message of messages) {
-      if (!shouldArm(message, { id: message.source_task_id }, target)) continue;
+      if (!shouldArm(message, target)) continue;
       this.obligations.arm(message.source_task_id, recipientTaskId);
     }
   }

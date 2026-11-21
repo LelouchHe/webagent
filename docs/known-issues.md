@@ -307,9 +307,10 @@ time. An entry without a "closing condition" is a wish, not an issue.
   not the replayed row. *Closing:* key both paths on message id, or drain the
   queue before applying a history page.
 - **A configured agent that cannot start leaves its dispatch queued.** The
-  delivery stays `queued` and the account stays open until the agent can be
-  started; nothing fails or retries on a timer. *Closing:* start-failure
-  handling that marks the delivery failed, if this proves common.
+  delivery stays `queued` until the agent can be started; nothing fails or
+  retries on a timer. No account opens and the source gets no notice, so only
+  the sender's `⋯` mark shows it. *Closing:* start-failure handling that marks
+  the delivery failed, if this proves common.
 - **A turn the agent starts on its own is not a WebAgent turn.** When a harness
   wakes the agent without a prompt (a finished background command, a scheduled
   wakeup, idle compaction), its events are recorded and count as activity for

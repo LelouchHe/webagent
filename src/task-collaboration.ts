@@ -22,18 +22,19 @@ export function isLocalCollaborationTarget(
 }
 
 /**
- * The single arming policy for directed dispatch closure. It is deliberately
- * derived from data the rows already carry — no classification field and no
- * body inspection.
+ * The single arming policy for directed dispatch closure, derived from data
+ * the rows already carry — no classification field and no body inspection.
  *
- * Only an agent-authored direct parent→child dispatch asks for an account.
- * A user send (even from the parent session), a child message, a correlated
- * account, and a runtime notice all fail one of the two conditions.
+ * Only an agent-authored direct parent→child dispatch asks for an account. A
+ * user send (even from the parent session), a child message, a typed update,
+ * and a runtime notice all fail one of the two conditions.
  */
 export function shouldArm(
-  message: Pick<CollaborationMessageRow, "source_actor">,
-  source: Pick<TaskRow, "id">,
+  message: Pick<CollaborationMessageRow, "source_actor" | "source_task_id">,
   target: Pick<TaskRow, "parent_id">,
 ): boolean {
-  return message.source_actor === "agent" && target.parent_id === source.id;
+  return (
+    message.source_actor === "agent" &&
+    target.parent_id === message.source_task_id
+  );
 }

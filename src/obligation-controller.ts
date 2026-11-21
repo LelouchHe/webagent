@@ -369,10 +369,7 @@ export class ObligationController {
 
 export function formatSilence(ms: number): string {
   const minutes = ms / 60_000;
-  if (Number.isInteger(minutes)) {
-    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
-  }
-  return `${Math.round(ms / 1000)} seconds`;
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
 export function noticeMessage(
