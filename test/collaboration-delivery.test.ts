@@ -595,6 +595,17 @@ describe("TaskManager collaboration delivery drain", () => {
       .filter((data) => data.kind === "collaboration");
     assert.equal(rows.length, 1, "exactly one recipient-visible row");
     assert.equal(rows[0].sourceLabel, "WebAgent runtime");
+    assert.equal(
+      rows[0].title,
+      "Task handoff required",
+      "a runtime item is titled in the runtime's own voice",
+    );
+    assert.doesNotMatch(
+      String(rows[0].title),
+      / sent /,
+      "a runtime item must not borrow the correspondence sentence: it has no " +
+        "sender, and the recipient the sentence would name is the reader",
+    );
     assert.equal("sourceTaskId" in rows[0], false);
     assert.equal(deliveryEvents.length, 0, "no mark for a system item");
   });

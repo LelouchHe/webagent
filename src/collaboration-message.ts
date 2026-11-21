@@ -9,6 +9,34 @@ export type CollaborationRole = "source" | "target";
 export const RUNTIME_AUTHOR_LABEL = "WebAgent runtime";
 
 /**
+ * The visible title of a runtime item, keyed by the audit event type written
+ * when the item is queued. The key is that event type so the row cannot
+ * describe a different item than the one an operator can audit.
+ */
+export const RUNTIME_ITEM_TITLES = {
+  handoff_reminder: "Task handoff required",
+  task_outcome_notice: "Task handoff notice",
+} as const;
+
+export type RuntimeItemKind = keyof typeof RUNTIME_ITEM_TITLES;
+
+/** Whether `value` names a runtime item whose title this module knows. */
+export function isRuntimeItemKind(value: unknown): value is RuntimeItemKind {
+  return typeof value === "string" && value in RUNTIME_ITEM_TITLES;
+}
+
+/**
+ * A runtime item is a notice about one task's own bookkeeping, not
+ * correspondence between two tasks: it has no sender, its reader is the party
+ * the `sent` sentence would name as the recipient, and it has no delivery mark.
+ * It therefore gets a title in the runtime's own voice and never borrows
+ * `collaborationTitle`.
+ */
+export function runtimeItemTitle(kind: RuntimeItemKind | undefined): string {
+  return kind === undefined ? RUNTIME_AUTHOR_LABEL : RUNTIME_ITEM_TITLES[kind];
+}
+
+/**
  * The raw (unquoted) task titles a collaboration title is built from. They are
  * stored beside the rendered title because the title alone cannot be parsed
  * back into them: titles may contain quotes, spaces, and even the words that
@@ -32,6 +60,8 @@ export interface CollaborationSystemMessageInput extends CollaborationLabels {
   body: string;
   /** Runtime-authored: show the runtime as author, not the named task. */
   systemAuthor?: boolean;
+  /** Which runtime item this is; selects the title. Ignored without `systemAuthor`. */
+  runtimeItem?: RuntimeItemKind;
 }
 
 export interface CollaborationSystemMessage {
@@ -52,7 +82,9 @@ export function buildCollaborationSystemMessage(
   const sourceLabel = input.systemAuthor
     ? RUNTIME_AUTHOR_LABEL
     : input.sourceLabel;
-  const title = collaborationTitle({ ...input, sourceLabel });
+  const title = input.systemAuthor
+    ? runtimeItemTitle(input.runtimeItem)
+    : collaborationTitle({ ...input, sourceLabel });
   return {
     title,
     body: input.body,
@@ -83,6 +115,7 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
   taskId: string;
   role: CollaborationRole;
   systemAuthor?: boolean;
+  runtimeItem?: RuntimeItemKind;
   deliveryStatus?: CollaborationDeliveryStatus;
   deliveredAt?: string;
   deliveryFailureReason?: string;

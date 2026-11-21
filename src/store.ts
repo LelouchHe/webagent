@@ -2721,6 +2721,25 @@ export class Store {
     })();
   }
 
+  /**
+   * The audit event type of the runtime item that queued `messageId`, if any.
+   * The delivery row carries no item kind — it is one row shape for every
+   * message — so the row written at drain recovers it from the audit event the
+   * producer wrote on the same task when it queued the item. Both use
+   * `from_ref: "system"`, and the producer stores the message id there.
+   */
+  getRuntimeItemKind(taskId: string, messageId: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT type FROM events
+         WHERE task_id = ? AND from_ref = 'system'
+           AND json_extract(data, '$.messageId') = ?
+         LIMIT 1`,
+      )
+      .get(taskId, messageId) as { type: string } | undefined;
+    return row?.type ?? null;
+  }
+
   private createCollaborationMessageInTransaction(
     input: CollaborationMessageInput,
   ): {

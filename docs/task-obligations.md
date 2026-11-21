@@ -81,9 +81,12 @@ Turn boundaries are the only clock:
 The reminder is a runtime-injected turn asking for one typed update; its text
 is `handoffReminderText()` in [`src/task-manager.ts`](../src/task-manager.ts).
 It is queued through the normal delivery path, so it is held while the target's
-turn runs and drained at its boundary like any other item. Runtime items are
-labeled as authored by the WebAgent runtime, not by the named task; the
-recipient sees exactly one row, written at drain.
+turn runs and drained at its boundary like any other item. A runtime item is not
+correspondence: the recipient sees exactly one row, written at drain, titled in
+the runtime's own voice (`Task handoff required` for a closing reminder,
+`Task handoff notice` for a notice). The delivery row carries no item kind, so
+the title is recovered from the audit event that queued it — the producer
+records the message id there.
 
 ## Silence
 
@@ -122,7 +125,9 @@ source, target, and reason so later statistics can read them. A settlement is
 distinguishable from a fallback report to the current parent. Notices and
 reminders are delivered like collaboration messages, in order, at the
 recipient's turn boundary; a notice body names the target Task id (and title
-when available) so two children with the same reason stay distinguishable. The account state
+when available) so two children with the same reason stay distinguishable, and
+states the fact in the `message` sentence. The machine `reason` stays on the
+event: the delivered body repeats it in prose rather than as a field. The account state
 itself is process-local: a restart forgets open accounts and does not recover
 reminders. Messages and delivery rows are durable, so a dispatch still queued
 at restart opens its account when it is handed over afterwards.

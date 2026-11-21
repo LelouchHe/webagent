@@ -20,6 +20,7 @@ import { shouldArm } from "./task-collaboration.ts";
 import {
   RUNTIME_AUTHOR_LABEL,
   buildCollaborationSystemMessage,
+  isRuntimeItemKind,
   type CollaborationBroadcastRequest,
 } from "./collaboration-message.ts";
 import { isoFromMillis } from "./shared/time.ts";
@@ -3987,11 +3988,15 @@ export class TaskManager implements ObligationHost {
    */
   submitObligationReminder(sourceTaskId: string, targetTaskId: string): void {
     const text = handoffReminderText();
-    // Audit metadata only: the recipient-visible row is written at drain.
+    const messageId = randomUUID();
+    // Audit metadata only: the recipient-visible row is written at drain. The
+    // message id is recorded here so that row can recover which runtime item it
+    // describes; the delivery row itself carries no item kind.
     this.store.saveEvent(
       targetTaskId,
       "handoff_reminder",
       {
+        messageId,
         reason: "closing_reminder",
         sourceTaskId,
         targetTaskId,
@@ -4000,7 +4005,7 @@ export class TaskManager implements ObligationHost {
       { from_ref: "system" },
     );
     this.store.createSystemDelivery({
-      messageId: randomUUID(),
+      messageId,
       deliveryId: randomUUID(),
       fromTaskId: sourceTaskId,
       recipientTaskId: targetTaskId,
@@ -4017,7 +4022,9 @@ export class TaskManager implements ObligationHost {
   emitObligationNotice(notice: ObligationNotice): void {
     if (!this.store.getTask(notice.sourceTaskId)) return;
     const target = this.store.getTaskIncludingDeleted(notice.targetTaskId);
+    const messageId = randomUUID();
     const payload = {
+      messageId,
       reason: notice.reason,
       sourceTaskId: notice.sourceTaskId,
       targetTaskId: notice.targetTaskId,
@@ -4026,8 +4033,11 @@ export class TaskManager implements ObligationHost {
     this.store.saveEvent(notice.sourceTaskId, "task_outcome_notice", payload, {
       from_ref: "system",
     });
+    // The machine fields stay on the audit event above. The body a person and
+    // an agent read carries only what they cannot audit: the `message` sentence
+    // already states what happened, and `target` names which child it happened
+    // to. A `reason:` line would restate the sentence in machine shorthand.
     const body = formatFieldBlock([
-      { label: "reason", value: notice.reason },
       {
         label: "target",
         value: target?.title
@@ -4037,7 +4047,7 @@ export class TaskManager implements ObligationHost {
       { label: "message", value: notice.message },
     ]);
     this.store.createSystemDelivery({
-      messageId: randomUUID(),
+      messageId,
       deliveryId: randomUUID(),
       fromTaskId: notice.targetTaskId,
       recipientTaskId: notice.sourceTaskId,
@@ -4070,6 +4080,16 @@ export class TaskManager implements ObligationHost {
     targetLabel: string,
   ): void {
     const systemAuthor = message.source_actor === "system";
+    // The delivery row is one shape for every message, so a runtime item
+    // recovers which notice it is from the audit event that queued it. An
+    // unknown kind (a row queued before producers recorded it) still gets a
+    // runtime title, never the `a sent b` sentence.
+    const runtimeItem = systemAuthor
+      ? (() => {
+          const kind = this.store.getRuntimeItemKind(taskId, message.id);
+          return isRuntimeItemKind(kind) ? kind : undefined;
+        })()
+      : undefined;
     const sourceLabel = systemAuthor
       ? RUNTIME_AUTHOR_LABEL
       : (this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
@@ -4086,6 +4106,7 @@ export class TaskManager implements ObligationHost {
         role: "target",
         body: message.body,
         systemAuthor,
+        runtimeItem,
       }).data,
       { from_ref: `msg:${message.id}` },
     );
@@ -4099,6 +4120,7 @@ export class TaskManager implements ObligationHost {
       taskId,
       body: message.body,
       systemAuthor,
+      runtimeItem,
     });
   }
 
