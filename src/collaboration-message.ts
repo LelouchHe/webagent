@@ -20,6 +20,11 @@ export const RUNTIME_ITEM_TITLES = {
 
 export type RuntimeItemKind = keyof typeof RUNTIME_ITEM_TITLES;
 
+/** The item kinds whose titles this module knows, for storage queries. */
+export const RUNTIME_ITEM_KINDS: readonly RuntimeItemKind[] = Object.keys(
+  RUNTIME_ITEM_TITLES,
+) as RuntimeItemKind[];
+
 /** Whether `value` names a runtime item whose title this module knows. */
 export function isRuntimeItemKind(value: unknown): value is RuntimeItemKind {
   return typeof value === "string" && value in RUNTIME_ITEM_TITLES;
@@ -76,6 +81,21 @@ export interface CollaborationSystemMessage {
  * Store's persisted copies, the agent tool, the user routes, runtime notices)
  * goes through it, so a title and the labels it was built from cannot drift.
  */
+/**
+ * `kind` names the fact, so a runtime item names itself rather than
+ * `collaboration`: its title carries no task reference, and a client that
+ * dispatches on `kind` must not go looking for one. A row whose item kind is
+ * unknown keeps the old value — that path exists only for a delivery queued
+ * before producers recorded their kind.
+ */
+export function projectionKind(input: {
+  systemAuthor?: boolean;
+  runtimeItem?: RuntimeItemKind;
+}): string {
+  if (!input.systemAuthor) return "collaboration";
+  return input.runtimeItem ?? "collaboration";
+}
+
 export function buildCollaborationSystemMessage(
   input: CollaborationSystemMessageInput,
 ): CollaborationSystemMessage {
@@ -89,7 +109,7 @@ export function buildCollaborationSystemMessage(
     title,
     body: input.body,
     data: {
-      kind: "collaboration",
+      kind: projectionKind(input),
       messageId: input.messageId,
       ...(input.systemAuthor ? {} : { sourceTaskId: input.sourceTaskId }),
       sourceLabel,
@@ -144,7 +164,7 @@ export function buildCollaborationBroadcast(
   return {
     type: "system_message",
     taskId: input.taskId,
-    kind: "collaboration",
+    kind: projectionKind(input),
     messageId: input.messageId,
     ...(input.systemAuthor ? {} : { sourceTaskId: input.sourceTaskId }),
     sourceLabel: input.systemAuthor ? RUNTIME_AUTHOR_LABEL : input.sourceLabel,

@@ -19,6 +19,7 @@ import {
 import { shouldArm } from "./task-collaboration.ts";
 import {
   RUNTIME_AUTHOR_LABEL,
+  RUNTIME_ITEM_KINDS,
   buildCollaborationSystemMessage,
   isRuntimeItemKind,
   type CollaborationBroadcastRequest,
@@ -4086,7 +4087,11 @@ export class TaskManager implements ObligationHost {
     // runtime title, never the `a sent b` sentence.
     const runtimeItem = systemAuthor
       ? (() => {
-          const kind = this.store.getRuntimeItemKind(taskId, message.id);
+          const kind = this.store.getRuntimeItemKind(
+            taskId,
+            message.id,
+            RUNTIME_ITEM_KINDS,
+          );
           return isRuntimeItemKind(kind) ? kind : undefined;
         })()
       : undefined;

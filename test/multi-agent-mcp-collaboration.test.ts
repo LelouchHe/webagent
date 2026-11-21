@@ -213,6 +213,7 @@ describe("cross-agent collaboration", () => {
       .filter((data) => data.sourceLabel === "WebAgent runtime")
       .at(-1);
     assert.ok(noticeRow, "the notice has one visible row on the source");
+    assert.equal(noticeRow.kind, "task_outcome_notice");
     assert.equal(noticeRow.title, "Task handoff notice");
     assert.doesNotMatch(String(noticeRow.title), / sent /);
   });

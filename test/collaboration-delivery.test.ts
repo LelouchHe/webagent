@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type Database from "better-sqlite3";
 import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
@@ -592,9 +593,15 @@ describe("TaskManager collaboration delivery drain", () => {
       .getEvents("child")
       .filter((event) => event.type === "system_message")
       .map((event) => JSON.parse(event.data) as Record<string, unknown>)
-      .filter((data) => data.kind === "collaboration");
+      .filter((data) => data.kind === "handoff_reminder");
     assert.equal(rows.length, 1, "exactly one recipient-visible row");
     assert.equal(rows[0].sourceLabel, "WebAgent runtime");
+    assert.equal(
+      rows[0].kind,
+      "handoff_reminder",
+      "the row names the fact it reports, not the collaboration container: its " +
+        "title carries no task reference for a kind-dispatched client to mark",
+    );
     assert.equal(
       rows[0].title,
       "Task handoff required",
@@ -608,6 +615,78 @@ describe("TaskManager collaboration delivery drain", () => {
     );
     assert.equal("sourceTaskId" in rows[0], false);
     assert.equal(deliveryEvents.length, 0, "no mark for a system item");
+  });
+
+  it("drains a runtime item past an unrelated row holding malformed JSON", async () => {
+    store.createTask(
+      "parent",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-parent",
+      store.rootTaskId,
+    );
+    store.createTask(
+      "child",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-child",
+      "parent",
+    );
+    tasks.liveTasks.add("child");
+    const prompts: string[] = [];
+    tasks.attachExecutionBridge({
+      ...mockBridgeStubs(),
+      async prompt(_taskId: string, text: string) {
+        prompts.push(text);
+      },
+    });
+    tasks.beginAgentTurn("child", { origin: "interactive" });
+
+    // `events.data` is unconstrained TEXT, so a row can hold unparseable JSON —
+    // a hand-edited database, or a writer from an older version. The recovered
+    // item kind is a display detail, and a drain that cannot read it must still
+    // deliver: `claimQueuedDeliveries` has already marked this batch delivered,
+    // so a throw here loses the message for good.
+    //
+    // Two rows, one on each side of the audit event the reminder writes: a scan
+    // in insertion order meets the older one first, and a newest-first read
+    // meets the newer one first. Neither may end the drain.
+    const db = (store as unknown as { db: Database.Database }).db;
+    const insertMalformed = (): void => {
+      const nextSeq = (
+        db
+          .prepare(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE task_id = ?",
+          )
+          .get("child") as { next: number }
+      ).next;
+      db.prepare(
+        `INSERT INTO events (task_id, seq, type, data, from_ref, created_at)
+         VALUES (?, ?, 'handoff_reminder', ?, 'system', ?)`,
+      ).run("child", nextSeq, '{"messageId": "trunc', Date.now());
+    };
+    insertMalformed();
+
+    tasks.submitObligationReminder("parent", "child");
+    insertMalformed();
+
+    tasks.endTurn("child");
+    await waitFor(() => prompts.length === 1, {
+      message: "a malformed sibling row must not lose the claimed batch",
+    });
+    assert.match(prompts[0], /runtime-injected closing turn/i);
+
+    const rows = store
+      .getEvents("child")
+      .filter((event) => event.type === "system_message")
+      .map((event) => JSON.parse(event.data) as Record<string, unknown>);
+    assert.equal(
+      rows.at(-1)?.title,
+      "Task handoff required",
+      "the delivered item still names itself after the unreadable row",
+    );
   });
 
   it("keeps the account when an unrelated delivery fails", async () => {

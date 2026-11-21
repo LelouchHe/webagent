@@ -94,10 +94,11 @@ time. An entry without a "closing condition" is a wish, not an issue.
   kind, so the row written at drain recovers the kind from the audit event the
   producer wrote on the same task. A system delivery queued before that event
   recorded the message id drains as `WebAgent runtime` instead of
-  `Task handoff required` / `Task handoff notice`; a third producer that
-  forgets the event lands the same way. The label is honest but unnamed.
-  *Closing:* write the audit event inside `createSystemDelivery`, so the item
-  record and its delivery cannot diverge.
+  `Task handoff required` / `Task handoff notice`, and keeps `kind:
+  collaboration`. The label is honest but unnamed. The lookup reads the two
+  candidate event types only and parses their data in JS, so one unreadable row
+  cannot fail a drain. *Closing:* write the audit event inside
+  `createSystemDelivery`, so the item record and its delivery cannot diverge.
 - **A soft-deleted task's share cannot be revoked.** The tombstone path keeps
   history but leaves the published snapshot addressable. *Closing:* revoke on
   tombstone and record the revocation in the share row.
