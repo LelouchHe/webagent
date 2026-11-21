@@ -214,7 +214,7 @@ describe("cross-agent collaboration", () => {
     });
     const result = toolResult(waiting.json);
     assert.equal(result.isError, undefined);
-    assert.match(JSON.stringify(result), /cannot see what will wake it/);
+    assert.match(JSON.stringify(result), /No visible wake source/);
     assert.match(JSON.stringify(result), /15 minutes/);
     assert.equal(harness.store.getTask(childId)?.workflow_status, "waiting");
     assert.ok(harness.tasks.hasOpenObligation(parentId, childId));
@@ -249,7 +249,7 @@ describe("cross-agent collaboration", () => {
     assert.equal(toolResult(waiting.json).isError, undefined);
     assert.doesNotMatch(
       JSON.stringify(toolResult(waiting.json)),
-      /cannot see what will wake it/,
+      /No visible wake source/,
       "a queued message is a visible wake source",
     );
     assert.equal(harness.store.getTask(childId)?.workflow_status, "waiting");

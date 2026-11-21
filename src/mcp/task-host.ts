@@ -548,9 +548,7 @@ export function createMcpTaskToolHost(deps: {
       }
       if (silenceWatchMs === undefined) return {};
       return {
-        note:
-          "No child owes this Task an update and no message is queued to it, so the runtime cannot see what will wake it. " +
-          `If there is no agent activity for ${formatSilence(silenceWatchMs)}, the requester is notified (no_activity).`,
+        note: `No visible wake source; the requester is notified after ${formatSilence(silenceWatchMs)} without agent activity.`,
       };
     },
   };

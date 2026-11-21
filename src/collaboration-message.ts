@@ -1,8 +1,7 @@
 import { formatTaskReference } from "./shared/task-reference.ts";
 import { isoFromMillis } from "./shared/time.ts";
+import type { CollaborationDeliveryStatus } from "./store.ts";
 import type { AgentEvent } from "./types.ts";
-
-export type DeliveryMarkStatus = "queued" | "delivered" | "failed";
 
 export type CollaborationRole = "source" | "target" | "supervisor";
 
@@ -84,7 +83,7 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
   taskId: string;
   role: CollaborationRole;
   systemAuthor?: boolean;
-  deliveryStatus?: DeliveryMarkStatus;
+  deliveryStatus?: CollaborationDeliveryStatus;
   deliveredAt?: string;
   deliveryFailureReason?: string;
 }
@@ -93,7 +92,7 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
 export type CollaborationBroadcastInput = CollaborationBroadcastRequest;
 
 export interface CollaborationDeliverySnapshot {
-  status: DeliveryMarkStatus;
+  status: CollaborationDeliveryStatus;
   deliveredAt: number | null;
   failureReason: string | null;
 }

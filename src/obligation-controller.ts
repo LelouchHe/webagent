@@ -64,11 +64,17 @@ interface Account {
   stopped: boolean;
 }
 
-/** A silence window: a running turn, or a `waiting` with no visible wake source. */
+/**
+ * One silence window per target. It exists while a turn runs, and outlives the
+ * turn when the target reported `waiting` with no visible wake source.
+ */
 interface SilenceWatch {
   lastActivityAt: number;
   /** The silence notice was already emitted for this window. */
   noticed: boolean;
+  inTurn: boolean;
+  /** A `waiting` with no visible wake source keeps the watch after the turn. */
+  waiting: boolean;
 }
 
 /**
@@ -77,9 +83,7 @@ interface SilenceWatch {
  */
 export class ObligationController {
   private readonly accounts = new Map<string, Account>();
-  private readonly turns = new Map<string, SilenceWatch>();
-  /** Targets that reported `waiting` with no runtime-visible wake source. */
-  private readonly waits = new Map<string, SilenceWatch>();
+  private readonly watches = new Map<string, SilenceWatch>();
   /** Targets whose current turn carried a `task_update` of any status. */
   private readonly updated = new Set<string>();
   private timer: TimerHandle | undefined;
@@ -136,8 +140,13 @@ export class ObligationController {
       account.noUpdateTurns = 0;
       account.stopped = false;
     }
-    if (this.turns.has(targetTaskId)) this.updated.add(targetTaskId);
-    if (this.waits.delete(targetTaskId)) this.schedule();
+    const watch = this.watches.get(targetTaskId);
+    if (watch?.inTurn) this.updated.add(targetTaskId);
+    if (watch?.waiting) {
+      watch.waiting = false;
+      if (!watch.inTurn) this.watches.delete(targetTaskId);
+      this.schedule();
+    }
   }
 
   /**
@@ -147,10 +156,9 @@ export class ObligationController {
    */
   noteUnwatchedWaiting(targetTaskId: string): boolean {
     if (this.disposed || !this.accounts.has(targetTaskId)) return false;
-    this.waits.set(targetTaskId, {
-      lastActivityAt: this.now(),
-      noticed: false,
-    });
+    const watch = this.watches.get(targetTaskId);
+    if (watch) watch.waiting = true;
+    else this.watch(targetTaskId, { inTurn: false, waiting: true });
     this.schedule();
     return true;
   }
@@ -165,7 +173,7 @@ export class ObligationController {
     const account = this.accounts.get(targetTaskId);
     if (!account) return;
     this.accounts.delete(targetTaskId);
-    this.waits.delete(targetTaskId);
+    this.watches.delete(targetTaskId);
     this.log("account settled", {
       sourceTaskId: account.sourceTaskId.slice(0, 8),
       targetTaskId: targetTaskId.slice(0, 8),
@@ -179,8 +187,7 @@ export class ObligationController {
     if (!account) return;
     this.accounts.delete(targetTaskId);
     this.updated.delete(targetTaskId);
-    this.turns.delete(targetTaskId);
-    this.waits.delete(targetTaskId);
+    this.watches.delete(targetTaskId);
     this.emit(account, "target_removed");
     this.schedule();
   }
@@ -189,28 +196,20 @@ export class ObligationController {
   beginTurn(targetTaskId: string): void {
     if (this.disposed) return;
     this.updated.delete(targetTaskId);
-    // A real turn takes over: its end is checked against the account.
-    this.waits.delete(targetTaskId);
-    this.turns.set(targetTaskId, {
-      lastActivityAt: this.now(),
-      noticed: false,
-    });
+    // A new turn opens a new window; its end is checked against the account.
+    this.watch(targetTaskId, { inTurn: true, waiting: false });
     this.schedule();
   }
 
   /** The turn stopped running without a turn-end check (release/reset). */
   clearTurnWatcher(targetTaskId: string): void {
-    this.turns.delete(targetTaskId);
-    this.schedule();
+    this.leaveTurn(targetTaskId);
   }
 
   noteAgentActivity(targetTaskId: string): void {
-    const turn = this.turns.get(targetTaskId);
-    const wait = this.waits.get(targetTaskId);
-    if (!turn && !wait) return;
-    const now = this.now();
-    if (turn) turn.lastActivityAt = now;
-    if (wait) wait.lastActivityAt = now;
+    const watch = this.watches.get(targetTaskId);
+    if (!watch) return;
+    watch.lastActivityAt = this.now();
     this.schedule();
   }
 
@@ -218,10 +217,7 @@ export class ObligationController {
   onTargetTurnEnded(targetTaskId: string, cancelled = false): void {
     if (this.disposed) return;
     const hadUpdate = this.updated.delete(targetTaskId);
-    this.turns.delete(targetTaskId);
-    // A waiting reported in this turn is watched from the turn's end.
-    const wait = this.waits.get(targetTaskId);
-    if (wait) wait.lastActivityAt = this.now();
+    this.leaveTurn(targetTaskId);
     const account = this.accounts.get(targetTaskId);
     if (account && !cancelled) {
       if (hadUpdate) {
@@ -246,9 +242,8 @@ export class ObligationController {
 
   /** A runtime reset ended the target's turn without a turn-end check. */
   abortTurn(targetTaskId: string): void {
-    this.turns.delete(targetTaskId);
     this.updated.delete(targetTaskId);
-    this.schedule();
+    this.leaveTurn(targetTaskId);
   }
 
   /** The task is gone. A target's account reports; a source's just goes away. */
@@ -262,9 +257,8 @@ export class ObligationController {
       if (inbound.sourceTaskId !== taskId) continue;
       this.accounts.delete(targetTaskId);
     }
-    this.turns.delete(taskId);
+    this.watches.delete(taskId);
     this.updated.delete(taskId);
-    this.waits.delete(taskId);
     this.schedule();
   }
 
@@ -275,9 +269,8 @@ export class ObligationController {
       this.accounts.delete(targetTaskId);
       this.emit(account, "target_removed");
     }
-    this.turns.delete(targetTaskId);
+    this.watches.delete(targetTaskId);
     this.updated.delete(targetTaskId);
-    this.waits.delete(targetTaskId);
     this.schedule();
   }
 
@@ -303,12 +296,24 @@ export class ObligationController {
 
   // --- The single watchdog timer ---
 
-  /** A running turn's own watch supersedes the target's waiting watch. */
-  private *silenceWatches(): Iterable<[string, SilenceWatch]> {
-    yield* this.turns;
-    for (const entry of this.waits) {
-      if (!this.turns.has(entry[0])) yield entry;
-    }
+  private watch(
+    targetTaskId: string,
+    kind: Pick<SilenceWatch, "inTurn" | "waiting">,
+  ): void {
+    this.watches.set(targetTaskId, {
+      lastActivityAt: this.now(),
+      noticed: false,
+      ...kind,
+    });
+  }
+
+  /** The turn ended: a standing `waiting` keeps a fresh window from now. */
+  private leaveTurn(targetTaskId: string): void {
+    const watch = this.watches.get(targetTaskId);
+    if (watch?.waiting)
+      this.watch(targetTaskId, { inTurn: false, waiting: true });
+    else this.watches.delete(targetTaskId);
+    this.schedule();
   }
 
   private schedule(): void {
@@ -318,7 +323,7 @@ export class ObligationController {
     }
     if (this.disposed) return;
     let earliest: number | undefined;
-    for (const [targetTaskId, watch] of this.silenceWatches()) {
+    for (const [targetTaskId, watch] of this.watches) {
       if (watch.noticed) continue;
       if (!this.accounts.has(targetTaskId)) continue;
       const deadline = watch.lastActivityAt + this.silenceMs;
@@ -337,7 +342,7 @@ export class ObligationController {
   private fireSilence(): void {
     if (this.disposed) return;
     const now = this.now();
-    for (const [targetTaskId, watch] of this.silenceWatches()) {
+    for (const [targetTaskId, watch] of this.watches) {
       if (watch.noticed) continue;
       if (watch.lastActivityAt + this.silenceMs > now) continue;
       const account = this.accounts.get(targetTaskId);

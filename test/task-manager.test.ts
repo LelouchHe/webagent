@@ -1196,15 +1196,15 @@ describe("TaskManager", () => {
       store.createTask("watch-task", tmpDir, "auto", "test-agent");
       sm.beginAgentTurn("watch-task", { origin: "interactive" });
       assert.equal(
-        (sm as any).obligations.turns.size,
+        (sm as any).obligations.watches.size,
         0,
         "a projected busy turn alone starts no clock",
       );
       sm.notePromptSubmitted("watch-task");
-      assert.equal((sm as any).obligations.turns.size, 1);
+      assert.equal((sm as any).obligations.watches.size, 1);
       sm.endTurn("watch-task");
       assert.equal(
-        (sm as any).obligations.turns.size,
+        (sm as any).obligations.watches.size,
         0,
         "turn end clears the clock",
       );
@@ -1237,7 +1237,7 @@ describe("TaskManager", () => {
       sm.activePrompts.delete("child");
       sm.syncBusy("child");
       (sm as any).obligations.beginTurn("child", "prompt-1");
-      assert.equal((sm as any).obligations.turns.size, 1);
+      assert.equal((sm as any).obligations.watches.size, 1);
 
       const bridge = {
         async newSession() {
@@ -1266,7 +1266,7 @@ describe("TaskManager", () => {
 
       // Mutation evidence: without abortTurn in resetTaskRuntime the observed
       // turn survives the rotation and later reports for an idle task.
-      assert.equal((sm as any).obligations.turns.size, 0);
+      assert.equal((sm as any).obligations.watches.size, 0);
     });
 
     it("rotates the ACP execution while preserving the WebAgent task", async () => {
