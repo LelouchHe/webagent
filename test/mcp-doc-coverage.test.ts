@@ -89,15 +89,13 @@ function registeredTools(): Record<string, RegisteredTool> {
 }
 
 function documentedToolNames(): string[] {
-  const toolsStart = MCP_DOC.indexOf("## Tools");
-  const nextHeading = MCP_DOC.indexOf("\n### ", toolsStart + 1);
+  const toolsStart = MCP_DOC.indexOf("\n## Tools");
+  const nextTopHeading = MCP_DOC.indexOf("\n## ", toolsStart + 1);
   const section = MCP_DOC.slice(
     toolsStart,
-    nextHeading < 0 ? MCP_DOC.length : nextHeading,
+    nextTopHeading < 0 ? MCP_DOC.length : nextTopHeading,
   );
-  return [...section.matchAll(/^\|\s*`([^`]+)`\s*\|/gm)].map(
-    (match) => match[1],
-  );
+  return [...section.matchAll(/^### `([^`]+)`$/gm)].map((match) => match[1]);
 }
 
 describe("MCP documentation coverage", () => {
@@ -131,16 +129,6 @@ describe("MCP documentation coverage", () => {
       }
     });
   }
-
-  it("keeps task_create as a two-step operation", () => {
-    const sectionStart = MCP_DOC.indexOf("### `task_create`");
-    const section = MCP_DOC.slice(
-      sectionStart,
-      MCP_DOC.indexOf("\n### ", sectionStart + 1),
-    );
-    assert.match(section, /task_send/);
-    assert.doesNotMatch(section, /required title\s+and brief/i);
-  });
 
   it("points to the advertised server instructions instead of copying them", () => {
     const { headings } = scanMarkdown(MCP_DOC);

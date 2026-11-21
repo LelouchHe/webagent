@@ -50,8 +50,9 @@ update check (below). It is refused, with nothing recorded, unless something
 will wake the Task: an open account it is the source of, or a delivery already
 queued to it. A refused `waiting` does not count as the turn's update.
 
-Waiting on a human, an external event, missing information, or a permission is
-`blocked`, not `waiting`, because nothing will wake the Task by itself.
+What each status means to the agent is the `status` parameter description in
+[`src/mcp/tools.ts`](../src/mcp/tools.ts). In short: `waiting` is only for
+waiting on another Task; anything else that stops progress is `blocked`.
 
 Runtime-set status stays separate: a drain sets `running`, and a finished turn
 turns `running` into `idle`. A turn end never overwrites `waiting`.
@@ -72,9 +73,9 @@ Turn boundaries are the only clock:
    both the miss count and the stop-reminding flag.
 4. A cancelled turn triggers nothing.
 
-The reminder is a runtime-injected turn that asks for one typed update: `done`,
-`blocked`, or `waiting` when another Task will hand off and wake the target. It
-is queued through the normal delivery path, so it is held while the target's
+The reminder is a runtime-injected turn asking for one typed update; its text
+is `handoffReminderText()` in [`src/task-manager.ts`](../src/task-manager.ts).
+It is queued through the normal delivery path, so it is held while the target's
 turn runs and drained at its boundary like any other item. Runtime items are
 labeled as authored by the WebAgent runtime, not by the named task; the
 recipient sees exactly one row, written at drain.
@@ -94,7 +95,6 @@ itself failed (a failed prompt, `/clear`, or an execution owner replacement),
 the source gets one `target_removed` notice and the account is gone. An
 unrelated delivery to the same target failing does not settle the account. A delivery that is queued to a deleted target is failed
 with `target_deleted` by the delivery layer; the same account removal covers it.
-This is the only notice that replaces the old separate delivery-failure notice.
 
 ## Persistence and scope
 
@@ -110,10 +110,5 @@ durable and unaffected.
 
 ## Known edges
 
-Recorded, not guarded, in [Known issues](known-issues.md):
-
-- One account per edge means several requests share it. One `done` or `blocked`
-  settles all of them; the requester and target clarify the mapping in prose.
-- Because accounts are process-local, after a restart a Task whose child is
-  still working cannot report `waiting` until it dispatches again. The child's
-  `done` or `blocked` still reaches it as the current parent.
+The limits of this mechanism (shared accounts per edge, process-local state)
+are recorded in [Known issues](known-issues.md#collaboration-accounting-limits).

@@ -6,8 +6,16 @@ session. The name is a client-visible label (some clients namespace tools as
 lets an agent inspect and coordinate with tasks in its local task family without
 granting access to unrelated tasks.
 
-This document is the tool reference. For the user-facing principles and
-examples, see the [Task Manual](task-manual.md) and [Task Examples](task-examples.md).
+This document is the reference for what the code does not say to the agent:
+authentication, transport, result shapes, limits, errors, and the rows each
+call records. Each fact has one home:
+
+| Fact | Home |
+| --- | --- |
+| What each tool and parameter does, as the agent sees it | tool and parameter descriptions in [`src/mcp/tools.ts`](../src/mcp/tools.ts) and [`src/mcp/task-create-description.ts`](../src/mcp/task-create-description.ts) |
+| The cross-tool model advertised at `initialize` | `MCP_SERVER_INSTRUCTIONS` in [`src/mcp/server.ts`](../src/mcp/server.ts) |
+| Accounts, reminders, notices, and settlement | [Task Obligations](task-obligations.md) |
+| How to use Tasks well | [Task Manual](task-manual.md) and [Task Examples](task-examples.md) |
 
 ## Scope and authentication
 
@@ -88,61 +96,7 @@ cannot drift.
 Clients may surface these instructions through their own discovery UI or tool;
 they are not a replacement for the individual tool descriptions.
 
-### Directed dispatch closure
-
-When an agent-authored parent Task dispatches work directly to a child Task, the
-runtime opens one process-local account for that edge. The account is settled by
-the child's `done` or `blocked`; `waiting` is an update, not an account. Turn
-boundaries are the only clock: a turn ends with no update, the target gets one
-closing reminder; another such turn reports `no_update` and stops reminding. A
-running turn silent for 15 minutes reports `no_activity`, and a target that
-leaves the edge reports `target_removed`. Notices state facts, not verdicts. The
-full rules are in [Task Obligations](task-obligations.md); the semantic boundary
-is in [Task semantic authority](implementation-invariants.md#task-semantic-authority).
-
-There is no correlation token and no new parameter on `task_update`. State is
-process-local: a restart forgets open accounts.
-
-## Lifecycle at a glance
-
-The MCP surface participates in this loop:
-
-```mermaid
-sequenceDiagram
-    participant P as Parent Task
-    participant C as Child Task
-
-    P->>C: task_create
-    P->>C: task_send(Task Contract)
-    C->>C: Execute work
-    C-->>P: task_update(done|blocked)
-    P->>P: Verify contract, result, and evidence
-    alt Accepted
-        P->>P: Complete its own Task when ready
-    else Follow-up needed
-        P->>C: task_send(focused follow-up)
-        C->>C: Continue work
-    else Blocked
-        P->>C: task_send(missing decision or input)
-        C->>C: Resume work
-    end
-```
-
-`task_send` does not complete the current Task. A `done` Task remains available
-for history and follow-up. Parent Tasks receive direct child handoffs only;
-WebAgent does not automatically rebroadcast raw child reports to ancestors.
-
 ## Tools
-
-| Tool | Purpose |
-| --- | --- |
-| `task_list` | List the current task, its parent, and its direct children, each with `workflowStatus`, `executionState`, `lastEventAt`, and `lastAgentActivityAt`. |
-| `task_query` | Read a bounded, compact history page for the current task or one visible relative. |
-| `task_read` | Read complete persisted history rows by task-local sequence from the current task or one visible relative. |
-| `task_cancel` | Stop the current execution of a child Task while preserving its history. |
-| `task_create` | Create a direct child Task with optional execution overrides. It does not run until it receives a message. |
-| `task_send` | Queue a durable message, delivered at the recipient's next turn boundary. An agent's message to its direct child opens or keeps open that edge's account. |
-| `task_update` | Record a typed `waiting`, `blocked`, or `done` update. `done` and `blocked` are delivered to the requester and settle the open account; `waiting` only records the status. There is no correlation parameter. This does not delete or permanently close the Task. |
 
 ### `task_list`
 
@@ -326,8 +280,8 @@ keeps its normal contrast.
 `@X` is the Task's title, falling back to its short id, exactly like a
 collaboration row. A user-initiated cancel writes neither row.
 
-A cancelled turn triggers no closing reminder and no notice. The account stays
-open, so a later `done` or `blocked` still settles it.
+How a cancelled turn affects an open account is defined in
+[Task Obligations](task-obligations.md#turn-end-check).
 
 ### `task_create`
 
@@ -377,55 +331,20 @@ or the target session's own current value. `inherited` appears only when a value
 genuinely cannot be determined, so a cross-agent child shows the target's
 defaults instead of claiming an inheritance that did not happen.
 
-This creates an Agent-delegated Task that does not run until it receives a
-message through `task_send`. Failures return an MCP tool error rather than an empty ID.
 
 ### `task_send`
 
-Queue a durable message to a visible Task. It is delivered at the recipient's
-next turn boundary and wakes it, including a Task marked `blocked` or `done`.
-
-`task_send` is not a lifecycle handoff and does not complete the current Task.
-Use `task_update(waiting|blocked|done)` for a typed update. The recipient receives the full message body; important
-findings are not discarded because the message is coordination.
+The message is stored before the call returns, so it survives a restart, and is
+delivered in order with any other queued items. Whether it opens an account is
+defined in [Task Obligations](task-obligations.md#opening-an-account).
 
 ### `task_update`
-
-Record a typed update for the current Task:
 
 ```ts
 task_update(status: "waiting" | "blocked" | "done", body: string)
 ```
 
-- `done`: the result, completion evidence, limitations, and a useful next step.
-- `blocked`: the missing input or decision, and how the Task can resume.
-- `waiting`: work is still in progress and another Task will hand off and wake
-  this one, typically a child it dispatched. Waiting on a human, an external
-  event, missing information, or a permission is `blocked`, not `waiting`,
-  because nothing will wake the Task by itself.
-
-`done` and `blocked` are delivered to the requester and wake it. The requester
-is the source of the open account on this edge; with no open account, the update
-goes to the current parent. A late update still settles an open account. The
-call also records the update event and changes the reported status.
-
-`waiting` is **not** delivered, does not wake anyone, and does not settle the
-account. It only records `workflowStatus = waiting` and an event. It still
-counts as this turn's update, so a turn that reports `waiting` gets no closing
-reminder. The call is refused, and nothing is recorded, unless something will
-wake the Task: an open account it is the source of (a child it dispatched still
-owes an update) or a message already queued to it.
-
-There is **no new parameter** and no correlation id. One account exists per
-parent→child edge, so several requests share it and one `done` or `blocked`
-settles all of them; the Tasks clarify the mapping in prose. A turn end never
-overwrites `waiting`.
-
-When a dispatch turn ends without any update, the runtime may inject one closing
-reminder turn; another such turn reports `no_update` and stops reminding. The
-rules are in [Task Obligations](task-obligations.md#turn-end-check).
-
-A `done` account is a result submission, not proof that the parent has accepted
-it. The parent or verifier checks the original Task Contract and may accept it,
-request focused follow-up with `task_send`, or keep it blocked. The Task and its
-history remain available after either status.
+The call records one `task_update` event on the current Task and sets its
+`workflowStatus`. Routing, settlement, the `waiting` precondition, and the
+turn-end check are defined in [Task Obligations](task-obligations.md). A
+refused `waiting` is an MCP tool error and records nothing.

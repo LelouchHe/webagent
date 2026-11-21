@@ -127,8 +127,8 @@ the Task is gone or renamed.
 
 A `+`-created Task is user-owned and interactive. It can receive messages and
 child results, but the runtime does not automatically require a typed
-`task_update(done|blocked)` handoff after each turn. Agent-created delegated
-Tasks follow the lifecycle handoff contract described in the [Task Manual](task-manual.md).
+`task_update(done|blocked)` handoff after each turn; only an agent's dispatch
+opens an account ([Task Obligations](task-obligations.md)).
 
 Autocomplete serves the second field. Once a title is present the menu leads
 with the action row for the current input — `↵ create 'api-fix'`, extended to

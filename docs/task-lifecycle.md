@@ -106,5 +106,5 @@ falls under the same definition and is therefore reachable from `/archive`.
 
 - Normative rules ("must"): [Implementation Invariants](implementation-invariants.md#execution-is-replaceable-the-task-is-not).
 - Columns, indexes, foreign keys, delete SQL: [Database Schema](schema.md#cascade--lifecycle).
-- Debt, delivery outcomes, obligation state machine: [Task Obligations](task-obligations.md#rotation-does-not-end-the-debt).
+- Accounts, reminders, and notices: [Task Obligations](task-obligations.md); rotation keeps the account: [Implementation Invariants](implementation-invariants.md#execution-is-replaceable-the-task-is-not).
 - User-facing command semantics: [Features](features.md) and [Task Manual](task-manual.md).

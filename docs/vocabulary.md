@@ -90,15 +90,14 @@ entity; they name the runtime's bookkeeping.
 
 | Term | Means |
 |---|---|
-| **directed obligation** | The process-local account one source Task keeps for one target, opened by an agent-authored direct parent→child dispatch. Not a persisted entity, and not a Task. |
-| **account** | The target's typed `done` or `blocked` report submitted with `task_update`; it settles the open obligation. A result submission, not proof that the parent accepted it. `waiting` is an update, not an account: it records status without settling. |
-| **settlement** | The atomic step that records a `done` or `blocked`, updates the reported status, creates the account message to the stored source, and deletes the open account. There is no correlation parameter. |
+| **account** | The process-local record one source Task keeps for one target, opened by an agent-authored direct parent→child dispatch and settled by the target's `done` or `blocked`. Not a persisted entity, and not a Task. |
+| **settlement** | The atomic step that records a `done` or `blocked`, updates the reported status, delivers the update to the stored source, and closes the open account. A result submission, not proof that the source accepted it. |
 | **stored source** | The source Task recorded when the account was opened. A settlement routes there even if the task tree changed afterwards. |
 | **closing reminder** | A runtime-injected closing turn that asks the target for a typed update after a turn that carried none. It is a recovery aid, not a lifecycle verdict. |
 
 **`handoff` stays reserved.** It continues to mean the provider/lifecycle handoff
 and the session-compaction handoff (for example `pending_compact_summary`); it is
-not another name for the obligation, its account, or settlement. Prefer *account*
+not another name for the account or settlement. Prefer *account*
 or *settlement* for this mechanism.
 
 ## Execution authority vocabulary

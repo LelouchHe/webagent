@@ -3,8 +3,9 @@
 These short examples show common ways to use Tasks. They focus on the
 collaboration shape, not on a particular application or model.
 
-For the underlying principles, see [Task Manual](task-manual.md). For the
-complete tool contract, see [Task MCP Control Plane](task-mcp.md).
+For the underlying principles, see [Task Manual](task-manual.md). What each
+tool does is in its own description; the reference contract is in
+[Task MCP Control Plane](task-mcp.md).
 
 ## Work directly in the current Task
 
@@ -175,9 +176,10 @@ Next step:
   the smallest action that follows
 ```
 
-The coordinator completes its own Task with its own handoff; it does not
-blindly forward the children's raw reports. The coordinator completes its own
-Task with:
+If the coordinator is itself a delegated child, it reports
+`task_update(waiting)` after fanning out and ends the turn; each child's
+handoff wakes it. It does not blindly forward the children's raw reports, and
+completes its own Task with:
 
 ```text
 task_update(
@@ -213,33 +215,17 @@ that should be reviewed as a unit.
 
 ## Recover context from the current Task
 
-Normal collaboration uses messages and handoffs, not history queries. History
-is also available for the current Task when `compact` or `clear` has moved
-important earlier context out of the active model context:
+Normal collaboration uses messages and handoffs, not history queries. After
+`/compact` or `/clear`, index the current Task's history and read the rows you
+need:
 
 ```text
 task_query({ range: [-50, -1] })
+task_read({ seqs: [42, 43] })
 ```
 
-With no `task_id`, this indexes the current Task's persisted history as a flat
-set of rows. Use the returned `max_seq` and absolute ranges to read older rows.
-The history itself is not compacted or cleared: `/compact` changes the active
-model context, and `/clear` rotates the active execution while keeping the
-Task's history.
-
-When the index is not enough, read one or more complete rows in one call:
-
-```text
-task_read({ task_id: "<task-id-from-query>", seqs: [42, 43] })
-```
-
-Omit `task_id` to read the current Task's own history.
-
-These tools expose persisted history; they do not restore hidden model
-reasoning or automatically recreate the old model context. They are also
-appropriate when a delivery appears to be missing, a Task must be recovered,
-or an earlier decision needs to be revisited. Do not use either tool as a
-waiting loop or as a replacement for a useful handoff.
+The same tools help when a delivery seems missing or an earlier decision needs
+revisiting. Do not use them as a waiting loop or in place of a handoff.
 
 ## Keep the example small
 

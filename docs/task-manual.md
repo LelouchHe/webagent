@@ -1,9 +1,11 @@
 # Task Manual
 
-This is a field guide to using Tasks well. It describes the principles and
-mental model behind Task coordination, not the detailed MCP tool contract. See
-[Task Examples](task-examples.md) for short usage patterns and [Task MCP Control
-Plane](task-mcp.md) for tool names, inputs, and boundaries.
+This is a field guide to using Tasks well: the policy and mental model, not
+the mechanism. What each tool does is in its description
+([`src/mcp/tools.ts`](../src/mcp/tools.ts)), the accounting rules are in
+[Task Obligations](task-obligations.md), and the reference contract is in
+[Task MCP Control Plane](task-mcp.md). See [Task Examples](task-examples.md)
+for short usage patterns.
 
 ## Who decides
 
@@ -57,24 +59,16 @@ child to work without repeatedly asking what it is supposed to do.
 
 ### Choose where it runs
 
-A Task's agent is an execution choice, not a container. `task_create` takes an
-optional `agent`: omit it to inherit your own, or name a configured agent to
-run the child somewhere else. `model` and `thinking` are passed to that
-session and validated there — an unsupported value fails with the target's own
-candidates, and an unknown agent fails immediately. Do not guess what an agent
-supports; ask for a value you know, or let the target's default stand.
-
-Crossing agents changes nothing about coordination: the child is still your
-direct child, messages still arrive the same way, and the account still settles
-the same obligation.
+A Task's agent is an execution choice, not a container: name another
+configured agent in `task_create` only when the work benefits from it. Do not
+guess what an agent supports; ask for a value you know, or let the target's
+default stand. Crossing agents changes nothing about coordination.
 
 ### Dispatched work is unattended
 
-Nobody is watching a Task's own page while you work on it, so a turn opened by
-an agent message — including your own dispatched instructions and a runtime
-reminder — answers its tool-permission requests on the host side instead of
-waiting for a person. Every answer is recorded as a `permission_response`, so
-the trail is complete even though nothing was clicked.
+A turn opened by an agent message or a runtime reminder answers its own
+tool-permission requests on the host side; no person is there to click (see
+[Task semantic authority](implementation-invariants.md#task-semantic-authority)).
 
 Two consequences worth internalizing:
 
@@ -86,9 +80,8 @@ Two consequences worth internalizing:
   turn keeps the permission prompt and the Task's `mode`. Do not design a
   workflow that depends on a human answering in a Task's page.
 
-To stop a child's current execution, use `task_cancel`. It preserves the Task
-and its history, records who cancelled what and why on both sides of the edge,
-and does not mark the Task `done`; a later `task_send` can hand it new work.
+To stop a child's current execution, use `task_cancel`; a later `task_send`
+can hand it new work.
 
 ## The Task lifecycle
 
@@ -111,32 +104,20 @@ flowchart TD
     J --> C
 ```
 
-`task_update(done, ...)` means that the current Agent is submitting its result;
-it does not prove that a parent has accepted the result. The handoff should
-include the conclusion, satisfied criteria, evidence, limitations, and a next
-step when useful. `task_update(blocked, ...)` should name the missing input or
+`task_update(done, ...)` submits a result; it does not mean a parent accepted
+it. The handoff should include the conclusion, satisfied criteria, evidence,
+limitations, and a next step when useful. `task_update(blocked, ...)` should name the missing input or
 decision and explain how the Task can resume.
 
 `task_send` is for ordinary coordination, questions, progress, and follow-up;
 it is not a terminal lifecycle handoff. A Task may send useful information and
 still need to continue or later submit `done` or `blocked`.
 
-A Task created by an Agent as a delegated child follows the handoff contract.
-A user-created interactive Task remains a user-controlled workspace: it can
-receive collaboration messages and important results, but the runtime does not
-automatically require a lifecycle handoff after each turn.
-
-After a parent accepts a result, the Task remains available for history and
-follow-up. A retrospective may be recorded after acceptance, but it is not a
-prerequisite for accepting the result. If an agent-authored direct parent→child
-dispatch turn ends without any typed update, WebAgent injects one closing
-reminder; another such turn reports `no_update` to the parent and stops
-reminding. This is a recovery aid, not a substitute for the Agent's typed
-update. `task_update(done|blocked)` closes that edge and wakes the requester;
-`waiting` records that the child is still working and settles nothing. There is
-no correlation parameter to copy back. A user prompt, a child message, and a
-runtime notice never open an account. The mechanism's details are in
-[Task Obligations](task-obligations.md).
+A delegated child owes its requester a typed `done` or `blocked`; the runtime
+reminds it and then tells the requester when it does not report (see
+[Task Obligations](task-obligations.md)). A user-created interactive Task owes
+nothing after each turn. After a parent accepts a result, the Task remains
+available for history and follow-up.
 
 ## Communicate through messages
 
@@ -168,31 +149,27 @@ to report.
 
 ## Use lifecycle states deliberately
 
-Use the lifecycle to communicate material state, not ordinary progress. These
-states describe the current execution record; `done` and `blocked` do not
-remove the Task or prevent a later continuation:
+Use the typed statuses to say whose move it is, not to report ordinary
+progress; send progress, findings, and decisions with `task_send`. None of them
+deletes or closes the Task.
 
-- **running** — work is in progress;
-- **idle** — no turn is currently running; this does not prove completion;
-- **blocked** — the current work cannot continue without a decision or missing input;
-- **done** — the current assignment is complete and its result has been handed off.
+- Report `done` when the assignment is complete, never for an intermediate
+  update.
+- Report `blocked` when the next move belongs to the requester or a person:
+  say what you need and what happens once you have it. The requester resumes
+  you with a message; a blocked state is not a reason to poll.
+- Report `waiting` when you have dispatched work to a child and will continue
+  once it hands off. Then end the turn, and finish later with `done` or
+  `blocked`.
 
-`task_update` is the typed lifecycle handoff for `blocked` and `done`; use
-`task_send` for ordinary progress, findings, and decisions. A blocked or done
-state does not delete or permanently close the Task. Its history remains
-available, and a later `task_send` can continue or resume it.
-
-A blocked Task should explain what it needs and what will happen after it gets
-that input. The parent resumes it by sending the decision or information. A
-blocked state is not a reason to poll, and a done state should not be used for
-an intermediate update. Create a new Task for follow-up work only when it
-needs a separate boundary, context, owner, or execution policy.
+Create a new Task for follow-up work only when it needs a separate boundary,
+context, owner, or execution policy.
 
 ## Let Tasks contribute at the right level
 
 The parent provides direction and resolves questions that cross boundaries.
-Children provide focused work and evidence. Sibling Tasks may exchange ideas,
-questions, and critiques when they are working on the same problem.
+Children provide focused work and evidence. Siblings cannot reach each other
+directly; when their findings should meet, the parent relays them.
 
 Keep independent analyses independent when diversity of thought matters. Share
 findings when another Task can use them to test an assumption, find a counter-
@@ -214,19 +191,11 @@ For code, identify the relevant file, symbol or line range, observed behavior,
 and causal mechanism. Prefer references and concise explanations over copying
 large files or entire transcripts.
 
-History inspection is an exception path, but it also applies to the current
-Task. Task history is persisted in the database and is not compacted or cleared.
-The word `compact` has two separate meanings here: `task_query` returns a
-bounded index of history, while `/compact` changes the active model context. Likewise, `/clear` rotates the active execution while keeping the
-Task's history.
-
-After `/compact` or `/clear`, use `task_query` without a target to index the
-current Task's persisted history, then use `task_read` with returned `seq`
-values for complete event rows when the index is not enough; `task_read`
-without a target reads the current Task. These tools expose stored events;
-they do not recreate hidden model reasoning or silently restore the old model
-context. Do not make history queries the normal way of passing results between
-Tasks.
+History inspection is an exception path. Task history survives `/compact`
+and `/clear`, so after either one `task_query` and `task_read` on the current
+Task recover what the model context lost; they return stored events, not hidden
+reasoning. Do not make history queries the normal way of passing results
+between Tasks.
 
 ## Keep the workflow proportional
 
