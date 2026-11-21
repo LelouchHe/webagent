@@ -164,6 +164,9 @@ describe("TaskManager", () => {
           sourceActor: "agent",
           body: "work",
         });
+        // Accounts open when a dispatch is handed over.
+        store.claimQueuedDeliveries(target);
+        (sm as any).obligations.arm(source, target);
       }
       assert.ok(sm.hasOpenObligation("parent", "child"));
       assert.ok(sm.hasOpenObligation("child", "grandchild"));
@@ -486,6 +489,9 @@ describe("TaskManager", () => {
         sourceActor: "agent",
         body: "Dispatch.",
       });
+      // The dispatch was handed over, so its account is open.
+      store.claimQueuedDeliveries("target");
+      (sm as any).obligations.arm("source", "target");
       assert.ok(sm.hasOpenObligation("source", "target"));
 
       await sm.deleteTask(undefined, "target");

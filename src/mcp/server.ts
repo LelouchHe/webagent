@@ -40,8 +40,9 @@ export const MCP_SERVER_NAME = "lelouchhe_webagent";
 export const MCP_SERVER_INSTRUCTIONS = [
   "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.",
   "Messages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.",
-  "An agent's task_send to a direct child opens one account for that edge; the child's task_update(done|blocked) settles it.",
-  "While an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target or failed dispatch notifies the requester (target_removed).",
+  "An agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.",
+  "While an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).",
+  "An agent's message that cannot be delivered notifies its sender (target_removed).",
   "Task history is the event log; summaries and updates are self-reports.",
 ].join("\n");
 

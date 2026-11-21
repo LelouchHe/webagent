@@ -9,7 +9,7 @@ import {
   emptyExecutionSlot,
   isEmptyExecutionSlot,
   type ArchiveTaskResult,
-  type CollaborationDeliveryRow,
+  type CollaborationDeliveryStatusChange,
   type CollaborationMessageRow,
   type TaskDelete,
   type TaskRow,
@@ -779,12 +779,10 @@ export class TaskManager implements ObligationHost {
     // One structural choke point: the Store emits exactly one fact per created
     // message and this observer decides the arming policy, so no creation path
     // can silently bypass it.
-    this.store.onCollaborationMessageCreated(({ message, delivery }) => {
-      this.onCollaborationMessageCreated(message, delivery);
-    });
     // The Store owns every delivery status write, so one observer covers the
     // drain, archive, clear, deletion, and failure paths for the sender mark.
     this.store.onDeliveryStatusChanged((change) => {
+      if (change.status === "failed") this.onDeliveryFailed(change);
       this.deliveryStatusBroadcast?.({
         type: "collaboration_delivery",
         taskId: change.sourceTaskId,
@@ -851,21 +849,21 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
-   * Pure arming policy over the post-commit creation fact: an agent-authored
-   * direct parent→child dispatch asks for an account; a user send, a sibling
-   * or child message, an account, and a runtime notice never do.
+   * The arming policy, applied when a batch is handed to its recipient: an
+   * agent-authored direct parent→child dispatch opens the account only once
+   * the target actually has it. A user send, a child message, and a runtime
+   * notice never open one.
    */
-  private onCollaborationMessageCreated(
-    message: CollaborationMessageRow,
-    _delivery: CollaborationDeliveryRow,
+  private armDelivered(
+    recipientTaskId: string,
+    messages: readonly CollaborationMessageRow[],
   ): void {
-    const source = this.store.getTaskIncludingDeleted(message.source_task_id);
-    const target = this.store.getTaskIncludingDeleted(
-      message.direct_target_task_id,
-    );
-    if (!source || !target) return;
-    if (!shouldArm(message, source, target)) return;
-    this.obligations.arm(message.source_task_id, message.direct_target_task_id);
+    const target = this.store.getTaskIncludingDeleted(recipientTaskId);
+    if (!target) return;
+    for (const message of messages) {
+      if (!shouldArm(message, { id: message.source_task_id }, target)) continue;
+      this.obligations.arm(message.source_task_id, recipientTaskId);
+    }
   }
 
   /**
@@ -1050,12 +1048,7 @@ export class TaskManager implements ObligationHost {
     this.clearStoredExecutionConfig(taskId);
     this.liveTasks.delete(taskId);
     this.resetTaskRuntime(taskId);
-    this.closeAccountIfDispatchFailed(
-      taskId,
-      this.store
-        .failOutstandingDeliveriesForTaskClear(taskId)
-        .map((failed) => failed.messageId),
-    );
+    this.store.failOutstandingDeliveriesForTaskClear(taskId);
     this.agents.existing(from.agentId)?.agentCommandSnapshots.delete(taskId);
     this.retireExecution(taskId, from.agentId, from.sessionId);
     if (!task) return;
@@ -2101,12 +2094,7 @@ export class TaskManager implements ObligationHost {
     reason: RotationReason | undefined,
     toAgent: string,
   ): void {
-    this.closeAccountIfDispatchFailed(
-      taskId,
-      this.store
-        .failOutstandingDeliveriesForTaskClear(taskId)
-        .map((failed) => failed.messageId),
-    );
+    this.store.failOutstandingDeliveriesForTaskClear(taskId);
     this.store.updateTaskWorkflowStatus(taskId, "idle");
     if (!reason) return;
     this.store.saveEvent(
@@ -3277,12 +3265,14 @@ export class TaskManager implements ObligationHost {
     this.endTurn(id, { sync: false });
     this.pendingWorkRecoveries.delete(id);
     this.lastAgentActivityAt.delete(id);
-    this.obligations.purgeTask(id);
     // The delivery rows were failed inside the delete transaction; publish
-    // their marks only now that it committed.
+    // their marks only now that it committed. This runs before the purge, so a
+    // failed dispatch reports once and closes its account; the purge then
+    // reports only an account whose dispatch was already delivered.
     this.store.broadcastDeliveryStatus(
       this.store.failedDeliveryIdsForRecipient(id, "target_deleted"),
     );
+    this.obligations.purgeTask(id);
     this.compactingTasks.delete(id);
     this.rotatingTasks.delete(id);
     const pendingSubmission = this.pendingPromptSubmissions.get(id);
@@ -3940,7 +3930,8 @@ export class TaskManager implements ObligationHost {
       // harness wakeup) is invisible here, so the silence watch covers it.
       const wakeSourceVisible =
         this.obligations.hasOpenAsSource(targetTaskId) ||
-        this.store.countQueuedDeliveries(targetTaskId) > 0;
+        this.store.countQueuedDeliveries(targetTaskId) > 0 ||
+        this.store.hasQueuedDispatchToChild(targetTaskId);
       const watched =
         !wakeSourceVisible &&
         this.obligations.noteUnwatchedWaiting(targetTaskId);
@@ -3967,24 +3958,27 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
-   * Close the open account only when one of the failed deliveries is the
-   * qualifying dispatch on this edge. An unrelated REST or system item failing
-   * must not settle an account the target still owes.
+   * An agent's message that could not be delivered is reported to its sender.
+   * When it is the dispatch behind the target's open account, that account
+   * closes with the report. User and runtime items report nothing.
    */
-  private closeAccountIfDispatchFailed(
-    targetTaskId: string,
-    messageIds: readonly string[],
-  ): void {
-    const sourceTaskId = this.obligations.peekSource(targetTaskId);
-    if (sourceTaskId === undefined) return;
-    const dispatchFailed = messageIds.some((messageId) => {
-      const message = this.store.getCollaborationMessage(messageId);
-      return (
-        message?.source_actor === "agent" &&
-        message.source_task_id === sourceTaskId
-      );
+  private onDeliveryFailed(change: CollaborationDeliveryStatusChange): void {
+    const message = this.store.getCollaborationMessage(change.messageId);
+    if (message?.source_actor !== "agent") return;
+    const text = `A message to the target was not delivered (${change.failureReason ?? "unknown"}).`;
+    if (
+      this.obligations.peekSource(change.recipientTaskId) ===
+      message.source_task_id
+    ) {
+      this.obligations.noteTargetUnavailable(change.recipientTaskId, text);
+      return;
+    }
+    this.emitObligationNotice({
+      reason: "target_removed",
+      sourceTaskId: message.source_task_id,
+      targetTaskId: change.recipientTaskId,
+      message: text,
     });
-    if (dispatchFailed) this.obligations.noteTargetUnavailable(targetTaskId);
   }
 
   /**
@@ -4231,14 +4225,7 @@ export class TaskManager implements ObligationHost {
           return false;
         }
         // Nothing will retry these rows now; fail them and report the edge.
-        const stranded = this.store.failQueuedDeliveries(
-          taskId,
-          "resume_failed",
-        );
-        this.closeAccountIfDispatchFailed(
-          taskId,
-          stranded.map((delivery) => delivery.message_id),
-        );
+        this.store.failQueuedDeliveries(taskId, "resume_failed");
         return false;
       }
       // The slot is held across the resume; a cancel, reload, or rotation
@@ -4262,6 +4249,10 @@ export class TaskManager implements ObligationHost {
         }
         return { delivery, message };
       });
+      this.armDelivered(
+        taskId,
+        claimed.map(({ message }) => message),
+      );
       const sourceActors = claimed.map(({ message }) => message.source_actor);
       const entries = claimed.map(({ message }) => this.deliveryEntry(message));
       // The receiver's rows appear now, at the turn boundary where the agent
@@ -4316,10 +4307,6 @@ export class TaskManager implements ObligationHost {
         this.store.failRejectedDeliveries(
           deliveries.map((delivery) => delivery.id),
           "prompt_failed",
-        );
-        this.closeAccountIfDispatchFailed(
-          taskId,
-          claimed.map(({ message }) => message.id),
         );
         if (!this.isCurrentPrompt(taskId, promptId)) return;
         // Same attribution as an ACP error event: a rejected delivery prompt

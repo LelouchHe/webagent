@@ -17,7 +17,9 @@ Tasks and their prose.
 
 ## Opening an account
 
-An account opens only for an **agent-authored direct parent→child dispatch**:
+An account opens when an **agent-authored direct parent→child dispatch** is
+handed to the target's agent, not when it is queued. A target cannot owe an
+update for a request it has not received:
 
 ```ts
 message.source_actor === "agent" && target.parent_id === source.id
@@ -29,10 +31,12 @@ derived from the rows already stored; there is no classification field and no
 body inspection. A target has at most one parent, so at most one account can be
 open for it.
 
-At most one account exists per `(source, target)` edge. A new dispatch while the
-account is open keeps it open (coalesces); it does not create a second request
-record and there is no correlation id. A `done` or `blocked` from the target
-settles that one account, even if several requests arrived in the meantime.
+At most one account exists per `(source, target)` edge. A dispatch handed over
+while the account is open keeps it open (coalesces); it does not create a
+second request record and there is no correlation id. A `done` or `blocked`
+settles that one account, covering every request the target has received. A
+dispatch still queued behind the target's running turn is not covered: it opens
+a new account when it is handed over.
 
 ## `task_update` statuses
 
@@ -97,14 +101,19 @@ command. Each window notifies at most once; a new turn or a new `waiting` opens
 a new window. The notice states the fact only: no state change, no reminder,
 no cancel.
 
-## Target leaves the edge
+## Undelivered messages and a target that leaves
 
-While an account is open, if the target actually disappears — deleted, or
-archive cut the edge from its parent — or the **qualifying dispatch delivery**
-itself failed (a failed prompt, `/clear`, or an execution owner replacement),
-the source gets one `target_removed` notice and the account is gone. An
-unrelated delivery to the same target failing does not settle the account. A delivery that is queued to a deleted target is failed
-with `target_deleted` by the delivery layer; the same account removal covers it.
+Any agent-authored message that cannot be delivered — the target was deleted
+or archived away, `/clear` or an execution replacement dropped it, a resume
+failed, or the agent rejected the request — sends its sender one
+`target_removed` notice naming the failure reason. If it was the dispatch
+behind the target's open account, that account closes with the same notice.
+A user or runtime item failing reports nothing, and an unrelated failure does
+not close an account.
+
+While an account is open, a target that is deleted or archived away with no
+undelivered dispatch also sends the source one `target_removed` notice, and
+the account is gone.
 
 ## Persistence and scope
 
@@ -114,9 +123,9 @@ distinguishable from a fallback report to the current parent. Notices and
 reminders are delivered like collaboration messages, in order, at the
 recipient's turn boundary; a notice body names the target Task id (and title
 when available) so two children with the same reason stay distinguishable. The account state
-itself is process-local: a restart forgets open accounts, does not recover
-reminders, and does not replay queued requests. Messages and delivery rows are
-durable and unaffected.
+itself is process-local: a restart forgets open accounts and does not recover
+reminders. Messages and delivery rows are durable, so a dispatch still queued
+at restart opens its account when it is handed over afterwards.
 
 ## Known edges
 

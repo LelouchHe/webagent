@@ -2912,6 +2912,22 @@ export class Store {
     return result;
   }
 
+  /** Whether an agent dispatch from this task to a direct child is still queued. */
+  hasQueuedDispatchToChild(sourceTaskId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 FROM deliveries d
+           JOIN messages m ON m.id = d.message_id
+           JOIN tasks t ON t.id = d.recipient_task_id
+           WHERE m.source_task_id = ? AND m.source_actor = 'agent'
+             AND t.parent_id = m.source_task_id AND d.status = 'queued'
+           LIMIT 1`,
+        )
+        .get(sourceTaskId) !== undefined
+    );
+  }
+
   /** Read-only queued count; lets a caller skip busy-turn churn entirely. */
   countQueuedDeliveries(recipientTaskId: string): number {
     const row = this.db

@@ -393,6 +393,16 @@ describe("TaskManager collaboration delivery drain", () => {
     });
   }
 
+  /** An account as a delivered dispatch leaves it, without running a drain. */
+  function armDeliveredDispatch(): void {
+    store.claimQueuedDeliveries("child");
+    (
+      tasks as unknown as {
+        obligations: { arm(source: string, target: string): void };
+      }
+    ).obligations.arm("parent", "child");
+  }
+
   function sourceNotice(taskId: string): Record<string, unknown> | undefined {
     const row = store
       .getEvents(taskId)
@@ -403,7 +413,11 @@ describe("TaskManager collaboration delivery drain", () => {
 
   it("reports target_removed when a dispatch prompt fails", async () => {
     seedDispatchFamily();
-    assert.ok(tasks.hasOpenObligation("parent", "child"));
+    assert.equal(
+      tasks.hasOpenObligation("parent", "child"),
+      false,
+      "a queued dispatch opens no account",
+    );
     const bridge = {
       ...mockBridgeStubs(),
       async prompt() {
@@ -423,6 +437,53 @@ describe("TaskManager collaboration delivery drain", () => {
     const notice = sourceNotice("parent");
     assert.equal(notice?.reason, "target_removed");
     assert.equal(notice.targetTaskId, "child");
+  });
+
+  it("opens the account at handover, so a dispatch queued behind a settled turn gets its own", async () => {
+    seedDispatchFamily();
+    let endTurn!: () => void;
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt() {
+        await new Promise<void>((resolve) => {
+          endTurn = resolve;
+        });
+      },
+    };
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", bridge),
+      true,
+    );
+    assert.ok(tasks.hasOpenObligation("parent", "child"));
+
+    // A second dispatch arrives while the child's turn runs; the child settles
+    // before it sees it.
+    store.createCollaborationMessage({
+      id: "second-message",
+      deliveryId: "second-delivery",
+      sourceTaskId: "parent",
+      directTargetTaskId: "child",
+      sourceActor: "agent",
+      body: "one more",
+    });
+    tasks.settleAgentUpdate("child", "done", "first only");
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(
+      store.getCollaborationDelivery("second-delivery")?.status,
+      "queued",
+    );
+
+    endTurn();
+    tasks.endTurn("child");
+    await tasks.drainCollaborationDeliveries("child", bridge);
+    assert.equal(
+      store.getCollaborationDelivery("second-delivery")?.status,
+      "delivered",
+    );
+    assert.ok(
+      tasks.hasOpenObligation("parent", "child"),
+      "the second dispatch opens a new account when it is handed over",
+    );
   });
 
   it("reports target_removed when a drain cannot resume the target", async () => {
@@ -540,7 +601,7 @@ describe("TaskManager collaboration delivery drain", () => {
 
   it("keeps the account when an unrelated delivery fails", async () => {
     seedDispatchFamily();
-    store.claimQueuedDeliveries("child");
+    armDeliveredDispatch();
     store.createCollaborationMessage({
       id: "third-party",
       deliveryId: "third-party-delivery",
@@ -596,7 +657,11 @@ describe("TaskManager collaboration delivery drain", () => {
       "queued",
       "a stale attempt must not fail the current queue",
     );
-    assert.equal(tasks.hasOpenObligation("parent", "child"), true);
+    assert.equal(
+      tasks.hasOpenObligation("parent", "child"),
+      false,
+      "still queued, so no account yet",
+    );
     assert.equal(sourceNotice("parent"), undefined);
   });
 
@@ -714,6 +779,7 @@ describe("TaskManager collaboration delivery drain", () => {
 
   it("does not mark a turn when the update transaction fails", () => {
     seedDispatchFamily();
+    armDeliveredDispatch();
     tasks.beginAgentTurn("child", { origin: "interactive" });
     tasks.notePromptSubmitted("child");
     const original = store.recordAgentWorkflowUpdate.bind(store);

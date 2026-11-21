@@ -90,7 +90,7 @@ entity; they name the runtime's bookkeeping.
 
 | Term | Means |
 |---|---|
-| **account** | The process-local record one source Task keeps for one target, opened by an agent-authored direct parent→child dispatch and settled by the target's `done` or `blocked`. Not a persisted entity, and not a Task. |
+| **account** | The process-local record one source Task keeps for one target, opened when an agent-authored direct parent→child dispatch is delivered and settled by the target's `done` or `blocked`. Not a persisted entity, and not a Task. |
 | **settlement** | The atomic step that records a `done` or `blocked`, updates the reported status, delivers the update to the stored source, and closes the open account. A result submission, not proof that the source accepted it. |
 | **stored source** | The source Task recorded when the account was opened. A settlement routes there even if the task tree changed afterwards. |
 | **closing reminder** | A runtime-injected closing turn that asks the target for a typed update after a turn that carried none. It is a recovery aid, not a lifecycle verdict. |

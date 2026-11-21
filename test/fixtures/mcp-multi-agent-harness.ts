@@ -93,12 +93,6 @@ export interface HarnessOptions {
   resolveHooks?: Record<string, () => Promise<void>>;
 }
 
-/** One post-commit collaboration fact, as the production observer sees it. */
-export interface ObserverFact {
-  messageId: string;
-  deliveryId: string;
-}
-
 export interface Harness {
   dir: string;
   store: Store;
@@ -107,12 +101,6 @@ export interface Harness {
   agents: Record<string, HarnessAgent>;
   /** Tokens minted for tasks, in order. */
   minted: Array<{ taskId: string; token: string }>;
-  /**
-   * Every call of the **production** task manager's collaboration observer,
-   * captured by wrapping the store registration the manager makes itself. The
-   * test's own observers are not included.
-   */
-  observerFacts: ObserverFact[];
   baseUrl(): string;
   request(
     method: string,
@@ -130,20 +118,6 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
   store.ensureRootTask(dir);
   const capabilities = new CapabilityStore();
   const authority = new ExecutionAuthority();
-
-  // Count the production manager's own observer calls: wrap the registration
-  // it makes during construction, and never register here on our own behalf.
-  const observerFacts: ObserverFact[] = [];
-  const registerObserver = store.onCollaborationMessageCreated.bind(store);
-  store.onCollaborationMessageCreated = (observer) => {
-    registerObserver((fact) => {
-      observerFacts.push({
-        messageId: fact.message.id,
-        deliveryId: fact.delivery.id,
-      });
-      observer(fact);
-    });
-  };
 
   const agents: Record<string, HarnessAgent> = {};
   for (const spec of options.agents) {
@@ -248,7 +222,6 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
     tasks,
     agents,
     minted,
-    observerFacts,
     baseUrl: () => `http://127.0.0.1:${port}`,
     request: (method, path, body) =>
       new Promise((resolve, reject) => {

@@ -74,7 +74,6 @@ describe("cross-agent collaboration", () => {
       ],
     });
     const parent = await parentOnA(harness);
-    assert.equal(harness.observerFacts.length, 0, "setup created no message");
 
     const created = await callMcpTool(harness, parent.token, "task_create", {
       title: "review on b",
@@ -101,9 +100,8 @@ describe("cross-agent collaboration", () => {
       "the parent's transport must not receive its own dispatch",
     );
 
-    // One dispatch message, one production observer call, one open account.
+    // The handed-over dispatch opened exactly one account for the edge.
     assert.ok(harness.tasks.hasOpenObligation(parent.taskId, childId));
-    assert.equal(harness.observerFacts.length, 1);
     return { parentId: parent.taskId, childId, childToken };
   }
 
@@ -141,14 +139,6 @@ describe("cross-agent collaboration", () => {
       harness.agents[B].prompts.length,
       1,
       "the child's transport received only the dispatch, not its own account",
-    );
-
-    // Two collaboration messages were created (dispatch, account): the
-    // production observer saw each exactly once.
-    assert.equal(harness.observerFacts.length, 2);
-    assert.equal(
-      new Set(harness.observerFacts.map((fact) => fact.messageId)).size,
-      2,
     );
   });
 

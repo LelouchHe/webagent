@@ -181,14 +181,14 @@ export class ObligationController {
     this.schedule();
   }
 
-  /** The target's delivery failed or it left: report and close. */
-  noteTargetUnavailable(targetTaskId: string): void {
+  /** A dispatch to the target was not delivered: report and close. */
+  noteTargetUnavailable(targetTaskId: string, message?: string): void {
     const account = this.accounts.get(targetTaskId);
     if (!account) return;
     this.accounts.delete(targetTaskId);
     this.updated.delete(targetTaskId);
     this.watches.delete(targetTaskId);
-    this.emit(account, "target_removed");
+    this.emit(account, "target_removed", message);
     this.schedule();
   }
 
@@ -353,12 +353,16 @@ export class ObligationController {
     this.schedule();
   }
 
-  private emit(account: Account, reason: ObligationNoticeReason): void {
+  private emit(
+    account: Account,
+    reason: ObligationNoticeReason,
+    message = noticeMessage(reason, this.silenceMs),
+  ): void {
     this.opts.emitNotice({
       reason,
       sourceTaskId: account.sourceTaskId,
       targetTaskId: account.targetTaskId,
-      message: noticeMessage(reason, this.silenceMs),
+      message,
     });
   }
 }

@@ -298,7 +298,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/collaboration-delivery.test.ts`
   - the receiver's collaboration row is written at drain, not at creation, and precedes the turn's own output event; a message never appears in a turn that did not see it
   - a batch is `delivered` at handover, broadcast while the recipient's turn is still running; a request-level rejection flips it to `failed`
-  - a rejected dispatch prompt, a resume failure, and `/clear` each fail the dispatch and close the account with one `target_removed` notice; a resume failure leaves no row stranded in `queued`, and `/clear` keeps an already handed-over row `delivered`
+  - an account opens at handover, not at enqueue: a queued dispatch has none, and a dispatch queued behind a turn whose `done` settled the account opens a new one when it is handed over
+  - a rejected dispatch prompt, a resume failure, and `/clear` each fail the agent's message and send its sender one `target_removed` notice, closing the account when the message was its dispatch; a resume failure leaves no row stranded in `queued`, and `/clear` keeps an already handed-over row `delivered`
   - a closing reminder is queued behind a running turn and appears only at the boundary through the automatic drain; the recipient gets exactly one row, labeled `WebAgent runtime`, with no pre-drain `handoff_reminder` row and no delivery mark
   - an unrelated REST/system delivery failing does not close the dispatch account; a stale resume leaves queued work for the current execution
   - same-time deliveries drain in insertion order, not id order

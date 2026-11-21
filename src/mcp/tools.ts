@@ -395,7 +395,7 @@ export function registerMcpTools(
       description:
         "Queue a durable message to a visible Task. " +
         "It is delivered at the recipient's next turn boundary and wakes it. " +
-        "An agent's message to its direct child opens or keeps open the account for that edge.",
+        "An agent's message to its direct child opens or keeps open the account for that edge once it is delivered.",
       inputSchema: {
         target: TASK_ID.describe("Stable target Task ID"),
         body: BODY.describe("Message body, delivered verbatim"),

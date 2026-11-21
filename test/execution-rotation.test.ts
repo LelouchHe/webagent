@@ -205,12 +205,12 @@ describe("implicit owner rotation", () => {
       sourceActor: "agent",
       body: "OLD BODY",
     });
-    assert.ok(tasks.hasOpenObligation("parent", "child"));
+    // Still queued, so no account yet; its failure is reported all the same.
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
 
     await tasks.resumeTask(bridge, "child");
 
-    // The old dispatch can no longer be delivered, so the edge is reported and
-    // the account closes.
+    // The old dispatch can no longer be delivered, so the source is told.
     assert.equal(tasks.hasOpenObligation("parent", "child"), false);
     assert.ok(
       store
@@ -275,7 +275,7 @@ describe("implicit owner rotation", () => {
       sourceActor: "agent",
       body: "STILL PENDING",
     });
-    assert.ok(tasks.hasOpenObligation("parent", "child"));
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
     assert.equal(
       store.getCollaborationDelivery("refused-rotation-delivery")?.status,
       "queued",
@@ -289,9 +289,15 @@ describe("implicit owner rotation", () => {
       /Cancel active work/,
     );
 
-    // Nothing was truncated by the failed attempt: same open account, queue,
-    // and binding.
-    assert.ok(tasks.hasOpenObligation("parent", "child"));
+    // Nothing was truncated by the failed attempt: same queue and binding, and
+    // no account or notice from a dispatch that is still queued.
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(
+      store
+        .getEvents("parent")
+        .some((event) => event.type === "task_outcome_notice"),
+      false,
+    );
     assert.equal(
       store.getCollaborationDelivery("refused-rotation-delivery")?.status,
       "queued",
