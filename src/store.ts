@@ -413,14 +413,17 @@ export class Store {
   private readonly deliveryStatusObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
   > = [];
+  private readonly deliveryStatusBroadcastObservers: Array<
+    (change: CollaborationDeliveryStatusChange) => void
+  > = [];
   /**
-   * Binding facts belong to the outermost successful commit, not to any one
-   * recursive Store method. Every binding write registers its before/after
-   * here; the batch flushes once the outermost scope commits and is discarded
-   * (or rewound to the failing scope's checkpoint) when it rolls back.
+   * Binding facts and post-commit effects belong to the outermost successful
+   * Store write, not to any one recursive method. Each nested scope checkpoints
+   * both queues so a rolled-back savepoint cannot leak a fact or effect.
    */
-  private bindingWriteDepth = 0;
+  private writeScopeDepth = 0;
   private pendingBindingChanges: BindingChange[] = [];
+  private pendingCommitEffects: Array<() => void> = [];
   private readonly bindingObservers: Array<
     (changes: readonly BindingChange[]) => void
   > = [];
@@ -490,24 +493,37 @@ export class Store {
   }
 
   /**
-   * Run `fn` as one binding-write scope. Nested scopes join the outer one, and
-   * a failing scope rewinds the pending batch to the checkpoint it started at
-   * so a rolled-back savepoint can never leak a fact into a later commit.
+   * Run `fn` as one outer Store write scope. Nested scopes join the outer one,
+   * while an optional effect is deferred until that outermost commit.
    */
-  private writeBindings<T>(fn: () => T): T {
+  private writeScope<T>(fn: () => T, afterCommit?: () => void): T {
     const checkpoint = this.pendingBindingChanges.length;
-    this.bindingWriteDepth += 1;
+    const effectCheckpoint = this.pendingCommitEffects.length;
+    this.writeScopeDepth += 1;
     let result: T;
     try {
       result = this.db.transaction(fn)();
+      if (afterCommit) this.pendingCommitEffects.push(afterCommit);
     } catch (error) {
       this.pendingBindingChanges.length = checkpoint;
-      this.bindingWriteDepth -= 1;
-      if (this.bindingWriteDepth === 0) this.pendingBindingChanges = [];
+      this.pendingCommitEffects.length = effectCheckpoint;
+      this.writeScopeDepth -= 1;
+      if (this.writeScopeDepth === 0) {
+        this.pendingBindingChanges = [];
+        this.pendingCommitEffects = [];
+      }
       throw error;
     }
-    this.bindingWriteDepth -= 1;
-    if (this.bindingWriteDepth === 0) this.flushBindingChanges();
+    this.writeScopeDepth -= 1;
+    if (this.writeScopeDepth === 0) {
+      try {
+        this.flushBindingChanges();
+      } catch (error) {
+        this.pendingCommitEffects = [];
+        throw error;
+      }
+      this.flushCommitEffects();
+    }
     return result;
   }
 
@@ -526,6 +542,12 @@ export class Store {
     this.pendingBindingChanges = [];
     if (batch.length === 0) return;
     for (const observer of this.bindingObservers) observer(batch);
+  }
+
+  private flushCommitEffects(): void {
+    const effects = this.pendingCommitEffects;
+    this.pendingCommitEffects = [];
+    for (const effect of effects) effect();
   }
 
   private canonicalizeStoredModelValues(): void {
@@ -1093,7 +1115,7 @@ export class Store {
         `Reserved Root id cannot be created as an ordinary task: ${id}`,
       );
     }
-    return this.writeBindings(() => {
+    return this.writeScope(() => {
       // The invariant is enforced by the single write path: a database that
       // has an ordinary task always has its Root, even for direct drivers that
       // never called ensureRootTask().
@@ -1310,7 +1332,7 @@ export class Store {
     agentId: string,
     agentSessionId: string,
   ): AgentSessionRow {
-    return this.writeBindings(() => {
+    return this.writeScope(() => {
       if (!this.getTaskIncludingDeleted(taskId)) {
         throw new Error(`Task not found: ${taskId}`);
       }
@@ -1348,7 +1370,7 @@ export class Store {
     agentSessionId: string,
     cwd?: string,
   ): AgentSessionRow {
-    return this.writeBindings(() => {
+    return this.writeScope(() => {
       const before = this.currentBinding(taskId);
       if (!before) throw new Error(`Task not found: ${taskId}`);
       if (cwd !== undefined) {
@@ -1376,7 +1398,7 @@ export class Store {
    * empty owner slot (an exit gives the replacement Root its own empty slot).
    */
   detachAgentSession(taskId: string): AgentSessionRow | undefined {
-    return this.writeBindings(() => {
+    return this.writeScope(() => {
       const before = this.currentBinding(taskId);
       const row = this.getCurrentExecutionBinding(taskId);
       if (!before) return undefined;
@@ -1598,7 +1620,7 @@ export class Store {
     if (!old) throw new Error("Root task not found");
     const newId = randomUUID();
     try {
-      const affected = this.writeBindings(() => {
+      const affected = this.writeScope(() => {
         const binding = this.currentBinding(oldId);
         const now = Date.now();
         this.db
@@ -1666,46 +1688,49 @@ export class Store {
     // Everything this operation persists — detach, transcript fact, and the
     // queued cross-tree delivery marks — commits or rolls back together. The
     // caller drops the in-memory obligation edge only after this returns.
-    const archived = this.db.transaction(() => {
-      const parentPath = this.getTaskPath(parentId) ?? parentId;
-      this.db
-        .prepare(
-          "UPDATE tasks SET parent_id = NULL WHERE id = ? AND parent_id = ?",
-        )
-        .run(id, parentId);
-      const message: ArchiveSystemMessage = {
-        kind: "task_archive",
-        title: "Task archived",
-        body: formatFieldBlock([
-          { label: "original parent", value: `${parentPath} (${parentId})` },
-        ]),
-      };
-      this.saveEvent(
-        id,
-        "system_message",
-        {
-          ...message,
-          originalParentId: parentId,
-          originalParentPath: parentPath,
-        },
-        { from_ref: "system" },
-      );
-      const failedDeliveryIds =
-        this.markQueuedDeliveriesAcrossSubtreeBoundary(id);
-      return {
-        result: {
-          status: "archived" as const,
-          taskId: id,
-          parentId,
-          parentPath,
-          message,
-        },
-        failedDeliveryIds,
-      };
-    })();
-    const { result, failedDeliveryIds } = archived;
-    this.broadcastDeliveryStatus(failedDeliveryIds);
-    return result;
+    let failedDeliveryIds: string[] = [];
+    const archived = this.writeScope(
+      () => {
+        const parentPath = this.getTaskPath(parentId) ?? parentId;
+        this.db
+          .prepare(
+            "UPDATE tasks SET parent_id = NULL WHERE id = ? AND parent_id = ?",
+          )
+          .run(id, parentId);
+        const message: ArchiveSystemMessage = {
+          kind: "task_archive",
+          title: "Task archived",
+          body: formatFieldBlock([
+            { label: "original parent", value: `${parentPath} (${parentId})` },
+          ]),
+        };
+        this.saveEvent(
+          id,
+          "system_message",
+          {
+            ...message,
+            originalParentId: parentId,
+            originalParentPath: parentPath,
+          },
+          { from_ref: "system" },
+        );
+        failedDeliveryIds = this.markQueuedDeliveriesAcrossSubtreeBoundary(id);
+        return {
+          result: {
+            status: "archived" as const,
+            taskId: id,
+            parentId,
+            parentPath,
+            message,
+          },
+          failedDeliveryIds,
+        };
+      },
+      () => {
+        this.publishDeliveryStatusChanges(failedDeliveryIds);
+      },
+    );
+    return archived.result;
   }
 
   /**
@@ -1927,7 +1952,7 @@ export class Store {
     if (this.isRootTaskId(id)) {
       throw new Error("Root task cannot be deleted");
     }
-    return this.writeBindings(() => this.deleteTaskInScope(id));
+    return this.writeScope(() => this.deleteTaskInScope(id));
   }
 
   private deleteTaskInScope(id: string): {
@@ -2027,7 +2052,7 @@ export class Store {
     this.db.prepare("DELETE FROM events WHERE task_id = ?").run(taskId);
     this.db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
     // Publish the sender marks only after the reaper's writes landed.
-    this.broadcastDeliveryStatus(failedDeliveryIds);
+    this.publishDeliveryStatusChanges(failedDeliveryIds);
     return true;
   }
 
@@ -2055,7 +2080,7 @@ export class Store {
       agent_key: string;
     }>;
     if (empties.length === 0) return [];
-    return this.writeBindings(() => {
+    return this.writeScope(() => {
       const del = this.db.prepare("DELETE FROM tasks WHERE id = ?");
       const removed: Array<{
         id: string;
@@ -2599,18 +2624,37 @@ export class Store {
   }
 
   /**
-   * Register the one observer for delivery status changes. Every in-process
-   * status write goes through the delivery methods below, so a sender's live
-   * mark cannot silently miss archive, clear, deletion, or prompt failure.
+   * Register a committed delivery transition observer. This is the semantic
+   * hook: every in-process status write reaches it independently of UI output.
    */
-  onDeliveryStatusChanged(
+  onDeliveryStatusTransition(
     observer: (change: CollaborationDeliveryStatusChange) => void,
   ): void {
     this.deliveryStatusObservers.push(observer);
   }
 
-  broadcastDeliveryStatus(ids: readonly string[]): void {
-    if (ids.length === 0 || this.deliveryStatusObservers.length === 0) return;
+  /** Compatibility name for consumers that observe committed transitions. */
+  onDeliveryStatusChanged(
+    observer: (change: CollaborationDeliveryStatusChange) => void,
+  ): void {
+    this.onDeliveryStatusTransition(observer);
+  }
+
+  onDeliveryStatusBroadcast(
+    observer: (change: CollaborationDeliveryStatusChange) => void,
+  ): void {
+    this.deliveryStatusBroadcastObservers.push(observer);
+  }
+
+  /** Publish committed transitions, first semantically and then to the UI. */
+  publishDeliveryStatusChanges(ids: readonly string[]): void {
+    if (
+      ids.length === 0 ||
+      (this.deliveryStatusObservers.length === 0 &&
+        this.deliveryStatusBroadcastObservers.length === 0)
+    ) {
+      return;
+    }
     const changes: CollaborationDeliveryStatusChange[] = [];
     for (let index = 0; index < ids.length; index += 400) {
       const chunk = ids.slice(index, index + 400);
@@ -2646,6 +2690,8 @@ export class Store {
     }
     for (const change of changes) {
       for (const observer of this.deliveryStatusObservers) observer(change);
+      for (const observer of this.deliveryStatusBroadcastObservers)
+        observer(change);
     }
   }
 
@@ -2660,9 +2706,9 @@ export class Store {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
   } {
-    return this.db.transaction(() =>
+    return this.writeScope(() =>
       this.createCollaborationMessageInTransaction(input),
-    )();
+    );
   }
 
   /**
@@ -2681,7 +2727,7 @@ export class Store {
     }
     this.requireLiveTask(input.recipientTaskId);
     const createdAt = input.createdAt ?? Date.now();
-    return this.db.transaction(() => {
+    return this.writeScope(() => {
       this.db
         .prepare(
           `INSERT INTO messages
@@ -2718,7 +2764,7 @@ export class Store {
         message: this.getCollaborationMessage(input.messageId)!,
         delivery: this.getCollaborationDelivery(input.deliveryId)!,
       };
-    })();
+    });
   }
 
   /**
@@ -2869,7 +2915,7 @@ export class Store {
   ): {
     collaborationMessageId: string | null;
   } {
-    const result = this.db.transaction(() => {
+    const result = this.writeScope(() => {
       const task = this.requireLiveTask(taskId);
       this.db
         .prepare("UPDATE tasks SET workflow_status = ? WHERE id = ?")
@@ -2899,8 +2945,48 @@ export class Store {
         body: `Task status: ${status}\n${body}`,
       });
       return { collaborationMessageId };
-    })();
+    });
     return result;
+  }
+
+  recordObligationNotice(notice: {
+    reason: string;
+    sourceTaskId: string;
+    targetTaskId: string;
+    message: string;
+  }): boolean {
+    if (!this.getTask(notice.sourceTaskId)) return false;
+    const target = this.getTaskIncludingDeleted(notice.targetTaskId);
+    const messageId = randomUUID();
+    this.saveEvent(
+      notice.sourceTaskId,
+      "task_outcome_notice",
+      {
+        messageId,
+        reason: notice.reason,
+        sourceTaskId: notice.sourceTaskId,
+        targetTaskId: notice.targetTaskId,
+        message: notice.message,
+      },
+      { from_ref: "system" },
+    );
+    const body = formatFieldBlock([
+      {
+        label: "target",
+        value: target?.title
+          ? `${target.title} (${notice.targetTaskId})`
+          : notice.targetTaskId,
+      },
+      { label: "message", value: notice.message },
+    ]);
+    this.createSystemDelivery({
+      messageId,
+      deliveryId: randomUUID(),
+      fromTaskId: notice.targetTaskId,
+      recipientTaskId: notice.sourceTaskId,
+      body,
+    });
+    return true;
   }
 
   getCollaborationMessage(id: string): CollaborationMessageRow | undefined {
@@ -2982,29 +3068,34 @@ export class Store {
    */
   claimQueuedDeliveries(recipientTaskId: string): CollaborationDeliveryRow[] {
     const deliveredAt = Date.now();
-    const claimed = this.db.transaction(() => {
-      const ids = this.db
-        .prepare(
-          `SELECT id FROM deliveries
+    let claimedIds: string[] = [];
+    return this.writeScope(
+      () => {
+        const ids = this.db
+          .prepare(
+            `SELECT id FROM deliveries
            WHERE recipient_task_id = ? AND status = 'queued'
            ORDER BY queued_at, rowid`,
-        )
-        .all(recipientTaskId) as Array<{ id: string }>;
-      const claim = this.db.prepare(
-        `UPDATE deliveries
+          )
+          .all(recipientTaskId) as Array<{ id: string }>;
+        const claim = this.db.prepare(
+          `UPDATE deliveries
          SET status = 'delivered', delivered_at = ?
          WHERE id = ? AND status = 'queued'`,
-      );
-      const rows: CollaborationDeliveryRow[] = [];
-      for (const { id } of ids) {
-        if (claim.run(deliveredAt, id).changes !== 1) continue;
-        const delivery = this.getCollaborationDelivery(id);
-        if (delivery) rows.push(delivery);
-      }
-      return rows;
-    })();
-    this.broadcastDeliveryStatus(claimed.map((delivery) => delivery.id));
-    return claimed;
+        );
+        const rows: CollaborationDeliveryRow[] = [];
+        for (const { id } of ids) {
+          if (claim.run(deliveredAt, id).changes !== 1) continue;
+          const delivery = this.getCollaborationDelivery(id);
+          if (delivery) rows.push(delivery);
+        }
+        claimedIds = rows.map((delivery) => delivery.id);
+        return rows;
+      },
+      () => {
+        this.publishDeliveryStatusChanges(claimedIds);
+      },
+    );
   }
 
   /**
@@ -3021,10 +3112,14 @@ export class Store {
        SET status = 'failed', failed_at = ?, failure_reason = ?, delivered_at = NULL
        WHERE id = ? AND status = 'delivered'`,
     );
-    this.db.transaction(() => {
-      for (const id of ids) fail.run(failedAt, failureReason, id);
-    })();
-    this.broadcastDeliveryStatus(ids);
+    this.writeScope(
+      () => {
+        for (const id of ids) fail.run(failedAt, failureReason, id);
+      },
+      () => {
+        this.publishDeliveryStatusChanges(ids);
+      },
+    );
   }
 
   /** Fail every Delivery still queued for one target; returns the failed rows. */
@@ -3033,29 +3128,34 @@ export class Store {
     failureReason: string,
     failedAt = Date.now(),
   ): CollaborationDeliveryRow[] {
-    const failed = this.db.transaction(() => {
-      const ids = this.db
-        .prepare(
-          `SELECT id FROM deliveries
+    let failedIds: string[] = [];
+    return this.writeScope(
+      () => {
+        const ids = this.db
+          .prepare(
+            `SELECT id FROM deliveries
            WHERE recipient_task_id = ? AND status = 'queued'
            ORDER BY queued_at, rowid`,
-        )
-        .all(recipientTaskId) as Array<{ id: string }>;
-      const fail = this.db.prepare(
-        `UPDATE deliveries
+          )
+          .all(recipientTaskId) as Array<{ id: string }>;
+        const fail = this.db.prepare(
+          `UPDATE deliveries
          SET status = 'failed', failed_at = ?, failure_reason = ?
          WHERE id = ? AND status = 'queued'`,
-      );
-      const rows: CollaborationDeliveryRow[] = [];
-      for (const { id } of ids) {
-        if (fail.run(failedAt, failureReason, id).changes !== 1) continue;
-        const delivery = this.getCollaborationDelivery(id);
-        if (delivery) rows.push(delivery);
-      }
-      return rows;
-    })();
-    this.broadcastDeliveryStatus(failed.map((delivery) => delivery.id));
-    return failed;
+        );
+        const rows: CollaborationDeliveryRow[] = [];
+        for (const { id } of ids) {
+          if (fail.run(failedAt, failureReason, id).changes !== 1) continue;
+          const delivery = this.getCollaborationDelivery(id);
+          if (delivery) rows.push(delivery);
+        }
+        failedIds = rows.map((delivery) => delivery.id);
+        return rows;
+      },
+      () => {
+        this.publishDeliveryStatusChanges(failedIds);
+      },
+    );
   }
 
   failOutstandingDeliveriesForTaskClear(
@@ -3077,7 +3177,7 @@ export class Store {
          WHERE recipient_task_id = ? AND status = 'queued'`,
       )
       .run(failedAt, taskId);
-    this.broadcastDeliveryStatus(ids);
+    this.publishDeliveryStatusChanges(ids);
     return rows.map((row) => ({ id: row.id, messageId: row.message_id }));
   }
 

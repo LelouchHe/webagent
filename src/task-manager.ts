@@ -16,7 +16,9 @@ import {
   type Store,
   type WorkflowStatus,
 } from "./store.ts";
-import { shouldArm } from "./task-collaboration.ts";
+import { handoffQueuedDeliveries } from "./collaboration-receiver.ts";
+import { persistAgentUpdate } from "./obligation-persistence.ts";
+import { reduceObligationOutcome } from "./obligation-outcomes.ts";
 import {
   RUNTIME_MESSAGE_KINDS,
   buildCollaborationSystemMessage,
@@ -25,7 +27,6 @@ import {
   type RuntimeMessageKind,
 } from "./collaboration-message.ts";
 import { isoFromMillis } from "./shared/time.ts";
-import { formatFieldBlock } from "./shared/field-block.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -778,13 +779,12 @@ export class TaskManager implements ObligationHost {
     this.authority = options.authority;
     this.agents = options.agents;
     this.obligations = options.obligations ?? createObligationController(this);
-    // One structural choke point: the Store emits exactly one fact per created
-    // message and this observer decides the arming policy, so no creation path
-    // can silently bypass it.
-    // The Store owns every delivery status write, so one observer covers the
-    // drain, archive, clear, deletion, and failure paths for the sender mark.
-    this.store.onDeliveryStatusChanged((change) => {
+    // Delivery transitions and UI publication are separate: failure semantics
+    // run first, while the receiver helper owns arming at the actual handoff.
+    this.store.onDeliveryStatusTransition((change) => {
       if (change.status === "failed") this.onDeliveryFailed(change);
+    });
+    this.store.onDeliveryStatusBroadcast((change) => {
       this.deliveryStatusBroadcast?.({
         type: "collaboration_delivery",
         taskId: change.sourceTaskId,
@@ -848,24 +848,6 @@ export class TaskManager implements ObligationHost {
     return (
       (bridge as { agentId?: string }).agentId ?? this.agents.defaultAgentId
     );
-  }
-
-  /**
-   * The arming policy, applied when a batch is handed to its recipient: an
-   * agent-authored direct parent→child dispatch opens the account only once
-   * the target actually has it. A user send, a child message, and a runtime
-   * notice never open one.
-   */
-  private armDelivered(
-    recipientTaskId: string,
-    messages: readonly CollaborationMessageRow[],
-  ): void {
-    const target = this.store.getTaskIncludingDeleted(recipientTaskId);
-    if (!target) return;
-    for (const message of messages) {
-      if (!shouldArm(message, target)) continue;
-      this.obligations.arm(message.source_task_id, recipientTaskId);
-    }
   }
 
   /**
@@ -3271,7 +3253,7 @@ export class TaskManager implements ObligationHost {
     // their marks only now that it committed. This runs before the purge, so a
     // failed dispatch reports once and closes its account; the purge then
     // reports only an account whose dispatch was already delivered.
-    this.store.broadcastDeliveryStatus(
+    this.store.publishDeliveryStatusChanges(
       this.store.failedDeliveryIdsForRecipient(id, "target_deleted"),
     );
     this.obligations.purgeTask(id);
@@ -3918,45 +3900,13 @@ export class TaskManager implements ObligationHost {
      */
     silenceWatchMs?: number;
   } {
-    if (status === "waiting") {
-      this.store.recordAgentWorkflowUpdate(
-        targetTaskId,
-        status,
-        body,
-        null,
-        "waiting",
-      );
-      this.obligations.noteUpdate(targetTaskId);
-      // A child that owes this task an update, or a delivery already queued to
-      // it, will wake it. Anything else (the agent's own background work, a
-      // harness wakeup) is invisible here, so the silence watch covers it.
-      const wakeSourceVisible =
-        this.obligations.hasOpenAsSource(targetTaskId) ||
-        this.store.countQueuedDeliveries(targetTaskId) > 0 ||
-        this.store.hasQueuedDispatchToChild(targetTaskId);
-      const watched =
-        !wakeSourceVisible &&
-        this.obligations.noteUnwatchedWaiting(targetTaskId);
-      return {
-        collaborationMessageId: null,
-        accountTargetTaskId: null,
-        ...(watched ? { silenceWatchMs: this.obligations.silenceMs } : {}),
-      };
-    }
-    const accountSource = this.obligations.peekSource(targetTaskId);
-    const accountTargetTaskId =
-      accountSource ?? this.store.getTask(targetTaskId)?.parent_id ?? null;
-    const { collaborationMessageId } = this.store.recordAgentWorkflowUpdate(
+    return persistAgentUpdate(
+      this.store,
+      this.obligations,
       targetTaskId,
       status,
       body,
-      accountTargetTaskId,
-      accountSource === undefined ? "fallback" : "settled",
     );
-    // A failed transaction above leaves both the account and the marker alone.
-    this.obligations.noteUpdate(targetTaskId);
-    if (accountSource !== undefined) this.obligations.close(targetTaskId);
-    return { collaborationMessageId, accountTargetTaskId };
   }
 
   /**
@@ -3966,21 +3916,23 @@ export class TaskManager implements ObligationHost {
    */
   private onDeliveryFailed(change: CollaborationDeliveryStatusChange): void {
     const message = this.store.getCollaborationMessage(change.messageId);
-    if (message?.source_actor !== "agent") return;
-    const text = `A message to the target was not delivered (${change.failureReason ?? "unknown"}).`;
-    if (
-      this.obligations.peekSource(change.recipientTaskId) ===
-      message.source_task_id
-    ) {
-      this.obligations.noteTargetUnavailable(change.recipientTaskId, text);
-      return;
-    }
-    this.emitObligationNotice({
-      reason: "target_removed",
-      sourceTaskId: message.source_task_id,
-      targetTaskId: change.recipientTaskId,
-      message: text,
+    if (!message) return;
+    const decision = reduceObligationOutcome({
+      kind: "delivery_failed",
+      change,
+      message,
+      openAccountSourceTaskId: this.obligations.peekSource(
+        change.recipientTaskId,
+      ),
     });
+    if (decision.kind === "close_account") {
+      this.obligations.noteTargetUnavailable(
+        change.recipientTaskId,
+        decision.notice.message,
+      );
+    } else if (decision.kind === "notice") {
+      this.emitObligationNotice(decision.notice);
+    }
   }
 
   /**
@@ -4021,39 +3973,12 @@ export class TaskManager implements ObligationHost {
    * delivered body also names the target so two children stay distinguishable.
    */
   emitObligationNotice(notice: ObligationNotice): void {
-    if (!this.store.getTask(notice.sourceTaskId)) return;
-    const target = this.store.getTaskIncludingDeleted(notice.targetTaskId);
-    const messageId = randomUUID();
-    const payload = {
-      messageId,
-      reason: notice.reason,
-      sourceTaskId: notice.sourceTaskId,
-      targetTaskId: notice.targetTaskId,
-      message: notice.message,
-    };
-    this.store.saveEvent(notice.sourceTaskId, "task_outcome_notice", payload, {
-      from_ref: "system",
+    const decision = reduceObligationOutcome({
+      kind: "account_unsettled",
+      notice,
     });
-    // The machine fields stay on the audit event above. The body a person and
-    // an agent read carries only what they cannot audit: the `message` sentence
-    // already states what happened, and `target` names which child it happened
-    // to. A `reason:` line would restate the sentence in machine shorthand.
-    const body = formatFieldBlock([
-      {
-        label: "target",
-        value: target?.title
-          ? `${target.title} (${notice.targetTaskId})`
-          : notice.targetTaskId,
-      },
-      { label: "message", value: notice.message },
-    ]);
-    this.store.createSystemDelivery({
-      messageId,
-      deliveryId: randomUUID(),
-      fromTaskId: notice.targetTaskId,
-      recipientTaskId: notice.sourceTaskId,
-      body,
-    });
+    if (decision.kind === "none") return;
+    if (!this.store.recordObligationNotice(decision.notice)) return;
     void this.drainCollaborationDeliveries(notice.sourceTaskId);
   }
 
@@ -4272,21 +4197,13 @@ export class TaskManager implements ObligationHost {
         });
         return false;
       }
-      const deliveries = this.store.claimQueuedDeliveries(taskId);
-      if (deliveries.length === 0) return false;
-      const claimed = deliveries.map((delivery) => {
-        const message = this.store.getCollaborationMessage(delivery.message_id);
-        if (!message) {
-          throw new Error(
-            `Collaboration message missing: ${delivery.message_id}`,
-          );
-        }
-        return { delivery, message };
-      });
-      this.armDelivered(
+      const claimed = handoffQueuedDeliveries(
+        this.store,
+        this.obligations,
         taskId,
-        claimed.map(({ message }) => message),
       );
+      if (claimed.length === 0) return false;
+      const deliveries = claimed.map(({ delivery }) => delivery);
       const sourceActors = claimed.map(({ message }) => message.source_actor);
       const entries = claimed.map(({ message }) => this.deliveryEntry(message));
       // The receiver's rows appear now, at the turn boundary where the agent

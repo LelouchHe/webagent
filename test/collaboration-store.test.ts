@@ -179,6 +179,46 @@ describe("Store collaboration records", () => {
     assert.equal(typeof delivery.delivered_at, "number");
   });
 
+  it("publishes delivery transitions only after the outer store scope commits", () => {
+    store.createCollaborationMessage(messageInput());
+    const db = (store as unknown as { db: Database.Database }).db;
+    const observed: Array<{
+      status: string;
+      inTransaction: boolean;
+      persistedStatus: string | undefined;
+    }> = [];
+    store.onDeliveryStatusTransition((change) => {
+      observed.push({
+        status: change.status,
+        inTransaction: db.inTransaction,
+        persistedStatus: store.getCollaborationDelivery(change.deliveryId)
+          ?.status,
+      });
+    });
+
+    assert.throws(() =>
+      store["writeScope"](() => {
+        store.claimQueuedDeliveries("a2");
+        throw new Error("roll back outer scope");
+      }),
+    );
+    assert.deepEqual(observed, []);
+    assert.equal(
+      store.getCollaborationDelivery("delivery-a1-a2")?.status,
+      "queued",
+      "an inner claim and its post-commit effect roll back together",
+    );
+
+    store.claimQueuedDeliveries("a2");
+    assert.deepEqual(observed, [
+      {
+        status: "delivered",
+        inTransaction: false,
+        persistedStatus: "delivered",
+      },
+    ]);
+  });
+
   it("keeps collaboration facts in surviving task timelines after hard delete", () => {
     store.createCollaborationMessage(messageInput());
 
