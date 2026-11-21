@@ -250,6 +250,11 @@ export interface CollaborationDeliveryStatusChange {
   failureReason: string | null;
 }
 
+export interface CollaborationDeliveryTransition extends CollaborationDeliveryStatusChange {
+  fromStatus: CollaborationDeliveryStatus;
+  sourceActor: CollaborationMessageRow["source_actor"];
+}
+
 export interface SystemDeliveryInput {
   messageId: string;
   deliveryId: string;
@@ -411,7 +416,7 @@ export class Store {
   /** This database's Root; it changes only when an exit replaces the Root. */
   private rootId = "";
   private readonly deliveryStatusObservers: Array<
-    (change: CollaborationDeliveryStatusChange) => void
+    (change: CollaborationDeliveryTransition) => void
   > = [];
   private readonly deliveryStatusBroadcastObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
@@ -424,6 +429,8 @@ export class Store {
   private writeScopeDepth = 0;
   private pendingBindingChanges: BindingChange[] = [];
   private pendingCommitEffects: Array<() => void> = [];
+  private pendingDeliveryTransitions: CollaborationDeliveryTransition[] = [];
+  private committedDeliveryBroadcasts: CollaborationDeliveryTransition[] = [];
   private readonly bindingObservers: Array<
     (changes: readonly BindingChange[]) => void
   > = [];
@@ -499,6 +506,7 @@ export class Store {
   private writeScope<T>(fn: () => T, afterCommit?: () => void): T {
     const checkpoint = this.pendingBindingChanges.length;
     const effectCheckpoint = this.pendingCommitEffects.length;
+    const transitionCheckpoint = this.pendingDeliveryTransitions.length;
     this.writeScopeDepth += 1;
     let result: T;
     try {
@@ -507,6 +515,7 @@ export class Store {
     } catch (error) {
       this.pendingBindingChanges.length = checkpoint;
       this.pendingCommitEffects.length = effectCheckpoint;
+      this.pendingDeliveryTransitions.length = transitionCheckpoint;
       this.writeScopeDepth -= 1;
       if (this.writeScopeDepth === 0) {
         this.pendingBindingChanges = [];
@@ -516,12 +525,15 @@ export class Store {
     }
     this.writeScopeDepth -= 1;
     if (this.writeScopeDepth === 0) {
+      const transitions = this.pendingDeliveryTransitions;
+      this.pendingDeliveryTransitions = [];
       try {
         this.flushBindingChanges();
       } catch (error) {
         this.pendingCommitEffects = [];
         throw error;
       }
+      this.commitDeliveryTransitions(transitions);
       this.flushCommitEffects();
     }
     return result;
@@ -548,6 +560,19 @@ export class Store {
     const effects = this.pendingCommitEffects;
     this.pendingCommitEffects = [];
     for (const effect of effects) effect();
+  }
+
+  /**
+   * Schedule process-local work after the outermost Store write commits.
+   * Outside a write scope the work is immediate, preserving existing call
+   * sites that are already past their persistence boundary.
+   */
+  afterCommit(effect: () => void): void {
+    if (this.writeScopeDepth === 0) {
+      effect();
+      return;
+    }
+    this.pendingCommitEffects.push(effect);
   }
 
   private canonicalizeStoredModelValues(): void {
@@ -1926,10 +1951,15 @@ export class Store {
        SET status = 'failed', failed_at = ?, failure_reason = 'archived_edge_cut'
        WHERE id = ? AND status = 'queued'`,
     );
+    const changed: string[] = [];
     this.db.transaction(() => {
-      for (const id of ids) fail.run(failedAt, id);
+      for (const id of ids) {
+        if (fail.run(failedAt, id).changes !== 1) continue;
+        this.captureDeliveryTransition(id, "queued");
+        changed.push(id);
+      }
     })();
-    return ids;
+    return changed;
   }
 
   /**
@@ -2628,7 +2658,7 @@ export class Store {
    * hook: every in-process status write reaches it independently of UI output.
    */
   onDeliveryStatusTransition(
-    observer: (change: CollaborationDeliveryStatusChange) => void,
+    observer: (change: CollaborationDeliveryTransition) => void,
   ): void {
     this.deliveryStatusObservers.push(observer);
   }
@@ -2637,7 +2667,7 @@ export class Store {
   onDeliveryStatusChanged(
     observer: (change: CollaborationDeliveryStatusChange) => void,
   ): void {
-    this.onDeliveryStatusTransition(observer);
+    this.onDeliveryStatusBroadcast(observer);
   }
 
   onDeliveryStatusBroadcast(
@@ -2646,52 +2676,77 @@ export class Store {
     this.deliveryStatusBroadcastObservers.push(observer);
   }
 
-  /** Publish committed transitions, first semantically and then to the UI. */
+  /** Publish the UI side of already-committed semantic transitions. */
   publishDeliveryStatusChanges(ids: readonly string[]): void {
-    if (
-      ids.length === 0 ||
-      (this.deliveryStatusObservers.length === 0 &&
-        this.deliveryStatusBroadcastObservers.length === 0)
-    ) {
-      return;
-    }
-    const changes: CollaborationDeliveryStatusChange[] = [];
-    for (let index = 0; index < ids.length; index += 400) {
-      const chunk = ids.slice(index, index + 400);
-      const placeholders = chunk.map(() => "?").join(", ");
-      const rows = this.db
-        .prepare(
-          `SELECT d.id AS delivery_id, d.message_id, d.recipient_task_id,
-                  d.status, d.delivered_at, d.failure_reason,
-                  m.source_task_id
-           FROM deliveries d JOIN messages m ON m.id = d.message_id
-           WHERE d.id IN (${placeholders}) AND m.source_actor <> 'system'`,
-        )
-        .all(...chunk) as Array<{
-        delivery_id: string;
-        message_id: string;
-        recipient_task_id: string;
-        status: CollaborationDeliveryStatus;
-        delivered_at: number | null;
-        failure_reason: string | null;
-        source_task_id: string;
-      }>;
-      for (const row of rows) {
-        changes.push({
-          deliveryId: row.delivery_id,
-          messageId: row.message_id,
-          sourceTaskId: row.source_task_id,
-          recipientTaskId: row.recipient_task_id,
-          status: row.status,
-          deliveredAt: row.delivered_at,
-          failureReason: row.failure_reason,
-        });
-      }
-    }
+    if (ids.length === 0) return;
+    const selected = new Set(ids);
+    const changes = this.committedDeliveryBroadcasts.filter((change) =>
+      selected.has(change.deliveryId),
+    );
+    this.committedDeliveryBroadcasts = this.committedDeliveryBroadcasts.filter(
+      (change) => !selected.has(change.deliveryId),
+    );
     for (const change of changes) {
-      for (const observer of this.deliveryStatusObservers) observer(change);
+      if (change.sourceActor === "system") continue;
+      const {
+        fromStatus: _fromStatus,
+        sourceActor: _sourceActor,
+        ...broadcastChange
+      } = change;
       for (const observer of this.deliveryStatusBroadcastObservers)
-        observer(change);
+        observer(broadcastChange);
+    }
+  }
+
+  private captureDeliveryTransition(
+    deliveryId: string,
+    fromStatus: CollaborationDeliveryStatus,
+  ): void {
+    const row = this.db
+      .prepare(
+        `SELECT d.id AS delivery_id, d.message_id, d.recipient_task_id,
+                d.status, d.delivered_at, d.failure_reason,
+                m.source_task_id, m.source_actor
+         FROM deliveries d JOIN messages m ON m.id = d.message_id
+         WHERE d.id = ?`,
+      )
+      .get(deliveryId) as
+      | {
+          delivery_id: string;
+          message_id: string;
+          recipient_task_id: string;
+          status: CollaborationDeliveryStatus;
+          delivered_at: number | null;
+          failure_reason: string | null;
+          source_task_id: string;
+          source_actor: CollaborationMessageRow["source_actor"];
+        }
+      | undefined;
+    if (!row) return;
+    const transition: CollaborationDeliveryTransition = {
+      deliveryId: row.delivery_id,
+      messageId: row.message_id,
+      sourceTaskId: row.source_task_id,
+      recipientTaskId: row.recipient_task_id,
+      fromStatus,
+      status: row.status,
+      deliveredAt: row.delivered_at,
+      failureReason: row.failure_reason,
+      sourceActor: row.source_actor,
+    };
+    if (this.writeScopeDepth > 0) {
+      this.pendingDeliveryTransitions.push(transition);
+    } else {
+      this.commitDeliveryTransitions([transition]);
+    }
+  }
+
+  private commitDeliveryTransitions(
+    transitions: readonly CollaborationDeliveryTransition[],
+  ): void {
+    this.committedDeliveryBroadcasts.push(...transitions);
+    for (const transition of transitions) {
+      for (const observer of this.deliveryStatusObservers) observer(transition);
     }
   }
 
@@ -3087,7 +3142,10 @@ export class Store {
         for (const { id } of ids) {
           if (claim.run(deliveredAt, id).changes !== 1) continue;
           const delivery = this.getCollaborationDelivery(id);
-          if (delivery) rows.push(delivery);
+          if (delivery) {
+            this.captureDeliveryTransition(id, "queued");
+            rows.push(delivery);
+          }
         }
         claimedIds = rows.map((delivery) => delivery.id);
         return rows;
@@ -3114,7 +3172,10 @@ export class Store {
     );
     this.writeScope(
       () => {
-        for (const id of ids) fail.run(failedAt, failureReason, id);
+        for (const id of ids) {
+          if (fail.run(failedAt, failureReason, id).changes !== 1) continue;
+          this.captureDeliveryTransition(id, "delivered");
+        }
       },
       () => {
         this.publishDeliveryStatusChanges(ids);
@@ -3147,7 +3208,10 @@ export class Store {
         for (const { id } of ids) {
           if (fail.run(failedAt, failureReason, id).changes !== 1) continue;
           const delivery = this.getCollaborationDelivery(id);
-          if (delivery) rows.push(delivery);
+          if (delivery) {
+            this.captureDeliveryTransition(id, "queued");
+            rows.push(delivery);
+          }
         }
         failedIds = rows.map((delivery) => delivery.id);
         return rows;
@@ -3168,28 +3232,40 @@ export class Store {
          WHERE recipient_task_id = ? AND status = 'queued'`,
       )
       .all(taskId) as Array<{ id: string; message_id: string }>;
-    const ids = rows.map((row) => row.id);
-    this.db
-      .prepare(
-        `UPDATE deliveries
+    const failedIds: string[] = [];
+    const fail = this.db.prepare(
+      `UPDATE deliveries
          SET status = 'failed', failed_at = ?,
            failure_reason = 'cleared_before_delivery'
-         WHERE recipient_task_id = ? AND status = 'queued'`,
-      )
-      .run(failedAt, taskId);
-    this.publishDeliveryStatusChanges(ids);
+         WHERE id = ? AND status = 'queued'`,
+    );
+    for (const row of rows) {
+      if (fail.run(failedAt, row.id).changes !== 1) continue;
+      this.captureDeliveryTransition(row.id, "queued");
+      failedIds.push(row.id);
+    }
+    this.publishDeliveryStatusChanges(failedIds);
     return rows.map((row) => ({ id: row.id, messageId: row.message_id }));
   }
 
   /** Preserve the fact while recording that a deleted target cannot receive it. */
   private failOutstandingDeliveriesForDeletedTask(taskId: string): void {
-    this.db
+    const rows = this.db
       .prepare(
-        `UPDATE deliveries
-         SET status = 'failed', failed_at = ?, failure_reason = 'target_deleted'
+        `SELECT id FROM deliveries
          WHERE recipient_task_id = ? AND status = 'queued'`,
       )
-      .run(Date.now(), taskId);
+      .all(taskId) as Array<{ id: string }>;
+    const fail = this.db.prepare(
+      `UPDATE deliveries
+         SET status = 'failed', failed_at = ?, failure_reason = 'target_deleted'
+         WHERE id = ? AND status = 'queued'`,
+    );
+    const failedAt = Date.now();
+    for (const { id } of rows) {
+      if (fail.run(failedAt, id).changes !== 1) continue;
+      this.captureDeliveryTransition(id, "queued");
+    }
   }
 
   /** Delivery ids a deletion failed, for the post-commit mark broadcast. */

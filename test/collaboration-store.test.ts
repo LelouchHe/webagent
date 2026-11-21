@@ -219,6 +219,82 @@ describe("Store collaboration records", () => {
     ]);
   });
 
+  it("preserves every real delivery transition when an outer scope claims then rejects", () => {
+    store.createCollaborationMessage({
+      ...messageInput(),
+      sourceActor: "agent",
+    });
+    const transitions: Array<Record<string, unknown>> = [];
+    store.onDeliveryStatusTransition((change) => {
+      transitions.push({ ...change });
+    });
+
+    store["writeScope"](() => {
+      store.claimQueuedDeliveries("a2");
+      store.failRejectedDeliveries(["delivery-a1-a2"], "prompt_failed", 123);
+    });
+
+    assert.deepEqual(
+      transitions.map(({ fromStatus, status, deliveredAt, failureReason }) => ({
+        fromStatus,
+        status,
+        deliveredAt,
+        failureReason,
+      })),
+      [
+        {
+          fromStatus: "queued",
+          status: "delivered",
+          deliveredAt: transitions[0].deliveredAt,
+          failureReason: null,
+        },
+        {
+          fromStatus: "delivered",
+          status: "failed",
+          deliveredAt: null,
+          failureReason: "prompt_failed",
+        },
+      ],
+    );
+  });
+
+  it("publishes committed system transitions semantically but not to the UI", () => {
+    store.createSystemDelivery({
+      messageId: "system-message",
+      deliveryId: "system-delivery",
+      fromTaskId: "a1",
+      recipientTaskId: "a2",
+      body: "notice",
+    });
+    const semantic: string[] = [];
+    const broadcast: string[] = [];
+    store.onDeliveryStatusTransition((change) => {
+      semantic.push(change.status);
+    });
+    store.onDeliveryStatusBroadcast((change) => {
+      broadcast.push(change.status);
+    });
+
+    store.claimQueuedDeliveries("a2");
+    assert.deepEqual(semantic, ["delivered"]);
+    assert.deepEqual(broadcast, []);
+  });
+
+  it("does not publish a transition when reject updates no row", () => {
+    store.createCollaborationMessage(messageInput());
+    const transitions: string[] = [];
+    store.onDeliveryStatusTransition((change) => {
+      transitions.push(change.status);
+    });
+
+    store.failRejectedDeliveries(["delivery-a1-a2"], "prompt_failed");
+    assert.deepEqual(transitions, []);
+    assert.equal(
+      store.getCollaborationDelivery("delivery-a1-a2")?.status,
+      "queued",
+    );
+  });
+
   it("keeps collaboration facts in surviving task timelines after hard delete", () => {
     store.createCollaborationMessage(messageInput());
 

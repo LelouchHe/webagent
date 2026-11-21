@@ -31,10 +31,12 @@ export function handoffQueuedDeliveries(
   });
   const target = store.getTaskIncludingDeleted(recipientTaskId);
   if (!target) return received;
-  for (const { message } of received) {
-    if (shouldArm(message, target)) {
-      obligations.arm(message.source_task_id, recipientTaskId);
+  store.afterCommit(() => {
+    for (const { message } of received) {
+      if (shouldArm(message, target)) {
+        obligations.arm(message.source_task_id, recipientTaskId);
+      }
     }
-  }
+  });
   return received;
 }

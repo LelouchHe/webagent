@@ -8,6 +8,7 @@ import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
+import { handoffQueuedDeliveries } from "../src/collaboration-receiver.ts";
 import {
   makeEventHandlerConfig,
   mockBridgeStubs,
@@ -446,6 +447,10 @@ describe("TaskManager collaboration delivery drain", () => {
     const bridge = {
       ...mockBridgeStubs(),
       async prompt() {
+        assert.ok(
+          tasks.hasOpenObligation("parent", "child"),
+          "the account is open before ACP submit",
+        );
         await new Promise<void>((resolve) => {
           endTurn = resolve;
         });
@@ -936,21 +941,46 @@ describe("TaskManager collaboration delivery drain", () => {
         workflowStatus: store.getTask("child")?.workflow_status,
       });
     });
+    let accountOpenAtPrompt = false;
 
     assert.equal(
       await tasks.drainCollaborationDeliveries("child", {
         ...mockBridgeStubs(),
         async prompt() {
+          accountOpenAtPrompt = tasks.hasOpenObligation("parent", "child");
           throw new Error("rejected");
         },
       }),
       true,
     );
+    assert.equal(accountOpenAtPrompt, true);
     await waitFor(() => observed.length === 1);
     assert.deepEqual(observed, [
       { accountOpen: false, workflowStatus: "running" },
     ]);
     assert.equal(store.getTask("child")?.workflow_status, "idle");
+  });
+
+  it("does not arm an account when the outer handoff scope rolls back", () => {
+    // Regression guard for deferring the process-local arm to outer commit.
+    seedDispatchFamily();
+    const obligations = (
+      tasks as unknown as {
+        obligations: { arm(source: string, target: string): void };
+      }
+    ).obligations;
+
+    assert.throws(() =>
+      store["writeScope"](() => {
+        handoffQueuedDeliveries(store, obligations, "child");
+        throw new Error("roll back handoff");
+      }),
+    );
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+    assert.equal(
+      store.getCollaborationDelivery("dispatch-delivery")?.status,
+      "queued",
+    );
   });
 
   it("persists one notice for one rejected dispatch failure", async () => {
@@ -971,6 +1001,26 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(notices.length, 1);
     assert.equal(notices[0].reason, "target_removed");
     assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+  });
+
+  it("processes a nested claim then reject as delivered followed by one failure", () => {
+    // Regression guard for immutable transition snapshots and one failure fact.
+    seedDispatchFamily();
+    const statuses: string[] = [];
+    store.onDeliveryStatusTransition((change) => {
+      statuses.push(change.status);
+    });
+
+    store["writeScope"](() => {
+      store.claimQueuedDeliveries("child");
+      store.failRejectedDeliveries(["dispatch-delivery"], "prompt_failed");
+    });
+
+    assert.deepEqual(statuses, ["delivered", "failed"]);
+    const notices = store
+      .getEvents("parent")
+      .filter((event) => event.type === "task_outcome_notice");
+    assert.equal(notices.length, 1);
   });
 
   it("does not mark a turn when the update transaction fails", () => {

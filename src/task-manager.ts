@@ -44,9 +44,9 @@ import {
 import { TaskStateManager } from "./task-state.ts";
 import {
   ObligationController,
-  type ObligationNotice,
   type TimerHandle,
 } from "./obligation-controller.ts";
+import type { ObligationOutcomeFact } from "./obligation-outcomes.ts";
 import { buildLabelMap, type LabelMap } from "./attachment-labels.ts";
 import { ExecutionAdapter } from "./execution-adapter.ts";
 import {
@@ -396,7 +396,7 @@ export interface ConsumeMessageResult {
  */
 export interface ObligationHost {
   submitObligationReminder(sourceTaskId: string, targetTaskId: string): void;
-  emitObligationNotice(notice: ObligationNotice): void;
+  emitObligationOutcome(fact: ObligationOutcomeFact): void;
 }
 
 /**
@@ -525,8 +525,8 @@ export function createObligationController(
     submitReminder: (sourceTaskId, targetTaskId) => {
       host.submitObligationReminder(sourceTaskId, targetTaskId);
     },
-    emitNotice: (notice) => {
-      host.emitObligationNotice(notice);
+    emitOutcome: (fact) => {
+      host.emitObligationOutcome(fact);
     },
     log: (event, fields) => {
       slog.debug(event, fields);
@@ -3917,7 +3917,7 @@ export class TaskManager implements ObligationHost {
   private onDeliveryFailed(change: CollaborationDeliveryStatusChange): void {
     const message = this.store.getCollaborationMessage(change.messageId);
     if (!message) return;
-    const decision = reduceObligationOutcome({
+    this.emitObligationOutcome({
       kind: "delivery_failed",
       change,
       message,
@@ -3925,14 +3925,6 @@ export class TaskManager implements ObligationHost {
         change.recipientTaskId,
       ),
     });
-    if (decision.kind === "close_account") {
-      this.obligations.noteTargetUnavailable(
-        change.recipientTaskId,
-        decision.notice.message,
-      );
-    } else if (decision.kind === "notice") {
-      this.emitObligationNotice(decision.notice);
-    }
   }
 
   /**
@@ -3972,14 +3964,14 @@ export class TaskManager implements ObligationHost {
    * normal delivery path. The event carries source, target, and reason; the
    * delivered body also names the target so two children stay distinguishable.
    */
-  emitObligationNotice(notice: ObligationNotice): void {
-    const decision = reduceObligationOutcome({
-      kind: "account_unsettled",
-      notice,
-    });
+  emitObligationOutcome(fact: ObligationOutcomeFact): void {
+    const decision = reduceObligationOutcome(fact);
     if (decision.kind === "none") return;
+    if (decision.kind === "close_account") {
+      this.obligations.closeUnavailable(decision.notice.targetTaskId);
+    }
     if (!this.store.recordObligationNotice(decision.notice)) return;
-    void this.drainCollaborationDeliveries(notice.sourceTaskId);
+    void this.drainCollaborationDeliveries(decision.notice.sourceTaskId);
   }
 
   /** ACP envelope text for one drained message. */

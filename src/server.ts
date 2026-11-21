@@ -139,8 +139,8 @@ const obligationController = createObligationController(
         targetTaskId,
       );
     },
-    emitObligationNotice: (notice) => {
-      taskManagerRef.current!.emitObligationNotice(notice);
+    emitObligationOutcome: (fact) => {
+      taskManagerRef.current!.emitObligationOutcome(fact);
     },
   },
   { silenceMs: config.limits.silence_timeout * 60_000 },

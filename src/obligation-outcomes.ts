@@ -1,4 +1,7 @@
-import type { ObligationNotice } from "./obligation-controller.ts";
+import {
+  formatSilence,
+  type ObligationNotice,
+} from "./obligation-controller.ts";
 import type {
   CollaborationDeliveryStatusChange,
   CollaborationMessageRow,
@@ -12,8 +15,20 @@ export type ObligationOutcomeFact =
       openAccountSourceTaskId: string | undefined;
     }
   | {
-      kind: "account_unsettled";
-      notice: ObligationNotice;
+      kind: "target_unavailable";
+      sourceTaskId: string;
+      targetTaskId: string;
+    }
+  | {
+      kind: "repeated_unreported_turn";
+      sourceTaskId: string;
+      targetTaskId: string;
+    }
+  | {
+      kind: "silent_account";
+      sourceTaskId: string;
+      targetTaskId: string;
+      silenceMs: number;
     };
 
 export type ObligationOutcomeDecision =
@@ -26,6 +41,15 @@ export type ObligationOutcomeDecision =
       kind: "notice";
       notice: ObligationNotice;
     };
+
+function accountNotice(
+  reason: ObligationNotice["reason"],
+  sourceTaskId: string,
+  targetTaskId: string,
+  message: string,
+): ObligationNotice {
+  return { reason, sourceTaskId, targetTaskId, message };
+}
 
 function deliveryFailureNotice(
   change: CollaborationDeliveryStatusChange,
@@ -48,8 +72,38 @@ function deliveryFailureNotice(
 export function reduceObligationOutcome(
   fact: ObligationOutcomeFact,
 ): ObligationOutcomeDecision {
-  if (fact.kind === "account_unsettled") {
-    return { kind: "notice", notice: fact.notice };
+  if (fact.kind === "target_unavailable") {
+    return {
+      kind: "notice",
+      notice: accountNotice(
+        "target_removed",
+        fact.sourceTaskId,
+        fact.targetTaskId,
+        "The target left this edge (deleted or archived); the account is gone.",
+      ),
+    };
+  }
+  if (fact.kind === "repeated_unreported_turn") {
+    return {
+      kind: "notice",
+      notice: accountNotice(
+        "no_update",
+        fact.sourceTaskId,
+        fact.targetTaskId,
+        "The target ended another turn without any task_update; the runtime stopped reminding.",
+      ),
+    };
+  }
+  if (fact.kind === "silent_account") {
+    return {
+      kind: "notice",
+      notice: accountNotice(
+        "no_activity",
+        fact.sourceTaskId,
+        fact.targetTaskId,
+        `No agent activity for ${formatSilence(fact.silenceMs)} while the account is open.`,
+      ),
+    };
   }
   if (fact.message.source_actor !== "agent") return { kind: "none" };
   const notice = deliveryFailureNotice(fact.change, fact.message);
