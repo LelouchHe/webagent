@@ -12,10 +12,8 @@ import {
   type TaskManager,
 } from "../task-manager.ts";
 import { expandHomePath } from "../home-path.ts";
-import { errorMessage, type AgentEvent } from "../types.ts";
-import { formatFieldBlock } from "../shared/field-block.ts";
-import { formatTaskReference } from "../shared/task-reference.ts";
-import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
+import { errorMessage } from "../types.ts";
+import { isoFromMillisOrNull } from "../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
 import { formatSilence } from "../obligation-controller.ts";
 import type {
@@ -27,23 +25,17 @@ import type {
   McpTaskCreateInput,
   McpTaskCreateResult,
 } from "./tools.ts";
+import { queryTaskHistory, readTaskHistory } from "./task-history.ts";
 import {
-  parseTaskHistoryData,
-  projectTaskHistoryRow,
-  TASK_HISTORY_LIMITS,
-} from "./task-history.ts";
+  cancelMcpTask,
+  persistMcpTaskCancelAudit,
+  type McpTaskCancelNotice,
+} from "./task-cancel.ts";
 import {
   agentStartError,
   configOverrideError,
   unconfiguredAgentError,
 } from "./create-errors.ts";
-
-const {
-  queryBytes: QUERY_LIMIT_BYTES,
-  readBytes: READ_LIMIT_BYTES,
-  readSingleBytes: READ_SINGLE_LIMIT_BYTES,
-  readSeqs: MAX_READ_SEQS,
-} = TASK_HISTORY_LIMITS;
 
 export interface McpTaskCollaborationEvent {
   messageId: string;
@@ -82,10 +74,7 @@ export interface McpTaskCreatedEvent {
  * frontend branch. A user-initiated cancel stays deliberately different and
  * writes nothing here.
  */
-export type McpTaskCancelNotice = Extract<
-  AgentEvent,
-  { type: "system_message" }
->;
+export type { McpTaskCancelNotice } from "./task-cancel.ts";
 
 function relationOrder(relation: McpTaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2 }[relation];
@@ -161,35 +150,6 @@ export function createMcpTaskToolHost(deps: {
     return target;
   }
 
-  function responseTooLarge(
-    value: unknown,
-    limitBytes: number,
-    extra: Record<string, unknown>,
-  ): never {
-    const requiredBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
-    throw new Error(
-      JSON.stringify({
-        error: "response_too_large",
-        required_bytes: requiredBytes,
-        limit_bytes: limitBytes,
-        ...extra,
-      }),
-    );
-  }
-
-  function normalizeRange(
-    range: [number, number] | undefined,
-    maxSeq: number,
-  ): [number, number] {
-    if (maxSeq < 1) return [1, 0];
-    const resolveIndex = (value: number) =>
-      value < 0 ? maxSeq + value + 1 : value;
-    const clamp = (value: number) => Math.min(maxSeq, Math.max(1, value));
-    const a = clamp(resolveIndex(range?.[0] ?? 1));
-    const b = clamp(resolveIndex(range?.[1] ?? maxSeq));
-    return a <= b ? [a, b] : [b, a];
-  }
-
   function requireChildTarget(sourceTaskId: string, targetTaskId: string) {
     const source = requireTask(sourceTaskId);
     const target = requireTask(targetTaskId);
@@ -244,31 +204,7 @@ export function createMcpTaskToolHost(deps: {
       const sourceTaskId = principal.taskId;
       const targetId = input.taskId ?? sourceTaskId;
       const target = requireHistoryTarget(sourceTaskId, targetId);
-      const maxSeq = store.getLastEventSeq(target.id);
-      const [start, end] = normalizeRange(input.range, maxSeq);
-      const events =
-        start > end
-          ? []
-          : store.getEvents(target.id, {
-              afterSeq: start - 1,
-              beforeSeq: end + 1,
-            });
-      const rows = events
-        .map((event) => projectTaskHistoryRow(event, input.text))
-        .filter((row) => input.text === undefined || row.field !== undefined);
-      const result: McpTaskQueryResult = {
-        task_id: target.id,
-        max_seq: maxSeq,
-        rows,
-      };
-      const requiredBytes = Buffer.byteLength(JSON.stringify(result), "utf8");
-      if (requiredBytes > QUERY_LIMIT_BYTES) {
-        responseTooLarge(result, QUERY_LIMIT_BYTES, {
-          max_seq: maxSeq,
-          hint: { range: [-Math.min(50, maxSeq), -1] },
-        });
-      }
-      return result;
+      return queryTaskHistory(store, target.id, input);
     },
 
     read(principal, input): McpTaskReadResult {
@@ -278,31 +214,7 @@ export function createMcpTaskToolHost(deps: {
         sourceTaskId,
         input.taskId ?? sourceTaskId,
       );
-      const uniqueSeqs = [...new Set(input.seqs)].sort((a, b) => a - b);
-      if (uniqueSeqs.length > MAX_READ_SEQS && uniqueSeqs.length !== 1) {
-        throw new Error(`too_many_seqs: maximum is ${MAX_READ_SEQS}`);
-      }
-      const events = uniqueSeqs.map((seq) => store.getEvent(target.id, seq));
-      const missing = uniqueSeqs.filter((_, index) => !events[index]);
-      if (missing.length > 0) {
-        throw new Error(JSON.stringify({ error: "unknown_seq", missing }));
-      }
-      const rows = events.map((event) => ({
-        seq: event!.seq,
-        type: event!.type,
-        at: isoFromMillis(event!.created_at),
-        from: event!.from_ref,
-        data: parseTaskHistoryData(event!.data),
-      }));
-      const result: McpTaskReadResult = { task_id: target.id, rows };
-      // A single-seq request is exempt from the batch byte budget so one
-      // legitimate event is never permanently unreadable.
-      const limitBytes =
-        uniqueSeqs.length === 1 ? READ_SINGLE_LIMIT_BYTES : READ_LIMIT_BYTES;
-      if (Buffer.byteLength(JSON.stringify(result), "utf8") > limitBytes) {
-        responseTooLarge(result, limitBytes, { seqs: uniqueSeqs });
-      }
-      return result;
+      return readTaskHistory(store, target.id, input);
     },
 
     async create(
@@ -420,10 +332,9 @@ export function createMcpTaskToolHost(deps: {
       authorize(principal);
       const sourceTaskId = principal.taskId;
       const { target } = requireChildTarget(sourceTaskId, targetTaskId);
-      const bridge = tasks.existingTaskExecution(target.id)?.bridge ?? null;
-      const result = await tasks.cancelTaskExecution(
+      const result = await cancelMcpTask(
+        tasks,
         target.id,
-        bridge,
         deps.cancelTimeoutMs ?? 0,
       );
       // The cancel awaited a transport round trip; the record of what happened
@@ -436,61 +347,13 @@ export function createMcpTaskToolHost(deps: {
       // from the live task rows, with the same short-id fallback collaboration
       // uses; a cancelled task may already be soft-deleted, hence
       // `getTaskIncludingDeleted`.
-      const sourceTask = store.getTaskIncludingDeleted(sourceTaskId);
-      const targetTask = store.getTaskIncludingDeleted(target.id);
-      const sourceLabel = sourceTask?.title ?? sourceTaskId.slice(0, 8);
-      const targetLabel = targetTask?.title ?? target.id.slice(0, 8);
-      // The raw labels travel with both rows: a client anchors the reference it
-      // may mark by task id, and cannot recover it from the rendered title.
-      const sourceRef = formatTaskReference(sourceLabel);
-      const targetRef = formatTaskReference(targetLabel);
-      const body = formatFieldBlock([
-        { label: "reason", value: reason },
-        { label: "status", value: result.status },
-      ]);
-      const rows = [
-        {
-          taskId: sourceTaskId,
-          role: "source" as const,
-          title: `${sourceRef} cancelled ${targetRef}`,
-        },
-        {
-          taskId: target.id,
-          role: "target" as const,
-          title: `Cancelled by ${sourceRef}`,
-        },
-      ];
-      for (const row of rows) {
-        store.saveEvent(
-          row.taskId,
-          "system_message",
-          {
-            kind: "task_cancel",
-            role: row.role,
-            sourceTaskId,
-            sourceLabel,
-            targetTaskId: target.id,
-            targetLabel,
-            reason,
-            status: result.status,
-            title: row.title,
-            body,
-          },
-          { from_ref: "agent" },
-        );
-        broadcastTaskCancelNotice?.({
-          type: "system_message",
-          taskId: row.taskId,
-          kind: "task_cancel",
-          role: row.role,
-          sourceTaskId,
-          sourceLabel,
-          targetTaskId: target.id,
-          targetLabel,
-          title: row.title,
-          body,
-        });
-      }
+      persistMcpTaskCancelAudit(store, {
+        sourceTaskId,
+        targetTaskId: target.id,
+        reason,
+        result,
+        broadcast: broadcastTaskCancelNotice,
+      });
       return { accepted: true, taskId: target.id, status: result.status };
     },
 
