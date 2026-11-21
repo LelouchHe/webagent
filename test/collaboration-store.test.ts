@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { Store, type CollaborationMessageInput } from "../src/store.ts";
+import { RUNTIME_ITEM_KINDS } from "../src/collaboration-message.ts";
 
 describe("Store collaboration records", () => {
   let store: Store;
@@ -258,5 +259,54 @@ describe("Store collaboration records", () => {
     assert.ok(task);
     assert.equal(task.workflow_status, "idle");
     assert.equal("brief" in task, false);
+  });
+
+  it("recovers a runtime item kind only from the system-authored record", () => {
+    // The drain recovers which runtime item a delivery is from the audit event
+    // the producer wrote. Two assertions, each with exactly one candidate for
+    // its message id, so neither depends on the order rows come back in.
+    const database = (store as unknown as { db: Database.Database }).db;
+    const insertEvent = (
+      type: string,
+      fromRef: string,
+      data: Record<string, unknown>,
+    ): void => {
+      const nextSeq = (
+        database
+          .prepare(
+            "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE task_id = ?",
+          )
+          .get("a1") as { next: number }
+      ).next;
+      database
+        .prepare(
+          `INSERT INTO events (task_id, seq, type, data, from_ref, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run("a1", nextSeq, type, JSON.stringify(data), fromRef, Date.now());
+    };
+
+    insertEvent("handoff_reminder", "agent", { messageId: "only-agent" });
+    assert.equal(
+      store.getRuntimeItemKind("a1", "only-agent", RUNTIME_ITEM_KINDS),
+      null,
+      "a message from a task is not a runtime item's record",
+    );
+
+    insertEvent("task_outcome_notice", "system", {
+      messageId: "only-system",
+    });
+    assert.equal(
+      store.getRuntimeItemKind("a1", "only-system", RUNTIME_ITEM_KINDS),
+      "task_outcome_notice",
+      "the runtime's own record still supplies the kind",
+    );
+
+    insertEvent("user_message", "user", { messageId: "other-type" });
+    assert.equal(
+      store.getRuntimeItemKind("a1", "other-type", RUNTIME_ITEM_KINDS),
+      null,
+      "an event outside the candidate kinds is not a runtime item either",
+    );
   });
 });

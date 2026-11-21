@@ -95,19 +95,24 @@ time. An entry without a "closing condition" is a wish, not an issue.
   producer wrote on the same task. A system delivery queued before that event
   recorded the message id drains as `WebAgent runtime` instead of
   `Task handoff required` / `Task handoff notice`, and keeps `kind:
-  collaboration`. The label is honest but unnamed. The lookup reads the two
-  candidate event types only and parses their data in JS, so one unreadable row
-  cannot fail a drain. *Closing:* write the audit event inside
-  `createSystemDelivery`, so the item record and its delivery cannot diverge.
+  collaboration`. The label is honest but unnamed. The lookup reads only the two
+  candidate event types from the inferred audit origin and parses their data in
+  JS, so an unreadable row cannot fail a drain — a SQLite failure still can,
+  which the claim-before-prompt entry below covers. It reads those rows until
+  the match, so a very long history costs one synchronous scan per item before
+  the prompt. *Closing:* write the audit event inside `createSystemDelivery`, so
+  the item record and its delivery cannot diverge.
 - **A claimed delivery batch is not repaired if the drain throws after the
   claim.** `claimQueuedDeliveries` marks the batch delivered before the rows are
   projected and before the ACP prompt, so an exception in between (a database
   error writing a projected row, say) leaves the batch marked delivered while
   the agent never receives it; the catch logs and returns without requeueing or
-  failing. The runtime item lookup no longer throws — it parses per row and
-  skips what it cannot read — but the claim-before-prompt window is by design.
-  *Closing:* repair or requeue the batch in the drain's catch, or claim after
-  the prompt is accepted.
+  failing. The runtime item lookup no longer throws on unreadable data — it
+  parses per row and skips what it cannot read — but a failed `sqlite3_step`, a
+  projection write, or any other throw in that window still reaches this catch,
+  and the claim-before-prompt window is by design. *Closing:* repair or
+  requeue the batch in the drain's catch, or claim after the prompt is
+  accepted.
 - **A soft-deleted task's share cannot be revoked.** The tombstone path keeps
   history but leaves the published snapshot addressable. *Closing:* revoke on
   tombstone and record the revocation in the share row.
