@@ -98,7 +98,10 @@ entity; they name the runtime's bookkeeping.
 **`handoff` stays reserved.** It continues to mean the provider/lifecycle handoff
 and the session-compaction handoff (for example `pending_compact_summary`); it is
 not another name for the account or settlement. Prefer *account*
-or *settlement* for this mechanism.
+or *settlement* for this mechanism. The reservation is about naming that record:
+the act of reporting one is still a handoff in product prose, as the Task Manual
+and the closing reminder's own text say, so a transcript row may be titled after
+the act (`Task handoff required`, `Task handoff notice`).
 
 ## Execution authority vocabulary
 
