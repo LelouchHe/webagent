@@ -319,14 +319,11 @@ time. An entry without a "closing condition" is a wish, not an issue.
   delivery stays `queued` and the account stays open until the agent can be
   started; nothing fails or retries on a timer. *Closing:* start-failure
   handling that marks the delivery failed, if this proves common.
-- **A Task that reports `waiting` but nothing will ever wake it is not
-  detected.** The runtime does not know whether a child, a person, or an
-  external event will actually hand off, so a misused `waiting` can stay silent
-  while the source waits. The status is visible in `task_list`, and the
-  `task_update` description says waiting on a person or an external event is
-  `blocked`. *Closing:* event data showing this misclassification in practice,
-  then a rule that treats a `waiting` turn with no open downstream account as a
-  missing update.
+- **After a restart, a Task whose child is still working cannot report
+  `waiting`.** Open accounts are process-local, so the wake-source check finds
+  none until the Task dispatches again; the child's `done` or `blocked` still
+  reaches it through the current-parent fallback. *Closing:* persisted
+  accounts, if restarts during delegated work prove common.
 
 ## Accepted as designed
 

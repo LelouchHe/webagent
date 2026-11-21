@@ -205,12 +205,74 @@ describe("cross-agent collaboration", () => {
     assert.equal(payload.targetTaskId, childId);
   });
 
-  it("records waiting without delivering, waking, or settling", async () => {
-    const { parentId, childId, childToken } = await dispatchToChildOnB();
+  it("rejects waiting when nothing will wake the task", async () => {
+    const { childId, childToken } = await dispatchToChildOnB();
 
     const waiting = await callTool(harness, childToken, "task_update", {
       status: "waiting",
-      body: "waiting on the other child",
+      body: "waiting on nothing",
+    });
+    const result = toolResult(waiting.json);
+    assert.equal(result.isError, true);
+    assert.match(JSON.stringify(result), /Nothing will wake this Task/);
+    assert.notEqual(harness.store.getTask(childId)?.workflow_status, "waiting");
+    assert.equal(childUpdateEvents(harness, childId).length, 0);
+
+    // A rejected waiting does not satisfy the turn: the reminder still follows.
+    const dispatchPrompt = harness.agents[B].prompts[0];
+    dispatchPrompt.resolve();
+    harness.endTurn(childId, dispatchPrompt.promptId);
+    await waitForPrompts(harness, B, 2);
+    assert.match(
+      harness.agents[B].prompts[1].text,
+      /runtime-injected closing turn/i,
+    );
+  });
+
+  it("accepts waiting while a message to the task is queued", async () => {
+    const { parentId, childId, childToken } = await dispatchToChildOnB();
+    const parentToken = harness.capabilities.mint(
+      parentId,
+      A,
+      harness.tasks.authority.leaseFor(parentId)!.generation,
+    );
+    // The child's turn is still running, so a second message stays queued.
+    const sent = await callTool(harness, parentToken, "task_send", {
+      target: childId,
+      body: "one more thing",
+    });
+    assert.equal(toolResult(sent.json).isError, undefined);
+    assert.equal(harness.store.countQueuedDeliveries(childId), 1);
+
+    const waiting = await callTool(harness, childToken, "task_update", {
+      status: "waiting",
+      body: "waiting for the queued message",
+    });
+    assert.equal(toolResult(waiting.json).isError, undefined);
+    assert.equal(harness.store.getTask(childId)?.workflow_status, "waiting");
+  });
+
+  it("records waiting on a dispatched child without delivering, waking, or settling", async () => {
+    const { parentId, childId, childToken } = await dispatchToChildOnB();
+
+    // The child dispatches its own child, which now owes it an update.
+    const created = await callTool(harness, childToken, "task_create", {
+      title: "grandchild on b",
+      agent: B,
+    });
+    const grandchildId = createdTaskId(created.json);
+    const dispatched = await callTool(harness, childToken, "task_send", {
+      target: grandchildId,
+      body: "GRANDCHILD CONTRACT",
+    });
+    assert.equal(toolResult(dispatched.json).isError, undefined);
+    await waitForPrompts(harness, B, 2);
+    const childPrompts = () =>
+      harness.agents[B].prompts.filter((prompt) => prompt.taskId === childId);
+
+    const waiting = await callTool(harness, childToken, "task_update", {
+      status: "waiting",
+      body: "waiting on the grandchild",
     });
     assert.equal(toolResult(waiting.json).isError, undefined);
 
@@ -228,12 +290,12 @@ describe("cross-agent collaboration", () => {
     );
 
     // Waiting still satisfies the current turn's check: no reminder follows.
-    const dispatchPrompt = harness.agents[B].prompts[0];
+    const dispatchPrompt = childPrompts()[0];
     dispatchPrompt.resolve();
     harness.endTurn(childId, dispatchPrompt.promptId);
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(
-      harness.agents[B].prompts.length,
+      childPrompts().length,
       1,
       "a turn that reported waiting needs no closing reminder",
     );

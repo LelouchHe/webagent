@@ -414,7 +414,7 @@ export function registerMcpTools(
       description:
         "Record a typed update for the current Task and set its workflowStatus. " +
         "`done` and `blocked` are delivered to the requester (the source of the open account, or the current parent when none is open), wake it, and settle the account, even when late. " +
-        "`waiting` is only recorded: it is not delivered, wakes no one, and leaves the account open. " +
+        "`waiting` is only recorded: it is not delivered, wakes no one, and leaves the account open. It is refused unless this Task is the source of an open account or has a queued message. " +
         "Any update satisfies the current turn's account check. The Task is not deleted or closed.",
       inputSchema: {
         status: z

@@ -416,7 +416,9 @@ call also records the update event and changes the reported status.
 `waiting` is **not** delivered, does not wake anyone, and does not settle the
 account. It only records `workflowStatus = waiting` and an event. It still
 counts as this turn's update, so a turn that reports `waiting` gets no closing
-reminder.
+reminder. The call is refused, and nothing is recorded, unless something will
+wake the Task: an open account it is the source of (a child it dispatched still
+owes an update) or a message already queued to it.
 
 There is **no new parameter** and no correlation id. One account exists per
 parent→child edge, so several requests share it and one `done` or `blocked`

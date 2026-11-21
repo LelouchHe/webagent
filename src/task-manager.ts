@@ -3916,6 +3916,16 @@ export class TaskManager implements ObligationHost {
     accountTargetTaskId: string | null;
   } {
     if (status === "waiting") {
+      // Waiting is only true while something will wake this task: a child that
+      // owes it an update, or a delivery already queued to it.
+      if (
+        !this.obligations.hasOpenAsSource(targetTaskId) &&
+        this.store.countQueuedDeliveries(targetTaskId) === 0
+      ) {
+        throw new Error(
+          "Nothing will wake this Task: it has no open request to a child and no queued message. `waiting` was not recorded.",
+        );
+      }
       this.store.recordAgentWorkflowUpdate(
         targetTaskId,
         status,

@@ -241,6 +241,14 @@ export class ObligationController {
     this.schedule();
   }
 
+  /** Whether this task is the source of any open account. */
+  hasOpenAsSource(sourceTaskId: string): boolean {
+    for (const account of this.accounts.values()) {
+      if (account.sourceTaskId === sourceTaskId) return true;
+    }
+    return false;
+  }
+
   hasOpen(sourceTaskId: string, targetTaskId: string): boolean {
     return this.accounts.get(targetTaskId)?.sourceTaskId === sourceTaskId;
   }

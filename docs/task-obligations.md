@@ -46,7 +46,9 @@ settles that one account, even if several requests arrived in the meantime.
 and wake it later, typically a child it dispatched. It is not delivered, does
 not wake anyone, and does not settle; it only writes the Task's
 `workflowStatus = waiting` and an event. It still satisfies the current turn's
-update check (below).
+update check (below). It is refused, with nothing recorded, unless something
+will wake the Task: an open account it is the source of, or a delivery already
+queued to it. A refused `waiting` does not count as the turn's update.
 
 Waiting on a human, an external event, missing information, or a permission is
 `blocked`, not `waiting`, because nothing will wake the Task by itself.
@@ -112,6 +114,6 @@ Recorded, not guarded, in [Known issues](known-issues.md):
 
 - One account per edge means several requests share it. One `done` or `blocked`
   settles all of them; the requester and target clarify the mapping in prose.
-- A Task that reports `waiting` but nothing will ever wake it is not detected.
-  That is a wrong status choice, answered by the `task_update` description and
-  the visible `waiting` state in `task_list`.
+- Because accounts are process-local, after a restart a Task whose child is
+  still working cannot report `waiting` until it dispatches again. The child's
+  `done` or `blocked` still reaches it as the current parent.
