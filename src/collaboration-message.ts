@@ -5,9 +5,6 @@ import type { AgentEvent } from "./types.ts";
 
 export type CollaborationRole = "source" | "target";
 
-/** The visible author label for a runtime-authored item. */
-export const RUNTIME_AUTHOR_LABEL = "WebAgent runtime";
-
 /**
  * The visible title of a runtime item, keyed by the audit event type written
  * when the item is queued. The key is that event type so the row cannot
@@ -28,17 +25,6 @@ export const RUNTIME_ITEM_KINDS: readonly RuntimeItemKind[] = Object.keys(
 /** Whether `value` names a runtime item whose title this module knows. */
 export function isRuntimeItemKind(value: unknown): value is RuntimeItemKind {
   return typeof value === "string" && value in RUNTIME_ITEM_TITLES;
-}
-
-/**
- * A runtime item is a notice about one task's own bookkeeping, not
- * correspondence between two tasks: it has no sender, its reader is the party
- * the `sent` sentence would name as the recipient, and it has no delivery mark.
- * It therefore gets a title in the runtime's own voice and never borrows
- * `collaborationTitle`.
- */
-export function runtimeItemTitle(kind: RuntimeItemKind | undefined): string {
-  return kind === undefined ? RUNTIME_AUTHOR_LABEL : RUNTIME_ITEM_TITLES[kind];
 }
 
 /**
@@ -63,9 +49,11 @@ export interface CollaborationSystemMessageInput extends CollaborationLabels {
   targetTaskId: string;
   role: CollaborationRole;
   body: string;
-  /** Runtime-authored: show the runtime as author, not the named task. */
-  systemAuthor?: boolean;
-  /** Which runtime item this is; selects the title. Ignored without `systemAuthor`. */
+  /**
+   * Which runtime item this is. Its presence is what makes the row a runtime
+   * item: it selects the title, gives the row its own `kind`, and drops the
+   * source handle, because nothing sent it.
+   */
   runtimeItem?: RuntimeItemKind;
 }
 
@@ -77,42 +65,39 @@ export interface CollaborationSystemMessage {
 }
 
 /**
+ * `kind` names the fact, so a runtime item names itself rather than
+ * `collaboration`: its title carries no task reference, and a client that
+ * dispatches on `kind` must not go looking for one.
+ */
+export function projectionKind(input: {
+  runtimeItem?: RuntimeItemKind;
+}): string {
+  return input.runtimeItem ?? "collaboration";
+}
+
+/**
  * The single row shape for a collaboration projection. Every producer (the
  * Store's persisted copies, the agent tool, the user routes, runtime notices)
  * goes through it, so a title and the labels it was built from cannot drift.
  */
-/**
- * `kind` names the fact, so a runtime item names itself rather than
- * `collaboration`: its title carries no task reference, and a client that
- * dispatches on `kind` must not go looking for one. A row whose item kind is
- * unknown keeps the old value — that path exists only for a delivery queued
- * before producers recorded their kind.
- */
-export function projectionKind(input: {
-  systemAuthor?: boolean;
-  runtimeItem?: RuntimeItemKind;
-}): string {
-  if (!input.systemAuthor) return "collaboration";
-  return input.runtimeItem ?? "collaboration";
-}
 
 export function buildCollaborationSystemMessage(
   input: CollaborationSystemMessageInput,
 ): CollaborationSystemMessage {
-  const sourceLabel = input.systemAuthor
-    ? RUNTIME_AUTHOR_LABEL
-    : input.sourceLabel;
-  const title = input.systemAuthor
-    ? runtimeItemTitle(input.runtimeItem)
-    : collaborationTitle({ ...input, sourceLabel });
+  // A runtime item has no source handle: nothing sent it, so a `sourceLabel`
+  // here would describe an author that cannot be referenced or replied to.
+  const title = input.runtimeItem
+    ? RUNTIME_ITEM_TITLES[input.runtimeItem]
+    : collaborationTitle(input);
   return {
     title,
     body: input.body,
     data: {
       kind: projectionKind(input),
       messageId: input.messageId,
-      ...(input.systemAuthor ? {} : { sourceTaskId: input.sourceTaskId }),
-      sourceLabel,
+      ...(input.runtimeItem
+        ? {}
+        : { sourceTaskId: input.sourceTaskId, sourceLabel: input.sourceLabel }),
       targetTaskId: input.targetTaskId,
       targetLabel: input.targetLabel,
       role: input.role,
@@ -134,7 +119,6 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
   body: string;
   taskId: string;
   role: CollaborationRole;
-  systemAuthor?: boolean;
   runtimeItem?: RuntimeItemKind;
   deliveryStatus?: CollaborationDeliveryStatus;
   deliveredAt?: string;
@@ -166,8 +150,9 @@ export function buildCollaborationBroadcast(
     taskId: input.taskId,
     kind: projectionKind(input),
     messageId: input.messageId,
-    ...(input.systemAuthor ? {} : { sourceTaskId: input.sourceTaskId }),
-    sourceLabel: input.systemAuthor ? RUNTIME_AUTHOR_LABEL : input.sourceLabel,
+    ...(input.runtimeItem
+      ? {}
+      : { sourceTaskId: input.sourceTaskId, sourceLabel: input.sourceLabel }),
     targetTaskId: input.targetTaskId,
     targetLabel: input.targetLabel,
     role: input.role,

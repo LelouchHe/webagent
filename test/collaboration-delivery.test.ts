@@ -578,7 +578,7 @@ describe("TaskManager collaboration delivery drain", () => {
     await waitFor(() => prompts.length === 1, {
       message: "the turn boundary drains the reminder automatically",
     });
-    assert.match(prompts[0], /From the WebAgent runtime/);
+    assert.match(prompts[0], /Runtime item:/);
     assert.match(prompts[0], /runtime-injected closing turn/i);
     assert.equal(store.countQueuedDeliveries("child"), 0);
     assert.equal(
@@ -595,7 +595,11 @@ describe("TaskManager collaboration delivery drain", () => {
       .map((event) => JSON.parse(event.data) as Record<string, unknown>)
       .filter((data) => data.kind === "handoff_reminder");
     assert.equal(rows.length, 1, "exactly one recipient-visible row");
-    assert.equal(rows[0].sourceLabel, "WebAgent runtime");
+    assert.equal(
+      "sourceLabel" in rows[0],
+      false,
+      "nothing sent a runtime item, so it carries no source handle",
+    );
     assert.equal(
       rows[0].kind,
       "handoff_reminder",
@@ -615,6 +619,58 @@ describe("TaskManager collaboration delivery drain", () => {
     );
     assert.equal("sourceTaskId" in rows[0], false);
     assert.equal(deliveryEvents.length, 0, "no mark for a system item");
+  });
+
+  it("delivers a runtime item that has no record without inventing a row", async () => {
+    store.createTask(
+      "parent",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-parent",
+      store.rootTaskId,
+    );
+    store.createTask(
+      "child",
+      tmpDir,
+      "auto",
+      "test-agent",
+      "agent-child",
+      "parent",
+    );
+    tasks.liveTasks.add("child");
+    const prompts: string[] = [];
+    tasks.attachExecutionBridge({
+      ...mockBridgeStubs(),
+      async prompt(_taskId: string, text: string) {
+        prompts.push(text);
+      },
+    });
+    tasks.beginAgentTurn("child", { origin: "interactive" });
+
+    // No audit event records what this item is, so the row has nothing honest to
+    // say. The body must still reach the agent; only the transcript entry is
+    // skipped, and no placeholder title is invented for it.
+    store.createSystemDelivery({
+      messageId: "unrecorded-item",
+      deliveryId: "unrecorded-delivery",
+      fromTaskId: "parent",
+      recipientTaskId: "child",
+      body: "unrecorded runtime text",
+    });
+
+    tasks.endTurn("child");
+    await waitFor(() => prompts.length === 1, {
+      message: "an unrecorded runtime item must still reach the agent",
+    });
+    assert.match(prompts[0], /Runtime item:/);
+    assert.match(prompts[0], /unrecorded runtime text/);
+
+    const rows = store
+      .getEvents("child")
+      .filter((event) => event.type === "system_message")
+      .map((event) => JSON.parse(event.data) as Record<string, unknown>);
+    assert.deepEqual(rows, [], "an unnamed item claims no transcript row");
   });
 
   it("drains a runtime item past an unrelated row holding malformed JSON", async () => {

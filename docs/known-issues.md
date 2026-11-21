@@ -89,19 +89,6 @@ time. An entry without a "closing condition" is a wish, not an issue.
   fail. `shares.task_id` is the one task FK with no `ON DELETE`, which is also
   what keeps the tombstone reap explicit. *Closing:* give the share row a
   cascade or reap the share before the task.
-- **A runtime item with no recorded message id renders as the bare runtime
-  label.** The delivery row is one shape for every message and carries no item
-  kind, so the row written at drain recovers the kind from the audit event the
-  producer wrote on the same task. A system delivery queued before that event
-  recorded the message id drains as `WebAgent runtime` instead of
-  `Task handoff required` / `Task handoff notice`, and keeps `kind:
-  collaboration`. The label is honest but unnamed. The lookup reads only the two
-  candidate event types from the inferred audit origin and parses their data in
-  JS, so an unreadable row cannot fail a drain — a SQLite failure still can,
-  which the claim-before-prompt entry below covers. It reads those rows until
-  the match, so a very long history costs one synchronous scan per item before
-  the prompt. *Closing:* write the audit event inside `createSystemDelivery`, so
-  the item record and its delivery cannot diverge.
 - **A claimed delivery batch is not repaired if the drain throws after the
   claim.** `claimQueuedDeliveries` marks the batch delivered before the rows are
   projected and before the ACP prompt, so an exception in between (a database

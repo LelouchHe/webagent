@@ -18,7 +18,6 @@ import {
 } from "./store.ts";
 import { shouldArm } from "./task-collaboration.ts";
 import {
-  RUNTIME_AUTHOR_LABEL,
   RUNTIME_ITEM_KINDS,
   buildCollaborationSystemMessage,
   isRuntimeItemKind,
@@ -4060,7 +4059,10 @@ export class TaskManager implements ObligationHost {
   /** ACP envelope text for one drained item. */
   private deliveryEntry(message: CollaborationMessageRow): string {
     if (message.source_actor === "system") {
-      return `From the ${RUNTIME_AUTHOR_LABEL}:\n---8<---\n${message.body}\n---8<---`;
+      // Not a message from a task, and nothing sent it: the marker says which
+      // kind of thing this is without inventing a correspondent. The fences
+      // still mark the body as quoted content, exactly as for a peer.
+      return `Runtime item:\n---8<---\n${message.body}\n---8<---`;
     }
     // The full source id is the only reliable reply handle available to the
     // receiving agent today; label it explicitly. The quoted name is
@@ -4080,25 +4082,24 @@ export class TaskManager implements ObligationHost {
     message: CollaborationMessageRow,
     targetLabel: string,
   ): void {
-    const systemAuthor = message.source_actor === "system";
     // The delivery row is one shape for every message, so a runtime item
-    // recovers which notice it is from the audit event that queued it. An
-    // unknown kind (a row queued before producers recorded it) still gets a
-    // runtime title, never the `a sent b` sentence.
-    const runtimeItem = systemAuthor
-      ? (() => {
-          const kind = this.store.getRuntimeItemKind(
-            taskId,
-            message.id,
-            RUNTIME_ITEM_KINDS,
-          );
-          return isRuntimeItemKind(kind) ? kind : undefined;
-        })()
-      : undefined;
-    const sourceLabel = systemAuthor
-      ? RUNTIME_AUTHOR_LABEL
-      : (this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
-        message.source_task_id.slice(0, 8));
+    // recovers which item it is from the audit event that queued it.
+    const runtimeItem =
+      message.source_actor === "system"
+        ? this.store.getRuntimeItemKind(taskId, message.id, RUNTIME_ITEM_KINDS)
+        : null;
+    if (message.source_actor === "system" && !isRuntimeItemKind(runtimeItem)) {
+      // No record says what this item is, so there is no honest row to write.
+      // The body still reaches the agent; only the transcript entry is skipped.
+      slog.warn("runtime item record missing", {
+        taskId: taskId.slice(0, 8),
+        messageId: message.id.slice(0, 8),
+      });
+      return;
+    }
+    const sourceLabel =
+      this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
+      message.source_task_id.slice(0, 8);
     this.store.saveEvent(
       taskId,
       "system_message",
@@ -4110,8 +4111,7 @@ export class TaskManager implements ObligationHost {
         targetLabel,
         role: "target",
         body: message.body,
-        systemAuthor,
-        runtimeItem,
+        runtimeItem: isRuntimeItemKind(runtimeItem) ? runtimeItem : undefined,
       }).data,
       { from_ref: `msg:${message.id}` },
     );
@@ -4124,8 +4124,7 @@ export class TaskManager implements ObligationHost {
       role: "target",
       taskId,
       body: message.body,
-      systemAuthor,
-      runtimeItem,
+      runtimeItem: isRuntimeItemKind(runtimeItem) ? runtimeItem : undefined,
     });
   }
 

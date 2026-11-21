@@ -166,7 +166,7 @@ describe("cross-agent collaboration", () => {
     harness.endTurn(childId, reminder.promptId);
     await waitForPrompts(harness, A, 1, "the no_update notice never reached A");
     const notice = harness.agents[A].prompts[0].text;
-    assert.match(notice, /From the WebAgent runtime/);
+    assert.match(notice, /Runtime item:/);
     assert.match(
       notice,
       /no agent activity|ended another turn without any task_update/i,
@@ -210,7 +210,7 @@ describe("cross-agent collaboration", () => {
       .getEvents(parentId)
       .filter((event) => event.type === "system_message")
       .map((event) => JSON.parse(event.data) as Record<string, unknown>)
-      .filter((data) => data.sourceLabel === "WebAgent runtime")
+      .filter((data) => data.kind === "task_outcome_notice")
       .at(-1);
     assert.ok(noticeRow, "the notice has one visible row on the source");
     assert.equal(noticeRow.kind, "task_outcome_notice");
