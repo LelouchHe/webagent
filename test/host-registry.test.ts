@@ -5,10 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Store } from "../src/store.ts";
-import { HostRegistry, resolveSecret } from "../src/host-registry.ts";
+import { HostRegistry, resolveSecret } from "../src/host/registry.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { waitFor } from "./fixtures.ts";
 import { hashToken } from "../src/auth.ts";
+import { HostStore } from "../src/host/store.ts";
+import { TaskLocator } from "../src/task-locator.ts";
 
 test("behavior proof: token commands resolve with a timeout and redact failure", async () => {
   assert.equal(await resolveSecret("literal-token"), "literal-token");
@@ -26,6 +28,7 @@ test("behavior proof: transport safely classifies real rejection, 503, 400, 409,
   const dir = mkdtempSync(join(tmpdir(), "webagent-host-client-"));
   const store = new Store(dir);
   store.ensureRootTask(dir);
+  const hostStore = new HostStore(store);
   const parent = store.createTask(
     "parent",
     dir,
@@ -34,7 +37,7 @@ test("behavior proof: transport safely classifies real rejection, 503, 400, 409,
     "session-parent",
     store.rootTaskId,
   );
-  const edge = store.createHostEdge({
+  const edge = hostStore.createHostEdge({
     parentTaskId: parent.id,
     hostName: "mini",
     remoteTaskId: "remote-child",
@@ -55,27 +58,27 @@ test("behavior proof: transport safely classifies real rejection, 503, 400, 409,
     },
   });
   assert.ok(edge.edge);
-  const retried = store.createRemoteDispatch({
+  const retried = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
     edge: edge.edge,
     body: "network",
   });
-  const badRequest = store.createRemoteDispatch({
+  const badRequest = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
     edge: edge.edge,
     body: "bad-400",
   });
-  const conflict = store.createRemoteDispatch({
+  const conflict = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
     edge: edge.edge,
     body: "bad-409",
   });
-  const removed = store.createRemoteDispatch({
+  const removed = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
     edge: edge.edge,
     body: "removed",
   });
-  const later = store.createRemoteDispatch({
+  const later = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
     edge: edge.edge,
     body: "later",
@@ -157,7 +160,15 @@ test("behavior proof: transport safely classifies real rejection, 503, 400, 409,
   });
   await new Promise<void>((resolve) => owner.listen(0, "127.0.0.1", resolve));
   const ownerPort = (owner.address() as { port: number }).port;
-  const tasks = createTaskManager(store, dir, dir);
+  const tasks = createTaskManager(
+    store,
+    dir,
+    dir,
+    undefined,
+    undefined,
+    "test-agent",
+    new TaskLocator(store, [hostStore]),
+  );
   const registry = new HostRegistry(
     {
       mini: {
@@ -165,8 +176,10 @@ test("behavior proof: transport safely classifies real rejection, 503, 400, 409,
         token: "wat_test_token",
       },
     },
-    store,
-    tasks,
+    hostStore,
+    (taskId: string) => {
+      void tasks.drainCollaborationDeliveries(taskId);
+    },
   );
   registry.start();
   t.after(async () => {
@@ -186,6 +199,12 @@ test("behavior proof: transport safely classifies real rejection, 503, 400, 409,
     timeoutMs: 1_000,
   });
   await waitFor(() => bodies.includes("removed"), { timeoutMs: 5_000 });
+  await waitFor(
+    () =>
+      store.getCollaborationDelivery(removed.delivery.id)?.failure_reason ===
+      "target_removed",
+    { timeoutMs: 2_000 },
+  );
   assert.equal(
     store.getCollaborationDelivery(retried.delivery.id)?.status,
     "delivered",
@@ -206,7 +225,7 @@ test("behavior proof: transport safely classifies real rejection, 503, 400, 409,
     store.getCollaborationDelivery(later.delivery.id)?.failure_reason,
     "target_removed_edge",
   );
-  assert.equal(store.getHostEdge(edge.edge.id)?.status, "removed");
+  assert.equal(hostStore.getHostEdge(edge.edge.id)?.status, "removed");
   assert.equal(store.countQueuedDeliveries(parent.id), 1);
   assert.deepEqual(bodies, [
     "network",
@@ -229,6 +248,7 @@ test("behavior proof: an ACK lost in flight stays dirty without bypassing backof
   const dir = mkdtempSync(join(tmpdir(), "webagent-host-ack-"));
   const store = new Store(dir);
   store.ensureRootTask(dir);
+  const hostStore = new HostStore(store);
   const parent = store.createTask(
     "parent",
     dir,
@@ -237,7 +257,7 @@ test("behavior proof: an ACK lost in flight stays dirty without bypassing backof
     "session-parent",
     store.rootTaskId,
   );
-  const edge = store.createHostEdge({
+  const edge = hostStore.createHostEdge({
     parentTaskId: parent.id,
     hostName: "mini",
     remoteTaskId: "remote-child",
@@ -315,7 +335,15 @@ test("behavior proof: an ACK lost in flight stays dirty without bypassing backof
   });
   await new Promise<void>((resolve) => owner.listen(0, "127.0.0.1", resolve));
   const ownerPort = (owner.address() as { port: number }).port;
-  const tasks = createTaskManager(store, dir, dir);
+  const tasks = createTaskManager(
+    store,
+    dir,
+    dir,
+    undefined,
+    undefined,
+    "test-agent",
+    new TaskLocator(store, [hostStore]),
+  );
   const registry = new HostRegistry(
     {
       mini: {
@@ -323,8 +351,10 @@ test("behavior proof: an ACK lost in flight stays dirty without bypassing backof
         token: "wat_test_token",
       },
     },
-    store,
-    tasks,
+    hostStore,
+    (taskId: string) => {
+      void tasks.drainCollaborationDeliveries(taskId);
+    },
   );
   registry.start();
   t.after(async () => {
@@ -353,6 +383,6 @@ test("behavior proof: an ACK lost in flight stays dirty without bypassing backof
     1,
     "duplicate fetch did not duplicate the local report",
   );
-  const reportRecipients = store.queuedAckedHostReportRecipients();
+  const reportRecipients = hostStore.queuedAckedHostReportRecipients();
   assert.deepEqual(reportRecipients, [parent.id]);
 });

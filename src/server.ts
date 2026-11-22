@@ -43,7 +43,11 @@ import {
   type InterceptorCounters,
 } from "./attachment-interceptor.ts";
 import type { AgentEvent } from "./types.ts";
-import { HostRegistry } from "./host-registry.ts";
+import { HostStore } from "./host/store.ts";
+import { HostRegistry } from "./host/registry.ts";
+import { HostTaskCreator } from "./host/create.ts";
+import { handleHostRoutes } from "./host/routes.ts";
+import { TaskLocator } from "./task-locator.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
 for (const method of ["log", "error", "warn"] as const) {
@@ -84,6 +88,8 @@ const PKG_VERSION = (() => {
 
 const store = new Store(config.data_dir);
 store.ensureRootTask(config.default_cwd);
+const hostStore = new HostStore(store);
+const locator = new TaskLocator(store, [hostStore]);
 console.log(`[store] using ${config.data_dir}/`);
 
 // Pin <data_dir>/tasks realpath at boot so all later anchor checks
@@ -156,10 +162,27 @@ const tasks = new TaskManager({
   authority: executionAuthority,
   agents: agentRegistry,
   obligations: obligationController,
+  locator,
 });
 taskManagerRef.current = tasks;
-const hosts = new HostRegistry(config.hosts, store, tasks);
 const sseManager = new SseManager();
+const hosts = new HostRegistry(config.hosts, hostStore, (taskId) => {
+  void tasks.drainCollaborationDeliveries(taskId);
+});
+const hostTaskCreator = new HostTaskCreator(hostStore, hosts);
+hostStore.onCommitted((taskId) => {
+  void tasks.drainCollaborationDeliveries(taskId);
+});
+tasks.onDeliveriesCommitted((delivery) => {
+  const action = hostStore.deliveryCommitAction(delivery.deliveryId);
+  if (!action) return;
+  if ("edgeId" in action) hosts.kick(action.edgeId);
+  else {
+    sseManager.broadcastToCredential(action.credentialHash, {
+      type: "host_message_pending",
+    });
+  }
+});
 const clientRegistry = new ClientRegistry();
 const pushService = new PushService(
   store,
@@ -203,11 +226,6 @@ tasks.setCollaborationBroadcast(broadcastCollaboration);
 tasks.setDeliveryStatusBroadcast((event) => {
   sseManager.broadcast(event);
 });
-tasks.setExternalMessageBroadcast((credentialHash) => {
-  sseManager.broadcastToCredential(credentialHash, {
-    type: "host_message_pending",
-  });
-});
 // A read no longer waits for its task's execution to warm up; this is how the
 // client learns the schema and commands once the restore finishes.
 tasks.setRuntimeWarmBroadcast((event) => {
@@ -222,7 +240,7 @@ const mcpTaskTools = createMcpTaskToolHost({
   store,
   tasks,
   cancelTimeoutMs: config.limits.cancel_timeout,
-  hosts,
+  crossHostCreator: hostTaskCreator,
   broadcastCollaboration,
   broadcastTaskCreated: (event) => {
     sseManager.broadcast(buildTaskCreatedBroadcast(event));
@@ -259,6 +277,13 @@ const requestHandler = createRequestHandler({
   debugLevel: config.debug.level,
   authStore,
   ticketStore,
+  peerEndpoint: (req, res, principal) =>
+    handleHostRoutes(req, res, {
+      store: hostStore,
+      agentIds: Object.keys(config.agents),
+      defaultCwd: config.default_cwd,
+      principal,
+    }),
   attachmentSecret,
   shareConfig: config.share,
   mcpEndpoint: createMcpEndpoint({
@@ -394,7 +419,9 @@ server.listen(config.port, config.host, () => {
     // demand. A missing or broken agent binary is therefore a runtime
     // condition, never a boot gate or a daemon restart.
     tasks.hydrate();
-    if (store.hasHostFacts()) tasks.recoverPersistedDeliveries();
+    for (const taskId of hostStore.queuedAckedHostReportRecipients()) {
+      void tasks.drainCollaborationDeliveries(taskId);
+    }
     hosts.start();
     console.log(
       `[agents] ${Object.keys(config.agents).join(", ")} start on demand`,

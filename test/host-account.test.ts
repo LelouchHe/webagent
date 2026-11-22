@@ -7,19 +7,22 @@ import { Store } from "../src/store.ts";
 import {
   SingleAgentEnvironment,
   TaskManager,
-  type ObligationHost,
+  type ObligationRuntime,
 } from "../src/task-manager.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
-import { requestHash } from "../src/host-protocol.ts";
+import { requestHash } from "../src/host/protocol.ts";
 import {
   ObligationController,
   type TimerHandle,
 } from "../src/obligation-controller.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
+import { HostStore } from "../src/host/store.ts";
+import { TaskLocator } from "../src/task-locator.ts";
 
 let dir: string;
 let store: Store;
+let hostStore: HostStore;
 let tasks: TaskManager;
 let remoteTaskId: string;
 const credentialHash = "1".repeat(64);
@@ -43,7 +46,8 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "webagent-host-account-"));
   store = new Store(dir);
   store.ensureRootTask(dir);
-  const created = store.createHostTask({
+  hostStore = new HostStore(store);
+  const created = hostStore.createHostTask({
     credentialHash,
     parentTaskId,
     createKey: "account-create",
@@ -54,7 +58,7 @@ beforeEach(() => {
   });
   if (created.status === "conflict") assert.fail("host create conflicted");
   remoteTaskId = created.taskId;
-  const taskRef: { current?: ObligationHost } = {};
+  const taskRef: { current?: ObligationRuntime } = {};
   const obligations = new ObligationController({
     now: () => now,
     setTimer: (fn, ms) => {
@@ -81,6 +85,7 @@ beforeEach(() => {
     authority: new ExecutionAuthority(),
     agents: new SingleAgentEnvironment("test-agent"),
     obligations,
+    locator: new TaskLocator(store, [hostStore]),
   });
   taskRef.current = tasks;
   tasks.liveTasks.add(remoteTaskId);
@@ -111,7 +116,7 @@ test("behavior proof: external dispatch opens the account and update settles to 
     "fallback",
   );
 
-  const received = store.receiveHostDispatch({
+  const received = hostStore.receiveHostDispatch({
     credentialHash,
     remoteMessageId: "dispatch",
     requestHash: requestHash({ body: "work" }),
@@ -127,7 +132,7 @@ test("behavior proof: external dispatch opens the account and update settles to 
 
   const settled = tasks.settleAgentUpdate(remoteTaskId, "done", "finished");
   assert.equal(settled.accountTargetTaskId, parentTaskId);
-  assert.equal(store.listHostOutbox(credentialHash).at(-1)?.kind, "done");
+  assert.equal(hostStore.listHostOutbox(credentialHash).at(-1)?.kind, "done");
   assert.equal(store.getTask(remoteTaskId)?.workflow_status, "done");
   assert.equal(
     JSON.parse(
@@ -141,7 +146,7 @@ test("behavior proof: external dispatch opens the account and update settles to 
 });
 
 test("behavior proof: archive preserves an already-open external account", async () => {
-  store.receiveHostDispatch({
+  hostStore.receiveHostDispatch({
     credentialHash,
     remoteMessageId: "dispatch",
     requestHash: requestHash({ body: "work" }),
@@ -160,14 +165,14 @@ test("behavior proof: archive preserves an already-open external account", async
   assert.equal(waiting.silenceWatchMs, 900_000);
   tasks.archiveTask(remoteTaskId);
   advanceTime(900_000);
-  const notice = store
+  const notice = hostStore
     .listHostOutbox(credentialHash)
     .find((item) => item.kind === "runtime_notice");
   assert.equal(notice?.reason, "no_activity");
 });
 
 test("behavior proof: waiting is watched and repeated turns emit an external notice", async () => {
-  store.receiveHostDispatch({
+  hostStore.receiveHostDispatch({
     credentialHash,
     remoteMessageId: "dispatch-notice",
     requestHash: requestHash({ body: "work" }),
@@ -182,12 +187,12 @@ test("behavior proof: waiting is watched and repeated turns emit an external not
     "still busy",
   );
   assert.equal(waiting.silenceWatchMs, 900_000);
-  assert.equal(store.listHostOutbox(credentialHash).length, 0);
+  assert.equal(hostStore.listHostOutbox(credentialHash).length, 0);
 
   tasks.onTargetTurnEnded(remoteTaskId);
   tasks.onTargetTurnEnded(remoteTaskId);
   tasks.onTargetTurnEnded(remoteTaskId);
-  const notice = store
+  const notice = hostStore
     .listHostOutbox(credentialHash)
     .find((item) => item.kind === "runtime_notice");
   assert.equal(notice?.reason, "no_update");
