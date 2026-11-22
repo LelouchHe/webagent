@@ -1,0 +1,702 @@
+{
+  "steps": [
+    {
+      "name": "setup",
+      "response": {
+        "taskId": "00000000-0000-4000-8000-000000000001"
+      },
+      "sse": [
+        {
+          "taskId": "*",
+          "events": [
+            {
+              "type": "connected",
+              "agent": {
+                "name": "mock-agent",
+                "version": "0.1.0"
+              },
+              "agentId": "mock",
+              "configOptions": [],
+              "cancelTimeout": 10000,
+              "recentPathsLimit": 10
+            }
+          ]
+        },
+        {
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "events": [
+            {
+              "type": "task_created",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "cwd": "<REPOSITORY>",
+              "cwdDisplay": "<REPOSITORY>",
+              "title": "root",
+              "parentId": null,
+              "parentAgentId": null,
+              "agentId": "mock",
+              "configOptions": [],
+              "agentCommands": {
+                "epoch": "00000000-0000-4000-8000-000000000003",
+                "revision": 1,
+                "commands": [
+                  {
+                    "name": "context",
+                    "description": "Show context usage"
+                  },
+                  {
+                    "name": "compact",
+                    "description": "Compact conversation",
+                    "input": {
+                      "hint": "focus instructions"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "mock": [
+        {
+          "sessionId": "*",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "initialize"
+            }
+          ]
+        },
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/new",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "cwd": "<REPOSITORY>"
+            }
+          ]
+        }
+      ],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+              "args": [
+                "mock",
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000001",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ?",
+              "args": ["00000000-0000-4000-8000-000000000001"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
+              "args": ["00000000-0000-4000-8000-000000000001"]
+            }
+          ]
+        ],
+        "reads": 27
+      }
+    },
+    {
+      "name": "invalid-cwd-and-duplicate-title",
+      "response": {
+        "status": 202,
+        "body": {
+          "status": "accepted"
+        }
+      },
+      "sse": [
+        {
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "events": [
+            {
+              "type": "user_message",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "text": "reject invalid creates",
+              "clientOpId": "00000000-0000-4000-8000-000000000004"
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 1,
+              "patch": {
+                "runtime": {
+                  "busy": {
+                    "kind": "agent",
+                    "since": "2026-09-13T21:00:00.000Z",
+                    "promptId": "prompt-1",
+                    "cancelStatus": null
+                  }
+                }
+              }
+            },
+            {
+              "type": "system_message",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "kind": "task_created",
+              "messageId": "00000000-0000-4000-8000-000000000006",
+              "sourceTaskId": "00000000-0000-4000-8000-000000000001",
+              "targetTaskId": "00000000-0000-4000-8000-000000000005",
+              "taskTitle": "Unique child",
+              "role": "source",
+              "title": "Created task @\"Unique child\"",
+              "body": "Task ID: 00000000-0000-4000-8000-000000000005\nagent: mock\ncwd: <REPOSITORY>\nmodel: mock-model\nthinking: medium"
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 2,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": true,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "message_chunk",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "text": "Invalid creates attempted."
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 3,
+              "patch": {
+                "runtime": {
+                  "busy": null
+                }
+              }
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 4,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": false,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "prompt_done",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "stopReason": "end_turn",
+              "promptId": "prompt-1"
+            }
+          ]
+        },
+        {
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "events": [
+            {
+              "type": "available_commands_update",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "commands": [
+                {
+                  "name": "context",
+                  "description": "Show context usage"
+                },
+                {
+                  "name": "compact",
+                  "description": "Compact conversation",
+                  "input": {
+                    "hint": "focus instructions"
+                  }
+                }
+              ],
+              "epoch": "00000000-0000-4000-8000-000000000003",
+              "revision": 1
+            },
+            {
+              "type": "task_created",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "agentId": "mock",
+              "cwd": "<REPOSITORY>",
+              "cwdDisplay": "<REPOSITORY>",
+              "title": "Unique child",
+              "parentId": "00000000-0000-4000-8000-000000000001",
+              "parentAgentId": "mock",
+              "configOptions": [
+                {
+                  "type": "select",
+                  "id": "model",
+                  "name": "Model",
+                  "category": "model",
+                  "currentValue": "mock-model",
+                  "options": [
+                    {
+                      "value": "mock-model",
+                      "name": "Mock Model"
+                    },
+                    {
+                      "value": "mock-model-2",
+                      "name": "Mock Model 2"
+                    }
+                  ]
+                },
+                {
+                  "type": "select",
+                  "id": "mode",
+                  "name": "Mode",
+                  "category": "mode",
+                  "currentValue": "agent",
+                  "options": [
+                    {
+                      "value": "agent",
+                      "name": "Agent"
+                    },
+                    {
+                      "value": "chat#plan",
+                      "name": "Plan"
+                    },
+                    {
+                      "value": "chat#autopilot",
+                      "name": "Autopilot"
+                    }
+                  ]
+                },
+                {
+                  "type": "select",
+                  "id": "reasoning_effort",
+                  "name": "Reasoning",
+                  "category": "thought_level",
+                  "currentValue": "medium",
+                  "options": [
+                    {
+                      "value": "low",
+                      "name": "Low"
+                    },
+                    {
+                      "value": "medium",
+                      "name": "Medium"
+                    },
+                    {
+                      "value": "high",
+                      "name": "High"
+                    }
+                  ]
+                }
+              ],
+              "agentCommands": {
+                "epoch": "00000000-0000-4000-8000-000000000003",
+                "revision": 1,
+                "commands": [
+                  {
+                    "name": "context",
+                    "description": "Show context usage"
+                  },
+                  {
+                    "name": "compact",
+                    "description": "Compact conversation",
+                    "input": {
+                      "hint": "focus instructions"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "mock": [
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/prompt",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "text": "reject invalid creates"
+            },
+            {
+              "kind": "mcp",
+              "method": "initialize",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "status": 200,
+              "result": {
+                "result": {
+                  "protocolVersion": "2025-06-18",
+                  "capabilities": {
+                    "tools": {
+                      "listChanged": true
+                    }
+                  },
+                  "serverInfo": {
+                    "name": "lelouchhe_webagent",
+                    "version": "0.1.0"
+                  },
+                  "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                },
+                "jsonrpc": "2.0",
+                "id": 1
+              }
+            },
+            {
+              "kind": "mcp",
+              "method": "notifications/initialized",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "status": 202,
+              "result": null
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "tool": "task_create",
+              "arguments": {
+                "title": "Invalid directory",
+                "cwd": "/webagent-regression-no-such-directory"
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Directory does not exist: /webagent-regression-no-such-directory"
+                    }
+                  ],
+                  "isError": true
+                },
+                "jsonrpc": "2.0",
+                "id": 2
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "tool": "task_create",
+              "arguments": {
+                "title": "Unique child",
+                "cwd": "."
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "{\"taskId\":\"00000000-0000-4000-8000-000000000005\"}"
+                    }
+                  ]
+                },
+                "jsonrpc": "2.0",
+                "id": 3
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "tool": "task_create",
+              "arguments": {
+                "title": "Unique child",
+                "cwd": "."
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "UNIQUE constraint failed: tasks.parent_id, tasks.title"
+                    }
+                  ],
+                  "isError": true
+                },
+                "jsonrpc": "2.0",
+                "id": 4
+              }
+            }
+          ]
+        },
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000002",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/new",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "cwd": "<REPOSITORY>"
+            }
+          ]
+        },
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000003",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/new",
+              "sessionId": "00000000-0000-4000-8000-000000000003",
+              "cwd": "<REPOSITORY>"
+            }
+          ]
+        }
+      ],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                1,
+                "user_message",
+                "{\"text\":\"reject invalid creates\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+                "user",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                2,
+                "system_message",
+                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Unique child\",\"agentId\":\"mock\",\"cwd\":\"<REPOSITORY>\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Unique child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                3,
+                "assistant_message",
+                "{\"text\":\"Invalid creates attempted.\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                4,
+                "prompt_done",
+                "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+              "args": ["<REPOSITORY>", 1789333200000]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000005",
+                "<REPOSITORY>",
+                "agent",
+                "00000000-0000-4000-8000-000000000001",
+                "Unique child",
+                "idle",
+                1789333200000,
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+              "args": [
+                "mock",
+                "00000000-0000-4000-8000-000000000002",
+                "00000000-0000-4000-8000-000000000005",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000007",
+                "<REPOSITORY>",
+                "agent",
+                "00000000-0000-4000-8000-000000000001",
+                "Unique child",
+                "idle",
+                1789333200000,
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+              "args": [1789333200000, "00000000-0000-4000-8000-000000000001"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+              "args": ["agent", "00000000-0000-4000-8000-000000000005"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+              "args": ["mock-model", "00000000-0000-4000-8000-000000000005"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+              "args": ["medium", "00000000-0000-4000-8000-000000000005"]
+            }
+          ]
+        ],
+        "reads": 70
+      }
+    }
+  ],
+  "snapshot": {
+    "tasks": [
+      {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "cwd": "<REPOSITORY>",
+        "title": "root",
+        "workflow_status": "idle",
+        "parent_id": null,
+        "pending_compact_summary": null,
+        "model": null,
+        "mode": null,
+        "reasoning_effort": null,
+        "source": "root",
+        "deleted_at": null,
+        "created_at": 1789333200000,
+        "last_active_at": 1789333200000
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000005",
+        "cwd": "<REPOSITORY>",
+        "title": "Unique child",
+        "workflow_status": "idle",
+        "parent_id": "00000000-0000-4000-8000-000000000001",
+        "pending_compact_summary": null,
+        "model": "mock-model",
+        "mode": "agent",
+        "reasoning_effort": "medium",
+        "source": "agent",
+        "deleted_at": null,
+        "created_at": 1789333200000,
+        "last_active_at": 1789333200000
+      }
+    ],
+    "agent_sessions": [
+      {
+        "agent_key": "mock",
+        "agent_session_id": "00000000-0000-4000-8000-000000000001",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "created_at": 1789333200000
+      },
+      {
+        "agent_key": "mock",
+        "agent_session_id": "00000000-0000-4000-8000-000000000002",
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "created_at": 1789333200000
+      }
+    ],
+    "events": [
+      {
+        "id": 1,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 1,
+        "type": "user_message",
+        "data": "{\"text\":\"reject invalid creates\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+        "created_at": 1789333200000,
+        "from_ref": "user"
+      },
+      {
+        "id": 2,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 2,
+        "type": "system_message",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Unique child\",\"agentId\":\"mock\",\"cwd\":\"<REPOSITORY>\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Unique child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 3,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 3,
+        "type": "assistant_message",
+        "data": "{\"text\":\"Invalid creates attempted.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 4,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 4,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      }
+    ],
+    "messages": [],
+    "message_projections": [],
+    "deliveries": [],
+    "client_ops": [],
+    "recent_paths": [
+      {
+        "cwd": "<REPOSITORY>",
+        "last_used_at": 1789333200000
+      }
+    ]
+  }
+}

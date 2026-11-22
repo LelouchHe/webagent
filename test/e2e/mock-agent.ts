@@ -292,6 +292,8 @@ class MockAgent {
   private retryCancelAttempts = new Map<string, number>();
   private regressionFirstMcp: McpServer[] | null = null;
   private regressionLastCreatedTaskId: string | null = null;
+  private regressionTaskIds = new Map<string, string>();
+  private regressionRelations = new Map<string, Map<string, string>>();
 
   constructor(connection: AgentContext) {
     this.connection = connection;
@@ -319,6 +321,7 @@ class MockAgent {
             ? (this.regressionFirstMcp ?? [])
             : (this.mcpServersBySession.get(params.sessionId) ?? []);
         await this.runRegressionMcp(
+          params.sessionId,
           servers,
           action.calls,
           action.capability === "missing",
@@ -350,6 +353,7 @@ class MockAgent {
   }
 
   private async runRegressionMcp(
+    sessionId: string,
     servers: McpServer[],
     calls: McpAction[],
     omitAuthorization = false,
@@ -383,7 +387,7 @@ class MockAgent {
         body: text ? (JSON.parse(text) as Record<string, unknown>) : null,
       };
     };
-    await post({
+    const initialized = await post({
       jsonrpc: "2.0",
       id: 1,
       method: "initialize",
@@ -393,9 +397,26 @@ class MockAgent {
         clientInfo: { name: "regression-agent", version: "0.1.0" },
       },
     });
-    await post({ jsonrpc: "2.0", method: "notifications/initialized" });
+    recordRegression({
+      kind: "mcp",
+      method: "initialize",
+      sessionId,
+      status: initialized.status,
+      result: initialized.body,
+    });
+    const ready = await post({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+    recordRegression({
+      kind: "mcp",
+      method: "notifications/initialized",
+      sessionId,
+      status: ready.status,
+      result: ready.body,
+    });
     for (const [index, call] of calls.entries()) {
-      const args = this.replaceRegressionTask(call.arguments ?? {});
+      const args = this.replaceRegressionTask(sessionId, call.arguments ?? {});
       const response = await post({
         jsonrpc: "2.0",
         id: index + 2,
@@ -404,6 +425,7 @@ class MockAgent {
       });
       recordRegression({
         kind: "mcp",
+        sessionId,
         tool: call.tool,
         arguments: args,
         status: response.status,
@@ -412,29 +434,67 @@ class MockAgent {
       const result = response.body?.result as
         { content?: Array<{ text?: string }> } | undefined;
       const content = result?.content?.map((part) => part.text ?? "").join("");
-      if (call.tool === "task_create" && content) {
-        try {
-          const parsed = JSON.parse(content) as { taskId?: string };
-          if (parsed.taskId) this.regressionLastCreatedTaskId = parsed.taskId;
-        } catch {
-          // The MCP error itself is the useful external observation.
-        }
-      }
+      this.recordRegressionTaskResult(sessionId, call, args, content);
     }
   }
 
-  private replaceRegressionTask(value: unknown): unknown {
+  private recordRegressionTaskResult(
+    sessionId: string,
+    call: McpAction,
+    args: unknown,
+    content: string | undefined,
+  ): void {
+    if (!content) return;
+    try {
+      const parsed = JSON.parse(content) as {
+        taskId?: string;
+        tasks?: Array<{ id?: string; title?: string; relation?: string }>;
+      };
+      if (call.tool === "task_create" && parsed.taskId) {
+        this.regressionLastCreatedTaskId = parsed.taskId;
+        const title =
+          typeof args === "object" &&
+          args !== null &&
+          typeof (args as Record<string, unknown>).title === "string"
+            ? (args as Record<string, string>).title
+            : undefined;
+        if (title) this.regressionTaskIds.set(title, parsed.taskId);
+      }
+      if (call.tool === "task_list") {
+        const relations = new Map<string, string>();
+        for (const task of parsed.tasks ?? []) {
+          if (!task.id) continue;
+          if (task.title) this.regressionTaskIds.set(task.title, task.id);
+          if (task.relation) relations.set(task.relation, task.id);
+        }
+        this.regressionRelations.set(sessionId, relations);
+      }
+    } catch {
+      // MCP tool errors remain observable and cannot populate aliases.
+    }
+  }
+
+  private replaceRegressionTask(sessionId: string, value: unknown): unknown {
     if (value === "$lastCreatedTaskId") {
       return this.regressionLastCreatedTaskId;
     }
+    if (value === "$currentTaskId" || value === "$selfTaskId") {
+      return this.regressionRelations.get(sessionId)?.get("self") ?? null;
+    }
+    if (value === "$parentTaskId") {
+      return this.regressionRelations.get(sessionId)?.get("parent") ?? null;
+    }
+    if (typeof value === "string" && value.startsWith("$task:")) {
+      return this.regressionTaskIds.get(value.slice("$task:".length)) ?? null;
+    }
     if (Array.isArray(value)) {
-      return value.map((item) => this.replaceRegressionTask(item));
+      return value.map((item) => this.replaceRegressionTask(sessionId, item));
     }
     if (value && typeof value === "object") {
       return Object.fromEntries(
         Object.entries(value).map(([key, item]) => [
           key,
-          this.replaceRegressionTask(item),
+          this.replaceRegressionTask(sessionId, item),
         ]),
       );
     }
@@ -879,11 +939,13 @@ class MockAgent {
       recordRegression({
         kind: "acp",
         method: "session/new",
+        sessionId,
         cwd: params.cwd,
       });
       this.regressionFirstMcp ??= params.mcpServers;
       if (REGRESSION_BEHAVIOR.onNew?.calls) {
         await this.runRegressionMcp(
+          sessionId,
           params.mcpServers,
           REGRESSION_BEHAVIOR.onNew.calls,
         );
@@ -1006,12 +1068,21 @@ class MockAgent {
       recordRegression({
         kind: "acp",
         method: "session/prompt",
+        sessionId: params.sessionId,
         text,
       });
-      const declared = REGRESSION_BEHAVIOR.prompts.find(
-        (entry) => text === entry.match,
+      const declared = REGRESSION_BEHAVIOR.prompts.find((entry) =>
+        text.includes(entry.match),
       );
-      if (declared) return await this.runRegressionPrompt(params, declared);
+      if (!declared) {
+        recordRegression({
+          kind: "undeclared-prompt",
+          sessionId: params.sessionId,
+          text,
+        });
+        throw new Error(`No regression prompt behavior declared for: ${text}`);
+      }
+      return await this.runRegressionPrompt(params, declared);
     }
     return await this.runPrimaryPrompt(params, text);
   }
@@ -1672,7 +1743,11 @@ class MockAgent {
   }
 
   async cancel(params: CancelNotification): Promise<void> {
-    recordRegression({ kind: "acp", method: "session/cancel" });
+    recordRegression({
+      kind: "acp",
+      method: "session/cancel",
+      sessionId: params.sessionId,
+    });
     const pending = this.pendingPrompts.get(params.sessionId);
     if (!pending) return;
     const retryAttempts = this.retryCancelAttempts.get(params.sessionId);

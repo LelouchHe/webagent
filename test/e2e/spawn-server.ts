@@ -159,49 +159,59 @@ export async function startSpecServer(
   );
 
   let output = "";
-  const port = await new Promise<number>((resolvePort, reject) => {
-    const timer = setTimeout(() => {
-      reject(
-        new Error(
-          `Timed out waiting for ${configPath} to report its listening port\n${output.slice(-2000)}`,
-        ),
-      );
-    }, 30_000);
-    let settled = false;
-    const finish = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      fn();
-    };
-    child.stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      if (!options.quiet) process.stdout.write(chunk);
-      const match = LISTENING.exec(output);
-      if (match) {
-        finish(() => {
-          resolvePort(Number(match[1]));
-        });
-      }
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      if (!options.quiet) process.stderr.write(chunk);
-    });
-    child.once("exit", (code, signal) => {
-      finish(() => {
+  const partial = { child, port: 0, origin: "" };
+  try {
+    const port = await new Promise<number>((resolvePort, reject) => {
+      const timer = setTimeout(() => {
         reject(
           new Error(
-            `Server exited before listening (code=${code} signal=${signal})\n${output.slice(-2000)}`,
+            `Timed out waiting for ${configPath} to report its listening port\n${output.slice(-2000)}`,
           ),
         );
+      }, 30_000);
+      let settled = false;
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn();
+      };
+      child.stdout.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+        if (!options.quiet) process.stdout.write(chunk);
+        const match = LISTENING.exec(output);
+        if (match) {
+          finish(() => {
+            resolvePort(Number(match[1]));
+          });
+        }
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+        if (!options.quiet) process.stderr.write(chunk);
+      });
+      child.once("exit", (code, signal) => {
+        finish(() => {
+          reject(
+            new Error(
+              `Server exited before listening (code=${code} signal=${signal})\n${output.slice(-2000)}`,
+            ),
+          );
+        });
       });
     });
-  });
 
-  const origin = `http://127.0.0.1:${port}`;
-  await waitForHealthy(origin);
-  return { child, port, origin };
+    const origin = `http://127.0.0.1:${port}`;
+    await waitForHealthy(origin);
+    return { child, port, origin };
+  } catch (error) {
+    try {
+      await stopSpecServer(partial);
+    } catch {
+      // Preserve the startup error; teardown still tried both signal levels.
+    }
+    throw error;
+  }
 }
 
 export async function stopSpecServer(server: SpecServer): Promise<void> {

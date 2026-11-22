@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { diffLines } from "diff";
+import { createTwoFilesPatch } from "diff";
 import Database from "better-sqlite3";
 import { format } from "prettier";
 import type {
@@ -42,9 +42,9 @@ const requested = process.argv
 interface StepResult {
   name: string;
   response: unknown;
-  sse: Json[];
-  mock: Json[];
-  sql: { writes: Json[]; reads: number };
+  sse: Array<{ taskId: string; events: Json[] }>;
+  mock: Array<{ sessionId: string; calls: Json[] }>;
+  sql: { writes: Json[][]; reads: number };
 }
 
 interface Instance {
@@ -68,6 +68,9 @@ interface Instance {
 }
 
 async function main(): Promise<void> {
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith("WEBAGENT_REGRESSION_")) delete process.env[key];
+  }
   const names = readdirSync(SCENARIO_DIR)
     .filter((name) => name.endsWith(".ts"))
     .map((name) => name.slice(0, -3))
@@ -76,9 +79,31 @@ async function main(): Promise<void> {
   if (names.length === 0) throw new Error("No regression scenarios selected");
   mkdirSync(GOLDEN_DIR, { recursive: true });
   const started = performance.now();
-  const results = await Promise.all(
+  const outcomes = await Promise.allSettled(
     names.map(async (name) => runScenarioPair(name)),
   );
+  const failures = outcomes
+    .filter((outcome) => outcome.status === "rejected")
+    .map((outcome) =>
+      outcome.reason instanceof Error
+        ? outcome.reason.message
+        : String(outcome.reason),
+    );
+  const results = outcomes
+    .filter(
+      (
+        outcome,
+      ): outcome is PromiseFulfilledResult<{
+        name: string;
+        durationMs: number;
+      }> => outcome.status === "fulfilled",
+    )
+    .map((outcome) => outcome.value);
+  if (failures.length > 0) {
+    throw new Error(
+      `${failures.length} regression scenario(s) failed after cleanup:\n\n${failures.join("\n\n")}`,
+    );
+  }
   for (const result of results) {
     console.log(
       `[regression] ${result.name}: ok (${formatDuration(result.durationMs)})`,
@@ -138,6 +163,7 @@ async function runOnce(
   try {
     const client = createClient(instance);
     await connectSse(instance);
+    markCursor(instance);
     const state = await timed(`${name}: setup`, () =>
       definition.setup({
         root: instance.root,
@@ -146,12 +172,7 @@ async function runOnce(
       }),
     );
     await settle(instance, "setup");
-    instance.stepCursor = {
-      sse: instance.sse.length,
-      mock: readLines(instance.mockLog).length,
-      observer: readLines(instance.observerLog).length,
-    };
-    const steps: StepResult[] = [];
+    const steps: StepResult[] = [observeStep(instance, "setup", state)];
     for (const step of definition.steps(client, state)) {
       const response = await timed(`${name}: step ${step.name}`, () =>
         step.action(client, state),
@@ -202,18 +223,24 @@ async function createInstance(
     mock,
   ].join(" ");
   writeSpecConfig(configPath, { dataDir, agentCommand });
-  const server = await startSpecServer(configPath, {
-    nodeArgs: ["--import", pathToFileURL(observer).href],
-    env: {
-      HOME: home,
-      WEBAGENT_STARTUP_CHECKED: "1",
-      WEBAGENT_REGRESSION_OBSERVER: observerLog,
-      WEBAGENT_REGRESSION_SQL: "1",
-      WEBAGENT_REGRESSION_BEHAVIOR_PATH: behaviorPath,
-      WEBAGENT_REGRESSION_CALLS_PATH: mockLog,
-    },
-    quiet: true,
-  });
+  let server: SpecServer;
+  try {
+    server = await startSpecServer(configPath, {
+      nodeArgs: ["--import", pathToFileURL(observer).href],
+      env: {
+        HOME: home,
+        WEBAGENT_STARTUP_CHECKED: "1",
+        WEBAGENT_REGRESSION_OBSERVER: observerLog,
+        WEBAGENT_REGRESSION_SQL: "1",
+        WEBAGENT_REGRESSION_BEHAVIOR_PATH: behaviorPath,
+        WEBAGENT_REGRESSION_CALLS_PATH: mockLog,
+      },
+      quiet: true,
+    });
+  } catch (error) {
+    rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
   const instance: Instance = {
     name,
     root,
@@ -334,6 +361,12 @@ async function consumeSse(
       instance.sseError =
         error instanceof Error ? error : new Error(String(error));
     }
+  } finally {
+    if (!instance.abortSse.signal.aborted && instance.sseError === null) {
+      instance.sseError = new Error(
+        `[${instance.name}] SSE stream closed unexpectedly`,
+      );
+    }
   }
 }
 
@@ -358,11 +391,12 @@ async function settle(instance: Instance, step: string): Promise<void> {
         quietSince = performance.now();
         return false;
       }
-      const busyCovered = instance.busy.size <= activeWaits(instance).length;
+      const busyCovered = uncoveredBusyTasks(instance).length === 0;
       return performance.now() - quietSince >= QUIET_MS && busyCovered;
     },
     SETTLE_TIMEOUT_MS,
-    `[${instance.name}] step ${step} did not settle; busy=${[...instance.busy].join(",")} waits=${waitLabels(instance).join(",")}`,
+    () =>
+      `[${instance.name}] step ${step} did not settle; ${settleStatus(instance)}`,
   );
 }
 
@@ -372,12 +406,6 @@ function fingerprint(instance: Instance): string {
     readLines(instance.mockLog).length,
     readLines(instance.observerLog).length,
   ]);
-}
-
-function waitLabels(instance: Instance): string[] {
-  return activeWaits(instance).map((line) =>
-    typeof line.label === "string" ? line.label : "",
-  );
 }
 
 function activeWaits(instance: Instance): JsonObject[] {
@@ -391,6 +419,57 @@ function activeWaits(instance: Instance): JsonObject[] {
   return [...active.values()];
 }
 
+function uncoveredBusyTasks(instance: Instance): JsonObject[] {
+  const waits = new Map(
+    activeWaits(instance).map((wait) => [wait.sessionId, wait]),
+  );
+  const sessions = taskSessions(instance);
+  return [...instance.busy]
+    .map((taskId) => {
+      const sessionId = sessions.get(taskId);
+      const wait = sessionId === undefined ? undefined : waits.get(sessionId);
+      return {
+        taskId,
+        sessionId: sessionId ?? null,
+        wait: wait?.label ?? null,
+      };
+    })
+    .filter((task) => task.wait === null);
+}
+
+function settleStatus(instance: Instance): string {
+  const sessions = taskSessions(instance);
+  const busy = [...instance.busy].map((taskId) => ({
+    taskId,
+    sessionId: sessions.get(taskId) ?? null,
+  }));
+  const waits = activeWaits(instance).map((wait) => ({
+    sessionId: wait.sessionId ?? null,
+    label: wait.label ?? null,
+  }));
+  return `busy=${JSON.stringify(busy)} waits=${JSON.stringify(waits)}`;
+}
+
+function taskSessions(instance: Instance): Map<string, string> {
+  const db = new Database(instance.databasePath, { readonly: true });
+  try {
+    const rows = db
+      .prepare("SELECT task_id, agent_session_id FROM agent_sessions")
+      .all() as Array<{ task_id: string; agent_session_id: string }>;
+    return new Map(rows.map((row) => [row.task_id, row.agent_session_id]));
+  } finally {
+    db.close();
+  }
+}
+
+function markCursor(instance: Instance): void {
+  instance.stepCursor = {
+    sse: instance.sse.length,
+    mock: readLines(instance.mockLog).length,
+    observer: readLines(instance.observerLog).length,
+  };
+}
+
 function observeStep(
   instance: Instance,
   name: string,
@@ -401,13 +480,37 @@ function observeStep(
     instance.stepCursor.observer,
   );
   const sse = instance.sse.slice(instance.stepCursor.sse);
+  const undeclared = mock.find(
+    (call) => (call as JsonObject).kind === "undeclared-prompt",
+  );
+  if (undeclared) {
+    throw new Error(
+      `[${instance.name}] step ${name} received an undeclared prompt: ${JSON.stringify(undeclared)}`,
+    );
+  }
   const result = {
     name,
     response,
-    sse,
-    mock,
+    sse: groupRecords(
+      sse,
+      (event) => {
+        const taskId = (event as JsonObject).taskId;
+        return typeof taskId === "string" ? taskId : "*";
+      },
+      "taskId",
+      "events",
+    ),
+    mock: groupRecords(
+      mock,
+      (call) => {
+        const sessionId = (call as JsonObject).sessionId;
+        return typeof sessionId === "string" ? sessionId : "*";
+      },
+      "sessionId",
+      "calls",
+    ),
     sql: {
-      writes: observer.filter((line) => (line as JsonObject).kind === "write"),
+      writes: transactionGroups(observer),
       reads: observer.filter((line) => (line as JsonObject).kind === "read")
         .length,
     },
@@ -418,6 +521,40 @@ function observeStep(
     observer: instance.stepCursor.observer + observer.length,
   };
   return result;
+}
+
+function groupRecords<Key extends string, Records extends string>(
+  records: Json[],
+  keyOf: (record: Json) => string,
+  keyName: Key,
+  recordsName: Records,
+): Array<Record<Key, string> & Record<Records, Json[]>> {
+  const groups = new Map<string, Json[]>();
+  for (const record of records) {
+    const key = keyOf(record);
+    groups.set(key, [...(groups.get(key) ?? []), record]);
+  }
+  return [...groups]
+    .sort(([left], [right]) => compareStrings(left, right))
+    .map(([key, items]) => ({
+      [keyName]: key,
+      [recordsName]: items,
+    })) as Array<Record<Key, string> & Record<Records, Json[]>>;
+}
+
+function transactionGroups(observer: Json[]): Json[][] {
+  const groups = new Map<number, Json[]>();
+  for (const raw of observer) {
+    const line = raw as JsonObject;
+    if (line.kind !== "write") continue;
+    const transaction =
+      typeof line.transaction === "number" ? line.transaction : 0;
+    const { transaction: _transaction, ...write } = line;
+    groups.set(transaction, [...(groups.get(transaction) ?? []), write]);
+  }
+  return [...groups.values()].sort((left, right) =>
+    compareStrings(JSON.stringify(left), JSON.stringify(right)),
+  );
 }
 
 function databaseSnapshot(instance: Instance): JsonObject {
@@ -481,14 +618,15 @@ async function stopInstance(instance: Instance): Promise<void> {
 async function waitUntil(
   condition: () => boolean | Promise<boolean>,
   timeoutMs: number,
-  message: string,
+  message: string | (() => string),
 ): Promise<void> {
   const deadline = performance.now() + timeoutMs;
   while (performance.now() < deadline) {
-    if (await timed(`${message} probe`, condition)) return;
+    const currentMessage = typeof message === "function" ? message() : message;
+    if (await timed(`${currentMessage} probe`, condition)) return;
     await delay(25);
   }
-  throw new Error(message);
+  throw new Error(typeof message === "function" ? message() : message);
 }
 
 async function timed<T>(
@@ -525,6 +663,10 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function failure(
   name: string,
   message: string,
@@ -533,12 +675,17 @@ function failure(
 ): Error {
   const before = `${JSON.stringify(expected, null, 2)}\n`;
   const after = `${JSON.stringify(actual, null, 2)}\n`;
-  const patch = diffLines(before, after)
-    .map(
-      (part) => `${part.added ? "+" : part.removed ? "-" : " "}${part.value}`,
-    )
-    .join("");
-  return new Error(`[${name}] ${message}\n${patch}`);
+  return new Error(
+    `[${name}] ${message}\n${createTwoFilesPatch(
+      "expected",
+      "actual",
+      before,
+      after,
+      "",
+      "",
+      { context: 3 },
+    )}`,
+  );
 }
 
 await main();

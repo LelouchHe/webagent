@@ -46,6 +46,10 @@ export default scenario<State>({
           { type: "reply", text: "Review finished." },
         ],
       },
+      {
+        match: "Task status: done\nReview complete.",
+        actions: [{ type: "reply", text: "Parent received review." }],
+      },
     ],
   },
   async setup(context) {

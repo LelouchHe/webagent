@@ -1,0 +1,2041 @@
+{
+  "steps": [
+    {
+      "name": "setup",
+      "response": {
+        "rootId": "00000000-0000-4000-8000-000000000001",
+        "childId": "00000000-0000-4000-8000-000000000005"
+      },
+      "sse": [
+        {
+          "taskId": "*",
+          "events": [
+            {
+              "type": "connected",
+              "agent": {
+                "name": "mock-agent",
+                "version": "0.1.0"
+              },
+              "agentId": "mock",
+              "configOptions": [],
+              "cancelTimeout": 10000,
+              "recentPathsLimit": 10
+            }
+          ]
+        },
+        {
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "events": [
+            {
+              "type": "task_created",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "cwd": "<REPOSITORY>",
+              "cwdDisplay": "<REPOSITORY>",
+              "title": "root",
+              "parentId": null,
+              "parentAgentId": null,
+              "agentId": "mock",
+              "configOptions": [],
+              "agentCommands": {
+                "epoch": "00000000-0000-4000-8000-000000000003",
+                "revision": 1,
+                "commands": [
+                  {
+                    "name": "context",
+                    "description": "Show context usage"
+                  },
+                  {
+                    "name": "compact",
+                    "description": "Compact conversation",
+                    "input": {
+                      "hint": "focus instructions"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "mock": [
+        {
+          "sessionId": "*",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "initialize"
+            }
+          ]
+        },
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/new",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "cwd": "<REPOSITORY>"
+            }
+          ]
+        }
+      ],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+              "args": [
+                "mock",
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000001",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ?",
+              "args": ["00000000-0000-4000-8000-000000000001"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
+              "args": ["00000000-0000-4000-8000-000000000001"]
+            }
+          ]
+        ],
+        "reads": 27
+      }
+    },
+    {
+      "name": "create-sibling-tree",
+      "response": {
+        "status": 202,
+        "body": {
+          "status": "accepted"
+        }
+      },
+      "sse": [
+        {
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "events": [
+            {
+              "type": "user_message",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "text": "create authorization siblings",
+              "clientOpId": "00000000-0000-4000-8000-000000000004"
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 1,
+              "patch": {
+                "runtime": {
+                  "busy": {
+                    "kind": "agent",
+                    "since": "2026-09-13T21:00:00.000Z",
+                    "promptId": "prompt-1",
+                    "cancelStatus": null
+                  }
+                }
+              }
+            },
+            {
+              "type": "system_message",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "kind": "task_created",
+              "messageId": "00000000-0000-4000-8000-000000000006",
+              "sourceTaskId": "00000000-0000-4000-8000-000000000001",
+              "targetTaskId": "00000000-0000-4000-8000-000000000005",
+              "taskTitle": "Authorization child",
+              "role": "source",
+              "title": "Created task @\"Authorization child\"",
+              "body": "Task ID: 00000000-0000-4000-8000-000000000005\nagent: mock\ncwd: <REPOSITORY>\nmodel: mock-model\nthinking: medium"
+            },
+            {
+              "type": "system_message",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "kind": "task_created",
+              "messageId": "00000000-0000-4000-8000-000000000008",
+              "sourceTaskId": "00000000-0000-4000-8000-000000000001",
+              "targetTaskId": "00000000-0000-4000-8000-000000000007",
+              "taskTitle": "Authorization sibling",
+              "role": "source",
+              "title": "Created task @\"Authorization sibling\"",
+              "body": "Task ID: 00000000-0000-4000-8000-000000000007\nagent: mock\ncwd: <REPOSITORY>\nmodel: mock-model\nthinking: medium"
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 2,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": true,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "message_chunk",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "text": "Authorization siblings created."
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 3,
+              "patch": {
+                "runtime": {
+                  "busy": null
+                }
+              }
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 4,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": false,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "prompt_done",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "stopReason": "end_turn",
+              "promptId": "prompt-1"
+            }
+          ]
+        },
+        {
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "events": [
+            {
+              "type": "available_commands_update",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "commands": [
+                {
+                  "name": "context",
+                  "description": "Show context usage"
+                },
+                {
+                  "name": "compact",
+                  "description": "Compact conversation",
+                  "input": {
+                    "hint": "focus instructions"
+                  }
+                }
+              ],
+              "epoch": "00000000-0000-4000-8000-000000000003",
+              "revision": 1
+            },
+            {
+              "type": "task_created",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "agentId": "mock",
+              "cwd": "<REPOSITORY>",
+              "cwdDisplay": "<REPOSITORY>",
+              "title": "Authorization child",
+              "parentId": "00000000-0000-4000-8000-000000000001",
+              "parentAgentId": "mock",
+              "configOptions": [
+                {
+                  "type": "select",
+                  "id": "model",
+                  "name": "Model",
+                  "category": "model",
+                  "currentValue": "mock-model",
+                  "options": [
+                    {
+                      "value": "mock-model",
+                      "name": "Mock Model"
+                    },
+                    {
+                      "value": "mock-model-2",
+                      "name": "Mock Model 2"
+                    }
+                  ]
+                },
+                {
+                  "type": "select",
+                  "id": "mode",
+                  "name": "Mode",
+                  "category": "mode",
+                  "currentValue": "agent",
+                  "options": [
+                    {
+                      "value": "agent",
+                      "name": "Agent"
+                    },
+                    {
+                      "value": "chat#plan",
+                      "name": "Plan"
+                    },
+                    {
+                      "value": "chat#autopilot",
+                      "name": "Autopilot"
+                    }
+                  ]
+                },
+                {
+                  "type": "select",
+                  "id": "reasoning_effort",
+                  "name": "Reasoning",
+                  "category": "thought_level",
+                  "currentValue": "medium",
+                  "options": [
+                    {
+                      "value": "low",
+                      "name": "Low"
+                    },
+                    {
+                      "value": "medium",
+                      "name": "Medium"
+                    },
+                    {
+                      "value": "high",
+                      "name": "High"
+                    }
+                  ]
+                }
+              ],
+              "agentCommands": {
+                "epoch": "00000000-0000-4000-8000-000000000003",
+                "revision": 1,
+                "commands": [
+                  {
+                    "name": "context",
+                    "description": "Show context usage"
+                  },
+                  {
+                    "name": "compact",
+                    "description": "Compact conversation",
+                    "input": {
+                      "hint": "focus instructions"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "taskId": "00000000-0000-4000-8000-000000000007",
+          "events": [
+            {
+              "type": "available_commands_update",
+              "taskId": "00000000-0000-4000-8000-000000000007",
+              "commands": [
+                {
+                  "name": "context",
+                  "description": "Show context usage"
+                },
+                {
+                  "name": "compact",
+                  "description": "Compact conversation",
+                  "input": {
+                    "hint": "focus instructions"
+                  }
+                }
+              ],
+              "epoch": "00000000-0000-4000-8000-000000000003",
+              "revision": 1
+            },
+            {
+              "type": "task_created",
+              "taskId": "00000000-0000-4000-8000-000000000007",
+              "agentId": "mock",
+              "cwd": "<REPOSITORY>",
+              "cwdDisplay": "<REPOSITORY>",
+              "title": "Authorization sibling",
+              "parentId": "00000000-0000-4000-8000-000000000001",
+              "parentAgentId": "mock",
+              "configOptions": [
+                {
+                  "type": "select",
+                  "id": "model",
+                  "name": "Model",
+                  "category": "model",
+                  "currentValue": "mock-model",
+                  "options": [
+                    {
+                      "value": "mock-model",
+                      "name": "Mock Model"
+                    },
+                    {
+                      "value": "mock-model-2",
+                      "name": "Mock Model 2"
+                    }
+                  ]
+                },
+                {
+                  "type": "select",
+                  "id": "mode",
+                  "name": "Mode",
+                  "category": "mode",
+                  "currentValue": "agent",
+                  "options": [
+                    {
+                      "value": "agent",
+                      "name": "Agent"
+                    },
+                    {
+                      "value": "chat#plan",
+                      "name": "Plan"
+                    },
+                    {
+                      "value": "chat#autopilot",
+                      "name": "Autopilot"
+                    }
+                  ]
+                },
+                {
+                  "type": "select",
+                  "id": "reasoning_effort",
+                  "name": "Reasoning",
+                  "category": "thought_level",
+                  "currentValue": "medium",
+                  "options": [
+                    {
+                      "value": "low",
+                      "name": "Low"
+                    },
+                    {
+                      "value": "medium",
+                      "name": "Medium"
+                    },
+                    {
+                      "value": "high",
+                      "name": "High"
+                    }
+                  ]
+                }
+              ],
+              "agentCommands": {
+                "epoch": "00000000-0000-4000-8000-000000000003",
+                "revision": 1,
+                "commands": [
+                  {
+                    "name": "context",
+                    "description": "Show context usage"
+                  },
+                  {
+                    "name": "compact",
+                    "description": "Compact conversation",
+                    "input": {
+                      "hint": "focus instructions"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "mock": [
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/prompt",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "text": "create authorization siblings"
+            },
+            {
+              "kind": "mcp",
+              "method": "initialize",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "status": 200,
+              "result": {
+                "result": {
+                  "protocolVersion": "2025-06-18",
+                  "capabilities": {
+                    "tools": {
+                      "listChanged": true
+                    }
+                  },
+                  "serverInfo": {
+                    "name": "lelouchhe_webagent",
+                    "version": "0.1.0"
+                  },
+                  "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                },
+                "jsonrpc": "2.0",
+                "id": 1
+              }
+            },
+            {
+              "kind": "mcp",
+              "method": "notifications/initialized",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "status": 202,
+              "result": null
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "tool": "task_create",
+              "arguments": {
+                "title": "Authorization child",
+                "cwd": "."
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "{\"taskId\":\"00000000-0000-4000-8000-000000000005\"}"
+                    }
+                  ]
+                },
+                "jsonrpc": "2.0",
+                "id": 2
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "tool": "task_create",
+              "arguments": {
+                "title": "Authorization sibling",
+                "cwd": "."
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "{\"taskId\":\"00000000-0000-4000-8000-000000000007\"}"
+                    }
+                  ]
+                },
+                "jsonrpc": "2.0",
+                "id": 3
+              }
+            }
+          ]
+        },
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000002",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/new",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "cwd": "<REPOSITORY>"
+            }
+          ]
+        },
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000003",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/new",
+              "sessionId": "00000000-0000-4000-8000-000000000003",
+              "cwd": "<REPOSITORY>"
+            }
+          ]
+        }
+      ],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                1,
+                "user_message",
+                "{\"text\":\"create authorization siblings\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+                "user",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                2,
+                "system_message",
+                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Authorization child\",\"agentId\":\"mock\",\"cwd\":\"<REPOSITORY>\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Authorization child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                3,
+                "system_message",
+                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000007\",\"taskTitle\":\"Authorization sibling\",\"agentId\":\"mock\",\"cwd\":\"<REPOSITORY>\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Authorization sibling\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000007\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                4,
+                "assistant_message",
+                "{\"text\":\"Authorization siblings created.\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                5,
+                "prompt_done",
+                "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+              "args": ["<REPOSITORY>", 1789333200000]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000005",
+                "<REPOSITORY>",
+                "agent",
+                "00000000-0000-4000-8000-000000000001",
+                "Authorization child",
+                "idle",
+                1789333200000,
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+              "args": [
+                "mock",
+                "00000000-0000-4000-8000-000000000002",
+                "00000000-0000-4000-8000-000000000005",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000007",
+                "<REPOSITORY>",
+                "agent",
+                "00000000-0000-4000-8000-000000000001",
+                "Authorization sibling",
+                "idle",
+                1789333200000,
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+              "args": [
+                "mock",
+                "00000000-0000-4000-8000-000000000003",
+                "00000000-0000-4000-8000-000000000007",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+              "args": [1789333200000, "00000000-0000-4000-8000-000000000001"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+              "args": ["agent", "00000000-0000-4000-8000-000000000005"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+              "args": ["agent", "00000000-0000-4000-8000-000000000007"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+              "args": ["mock-model", "00000000-0000-4000-8000-000000000005"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+              "args": ["mock-model", "00000000-0000-4000-8000-000000000007"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+              "args": ["medium", "00000000-0000-4000-8000-000000000005"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+              "args": ["medium", "00000000-0000-4000-8000-000000000007"]
+            }
+          ]
+        ],
+        "reads": 78
+      }
+    },
+    {
+      "name": "discover-created-siblings",
+      "response": {
+        "status": 200,
+        "body": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "cwd": "<REPOSITORY>",
+            "title": "root",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "model": null,
+            "mode": null,
+            "reasoning_effort": null,
+            "source": "root",
+            "deleted_at": null,
+            "created_at": "2026-09-13T21:00:00.000Z",
+            "last_active_at": "2026-09-13T21:00:00.000Z",
+            "agentId": "mock",
+            "cwdDisplay": "<REPOSITORY>",
+            "hasUserInput": true,
+            "isRoot": true,
+            "archived": false
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000005",
+            "cwd": "<REPOSITORY>",
+            "title": "Authorization child",
+            "workflow_status": "idle",
+            "parent_id": "00000000-0000-4000-8000-000000000001",
+            "model": "mock-model",
+            "mode": "agent",
+            "reasoning_effort": "medium",
+            "source": "agent",
+            "deleted_at": null,
+            "created_at": "2026-09-13T21:00:00.000Z",
+            "last_active_at": "2026-09-13T21:00:00.000Z",
+            "agentId": "mock",
+            "cwdDisplay": "<REPOSITORY>",
+            "hasUserInput": false,
+            "isRoot": false,
+            "archived": false
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000007",
+            "cwd": "<REPOSITORY>",
+            "title": "Authorization sibling",
+            "workflow_status": "idle",
+            "parent_id": "00000000-0000-4000-8000-000000000001",
+            "model": "mock-model",
+            "mode": "agent",
+            "reasoning_effort": "medium",
+            "source": "agent",
+            "deleted_at": null,
+            "created_at": "2026-09-13T21:00:00.000Z",
+            "last_active_at": "2026-09-13T21:00:00.000Z",
+            "agentId": "mock",
+            "cwdDisplay": "<REPOSITORY>",
+            "hasUserInput": false,
+            "isRoot": false,
+            "archived": false
+          }
+        ]
+      },
+      "sse": [],
+      "mock": [],
+      "sql": {
+        "writes": [],
+        "reads": 6
+      }
+    },
+    {
+      "name": "child-reads-and-messages-parent",
+      "response": {
+        "status": 202,
+        "body": {
+          "status": "accepted"
+        }
+      },
+      "sse": [
+        {
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "events": [
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 5,
+              "patch": {
+                "runtime": {
+                  "busy": {
+                    "kind": "agent",
+                    "since": "2026-09-13T21:00:00.000Z",
+                    "promptId": "prompt-3",
+                    "cancelStatus": null
+                  }
+                }
+              }
+            },
+            {
+              "type": "system_message",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "kind": "collaboration",
+              "messageId": "00000000-0000-4000-8000-00000000000a",
+              "sourceTaskId": "00000000-0000-4000-8000-000000000005",
+              "sourceLabel": "Authorization child",
+              "targetTaskId": "00000000-0000-4000-8000-000000000001",
+              "targetLabel": "root",
+              "role": "target",
+              "title": "@\"Authorization child\" sent @root",
+              "body": "hello parent"
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 6,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": true,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "message_chunk",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "text": "Parent received the message."
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 7,
+              "patch": {
+                "runtime": {
+                  "busy": null
+                }
+              }
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 8,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": false,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "prompt_done",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "stopReason": "end_turn",
+              "promptId": "prompt-3"
+            }
+          ]
+        },
+        {
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "events": [
+            {
+              "type": "user_message",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "text": "read and message parent",
+              "clientOpId": "00000000-0000-4000-8000-000000000009"
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "seq": 1,
+              "patch": {
+                "runtime": {
+                  "busy": {
+                    "kind": "agent",
+                    "since": "2026-09-13T21:00:00.000Z",
+                    "promptId": "prompt-2",
+                    "cancelStatus": null
+                  }
+                }
+              }
+            },
+            {
+              "type": "system_message",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "kind": "collaboration",
+              "messageId": "00000000-0000-4000-8000-00000000000a",
+              "sourceTaskId": "00000000-0000-4000-8000-000000000005",
+              "sourceLabel": "Authorization child",
+              "targetTaskId": "00000000-0000-4000-8000-000000000001",
+              "targetLabel": "root",
+              "role": "source",
+              "title": "@\"Authorization child\" sent @root",
+              "body": "hello parent",
+              "deliveryStatus": "queued"
+            },
+            {
+              "type": "collaboration_delivery",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "messageId": "00000000-0000-4000-8000-00000000000a",
+              "status": "delivered",
+              "deliveredAt": "2026-09-13T21:00:00.000Z"
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "seq": 2,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": true,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "message_chunk",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "text": "Parent read and messaged."
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "seq": 3,
+              "patch": {
+                "runtime": {
+                  "busy": null
+                }
+              }
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "seq": 4,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": false,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "prompt_done",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "stopReason": "end_turn",
+              "promptId": "prompt-2"
+            }
+          ]
+        }
+      ],
+      "mock": [
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/prompt",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "text": "From \"Authorization child\" (task id 00000000-0000-4000-8000-000000000005):\n---8<---\nhello parent\n---8<---"
+            }
+          ]
+        },
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000002",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/prompt",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "text": "read and message parent"
+            },
+            {
+              "kind": "mcp",
+              "method": "initialize",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "status": 200,
+              "result": {
+                "result": {
+                  "protocolVersion": "2025-06-18",
+                  "capabilities": {
+                    "tools": {
+                      "listChanged": true
+                    }
+                  },
+                  "serverInfo": {
+                    "name": "lelouchhe_webagent",
+                    "version": "0.1.0"
+                  },
+                  "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                },
+                "jsonrpc": "2.0",
+                "id": 1
+              }
+            },
+            {
+              "kind": "mcp",
+              "method": "notifications/initialized",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "status": 202,
+              "result": null
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_list",
+              "arguments": {},
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8000-000000000005\",\"title\":\"Authorization child\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":null,\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"parent\",\"workflowStatus\":\"idle\",\"executionState\":\"idle\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"}]}"
+                    }
+                  ]
+                },
+                "jsonrpc": "2.0",
+                "id": 2
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_send",
+              "arguments": {
+                "target": "00000000-0000-4000-8000-000000000001",
+                "body": "hello parent"
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "{\"accepted\":true}"
+                    }
+                  ]
+                },
+                "jsonrpc": "2.0",
+                "id": 3
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_query",
+              "arguments": {
+                "task_id": "00000000-0000-4000-8000-000000000001",
+                "range": [-10, -1]
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000001\",\"max_seq\":9,\"rows\":[{\"seq\":1,\"type\":\"user_message\",\"bytes\":92,\"field\":\"text\",\"text\":\"create authorization siblings\"},{\"seq\":2,\"type\":\"system_message\",\"bytes\":408,\"title\":\"Created task @\\\"Authorization child\\\"\",\"field\":\"body\",\"text\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"},{\"seq\":3,\"type\":\"system_message\",\"bytes\":412,\"title\":\"Created task @\\\"Authorization sibling\\\"\",\"field\":\"body\",\"text\":\"Task ID: 00000000-0000-4000-8000-000000000007\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"},{\"seq\":4,\"type\":\"assistant_message\",\"bytes\":42,\"field\":\"text\",\"text\":\"Authorization siblings created.\"},{\"seq\":5,\"type\":\"prompt_done\",\"bytes\":47,\"field\":\"stopReason\",\"text\":\"end_turn\"},{\"seq\":6,\"type\":\"system_message\",\"bytes\":324,\"title\":\"@\\\"Authorization child\\\" sent @root\",\"field\":\"body\",\"text\":\"hello parent\"},{\"seq\":7,\"type\":\"collaboration_prompt\",\"bytes\":207,\"field\":\"text\",\"text\":\"From \\\"Authorization child\\\" (task id 00000000-0000-4000-8000-000000000005):\\n---8<---\\nhello parent\\n---8<---\"},{\"seq\":8,\"type\":\"assistant_message\",\"bytes\":39,\"field\":\"text\",\"text\":\"Parent received the message.\"},{\"seq\":9,\"type\":\"prompt_done\",\"bytes\":47,\"field\":\"stopReason\",\"text\":\"end_turn\"}]}"
+                    }
+                  ]
+                },
+                "jsonrpc": "2.0",
+                "id": 4
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_read",
+              "arguments": {
+                "task_id": "00000000-0000-4000-8000-000000000001",
+                "seqs": [1]
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000001\",\"rows\":[{\"seq\":1,\"type\":\"user_message\",\"at\":\"2026-09-13T21:00:00.000Z\",\"from\":\"user\",\"data\":{\"text\":\"create authorization siblings\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}}]}"
+                    }
+                  ]
+                },
+                "jsonrpc": "2.0",
+                "id": 5
+              }
+            }
+          ]
+        }
+      ],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                6,
+                "system_message",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"sourceLabel\":\"Authorization child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Authorization child\\\" sent @root\",\"body\":\"hello parent\"}",
+                "msg:00000000-0000-4000-8000-00000000000a",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                7,
+                "collaboration_prompt",
+                "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000a\"],\"text\":\"From \\\"Authorization child\\\" (task id 00000000-0000-4000-8000-000000000005):\\n---8<---\\nhello parent\\n---8<---\",\"truncated\":false,\"rawSize\":105}",
+                "system",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                8,
+                "assistant_message",
+                "{\"text\":\"Parent received the message.\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                9,
+                "prompt_done",
+                "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000005",
+                1,
+                "user_message",
+                "{\"text\":\"read and message parent\",\"clientOpId\":\"00000000-0000-4000-8000-000000000009\"}",
+                "user",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000005",
+                3,
+                "assistant_message",
+                "{\"text\":\"Parent read and messaged.\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000005",
+                4,
+                "prompt_done",
+                "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000a",
+                "00000000-0000-4000-8000-000000000005",
+                "00000000-0000-4000-8000-000000000001",
+                "agent",
+                "hello parent",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000a",
+                "00000000-0000-4000-8000-000000000005",
+                "source",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000a",
+                "00000000-0000-4000-8000-000000000001",
+                "target",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000005",
+                2,
+                "system_message",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"sourceLabel\":\"Authorization child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Authorization child\\\" sent @root\",\"body\":\"hello parent\"}",
+                "msg:00000000-0000-4000-8000-00000000000a",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000b",
+                "00000000-0000-4000-8000-00000000000a",
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-00000000000a:00000000-0000-4000-8000-000000000001",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+              "args": ["<REPOSITORY>", 1789333200000]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE deliveries\n         SET status = 'delivered', delivered_at = ?\n         WHERE id = ? AND status = 'queued'",
+              "args": [1789333200000, "00000000-0000-4000-8000-00000000000b"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+              "args": [1789333200000, "00000000-0000-4000-8000-000000000005"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+              "args": ["idle", "00000000-0000-4000-8000-000000000001"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+              "args": ["running", "00000000-0000-4000-8000-000000000001"]
+            }
+          ]
+        ],
+        "reads": 74
+      }
+    },
+    {
+      "name": "child-rejects-self-sibling-and-parent-cancel",
+      "response": {
+        "status": 202,
+        "body": {
+          "status": "accepted"
+        }
+      },
+      "sse": [
+        {
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "events": [
+            {
+              "type": "user_message",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "text": "reject self and sibling targets",
+              "clientOpId": "00000000-0000-4000-8000-00000000000c"
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "seq": 5,
+              "patch": {
+                "runtime": {
+                  "busy": {
+                    "kind": "agent",
+                    "since": "2026-09-13T21:00:00.000Z",
+                    "promptId": "prompt-4",
+                    "cancelStatus": null
+                  }
+                }
+              }
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "seq": 6,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": true,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "message_chunk",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "text": "Rejected targets exercised."
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "seq": 7,
+              "patch": {
+                "runtime": {
+                  "busy": null
+                }
+              }
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "seq": 8,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": false,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "prompt_done",
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "stopReason": "end_turn",
+              "promptId": "prompt-4"
+            }
+          ]
+        }
+      ],
+      "mock": [
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000002",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/prompt",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "text": "reject self and sibling targets"
+            },
+            {
+              "kind": "mcp",
+              "method": "initialize",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "status": 200,
+              "result": {
+                "result": {
+                  "protocolVersion": "2025-06-18",
+                  "capabilities": {
+                    "tools": {
+                      "listChanged": true
+                    }
+                  },
+                  "serverInfo": {
+                    "name": "lelouchhe_webagent",
+                    "version": "0.1.0"
+                  },
+                  "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                },
+                "jsonrpc": "2.0",
+                "id": 1
+              }
+            },
+            {
+              "kind": "mcp",
+              "method": "notifications/initialized",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "status": 202,
+              "result": null
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_list",
+              "arguments": {},
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8000-000000000005\",\"title\":\"Authorization child\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"parent\",\"workflowStatus\":\"idle\",\"executionState\":\"idle\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"}]}"
+                    }
+                  ]
+                },
+                "jsonrpc": "2.0",
+                "id": 2
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_send",
+              "arguments": {
+                "target": "00000000-0000-4000-8000-000000000005",
+                "body": "self"
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "target_not_allowed"
+                    }
+                  ],
+                  "isError": true
+                },
+                "jsonrpc": "2.0",
+                "id": 3
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_send",
+              "arguments": {
+                "target": "00000000-0000-4000-8000-000000000007",
+                "body": "sibling"
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "target_not_allowed"
+                    }
+                  ],
+                  "isError": true
+                },
+                "jsonrpc": "2.0",
+                "id": 4
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_query",
+              "arguments": {
+                "task_id": "00000000-0000-4000-8000-000000000007"
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "target_not_allowed"
+                    }
+                  ],
+                  "isError": true
+                },
+                "jsonrpc": "2.0",
+                "id": 5
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_read",
+              "arguments": {
+                "task_id": "00000000-0000-4000-8000-000000000007",
+                "seqs": [1]
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "target_not_allowed"
+                    }
+                  ],
+                  "isError": true
+                },
+                "jsonrpc": "2.0",
+                "id": 6
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_cancel",
+              "arguments": {
+                "target": "00000000-0000-4000-8000-000000000001",
+                "reason": "parent"
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "target_not_allowed"
+                    }
+                  ],
+                  "isError": true
+                },
+                "jsonrpc": "2.0",
+                "id": 7
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_cancel",
+              "arguments": {
+                "target": "00000000-0000-4000-8000-000000000005",
+                "reason": "self"
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "target_not_allowed"
+                    }
+                  ],
+                  "isError": true
+                },
+                "jsonrpc": "2.0",
+                "id": 8
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_cancel",
+              "arguments": {
+                "target": "00000000-0000-4000-8000-000000000007",
+                "reason": "sibling"
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "target_not_allowed"
+                    }
+                  ],
+                  "isError": true
+                },
+                "jsonrpc": "2.0",
+                "id": 9
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_send",
+              "arguments": {
+                "target": "missing-task",
+                "body": "missing"
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task_not_found"
+                    }
+                  ],
+                  "isError": true
+                },
+                "jsonrpc": "2.0",
+                "id": 10
+              }
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "tool": "task_cancel",
+              "arguments": {
+                "target": "missing-task",
+                "reason": "missing"
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "task_not_found"
+                    }
+                  ],
+                  "isError": true
+                },
+                "jsonrpc": "2.0",
+                "id": 11
+              }
+            }
+          ]
+        }
+      ],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000005",
+                5,
+                "user_message",
+                "{\"text\":\"reject self and sibling targets\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000c\"}",
+                "user",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000005",
+                6,
+                "assistant_message",
+                "{\"text\":\"Rejected targets exercised.\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000005",
+                7,
+                "prompt_done",
+                "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+              "args": ["<REPOSITORY>", 1789333200000]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+              "args": [1789333200000, "00000000-0000-4000-8000-000000000005"]
+            }
+          ]
+        ],
+        "reads": 46
+      }
+    }
+  ],
+  "snapshot": {
+    "tasks": [
+      {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "cwd": "<REPOSITORY>",
+        "title": "root",
+        "workflow_status": "idle",
+        "parent_id": null,
+        "pending_compact_summary": null,
+        "model": null,
+        "mode": null,
+        "reasoning_effort": null,
+        "source": "root",
+        "deleted_at": null,
+        "created_at": 1789333200000,
+        "last_active_at": 1789333200000
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000005",
+        "cwd": "<REPOSITORY>",
+        "title": "Authorization child",
+        "workflow_status": "idle",
+        "parent_id": "00000000-0000-4000-8000-000000000001",
+        "pending_compact_summary": null,
+        "model": "mock-model",
+        "mode": "agent",
+        "reasoning_effort": "medium",
+        "source": "agent",
+        "deleted_at": null,
+        "created_at": 1789333200000,
+        "last_active_at": 1789333200000
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000007",
+        "cwd": "<REPOSITORY>",
+        "title": "Authorization sibling",
+        "workflow_status": "idle",
+        "parent_id": "00000000-0000-4000-8000-000000000001",
+        "pending_compact_summary": null,
+        "model": "mock-model",
+        "mode": "agent",
+        "reasoning_effort": "medium",
+        "source": "agent",
+        "deleted_at": null,
+        "created_at": 1789333200000,
+        "last_active_at": 1789333200000
+      }
+    ],
+    "agent_sessions": [
+      {
+        "agent_key": "mock",
+        "agent_session_id": "00000000-0000-4000-8000-000000000001",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "created_at": 1789333200000
+      },
+      {
+        "agent_key": "mock",
+        "agent_session_id": "00000000-0000-4000-8000-000000000002",
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "created_at": 1789333200000
+      },
+      {
+        "agent_key": "mock",
+        "agent_session_id": "00000000-0000-4000-8000-000000000003",
+        "task_id": "00000000-0000-4000-8000-000000000007",
+        "created_at": 1789333200000
+      }
+    ],
+    "events": [
+      {
+        "id": 1,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 1,
+        "type": "user_message",
+        "data": "{\"text\":\"create authorization siblings\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+        "created_at": 1789333200000,
+        "from_ref": "user"
+      },
+      {
+        "id": 2,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 2,
+        "type": "system_message",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Authorization child\",\"agentId\":\"mock\",\"cwd\":\"<REPOSITORY>\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Authorization child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 3,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 3,
+        "type": "system_message",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000007\",\"taskTitle\":\"Authorization sibling\",\"agentId\":\"mock\",\"cwd\":\"<REPOSITORY>\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Authorization sibling\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000007\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 4,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 4,
+        "type": "assistant_message",
+        "data": "{\"text\":\"Authorization siblings created.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 5,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 5,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 6,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 1,
+        "type": "user_message",
+        "data": "{\"text\":\"read and message parent\",\"clientOpId\":\"00000000-0000-4000-8000-000000000009\"}",
+        "created_at": 1789333200000,
+        "from_ref": "user"
+      },
+      {
+        "id": 7,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 2,
+        "type": "system_message",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"sourceLabel\":\"Authorization child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Authorization child\\\" sent @root\",\"body\":\"hello parent\"}",
+        "created_at": 1789333200000,
+        "from_ref": "msg:00000000-0000-4000-8000-00000000000a"
+      },
+      {
+        "id": 8,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 6,
+        "type": "system_message",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"sourceLabel\":\"Authorization child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Authorization child\\\" sent @root\",\"body\":\"hello parent\"}",
+        "created_at": 1789333200000,
+        "from_ref": "msg:00000000-0000-4000-8000-00000000000a"
+      },
+      {
+        "id": 9,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 7,
+        "type": "collaboration_prompt",
+        "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000a\"],\"text\":\"From \\\"Authorization child\\\" (task id 00000000-0000-4000-8000-000000000005):\\n---8<---\\nhello parent\\n---8<---\",\"truncated\":false,\"rawSize\":105}",
+        "created_at": 1789333200000,
+        "from_ref": "system"
+      },
+      {
+        "id": 10,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 8,
+        "type": "assistant_message",
+        "data": "{\"text\":\"Parent received the message.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 11,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 9,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 12,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 3,
+        "type": "assistant_message",
+        "data": "{\"text\":\"Parent read and messaged.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 13,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 4,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 14,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 5,
+        "type": "user_message",
+        "data": "{\"text\":\"reject self and sibling targets\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000c\"}",
+        "created_at": 1789333200000,
+        "from_ref": "user"
+      },
+      {
+        "id": 15,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 6,
+        "type": "assistant_message",
+        "data": "{\"text\":\"Rejected targets exercised.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 16,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 7,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      }
+    ],
+    "messages": [
+      {
+        "id": "00000000-0000-4000-8000-00000000000a",
+        "source_task_id": "00000000-0000-4000-8000-000000000005",
+        "direct_target_task_id": "00000000-0000-4000-8000-000000000001",
+        "source_actor": "agent",
+        "body": "hello parent",
+        "created_at": 1789333200000
+      }
+    ],
+    "message_projections": [
+      {
+        "message_id": "00000000-0000-4000-8000-00000000000a",
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "role": "source",
+        "created_at": 1789333200000
+      },
+      {
+        "message_id": "00000000-0000-4000-8000-00000000000a",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "role": "target",
+        "created_at": 1789333200000
+      }
+    ],
+    "deliveries": [
+      {
+        "id": "00000000-0000-4000-8000-00000000000b",
+        "message_id": "00000000-0000-4000-8000-00000000000a",
+        "recipient_task_id": "00000000-0000-4000-8000-000000000001",
+        "idempotency_key": "00000000-0000-4000-8000-00000000000a:00000000-0000-4000-8000-000000000001",
+        "status": "delivered",
+        "queued_at": 1789333200000,
+        "delivered_at": 1789333200000,
+        "failed_at": null,
+        "failure_reason": null
+      }
+    ],
+    "client_ops": [],
+    "recent_paths": [
+      {
+        "cwd": "<REPOSITORY>",
+        "last_used_at": 1789333200000
+      }
+    ]
+  }
+}
