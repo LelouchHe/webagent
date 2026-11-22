@@ -23,7 +23,7 @@ The server and agent are preloaded with `observer.ts`. It only observes
 random stream. Instance paths, the checkout root, and ports are normalized when results are
 read. `<INSTANCE>` replaces the scenario's private directory, `<REPOSITORY>`
 replaces the checkout path, and `<ORIGIN>` replaces the loopback port. The
-observer uses `better-sqlite3` statement `.reader` metadata, records write SQL
+observer uses `better-sqlite3` statement `.readonly` metadata, records write SQL
 in order, and records reads as counts. The final database snapshot is opened
 read-only after all steps.
 
@@ -81,9 +81,10 @@ normal EOF, is an error.
 Scenarios do not wait for named events or inspect internal state.
 
 This fixed quiet window has a known limitation: a step that pauses for more
-than 250ms without producing output can be mistaken for settled. That case
-must surface as an A/A mismatch (or later output in another step), not as a
-single-run silent pass; tighten the declared behavior or observer when such a
+than 250ms without producing output can be mistaken for settled. Usually the
+late output shows up in the next step or as an A/A mismatch, but after the
+final step the instance is torn down immediately, so output that is late in
+both runs can be missed entirely. Tighten the declared behavior when such a
 late continuation becomes reproducible.
 
 `--update` still performs the A/A check, then replaces the selected goldens.

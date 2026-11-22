@@ -47,13 +47,24 @@ export default scenario<State>({
                   reason: "No longer needed",
                 },
               },
+            ],
+          },
+          { type: "reply", text: "Child cancelled." },
+        ],
+      },
+      {
+        match: "read child history",
+        actions: [
+          {
+            type: "mcp",
+            calls: [
               {
                 tool: "task_query",
                 arguments: { task_id: "$lastCreatedTaskId", range: [-20, -1] },
               },
             ],
           },
-          { type: "reply", text: "Child cancelled." },
+          { type: "reply", text: "History read." },
         ],
       },
     ],
@@ -76,10 +87,17 @@ export default scenario<State>({
           }),
       },
       {
-        name: "cancel-child-and-read-history",
+        name: "cancel-child",
         action: (client) =>
           client.rest("POST", `/api/v1/tasks/${state.taskId}/prompt`, {
             text: "cancel child",
+          }),
+      },
+      {
+        name: "read-child-history",
+        action: (client) =>
+          client.rest("POST", `/api/v1/tasks/${state.taskId}/prompt`, {
+            text: "read child history",
           }),
       },
     ];

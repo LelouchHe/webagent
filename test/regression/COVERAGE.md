@@ -12,11 +12,11 @@ scope.
 | `mcp-authorization` | missing REST/MCP bearer 401; `task_list` during initialization; stale capability after execution rotation; unknown/out-of-family query, read, send and cancel; no side effect in the caller response/SSE/DB snapshot |
 | `mcp-list` | own family list and execution projection; query range; complete read; cold/public REST history response |
 | `mcp-authorization-tree` | a real root/child/sibling tree; child-to-parent send without an obligation, parent history read; self, sibling, and parent cancel rejection; missing `task_not_found` vs relation `target_not_allowed`; rejected calls leave only the caller turn's ordinary rows |
-| `mcp-lifecycle` | create direct child; durable send and handover; declared child wait; MCP cancellation really reaches `session/cancel`; query the child's cancelled history |
-| `mcp-collaboration` | create -> queued/delivered collaboration -> declared child wait -> cancellation -> child `task_update(done)` -> parent notice and readable prompt; account closure visible in the final snapshot |
+| `mcp-lifecycle` | create direct child; durable send and handover; declared child wait; MCP cancellation really reaches `session/cancel`; query the child's history in a separate step |
+| `mcp-collaboration` | create -> queued/delivered collaboration -> declared child wait -> cancellation -> child `task_update(done)` -> parent notice and readable prompt; the `task_update` audit shows `settled` (the account itself is in memory; `test/multi-agent-mcp-collaboration.test.ts` asserts its closure) |
 | `mcp-update-status` | `blocked` settlement; no-account `done` fallback to a real parent; `waiting` where the only visible wake source is a dispatch queued behind a busy child |
 | `mcp-cold-family` | an active child lists and reads its unmaterialized parent without an ACP session, server-driven warm, or flush for the parent |
-| `mcp-create-errors` | invalid cwd and duplicate sibling title return MCP errors and leave no failed task rows/session |
+| `mcp-create-errors` | invalid cwd and duplicate sibling title return MCP errors and leave no persistent task row or binding for the failed create (a transient `session/new` may still be sent) |
 | `mcp-delete-notice` | cancel an actually waiting delivered target, delete it, and observe the real `target_removed` notice |
 | `rest-tasks` | bootstrap, create, prompt, cancel, list, archive, archived list, unarchive; corresponding global SSE and SQL |
 | `sse-events` | rename broadcast, user/prompt state transitions, chunks and `prompt_done` on the global stream |
@@ -38,7 +38,7 @@ scope.
 | Task delete / Root exit rebuild and interleaving | `test/tree-deletion.test.ts`: `deletes the whole subtree and retires each execution in its own adapter`; `holds the rebuild against a clear and a second exit` |
 | Per-task SSE filtering and replay | `test/sse.test.ts`: `only receives events for its task`; `replays events with seq as SSE id` |
 | REST create inheritance/validation and cleanup | `test/multi-agent-mcp-create.test.ts`: `reports the failing session's candidates and leaves nothing behind`; `cleans the task when the model applies and the thinking value fails`; `keeps the same-agent inheritance and override behaviour` |
-| Delivery 12: restart with an in-memory account forgotten, followed by explicit re-handover of queued work | Kept in the focused delivery/account unit layer; covered by `test/collaboration-delivery.test.ts`'s `opens the account at handover, so a dispatch queued behind a settled turn gets its own` and the controller's handover/account lifecycle tests. Not reproduced in regression scenarios. |
+| Delivery 12: restart with an in-memory account forgotten, followed by explicit re-handover of queued work | **Not yet covered.** No existing test restarts the process; `test/collaboration-delivery.test.ts` (`opens the account at handover, so a dispatch queued behind a settled turn gets its own`) covers only the same-process handover. Deliberately left out of regression scenarios. |
 
 The plan also lists external cases around two configured agents, permissions,
 attachments, Root exit, and browser presentation. They are outside PR A's

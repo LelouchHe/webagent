@@ -738,7 +738,7 @@
       }
     },
     {
-      "name": "cancel-child-and-read-history",
+      "name": "cancel-child",
       "response": {
         "status": 202,
         "body": {
@@ -954,28 +954,6 @@
                 "jsonrpc": "2.0",
                 "id": 2
               }
-            },
-            {
-              "kind": "mcp",
-              "sessionId": "00000000-0000-4000-8000-000000000001",
-              "tool": "task_query",
-              "arguments": {
-                "task_id": "00000000-0000-4000-8000-000000000005",
-                "range": [-20, -1]
-              },
-              "status": 200,
-              "result": {
-                "result": {
-                  "content": [
-                    {
-                      "type": "text",
-                      "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000005\",\"max_seq\":5,\"rows\":[{\"seq\":1,\"type\":\"system_message\",\"bytes\":326,\"title\":\"@root sent @\\\"Cancelable child\\\"\",\"field\":\"body\",\"text\":\"park until cancelled\"},{\"seq\":2,\"type\":\"collaboration_prompt\",\"bytes\":199,\"field\":\"text\",\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8000-000000000001):\\n---8<---\\npark until cancelled\\n---8<---\"},{\"seq\":3,\"type\":\"system_message\",\"bytes\":333,\"title\":\"Cancelled by @root\",\"field\":\"body\",\"text\":\"reason: No longer needed\\nstatus: cancelling\"},{\"seq\":4,\"type\":\"assistant_message\",\"bytes\":34,\"field\":\"text\",\"text\":\"REGRESSION_WAIT: cancel\"},{\"seq\":5,\"type\":\"prompt_done\",\"bytes\":48,\"field\":\"stopReason\",\"text\":\"cancelled\"}]}"
-                    }
-                  ]
-                },
-                "jsonrpc": "2.0",
-                "id": 3
-              }
             }
           ]
         },
@@ -1126,7 +1104,222 @@
             }
           ]
         ],
-        "reads": 49
+        "reads": 45
+      }
+    },
+    {
+      "name": "read-child-history",
+      "response": {
+        "status": 202,
+        "body": {
+          "status": "accepted"
+        }
+      },
+      "sse": [
+        {
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "events": [
+            {
+              "type": "user_message",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "text": "read child history",
+              "clientOpId": "00000000-0000-4000-8000-00000000000a"
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 9,
+              "patch": {
+                "runtime": {
+                  "busy": {
+                    "kind": "agent",
+                    "since": "2026-09-13T21:00:00.000Z",
+                    "promptId": "prompt-4",
+                    "cancelStatus": null
+                  }
+                }
+              }
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 10,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": true,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "message_chunk",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "text": "History read."
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 11,
+              "patch": {
+                "runtime": {
+                  "busy": null
+                }
+              }
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "seq": 12,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": false,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "prompt_done",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "stopReason": "end_turn",
+              "promptId": "prompt-4"
+            }
+          ]
+        }
+      ],
+      "mock": [
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/prompt",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "text": "read child history"
+            },
+            {
+              "kind": "mcp",
+              "method": "initialize",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "status": 200,
+              "result": {
+                "result": {
+                  "protocolVersion": "2025-06-18",
+                  "capabilities": {
+                    "tools": {
+                      "listChanged": true
+                    }
+                  },
+                  "serverInfo": {
+                    "name": "lelouchhe_webagent",
+                    "version": "0.1.0"
+                  },
+                  "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                },
+                "jsonrpc": "2.0",
+                "id": 1
+              }
+            },
+            {
+              "kind": "mcp",
+              "method": "notifications/initialized",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "status": 202,
+              "result": null
+            },
+            {
+              "kind": "mcp",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "tool": "task_query",
+              "arguments": {
+                "task_id": "00000000-0000-4000-8000-000000000005",
+                "range": [-20, -1]
+              },
+              "status": 200,
+              "result": {
+                "result": {
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000005\",\"max_seq\":5,\"rows\":[{\"seq\":1,\"type\":\"system_message\",\"bytes\":326,\"title\":\"@root sent @\\\"Cancelable child\\\"\",\"field\":\"body\",\"text\":\"park until cancelled\"},{\"seq\":2,\"type\":\"collaboration_prompt\",\"bytes\":199,\"field\":\"text\",\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8000-000000000001):\\n---8<---\\npark until cancelled\\n---8<---\"},{\"seq\":3,\"type\":\"system_message\",\"bytes\":333,\"title\":\"Cancelled by @root\",\"field\":\"body\",\"text\":\"reason: No longer needed\\nstatus: cancelling\"},{\"seq\":4,\"type\":\"assistant_message\",\"bytes\":34,\"field\":\"text\",\"text\":\"REGRESSION_WAIT: cancel\"},{\"seq\":5,\"type\":\"prompt_done\",\"bytes\":48,\"field\":\"stopReason\",\"text\":\"cancelled\"}]}"
+                    }
+                  ]
+                },
+                "jsonrpc": "2.0",
+                "id": 2
+              }
+            }
+          ]
+        }
+      ],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                10,
+                "user_message",
+                "{\"text\":\"read child history\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000a\"}",
+                "user",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                11,
+                "assistant_message",
+                "{\"text\":\"History read.\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                12,
+                "prompt_done",
+                "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+              "args": ["/", 1789333200000]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+              "args": [1789333200000, "00000000-0000-4000-8000-000000000001"]
+            }
+          ]
+        ],
+        "reads": 26
       }
     }
   ],
@@ -1301,6 +1494,33 @@
         "seq": 9,
         "type": "prompt_done",
         "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 15,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 10,
+        "type": "user_message",
+        "data": "{\"text\":\"read child history\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000a\"}",
+        "created_at": 1789333200000,
+        "from_ref": "user"
+      },
+      {
+        "id": 16,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 11,
+        "type": "assistant_message",
+        "data": "{\"text\":\"History read.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 17,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 12,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       }

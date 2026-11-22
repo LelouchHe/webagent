@@ -116,7 +116,8 @@ if (process.env.WEBAGENT_REGRESSION_SQL === "1") {
       if (typeof original !== "function") continue;
       statement[method] = (...args: unknown[]) => {
         const normalized = sql.trimStart();
-        if (statement.reader === true) {
+        // `readonly` (not `reader`): `INSERT/UPDATE … RETURNING` returns rows but still writes.
+        if (statement.readonly === true) {
           record({ kind: "read" });
         } else {
           const group = transactionDepth > 0 ? transactionId : ++transactionId;
