@@ -43,8 +43,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   ordered per-edge POST, structured target-not-found removal, and `400`/`409`
   terminalization without a notice
 - `test/host-account.test.ts` and `test/host-mcp.test.ts` cover external account
-  arming/settlement, unarchive→archive watcher retention, and MCP `agent@host`
-  creation followed by send to the returned task id
+  arming/settlement, `waiting` silence observation, repeated-turn `no_update`,
+  unarchive→archive watcher retention, and MCP `agent@host` creation followed
+  by send to the returned task id
 
 ### Multi-agent runtime
 

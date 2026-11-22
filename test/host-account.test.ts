@@ -79,3 +79,30 @@ test("behavior proof: archive preserves an already-open external account", async
   assert.equal(settled.accountTargetTaskId, parentTaskId);
   assert.equal(store.listHostOutbox(credentialHash).at(-1)?.kind, "blocked");
 });
+
+test("behavior proof: waiting is watched and repeated turns emit an external notice", async () => {
+  store.receiveHostDispatch({
+    credentialHash,
+    remoteMessageId: "dispatch-notice",
+    requestHash: requestHash({ body: "work" }),
+    targetTaskId: remoteTaskId,
+    body: "work",
+  });
+  const bridge = { ...mockBridgeStubs(), prompt: async () => {} };
+  await tasks.drainCollaborationDeliveries(remoteTaskId, bridge);
+  const waiting = tasks.settleAgentUpdate(
+    remoteTaskId,
+    "waiting",
+    "still busy",
+  );
+  assert.equal(waiting.silenceWatchMs, 900_000);
+  assert.equal(store.listHostOutbox(credentialHash).length, 0);
+
+  tasks.onTargetTurnEnded(remoteTaskId);
+  tasks.onTargetTurnEnded(remoteTaskId);
+  tasks.onTargetTurnEnded(remoteTaskId);
+  const notice = store
+    .listHostOutbox(credentialHash)
+    .find((item) => item.kind === "runtime_notice");
+  assert.equal(notice?.reason, "no_update");
+});
