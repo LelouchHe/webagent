@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import type { Store, TaskRow } from "../store.ts";
-import {
-  isLocalCollaborationTarget,
-  collaborationRelation,
-} from "../task-collaboration.ts";
+import { collaborationRelation } from "../task-collaboration.ts";
+import { TaskLocator } from "../task-locator.ts";
+import { DeliveryQueue } from "../delivery-queue.ts";
+import type { HostRegistry } from "../host-registry.ts";
+import { hostRequestHash } from "../host-registry.ts";
 import {
   TaskConfigOverrideError,
   reportedExecutionConfig,
@@ -87,6 +88,7 @@ export function createMcpTaskToolHost(deps: {
   broadcastCollaboration?: (event: McpTaskCollaborationEvent) => void;
   broadcastTaskCreated?: (event: McpTaskCreatedEvent) => void;
   broadcastTaskCancelNotice?: (event: McpTaskCancelNotice) => void;
+  hosts?: HostRegistry;
 }): McpTaskToolHost {
   const {
     store,
@@ -95,6 +97,16 @@ export function createMcpTaskToolHost(deps: {
     broadcastTaskCreated,
     broadcastTaskCancelNotice,
   } = deps;
+  const locator = new TaskLocator(store);
+  const deliveries = new DeliveryQueue(store, locator, {
+    drainLocal: (taskId) => {
+      void tasks.drainCollaborationDeliveries(taskId);
+    },
+    kickEdge: (edgeId) => deps.hosts?.kick(edgeId),
+    notifyExternal: (credentialHash) => {
+      tasks.notifyExternalMessage(credentialHash);
+    },
+  });
 
   /**
    * The single authority check for one MCP operation. It lives here because
@@ -128,22 +140,14 @@ export function createMcpTaskToolHost(deps: {
     return task;
   }
 
-  function requireLocalTarget(sourceTaskId: string, targetTaskId: string) {
-    const source = requireTask(sourceTaskId);
-    const target = requireTask(targetTaskId);
-    if (!isLocalCollaborationTarget(source, target)) {
-      throw new Error("target_not_allowed");
-    }
-    return { source, target };
-  }
-
   function requireHistoryTarget(sourceTaskId: string, targetTaskId: string) {
     const source = store.getTask(sourceTaskId);
     const target = store.getTask(targetTaskId);
     if (
       !source ||
       !target ||
-      (source.id !== target.id && !isLocalCollaborationTarget(source, target))
+      (source.id !== target.id &&
+        collaborationRelation(source, target) === null)
     ) {
       throw new Error("target_not_allowed");
     }
@@ -188,7 +192,7 @@ export function createMcpTaskToolHost(deps: {
       const lastEventTimes = store.getLatestEventTimes(
         entries.map((entry) => entry.task.id),
       );
-      return entries.map(({ task, relation }): McpTaskListItem => ({
+      const listed = entries.map(({ task, relation }): McpTaskListItem => ({
         id: task.id,
         title: task.title ?? task.id,
         relation,
@@ -197,6 +201,36 @@ export function createMcpTaskToolHost(deps: {
         lastAgentActivityAt: tasks.getLastAgentActivityAt(task.id),
         lastEventAt: isoFromMillisOrNull(lastEventTimes.get(task.id)),
       }));
+      if (!store.hasHostFacts()) return listed;
+      const localIds = new Set(listed.map((item) => item.id));
+      const externalParent = locator.parentOf(source.id);
+      if (
+        externalParent &&
+        externalParent !== source.parent_id &&
+        !localIds.has(externalParent)
+      ) {
+        listed.push({
+          id: externalParent,
+          title: externalParent,
+          relation: "parent",
+          external: true,
+        });
+      }
+      for (const edge of store.listHostEdgesForParent(source.id)) {
+        if (localIds.has(edge.remote_task_id)) continue;
+        listed.push({
+          id: edge.remote_task_id,
+          title: edge.display_title,
+          relation: "child",
+          external: true,
+          hostLabel: edge.host_name,
+        });
+      }
+      return listed.sort(
+        (a, b) =>
+          relationOrder(a.relation) - relationOrder(b.relation) ||
+          a.id.localeCompare(b.id),
+      );
     },
 
     query(principal, input): McpTaskQueryResult {
@@ -217,6 +251,7 @@ export function createMcpTaskToolHost(deps: {
       return readTaskHistory(store, target.id, input);
     },
 
+    // eslint-disable-next-line complexity -- local and remote create have separate fenced write paths
     async create(
       principal: McpCallerPrincipal,
       input: McpTaskCreateInput,
@@ -228,6 +263,55 @@ export function createMcpTaskToolHost(deps: {
       // diverge from the caller's binding, and it is resolved *before* anything
       // is created so an unusable target leaves no trace.
       const requestedAgent = input.agent;
+      const remote = requestedAgent
+        ? (deps.hosts?.remoteAgentId(requestedAgent) ?? null)
+        : null;
+      if (requestedAgent && remote) {
+        const source = requireTask(sourceTaskId);
+        if (store.siblingTitleExists(source.id, input.title)) {
+          throw new Error("task_title_conflict");
+        }
+        const createKey = randomUUID();
+        const request = {
+          createKey,
+          parentTaskId: source.id,
+          agent: remote.agentId,
+          title: input.title,
+          ...(input.cwd ? { cwd: input.cwd } : {}),
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.thinking ? { thinking: input.thinking } : {}),
+        };
+        const result = await deps.hosts!.createTask({
+          hostName: remote.hostName,
+          credentialHash: remote.credentialHash,
+          request,
+        });
+        authorize(principal);
+        const created = store.createHostEdge({
+          parentTaskId: source.id,
+          hostName: remote.hostName,
+          remoteTaskId: result.taskId,
+          title: input.title,
+          credentialHash: result.credentialHash,
+          createKey,
+          requestHash: hostRequestHash(request),
+          event: {
+            title: `Created remote task ${input.title} @${remote.hostName}`,
+            body: `Host: ${remote.hostName}\nTask: ${result.taskId}`,
+            kind: "task_created_remote",
+            taskId: result.taskId,
+            taskTitle: input.title,
+            agentId: remote.agentId,
+            cwd: input.cwd ?? "owner default",
+            model: input.model ?? null,
+            thinking: input.thinking ?? null,
+          },
+        });
+        if (created.status === "conflict" || created.edge === null) {
+          throw new Error("task_create_conflict");
+        }
+        return { taskId: result.taskId };
+      }
       let targetAgentId: string;
       let targetBridge: DeliveryBridge;
       if (requestedAgent !== undefined) {
@@ -405,21 +489,34 @@ export function createMcpTaskToolHost(deps: {
     async send(principal, targetTaskId, body) {
       authorize(principal);
       const sourceTaskId = principal.taskId;
-      const { source, target } = requireLocalTarget(sourceTaskId, targetTaskId);
-      const created = store.createCollaborationMessage({
-        id: randomUUID(),
-        deliveryId: randomUUID(),
-        sourceTaskId,
-        directTargetTaskId: target.id,
-        sourceActor: "agent",
-        body,
-      });
+      const route = locator.route(sourceTaskId, targetTaskId);
+      if (route.relation !== "child" && route.relation !== "parent") {
+        throw new Error(
+          route.endpoint ? "target_not_allowed" : "task_not_found",
+        );
+      }
+      const created = deliveries.enqueue(
+        {
+          sourceId: sourceTaskId,
+          targetId: targetTaskId,
+          kind: route.relation === "child" ? "dispatch" : "message",
+          body,
+        },
+        route,
+      );
+      const source = requireTask(sourceTaskId);
+      const target = created.endpoint;
+      const targetLabel =
+        target.kind === "local"
+          ? (target.task.title ?? target.task.id.slice(0, 8))
+          : target.kind === "remote_child"
+            ? target.edge.display_title
+            : targetTaskId.slice(0, 8);
       const sourceLabel = source.title ?? source.id.slice(0, 8);
-      const targetLabel = target.title ?? target.id.slice(0, 8);
       broadcastCollaboration?.({
         messageId: created.message.id,
         sourceTaskId,
-        targetTaskId: target.id,
+        targetTaskId,
         sourceLabel,
         targetLabel,
         body: created.message.body,
@@ -427,7 +524,6 @@ export function createMcpTaskToolHost(deps: {
         role: "source",
         deliveryStatus: "queued",
       });
-      void tasks.drainCollaborationDeliveries(target.id);
     },
 
     async update(principal, status, body) {
@@ -440,19 +536,25 @@ export function createMcpTaskToolHost(deps: {
         tasks.settleAgentUpdate(sourceTaskId, status, body);
       if (collaborationMessageId && accountTargetTaskId) {
         const source = requireTask(sourceTaskId);
-        const target = requireTask(accountTargetTaskId);
+        const target = locator.endpoint(accountTargetTaskId, sourceTaskId);
+        if (!target) return {};
         broadcastCollaboration?.({
           messageId: collaborationMessageId,
           sourceTaskId,
           targetTaskId: accountTargetTaskId,
           sourceLabel: source.title ?? source.id.slice(0, 8),
-          targetLabel: target.title ?? target.id.slice(0, 8),
+          targetLabel:
+            target.kind === "local"
+              ? (target.task.title ?? target.task.id.slice(0, 8))
+              : accountTargetTaskId.slice(0, 8),
           body: `Task status: ${status}\n${body}`,
           taskId: sourceTaskId,
           role: "source",
           deliveryStatus: "queued",
         });
-        void tasks.drainCollaborationDeliveries(accountTargetTaskId);
+        if (target.kind === "local") {
+          void tasks.drainCollaborationDeliveries(accountTargetTaskId);
+        }
       }
       if (silenceWatchMs === undefined) return {};
       return {

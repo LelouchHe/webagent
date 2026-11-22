@@ -87,6 +87,10 @@ export class AuthStore {
     return false;
   }
 
+  hasTokenHash(hash: string): boolean {
+    return this.tokens.has(hash);
+  }
+
   /** Update lastUsedAt in memory; persisted on next flush(). */
   touchLastUsed(token: string): void {
     if (!token) return;
