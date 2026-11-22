@@ -17,7 +17,9 @@ control, hold, or release the agent while a run is active.
 
 The server and agent are preloaded with `observer.ts`. It only observes
 `better-sqlite3` statement calls, while fixing the clock, UUID stream, and
-random stream. Instance paths and ports are normalized when results are read.
+random stream. Instance paths, the checkout root, and ports are normalized when results are
+read. `<INSTANCE>` replaces the scenario's private directory, `<REPOSITORY>`
+replaces the checkout path, and `<ORIGIN>` replaces the loopback port.
 The observer records write SQL in order and records read operations as counts.
 The final database snapshot is opened read-only after all steps.
 
@@ -36,11 +38,17 @@ One step result contains:
 4. ordered write SQL plus read counts;
 5. the final read-only database snapshot.
 
-After every step, the runner alone calls `settle()`. The runner waits until
-observer, ACP, and SSE activity is quiet. Any busy task must either become idle
-or be represented by a mock-declared wait; a timeout reports the scenario,
-step, busy task ids, and declared waits. Scenarios do not sleep, poll, wait for
-named events, or inspect internal state.
+After every step, the runner alone calls `settle()`. It probes every 25ms and
+declares the run quiet after 250ms with no new observer, ACP, or SSE output.
+Any busy task must either become idle or be represented by a mock-declared wait;
+a timeout reports the scenario, step, busy task ids, and declared waits.
+Scenarios do not wait for named events or inspect internal state.
+
+This fixed quiet window has a known limitation: a step that pauses for more
+than 250ms without producing output can be mistaken for settled. That case
+must surface as an A/A mismatch (or later output in another step), not as a
+single-run silent pass; tighten the declared behavior or observer when such a
+late continuation becomes reproducible.
 
 `--update` still performs the A/A check, then replaces the selected goldens.
 Review those diffs by asking what external behavior changed, whether the SQL

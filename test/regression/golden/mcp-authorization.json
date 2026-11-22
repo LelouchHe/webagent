@@ -6,8 +6,8 @@
         "status": 200,
         "body": {
           "id": "00000000-0000-4000-8000-000000000001",
-          "cwd": "/Users/lelouch/mine/code/webagent/main",
-          "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+          "cwd": "<REPOSITORY>",
+          "cwdDisplay": "<REPOSITORY>",
           "parentId": null,
           "parentAgentId": null,
           "agentId": "mock",
@@ -55,8 +55,8 @@
         {
           "type": "task_created",
           "taskId": "00000000-0000-4000-8000-000000000001",
-          "cwd": "/Users/lelouch/mine/code/webagent/main",
-          "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+          "cwd": "<REPOSITORY>",
+          "cwdDisplay": "<REPOSITORY>",
           "title": "root",
           "parentId": null,
           "parentAgentId": null,
@@ -89,7 +89,7 @@
         {
           "kind": "acp",
           "method": "session/new",
-          "cwd": "/Users/lelouch/mine/code/webagent/main"
+          "cwd": "<REPOSITORY>"
         },
         {
           "kind": "mcp",
@@ -337,7 +337,7 @@
             "kind": "write",
             "method": "run",
             "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
-            "args": ["/Users/lelouch/mine/code/webagent/main", 1789333200000]
+            "args": ["<REPOSITORY>", 1789333200000]
           },
           {
             "kind": "write",
@@ -509,7 +509,7 @@
             "kind": "write",
             "method": "run",
             "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
-            "args": ["/Users/lelouch/mine/code/webagent/main", 1789333200000]
+            "args": ["<REPOSITORY>", 1789333200000]
           },
           {
             "kind": "write",
@@ -547,8 +547,8 @@
         "status": 200,
         "body": {
           "id": "00000000-0000-4000-8000-000000000001",
-          "cwd": "/Users/lelouch/mine/code/webagent/main",
-          "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+          "cwd": "<REPOSITORY>",
+          "cwdDisplay": "<REPOSITORY>",
           "parentId": null,
           "parentAgentId": null,
           "agentId": "mock",
@@ -677,8 +677,8 @@
         {
           "type": "task_created",
           "taskId": "00000000-0000-4000-8000-000000000001",
-          "cwd": "/Users/lelouch/mine/code/webagent/main",
-          "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+          "cwd": "<REPOSITORY>",
+          "cwdDisplay": "<REPOSITORY>",
           "parentId": null,
           "parentAgentId": null,
           "agentId": "mock",
@@ -755,7 +755,7 @@
         {
           "kind": "acp",
           "method": "session/new",
-          "cwd": "/Users/lelouch/mine/code/webagent/main"
+          "cwd": "<REPOSITORY>"
         },
         {
           "kind": "mcp",
@@ -783,10 +783,7 @@
             "kind": "write",
             "method": "run",
             "sql": "UPDATE tasks SET cwd = ? WHERE id = ?",
-            "args": [
-              "/Users/lelouch/mine/code/webagent/main",
-              "00000000-0000-4000-8000-000000000001"
-            ]
+            "args": ["<REPOSITORY>", "00000000-0000-4000-8000-000000000001"]
           },
           {
             "kind": "write",
@@ -982,7 +979,7 @@
             "kind": "write",
             "method": "run",
             "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
-            "args": ["/Users/lelouch/mine/code/webagent/main", 1789333200000]
+            "args": ["<REPOSITORY>", 1789333200000]
           },
           {
             "kind": "write",
@@ -1019,7 +1016,7 @@
     "tasks": [
       {
         "id": "00000000-0000-4000-8000-000000000001",
-        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "cwd": "<REPOSITORY>",
         "title": "root",
         "workflow_status": "idle",
         "parent_id": null,
@@ -1139,7 +1136,7 @@
     "client_ops": [],
     "recent_paths": [
       {
-        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "cwd": "<REPOSITORY>",
         "last_used_at": 1789333200000
       }
     ]

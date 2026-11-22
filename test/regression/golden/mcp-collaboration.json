@@ -53,8 +53,8 @@
           "type": "task_created",
           "taskId": "00000000-0000-4000-8000-000000000005",
           "agentId": "mock",
-          "cwd": "/Users/lelouch/mine/code/webagent/main",
-          "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+          "cwd": "<REPOSITORY>",
+          "cwdDisplay": "<REPOSITORY>",
           "title": "Regression review",
           "parentId": "00000000-0000-4000-8000-000000000001",
           "parentAgentId": "mock",
@@ -147,7 +147,7 @@
           "taskTitle": "Regression review",
           "role": "source",
           "title": "Created task @\"Regression review\"",
-          "body": "Task ID: 00000000-0000-4000-8000-000000000005\nagent: mock\ncwd: /Users/lelouch/mine/code/webagent/main\nmodel: mock-model\nthinking: medium"
+          "body": "Task ID: 00000000-0000-4000-8000-000000000005\nagent: mock\ncwd: <REPOSITORY>\nmodel: mock-model\nthinking: medium"
         },
         {
           "type": "system_message",
@@ -448,7 +448,7 @@
         {
           "kind": "acp",
           "method": "session/new",
-          "cwd": "/Users/lelouch/mine/code/webagent/main"
+          "cwd": "<REPOSITORY>"
         },
         {
           "kind": "mcp",
@@ -533,7 +533,7 @@
             "kind": "write",
             "method": "run",
             "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
-            "args": ["/Users/lelouch/mine/code/webagent/main", 1789333200000]
+            "args": ["<REPOSITORY>", 1789333200000]
           },
           {
             "kind": "write",
@@ -541,7 +541,7 @@
             "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             "args": [
               "00000000-0000-4000-8000-000000000005",
-              "/Users/lelouch/mine/code/webagent/main",
+              "<REPOSITORY>",
               "agent",
               "00000000-0000-4000-8000-000000000001",
               "Regression review",
@@ -587,7 +587,7 @@
               "00000000-0000-4000-8000-000000000001",
               2,
               "system_message",
-              "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Regression review\",\"agentId\":\"mock\",\"cwd\":\"/Users/lelouch/mine/code/webagent/main\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Regression review\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /Users/lelouch/mine/code/webagent/main\\nmodel: mock-model\\nthinking: medium\"}",
+              "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Regression review\",\"agentId\":\"mock\",\"cwd\":\"<REPOSITORY>\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Regression review\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"}",
               "agent",
               1789333200000
             ]
@@ -994,7 +994,7 @@
           "body": [
             {
               "id": "00000000-0000-4000-8000-000000000001",
-              "cwd": "/Users/lelouch/mine/code/webagent/main",
+              "cwd": "<REPOSITORY>",
               "title": "root",
               "workflow_status": "idle",
               "parent_id": null,
@@ -1006,14 +1006,14 @@
               "created_at": "2026-09-13T21:00:00.000Z",
               "last_active_at": "2026-09-13T21:00:00.000Z",
               "agentId": "mock",
-              "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+              "cwdDisplay": "<REPOSITORY>",
               "hasUserInput": true,
               "isRoot": true,
               "archived": false
             },
             {
               "id": "00000000-0000-4000-8000-000000000005",
-              "cwd": "/Users/lelouch/mine/code/webagent/main",
+              "cwd": "<REPOSITORY>",
               "title": "Regression review",
               "workflow_status": "idle",
               "parent_id": "00000000-0000-4000-8000-000000000001",
@@ -1025,7 +1025,7 @@
               "created_at": "2026-09-13T21:00:00.000Z",
               "last_active_at": "2026-09-13T21:00:00.000Z",
               "agentId": "mock",
-              "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+              "cwdDisplay": "<REPOSITORY>",
               "hasUserInput": false,
               "isRoot": false,
               "archived": false
@@ -1279,7 +1279,7 @@
             "kind": "write",
             "method": "run",
             "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
-            "args": ["/Users/lelouch/mine/code/webagent/main", 1789333200000]
+            "args": ["<REPOSITORY>", 1789333200000]
           },
           {
             "kind": "write",
@@ -1465,7 +1465,7 @@
     "tasks": [
       {
         "id": "00000000-0000-4000-8000-000000000001",
-        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "cwd": "<REPOSITORY>",
         "title": "root",
         "workflow_status": "idle",
         "parent_id": null,
@@ -1480,7 +1480,7 @@
       },
       {
         "id": "00000000-0000-4000-8000-000000000005",
-        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "cwd": "<REPOSITORY>",
         "title": "Regression review",
         "workflow_status": "done",
         "parent_id": "00000000-0000-4000-8000-000000000001",
@@ -1523,7 +1523,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 2,
         "type": "system_message",
-        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Regression review\",\"agentId\":\"mock\",\"cwd\":\"/Users/lelouch/mine/code/webagent/main\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Regression review\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /Users/lelouch/mine/code/webagent/main\\nmodel: mock-model\\nthinking: medium\"}",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Regression review\",\"agentId\":\"mock\",\"cwd\":\"<REPOSITORY>\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Regression review\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
@@ -1883,7 +1883,7 @@
     "client_ops": [],
     "recent_paths": [
       {
-        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "cwd": "<REPOSITORY>",
         "last_used_at": 1789333200000
       }
     ]

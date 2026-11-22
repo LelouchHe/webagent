@@ -448,7 +448,8 @@ function normalize(value: unknown, instance: Instance): unknown {
   if (typeof value === "string") {
     return value
       .replaceAll(instance.root, "<INSTANCE>")
-      .replaceAll(`127.0.0.1:${instance.port}`, "<ORIGIN>");
+      .replaceAll(`127.0.0.1:${instance.port}`, "<ORIGIN>")
+      .replaceAll(ROOT, "<REPOSITORY>");
   }
   if (Array.isArray(value))
     return value.map((item) => normalize(item, instance));

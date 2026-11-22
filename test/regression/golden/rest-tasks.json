@@ -6,8 +6,8 @@
         "status": 201,
         "body": {
           "id": "00000000-0000-4000-8000-000000000004",
-          "cwd": "/Users/lelouch/mine/code/webagent/main",
-          "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+          "cwd": "<REPOSITORY>",
+          "cwdDisplay": "<REPOSITORY>",
           "parentId": "00000000-0000-4000-8000-000000000001",
           "parentAgentId": "mock",
           "agentId": "mock",
@@ -118,8 +118,8 @@
           "type": "task_created",
           "taskId": "00000000-0000-4000-8000-000000000004",
           "agentId": "mock",
-          "cwd": "/Users/lelouch/mine/code/webagent/main",
-          "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+          "cwd": "<REPOSITORY>",
+          "cwdDisplay": "<REPOSITORY>",
           "title": "REST child",
           "parentId": "00000000-0000-4000-8000-000000000001",
           "parentAgentId": "mock",
@@ -212,7 +212,7 @@
           "taskTitle": "REST child",
           "role": "source",
           "title": "Created task @\"REST child\"",
-          "body": "Task ID: 00000000-0000-4000-8000-000000000004\nagent: mock\ncwd: /Users/lelouch/mine/code/webagent/main\nmodel: mock-model\nthinking: medium"
+          "body": "Task ID: 00000000-0000-4000-8000-000000000004\nagent: mock\ncwd: <REPOSITORY>\nmodel: mock-model\nthinking: medium"
         },
         {
           "type": "config_option_update",
@@ -284,7 +284,7 @@
         {
           "kind": "acp",
           "method": "session/new",
-          "cwd": "/Users/lelouch/mine/code/webagent/main"
+          "cwd": "<REPOSITORY>"
         }
       ],
       "sql": {
@@ -295,7 +295,7 @@
             "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             "args": [
               "00000000-0000-4000-8000-000000000004",
-              "/Users/lelouch/mine/code/webagent/main",
+              "<REPOSITORY>",
               "auto",
               "00000000-0000-4000-8000-000000000001",
               "REST child",
@@ -341,7 +341,7 @@
               "00000000-0000-4000-8000-000000000001",
               1,
               "system_message",
-              "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"REST child\",\"agentId\":\"mock\",\"cwd\":\"/Users/lelouch/mine/code/webagent/main\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"REST child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: /Users/lelouch/mine/code/webagent/main\\nmodel: mock-model\\nthinking: medium\"}",
+              "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"REST child\",\"agentId\":\"mock\",\"cwd\":\"<REPOSITORY>\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"REST child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"}",
               "user",
               1789333200000
             ]
@@ -436,7 +436,7 @@
             "kind": "write",
             "method": "run",
             "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
-            "args": ["/Users/lelouch/mine/code/webagent/main", 1789333200000]
+            "args": ["<REPOSITORY>", 1789333200000]
           }
         ],
         "reads": 9
@@ -546,7 +546,7 @@
         "body": [
           {
             "id": "00000000-0000-4000-8000-000000000001",
-            "cwd": "/Users/lelouch/mine/code/webagent/main",
+            "cwd": "<REPOSITORY>",
             "title": "root",
             "workflow_status": "idle",
             "parent_id": null,
@@ -558,14 +558,14 @@
             "created_at": "2026-09-13T21:00:00.000Z",
             "last_active_at": "2026-09-13T21:00:00.000Z",
             "agentId": "mock",
-            "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+            "cwdDisplay": "<REPOSITORY>",
             "hasUserInput": false,
             "isRoot": true,
             "archived": false
           },
           {
             "id": "00000000-0000-4000-8000-000000000004",
-            "cwd": "/Users/lelouch/mine/code/webagent/main",
+            "cwd": "<REPOSITORY>",
             "title": "REST child",
             "workflow_status": "idle",
             "parent_id": "00000000-0000-4000-8000-000000000001",
@@ -577,7 +577,7 @@
             "created_at": "2026-09-13T21:00:00.000Z",
             "last_active_at": "2026-09-13T21:00:00.000Z",
             "agentId": "mock",
-            "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+            "cwdDisplay": "<REPOSITORY>",
             "hasUserInput": true,
             "isRoot": false,
             "archived": false
@@ -648,7 +648,7 @@
         "body": [
           {
             "id": "00000000-0000-4000-8000-000000000004",
-            "cwd": "/Users/lelouch/mine/code/webagent/main",
+            "cwd": "<REPOSITORY>",
             "title": "REST child",
             "workflow_status": "idle",
             "parent_id": null,
@@ -660,7 +660,7 @@
             "created_at": "2026-09-13T21:00:00.000Z",
             "last_active_at": "2026-09-13T21:00:00.000Z",
             "agentId": "mock",
-            "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+            "cwdDisplay": "<REPOSITORY>",
             "hasUserInput": true,
             "isRoot": false,
             "archived": true
@@ -728,7 +728,7 @@
     "tasks": [
       {
         "id": "00000000-0000-4000-8000-000000000001",
-        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "cwd": "<REPOSITORY>",
         "title": "root",
         "workflow_status": "idle",
         "parent_id": null,
@@ -743,7 +743,7 @@
       },
       {
         "id": "00000000-0000-4000-8000-000000000004",
-        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "cwd": "<REPOSITORY>",
         "title": "REST child",
         "workflow_status": "idle",
         "parent_id": "00000000-0000-4000-8000-000000000001",
@@ -777,7 +777,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 1,
         "type": "system_message",
-        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"REST child\",\"agentId\":\"mock\",\"cwd\":\"/Users/lelouch/mine/code/webagent/main\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"REST child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: /Users/lelouch/mine/code/webagent/main\\nmodel: mock-model\\nthinking: medium\"}",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"REST child\",\"agentId\":\"mock\",\"cwd\":\"<REPOSITORY>\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"REST child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"}",
         "created_at": 1789333200000,
         "from_ref": "user"
       },
@@ -833,7 +833,7 @@
     "client_ops": [],
     "recent_paths": [
       {
-        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "cwd": "<REPOSITORY>",
         "last_used_at": 1789333200000
       }
     ]
