@@ -45,6 +45,13 @@ time. An entry without a "closing condition" is a wish, not an issue.
 - **Sharing a host-created R1 soft-deletes it without the remote failure
   path.** An accepted queued dispatch can then produce no `target_removed`.
   *Closing:* soft-delete terminalizes external dispatches in its transaction.
+- **Owner hard-delete publishes an external `target_removed` after commit.**
+  The owner delivery is failed in the delete transaction, but its external
+  outbox notice is queued by the in-process status observer afterwards,
+  matching the pre-existing local publication window. A crash in that
+  interval can leave the initiator without the notice. *Closing:* fold the
+  external notice into `Store.deleteTask` (or a durable outcome step) once
+  this failure path requires exact atomicity.
 - **Unarchive plus a new local dispatch can replace an old external account.**
   This unsupported composition is not reached by the host flow. *Closing:*
   real use proves it reachable or accounts gain explicit correlation.

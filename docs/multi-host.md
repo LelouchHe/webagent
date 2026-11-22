@@ -38,7 +38,7 @@ initiator (P)                                  owner (R1)
 |                                      |      |     -> account / update   |
 |                                      |      |                           |
 | GET /host/messages <- hint by token  |<-----| R1 -> P queued outbound   |
-|   persist local row + receipt        |      | SSE says id only          |
+|   persist local row + receipt        |      | SSE sends a pending hint   |
 |   POST /:id/ack ---------------------|----->| queued -> delivered       |
 |   local drain -> P ACP               |      +----------------------------+
 +--------------------------------------+
@@ -46,9 +46,10 @@ initiator (P)                                  owner (R1)
 
 The owner has no configuration for the initiator. The initiating host resolves
 its configured token, describes the owner, opens a ticket-authenticated global
-SSE stream, and then performs a baseline `GET`. Disconnection changes no
-business state; reconnect performs another pull. A report is ACKed only after
-the initiator transaction commits.
+SSE stream, and then performs a baseline `GET`. The `host_message_pending`
+frame carries only its event type, not a message id or payload. Disconnection
+changes no business state; reconnect performs another pull. A report is ACKed
+only after the initiator transaction commits.
 
 ## Layer boundary
 
@@ -81,6 +82,12 @@ that synchronous claim path. The locator's `Store.hasHostFacts()` flag is an
 in-process value initialized from persisted facts and changed only after a
 host fact commits, so a database with no host relationships keeps the original
 local SQL path.
+
+An edge's transport state and wake hint are separate facts. A typed terminal
+owner report consumes only the conservative wake hint; it does not mark another
+pending POST as delivered. A typed `target_not_found`, by contrast, removes the
+edge and terminalizes its still-untransferred rows plus the one local
+`target_removed` notice in one transaction.
 
 ## External endpoints
 

@@ -64,6 +64,7 @@ import { canonicalCwd } from "./cwd-path.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { log } from "./log.ts";
 import { TaskTreeLock, type TaskTreeLockRelease } from "./task-tree-lock.ts";
+import { TaskLocator } from "./task-locator.ts";
 
 const slog = log.scope("task");
 
@@ -704,8 +705,7 @@ export class TaskManager implements ObligationHost {
     ((event: CollaborationBroadcastRequest) => void) | null = null;
   private externalMessageBroadcast: ((credentialHash: string) => void) | null =
     null;
-  private remoteWakeSource: ((taskId: string) => boolean) | null = null;
-  private readonly hostExternalTasks: Set<string>;
+  private readonly locator: TaskLocator;
   /** Live-only delivery status refresh for a sender's message mark. */
   private deliveryStatusBroadcast:
     | ((event: Extract<AgentEvent, { type: "collaboration_delivery" }>) => void)
@@ -784,7 +784,7 @@ export class TaskManager implements ObligationHost {
     this.authority = options.authority;
     this.agents = options.agents;
     this.obligations = options.obligations ?? createObligationController(this);
-    this.hostExternalTasks = new Set(this.store.listHostExternalTaskIds());
+    this.locator = new TaskLocator(this.store);
     // The one Store observer runs failure semantics before UI publication;
     // the receiver helper owns arming at the actual handoff.
     this.store.onDeliveryStatusChanged((change) => {
@@ -956,7 +956,7 @@ export class TaskManager implements ObligationHost {
   }
 
   recoverPersistedDeliveries(): void {
-    for (const taskId of this.store.queuedLocalDeliveryRecipients()) {
+    for (const taskId of this.store.queuedAckedHostReportRecipients()) {
       void this.drainCollaborationDeliveries(taskId);
     }
   }
@@ -3863,14 +3863,6 @@ export class TaskManager implements ObligationHost {
     this.externalMessageBroadcast?.(credentialHash);
   }
 
-  setRemoteWakeSourceProbe(probe: ((taskId: string) => boolean) | null): void {
-    this.remoteWakeSource = probe;
-  }
-
-  registerHostExternalTask(taskId: string): void {
-    this.hostExternalTasks.add(taskId);
-  }
-
   /** Install the live delivery-status hook (sender mark refresh only). */
   setDeliveryStatusBroadcast(
     broadcast:
@@ -3943,6 +3935,9 @@ export class TaskManager implements ObligationHost {
   ): {
     collaborationMessageId: string | null;
     accountTargetTaskId: string | null;
+    sourceLabel: string | null;
+    targetLabel: string | null;
+    accountTargetExternal?: boolean;
     /**
      * For `waiting` with nothing visible to wake the task while it owes an
      * account: the silence window after which the requester is notified.
@@ -3961,14 +3956,15 @@ export class TaskManager implements ObligationHost {
       const wakeSourceVisible =
         this.obligations.hasOpenAsSource(targetTaskId) ||
         this.store.countQueuedDeliveries(targetTaskId) > 0 ||
-        this.store.hasQueuedDispatchToChild(targetTaskId) ||
-        this.remoteWakeSource?.(targetTaskId) === true;
+        this.locator.hasChildWakeSource(targetTaskId);
       const watched =
         !wakeSourceVisible &&
         this.obligations.noteUnwatchedWaiting(targetTaskId);
       return {
         collaborationMessageId: null,
         accountTargetTaskId: null,
+        sourceLabel: null,
+        targetLabel: null,
         ...(watched ? { silenceWatchMs: this.obligations.silenceMs } : {}),
       };
     }
@@ -3981,6 +3977,7 @@ export class TaskManager implements ObligationHost {
           status,
           body,
           source,
+          reason: "settled",
         });
         this.obligations.noteUpdate(targetTaskId);
         this.obligations.close(targetTaskId);
@@ -3988,13 +3985,13 @@ export class TaskManager implements ObligationHost {
         return {
           collaborationMessageId: result.collaborationMessageId,
           accountTargetTaskId: source.parent_task_id,
+          sourceLabel: result.sourceLabel,
+          targetLabel: result.targetLabel,
+          accountTargetExternal: true,
         };
       }
     }
-    if (
-      accountSource === undefined &&
-      this.hostExternalTasks.has(targetTaskId)
-    ) {
+    if (accountSource === undefined && this.store.hasHostFacts()) {
       const task = this.store.getTask(targetTaskId);
       const source = this.store.getHostExternalSource(targetTaskId);
       if (task?.parent_id === null && source) {
@@ -4003,27 +4000,38 @@ export class TaskManager implements ObligationHost {
           status,
           body,
           source,
+          reason: "fallback",
         });
         this.obligations.noteUpdate(targetTaskId);
         this.externalMessageBroadcast?.(source.credential_hash);
         return {
           collaborationMessageId: result.collaborationMessageId,
           accountTargetTaskId: source.parent_task_id,
+          sourceLabel: result.sourceLabel,
+          targetLabel: result.targetLabel,
+          accountTargetExternal: true,
         };
       }
     }
     const accountTargetTaskId =
       accountSource ?? this.store.getTask(targetTaskId)?.parent_id ?? null;
-    const { collaborationMessageId } = this.store.recordAgentWorkflowUpdate(
-      targetTaskId,
-      status,
-      body,
-      accountTargetTaskId,
-      accountSource === undefined ? "fallback" : "settled",
-    );
+    const { collaborationMessageId, sourceLabel, targetLabel } =
+      this.store.recordAgentWorkflowUpdate(
+        targetTaskId,
+        status,
+        body,
+        accountTargetTaskId,
+        accountSource === undefined ? "fallback" : "settled",
+      );
     this.obligations.noteUpdate(targetTaskId);
     if (accountSource !== undefined) this.obligations.close(targetTaskId);
-    return { collaborationMessageId, accountTargetTaskId };
+    return {
+      collaborationMessageId,
+      accountTargetTaskId,
+      sourceLabel,
+      targetLabel,
+      accountTargetExternal: false,
+    };
   }
 
   /**
@@ -4035,9 +4043,7 @@ export class TaskManager implements ObligationHost {
     const hostDispatch = this.store.hasHostFacts()
       ? this.store.getHostDispatch(change.deliveryId)
       : undefined;
-    if (hostDispatch && change.failureReason !== "target_removed") {
-      return;
-    }
+    if (hostDispatch) return;
     if (
       this.store.hasHostFacts() &&
       this.store.isHostReportMessage(change.messageId)
@@ -4160,7 +4166,10 @@ export class TaskManager implements ObligationHost {
   }
 
   /** ACP envelope text for one drained message. */
-  private deliveryEntry(message: CollaborationMessageRow): string {
+  private deliveryEntry(
+    message: CollaborationMessageRow,
+    delivery: CollaborationDeliveryRow,
+  ): string {
     if (message.source_actor === "system") {
       // Not a message from a Task: the marker names the sender as the runtime,
       // which is what it is, without borrowing the task-reference grammar that
@@ -4174,9 +4183,11 @@ export class TaskManager implements ObligationHost {
     // id stays the only thing presented as a precise handle. The body is
     // fenced verbatim between scissor lines so the agent never reads metadata
     // as instruction and the forwarding layer never rewrites the content.
-    const sourceName =
-      this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
-      message.source_task_id.slice(0, 8);
+    const sourceName = delivery.external_source_task_id
+      ? `External task ${delivery.external_source_task_id}`
+      : (delivery.external_source_label ??
+        this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
+        message.source_task_id.slice(0, 8));
     return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
   }
 
@@ -4208,9 +4219,14 @@ export class TaskManager implements ObligationHost {
       }
       runtimeMessage = recorded;
     }
-    const sourceLabel =
-      this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
-      message.source_task_id.slice(0, 8);
+    const externalSource =
+      delivery.external_source_task_id !== undefined ||
+      delivery.external_source_host !== undefined;
+    const sourceLabel = delivery.external_source_task_id
+      ? `External task ${delivery.external_source_task_id}`
+      : (delivery.external_source_label ??
+        this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
+        message.source_task_id.slice(0, 8));
     this.store.saveEvent(
       taskId,
       "system_message",
@@ -4224,6 +4240,7 @@ export class TaskManager implements ObligationHost {
         body: message.body,
         runtimeMessage,
         externalSourceHost: delivery.external_source_host,
+        externalSource,
       }),
       { from_ref: `msg:${message.id}` },
     );
@@ -4238,6 +4255,7 @@ export class TaskManager implements ObligationHost {
       body: message.body,
       runtimeMessage,
       externalSourceHost: delivery.external_source_host,
+      externalSource,
     });
   }
 
@@ -4390,7 +4408,9 @@ export class TaskManager implements ObligationHost {
       });
       this.armDelivered(taskId, claimed);
       const sourceActors = claimed.map(({ message }) => message.source_actor);
-      const entries = claimed.map(({ message }) => this.deliveryEntry(message));
+      const entries = claimed.map(({ message, delivery }) =>
+        this.deliveryEntry(message, delivery),
+      );
       // The receiver's rows appear now, at the turn boundary where the agent
       // actually gets them. Batched deliveries land together, and a row can no
       // longer sit in a turn that never saw it.

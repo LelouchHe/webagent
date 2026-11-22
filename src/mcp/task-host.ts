@@ -302,7 +302,7 @@ export function createMcpTaskToolHost(deps: {
             taskId: result.taskId,
             taskTitle: input.title,
             agentId: remote.agentId,
-            cwd: input.cwd ?? "owner default",
+            cwd: "owner default or explicit path",
             model: input.model ?? null,
             thinking: input.thinking ?? null,
           },
@@ -504,8 +504,8 @@ export function createMcpTaskToolHost(deps: {
         },
         route,
       );
-      const source = requireTask(sourceTaskId);
       const target = created.endpoint;
+      const source = created.source;
       const targetLabel =
         target.kind === "local"
           ? (target.task.title ?? target.task.id.slice(0, 8))
@@ -532,27 +532,27 @@ export function createMcpTaskToolHost(deps: {
       // `waiting` only records the status. `done` and `blocked` settle the
       // target's open account and are delivered to its source, or fall back to
       // the current parent when no account is open.
-      const { collaborationMessageId, accountTargetTaskId, silenceWatchMs } =
-        tasks.settleAgentUpdate(sourceTaskId, status, body);
+      const {
+        collaborationMessageId,
+        accountTargetTaskId,
+        accountTargetExternal,
+        sourceLabel,
+        targetLabel,
+        silenceWatchMs,
+      } = tasks.settleAgentUpdate(sourceTaskId, status, body);
       if (collaborationMessageId && accountTargetTaskId) {
-        const source = requireTask(sourceTaskId);
-        const target = locator.endpoint(accountTargetTaskId, sourceTaskId);
-        if (!target) return {};
         broadcastCollaboration?.({
           messageId: collaborationMessageId,
           sourceTaskId,
           targetTaskId: accountTargetTaskId,
-          sourceLabel: source.title ?? source.id.slice(0, 8),
-          targetLabel:
-            target.kind === "local"
-              ? (target.task.title ?? target.task.id.slice(0, 8))
-              : accountTargetTaskId.slice(0, 8),
+          sourceLabel: sourceLabel ?? sourceTaskId.slice(0, 8),
+          targetLabel: targetLabel ?? accountTargetTaskId.slice(0, 8),
           body: `Task status: ${status}\n${body}`,
           taskId: sourceTaskId,
           role: "source",
           deliveryStatus: "queued",
         });
-        if (target.kind === "local") {
+        if (!accountTargetExternal) {
           void tasks.drainCollaborationDeliveries(accountTargetTaskId);
         }
       }

@@ -78,6 +78,9 @@ interface HostRuntime {
   dirty: boolean;
   pulling: boolean;
   retryMs: number;
+  description: HostDescription | null;
+  pullRetryAt: number;
+  pullRetryTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface HostRegistryOptions {
@@ -87,6 +90,8 @@ interface HostRegistryOptions {
   requestTimeoutMs?: number;
   log?: (line: string) => void;
 }
+
+type NextHostDispatch = NonNullable<ReturnType<Store["nextHostDispatch"]>>;
 
 export class HostRegistry {
   private readonly hosts: Record<string, HostConfig>;
@@ -103,6 +108,7 @@ export class HostRegistry {
   private readonly edgeRetryMs = new Map<string, number>();
   private readonly aborts = new Map<string, AbortController>();
   private readonly requestTimeoutMs: number;
+  private readonly now: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly logLine: (line: string) => void;
   private started = false;
@@ -119,6 +125,7 @@ export class HostRegistry {
     this.tasks = tasks;
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+    this.now = options.now ?? Date.now;
     this.sleep =
       options.sleep ??
       ((milliseconds) =>
@@ -130,17 +137,8 @@ export class HostRegistry {
       });
   }
 
-  hasHost(name: string): boolean {
-    return Object.hasOwn(this.hosts, name);
-  }
-
   state(name: string): HostConnectionState | undefined {
     return this.states.get(name);
-  }
-
-  agents(name: string): readonly string[] {
-    const state = this.states.get(name);
-    return state?.status === "ok" ? state.description.agent_ids : [];
   }
 
   agentCoordinates(): string[] {
@@ -177,14 +175,19 @@ export class HostRegistry {
     if (this.started || Object.keys(this.hosts).length === 0) return;
     this.started = true;
     for (const name of Object.keys(this.hosts)) {
-      void this.run(name);
+      void this.run(name).catch(() => {
+        if (!this.isStopped()) this.unreachable(name, "connection loop failed");
+      });
     }
   }
 
   stop(): void {
     this.stopped = true;
     for (const abort of this.aborts.values()) abort.abort();
-    for (const runtime of this.runtimes.values()) runtime.streamAbort?.abort();
+    for (const runtime of this.runtimes.values()) {
+      runtime.streamAbort?.abort();
+      if (runtime.pullRetryTimer) clearTimeout(runtime.pullRetryTimer);
+    }
     for (const timer of this.edgeRetries.values()) clearTimeout(timer);
     this.edgeRetries.clear();
   }
@@ -211,6 +214,9 @@ export class HostRegistry {
       dirty: true,
       pulling: false,
       retryMs: MIN_RETRY_MS,
+      description: null,
+      pullRetryAt: 0,
+      pullRetryTimer: null,
     };
   }
 
@@ -239,6 +245,15 @@ export class HostRegistry {
     this.logLine(`[hosts] ${name}: unreachable (${reason})`);
   }
 
+  private reachable(name: string, runtime: HostRuntime): void {
+    if (!runtime.description) return;
+    this.states.set(name, {
+      status: "ok",
+      description: runtime.description,
+      credentialHash: runtime.credentialHash,
+    });
+  }
+
   private async run(name: string): Promise<void> {
     let backoff = MIN_RETRY_MS;
     while (!this.stopped) {
@@ -252,6 +267,7 @@ export class HostRegistry {
         const description = parseHostDescription(
           await descriptionResponse.json(),
         );
+        runtime.description = description;
         if (description.host_api_version !== HOST_API_VERSION) {
           throw new Error(
             `host API version ${description.host_api_version} is not ${HOST_API_VERSION}`,
@@ -289,11 +305,7 @@ export class HostRegistry {
           throw new Error(`SSE HTTP ${streamResponse.status}`);
         }
         this.runtimes.set(name, runtime);
-        this.states.set(name, {
-          status: "ok",
-          description,
-          credentialHash: runtime.credentialHash,
-        });
+        this.reachable(name, runtime);
         this.logLine(`[hosts] ${name}: connected`);
         backoff = MIN_RETRY_MS;
         await this.readStream(name, runtime, streamResponse.body);
@@ -355,7 +367,7 @@ export class HostRegistry {
             if (!connected && data.type === "connected") {
               connected = true;
               runtime.dirty = true;
-              void this.pull(name, runtime);
+              this.runPull(name, runtime);
               this.resumeEdges(runtime.credentialHash);
             } else if (data.type === "host_message_pending") {
               this.markDirty(name);
@@ -373,56 +385,131 @@ export class HostRegistry {
     const runtime = this.runtimes.get(name);
     if (!runtime) return;
     runtime.dirty = true;
-    void this.pull(name, runtime);
+    this.runPull(name, runtime);
+  }
+
+  private runPull(name: string, runtime: HostRuntime): void {
+    void this.pull(name, runtime).catch(() => {
+      if (!this.isStopped()) this.schedulePullRetry(name, runtime);
+    });
   }
 
   private async pull(name: string, runtime: HostRuntime): Promise<void> {
     if (runtime.pulling || !runtime.dirty || this.isStopped()) return;
+    if (runtime.pullRetryAt > this.now()) {
+      this.schedulePullRetry(name, runtime);
+      return;
+    }
     runtime.pulling = true;
-    let progress: boolean;
+    if (runtime.pullRetryTimer) {
+      clearTimeout(runtime.pullRetryTimer);
+      runtime.pullRetryTimer = null;
+    }
+    runtime.pullRetryAt = 0;
     let stalled = false;
     let reschedule = false;
     try {
       while (runtime.dirty && !this.isStopped()) {
         runtime.dirty = false;
-        const response = await this.request(runtime, "/api/v1/host/messages");
-        if (!response.ok) throw new Error(`inbox HTTP ${response.status}`);
-        const body = (await response.json()) as { messages?: unknown };
-        if (!Array.isArray(body.messages)) throw new Error("invalid inbox");
-        const messages = body.messages.map(parseHostEnvelope);
-        progress = false;
-        for (const envelope of messages) {
-          const result = this.ingest(name, runtime, envelope);
-          if (result === "unmatched") continue;
-          const ack = await this.request(
-            runtime,
-            `/api/v1/host/messages/${encodeURIComponent(envelope.id)}/ack`,
-            { method: "POST" },
-          );
-          if (!ack.ok) throw new Error(`ACK HTTP ${ack.status}`);
-          progress = true;
-        }
-        if (messages.length > 0 && progress) runtime.dirty = true;
-        else if (messages.length > 0) stalled = true;
-        else runtime.retryMs = MIN_RETRY_MS;
+        const outcome = await this.pullPage(name, runtime);
+        stalled = outcome === "stalled";
+        this.reachable(name, runtime);
+        if (outcome === "drained") runtime.dirty = true;
       }
     } catch {
-      if (!this.isStopped()) reschedule = true;
       const retryMs = runtime.retryMs;
+      if (!this.isStopped()) reschedule = true;
       runtime.retryMs = Math.min(retryMs * 2, MAX_RETRY_MS);
+      runtime.pullRetryAt = this.now() + retryMs;
+      this.unreachable(name, "host request failed");
     } finally {
       runtime.pulling = false;
       runtime.retryMs = Math.min(runtime.retryMs, MAX_RETRY_MS);
       if ((stalled || reschedule) && !this.isStopped()) {
-        const delay = stalled ? MAX_RETRY_MS : runtime.retryMs;
-        const timer = setTimeout(() => {
-          if (this.runtimes.get(name) !== runtime || this.isStopped()) return;
-          runtime.dirty = true;
-          void this.pull(name, runtime);
-        }, delay);
-        timer.unref();
+        this.schedulePullRetry(
+          name,
+          runtime,
+          stalled ? MAX_RETRY_MS : undefined,
+        );
       }
     }
+  }
+
+  private async pullPage(
+    name: string,
+    runtime: HostRuntime,
+  ): Promise<"empty" | "drained" | "stalled"> {
+    const response = await this.request(runtime, "/api/v1/host/messages");
+    if (!response.ok) throw new Error(`inbox HTTP ${response.status}`);
+    const body = (await response.json()) as { messages?: unknown };
+    if (!Array.isArray(body.messages)) throw new Error("invalid inbox");
+    const messages = body.messages.map(parseHostEnvelope);
+    if (messages.length === 0) {
+      runtime.retryMs = MIN_RETRY_MS;
+      return "empty";
+    }
+    for (const envelope of messages) {
+      await this.acceptAndAck(name, runtime, envelope);
+    }
+    return this.store.hostReportPageStillQueued(
+      name,
+      runtime.credentialHash,
+      messages.map((message) => message.id),
+    )
+      ? "stalled"
+      : "drained";
+  }
+
+  private async acceptAndAck(
+    name: string,
+    runtime: HostRuntime,
+    envelope: HostEnvelope,
+  ): Promise<void> {
+    if (this.ingest(name, runtime, envelope) === "unmatched") return;
+    try {
+      const ack = await this.request(
+        runtime,
+        `/api/v1/host/messages/${encodeURIComponent(envelope.id)}/ack`,
+        { method: "POST" },
+      );
+      if (!ack.ok) throw new Error(`ACK HTTP ${ack.status}`);
+    } catch (error) {
+      this.store.markHostReportAck(name, runtime.credentialHash, envelope.id);
+      throw error;
+    }
+    const recipient = this.store.markHostReportAck(
+      name,
+      runtime.credentialHash,
+      envelope.id,
+    );
+    if (recipient) {
+      void this.tasks.drainCollaborationDeliveries(recipient);
+    }
+  }
+
+  private schedulePullRetry(
+    name: string,
+    runtime: HostRuntime,
+    delayOverride?: number,
+  ): void {
+    if (
+      runtime.pullRetryTimer ||
+      this.isStopped() ||
+      this.runtimes.get(name) !== runtime
+    ) {
+      return;
+    }
+    const delay =
+      delayOverride ?? Math.max(0, runtime.pullRetryAt - this.now());
+    runtime.pullRetryAt = this.now() + delay;
+    const timer = setTimeout(() => {
+      runtime.pullRetryTimer = null;
+      if (this.runtimes.get(name) !== runtime || this.isStopped()) return;
+      runtime.dirty = true;
+      this.runPull(name, runtime);
+    }, delay);
+    timer.unref();
+    runtime.pullRetryTimer = timer;
   }
 
   private ingest(
@@ -489,12 +576,8 @@ export class HostRegistry {
   }
 
   kick(edgeId: string): void {
-    const retry = this.edgeRetries.get(edgeId);
-    if (retry) {
-      clearTimeout(retry);
-      this.edgeRetries.delete(edgeId);
-    }
-    void this.drainEdge(edgeId);
+    if (this.edgeRetries.has(edgeId)) return;
+    this.runEdgeDrain(edgeId);
   }
 
   private resumeEdges(credentialHash: string): void {
@@ -510,49 +593,11 @@ export class HostRegistry {
       while (!this.isStopped()) {
         const next = this.store.nextHostDispatch(edgeId);
         if (!next) return;
-        const runtime = this.runtimes.get(next.edge.host_name);
-        if (
-          runtime?.credentialHash !== next.edge.credential_hash ||
-          this.states.get(next.edge.host_name)?.status !== "ok"
-        ) {
-          return;
-        }
-        const response = await this.request(runtime, "/api/v1/host/messages", {
-          method: "POST",
-          body: JSON.stringify({
-            to: next.edge.remote_task_id,
-            messageId: next.message.id,
-            kind: "dispatch",
-            body: next.message.body,
-          }),
-        });
-        if (response.status === HTTP_STATUS.ACCEPTED) {
-          this.store.markHostDispatchHandedOff(next.delivery.id);
-          this.edgeRetryMs.delete(edgeId);
-          continue;
-        }
-        if (
-          response.status === HTTP_STATUS.BAD_REQUEST ||
-          response.status === HTTP_STATUS.CONFLICT
-        ) {
-          this.store.finishHostDispatch(
-            next.delivery.id,
-            `http_${response.status}`,
-          );
-          continue;
-        }
-        if (response.status === HTTP_STATUS.NOT_FOUND) {
-          const body = (await response.json().catch(() => null)) as {
-            code?: unknown;
-          } | null;
-          if (body?.code === "target_not_found") {
-            this.store.markHostEdgeRemoved(next.edge.id, next.delivery.id);
-            this.store.finishHostDispatch(next.delivery.id, "target_removed");
-            return;
-          }
-        }
-        return;
+        if (!(await this.sendHostDispatch(next))) return;
       }
+    } catch {
+      const edge = this.store.getHostEdge(edgeId);
+      if (edge) this.unreachable(edge.host_name, "host request failed");
     } finally {
       this.edgeSends.delete(edgeId);
       const pending = this.store.nextHostDispatch(edgeId);
@@ -569,6 +614,63 @@ export class HostRegistry {
     }
   }
 
+  private async sendHostDispatch(next: NextHostDispatch): Promise<boolean> {
+    const runtime = this.runtimes.get(next.edge.host_name);
+    if (runtime?.credentialHash !== next.edge.credential_hash) return false;
+    const response = await this.request(runtime, "/api/v1/host/messages", {
+      method: "POST",
+      body: JSON.stringify({
+        to: next.edge.remote_task_id,
+        messageId: next.message.id,
+        kind: "dispatch",
+        body: next.message.body,
+      }),
+    });
+    if (response.status === HTTP_STATUS.ACCEPTED) {
+      this.store.markHostDispatchHandedOff(next.delivery.id);
+      this.edgeRetryMs.delete(next.edge.id);
+      this.reachable(next.edge.host_name, runtime);
+      return true;
+    }
+    if (
+      response.status === HTTP_STATUS.BAD_REQUEST ||
+      response.status === HTTP_STATUS.CONFLICT
+    ) {
+      this.store.finishHostDispatch(
+        next.delivery.id,
+        `http_${response.status}`,
+      );
+      this.reachable(next.edge.host_name, runtime);
+      return true;
+    }
+    if (response.status === HTTP_STATUS.NOT_FOUND) {
+      const body = (await response.json().catch(() => null)) as {
+        code?: unknown;
+      } | null;
+      if (body?.code === "target_not_found") {
+        const failed = this.store.failHostEdgeTargetNotFound(next.delivery.id);
+        if (failed.noticeRecipientTaskId) {
+          void this.tasks.drainCollaborationDeliveries(
+            failed.noticeRecipientTaskId,
+          );
+        }
+        this.reachable(next.edge.host_name, runtime);
+        return false;
+      }
+    }
+    this.unreachable(
+      next.edge.host_name,
+      `host request HTTP ${response.status}`,
+    );
+    return false;
+  }
+
+  private runEdgeDrain(edgeId: string): void {
+    void this.drainEdge(edgeId).catch(() => {
+      if (!this.isStopped()) this.scheduleEdgeRetry(edgeId);
+    });
+  }
+
   private scheduleEdgeRetry(edgeId: string): void {
     if (this.edgeRetries.has(edgeId) || this.isStopped()) return;
     const delay = Math.min(
@@ -578,7 +680,7 @@ export class HostRegistry {
     this.edgeRetryMs.set(edgeId, Math.min(delay * 2, MAX_RETRY_MS));
     const timer = setTimeout(() => {
       this.edgeRetries.delete(edgeId);
-      void this.drainEdge(edgeId);
+      this.runEdgeDrain(edgeId);
     }, delay);
     timer.unref();
     this.edgeRetries.set(edgeId, timer);

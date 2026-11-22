@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { request as httpRequest } from "node:http";
@@ -21,9 +22,11 @@ let dir: string;
 let store: Store;
 let authStore: AuthStore;
 let ticketStore: TicketStore;
+let sseManager: SseManager;
 let server: ReturnType<typeof createServer>;
 let port: number;
 let apiToken: string;
+let agentIds: string[];
 
 async function call(
   method: string,
@@ -70,15 +73,21 @@ beforeEach(async () => {
   await authStore.load();
   apiToken = (await authStore.addToken("laptop", "api")).token;
   ticketStore = new TicketStore();
+  agentIds = ["copilot"];
   const tasks = createTaskManager(store, dir, dir);
+  sseManager = new SseManager(10);
+  sseManager.setRevocationCheck(
+    (credentialHash) => !authStore.hasTokenHash(credentialHash),
+  );
+  sseManager.startHeartbeat();
   const handler = createRequestHandler({
     store,
     tasks,
-    sseManager: new SseManager(),
+    sseManager,
     publicDir,
     dataDir: dir,
     defaultCwd: dir,
-    agentIds: ["copilot"],
+    agentIds,
     limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
     authStore,
     ticketStore,
@@ -89,6 +98,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  sseManager.stopHeartbeat();
   await new Promise<void>((resolve, reject) => {
     server.close((error) => {
       if (error) reject(error);
@@ -137,6 +147,15 @@ test("behavior proof: host routes enforce scope and owner create semantics", asy
   const reused = await call("POST", "/api/v1/host/tasks", apiToken, base);
   assert.equal(reused.status, 200);
   assert.equal(reused.body.taskId, taskId);
+  const homeCreated = await call("POST", "/api/v1/host/tasks", apiToken, {
+    createKey: "create-home",
+    parentTaskId: "home-parent",
+    agent: "copilot",
+    title: "home",
+    cwd: "~",
+  });
+  assert.equal(homeCreated.status, 201);
+  assert.equal(store.getTask(String(homeCreated.body.taskId))?.cwd, homedir());
   assert.equal(
     (
       await call("POST", "/api/v1/host/tasks", apiToken, {
@@ -170,6 +189,35 @@ test("behavior proof: host routes enforce scope and owner create semantics", asy
     ).status,
     409,
   );
+
+  const replayDir = join(dir, "replay-cwd");
+  mkdirSync(replayDir);
+  const replayRequest = {
+    createKey: "create-replay-before-validation",
+    parentTaskId: "another-parent",
+    agent: "copilot",
+    title: "replay",
+    cwd: replayDir,
+  };
+  assert.equal(
+    (await call("POST", "/api/v1/host/tasks", apiToken, replayRequest)).status,
+    201,
+  );
+  rmSync(replayDir, { recursive: true, force: true });
+  agentIds.splice(0);
+  assert.equal(
+    (await call("POST", "/api/v1/host/tasks", apiToken, replayRequest)).status,
+    200,
+  );
+  assert.equal(
+    (
+      await call("POST", "/api/v1/host/tasks", apiToken, {
+        ...replayRequest,
+        title: "different replay",
+      })
+    ).status,
+    409,
+  );
 });
 
 test("behavior proof: revocation and same-name reissue invalidate an old ticket", async () => {
@@ -186,6 +234,56 @@ test("behavior proof: revocation and same-name reissue invalidate an old ticket"
     apiToken,
   );
   assert.equal(stream.status, 401);
+});
+
+test("behavior proof: revocation closes two old streams despite same-name reissue", async () => {
+  const ticketA = await call("POST", "/api/v1/sse-ticket");
+  const ticketB = await call("POST", "/api/v1/sse-ticket");
+  const open = (ticket: unknown) =>
+    new Promise<{
+      connected: Promise<void>;
+      closed: Promise<void>;
+      close: () => void;
+    }>((resolve, reject) => {
+      const req = httpRequest(
+        {
+          host: "127.0.0.1",
+          port,
+          path: `/api/v1/events/stream?ticket=${encodeURIComponent(String(ticket))}`,
+          method: "GET",
+        },
+        (res) => {
+          let connectedResolve: (() => void) | null = null;
+          const connected = new Promise<void>((done) => {
+            connectedResolve = done;
+          });
+          const closed = new Promise<void>((done) => {
+            res.once("close", () => {
+              done();
+            });
+          });
+          res.on("data", () => connectedResolve?.());
+          resolve({
+            connected,
+            closed,
+            close: () => req.destroy(),
+          });
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  const streamA = await open(ticketA.body.ticket);
+  const streamB = await open(ticketB.body.ticket);
+  await Promise.all([streamA.connected, streamB.connected]);
+  assert.equal(sseManager.size, 2);
+
+  await authStore.revokeToken("laptop");
+  apiToken = (await authStore.addToken("laptop", "api")).token;
+  await Promise.all([streamA.closed, streamB.closed]);
+  assert.equal(sseManager.size, 0);
+  streamA.close();
+  streamB.close();
 });
 
 test("behavior proof: outbox ACK belongs to the exact credential", async () => {
@@ -206,6 +304,7 @@ test("behavior proof: outbox ACK belongs to the exact credential", async () => {
     status: "done",
     body: "finished",
     source: binding,
+    reason: "settled",
   });
   const outbox = await call("GET", "/api/v1/host/messages");
   assert.equal(outbox.status, 200);

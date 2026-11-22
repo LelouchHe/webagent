@@ -208,9 +208,6 @@ tasks.setExternalMessageBroadcast((credentialHash) => {
     type: "host_message_pending",
   });
 });
-tasks.setRemoteWakeSourceProbe(
-  (taskId) => store.hasHostFacts() && store.hasOpenHostDispatch(taskId),
-);
 // A read no longer waits for its task's execution to warm up; this is how the
 // client learns the schema and commands once the restore finishes.
 tasks.setRuntimeWarmBroadcast((event) => {

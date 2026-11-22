@@ -44,6 +44,7 @@ import {
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
 import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
+import { canonicalCwd } from "./cwd-path.ts";
 import { log } from "./log.ts";
 import {
   attachCollaborationDeliveryStatus,
@@ -883,6 +884,27 @@ export function createRequestHandler(
             });
             return;
           }
+          const requestHashValue = requestHash(parsed.data);
+          const replay = store.getHostCreateResult(
+            hostPrincipal.hash,
+            parsed.data.createKey,
+            requestHashValue,
+          );
+          if (replay) {
+            json(
+              res,
+              replay.status === "reused"
+                ? HTTP_STATUS.OK
+                : HTTP_STATUS.CONFLICT,
+              replay.status === "reused"
+                ? { taskId: replay.taskId }
+                : {
+                    error: "createKey already used for a different request",
+                    code: "create_conflict",
+                  },
+            );
+            return;
+          }
           if (!(deps.agentIds ?? []).includes(parsed.data.agent)) {
             json(res, HTTP_STATUS.BAD_REQUEST, {
               error: "Agent is not configured on this host",
@@ -890,10 +912,9 @@ export function createRequestHandler(
             });
             return;
           }
-          const requestedCwd = parsed.data.cwd;
-          const cwd = requestedCwd
-            ? expandHomePath(requestedCwd)
-            : (deps.defaultCwd ?? process.cwd());
+          const requestedCwd =
+            parsed.data.cwd ?? deps.defaultCwd ?? process.cwd();
+          const cwd = canonicalCwd(expandHomePath(requestedCwd));
           if (!isAbsolute(cwd)) {
             json(res, HTTP_STATUS.BAD_REQUEST, {
               error: "cwd must be absolute or start with ~",
@@ -915,7 +936,7 @@ export function createRequestHandler(
             credentialHash: hostPrincipal.hash,
             parentTaskId: parsed.data.parentTaskId,
             createKey: parsed.data.createKey,
-            requestHash: requestHash(parsed.data),
+            requestHash: requestHashValue,
             agentId: parsed.data.agent,
             cwd,
             title: parsed.data.title,
@@ -929,7 +950,6 @@ export function createRequestHandler(
             });
             return;
           }
-          tasks?.registerHostExternalTask(created.taskId);
           json(
             res,
             created.status === "created" ? HTTP_STATUS.CREATED : HTTP_STATUS.OK,
