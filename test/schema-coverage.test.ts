@@ -5,15 +5,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 import { Store } from "../src/store.ts";
-import { HostStore } from "../src/host/store.ts";
 
 /**
  * Staleness guard: ensures docs/schema.md covers every table and index
- * declared in core and physical host Store modules.
+ * declared in src/store.ts.
  *
  * How it works:
  *   1. Parses CREATE TABLE / CREATE [UNIQUE] INDEX statements out of
- *      src/store.ts and src/host/store.ts.
+ *      src/store.ts.
  *   2. Reads docs/schema.md.
  *   3. Asserts every table name appears as an `### \`<name>\`` heading and
  *      every index name appears anywhere in the doc (typically the
@@ -25,10 +24,7 @@ import { HostStore } from "../src/host/store.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 
-const STORE_SRC =
-  readFileSync(join(ROOT, "src/store.ts"), "utf-8") +
-  "\n" +
-  readFileSync(join(ROOT, "src/host/store.ts"), "utf-8");
+const STORE_SRC = readFileSync(join(ROOT, "src/store.ts"), "utf-8");
 const SCHEMA_DOC = readFileSync(join(ROOT, "docs/schema.md"), "utf-8");
 
 // CREATE TABLE [IF NOT EXISTS] <name> ( ...
@@ -61,7 +57,6 @@ function documentedColumns(table: string): string[] {
 
 const schemaDir = mkdtempSync(join(tmpdir(), "webagent-schema-docs-"));
 const schemaStore = new Store(schemaDir);
-new HostStore(schemaStore);
 schemaStore.close();
 const schemaDb = new Database(join(schemaDir, "webagent.db"), {
   readonly: true,

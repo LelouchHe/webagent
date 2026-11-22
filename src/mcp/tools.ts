@@ -14,20 +14,20 @@ export interface McpTaskListItem {
    * Lifecycle status of the Task's last turn, matching `task_query`'s
    * `workflowStatus`. `done` is per turn, not a lifecycle terminal.
    */
-  workflowStatus?: McpWorkflowStatus;
+  workflowStatus: McpWorkflowStatus;
   /**
    * Live execution source from the runtime: `agent` while an ACP turn or
    * delivery is running, `bash` while a user shell command owns the task, and
    * `idle` otherwise. Distinct from `workflowStatus`, which is the last typed
    * report, not execution truth.
    */
-  executionState?: "idle" | "agent" | "bash";
+  executionState: "idle" | "agent" | "bash";
   /**
    * ISO-8601 time of the Task's latest qualifying agent-runtime event, or
    * null when none has been observed. Unlike `lastEventAt`, it ignores user
    * and system events, so it is a silence signal for a running turn.
    */
-  lastAgentActivityAt?: string | null;
+  lastAgentActivityAt: string | null;
   /**
    * `created_at` of the Task's most recent persisted event, any type — the
    * Task's own activity clock. Rendered as ISO-8601 UTC with an explicit `Z`,
@@ -35,10 +35,7 @@ export interface McpTaskListItem {
    * events yet. It is a lag signal, not proof of work: a long silent tool call
    * can look stale while the Task is still running.
    */
-  lastEventAt?: string | null;
-  /** True when the endpoint is represented by a persisted host binding. */
-  external?: boolean;
-  hostLabel?: string;
+  lastEventAt: string | null;
 }
 
 export type McpTaskHistoryRecord = McpTaskHistoryRow;
@@ -329,7 +326,7 @@ export function registerMcpTools(
           .nullable()
           .optional()
           .describe(
-            "Working directory; local creation inherits the current Task, while agent@host omission uses the owner host default",
+            "Working directory; null or omission inherits the current Task",
           ),
         agent: z
           .string()
@@ -348,7 +345,7 @@ export function registerMcpTools(
           .nullable()
           .optional()
           .describe(
-            "Model override; omitted local same-agent children inherit, while remote children use owner defaults",
+            "Model override; null or omission inherits the current Task",
           ),
         thinking: z
           .string()
@@ -358,7 +355,7 @@ export function registerMcpTools(
           .nullable()
           .optional()
           .describe(
-            "Thinking override; omitted local same-agent children inherit, while remote children use owner defaults",
+            "Thinking level override; null or omission inherits the current Task",
           ),
       },
     },

@@ -51,9 +51,6 @@ export interface CollaborationSystemMessageInput extends CollaborationLabels {
   targetTaskId: string;
   role: CollaborationRole;
   body: string;
-  externalSourceHost?: string;
-  externalTargetHost?: string;
-  externalSource?: boolean;
   /**
    * Which runtime message this is. Its presence is what makes the row a runtime
    * message: it selects the title, gives the row its own `kind`, and drops the
@@ -78,9 +75,6 @@ export type CollaborationSystemMessageData = {
   role: CollaborationRole;
   title: string;
   body: string;
-  externalSourceHost?: string;
-  externalTargetHost?: string;
-  externalSource?: boolean;
 };
 
 /**
@@ -118,13 +112,6 @@ export function buildCollaborationSystemMessage(
       ? RUNTIME_MESSAGE_TITLES[input.runtimeMessage]
       : collaborationTitle(input),
     body: input.body,
-    ...(input.externalSourceHost
-      ? { externalSourceHost: input.externalSourceHost }
-      : {}),
-    ...(input.externalTargetHost
-      ? { externalTargetHost: input.externalTargetHost }
-      : {}),
-    ...(input.externalSource ? { externalSource: true } : {}),
   };
 }
 
@@ -144,9 +131,6 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
   deliveryStatus?: CollaborationDeliveryStatus;
   deliveredAt?: string;
   deliveryFailureReason?: string;
-  externalSourceHost?: string;
-  externalTargetHost?: string;
-  externalSource?: boolean;
 }
 
 export interface CollaborationDeliverySnapshot {

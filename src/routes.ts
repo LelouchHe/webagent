@@ -245,7 +245,6 @@ export interface RequestHandlerDeps {
    * plain configuration fact (no PATH or process state).
    */
   agentIds?: string[];
-  defaultCwd?: string;
   limits: Pick<Config["limits"], "bash_output" | "image_upload"> &
     Partial<
       Pick<
@@ -268,11 +267,6 @@ export interface RequestHandlerDeps {
   /** Optional SSE ticket store. Required alongside authStore for the
    *  /api/v1/sse-ticket route and ticket-based SSE auth. */
   ticketStore?: TicketStore;
-  peerEndpoint?: (
-    req: IncomingMessage,
-    res: ServerResponse,
-    principal: TokenRecord,
-  ) => Promise<boolean>;
   /**
    * Support seam: called synchronously when a route starts reading the request
    * body — by definition *after* that route's pre-body checks have passed. It
@@ -793,15 +787,6 @@ export function createRequestHandler(
       }
     }
 
-    const peerPrincipal = principalByRequest.get(req);
-    if (
-      deps.peerEndpoint &&
-      peerPrincipal &&
-      (await deps.peerEndpoint(req, res, peerPrincipal))
-    ) {
-      return;
-    }
-
     // Share routes — early dispatch so /s/* and /api/v1/shares* claim
     // their URL space before the generic /api/v1 branch. When
     // `shareConfig.enabled === false` handleShareRoutes is a no-op.
@@ -990,7 +975,6 @@ export function createRequestHandler(
         }
         const ticket = deps.ticketStore.mint({
           tokenName: principal.name,
-          tokenHash: principal.hash,
           scope: principal.scope,
         });
         json(res, HTTP_STATUS.OK, { ticket, expiresIn: 60 });
@@ -3366,23 +3350,17 @@ export function createRequestHandler(
         // When authStore is configured, every SSE connection MUST present a
         // valid single-use ticket from POST /api/v1/sse-ticket.
         let tokenName: string | undefined;
-        let tokenHash: string | undefined;
         if (deps.authStore) {
           const ticket =
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
           const principal = deps.ticketStore?.consume(ticket);
-          if (
-            !principal ||
-            (principal.tokenHash !== undefined &&
-              !deps.authStore.hasTokenHash(principal.tokenHash))
-          ) {
+          if (!principal) {
             json(res, HTTP_STATUS.UNAUTHORIZED, {
               error: "Invalid or expired ticket",
             });
             return;
           }
           tokenName = principal.tokenName;
-          tokenHash = principal.tokenHash;
         }
 
         const clientId = sseManager.generateClientId();
@@ -3397,7 +3375,6 @@ export function createRequestHandler(
           id: clientId,
           res,
           tokenName,
-          tokenHash,
         };
         sseManager.add(client);
 
@@ -3420,23 +3397,17 @@ export function createRequestHandler(
         const taskId = decodeURIComponent(sseTaskMatch[1]);
 
         let tokenName: string | undefined;
-        let tokenHash: string | undefined;
         if (deps.authStore) {
           const ticket =
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
           const principal = deps.ticketStore?.consume(ticket);
-          if (
-            !principal ||
-            (principal.tokenHash !== undefined &&
-              !deps.authStore.hasTokenHash(principal.tokenHash))
-          ) {
+          if (!principal) {
             json(res, HTTP_STATUS.UNAUTHORIZED, {
               error: "Invalid or expired ticket",
             });
             return;
           }
           tokenName = principal.tokenName;
-          tokenHash = principal.tokenHash;
         }
 
         const task = store.getTask(taskId);
@@ -3457,7 +3428,6 @@ export function createRequestHandler(
           res,
           taskId,
           tokenName,
-          tokenHash,
         };
         sseManager.add(client);
 

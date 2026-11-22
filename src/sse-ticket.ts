@@ -2,7 +2,6 @@ import { generateSseTicket } from "./tokens.ts";
 
 export interface TicketPrincipal {
   tokenName: string;
-  tokenHash?: string;
   scope: "admin" | "api" | "read";
 }
 
@@ -36,7 +35,6 @@ export class TicketStore {
     const ticket = generateSseTicket();
     this.tickets.set(ticket, {
       tokenName: principal.tokenName,
-      tokenHash: principal.tokenHash,
       scope: principal.scope,
       expiresAt: this.now() + this.ttlMs,
     });
@@ -48,12 +46,7 @@ export class TicketStore {
     if (!rec) return null;
     this.tickets.delete(ticket);
     if (rec.expiresAt <= this.now()) return null;
-    const consumed: TicketPrincipal = {
-      tokenName: rec.tokenName,
-      scope: rec.scope,
-    };
-    if (rec.tokenHash !== undefined) consumed.tokenHash = rec.tokenHash;
-    return consumed;
+    return { tokenName: rec.tokenName, scope: rec.scope };
   }
 
   gc(): void {

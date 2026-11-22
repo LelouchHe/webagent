@@ -10,14 +10,14 @@ import {
   isEmptyExecutionSlot,
   type ArchiveTaskResult,
   type CollaborationDeliveryStatusChange,
-  type CollaborationDeliveryRow,
   type CollaborationMessageRow,
   type TaskDelete,
   type TaskRow,
   type Store,
   type WorkflowStatus,
 } from "./store.ts";
-import { shouldArm } from "./task-collaboration.ts";
+import { handoffQueuedDeliveries } from "./collaboration-receiver.ts";
+import { persistAgentUpdate } from "./obligation-persistence.ts";
 import { reduceObligationOutcome } from "./obligation-outcomes.ts";
 import {
   RUNTIME_MESSAGE_KINDS,
@@ -27,7 +27,6 @@ import {
   type RuntimeMessageKind,
 } from "./collaboration-message.ts";
 import { isoFromMillis } from "./shared/time.ts";
-import { formatFieldBlock } from "./shared/field-block.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -64,8 +63,6 @@ import { canonicalCwd } from "./cwd-path.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { log } from "./log.ts";
 import { TaskTreeLock, type TaskTreeLockRelease } from "./task-tree-lock.ts";
-import { TaskLocator } from "./task-locator.ts";
-import { DeliveryQueue, type CommittedDelivery } from "./delivery-queue.ts";
 
 const slog = log.scope("task");
 
@@ -394,10 +391,10 @@ export interface ConsumeMessageResult {
 
 /**
  * The services `ObligationController` needs from the task runtime. It is a
- * narrow runtime interface, not the manager itself, so the controller can be
+ * narrow host interface, not the manager itself, so the controller can be
  * constructed by the server before (or independently of) the manager.
  */
-export interface ObligationRuntime {
+export interface ObligationHost {
   submitObligationReminder(sourceTaskId: string, targetTaskId: string): void;
   emitObligationOutcome(fact: ObligationOutcomeFact): void;
 }
@@ -507,7 +504,7 @@ interface OpenTurn {
 
 /** Build the process-local obligation controller for one task runtime. */
 export function createObligationController(
-  runtime: ObligationRuntime,
+  host: ObligationHost,
   options: { silenceMs?: number } = {},
 ): ObligationController {
   return new ObligationController({
@@ -526,10 +523,10 @@ export function createObligationController(
       clearTimeout(handle);
     },
     submitReminder: (sourceTaskId, targetTaskId) => {
-      runtime.submitObligationReminder(sourceTaskId, targetTaskId);
+      host.submitObligationReminder(sourceTaskId, targetTaskId);
     },
     emitOutcome: (fact) => {
-      runtime.emitObligationOutcome(fact);
+      host.emitObligationOutcome(fact);
     },
     log: (event, fields) => {
       slog.debug(event, fields);
@@ -577,8 +574,6 @@ export interface TaskManagerOptions {
   agents: AgentEnvironment;
   /** Injected obligation state machine; defaults to one bound to this manager. */
   obligations?: ObligationController;
-  locator?: TaskLocator;
-  onDeliveriesCommitted?: (delivery: CommittedDelivery) => void;
 }
 
 /**
@@ -644,7 +639,6 @@ export function createTaskManager(
   capabilities?: CapabilityStore,
   mcpBaseUrl?: string,
   agentId: string = "test-agent",
-  locator?: TaskLocator,
 ): TaskManager {
   return new TaskManager({
     store,
@@ -655,7 +649,6 @@ export function createTaskManager(
     state: new TaskStateManager(),
     authority: new ExecutionAuthority(),
     agents: new SingleAgentEnvironment(agentId),
-    locator,
   });
 }
 
@@ -663,7 +656,7 @@ export function createTaskManager(
  * Centralizes all task-related state that was previously scattered
  * across module-level variables in server.ts.
  */
-export class TaskManager implements ObligationRuntime {
+export class TaskManager implements ObligationHost {
   readonly liveTasks = new Set<string>();
   /** Tasks with a minted MCP capability awaiting ACP task/new. */
   readonly creatingTasks = new Set<string>();
@@ -708,8 +701,6 @@ export class TaskManager implements ObligationRuntime {
   /** SSE broadcast hook for runtime collaboration messages. */
   private collaborationBroadcast:
     ((event: CollaborationBroadcastRequest) => void) | null = null;
-  private readonly locator: TaskLocator;
-  private readonly deliveries: DeliveryQueue;
   /** Live-only delivery status refresh for a sender's message mark. */
   private deliveryStatusBroadcast:
     | ((event: Extract<AgentEvent, { type: "collaboration_delivery" }>) => void)
@@ -788,14 +779,6 @@ export class TaskManager implements ObligationRuntime {
     this.authority = options.authority;
     this.agents = options.agents;
     this.obligations = options.obligations ?? createObligationController(this);
-    this.locator = options.locator ?? new TaskLocator(this.store);
-    this.deliveries = new DeliveryQueue(this.store, this.locator);
-    this.deliveries.onCommitted((delivery) => {
-      if (delivery.localTarget) {
-        void this.drainCollaborationDeliveries(delivery.targetTaskId);
-      }
-      options.onDeliveriesCommitted?.(delivery);
-    });
     // The one Store observer runs failure semantics before UI publication;
     // the receiver helper owns arming at the actual handoff.
     this.store.onDeliveryStatusChanged((change) => {
@@ -863,26 +846,6 @@ export class TaskManager implements ObligationRuntime {
     return (
       (bridge as { agentId?: string }).agentId ?? this.agents.defaultAgentId
     );
-  }
-
-  private armDelivered(
-    recipientTaskId: string,
-    deliveries: ReadonlyArray<{
-      message: CollaborationMessageRow;
-      delivery: CollaborationDeliveryRow;
-    }>,
-  ): void {
-    const target = this.store.getTaskIncludingDeleted(recipientTaskId);
-    if (!target) return;
-    for (const { message, delivery } of deliveries) {
-      if (delivery.account_source_task_id && message.source_actor === "agent") {
-        this.obligations.arm(delivery.account_source_task_id, recipientTaskId);
-        continue;
-      }
-      if (shouldArm(message, target)) {
-        this.obligations.arm(message.source_task_id, recipientTaskId);
-      }
-    }
   }
 
   /**
@@ -3840,35 +3803,6 @@ export class TaskManager implements ObligationRuntime {
     this.obligations.noteAgentActivity(taskId);
   }
 
-  deliveryRoute(sourceId: string, targetId: string, knownSource?: TaskRow) {
-    return this.locator.route(sourceId, targetId, undefined, knownSource);
-  }
-
-  parentOf(taskId: string): string | null {
-    return this.locator.parentOf(taskId);
-  }
-
-  childrenOf(taskId: string): string[] {
-    return this.locator.childrenOf(taskId);
-  }
-
-  describeTask(taskId: string) {
-    return this.locator.describe(taskId);
-  }
-
-  enqueueDelivery(
-    input: Parameters<DeliveryQueue["enqueue"]>[0],
-    route?: ReturnType<TaskLocator["route"]>,
-  ) {
-    return route === undefined
-      ? this.deliveries.enqueue(input)
-      : this.deliveries.enqueue(input, route);
-  }
-
-  onDeliveriesCommitted(observer: (delivery: CommittedDelivery) => void): void {
-    this.deliveries.onCommitted(observer);
-  }
-
   /** Live execution source for task_list telemetry. */
   getExecutionState(taskId: string): "idle" | "agent" | "bash" {
     return this.getBusyKind(taskId) ?? "idle";
@@ -3958,94 +3892,19 @@ export class TaskManager implements ObligationRuntime {
   ): {
     collaborationMessageId: string | null;
     accountTargetTaskId: string | null;
-    sourceLabel: string | null;
-    targetLabel: string | null;
     /**
      * For `waiting` with nothing visible to wake the task while it owes an
      * account: the silence window after which the requester is notified.
      */
     silenceWatchMs?: number;
   } {
-    if (status === "waiting") {
-      this.store.recordAgentWorkflowUpdate(
-        targetTaskId,
-        status,
-        body,
-        null,
-        "waiting",
-      );
-      this.obligations.noteUpdate(targetTaskId);
-      const wakeSourceVisible =
-        this.obligations.hasOpenAsSource(targetTaskId) ||
-        this.store.countQueuedDeliveries(targetTaskId) > 0 ||
-        this.locator.hasChildWakeSource(targetTaskId);
-      const watched =
-        !wakeSourceVisible &&
-        this.obligations.noteUnwatchedWaiting(targetTaskId);
-      return {
-        collaborationMessageId: null,
-        accountTargetTaskId: null,
-        sourceLabel: null,
-        targetLabel: null,
-        ...(watched ? { silenceWatchMs: this.obligations.silenceMs } : {}),
-      };
-    }
-    const source = this.store.getTask(targetTaskId);
-    if (!source) throw new Error("task_not_found");
-    const accountSource = this.obligations.peekSource(targetTaskId);
-    const accountTargetTaskId =
-      accountSource ?? this.locator.parentOf(targetTaskId, source);
-    const reason = accountSource === undefined ? "fallback" : "settled";
-    let collaborationMessageId: string | null = null;
-    let sourceLabel = source.title ?? source.id.slice(0, 8);
-    let targetLabel: string | null = null;
-    if (accountTargetTaskId === null) {
-      this.store.transaction(() => {
-        this.store.recordAgentWorkflowUpdate(
-          targetTaskId,
-          status,
-          body,
-          null,
-          reason,
-          false,
-          source,
-        );
-      });
-    } else {
-      const delivered = this.deliveries.enqueue({
-        sourceId: targetTaskId,
-        targetId: accountTargetTaskId,
-        kind: "update",
-        body: `Task status: ${status}\n${body}`,
-        updateStatus: status,
-        relationHint: "parent",
-        knownSource: source,
-        mutate: () => {
-          this.store.recordAgentWorkflowUpdate(
-            targetTaskId,
-            status,
-            body,
-            accountTargetTaskId,
-            reason,
-            false,
-            source,
-          );
-        },
-      });
-      if (!delivered) throw new Error("task_not_found");
-      collaborationMessageId = delivered.message.id;
-      sourceLabel = source.title ?? source.id.slice(0, 8);
-      targetLabel =
-        delivered.route?.description.title ?? accountTargetTaskId.slice(0, 8);
-    }
-    this.obligations.noteUpdate(targetTaskId);
-    if (accountSource !== undefined) this.obligations.close(targetTaskId);
-    return {
-      collaborationMessageId,
-      accountTargetTaskId,
-      sourceLabel,
-      targetLabel,
-    };
+    return persistAgentUpdate(
+      this.store,
+      this.obligations,
+      targetTaskId,
+      status,
+      body,
+    );
   }
 
   /**
@@ -4054,7 +3913,6 @@ export class TaskManager implements ObligationRuntime {
    * closes with the report. User and runtime messages report nothing.
    */
   private onDeliveryFailed(change: CollaborationDeliveryStatusChange): void {
-    if (!this.store.reportsDeliveryFailure(change)) return;
     const message = this.store.getCollaborationMessage(change.messageId);
     if (!message) return;
     this.emitObligationOutcome({
@@ -4073,28 +3931,30 @@ export class TaskManager implements ObligationRuntime {
    */
   submitObligationReminder(sourceTaskId: string, targetTaskId: string): void {
     const text = handoffReminderText();
-    this.deliveries.enqueue({
-      sourceId: sourceTaskId,
-      targetId: targetTaskId,
-      kind: "notice",
-      body: text,
-      runtimeKind: "handoff_reminder",
-      reason: "closing_reminder",
-      mutate: ({ messageId }) => {
-        this.store.saveEvent(
-          targetTaskId,
-          "handoff_reminder",
-          {
-            messageId,
-            reason: "closing_reminder",
-            sourceTaskId,
-            targetTaskId,
-            body: text,
-          },
-          { from_ref: "system" },
-        );
+    const messageId = randomUUID();
+    // Audit metadata only: the recipient-visible row is written at drain. The
+    // message id is recorded here so that row can recover which runtime message it
+    // describes; the delivery row itself carries no kind.
+    this.store.saveEvent(
+      targetTaskId,
+      "handoff_reminder",
+      {
+        messageId,
+        reason: "closing_reminder",
+        sourceTaskId,
+        targetTaskId,
+        body: text,
       },
+      { from_ref: "system" },
+    );
+    this.store.createSystemDelivery({
+      messageId,
+      deliveryId: randomUUID(),
+      fromTaskId: sourceTaskId,
+      recipientTaskId: targetTaskId,
+      body: text,
     });
+    void this.drainCollaborationDeliveries(targetTaskId);
   }
 
   /**
@@ -4105,56 +3965,15 @@ export class TaskManager implements ObligationRuntime {
   emitObligationOutcome(fact: ObligationOutcomeFact): void {
     const decision = reduceObligationOutcome(fact);
     if (decision.kind === "none") return;
-    const closesAccount = decision.kind === "close_account";
-    const notice = decision.notice;
-    const target = this.store.getTaskIncludingDeleted(notice.targetTaskId);
-    const auditTaskId = this.store.getTask(notice.sourceTaskId)
-      ? notice.sourceTaskId
-      : this.store.getTask(notice.targetTaskId)
-        ? notice.targetTaskId
-        : null;
-    const body = formatFieldBlock([
-      {
-        label: "target",
-        value: target?.title
-          ? `${target.title} (${notice.targetTaskId})`
-          : notice.targetTaskId,
-      },
-      { label: "message", value: notice.message },
-    ]);
-    this.deliveries.enqueue({
-      sourceId: notice.targetTaskId,
-      targetId: notice.sourceTaskId,
-      kind: "notice",
-      body,
-      runtimeKind: "task_outcome_notice",
-      reason: notice.reason,
-      mutate: ({ messageId }) => {
-        if (!auditTaskId) return;
-        this.store.saveEvent(
-          auditTaskId,
-          "task_outcome_notice",
-          {
-            messageId,
-            reason: notice.reason,
-            sourceTaskId: notice.sourceTaskId,
-            targetTaskId: notice.targetTaskId,
-            message: notice.message,
-          },
-          { from_ref: "system" },
-        );
-      },
-    });
-    if (closesAccount) {
-      this.obligations.closeUnavailable(notice.targetTaskId);
+    if (decision.kind === "close_account") {
+      this.obligations.closeUnavailable(decision.notice.targetTaskId);
     }
+    if (!this.store.recordObligationNotice(decision.notice)) return;
+    void this.drainCollaborationDeliveries(decision.notice.sourceTaskId);
   }
 
   /** ACP envelope text for one drained message. */
-  private deliveryEntry(
-    message: CollaborationMessageRow,
-    delivery: CollaborationDeliveryRow,
-  ): string {
+  private deliveryEntry(message: CollaborationMessageRow): string {
     if (message.source_actor === "system") {
       // Not a message from a Task: the marker names the sender as the runtime,
       // which is what it is, without borrowing the task-reference grammar that
@@ -4169,7 +3988,6 @@ export class TaskManager implements ObligationRuntime {
     // fenced verbatim between scissor lines so the agent never reads metadata
     // as instruction and the forwarding layer never rewrites the content.
     const sourceName =
-      delivery.source_endpoint_label ??
       this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
       message.source_task_id.slice(0, 8);
     return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
@@ -4180,7 +3998,6 @@ export class TaskManager implements ObligationRuntime {
     taskId: string,
     message: CollaborationMessageRow,
     targetLabel: string,
-    delivery: CollaborationDeliveryRow,
   ): void {
     // The delivery row is one shape for every message, so a runtime message
     // recovers which message it is from the audit event that queued it. Absent
@@ -4204,7 +4021,6 @@ export class TaskManager implements ObligationRuntime {
       runtimeMessage = recorded;
     }
     const sourceLabel =
-      delivery.source_endpoint_label ??
       this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
       message.source_task_id.slice(0, 8);
     this.store.saveEvent(
@@ -4219,7 +4035,6 @@ export class TaskManager implements ObligationRuntime {
         role: "target",
         body: message.body,
         runtimeMessage,
-        ...delivery.source_presentation,
       }),
       { from_ref: `msg:${message.id}` },
     );
@@ -4233,7 +4048,6 @@ export class TaskManager implements ObligationRuntime {
       taskId,
       body: message.body,
       runtimeMessage,
-      ...delivery.source_presentation,
     });
   }
 
@@ -4373,29 +4187,22 @@ export class TaskManager implements ObligationRuntime {
         });
         return false;
       }
-      const deliveries = this.store.claimQueuedDeliveries(taskId);
-      if (deliveries.length === 0) return false;
-      const claimed = deliveries.map((delivery) => {
-        const message = this.store.getCollaborationMessage(delivery.message_id);
-        if (!message) {
-          throw new Error(
-            `Collaboration message missing: ${delivery.message_id}`,
-          );
-        }
-        return { delivery, message };
-      });
-      this.armDelivered(taskId, claimed);
-      const sourceActors = claimed.map(({ message }) => message.source_actor);
-      const entries = claimed.map(({ message, delivery }) =>
-        this.deliveryEntry(message, delivery),
+      const claimed = handoffQueuedDeliveries(
+        this.store,
+        this.obligations,
+        taskId,
       );
+      if (claimed.length === 0) return false;
+      const deliveries = claimed.map(({ delivery }) => delivery);
+      const sourceActors = claimed.map(({ message }) => message.source_actor);
+      const entries = claimed.map(({ message }) => this.deliveryEntry(message));
       // The receiver's rows appear now, at the turn boundary where the agent
       // actually gets them. Batched deliveries land together, and a row can no
       // longer sit in a turn that never saw it.
       const targetLabel =
         this.store.getTaskIncludingDeleted(taskId)?.title ?? taskId.slice(0, 8);
-      for (const { message, delivery } of claimed) {
-        this.projectDeliveredMessage(taskId, message, targetLabel, delivery);
+      for (const { message } of claimed) {
+        this.projectDeliveredMessage(taskId, message, targetLabel);
       }
       this.persistCollaborationPromptAudit(
         taskId,

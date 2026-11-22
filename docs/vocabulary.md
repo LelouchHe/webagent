@@ -96,18 +96,6 @@ entity; they name the runtime's bookkeeping.
 | **runtime message** | A message the runtime queues for one Task about its own bookkeeping — a closing reminder or a fact notice. Delivered like any other message, but not correspondence: no source handle, no delivery mark, and its `kind` names the item instead of `collaboration`. Its title never uses the task-reference grammar, because a source title would repeat and would read as a Task talking. |
 | **closing reminder** | A runtime message delivered as a runtime-injected closing turn that asks the target for a typed update after a turn that carried none. It is a recovery aid, not a lifecycle verdict. |
 
-## Multi-host vocabulary
-
-| Term | Means |
-|---|---|
-| **host** | One WebAgent deployment and its own SQLite data directory. Hosts do not share task, account, delivery, cursor, or instance state. |
-| **initiator / hub** | The host holding one credential for another host and a persistent client connection to it. In a `P → R1` relationship this is the host holding P. |
-| **owner host** | The host that created and executes R1. “Owner” here names host responsibility for that task, not an agent binding. |
-| **remote child** | On the initiator, an external endpoint persisted in `host_edges`; no local `tasks` placeholder is created. |
-| **external parent** | On the owner, the initiator task id and credential binding persisted in `host_external_sources`; it is not a local `parent_id`. |
-| **credential fingerprint** | SHA-256 identity of the bearer token. Token display names are not identity; fingerprints are not exposed by host APIs. |
-| **delivery-row boundary** | The upper layer reads and writes only local `messages` / `deliveries`. Host components move rows for non-local recipients and turn inbound records into local queued rows. |
-
 **`handoff` stays reserved.** It continues to mean the provider/lifecycle handoff
 and the session-compaction handoff (for example `pending_compact_summary`); it is
 not another name for the account or settlement. Prefer *account*
