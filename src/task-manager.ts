@@ -16,8 +16,7 @@ import {
   type Store,
   type WorkflowStatus,
 } from "./store.ts";
-import { handoffQueuedDeliveries } from "./collaboration-receiver.ts";
-import { persistAgentUpdate } from "./obligation-persistence.ts";
+import { shouldArm } from "./task-collaboration.ts";
 import { reduceObligationOutcome } from "./obligation-outcomes.ts";
 import {
   RUNTIME_MESSAGE_KINDS,
@@ -27,6 +26,7 @@ import {
   type RuntimeMessageKind,
 } from "./collaboration-message.ts";
 import { isoFromMillis } from "./shared/time.ts";
+import { formatFieldBlock } from "./shared/field-block.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -846,6 +846,19 @@ export class TaskManager implements ObligationHost {
     return (
       (bridge as { agentId?: string }).agentId ?? this.agents.defaultAgentId
     );
+  }
+
+  private armDelivered(
+    recipientTaskId: string,
+    messages: readonly CollaborationMessageRow[],
+  ): void {
+    const target = this.store.getTaskIncludingDeleted(recipientTaskId);
+    if (!target) return;
+    for (const message of messages) {
+      if (shouldArm(message, target)) {
+        this.obligations.arm(message.source_task_id, recipientTaskId);
+      }
+    }
   }
 
   /**
@@ -3898,13 +3911,41 @@ export class TaskManager implements ObligationHost {
      */
     silenceWatchMs?: number;
   } {
-    return persistAgentUpdate(
-      this.store,
-      this.obligations,
+    if (status === "waiting") {
+      this.store.recordAgentWorkflowUpdate(
+        targetTaskId,
+        status,
+        body,
+        null,
+        "waiting",
+      );
+      this.obligations.noteUpdate(targetTaskId);
+      const wakeSourceVisible =
+        this.obligations.hasOpenAsSource(targetTaskId) ||
+        this.store.countQueuedDeliveries(targetTaskId) > 0 ||
+        this.store.hasQueuedDispatchToChild(targetTaskId);
+      const watched =
+        !wakeSourceVisible &&
+        this.obligations.noteUnwatchedWaiting(targetTaskId);
+      return {
+        collaborationMessageId: null,
+        accountTargetTaskId: null,
+        ...(watched ? { silenceWatchMs: this.obligations.silenceMs } : {}),
+      };
+    }
+    const accountSource = this.obligations.peekSource(targetTaskId);
+    const accountTargetTaskId =
+      accountSource ?? this.store.getTask(targetTaskId)?.parent_id ?? null;
+    const { collaborationMessageId } = this.store.recordAgentWorkflowUpdate(
       targetTaskId,
       status,
       body,
+      accountTargetTaskId,
+      accountSource === undefined ? "fallback" : "settled",
     );
+    this.obligations.noteUpdate(targetTaskId);
+    if (accountSource !== undefined) this.obligations.close(targetTaskId);
+    return { collaborationMessageId, accountTargetTaskId };
   }
 
   /**
@@ -3968,8 +4009,38 @@ export class TaskManager implements ObligationHost {
     if (decision.kind === "close_account") {
       this.obligations.closeUnavailable(decision.notice.targetTaskId);
     }
-    if (!this.store.recordObligationNotice(decision.notice)) return;
-    void this.drainCollaborationDeliveries(decision.notice.sourceTaskId);
+    const notice = decision.notice;
+    if (!this.store.getTask(notice.sourceTaskId)) return;
+    const target = this.store.getTaskIncludingDeleted(notice.targetTaskId);
+    const messageId = randomUUID();
+    this.store.saveEvent(
+      notice.sourceTaskId,
+      "task_outcome_notice",
+      {
+        messageId,
+        reason: notice.reason,
+        sourceTaskId: notice.sourceTaskId,
+        targetTaskId: notice.targetTaskId,
+        message: notice.message,
+      },
+      { from_ref: "system" },
+    );
+    this.store.createSystemDelivery({
+      messageId,
+      deliveryId: randomUUID(),
+      fromTaskId: notice.targetTaskId,
+      recipientTaskId: notice.sourceTaskId,
+      body: formatFieldBlock([
+        {
+          label: "target",
+          value: target?.title
+            ? `${target.title} (${notice.targetTaskId})`
+            : notice.targetTaskId,
+        },
+        { label: "message", value: notice.message },
+      ]),
+    });
+    void this.drainCollaborationDeliveries(notice.sourceTaskId);
   }
 
   /** ACP envelope text for one drained message. */
@@ -4187,13 +4258,21 @@ export class TaskManager implements ObligationHost {
         });
         return false;
       }
-      const claimed = handoffQueuedDeliveries(
-        this.store,
-        this.obligations,
+      const deliveries = this.store.claimQueuedDeliveries(taskId);
+      if (deliveries.length === 0) return false;
+      const claimed = deliveries.map((delivery) => {
+        const message = this.store.getCollaborationMessage(delivery.message_id);
+        if (!message) {
+          throw new Error(
+            `Collaboration message missing: ${delivery.message_id}`,
+          );
+        }
+        return { delivery, message };
+      });
+      this.armDelivered(
         taskId,
+        claimed.map(({ message }) => message),
       );
-      if (claimed.length === 0) return false;
-      const deliveries = claimed.map(({ delivery }) => delivery);
       const sourceActors = claimed.map(({ message }) => message.source_actor);
       const entries = claimed.map(({ message }) => this.deliveryEntry(message));
       // The receiver's rows appear now, at the turn boundary where the agent
