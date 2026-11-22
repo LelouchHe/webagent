@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-11-19
+Last updated: 2026-11-22
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -24,6 +24,27 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - Local file viewer (arbitrary paths, signed bytes, slash picker, responsive viewer)
 
 ## Unit / Integration Scenarios
+
+### Multi-host delivery
+
+- `test/host-store.test.ts` (real SQLite, additive schema, two persisted endpoint directions)
+  - behavior proof: owner create is idempotent by credential + `createKey`, conflicting payloads differ, dispatch ids map to one local message, and both facts survive Store reopen
+  - behavior proof: R1's progress and typed update remain queued in the owner outbox; ACK is identity-bound and idempotent
+  - behavior proof: the initiator locator sees a remote child through task id alone, report receipt is deduplicated, and late reports terminate after the local parent is deleted
+  - regression guard: archiving a local tree does not terminalize a delivery whose other endpoint is remote (mutation verified `failed` before the guard was restored)
+- `test/host-loop.test.ts` (two real Stores, TaskManagers, HTTP handler, SSE,
+  persistent host client, and controllable ACP prompt callbacks) proves one
+  transaction-to-transaction path: MCP remote create → task-id send → owner
+  dispatch handoff → `done` outbox → initiator GET/commit/ACK → P ACP wake
+- `test/host-routes.test.ts` covers Bearer scope, cwd/create validation and
+  idempotency, dispatch payload idempotency, credential-bound ACK, and same-name
+  token reissue invalidating an old ticket
+- `test/host-registry.test.ts` covers `!` token command timeout/redaction,
+  ordered per-edge POST, structured target-not-found removal, and `400`/`409`
+  terminalization without a notice
+- `test/host-account.test.ts` and `test/host-mcp.test.ts` cover external account
+  arming/settlement, unarchive→archive watcher retention, and MCP `agent@host`
+  creation followed by send to the returned task id
 
 ### Multi-agent runtime
 
