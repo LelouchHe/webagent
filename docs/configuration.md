@@ -110,8 +110,6 @@ An agent table and `default_agent` are required, so a config file must define bo
 | `public_dir`                         | `dist`                      | Static assets directory                                                                                                                                                                                                                                                                                              |
 | `default_agent`                      | — (required)                | Id of the agent a task targets when it has no binding to inherit from (first task, Root's first use, an inbox message, `/clear` without `agentId`). Must name one of the `[agents.<id>]` tables.                                                                                                                     |
 | `agents.<id>.cmd`                    | — (required)                | ACP launch command for that agent, split on whitespace. `<id>` must match `[a-z0-9][a-z0-9-]*`. Paths containing spaces are not supported.                                                                                                                                                                          |
-| `hosts.<name>.url`                    | `{}` (no outbound hosts)    | HTTP(S) base URL of another WebAgent host. The name is local to this deployment and is used in `agent@host` coordinates.                                                                                                                                                                                              |
-| `hosts.<name>.token`                  | — (required per host)       | API-or-admin token issued by that host. A literal value is stored in this config by the operator; a value beginning `!` is executed with `/bin/sh -c` at each connection and only the trimmed output is kept in memory. A failed command makes that host unreachable without preventing server startup.                                                                                 |
 | `limits.bash_output`                 | `1048576` (1 MB)            | Max bash output stored in DB per command                                                                                                                                                                                                                                                                             |
 | `limits.image_upload`                | `10485760` (10 MB)          | Max image upload size                                                                                                                                                                                                                                                                                                |
 | `limits.file_upload`                 | `52428800` (50 MB)          | Max non-image attachment upload size. Server picks the cap from sniffed MIME (`image/*` → `image_upload`, otherwise → `file_upload`).                                                                                                                                                                                |
@@ -134,28 +132,6 @@ Unknown top-level keys and unknown keys inside the existing nested tables
 shared with another build can carry its own sections. Agent entries are strict:
 a typo such as `cmdd` under `[agents.<id>]` fails startup.
 The legacy `agent_cmd` key is always rejected rather than ignored.
-
-## Multi-host
-
-Only the initiating host is configured:
-
-```toml
-[hosts.mini]
-url = "http://127.0.0.1:7800"
-token = "!security find-generic-password -s webagent-mini -w"
-```
-
-The token is issued by `mini` through the existing token API or
-`--create-token`; it needs at least `api` scope. `mini` does not need the
-initiator's URL or token. Each configured relationship gets its own token.
-Changing or removing an alias, or rotating the token to a new credential
-fingerprint, does not migrate existing edges: they become unreachable until an
-operator explicitly abandons them in a later release.
-
-This feature uses the same broad capability as browser `api` tokens. Configure
-it only between machines controlled by the same operator and expose each
-WebAgent URL through authenticated transport such as SSH or a private tunnel.
-The default listener remains loopback-only.
 
 To use a different ACP-compatible agent backend, change `default_agent` and add its table:
 

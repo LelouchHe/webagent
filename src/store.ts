@@ -238,16 +238,6 @@ export interface CollaborationDeliveryRow {
   delivered_at: number | null;
   failed_at: number | null;
   failure_reason: string | null;
-  /** Runtime-only fact copied into the claim transaction for external dispatch. */
-  account_source_task_id?: string;
-  source_endpoint_label?: string;
-  source_presentation?: { externalSource: true };
-}
-
-export interface DeliveryClaimMetadata {
-  accountSourceTaskId?: string;
-  sourceEndpointLabel?: string;
-  sourcePresentation?: { externalSource: true };
 }
 
 export interface CollaborationDeliveryStatusChange {
@@ -423,12 +413,6 @@ export class Store {
   private readonly deliveryStatusObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
   > = [];
-  private readonly deliveryClaimMetadataProviders: Array<
-    (recipientTaskId: string) => Map<string, DeliveryClaimMetadata>
-  > = [];
-  private readonly deliveryFailurePolicies: Array<
-    (change: CollaborationDeliveryStatusChange) => boolean
-  > = [];
   /**
    * Binding facts belong to the outermost successful commit, not to any one
    * recursive Store method. Every binding write registers its before/after
@@ -443,30 +427,6 @@ export class Store {
 
   get rootTaskId(): string {
     return this.rootId;
-  }
-
-  database(): Database.Database {
-    return this.db;
-  }
-
-  transaction<T>(fn: () => T): T {
-    return this.db.transaction(fn)();
-  }
-
-  registerDeliveryClaimMetadataProvider(
-    provider: (recipientTaskId: string) => Map<string, DeliveryClaimMetadata>,
-  ): void {
-    this.deliveryClaimMetadataProviders.push(provider);
-  }
-
-  registerDeliveryFailurePolicy(
-    policy: (change: CollaborationDeliveryStatusChange) => boolean,
-  ): void {
-    this.deliveryFailurePolicies.push(policy);
-  }
-
-  reportsDeliveryFailure(change: CollaborationDeliveryStatusChange): boolean {
-    return this.deliveryFailurePolicies.every((policy) => policy(change));
   }
 
   /**
@@ -534,7 +494,7 @@ export class Store {
    * a failing scope rewinds the pending batch to the checkpoint it started at
    * so a rolled-back savepoint can never leak a fact into a later commit.
    */
-  writeBindings<T>(fn: () => T): T {
+  private writeBindings<T>(fn: () => T): T {
     const checkpoint = this.pendingBindingChanges.length;
     this.bindingWriteDepth += 1;
     let result: T;
@@ -1126,35 +1086,6 @@ export class Store {
     opts: {
       title?: string;
       workflowStatus?: WorkflowStatus;
-      detached?: boolean;
-      mode?: string;
-    } = {},
-  ): TaskRow {
-    return this.writeBindings(() =>
-      this.createTaskInTransaction(
-        id,
-        cwd,
-        source,
-        agentId,
-        agentSessionId,
-        parentId,
-        opts,
-      ),
-    );
-  }
-
-  createTaskInTransaction(
-    id: string,
-    cwd: string,
-    source: string,
-    agentId: string,
-    agentSessionId: string,
-    parentId: string | null,
-    opts: {
-      title?: string;
-      workflowStatus?: WorkflowStatus;
-      detached?: boolean;
-      mode?: string;
     } = {},
   ): TaskRow {
     if (this.isRootTaskId(id)) {
@@ -1162,41 +1093,40 @@ export class Store {
         `Reserved Root id cannot be created as an ordinary task: ${id}`,
       );
     }
-    // The invariant is enforced by the single write path: a database that
-    // has an ordinary task always has its Root, even for direct drivers that
-    // never called ensureRootTask().
-    if (!this.getTaskIncludingDeleted(this.rootTaskId)) {
-      this.insertRootRow(cwd);
-    }
-    // At creation time Root is the only parentless row; omitted/null means
-    // "attach to Root". Deleting a parent may later detach a survivor whose
-    // destination collides (see reparentChildrenToRoot).
-    const resolvedParentId = opts.detached
-      ? null
-      : (parentId ?? this.rootTaskId);
-    const now = Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO tasks
-           (id, cwd, source, parent_id, title, workflow_status, mode, created_at, last_active_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        canonicalCwd(cwd),
-        source,
-        resolvedParentId,
-        opts.title ?? id,
-        opts.workflowStatus ?? "idle",
-        opts.mode ?? null,
-        now,
-        now,
-      );
-    this.insertBindingRow(id, agentId, agentSessionId);
-    this.collectBindingChange(id, null);
-    return this.db
-      .prepare("SELECT * FROM tasks WHERE id = ?")
-      .get(id) as TaskRow;
+    return this.writeBindings(() => {
+      // The invariant is enforced by the single write path: a database that
+      // has an ordinary task always has its Root, even for direct drivers that
+      // never called ensureRootTask().
+      if (!this.getTaskIncludingDeleted(this.rootTaskId)) {
+        this.insertRootRow(cwd);
+      }
+      // At creation time Root is the only parentless row; omitted/null means
+      // "attach to Root". Deleting a parent may later detach a survivor whose
+      // destination collides (see reparentChildrenToRoot).
+      const resolvedParentId = parentId ?? this.rootTaskId;
+      const now = Date.now();
+      this.db
+        .prepare(
+          `INSERT INTO tasks
+           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          canonicalCwd(cwd),
+          source,
+          resolvedParentId,
+          opts.title ?? id,
+          opts.workflowStatus ?? "idle",
+          now,
+          now,
+        );
+      this.insertBindingRow(id, agentId, agentSessionId);
+      this.collectBindingChange(id, null);
+      return this.db
+        .prepare("SELECT * FROM tasks WHERE id = ?")
+        .get(id) as TaskRow;
+    });
   }
 
   /**
@@ -1223,7 +1153,6 @@ export class Store {
       conditions.push("s.source = ?");
       params.push(opts.source);
     }
-
     if (opts?.agentId !== undefined) {
       conditions.push(
         "EXISTS (SELECT 1 FROM agent_sessions a WHERE a.task_id = s.id AND a.agent_key = ?)",
@@ -1959,13 +1888,9 @@ export class Store {
              AND d.message_id IN (
                SELECT m.id FROM messages m
                WHERE (
-                    EXISTS (SELECT 1 FROM tasks s WHERE s.id = m.source_task_id)
-                    AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = m.direct_target_task_id)
-                    AND (
                    (m.source_task_id IN (SELECT id FROM subtree))
                    <> (m.direct_target_task_id IN (SELECT id FROM subtree))
-                    )
-                   )
+                 )
              )`,
         )
         .all(seedTaskId) as Array<{ id: string }>
@@ -2665,7 +2590,7 @@ export class Store {
 
   // ===== collaboration messages =====
 
-  requireLiveTask(taskId: string): TaskRow {
+  private requireLiveTask(taskId: string): TaskRow {
     const task = this.getTaskIncludingDeleted(taskId);
     if (task?.deleted_at !== null) {
       throw new Error(`Live task not found: ${taskId}`);
@@ -2736,7 +2661,7 @@ export class Store {
     delivery: CollaborationDeliveryRow;
   } {
     return this.db.transaction(() =>
-      this.createCollaborationMessageInStoreTransaction(input),
+      this.createCollaborationMessageInTransaction(input),
     )();
   }
 
@@ -2747,68 +2672,6 @@ export class Store {
    * No event is written: the receiver's row appears when the drain hands it
    * over, exactly like a collaboration message.
    */
-  enqueueDeliveryRows(input: {
-    messageId: string;
-    deliveryId: string;
-    sourceTaskId: string;
-    directTargetTaskId: string;
-    sourceActor: CollaborationActor;
-    body: string;
-    createdAt?: number;
-    projections: ReadonlyArray<{
-      taskId: string;
-      role: CollaborationProjectionRole;
-    }>;
-  }): {
-    message: CollaborationMessageRow;
-    delivery: CollaborationDeliveryRow;
-  } {
-    const createdAt = input.createdAt ?? Date.now();
-    this.db
-      .prepare(
-        `INSERT INTO messages
-         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.messageId,
-        input.sourceTaskId,
-        input.directTargetTaskId,
-        input.sourceActor,
-        input.body,
-        createdAt,
-      );
-    const insertProjection = this.db.prepare(
-      `INSERT INTO message_projections (message_id, task_id, role, created_at)
-       VALUES (?, ?, ?, ?)`,
-    );
-    for (const projection of input.projections) {
-      insertProjection.run(
-        input.messageId,
-        projection.taskId,
-        projection.role,
-        createdAt,
-      );
-    }
-    this.db
-      .prepare(
-        `INSERT INTO deliveries
-         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
-         VALUES (?, ?, ?, ?, 'queued', ?)`,
-      )
-      .run(
-        input.deliveryId,
-        input.messageId,
-        input.directTargetTaskId,
-        `${input.messageId}:${input.directTargetTaskId}`,
-        createdAt,
-      );
-    return {
-      message: this.getCollaborationMessage(input.messageId)!,
-      delivery: this.getCollaborationDelivery(input.deliveryId)!,
-    };
-  }
-
   createSystemDelivery(input: SystemDeliveryInput): {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
@@ -2817,18 +2680,45 @@ export class Store {
       throw new Error("System delivery source and target must differ");
     }
     this.requireLiveTask(input.recipientTaskId);
-    return this.db.transaction(() =>
-      this.enqueueDeliveryRows({
-        messageId: input.messageId,
-        deliveryId: input.deliveryId,
-        sourceTaskId: input.fromTaskId,
-        directTargetTaskId: input.recipientTaskId,
-        sourceActor: "system",
-        body: input.body,
-        createdAt: input.createdAt,
-        projections: [{ taskId: input.recipientTaskId, role: "target" }],
-      }),
-    )();
+    const createdAt = input.createdAt ?? Date.now();
+    return this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO messages
+           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+           VALUES (?, ?, ?, 'system', ?, ?)`,
+        )
+        .run(
+          input.messageId,
+          input.fromTaskId,
+          input.recipientTaskId,
+          input.body,
+          createdAt,
+        );
+      this.db
+        .prepare(
+          `INSERT INTO message_projections (message_id, task_id, role, created_at)
+           VALUES (?, ?, 'target', ?)`,
+        )
+        .run(input.messageId, input.recipientTaskId, createdAt);
+      this.db
+        .prepare(
+          `INSERT INTO deliveries
+           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
+           VALUES (?, ?, ?, ?, 'queued', ?)`,
+        )
+        .run(
+          input.deliveryId,
+          input.messageId,
+          input.recipientTaskId,
+          `${input.messageId}:${input.recipientTaskId}`,
+          createdAt,
+        );
+      return {
+        message: this.getCollaborationMessage(input.messageId)!,
+        delivery: this.getCollaborationDelivery(input.deliveryId)!,
+      };
+    })();
   }
 
   /**
@@ -2885,9 +2775,8 @@ export class Store {
     return null;
   }
 
-  createCollaborationMessageInStoreTransaction(
+  private createCollaborationMessageInTransaction(
     input: CollaborationMessageInput,
-    knownTasks?: { source: TaskRow; target: TaskRow },
   ): {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
@@ -2896,28 +2785,33 @@ export class Store {
     if (input.sourceTaskId === input.directTargetTaskId) {
       throw new Error("Collaboration source and target must differ");
     }
-    if (
-      knownTasks?.source.id !== input.sourceTaskId ||
-      knownTasks.target.id !== input.directTargetTaskId ||
-      knownTasks.source.deleted_at !== null ||
-      knownTasks.target.deleted_at !== null
-    ) {
-      this.requireLiveTask(input.sourceTaskId);
-      this.requireLiveTask(input.directTargetTaskId);
-    }
-    const created = this.enqueueDeliveryRows({
-      messageId: input.id,
-      deliveryId: input.deliveryId,
-      sourceTaskId: input.sourceTaskId,
-      directTargetTaskId: input.directTargetTaskId,
-      sourceActor: input.sourceActor,
-      body: input.body,
+    this.requireLiveTask(input.sourceTaskId);
+    this.requireLiveTask(input.directTargetTaskId);
+    this.db
+      .prepare(
+        `INSERT INTO messages
+         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.sourceTaskId,
+        input.directTargetTaskId,
+        input.sourceActor,
+        input.body,
+        createdAt,
+      );
+    const insertProjection = this.db.prepare(
+      `INSERT INTO message_projections (message_id, task_id, role, created_at)
+       VALUES (?, ?, ?, ?)`,
+    );
+    insertProjection.run(input.id, input.sourceTaskId, "source", createdAt);
+    insertProjection.run(
+      input.id,
+      input.directTargetTaskId,
+      "target",
       createdAt,
-      projections: [
-        { taskId: input.sourceTaskId, role: "source" },
-        { taskId: input.directTargetTaskId, role: "target" },
-      ],
-    });
+    );
     const sourceLabel =
       this.getTask(input.sourceTaskId)?.title ?? input.sourceTaskId.slice(0, 8);
     const targetLabel =
@@ -2940,7 +2834,23 @@ export class Store {
       }),
       { from_ref: `msg:${input.id}` },
     );
-    return created;
+    this.db
+      .prepare(
+        `INSERT INTO deliveries
+         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
+         VALUES (?, ?, ?, ?, 'queued', ?)`,
+      )
+      .run(
+        input.deliveryId,
+        input.id,
+        input.directTargetTaskId,
+        `${input.id}:${input.directTargetTaskId}`,
+        createdAt,
+      );
+    return {
+      message: this.getCollaborationMessage(input.id)!,
+      delivery: this.getCollaborationDelivery(input.deliveryId)!,
+    };
   }
 
   /**
@@ -2956,39 +2866,31 @@ export class Store {
     body: string,
     accountTargetTaskId: string | null,
     reason: "settled" | "fallback" | "waiting",
-    enqueue = true,
-    knownTask?: TaskRow,
   ): {
     collaborationMessageId: string | null;
-    sourceLabel: string;
-    targetLabel: string | null;
   } {
     const result = this.db.transaction(() => {
-      const task = this.recordAgentWorkflowUpdateState(
+      const task = this.requireLiveTask(taskId);
+      this.db
+        .prepare("UPDATE tasks SET workflow_status = ? WHERE id = ?")
+        .run(status, taskId);
+      this.saveEvent(
         taskId,
-        status,
-        body,
-        accountTargetTaskId,
-        reason,
-        knownTask,
+        "task_update",
+        {
+          status,
+          body,
+          reason,
+          sourceTaskId: taskId,
+          targetTaskId: accountTargetTaskId,
+        },
+        { from_ref: "agent" },
       );
-      if (!enqueue) {
-        return {
-          collaborationMessageId: null,
-          sourceLabel: task.title ?? task.id.slice(0, 8),
-          targetLabel: accountTargetTaskId?.slice(0, 8) ?? null,
-        };
-      }
       if (!accountTargetTaskId || accountTargetTaskId === task.id) {
-        return {
-          collaborationMessageId: null,
-          sourceLabel: task.title ?? task.id.slice(0, 8),
-          targetLabel: null,
-        };
+        return { collaborationMessageId: null };
       }
-      const target = this.requireLiveTask(accountTargetTaskId);
       const collaborationMessageId = randomUUID();
-      this.createCollaborationMessageInStoreTransaction({
+      this.createCollaborationMessageInTransaction({
         id: collaborationMessageId,
         deliveryId: randomUUID(),
         sourceTaskId: taskId,
@@ -2996,43 +2898,49 @@ export class Store {
         sourceActor: "agent",
         body: `Task status: ${status}\n${body}`,
       });
-      return {
-        collaborationMessageId,
-        sourceLabel: task.title ?? task.id.slice(0, 8),
-        targetLabel: target.title ?? target.id.slice(0, 8),
-      };
+      return { collaborationMessageId };
     })();
     return result;
   }
 
-  recordAgentWorkflowUpdateState(
-    taskId: string,
-    status: Extract<WorkflowStatus, "waiting" | "blocked" | "done">,
-    body: string,
-    accountTargetTaskId: string | null,
-    reason: "settled" | "fallback" | "waiting",
-    knownTask?: TaskRow,
-  ): TaskRow {
-    const task =
-      knownTask?.id === taskId && knownTask.deleted_at === null
-        ? knownTask
-        : this.requireLiveTask(taskId);
-    this.db
-      .prepare("UPDATE tasks SET workflow_status = ? WHERE id = ?")
-      .run(status, taskId);
+  recordObligationNotice(notice: {
+    reason: string;
+    sourceTaskId: string;
+    targetTaskId: string;
+    message: string;
+  }): boolean {
+    if (!this.getTask(notice.sourceTaskId)) return false;
+    const target = this.getTaskIncludingDeleted(notice.targetTaskId);
+    const messageId = randomUUID();
     this.saveEvent(
-      taskId,
-      "task_update",
+      notice.sourceTaskId,
+      "task_outcome_notice",
       {
-        status,
-        body,
-        reason,
-        sourceTaskId: taskId,
-        targetTaskId: accountTargetTaskId,
+        messageId,
+        reason: notice.reason,
+        sourceTaskId: notice.sourceTaskId,
+        targetTaskId: notice.targetTaskId,
+        message: notice.message,
       },
-      { from_ref: "agent" },
+      { from_ref: "system" },
     );
-    return task;
+    const body = formatFieldBlock([
+      {
+        label: "target",
+        value: target?.title
+          ? `${target.title} (${notice.targetTaskId})`
+          : notice.targetTaskId,
+      },
+      { label: "message", value: notice.message },
+    ]);
+    this.createSystemDelivery({
+      messageId,
+      deliveryId: randomUUID(),
+      fromTaskId: notice.targetTaskId,
+      recipientTaskId: notice.sourceTaskId,
+      body,
+    });
+    return true;
   }
 
   getCollaborationMessage(id: string): CollaborationMessageRow | undefined {
@@ -3122,12 +3030,6 @@ export class Store {
            ORDER BY queued_at, rowid`,
         )
         .all(recipientTaskId) as Array<{ id: string }>;
-      const metadata = new Map<string, DeliveryClaimMetadata>();
-      for (const provider of this.deliveryClaimMetadataProviders) {
-        for (const [id, value] of provider(recipientTaskId)) {
-          metadata.set(id, value);
-        }
-      }
       const claim = this.db.prepare(
         `UPDATE deliveries
          SET status = 'delivered', delivered_at = ?
@@ -3137,16 +3039,7 @@ export class Store {
       for (const { id } of ids) {
         if (claim.run(deliveredAt, id).changes !== 1) continue;
         const delivery = this.getCollaborationDelivery(id);
-        if (delivery) {
-          const fact = metadata.get(id);
-          if (fact?.accountSourceTaskId)
-            delivery.account_source_task_id = fact.accountSourceTaskId;
-          if (fact?.sourceEndpointLabel)
-            delivery.source_endpoint_label = fact.sourceEndpointLabel;
-          if (fact?.sourcePresentation)
-            delivery.source_presentation = fact.sourcePresentation;
-          rows.push(delivery);
-        }
+        if (delivery) rows.push(delivery);
       }
       return rows;
     })();

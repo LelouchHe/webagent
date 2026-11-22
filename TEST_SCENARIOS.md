@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-11-22
+Last updated: 2026-11-19
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -24,57 +24,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - Local file viewer (arbitrary paths, signed bytes, slash picker, responsive viewer)
 
 ## Unit / Integration Scenarios
-
-### Multi-host delivery
-
-- `test/host-store.test.ts` (real SQLite, additive schema, two persisted endpoint directions)
-  - behavior proof: owner create is idempotent by credential + `createKey`, conflicting payloads differ, dispatch ids map to one local message, and both facts survive Store reopen
-  - behavior proof: R1's progress and typed update remain queued in the owner outbox; ACK is identity-bound and idempotent
-  - behavior proof: a terminal report consumes only the edge wake hint: an unrelated pending/backing-off dispatch remains queued and ordered
-  - behavior proof: the initiator locator sees a remote child through task id alone, report receipt is deduplicated, and late reports terminate after the local parent is deleted
-  - behavior proof: startup replays only a committed ACKed hub report; an unrelated local delivery and an owner-only instance do not warm ACP
-  - behavior proof: the additive schema still upgrades a populated `main@1bacca0`-shaped database twice without reset
-  - regression guard: archiving a local tree does not terminalize a delivery whose other endpoint is remote (mutation verified `failed` before the guard was restored)
-- `test/host-loop.test.ts` (two real Stores, TaskManagers, HTTP handler, SSE,
-  persistent host client, and controllable ACP prompt callbacks) proves one
-  transaction-to-transaction path: MCP remote create → task-id send → owner
-  dispatch handoff → unarchive → MCP `done` outbox → initiator GET/commit/ACK
-  → P ACP wake; a second remote child proves runtime notice transcript/live
-  projection on the real SSE return path
-- `test/host-routes.test.ts` covers Bearer scope, cwd/create validation and
-  idempotency, replay before agent/cwd stat checks, `~` normalization, dispatch
-  payload idempotency, credential-bound ACK, and same-name token reissue
-  invalidating unredeemed tickets plus two already-open streams
-- `test/host-registry.test.ts` covers `!` token command timeout/redaction,
-  real HTTP socket rejection, `503` backoff/state, ordered per-edge POST,
-  `400`/`409` terminalization, atomic typed-404 edge/rows/notice, ACK loss,
-  mixed-page progress, retired-runtime state isolation, and reconnect backoff
-  that resets only on a real SSE frame
-- `test/host-account.test.ts` and `test/host-mcp.test.ts` cover external account
-  arming versus archived fallback, `waiting` silence observation, repeated-turn
-  `no_update`, real fake-clock `no_activity` across unarchive→archive, and MCP
-  `agent@host` creation followed by send to the returned task id
-- `test/collaboration-route.test.ts` proves queued local hard-delete:
-  deleting only C returns 200 and gives live P exactly one `target_removed`;
-  deleting P and C as one subtree queues none
-- `test/host-account.test.ts` also covers an already-open local account with a
-  second queued dispatch: deletion closes/report once, not twice
-- `test/host-local-sql.test.ts` measures the production MCP local `list`, `send`,
-  and `update` paths: 6 / 12 / 16 prepared statements versus the measured
-  `ff346a2` baseline 6 / 14 / 20
-- `npm run lint` enforces the physical boundary: only `src/server.ts` may
-  import `src/host/`, and `src/host/` may not import TaskManager, obligation,
-  or MCP business modules. A one-off `task-manager.ts` import of
-  `src/host/store.ts` fails with the restricted-import diagnostic and is
-  reverted before the gate runs
-- `test/host-local-sql.test.ts` now uses HostStore + TaskLocator + the
-  production commit observer wiring, so no-host SQL assertions cover the lower
-  provider's fast path rather than a provider-free fixture; a real archive
-  with a queued local dispatch is 26 statements / 0 host statements versus
-  the `ff346a2` archive baseline of 28
-- the lost-ACK test wakes P from the committed receipt before ACK completion;
-  restart selection is based on queued receipts, not ACK outcome rows (the
-  redundant `host_report_acks` table and code are removed)
 
 ### Multi-agent runtime
 

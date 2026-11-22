@@ -132,47 +132,6 @@ export default tseslint.config(
     languageOptions: { globals: { ...globals.node } },
   },
 
-  {
-    files: ["src/**/*.ts"],
-    ignores: ["src/host/**/*.ts", "src/server.ts"],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          patterns: [
-            {
-              group: ["./host/**", "../host/**", "../../host/**"],
-              message:
-                "The host layer is a composition-only dependency. Import boundary interfaces instead; src/host/* may only be wired from src/server.ts.",
-            },
-          ],
-        },
-      ],
-    },
-  },
-
-  {
-    files: ["src/host/**/*.ts"],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          patterns: [
-            {
-              group: [
-                "../task-manager.ts",
-                "../obligation-controller.ts",
-                "../mcp/**",
-              ],
-              message:
-                "The lower host layer must not import upper-layer task, account, or MCP business modules.",
-            },
-          ],
-        },
-      ],
-    },
-  },
-
   // public/js: browser globals + strict console ban.
   // Convention (CLAUDE.md): use `log.*` (public/js/log.ts) so entries appear
   // in the inline debug panel. console.* bypasses that channel entirely.

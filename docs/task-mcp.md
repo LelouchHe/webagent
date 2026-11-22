@@ -111,19 +111,12 @@ type McpTaskListItem = {
   id: string;
   title: string;
   relation: "self" | "parent" | "child";
-  workflowStatus?: "running" | "idle" | "waiting" | "blocked" | "done";
-  executionState?: "idle" | "agent" | "bash";
-  lastEventAt?: string | null;
-  lastAgentActivityAt?: string | null;
-  external?: true;
-  hostLabel?: string;
+  workflowStatus: "running" | "idle" | "waiting" | "blocked" | "done";
+  executionState: "idle" | "agent" | "bash";
+  lastEventAt: string | null;
+  lastAgentActivityAt: string | null;
 };
 ```
-
-An external parent or remote child is still addressed only by its task id. It
-has `id`, `title`, `relation`, and an `external` marker; remote runtime state is
-not fabricated. `task_read` and `task_query` reject external endpoints in this
-release.
 
 `workflowStatus` uses the same vocabulary as `task_list`: `running` while a turn runs, `idle` after it ended without a typed report, `waiting` when the Task says its work continues without the requester, and `blocked`/`done` when it handed the ball back. `task_query` returns only `task_id`, `max_seq`, and flat event rows.
 It is **per turn, not a lifecycle terminal**: a `done` Task can be woken by a
@@ -296,8 +289,7 @@ Create a direct child Task immediately. The request includes a required `title`
 plus optional `agent`, `cwd`, `model`, and `thinking`.
 
 `agent` names the execution agent for the child. It is a free string, validated
-against the configured `[agents.*]` ids and the connected `agent@host`
-coordinates when the call runs: adding an agent or host is a
+against the configured `[agents.*]` ids when the call runs: adding an agent is a
 configuration change and a restart, not a schema change. The tool description
 advertises the configured ids and is rebuilt on every request from the startup
 snapshot — the whole description stays within 1024 characters, ids are listed
@@ -311,13 +303,6 @@ The target agent is started on demand. Creating a child on another agent is a
 declared divergence, not a write through the wrong process: the caller's own
 binding is untouched, and a relative `cwd` still resolves against the current
 Task's `cwd`.
-
-For `agent@host`, the call POSTs to the owner with the initiating parent id and
-a fresh create key. The owner interprets omitted `cwd` from its own
-`default_cwd`; an explicit relative cwd is rejected rather than resolved
-against P. No P model/mode/thinking is implicitly inherited across hosts.
-After the owner reply, P's generation and sibling titles are rechecked before
-the edge and parent transcript fact commit together.
 
 **Execution config.** Omitted `model` / `thinking` inherit from the current Task
 only when the child lands on the same agent; a cross-agent child starts from the
@@ -350,9 +335,7 @@ defaults instead of claiming an inheritance that did not happen.
 ### `task_send`
 
 The message is stored before the call returns, so it survives a restart, and is
-delivered in order with any other queued items. For a remote child or external
-parent the acceptance is a synchronous local commit; network `202`, retries,
-and terminal transport facts happen in the background. Whether it opens an account is
+delivered in order with any other queued items. Whether it opens an account is
 defined in [Task Obligations](task-obligations.md#opening-an-account).
 
 ### `task_update`
