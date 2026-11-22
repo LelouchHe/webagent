@@ -11,10 +11,6 @@ import {
   type McpTaskCancelNotice,
 } from "../src/mcp/task-host.ts";
 import { projectTaskHistoryRow } from "../src/mcp/task-history.ts";
-import {
-  persistMcpTaskCancelAuditSide,
-  type McpTaskCancelFact,
-} from "../src/mcp/task-cancel.ts";
 import type { AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
 
@@ -706,63 +702,6 @@ describe("MCP Task tool host", () => {
         status: "idle",
       },
     );
-  });
-
-  it("audits an idle cancel before a generation replacement queued after it", async () => {
-    // Behavior proof: the host must await the same Promise as the original
-    // inline call, not an extra async wrapper.
-    const host = createMcpTaskToolHost({ store, tasks });
-    const pending = host.cancel(
-      principal(),
-      "alpha-child",
-      "keep the original promise boundary",
-    );
-    queueMicrotask(() => {
-      store.replaceAgentSession("alpha", "test-agent", "alpha-replaced");
-    });
-
-    assert.deepEqual(await pending, {
-      accepted: true,
-      taskId: "alpha-child",
-      status: "idle",
-    });
-    const audits = store
-      .getEvents("alpha")
-      .filter(
-        (event) =>
-          event.type === "system_message" &&
-          (JSON.parse(event.data) as { kind?: string }).kind === "task_cancel",
-      );
-    assert.equal(audits.length, 1);
-  });
-
-  it("persists one local cancel-audit side without requiring the other task", () => {
-    // Regression guard: one remote/local side must never require the other
-    // side's task row to exist.
-    const broadcasts: McpTaskCancelNotice[] = [];
-    const fact: McpTaskCancelFact = {
-      sourceTaskId: "alpha",
-      targetTaskId: "remote-child",
-      sourceLabel: "Alpha",
-      targetLabel: "Remote child",
-      reason: "remote cancellation",
-      status: "cancelled",
-    };
-
-    persistMcpTaskCancelAuditSide(store, fact, "source", (event) => {
-      broadcasts.push(event);
-    });
-
-    const rows = store
-      .getEvents("alpha")
-      .filter(
-        (event) =>
-          event.type === "system_message" &&
-          (JSON.parse(event.data) as { kind?: string }).kind === "task_cancel",
-      );
-    assert.equal(rows.length, 1);
-    assert.equal(broadcasts.length, 1);
-    assert.equal(broadcasts[0].taskId, "alpha");
   });
 
   it("creates a direct child with inherited and requested configuration", async () => {

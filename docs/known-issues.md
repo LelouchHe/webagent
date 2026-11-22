@@ -330,13 +330,6 @@ time. An entry without a "closing condition" is a wish, not an issue.
   text is persisted only when the next turn starts. ACP has no portable signal
   for when such work ends. *Closing:* a standard ACP signal for agent-initiated
   turns.
-- **Delivery handoff and failure are top-level operations only.**
-  `claimQueuedDeliveries`, `failRejectedDeliveries`,
-  `failQueuedDeliveries`, and `handoffQueuedDeliveries` publish and arm before
-  an enclosing database transaction commits. A later rollback therefore does
-  not undo those effects. No caller composes them today. *Closing:* the first
-  caller that needs to compose them defines committed facts, post-commit
-  effects, and rollback order.
 
 ## Accepted as designed
 
