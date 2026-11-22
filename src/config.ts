@@ -23,6 +23,20 @@ const AgentConfigSchema = z.strictObject({
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
+const HostConfigSchema = z.strictObject({
+  url: z
+    .string()
+    .trim()
+    .url()
+    .refine((value) => {
+      const protocol = new URL(value).protocol;
+      return protocol === "http:" || protocol === "https:";
+    }, "host url must use http or https"),
+  token: z.string().trim().min(1, "token must be non-empty"),
+});
+
+export type HostConfig = z.infer<typeof HostConfigSchema>;
+
 export const ConfigSchema = z
   .object({
     port: z.number().int().positive().default(6800),
@@ -48,6 +62,7 @@ export const ConfigSchema = z
       .refine((agents) => Object.keys(agents).length > 0, {
         message: "at least one [agents.<id>] entry is required",
       }),
+    hosts: z.record(AgentIdSchema, HostConfigSchema).default({}),
 
     limits: z
       .object({
