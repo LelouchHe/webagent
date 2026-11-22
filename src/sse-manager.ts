@@ -23,6 +23,7 @@ export interface SseClient {
   res: ServerResponse;
   taskId?: string; // undefined = global stream
   tokenName?: string; // bound at connect via SSE ticket; used for revoke detection
+  tokenHash?: string;
 }
 
 /**
@@ -34,7 +35,7 @@ export class SseManager {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly heartbeatInterval: number;
   private onRemoveCallback: ((clientId: string) => void) | null = null;
-  private isTokenRevoked: ((tokenName: string) => boolean) | null = null;
+  private isTokenRevoked: ((tokenHash: string) => boolean) | null = null;
   private attachmentSecret: Buffer | null = null;
   private getLabelMap: ((taskId: string) => LabelMap) | null = null;
 
@@ -69,7 +70,7 @@ export class SseManager {
   /** Install a revocation check called on every heartbeat. If it returns
    *  true the SSE connection is closed immediately (within one heartbeat
    *  interval, ≤15s by default). */
-  setRevocationCheck(check: (tokenName: string) => boolean): void {
+  setRevocationCheck(check: (tokenHash: string) => boolean): void {
     this.isTokenRevoked = check;
   }
 
@@ -80,7 +81,7 @@ export class SseManager {
       for (const client of this.clients.values()) {
         if (client.res.writableEnded) continue;
         // Close any stream whose backing token has been revoked.
-        if (client.tokenName && this.isTokenRevoked?.(client.tokenName)) {
+        if (client.tokenHash && this.isTokenRevoked?.(client.tokenHash)) {
           try {
             client.res.end();
           } catch {
@@ -197,6 +198,14 @@ export class SseManager {
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
       this.sendEvent(client, event);
+    }
+  }
+
+  broadcastToCredential(credentialHash: string, event: AgentEvent): void {
+    for (const client of [...this.clients.values()]) {
+      if (client.tokenHash === credentialHash && !client.res.writableEnded) {
+        this.sendEvent(client, event);
+      }
     }
   }
 

@@ -87,7 +87,7 @@ export interface McpEndpointOptions {
    * advertises them, which is the only always-visible discovery channel (an MCP
    * server is rebuilt per request, so this needs no static schema).
    */
-  configuredAgentIds?: readonly string[];
+  configuredAgentIds?: readonly string[] | (() => readonly string[]);
   /** Mount path; the response `true` claims that path. */
   path?: string;
 }
@@ -188,7 +188,10 @@ export function createMcpEndpoint(
       { instructions: MCP_SERVER_INSTRUCTIONS },
     );
     registerMcpTools(server, principal, options.taskTools, {
-      configuredAgentIds: options.configuredAgentIds,
+      configuredAgentIds:
+        typeof options.configuredAgentIds === "function"
+          ? options.configuredAgentIds()
+          : options.configuredAgentIds,
     });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,

@@ -43,6 +43,7 @@ import {
   type InterceptorCounters,
 } from "./attachment-interceptor.ts";
 import type { AgentEvent } from "./types.ts";
+import { HostRegistry } from "./host-registry.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
 for (const method of ["log", "error", "warn"] as const) {
@@ -157,6 +158,7 @@ const tasks = new TaskManager({
   obligations: obligationController,
 });
 taskManagerRef.current = tasks;
+const hosts = new HostRegistry(config.hosts, store, tasks);
 const sseManager = new SseManager();
 const clientRegistry = new ClientRegistry();
 const pushService = new PushService(
@@ -184,7 +186,7 @@ const attachmentSecret = randomBytes(32);
 // SSE heartbeat re-checks token revocation; revoked → connection closed
 // within one heartbeat interval (≤15s).
 sseManager.setRevocationCheck(
-  (tokenName) => !authStore.hasTokenName(tokenName),
+  (tokenHash) => !authStore.hasTokenHash(tokenHash),
 );
 sseManager.setAttachmentSecret(attachmentSecret);
 sseManager.setLabelMapProvider((taskId) => tasks.getLabelMap(taskId));
@@ -201,6 +203,14 @@ tasks.setCollaborationBroadcast(broadcastCollaboration);
 tasks.setDeliveryStatusBroadcast((event) => {
   sseManager.broadcast(event);
 });
+tasks.setExternalMessageBroadcast((credentialHash) => {
+  sseManager.broadcastToCredential(credentialHash, {
+    type: "host_message_pending",
+  });
+});
+tasks.setRemoteWakeSourceProbe(
+  (taskId) => store.hasHostFacts() && store.hasOpenHostDispatch(taskId),
+);
 // A read no longer waits for its task's execution to warm up; this is how the
 // client learns the schema and commands once the restore finishes.
 tasks.setRuntimeWarmBroadcast((event) => {
@@ -215,6 +225,7 @@ const mcpTaskTools = createMcpTaskToolHost({
   store,
   tasks,
   cancelTimeoutMs: config.limits.cancel_timeout,
+  hosts,
   broadcastCollaboration,
   broadcastTaskCreated: (event) => {
     sseManager.broadcast(buildTaskCreatedBroadcast(event));
@@ -245,6 +256,7 @@ const requestHandler = createRequestHandler({
   dataDir: config.data_dir,
   limits: config.limits,
   agentIds: Object.keys(config.agents),
+  defaultCwd: config.default_cwd,
   pushService,
   serverVersion: PKG_VERSION,
   debugLevel: config.debug.level,
@@ -259,7 +271,10 @@ const requestHandler = createRequestHandler({
     // Discovery for `task_create(agent: …)` comes from the running
     // configuration, not from a static schema that would have to be rebuilt by
     // hand whenever an agent is added.
-    configuredAgentIds: Object.keys(config.agents),
+    configuredAgentIds: () => [
+      ...Object.keys(config.agents),
+      ...hosts.agentCoordinates(),
+    ],
   }),
 });
 
@@ -316,6 +331,7 @@ async function shutdown() {
   messageCleanup.stop();
   sharePreviewCleanup?.stop();
   tasks.killAllBashProcs();
+  hosts.stop();
   await agentRegistry.shutdownAll();
   await authStore.close();
   store.close();
@@ -381,6 +397,8 @@ server.listen(config.port, config.host, () => {
     // demand. A missing or broken agent binary is therefore a runtime
     // condition, never a boot gate or a daemon restart.
     tasks.hydrate();
+    if (store.hasHostFacts()) tasks.recoverPersistedDeliveries();
+    hosts.start();
     console.log(
       `[agents] ${Object.keys(config.agents).join(", ")} start on demand`,
     );

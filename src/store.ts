@@ -3254,7 +3254,9 @@ export class Store {
         message?: CollaborationMessageRow;
         delivery?: CollaborationDeliveryRow;
       }
-    | { status: "conflict" | "target_not_found" | "forbidden" } {
+    | { status: "conflict" }
+    | { status: "target_not_found" }
+    | { status: "forbidden" } {
     const existing = this.db
       .prepare(
         `SELECT local_message_id, request_hash FROM host_received_dispatches

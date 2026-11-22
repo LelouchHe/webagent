@@ -1,6 +1,13 @@
-import { readFile, mkdir, rename, unlink, realpath } from "node:fs/promises";
+import {
+  readFile,
+  mkdir,
+  rename,
+  unlink,
+  realpath,
+  stat,
+} from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { join, extname, basename } from "node:path";
+import { join, extname, basename, isAbsolute } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import busboy from "busboy";
@@ -36,7 +43,7 @@ import {
 } from "./auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
-import { abbreviateHomePath } from "./home-path.ts";
+import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 import {
   attachCollaborationDeliveryStatus,
@@ -164,6 +171,13 @@ import {
 } from "./attachments.ts";
 import { readImageInfo } from "./image-info.ts";
 import { HTTP_STATUS } from "./http-status.ts";
+import {
+  HOST_API_VERSION,
+  HostCreateSchema,
+  HostDispatchSchema,
+  requestHash,
+  targetNotFoundBody,
+} from "./host-protocol.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -245,6 +259,7 @@ export interface RequestHandlerDeps {
    * plain configuration fact (no PATH or process state).
    */
   agentIds?: string[];
+  defaultCwd?: string;
   limits: Pick<Config["limits"], "bash_output" | "image_upload"> &
     Partial<
       Pick<
@@ -838,6 +853,165 @@ export function createRequestHandler(
         return;
       }
 
+      const hostPrincipal = principalByRequest.get(req);
+      const hostPrefix = "/api/v1/host";
+      if (
+        (url === hostPrefix || url.startsWith(`${hostPrefix}/`)) &&
+        hostPrincipal
+      ) {
+        if (url === hostPrefix && req.method === "GET") {
+          json(res, HTTP_STATUS.OK, {
+            host_api_version: HOST_API_VERSION,
+            agent_ids: deps.agentIds ?? [],
+          });
+          return;
+        }
+
+        if (url === `${hostPrefix}/tasks` && req.method === "POST") {
+          let raw: unknown;
+          try {
+            raw = JSON.parse(await readBody(req));
+          } catch {
+            json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+            return;
+          }
+          const parsed = HostCreateSchema.safeParse(raw);
+          if (!parsed.success) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "Invalid host create request",
+              code: "invalid_request",
+            });
+            return;
+          }
+          if (!(deps.agentIds ?? []).includes(parsed.data.agent)) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "Agent is not configured on this host",
+              code: "unknown_agent",
+            });
+            return;
+          }
+          const requestedCwd = parsed.data.cwd;
+          const cwd = requestedCwd
+            ? expandHomePath(requestedCwd)
+            : (deps.defaultCwd ?? process.cwd());
+          if (!isAbsolute(cwd)) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "cwd must be absolute or start with ~",
+              code: "invalid_cwd",
+            });
+            return;
+          }
+          try {
+            const cwdStat = await stat(cwd);
+            if (!cwdStat.isDirectory()) throw new Error("not directory");
+          } catch {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "cwd is not an accessible directory",
+              code: "invalid_cwd",
+            });
+            return;
+          }
+          const created = store.createHostTask({
+            credentialHash: hostPrincipal.hash,
+            parentTaskId: parsed.data.parentTaskId,
+            createKey: parsed.data.createKey,
+            requestHash: requestHash(parsed.data),
+            agentId: parsed.data.agent,
+            cwd,
+            title: parsed.data.title,
+            model: parsed.data.model,
+            thinking: parsed.data.thinking,
+          });
+          if (created.status === "conflict") {
+            json(res, HTTP_STATUS.CONFLICT, {
+              error: "createKey already used for a different request",
+              code: "create_conflict",
+            });
+            return;
+          }
+          tasks?.registerHostExternalTask(created.taskId);
+          json(
+            res,
+            created.status === "created" ? HTTP_STATUS.CREATED : HTTP_STATUS.OK,
+            { taskId: created.taskId },
+          );
+          return;
+        }
+
+        if (url === `${hostPrefix}/messages` && req.method === "POST") {
+          let raw: unknown;
+          try {
+            raw = JSON.parse(await readBody(req));
+          } catch {
+            json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+            return;
+          }
+          const parsed = HostDispatchSchema.safeParse(raw);
+          if (!parsed.success) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "Invalid host dispatch request",
+              code: "invalid_request",
+            });
+            return;
+          }
+          const received = store.receiveHostDispatch({
+            credentialHash: hostPrincipal.hash,
+            remoteMessageId: parsed.data.messageId,
+            requestHash: requestHash(parsed.data),
+            targetTaskId: parsed.data.to,
+            body: parsed.data.body,
+          });
+          if (received.status === "conflict") {
+            json(res, HTTP_STATUS.CONFLICT, {
+              error: "messageId already used for a different request",
+              code: "message_conflict",
+            });
+            return;
+          }
+          if (received.status === "target_not_found") {
+            json(res, HTTP_STATUS.NOT_FOUND, targetNotFoundBody());
+            return;
+          }
+          if (received.status === "forbidden") {
+            json(res, HTTP_STATUS.FORBIDDEN, {
+              error: "Task is not owned by this credential",
+              code: "target_not_allowed",
+            });
+            return;
+          }
+          if (tasks && received.delivery) {
+            void tasks.drainCollaborationDeliveries(parsed.data.to);
+          }
+          json(res, HTTP_STATUS.ACCEPTED, {
+            accepted: true,
+            messageId: received.localMessageId,
+          });
+          return;
+        }
+
+        if (url === `${hostPrefix}/messages` && req.method === "GET") {
+          const messages = store.listHostOutbox(hostPrincipal.hash);
+          json(res, HTTP_STATUS.OK, { messages });
+          return;
+        }
+
+        const ackMatch = url.match(/^\/api\/v1\/host\/messages\/([^/]+)\/ack$/);
+        if (ackMatch && req.method === "POST") {
+          const result = store.ackHostMessage(
+            hostPrincipal.hash,
+            decodeURIComponent(ackMatch[1]),
+          );
+          if (result.status === "acked") {
+            json(res, HTTP_STATUS.OK, { acknowledged: true });
+          } else if (result.status === "forbidden") {
+            json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
+          } else {
+            json(res, HTTP_STATUS.NOT_FOUND, { error: "Message not found" });
+          }
+          return;
+        }
+      }
+
       // GET /api/v1/tasks
       if (
         url.startsWith("/api/v1/tasks") &&
@@ -975,6 +1149,7 @@ export function createRequestHandler(
         }
         const ticket = deps.ticketStore.mint({
           tokenName: principal.name,
+          tokenHash: principal.hash,
           scope: principal.scope,
         });
         json(res, HTTP_STATUS.OK, { ticket, expiresIn: 60 });
@@ -3350,17 +3525,23 @@ export function createRequestHandler(
         // When authStore is configured, every SSE connection MUST present a
         // valid single-use ticket from POST /api/v1/sse-ticket.
         let tokenName: string | undefined;
+        let tokenHash: string | undefined;
         if (deps.authStore) {
           const ticket =
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
           const principal = deps.ticketStore?.consume(ticket);
-          if (!principal) {
+          if (
+            !principal ||
+            (principal.tokenHash !== undefined &&
+              !deps.authStore.hasTokenHash(principal.tokenHash))
+          ) {
             json(res, HTTP_STATUS.UNAUTHORIZED, {
               error: "Invalid or expired ticket",
             });
             return;
           }
           tokenName = principal.tokenName;
+          tokenHash = principal.tokenHash;
         }
 
         const clientId = sseManager.generateClientId();
@@ -3375,6 +3556,7 @@ export function createRequestHandler(
           id: clientId,
           res,
           tokenName,
+          tokenHash,
         };
         sseManager.add(client);
 
@@ -3397,17 +3579,23 @@ export function createRequestHandler(
         const taskId = decodeURIComponent(sseTaskMatch[1]);
 
         let tokenName: string | undefined;
+        let tokenHash: string | undefined;
         if (deps.authStore) {
           const ticket =
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
           const principal = deps.ticketStore?.consume(ticket);
-          if (!principal) {
+          if (
+            !principal ||
+            (principal.tokenHash !== undefined &&
+              !deps.authStore.hasTokenHash(principal.tokenHash))
+          ) {
             json(res, HTTP_STATUS.UNAUTHORIZED, {
               error: "Invalid or expired ticket",
             });
             return;
           }
           tokenName = principal.tokenName;
+          tokenHash = principal.tokenHash;
         }
 
         const task = store.getTask(taskId);
@@ -3428,6 +3616,7 @@ export function createRequestHandler(
           res,
           taskId,
           tokenName,
+          tokenHash,
         };
         sseManager.add(client);
 

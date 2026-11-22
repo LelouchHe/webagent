@@ -10,6 +10,7 @@ import {
   isEmptyExecutionSlot,
   type ArchiveTaskResult,
   type CollaborationDeliveryStatusChange,
+  type CollaborationDeliveryRow,
   type CollaborationMessageRow,
   type TaskDelete,
   type TaskRow,
@@ -701,6 +702,10 @@ export class TaskManager implements ObligationHost {
   /** SSE broadcast hook for runtime collaboration messages. */
   private collaborationBroadcast:
     ((event: CollaborationBroadcastRequest) => void) | null = null;
+  private externalMessageBroadcast: ((credentialHash: string) => void) | null =
+    null;
+  private remoteWakeSource: ((taskId: string) => boolean) | null = null;
+  private readonly hostExternalTasks: Set<string>;
   /** Live-only delivery status refresh for a sender's message mark. */
   private deliveryStatusBroadcast:
     | ((event: Extract<AgentEvent, { type: "collaboration_delivery" }>) => void)
@@ -779,6 +784,7 @@ export class TaskManager implements ObligationHost {
     this.authority = options.authority;
     this.agents = options.agents;
     this.obligations = options.obligations ?? createObligationController(this);
+    this.hostExternalTasks = new Set(this.store.listHostExternalTaskIds());
     // The one Store observer runs failure semantics before UI publication;
     // the receiver helper owns arming at the actual handoff.
     this.store.onDeliveryStatusChanged((change) => {
@@ -850,11 +856,18 @@ export class TaskManager implements ObligationHost {
 
   private armDelivered(
     recipientTaskId: string,
-    messages: readonly CollaborationMessageRow[],
+    deliveries: ReadonlyArray<{
+      message: CollaborationMessageRow;
+      delivery: CollaborationDeliveryRow;
+    }>,
   ): void {
     const target = this.store.getTaskIncludingDeleted(recipientTaskId);
     if (!target) return;
-    for (const message of messages) {
+    for (const { message, delivery } of deliveries) {
+      if (delivery.account_source_task_id && message.source_actor === "agent") {
+        this.obligations.arm(delivery.account_source_task_id, recipientTaskId);
+        continue;
+      }
       if (shouldArm(message, target)) {
         this.obligations.arm(message.source_task_id, recipientTaskId);
       }
@@ -940,6 +953,12 @@ export class TaskManager implements ObligationHost {
     // No per-task title tracking needed after automatic title-service
     // removal; titles persist in the store and are broadcast via
     // task_title_updated on manual rename.
+  }
+
+  recoverPersistedDeliveries(): void {
+    for (const taskId of this.store.queuedLocalDeliveryRecipients()) {
+      void this.drainCollaborationDeliveries(taskId);
+    }
   }
 
   /**
@@ -3834,6 +3853,24 @@ export class TaskManager implements ObligationHost {
     this.collaborationBroadcast = broadcast;
   }
 
+  setExternalMessageBroadcast(
+    broadcast: ((credentialHash: string) => void) | null,
+  ): void {
+    this.externalMessageBroadcast = broadcast;
+  }
+
+  notifyExternalMessage(credentialHash: string): void {
+    this.externalMessageBroadcast?.(credentialHash);
+  }
+
+  setRemoteWakeSourceProbe(probe: ((taskId: string) => boolean) | null): void {
+    this.remoteWakeSource = probe;
+  }
+
+  registerHostExternalTask(taskId: string): void {
+    this.hostExternalTasks.add(taskId);
+  }
+
   /** Install the live delivery-status hook (sender mark refresh only). */
   setDeliveryStatusBroadcast(
     broadcast:
@@ -3898,6 +3935,7 @@ export class TaskManager implements ObligationHost {
    * back to the current parent when none is open) and are delivered there.
    * The account closes only after the update transaction commits.
    */
+  // eslint-disable-next-line complexity -- local, external-account, and fallback routes are intentionally explicit
   settleAgentUpdate(
     targetTaskId: string,
     status: "waiting" | "blocked" | "done",
@@ -3923,7 +3961,8 @@ export class TaskManager implements ObligationHost {
       const wakeSourceVisible =
         this.obligations.hasOpenAsSource(targetTaskId) ||
         this.store.countQueuedDeliveries(targetTaskId) > 0 ||
-        this.store.hasQueuedDispatchToChild(targetTaskId);
+        this.store.hasQueuedDispatchToChild(targetTaskId) ||
+        this.remoteWakeSource?.(targetTaskId) === true;
       const watched =
         !wakeSourceVisible &&
         this.obligations.noteUnwatchedWaiting(targetTaskId);
@@ -3934,6 +3973,45 @@ export class TaskManager implements ObligationHost {
       };
     }
     const accountSource = this.obligations.peekSource(targetTaskId);
+    if (accountSource && this.store.hasHostFacts()) {
+      const source = this.store.getHostExternalSource(targetTaskId);
+      if (source?.parent_task_id === accountSource) {
+        const result = this.store.recordHostWorkflowUpdate({
+          taskId: targetTaskId,
+          status,
+          body,
+          source,
+        });
+        this.obligations.noteUpdate(targetTaskId);
+        this.obligations.close(targetTaskId);
+        this.externalMessageBroadcast?.(source.credential_hash);
+        return {
+          collaborationMessageId: result.collaborationMessageId,
+          accountTargetTaskId: source.parent_task_id,
+        };
+      }
+    }
+    if (
+      accountSource === undefined &&
+      this.hostExternalTasks.has(targetTaskId)
+    ) {
+      const task = this.store.getTask(targetTaskId);
+      const source = this.store.getHostExternalSource(targetTaskId);
+      if (task?.parent_id === null && source) {
+        const result = this.store.recordHostWorkflowUpdate({
+          taskId: targetTaskId,
+          status,
+          body,
+          source,
+        });
+        this.obligations.noteUpdate(targetTaskId);
+        this.externalMessageBroadcast?.(source.credential_hash);
+        return {
+          collaborationMessageId: result.collaborationMessageId,
+          accountTargetTaskId: source.parent_task_id,
+        };
+      }
+    }
     const accountTargetTaskId =
       accountSource ?? this.store.getTask(targetTaskId)?.parent_id ?? null;
     const { collaborationMessageId } = this.store.recordAgentWorkflowUpdate(
@@ -3954,6 +4032,18 @@ export class TaskManager implements ObligationHost {
    * closes with the report. User and runtime messages report nothing.
    */
   private onDeliveryFailed(change: CollaborationDeliveryStatusChange): void {
+    const hostDispatch = this.store.hasHostFacts()
+      ? this.store.getHostDispatch(change.deliveryId)
+      : undefined;
+    if (hostDispatch && change.failureReason !== "target_removed") {
+      return;
+    }
+    if (
+      this.store.hasHostFacts() &&
+      this.store.isHostReportMessage(change.messageId)
+    ) {
+      return;
+    }
     const message = this.store.getCollaborationMessage(change.messageId);
     if (!message) return;
     this.emitObligationOutcome({
@@ -4006,10 +4096,33 @@ export class TaskManager implements ObligationHost {
   emitObligationOutcome(fact: ObligationOutcomeFact): void {
     const decision = reduceObligationOutcome(fact);
     if (decision.kind === "none") return;
-    if (decision.kind === "close_account") {
-      this.obligations.closeUnavailable(decision.notice.targetTaskId);
-    }
+    const closesAccount = decision.kind === "close_account";
     const notice = decision.notice;
+    const external = this.store.hasHostFacts()
+      ? this.store.getHostExternalSource(notice.targetTaskId)
+      : undefined;
+    if (external?.parent_task_id === notice.sourceTaskId) {
+      const body = formatFieldBlock([
+        {
+          label: "target",
+          value:
+            this.store.getTaskIncludingDeleted(notice.targetTaskId)?.title ??
+            notice.targetTaskId,
+        },
+        { label: "message", value: notice.message },
+      ]);
+      this.store.createHostRuntimeNotice({
+        sourceTaskId: notice.targetTaskId,
+        source: external,
+        reason: notice.reason,
+        body,
+      });
+      this.externalMessageBroadcast?.(external.credential_hash);
+      if (closesAccount) {
+        this.obligations.closeUnavailable(notice.targetTaskId);
+      }
+      return;
+    }
     if (!this.store.getTask(notice.sourceTaskId)) return;
     const target = this.store.getTaskIncludingDeleted(notice.targetTaskId);
     const messageId = randomUUID();
@@ -4040,6 +4153,9 @@ export class TaskManager implements ObligationHost {
         { label: "message", value: notice.message },
       ]),
     });
+    if (closesAccount) {
+      this.obligations.closeUnavailable(notice.targetTaskId);
+    }
     void this.drainCollaborationDeliveries(notice.sourceTaskId);
   }
 
@@ -4069,6 +4185,7 @@ export class TaskManager implements ObligationHost {
     taskId: string,
     message: CollaborationMessageRow,
     targetLabel: string,
+    delivery: CollaborationDeliveryRow,
   ): void {
     // The delivery row is one shape for every message, so a runtime message
     // recovers which message it is from the audit event that queued it. Absent
@@ -4106,6 +4223,7 @@ export class TaskManager implements ObligationHost {
         role: "target",
         body: message.body,
         runtimeMessage,
+        externalSourceHost: delivery.external_source_host,
       }),
       { from_ref: `msg:${message.id}` },
     );
@@ -4119,6 +4237,7 @@ export class TaskManager implements ObligationHost {
       taskId,
       body: message.body,
       runtimeMessage,
+      externalSourceHost: delivery.external_source_host,
     });
   }
 
@@ -4269,10 +4388,7 @@ export class TaskManager implements ObligationHost {
         }
         return { delivery, message };
       });
-      this.armDelivered(
-        taskId,
-        claimed.map(({ message }) => message),
-      );
+      this.armDelivered(taskId, claimed);
       const sourceActors = claimed.map(({ message }) => message.source_actor);
       const entries = claimed.map(({ message }) => this.deliveryEntry(message));
       // The receiver's rows appear now, at the turn boundary where the agent
@@ -4280,8 +4396,8 @@ export class TaskManager implements ObligationHost {
       // longer sit in a turn that never saw it.
       const targetLabel =
         this.store.getTaskIncludingDeleted(taskId)?.title ?? taskId.slice(0, 8);
-      for (const { message } of claimed) {
-        this.projectDeliveredMessage(taskId, message, targetLabel);
+      for (const { message, delivery } of claimed) {
+        this.projectDeliveredMessage(taskId, message, targetLabel, delivery);
       }
       this.persistCollaborationPromptAudit(
         taskId,
