@@ -29,7 +29,12 @@ A user send (including a human message typed in the parent's session), a child
 message, a typed update, and a runtime notice never open one. The predicate is
 derived from the rows already stored; there is no classification field and no
 body inspection. A target has at most one parent, so at most one account can be
-open for it.
+open for it. A host dispatch is the same fact with an external endpoint:
+the owner records the credential-bound external parent and the dispatch kind
+when the message is received, then opens the account only when that queued row
+is handed to R1's ACP process. Human input, runtime reminders, `202` transport
+handoff, progress messages, typed updates, and runtime notices do not open an
+account.
 
 At most one account exists per `(source, target)` edge. A dispatch handed over
 while the account is open keeps it open (coalesces); it does not create a
@@ -64,7 +69,12 @@ turns `running` into `idle`. A turn end never overwrites `waiting`.
 
 `done` and `blocked` are delivered to the account's stored source, which wakes
 it. A late update still settles. With no open account, they fall back to the
-Task's current parent (or nowhere when it has none). `waiting` never routes.
+Task's current parent. An archived owner task with no local parent falls back to
+its persisted external parent; that message remains in the owner outbox until
+the initiating credential fetches and acknowledges it. `waiting` never routes.
+An update with an open external account writes the Task status, event, message,
+delivery, and external ownership fact in one transaction. Only after commit
+does the controller close the account and the host hint kick the pull loop.
 
 ## Turn-end check
 
@@ -77,6 +87,13 @@ Turn boundaries are the only clock:
 3. A turn that carried any update resets the whole cycle, including `waiting`:
    both the miss count and the stop-reminding flag.
 4. A cancelled turn triggers nothing.
+
+For a remote child, `waiting` asks one `hasChildWakeSource(parentId)` fact:
+the host-side equivalent of an outstanding local child dispatch is persisted
+in `host_dispatches` from enqueue until a terminal typed update or runtime
+notice arrives. `202` transport success does not consume that source. A normal
+progress message does not consume it either. This is a conservative presence
+signal, not a mirror of the owner's account.
 
 The reminder is a runtime-injected turn asking for one typed update; its text
 is `handoffReminderText()` in [`src/task-manager.ts`](../src/task-manager.ts).
@@ -114,6 +131,14 @@ failed, or the agent rejected the request — sends its sender one
 behind the target's open account, that account closes with the same notice.
 A user or runtime message failing reports nothing, and an unrelated failure does
 not close an account.
+
+For a remote-child POST, a structured authenticated `target_not_found` makes
+the initiating side produce one `target_removed`; every later pending row on
+that edge becomes a distinguishable terminal transport fact. `400` and `409`
+are terminal without a target-removed notice. Authentication failures,
+server failures, malformed/unknown routes, and network loss remain retryable
+and produce no notice. A rejection of a report on the initiating side never
+feeds a reverse notice to the owner.
 
 While an account is open, a target that is deleted or archived away with no
 undelivered dispatch also sends the source one `target_removed` notice, and

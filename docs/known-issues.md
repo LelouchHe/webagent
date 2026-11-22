@@ -12,6 +12,53 @@ How to add an entry: open it when you knowingly leave a defect or a soft edge
 behind, with the symptom, where it lives, and why deferring was right at the
 time. An entry without a "closing condition" is a wish, not an issue.
 
+## Multi-host
+
+- **R1 cannot know whether P's ACP process accepted a return message.**
+  Owner acknowledgement means the initiator persisted the report, not that P
+  consumed it. *Closing:* an end-to-end ACP receipt requirement adds a reverse
+  authenticated delivery-receipt path.
+- **Credential rotation does not migrate old edges or owner reports.** A new
+  token is a new relationship; reports queued for a revoked fingerprint remain
+  queued. *Closing:* an operator migration explicitly maps one old fingerprint
+  to a new relationship without rewriting unrelated rows.
+- **Two initiators using the same owner token are unsupported.** Their
+  fingerprint namespaces and SSE hints collide. *Closing:* one token is
+  issued per initiating host and the configuration rejects shared credentials.
+- **The remote-child wake hint is conservative.** Overlapping dispatches may
+  share one owner account and one edge hint; it proves presence, not an exact
+  request/account mapping. *Closing:* a consumer needs per-dispatch
+  correlation and the protocol gains a settlement reference.
+- **R1 cannot read P's history or status.** The owner has no initiator token,
+  so PR 2 exposes only a minimal external-parent row. *Closing:* a reciprocal
+  `[hosts]` relationship or a separately authenticated reverse read exists.
+- **Remote creation can orphan R1.** If the initiator disappears after owner
+  creation but before edge commit, R1 remains an archived task. *Closing:*
+  compensating deletion is required by a real workflow.
+- **Owner account state is process-local.** Restart forgets it; an existing
+  edge can remain a wake hint while queued dispatches re-arm on handoff.
+  *Closing:* actual need justifies persisted obligation state.
+- **A report page whose every entry is unmatchable stalls pulling.** The loop
+  does not ACK those entries and backs off rather than busy-looping. *Closing:*
+  a real orphan page blocks delivery and GET gains a bounded cursor or a
+  garbage-route policy.
+- **Sharing a host-created R1 soft-deletes it without the remote failure
+  path.** An accepted queued dispatch can then produce no `target_removed`.
+  *Closing:* soft-delete terminalizes external dispatches in its transaction.
+- **Unarchive plus a new local dispatch can replace an old external account.**
+  This unsupported composition is not reached by the host flow. *Closing:*
+  real use proves it reachable or accounts gain explicit correlation.
+- **Token scope is deliberately broad.** `api` callers have browser-level
+  reach, including host endpoints. *Closing:* host-only capability scoping is
+  required operationally.
+- **A host task id is assumed never to be reused.** UUID-only edges cannot
+  distinguish an imported/restored task with the same id. *Closing:* supported
+  import/restore rejects reused ids or adds endpoint generation.
+- **A later local child can race a remote sibling title.** Creation checks
+  local and remote titles at initiation and edge commit, but local creation has
+  no cross-table reservation. *Closing:* sibling-name uniqueness gains one
+  persisted reservation across task categories.
+
 ## Permission and turn lifecycle
 
 - **A pending permission has no turn-boundary cleanup.** `bridge.cancel` /
@@ -332,8 +379,8 @@ time. An entry without a "closing condition" is a wish, not an issue.
   turns.
 - **Delivery handoff and failure are top-level operations only.**
   `claimQueuedDeliveries`, `failRejectedDeliveries`,
-  `failQueuedDeliveries`, and `handoffQueuedDeliveries` publish and arm before
-  an enclosing database transaction commits. A later rollback therefore does
+  and `failQueuedDeliveries` publish and arm before an enclosing database
+  transaction commits. A later rollback therefore does
   not undo those effects. No caller composes them today. *Closing:* the first
   caller that needs to compose them defines committed facts, post-commit
   effects, and rollback order.
