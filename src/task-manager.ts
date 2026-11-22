@@ -4129,7 +4129,6 @@ export class TaskManager implements ObligationRuntime {
       body,
       runtimeKind: "task_outcome_notice",
       reason: notice.reason,
-      suppressMissingSource: fact.kind === "delivery_failed",
       mutate: ({ messageId }) => {
         if (!auditTaskId) return;
         this.store.saveEvent(

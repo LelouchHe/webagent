@@ -103,6 +103,11 @@ test("behavior proof: real MCP local paths do not exceed main SQL counts", async
     sourceActor: "agent",
     body: "queued before archive",
   });
+  let drainCount = 0;
+  tasks.drainCollaborationDeliveries = async (taskId: string) => {
+    if (taskId === "parent") drainCount += 1;
+    return false;
+  };
   hostStatements = 0;
   const archiveStatements = statements;
   tasks.archiveTask(archivedChild.id);
@@ -119,6 +124,8 @@ test("behavior proof: real MCP local paths do not exceed main SQL counts", async
       .filter((event) => event.type === "task_outcome_notice").length,
     1,
   );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(drainCount, 1);
 
   tasks.dispose();
   store.close();
