@@ -16,7 +16,10 @@ export interface TaskDescription {
   title: string;
   relation: CollaborationRelation;
   local: boolean;
-  presentation?: Record<string, string | boolean>;
+  presentation?: {
+    external: true;
+    hostLabel?: string;
+  };
   task?: TaskRow;
 }
 
@@ -66,7 +69,7 @@ export class TaskLocator {
     const source = this.store.getTask(sourceId);
     const target = this.store.getTask(targetId);
     if (source && target) return collaborationRelation(source, target);
-    if (!source) return sourceId === targetId ? "self" : null;
+    if (!source && sourceId === targetId) return "self";
     for (const provider of this.providers) {
       const relation = provider.relation(sourceId, targetId);
       if (relation) return relation;

@@ -61,16 +61,28 @@ export class DeliveryQueue {
     delivery: CollaborationDeliveryRow;
     route: DeliveryRoute | null;
   } {
-    if (
-      !route &&
-      input.kind === "notice" &&
-      this.store.getTask(input.targetId)
-    ) {
+    if (!route && input.kind === "notice") {
       const messageId = randomUUID();
       const deliveryId = randomUUID();
       const createdAt = Date.now();
       const created = this.store.transaction(() => {
         input.mutate?.({ messageId, deliveryId });
+        const delegated = this.locator.enqueueOther({
+          messageId,
+          deliveryId,
+          sourceTaskId: input.sourceId,
+          targetTaskId: input.targetId,
+          kind: input.kind,
+          body: input.body,
+          createdAt,
+          updateStatus: input.updateStatus,
+          runtimeKind: input.runtimeKind,
+          reason: input.reason,
+        });
+        if (delegated) return delegated;
+        if (!this.store.getTask(input.targetId)) {
+          throw new Error("task_not_found");
+        }
         return this.store.enqueueDeliveryRows({
           messageId,
           deliveryId,

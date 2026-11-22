@@ -6,7 +6,6 @@ import {
   HOST_API_VERSION,
   parseHostDescription,
   parseHostEnvelope,
-  requestHash,
   type HostDescription,
 } from "./protocol.ts";
 import type { HostEnvelope, HostStore } from "./store.ts";
@@ -239,13 +238,19 @@ export class HostRegistry {
     });
   }
 
-  private unreachable(name: string, reason: string): void {
+  private unreachable(
+    name: string,
+    reason: string,
+    runtime?: HostRuntime,
+  ): void {
+    if (runtime && this.runtimes.get(name) !== runtime) return;
     this.states.set(name, { status: "unreachable", reason });
     this.logLine(`[hosts] ${name}: unreachable (${reason})`);
   }
 
   private reachable(name: string, runtime: HostRuntime): void {
     if (!runtime.description) return;
+    if (this.runtimes.get(name) !== runtime) return;
     this.states.set(name, {
       status: "ok",
       description: runtime.description,
@@ -257,8 +262,10 @@ export class HostRegistry {
     let backoff = MIN_RETRY_MS;
     while (!this.stopped) {
       let streamAbort: AbortController | undefined;
+      let activeRuntime: HostRuntime | undefined;
       try {
         const runtime = await this.resolve(name);
+        activeRuntime = runtime;
         const descriptionResponse = await this.request(runtime, "/api/v1/host");
         if (!descriptionResponse.ok) {
           throw new Error(`HTTP ${descriptionResponse.status}`);
@@ -306,8 +313,9 @@ export class HostRegistry {
         this.runtimes.set(name, runtime);
         this.reachable(name, runtime);
         this.logLine(`[hosts] ${name}: connected`);
-        backoff = MIN_RETRY_MS;
-        await this.readStream(name, runtime, streamResponse.body);
+        await this.readStream(name, runtime, streamResponse.body, () => {
+          backoff = MIN_RETRY_MS;
+        });
       } catch (error) {
         if (!this.isStopped()) {
           const safeReason =
@@ -316,7 +324,7 @@ export class HostRegistry {
               : isTimeoutError(error)
                 ? "connection timed out"
                 : "connection failed";
-          this.unreachable(name, safeReason);
+          this.unreachable(name, safeReason, activeRuntime);
         }
       } finally {
         streamAbort?.abort();
@@ -333,6 +341,7 @@ export class HostRegistry {
     name: string,
     runtime: HostRuntime,
     body: ReadableStream<Uint8Array>,
+    onReady: () => void,
   ): Promise<void> {
     const reader = body.getReader();
     const decoder = new TextDecoder();
@@ -365,6 +374,7 @@ export class HostRegistry {
             };
             if (!connected && data.type === "connected") {
               connected = true;
+              onReady();
               runtime.dirty = true;
               this.runPull(name, runtime);
               this.resumeEdges(runtime.credentialHash);
@@ -413,14 +423,14 @@ export class HostRegistry {
         const outcome = await this.pullPage(name, runtime);
         stalled = outcome === "stalled";
         this.reachable(name, runtime);
-        if (outcome === "drained") runtime.dirty = true;
+        if (outcome === "progress") runtime.dirty = true;
       }
     } catch {
       const retryMs = runtime.retryMs;
       if (!this.isStopped()) reschedule = true;
       runtime.retryMs = Math.min(retryMs * 2, MAX_RETRY_MS);
       runtime.pullRetryAt = this.now() + retryMs;
-      this.unreachable(name, "host request failed");
+      this.unreachable(name, "host request failed", runtime);
     } finally {
       runtime.pulling = false;
       runtime.retryMs = Math.min(runtime.retryMs, MAX_RETRY_MS);
@@ -437,7 +447,7 @@ export class HostRegistry {
   private async pullPage(
     name: string,
     runtime: HostRuntime,
-  ): Promise<"empty" | "drained" | "stalled"> {
+  ): Promise<"empty" | "progress" | "stalled"> {
     const response = await this.request(runtime, "/api/v1/host/messages");
     if (!response.ok) throw new Error(`inbox HTTP ${response.status}`);
     const body = (await response.json()) as { messages?: unknown };
@@ -447,43 +457,27 @@ export class HostRegistry {
       runtime.retryMs = MIN_RETRY_MS;
       return "empty";
     }
+    let progress = false;
     for (const envelope of messages) {
-      await this.acceptAndAck(name, runtime, envelope);
+      const result = await this.acceptAndAck(name, runtime, envelope);
+      if (result !== "skipped") progress = true;
     }
-    return this.store.hostReportPageStillQueued(
-      name,
-      runtime.credentialHash,
-      messages.map((message) => message.id),
-    )
-      ? "stalled"
-      : "drained";
+    return progress ? "progress" : "stalled";
   }
 
   private async acceptAndAck(
     name: string,
     runtime: HostRuntime,
     envelope: HostEnvelope,
-  ): Promise<void> {
-    if (this.ingest(name, runtime, envelope) === "unmatched") return;
-    try {
-      const ack = await this.request(
-        runtime,
-        `/api/v1/host/messages/${encodeURIComponent(envelope.id)}/ack`,
-        { method: "POST" },
-      );
-      if (!ack.ok) throw new Error(`ACK HTTP ${ack.status}`);
-    } catch (error) {
-      this.store.markHostReportAck(name, runtime.credentialHash, envelope.id);
-      throw error;
-    }
-    const recipient = this.store.markHostReportAck(
-      name,
-      runtime.credentialHash,
-      envelope.id,
+  ): Promise<"progress" | "skipped"> {
+    if (this.ingest(name, runtime, envelope) === "unmatched") return "skipped";
+    const ack = await this.request(
+      runtime,
+      `/api/v1/host/messages/${encodeURIComponent(envelope.id)}/ack`,
+      { method: "POST" },
     );
-    if (recipient) {
-      this.onLocalDelivery(recipient);
-    }
+    if (!ack.ok) throw new Error(`ACK HTTP ${ack.status}`);
+    return "progress";
   }
 
   private schedulePullRetry(
@@ -592,8 +586,7 @@ export class HostRegistry {
         if (!(await this.sendHostDispatch(next))) return;
       }
     } catch {
-      const edge = this.store.getHostEdge(edgeId);
-      if (edge) this.unreachable(edge.host_name, "host request failed");
+      // Individual request failures are classified in sendHostDispatch.
     } finally {
       this.edgeSends.delete(edgeId);
       const pending = this.store.nextHostDispatch(edgeId);
@@ -613,15 +606,21 @@ export class HostRegistry {
   private async sendHostDispatch(next: NextHostDispatch): Promise<boolean> {
     const runtime = this.runtimes.get(next.edge.host_name);
     if (runtime?.credentialHash !== next.edge.credential_hash) return false;
-    const response = await this.request(runtime, "/api/v1/host/messages", {
-      method: "POST",
-      body: JSON.stringify({
-        to: next.edge.remote_task_id,
-        messageId: next.message.id,
-        kind: "dispatch",
-        body: next.message.body,
-      }),
-    });
+    let response: Response;
+    try {
+      response = await this.request(runtime, "/api/v1/host/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          to: next.edge.remote_task_id,
+          messageId: next.message.id,
+          kind: "dispatch",
+          body: next.message.body,
+        }),
+      });
+    } catch (error) {
+      this.unreachable(next.edge.host_name, "host request failed", runtime);
+      throw error;
+    }
     if (response.status === HTTP_STATUS.ACCEPTED) {
       this.store.markHostDispatchHandedOff(next.delivery.id);
       this.edgeRetryMs.delete(next.edge.id);
@@ -655,6 +654,7 @@ export class HostRegistry {
     this.unreachable(
       next.edge.host_name,
       `host request HTTP ${response.status}`,
+      runtime,
     );
     return false;
   }
@@ -679,15 +679,4 @@ export class HostRegistry {
     timer.unref();
     this.edgeRetries.set(edgeId, timer);
   }
-}
-
-export function hostRequestHash(input: {
-  parentTaskId: string;
-  agent: string;
-  title: string;
-  cwd?: string;
-  model?: string;
-  thinking?: string;
-}): string {
-  return requestHash(input);
 }

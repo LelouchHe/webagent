@@ -55,8 +55,15 @@ test("behavior proof: two runtimes close create, dispatch, update, ACK, and wake
   ownerHostStore.onCommitted((taskId) => {
     void ownerTasks.drainCollaborationDeliveries(taskId);
   });
+  hubHostStore.onCommitted((taskId) => {
+    void hubTasks.drainCollaborationDeliveries(taskId);
+  });
   const ownerPrompts: Array<{ taskId: string; text: string }> = [];
   const hubPrompts: Array<{ taskId: string; text: string }> = [];
+  const hubBroadcasts: Array<{
+    runtimeMessage?: string;
+    role?: string;
+  }> = [];
   ownerTasks.attachExecutionBridge({
     ...mockBridgeStubs(),
     async prompt(taskId: string, text: string) {
@@ -68,6 +75,12 @@ test("behavior proof: two runtimes close create, dispatch, update, ACK, and wake
     async prompt(taskId: string, text: string) {
       hubPrompts.push({ taskId, text });
     },
+  });
+  hubTasks.setCollaborationBroadcast((event) => {
+    hubBroadcasts.push({
+      runtimeMessage: event.runtimeMessage,
+      role: event.role,
+    });
   });
   hubStore.createTask(
     "parent",
@@ -269,5 +282,13 @@ test("behavior proof: two runtimes close create, dispatch, update, ACK, and wake
           JSON.parse(event.data).kind === "task_outcome_notice",
       ).length,
     1,
+  );
+  assert.equal(
+    hubBroadcasts.some(
+      (event) =>
+        event.runtimeMessage === "task_outcome_notice" &&
+        event.role === "target",
+    ),
+    true,
   );
 });

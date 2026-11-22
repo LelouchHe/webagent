@@ -7,12 +7,23 @@ import test from "node:test";
 import { Store } from "../src/store.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
+import { HostStore } from "../src/host/store.ts";
+import { TaskLocator } from "../src/task-locator.ts";
 
 test("behavior proof: real MCP local paths do not exceed main SQL counts", async () => {
   const dir = mkdtempSync(join(tmpdir(), "webagent-host-local-sql-"));
   const store = new Store(dir);
   const root = store.ensureRootTask(dir);
-  const tasks = createTaskManager(store, dir, dir);
+  const hostStore = new HostStore(store);
+  const tasks = createTaskManager(
+    store,
+    dir,
+    dir,
+    undefined,
+    undefined,
+    "test-agent",
+    new TaskLocator(store, [hostStore]),
+  );
   store.createTask(
     "parent",
     dir,
@@ -30,6 +41,9 @@ test("behavior proof: real MCP local paths do not exceed main SQL counts", async
     "parent",
   );
   tasks.drainCollaborationDeliveries = async () => false;
+  tasks.onDeliveriesCommitted((delivery) => {
+    hostStore.deliveryCommitAction(delivery.deliveryId);
+  });
   const host = createMcpTaskToolHost({ store, tasks });
   const principal = (taskId: string) => {
     const lease = tasks.authority.leaseFor(taskId);
