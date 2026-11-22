@@ -35,8 +35,10 @@ or counters rather than instants (`ttl_hours`, `share_snapshot_seq`,
   - [host_received_dispatches](#host_received_dispatches)
   - [host_edges](#host_edges)
   - [host_dispatches](#host_dispatches)
+  - [host_wake_hints](#host_wake_hints)
   - [host_message_types](#host_message_types)
   - [host_report_receipts](#host_report_receipts)
+  - [host_report_acks](#host_report_acks)
   - [client_ops](#client_ops)
   - [recent_paths](#recent_paths)
   - [shares](#shares)
@@ -317,6 +319,17 @@ remote child. The delivery status remains the common upper-layer fact.
 | `created_at` | INTEGER NOT NULL | Unix milliseconds |
 | `ended_at` | INTEGER | Unix milliseconds |
 
+### `host_wake_hints`
+
+One conservative “a child may owe a report” fact per initiator edge. Transport
+rows remain independent, so a returned terminal report removes this hint but
+does not alter an unrelated pending POST.
+
+| Column | Type | Notes |
+|---|---|---|
+| `edge_id` | TEXT PRIMARY KEY | `host_edges.id` |
+| `created_at` | INTEGER NOT NULL | Enqueue time in unix milliseconds |
+
 ### `host_message_types`
 
 Persistent message classification for host outbox envelopes. Runtime notice
@@ -345,6 +358,22 @@ compaction.
 | `parent_task_id` | TEXT NOT NULL | Original local parent id |
 | `result` | TEXT NOT NULL | `queued` or `parent_deleted` |
 | `received_at` | INTEGER NOT NULL | Unix milliseconds |
+
+Primary key: `(host_name, credential_hash, owner_message_id)`.
+
+### `host_report_acks`
+
+Durable initiator fact that ACK was completed, or the response was lost after
+the ACK request was made. The latter protects an already-committed local
+delivery from restart stranding; a later owner GET remains harmless because the
+receipt and message id are deduplicated.
+
+| Column | Type | Notes |
+|---|---|---|
+| `host_name` | TEXT NOT NULL | Local host alias |
+| `credential_hash` | TEXT NOT NULL | Credential identity |
+| `owner_message_id` | TEXT NOT NULL | Owner-side `messages.id` |
+| `acked_at` | INTEGER NOT NULL | Local ACK outcome timestamp in unix milliseconds |
 
 Primary key: `(host_name, credential_hash, owner_message_id)`.
 

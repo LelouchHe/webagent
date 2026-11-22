@@ -8,6 +8,8 @@ import { Store } from "../src/store.ts";
 import { TaskLocator } from "../src/task-locator.ts";
 import { requestHash } from "../src/host-protocol.ts";
 import Database from "better-sqlite3";
+import { createTaskManager } from "../src/task-manager.ts";
+import { waitFor } from "./fixtures.ts";
 
 async function fixture(t: test.TestContext) {
   const dir = await mkdtemp(join(tmpdir(), "webagent-host-store-"));
@@ -139,6 +141,7 @@ test("behavior proof: external parent is queued and acked in the owner outbox", 
     status: "done",
     body: "finished",
     source,
+    reason: "settled",
   });
   const outbox = store.listHostOutbox(credentialHash);
   assert.deepEqual(
@@ -212,18 +215,20 @@ test("behavior proof: hub locator and report receipt use the persisted edge", as
   });
   assert.equal(duplicate.status, "conflict");
   const locator = new TaskLocator(store);
-  assert.equal(locator.relation(parent.id, remoteTaskId), "child");
+  const route = locator.route(parent.id, remoteTaskId);
+  assert.equal(route.relation, "child");
   assert.equal(store.getTask(remoteTaskId), undefined);
-  assert.deepEqual(locator.childrenOf(parent.id), [remoteTaskId]);
-  assert.equal(
-    locator.describe(remoteTaskId, parent.id)?.where,
-    "remote_child",
-  );
+  assert.equal(route.endpoint?.kind, "remote_child");
 
   const dispatched = store.createRemoteDispatch({
     parentTaskId: parent.id,
     edge: edge.edge,
-    body: "run",
+    body: "first",
+  });
+  const second = store.createRemoteDispatch({
+    parentTaskId: parent.id,
+    edge: edge.edge,
+    body: "second",
   });
   assert.equal(store.hasOpenHostDispatch(parent.id), true);
   assert.equal(
@@ -255,6 +260,16 @@ test("behavior proof: hub locator and report receipt use the persisted edge", as
     "duplicate",
   );
   assert.equal(store.hasOpenHostDispatch(parent.id), false);
+  assert.equal(store.getHostDispatch(second.delivery.id)?.state, "pending");
+  assert.equal(
+    store.getCollaborationDelivery(second.delivery.id)?.status,
+    "queued",
+  );
+  assert.equal(
+    store.nextHostDispatch(edge.edge.id)?.delivery.id,
+    second.delivery.id,
+  );
+  assert.equal(store.nextHostDispatch(edge.edge.id)?.message.body, "second");
 
   store.deleteTask(parent.id);
   assert.equal(
@@ -347,8 +362,10 @@ test("behavior proof: the additive host schema upgrades a 1bacca0-shaped Store t
 
   const oldShape = new Database(join(dir, "webagent.db"));
   for (const table of [
+    "host_report_acks",
     "host_report_receipts",
     "host_message_types",
+    "host_wake_hints",
     "host_dispatches",
     "host_received_dispatches",
     "host_edges",
@@ -375,4 +392,120 @@ test("behavior proof: the additive host schema upgrades a 1bacca0-shaped Store t
     "queued",
   );
   assert.equal(reopenedAgain.hasHostFacts(), false);
+});
+
+test("behavior proof: boot replay selects only a committed ACKed hub report", async (t) => {
+  const { dir, store, close } = await fixture(t);
+  const parent = store.createTask(randomUUID(), dir, "agent", "copilot");
+  const localTarget = store.createTask(
+    randomUUID(),
+    dir,
+    "agent",
+    "copilot",
+    randomUUID(),
+    parent.id,
+  );
+  store.createCollaborationMessage({
+    id: "unrelated-local",
+    deliveryId: "unrelated-local-delivery",
+    sourceTaskId: parent.id,
+    directTargetTaskId: localTarget.id,
+    sourceActor: "agent",
+    body: "local work",
+  });
+  const remoteTaskId = randomUUID();
+  const edge = store.createHostEdge({
+    parentTaskId: parent.id,
+    hostName: "mini",
+    remoteTaskId,
+    title: "remote",
+    credentialHash: "g".repeat(64),
+    createKey: "boot-edge",
+    requestHash: "boot-edge",
+    event: {
+      title: "remote",
+      body: "remote",
+      kind: "task_created_remote",
+      taskId: remoteTaskId,
+      taskTitle: "remote",
+      agentId: "copilot",
+      cwd: dir,
+      model: null,
+      thinking: null,
+    },
+  });
+  assert.ok(edge.edge);
+  const report = store.ingestHostReport({
+    hostName: "mini",
+    credentialHash: "g".repeat(64),
+    ownerMessageId: "acked-report",
+    ownerTaskId: remoteTaskId,
+    parentTaskId: parent.id,
+    kind: "blocked",
+    body: "needs input",
+  });
+  assert.equal(report.status, "queued");
+  store.markHostReportAck("mini", "g".repeat(64), "acked-report");
+  close();
+
+  const reopened = new Store(dir);
+  const tasks = createTaskManager(reopened, dir, dir);
+  const replayed: string[] = [];
+  tasks.drainCollaborationDeliveries = async (taskId: string) => {
+    replayed.push(taskId);
+    return true;
+  };
+  tasks.recoverPersistedDeliveries();
+  await waitFor(() => replayed.length > 0);
+  assert.deepEqual(replayed, [parent.id]);
+  assert.equal(
+    reopened.getCollaborationDelivery("unrelated-local-delivery")?.status,
+    "queued",
+  );
+  tasks.dispose();
+  reopened.close();
+
+  const ownerDir = await mkdtemp(join(tmpdir(), "webagent-owner-boot-"));
+  const owner = new Store(ownerDir);
+  const ownerRoot = owner.ensureRootTask(ownerDir);
+  const ownerLocal = owner.createTask(
+    randomUUID(),
+    ownerDir,
+    "agent",
+    "copilot",
+    randomUUID(),
+    ownerRoot.id,
+  );
+  owner.createCollaborationMessage({
+    id: "owner-local",
+    deliveryId: "owner-local-delivery",
+    sourceTaskId: ownerRoot.id,
+    directTargetTaskId: ownerLocal.id,
+    sourceActor: "agent",
+    body: "do not replay on owner boot",
+  });
+  const external = owner.createHostTask({
+    credentialHash: "h".repeat(64),
+    parentTaskId: randomUUID(),
+    createKey: "owner-boot",
+    requestHash: "owner-boot",
+    agentId: "copilot",
+    cwd: ownerDir,
+    title: "external",
+  });
+  assert.notEqual(external.status, "conflict");
+  owner.close();
+  const reopenedOwner = new Store(ownerDir);
+  const ownerTasks = createTaskManager(reopenedOwner, ownerDir, ownerDir);
+  const ownerReplays: string[] = [];
+  ownerTasks.drainCollaborationDeliveries = async (taskId: string) => {
+    ownerReplays.push(taskId);
+    return true;
+  };
+  ownerTasks.recoverPersistedDeliveries();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(ownerReplays, []);
+  ownerTasks.dispose();
+  reopenedOwner.close();
+  await rm(ownerDir, { recursive: true, force: true });
 });

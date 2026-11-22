@@ -30,22 +30,32 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/host-store.test.ts` (real SQLite, additive schema, two persisted endpoint directions)
   - behavior proof: owner create is idempotent by credential + `createKey`, conflicting payloads differ, dispatch ids map to one local message, and both facts survive Store reopen
   - behavior proof: R1's progress and typed update remain queued in the owner outbox; ACK is identity-bound and idempotent
+  - behavior proof: a terminal report consumes only the edge wake hint: an unrelated pending/backing-off dispatch remains queued and ordered
   - behavior proof: the initiator locator sees a remote child through task id alone, report receipt is deduplicated, and late reports terminate after the local parent is deleted
+  - behavior proof: startup replays only a committed ACKed hub report; an unrelated local delivery and an owner-only instance do not warm ACP
+  - behavior proof: the additive schema still upgrades a populated `main@1bacca0`-shaped database twice without reset
   - regression guard: archiving a local tree does not terminalize a delivery whose other endpoint is remote (mutation verified `failed` before the guard was restored)
 - `test/host-loop.test.ts` (two real Stores, TaskManagers, HTTP handler, SSE,
   persistent host client, and controllable ACP prompt callbacks) proves one
   transaction-to-transaction path: MCP remote create → task-id send → owner
-  dispatch handoff → `done` outbox → initiator GET/commit/ACK → P ACP wake
+  dispatch handoff → unarchive → MCP `done` outbox → initiator GET/commit/ACK
+  → P ACP wake; a second remote child proves runtime notice transcript/live
+  projection on the real SSE return path
 - `test/host-routes.test.ts` covers Bearer scope, cwd/create validation and
-  idempotency, dispatch payload idempotency, credential-bound ACK, and same-name
-  token reissue invalidating an old ticket
+  idempotency, replay before agent/cwd stat checks, `~` normalization, dispatch
+  payload idempotency, credential-bound ACK, and same-name token reissue
+  invalidating unredeemed tickets plus two already-open streams
 - `test/host-registry.test.ts` covers `!` token command timeout/redaction,
-  ordered per-edge POST, structured target-not-found removal, and `400`/`409`
-  terminalization without a notice
+  real HTTP socket rejection, `503` backoff/state, ordered per-edge POST,
+  `400`/`409` terminalization, atomic typed-404 edge/rows/notice, ACK loss,
+  and dirty hints that do not bypass an armed GET/ACK backoff
 - `test/host-account.test.ts` and `test/host-mcp.test.ts` cover external account
-  arming/settlement, `waiting` silence observation, repeated-turn `no_update`,
-  unarchive→archive watcher retention, and MCP `agent@host` creation followed
-  by send to the returned task id
+  arming versus archived fallback, `waiting` silence observation, repeated-turn
+  `no_update`, real fake-clock `no_activity` across unarchive→archive, and MCP
+  `agent@host` creation followed by send to the returned task id
+- `test/host-local-sql.test.ts` measures the production MCP local `list`, `send`,
+  and `update` paths: 6 / 14 / 19 prepared statements versus the measured
+  `ff346a2` baseline 6 / 14 / 20
 
 ### Multi-agent runtime
 

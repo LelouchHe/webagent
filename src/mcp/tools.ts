@@ -329,7 +329,7 @@ export function registerMcpTools(
           .nullable()
           .optional()
           .describe(
-            "Working directory; null or omission inherits the current Task",
+            "Working directory; local creation inherits the current Task, while agent@host omission uses the owner host default",
           ),
         agent: z
           .string()
@@ -348,7 +348,7 @@ export function registerMcpTools(
           .nullable()
           .optional()
           .describe(
-            "Model override; null or omission inherits the current Task",
+            "Model override; omitted local same-agent children inherit, while remote children use owner defaults",
           ),
         thinking: z
           .string()
@@ -358,7 +358,7 @@ export function registerMcpTools(
           .nullable()
           .optional()
           .describe(
-            "Thinking level override; null or omission inherits the current Task",
+            "Thinking override; omitted local same-agent children inherit, while remote children use owner defaults",
           ),
       },
     },

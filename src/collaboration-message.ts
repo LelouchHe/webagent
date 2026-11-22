@@ -53,6 +53,7 @@ export interface CollaborationSystemMessageInput extends CollaborationLabels {
   body: string;
   externalSourceHost?: string;
   externalTargetHost?: string;
+  externalSource?: boolean;
   /**
    * Which runtime message this is. Its presence is what makes the row a runtime
    * message: it selects the title, gives the row its own `kind`, and drops the
@@ -79,6 +80,7 @@ export type CollaborationSystemMessageData = {
   body: string;
   externalSourceHost?: string;
   externalTargetHost?: string;
+  externalSource?: boolean;
 };
 
 /**
@@ -122,6 +124,7 @@ export function buildCollaborationSystemMessage(
     ...(input.externalTargetHost
       ? { externalTargetHost: input.externalTargetHost }
       : {}),
+    ...(input.externalSource ? { externalSource: true } : {}),
   };
 }
 
@@ -143,6 +146,7 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
   deliveryFailureReason?: string;
   externalSourceHost?: string;
   externalTargetHost?: string;
+  externalSource?: boolean;
 }
 
 export interface CollaborationDeliverySnapshot {

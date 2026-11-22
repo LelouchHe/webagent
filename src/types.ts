@@ -394,6 +394,7 @@ export type AgentEvent =
       targetLabel?: string;
       externalSourceHost?: string;
       externalTargetHost?: string;
+      externalSource?: boolean;
     }
   | { type: "host_message_pending" }
   | {

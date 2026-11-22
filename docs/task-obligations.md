@@ -89,11 +89,13 @@ Turn boundaries are the only clock:
 4. A cancelled turn triggers nothing.
 
 For a remote child, `waiting` asks one `hasChildWakeSource(parentId)` fact:
-the host-side equivalent of an outstanding local child dispatch is persisted
-in `host_dispatches` from enqueue until a terminal typed update or runtime
-notice arrives. `202` transport success does not consume that source. A normal
-progress message does not consume it either. This is a conservative presence
-signal, not a mirror of the owner's account.
+the host-side equivalent of an outstanding local child dispatch is one
+`host_wake_hints` row from enqueue until a terminal typed update or runtime
+notice arrives. It is deliberately separate from `host_dispatches` transport
+state: consuming the hint does not terminalize another pending or retrying
+POST. `202` transport success does not consume the hint, and neither does a
+normal progress message. This is a conservative presence signal, not a mirror
+of the owner's account.
 
 The reminder is a runtime-injected turn asking for one typed update; its text
 is `handoffReminderText()` in [`src/task-manager.ts`](../src/task-manager.ts).
@@ -134,7 +136,9 @@ not close an account.
 
 For a remote-child POST, a structured authenticated `target_not_found` makes
 the initiating side produce one `target_removed`; every later pending row on
-that edge becomes a distinguishable terminal transport fact. `400` and `409`
+that edge becomes a distinguishable terminal transport fact. Edge removal,
+trigger/remaining row termination, wake-hint deletion, and the one local
+`target_removed` delivery commit in the same Store transaction. `400` and `409`
 are terminal without a target-removed notice. Authentication failures,
 server failures, malformed/unknown routes, and network loss remain retryable
 and produce no notice. A rejection of a report on the initiating side never

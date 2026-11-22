@@ -2,6 +2,7 @@ import type {
   CollaborationDeliveryRow,
   CollaborationMessageRow,
   Store,
+  TaskRow,
 } from "./store.ts";
 import type { TaskLocator } from "./task-locator.ts";
 import type { TaskEndpoint } from "./task-locator.ts";
@@ -36,11 +37,13 @@ export class DeliveryQueue {
     delivery: CollaborationDeliveryRow;
     relation: "parent" | "child";
     endpoint: TaskEndpoint;
+    source: TaskRow;
   } {
     const route =
       routeInput ?? this.locator.route(input.sourceId, input.targetId);
     const endpoint = route.endpoint;
     if (!endpoint) throw new Error("task_not_found");
+    if (!route.source) throw new Error("task_not_found");
     if (route.relation !== "parent" && route.relation !== "child") {
       throw new Error("target_not_allowed");
     }
@@ -81,7 +84,12 @@ export class DeliveryQueue {
       });
       this.hooks.notifyExternal(source.credential_hash);
     }
-    return { ...created, relation: route.relation, endpoint };
+    return {
+      ...created,
+      relation: route.relation,
+      endpoint,
+      source: route.source,
+    };
   }
 }
 import { randomUUID } from "node:crypto";
