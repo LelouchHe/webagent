@@ -53,22 +53,6 @@ WebAgent itself.
 - Keep capabilities independent, so each can be used, replaced, or removed
   without the others.
 
-## Keep it simple
-
-Solve the case a real path reaches; do not build for the one it cannot.
-
-- When a scenario needs an unusual composition, an unlikely interleaving, or a
-  caller that does not exist yet, record it in
-  [`docs/known-issues.md`](./docs/known-issues.md) with its closing condition
-  instead of adding machinery for it.
-- When a fix keeps producing new findings in the machinery it added, stop and
-  look for a simpler design — often removing that machinery — before adding
-  another guard.
-- Prefer deleting code to adding guards. Extract an abstraction when its
-  second caller arrives, not before.
-- Reviews follow the same rule: classify each finding by whether a real path
-  reaches it. An unreachable one is a known-limit candidate, not a defect.
-
 ## Required invariants
 
 - Bearer authentication is required. Public-route whitelist changes belong in

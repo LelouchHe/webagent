@@ -1,5 +1,3 @@
-import type { ObligationOutcomeFact } from "./obligation-outcomes.ts";
-
 /**
  * Directed dispatch closure.
  *
@@ -50,8 +48,8 @@ export interface ObligationControllerOptions {
    * delivery drain owns when the target actually receives it.
    */
   submitReminder: (sourceTaskId: string, targetTaskId: string) => void;
-  /** Hand one account fact to the outcome reducer. */
-  emitOutcome: (fact: ObligationOutcomeFact) => void;
+  /** Queue a runtime notice to the account's source and close the account. */
+  emitNotice: (notice: ObligationNotice) => void;
   /** No-activity threshold in milliseconds; defaults to {@link SILENCE_THRESHOLD_MS}. */
   silenceMs?: number;
   log?: (event: string, fields: Record<string, unknown>) => void;
@@ -183,13 +181,14 @@ export class ObligationController {
     this.schedule();
   }
 
-  /** Close an account after a delivery-failure fact reduced to closure. */
-  closeUnavailable(targetTaskId: string): void {
+  /** A dispatch to the target was not delivered: report and close. */
+  noteTargetUnavailable(targetTaskId: string, message?: string): void {
     const account = this.accounts.get(targetTaskId);
     if (!account) return;
     this.accounts.delete(targetTaskId);
     this.updated.delete(targetTaskId);
     this.watches.delete(targetTaskId);
+    this.emit(account, "target_removed", message);
     this.schedule();
   }
 
@@ -234,11 +233,7 @@ export class ObligationController {
           this.opts.submitReminder(account.sourceTaskId, targetTaskId);
         } else if (!account.stopped) {
           account.stopped = true;
-          this.emitOutcome({
-            kind: "repeated_unreported_turn",
-            sourceTaskId: account.sourceTaskId,
-            targetTaskId,
-          });
+          this.emit(account, "no_update");
         }
       }
     }
@@ -256,11 +251,7 @@ export class ObligationController {
     const account = this.accounts.get(taskId);
     if (account) {
       this.accounts.delete(taskId);
-      this.emitOutcome({
-        kind: "target_unavailable",
-        sourceTaskId: account.sourceTaskId,
-        targetTaskId: taskId,
-      });
+      this.emit(account, "target_removed");
     }
     for (const [targetTaskId, inbound] of [...this.accounts]) {
       if (inbound.sourceTaskId !== taskId) continue;
@@ -276,11 +267,7 @@ export class ObligationController {
     const account = this.accounts.get(targetTaskId);
     if (account?.sourceTaskId === sourceTaskId) {
       this.accounts.delete(targetTaskId);
-      this.emitOutcome({
-        kind: "target_unavailable",
-        sourceTaskId: account.sourceTaskId,
-        targetTaskId,
-      });
+      this.emit(account, "target_removed");
     }
     this.watches.delete(targetTaskId);
     this.updated.delete(targetTaskId);
@@ -361,22 +348,40 @@ export class ObligationController {
       const account = this.accounts.get(targetTaskId);
       if (!account) continue;
       watch.noticed = true;
-      this.emitOutcome({
-        kind: "silent_account",
-        sourceTaskId: account.sourceTaskId,
-        targetTaskId,
-        silenceMs: this.silenceMs,
-      });
+      this.emit(account, "no_activity");
     }
     this.schedule();
   }
 
-  private emitOutcome(fact: ObligationOutcomeFact): void {
-    this.opts.emitOutcome(fact);
+  private emit(
+    account: Account,
+    reason: ObligationNoticeReason,
+    message = noticeMessage(reason, this.silenceMs),
+  ): void {
+    this.opts.emitNotice({
+      reason,
+      sourceTaskId: account.sourceTaskId,
+      targetTaskId: account.targetTaskId,
+      message,
+    });
   }
 }
 
 export function formatSilence(ms: number): string {
   const minutes = ms / 60_000;
   return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
+export function noticeMessage(
+  reason: ObligationNoticeReason,
+  silenceMs = SILENCE_THRESHOLD_MS,
+): string {
+  switch (reason) {
+    case "no_update":
+      return "The target ended another turn without any task_update; the runtime stopped reminding.";
+    case "no_activity":
+      return `No agent activity for ${formatSilence(silenceMs)} while the account is open.`;
+    case "target_removed":
+      return "The target left this edge (deleted or archived); the account is gone.";
+  }
 }

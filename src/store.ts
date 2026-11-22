@@ -2903,46 +2903,6 @@ export class Store {
     return result;
   }
 
-  recordObligationNotice(notice: {
-    reason: string;
-    sourceTaskId: string;
-    targetTaskId: string;
-    message: string;
-  }): boolean {
-    if (!this.getTask(notice.sourceTaskId)) return false;
-    const target = this.getTaskIncludingDeleted(notice.targetTaskId);
-    const messageId = randomUUID();
-    this.saveEvent(
-      notice.sourceTaskId,
-      "task_outcome_notice",
-      {
-        messageId,
-        reason: notice.reason,
-        sourceTaskId: notice.sourceTaskId,
-        targetTaskId: notice.targetTaskId,
-        message: notice.message,
-      },
-      { from_ref: "system" },
-    );
-    const body = formatFieldBlock([
-      {
-        label: "target",
-        value: target?.title
-          ? `${target.title} (${notice.targetTaskId})`
-          : notice.targetTaskId,
-      },
-      { label: "message", value: notice.message },
-    ]);
-    this.createSystemDelivery({
-      messageId,
-      deliveryId: randomUUID(),
-      fromTaskId: notice.targetTaskId,
-      recipientTaskId: notice.sourceTaskId,
-      body,
-    });
-    return true;
-  }
-
   getCollaborationMessage(id: string): CollaborationMessageRow | undefined {
     return this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as
       CollaborationMessageRow | undefined;
