@@ -238,6 +238,10 @@ export interface CollaborationDeliveryRow {
   delivered_at: number | null;
   failed_at: number | null;
   failure_reason: string | null;
+  /** Runtime-only fact copied into the claim transaction for external dispatch. */
+  account_source_task_id?: string;
+  external_source_host?: string;
+  external_source_label?: string;
 }
 
 export interface CollaborationDeliveryStatusChange {
@@ -269,6 +273,64 @@ export interface CollaborationMessageInput {
   sourceActor: CollaborationActor;
   body: string;
   createdAt?: number;
+}
+
+export type HostMessageKind =
+  "collaboration" | "done" | "blocked" | "runtime_notice";
+
+export interface HostExternalSource {
+  task_id: string;
+  credential_hash: string;
+  parent_task_id: string;
+  create_key: string;
+  request_hash: string;
+  created_at: number;
+}
+
+export interface HostEdge {
+  id: string;
+  parent_task_id: string;
+  host_name: string;
+  remote_task_id: string;
+  display_title: string;
+  credential_hash: string;
+  create_key: string;
+  request_hash: string;
+  status: "active" | "removed" | "abandoned";
+  created_at: number;
+  ended_at: number | null;
+}
+
+export interface HostDispatch {
+  delivery_id: string;
+  edge_id: string;
+  state: "pending" | "handed_off" | "terminal";
+  ended_reason: string | null;
+  created_at: number;
+  ended_at: number | null;
+}
+
+export interface HostEnvelope {
+  id: string;
+  owner_task_id: string;
+  parent_task_id: string;
+  kind: HostMessageKind;
+  body: string;
+  runtime_kind?: string | null;
+  reason?: string | null;
+  queued_at: number;
+}
+
+export interface HostReportReceiptInput {
+  hostName: string;
+  credentialHash: string;
+  ownerMessageId: string;
+  ownerTaskId: string;
+  parentTaskId: string;
+  kind: HostMessageKind;
+  body: string;
+  runtimeKind?: string | null;
+  reason?: string | null;
 }
 
 /** share-plan §4.1 full row shape. */
@@ -413,6 +475,7 @@ export class Store {
   private readonly deliveryStatusObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
   > = [];
+  private hostFactsPresent = false;
   /**
    * Binding facts belong to the outermost successful commit, not to any one
    * recursive Store method. Every binding write registers its before/after
@@ -449,6 +512,12 @@ export class Store {
       this.db.pragma("foreign_keys = ON");
       this.assertSupportedSchema();
       this.initializeSchema();
+      this.hostFactsPresent =
+        this.db
+          .prepare(
+            "SELECT 1 FROM host_external_sources UNION ALL SELECT 1 FROM host_edges LIMIT 1",
+          )
+          .get() !== undefined;
       migrateTimestampsToMillis(this.db);
       this.migrateAgentSessionUniqueness();
       this.dropLegacyColumns();
@@ -937,6 +1006,82 @@ export class Store {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
         updated_at INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS host_external_sources (
+        task_id TEXT PRIMARY KEY,
+        credential_hash TEXT NOT NULL,
+        parent_task_id TEXT NOT NULL,
+        create_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE (credential_hash, create_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_host_external_sources_credential
+        ON host_external_sources (credential_hash);
+
+      CREATE TABLE IF NOT EXISTS host_received_dispatches (
+        credential_hash TEXT NOT NULL,
+        remote_message_id TEXT NOT NULL,
+        local_message_id TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        received_at INTEGER NOT NULL,
+        PRIMARY KEY (credential_hash, remote_message_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_host_received_dispatches_local
+        ON host_received_dispatches (local_message_id);
+
+      CREATE TABLE IF NOT EXISTS host_edges (
+        id TEXT PRIMARY KEY,
+        parent_task_id TEXT NOT NULL,
+        host_name TEXT NOT NULL,
+        remote_task_id TEXT NOT NULL,
+        display_title TEXT NOT NULL,
+        credential_hash TEXT NOT NULL,
+        create_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('active', 'removed', 'abandoned')),
+        created_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        UNIQUE (parent_task_id, host_name, credential_hash, create_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_host_edges_parent_status
+        ON host_edges (parent_task_id, status);
+
+      CREATE TABLE IF NOT EXISTS host_dispatches (
+        delivery_id TEXT PRIMARY KEY,
+        edge_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (
+          state IN ('pending', 'handed_off', 'terminal')
+        ),
+        ended_reason TEXT,
+        created_at INTEGER NOT NULL,
+        ended_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_host_dispatches_edge_state
+        ON host_dispatches (edge_id, state);
+
+      CREATE TABLE IF NOT EXISTS host_message_types (
+        message_id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (
+          kind IN ('collaboration', 'done', 'blocked', 'runtime_notice')
+        ),
+        runtime_kind TEXT,
+        reason TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS host_report_receipts (
+        host_name TEXT NOT NULL,
+        credential_hash TEXT NOT NULL,
+        owner_message_id TEXT NOT NULL,
+        local_message_id TEXT,
+        edge_id TEXT NOT NULL,
+        parent_task_id TEXT NOT NULL,
+        result TEXT NOT NULL CHECK (result IN ('queued', 'parent_deleted')),
+        received_at INTEGER NOT NULL,
+        PRIMARY KEY (host_name, credential_hash, owner_message_id)
       );
     `);
   }
@@ -1888,9 +2033,13 @@ export class Store {
              AND d.message_id IN (
                SELECT m.id FROM messages m
                WHERE (
+                    EXISTS (SELECT 1 FROM tasks s WHERE s.id = m.source_task_id)
+                    AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = m.direct_target_task_id)
+                    AND (
                    (m.source_task_id IN (SELECT id FROM subtree))
                    <> (m.direct_target_task_id IN (SELECT id FROM subtree))
-                 )
+                    )
+                   )
              )`,
         )
         .all(seedTaskId) as Array<{ id: string }>
@@ -2949,6 +3098,1077 @@ export class Store {
     return result;
   }
 
+  hasHostFacts(): boolean {
+    return this.hostFactsPresent;
+  }
+
+  getHostExternalSource(taskId: string): HostExternalSource | undefined {
+    return this.db
+      .prepare("SELECT * FROM host_external_sources WHERE task_id = ?")
+      .get(taskId) as HostExternalSource | undefined;
+  }
+
+  listHostExternalTaskIds(): string[] {
+    return (
+      this.db
+        .prepare("SELECT task_id FROM host_external_sources")
+        .all() as Array<{ task_id: string }>
+    ).map((row) => row.task_id);
+  }
+
+  createHostTask(input: {
+    credentialHash: string;
+    parentTaskId: string;
+    createKey: string;
+    requestHash: string;
+    agentId: string;
+    cwd: string;
+    title: string;
+    model?: string | null;
+    thinking?: string | null;
+  }):
+    { status: "created" | "reused"; taskId: string } | { status: "conflict" } {
+    const existing = this.db
+      .prepare(
+        `SELECT task_id, request_hash FROM host_external_sources
+         WHERE credential_hash = ? AND create_key = ?`,
+      )
+      .get(input.credentialHash, input.createKey) as
+      { task_id: string; request_hash: string } | undefined;
+    if (existing) {
+      if (existing.request_hash !== input.requestHash) {
+        return { status: "conflict" };
+      }
+      return { status: "reused", taskId: existing.task_id };
+    }
+    if (
+      this.getTaskIncludingDeleted(input.parentTaskId) ||
+      this.db
+        .prepare("SELECT 1 FROM host_edges WHERE remote_task_id = ? LIMIT 1")
+        .get(input.parentTaskId)
+    ) {
+      return { status: "conflict" };
+    }
+    const taskId = randomUUID();
+    const now = Date.now();
+    this.writeBindings(() => {
+      if (
+        this.getTaskIncludingDeleted(input.parentTaskId) ||
+        this.db
+          .prepare("SELECT 1 FROM host_edges WHERE remote_task_id = ? LIMIT 1")
+          .get(input.parentTaskId)
+      ) {
+        return;
+      }
+      if (
+        this.getTaskIncludingDeleted(taskId) ||
+        this.db
+          .prepare("SELECT 1 FROM host_edges WHERE remote_task_id = ? LIMIT 1")
+          .get(taskId)
+      ) {
+        throw new Error("host_task_id_conflict");
+      }
+      const duplicate = this.db
+        .prepare(
+          `SELECT task_id, request_hash FROM host_external_sources
+           WHERE credential_hash = ? AND create_key = ?`,
+        )
+        .get(input.credentialHash, input.createKey) as
+        { task_id: string; request_hash: string } | undefined;
+      if (duplicate) return;
+      this.db
+        .prepare(
+          `INSERT INTO tasks
+           (id, cwd, title, workflow_status, parent_id, model, mode,
+            reasoning_effort, source, created_at, last_active_at)
+           VALUES (?, ?, ?, 'idle', NULL, ?, 'agent', ?, 'host', ?, ?)`,
+        )
+        .run(
+          taskId,
+          canonicalCwd(input.cwd),
+          input.title,
+          input.model ?? null,
+          input.thinking ?? null,
+          now,
+          now,
+        );
+      this.insertBindingRow(taskId, input.agentId, emptyExecutionSlot(taskId));
+      this.collectBindingChange(taskId, null);
+      this.db
+        .prepare(
+          `INSERT INTO host_external_sources
+           (task_id, credential_hash, parent_task_id, create_key, request_hash, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          taskId,
+          input.credentialHash,
+          input.parentTaskId,
+          input.createKey,
+          input.requestHash,
+          now,
+        );
+      this.saveEvent(
+        taskId,
+        "system_message",
+        {
+          kind: "task_created_host",
+          title: "Remote task created",
+          body: `Parent task: ${input.parentTaskId}`,
+          externalParentTaskId: input.parentTaskId,
+        },
+        { from_ref: "system" },
+      );
+    });
+    const created = this.db
+      .prepare(
+        `SELECT task_id, request_hash FROM host_external_sources
+         WHERE credential_hash = ? AND create_key = ?`,
+      )
+      .get(input.credentialHash, input.createKey) as
+      | {
+          task_id: string;
+          request_hash: string;
+        }
+      | undefined;
+    if (!created) return { status: "conflict" };
+    this.hostFactsPresent = true;
+    if (created.request_hash !== input.requestHash)
+      return { status: "conflict" };
+    return {
+      status: created.task_id === taskId ? "created" : "reused",
+      taskId: created.task_id,
+    };
+  }
+
+  receiveHostDispatch(input: {
+    credentialHash: string;
+    remoteMessageId: string;
+    requestHash: string;
+    targetTaskId: string;
+    body: string;
+  }):
+    | {
+        status: "accepted";
+        localMessageId: string;
+        message?: CollaborationMessageRow;
+        delivery?: CollaborationDeliveryRow;
+      }
+    | { status: "conflict" | "target_not_found" | "forbidden" } {
+    const existing = this.db
+      .prepare(
+        `SELECT local_message_id, request_hash FROM host_received_dispatches
+         WHERE credential_hash = ? AND remote_message_id = ?`,
+      )
+      .get(input.credentialHash, input.remoteMessageId) as
+      { local_message_id: string; request_hash: string } | undefined;
+    if (existing) {
+      return existing.request_hash === input.requestHash
+        ? { status: "accepted", localMessageId: existing.local_message_id }
+        : { status: "conflict" };
+    }
+    const task = this.getTaskIncludingDeleted(input.targetTaskId);
+    const source = this.getHostExternalSource(input.targetTaskId);
+    if (task?.deleted_at !== null) {
+      return { status: "target_not_found" };
+    }
+    if (
+      source?.credential_hash !== input.credentialHash ||
+      source.task_id === source.parent_task_id
+    ) {
+      return { status: "forbidden" };
+    }
+    const localMessageId = randomUUID();
+    const deliveryId = randomUUID();
+    const now = Date.now();
+    const created = this.db.transaction(() => {
+      const duplicate = this.db
+        .prepare(
+          `SELECT local_message_id, request_hash FROM host_received_dispatches
+           WHERE credential_hash = ? AND remote_message_id = ?`,
+        )
+        .get(input.credentialHash, input.remoteMessageId) as
+        { local_message_id: string; request_hash: string } | undefined;
+      if (duplicate) {
+        return duplicate.request_hash === input.requestHash
+          ? {
+              status: "accepted" as const,
+              localMessageId: duplicate.local_message_id,
+            }
+          : { status: "conflict" as const };
+      }
+      this.db
+        .prepare(
+          `INSERT INTO messages
+           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+           VALUES (?, ?, ?, 'agent', ?, ?)`,
+        )
+        .run(
+          localMessageId,
+          source.parent_task_id,
+          input.targetTaskId,
+          input.body,
+          now,
+        );
+      this.db
+        .prepare(
+          `INSERT INTO message_projections
+           (message_id, task_id, role, created_at)
+           VALUES (?, ?, 'target', ?)`,
+        )
+        .run(localMessageId, input.targetTaskId, now);
+      this.db
+        .prepare(
+          `INSERT INTO deliveries
+           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
+           VALUES (?, ?, ?, ?, 'queued', ?)`,
+        )
+        .run(
+          deliveryId,
+          localMessageId,
+          input.targetTaskId,
+          `${localMessageId}:${input.targetTaskId}`,
+          now,
+        );
+      this.db
+        .prepare(
+          `INSERT INTO host_received_dispatches
+           (credential_hash, remote_message_id, local_message_id, request_hash, received_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.credentialHash,
+          input.remoteMessageId,
+          localMessageId,
+          input.requestHash,
+          now,
+        );
+      return {
+        status: "accepted" as const,
+        localMessageId,
+        message: this.getCollaborationMessage(localMessageId)!,
+        delivery: this.getCollaborationDelivery(deliveryId)!,
+      };
+    })();
+    return created;
+  }
+
+  getHostEdge(id: string): HostEdge | undefined {
+    return this.db.prepare("SELECT * FROM host_edges WHERE id = ?").get(id) as
+      HostEdge | undefined;
+  }
+
+  findHostEdge(input: {
+    hostName: string;
+    credentialHash: string;
+    remoteTaskId: string;
+    parentTaskId: string;
+  }): HostEdge | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM host_edges
+         WHERE host_name = ? AND credential_hash = ?
+           AND remote_task_id = ? AND parent_task_id = ?
+         ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(
+        input.hostName,
+        input.credentialHash,
+        input.remoteTaskId,
+        input.parentTaskId,
+      ) as HostEdge | undefined;
+  }
+
+  findHostEdgeForParent(
+    targetTaskId: string,
+    parentTaskId: string,
+  ): HostEdge | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM host_edges
+         WHERE remote_task_id = ? AND parent_task_id = ? AND status = 'active'
+         ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      )
+      .get(targetTaskId, parentTaskId) as HostEdge | undefined;
+  }
+
+  listHostEdgesForParent(parentTaskId: string): HostEdge[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM host_edges
+         WHERE parent_task_id = ? AND status = 'active'
+         ORDER BY display_title, remote_task_id`,
+      )
+      .all(parentTaskId) as HostEdge[];
+  }
+
+  siblingTitleExists(parentTaskId: string, title: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 FROM tasks
+           WHERE parent_id = ? AND deleted_at IS NULL AND title = ?
+           UNION ALL
+           SELECT 1 FROM host_edges
+           WHERE parent_task_id = ? AND status = 'active' AND display_title = ?
+           LIMIT 1`,
+        )
+        .get(parentTaskId, title, parentTaskId, title) !== undefined
+    );
+  }
+
+  createHostEdge(input: {
+    parentTaskId: string;
+    hostName: string;
+    remoteTaskId: string;
+    title: string;
+    credentialHash: string;
+    createKey: string;
+    requestHash: string;
+    event: {
+      title: string;
+      body: string;
+      kind: string;
+      taskId: string;
+      taskTitle: string;
+      agentId: string;
+      cwd: string;
+      model: string | null;
+      thinking: string | null;
+    };
+  }): { status: "created" | "conflict"; edge: HostEdge | null } {
+    const id = randomUUID();
+    const now = Date.now();
+    const created = this.db.transaction(() => {
+      const parent = this.getTask(input.parentTaskId);
+      if (!parent) throw new Error("parent_not_found");
+      if (this.getTaskIncludingDeleted(input.remoteTaskId)) {
+        throw new Error("host_task_id_conflicts_with_local");
+      }
+      if (this.getHostExternalSource(input.remoteTaskId)) {
+        throw new Error("host_task_id_conflicts_with_external_parent");
+      }
+      const ownedElsewhere = this.db
+        .prepare(
+          `SELECT 1 FROM host_edges
+             WHERE remote_task_id = ?
+               AND NOT (
+                 host_name = ? AND credential_hash = ? AND
+                 parent_task_id = ? AND create_key = ?
+               )
+             LIMIT 1`,
+        )
+        .get(
+          input.remoteTaskId,
+          input.hostName,
+          input.credentialHash,
+          input.parentTaskId,
+          input.createKey,
+        );
+      if (ownedElsewhere) {
+        return { status: "conflict" as const, edge: null };
+      }
+      const existing = this.db
+        .prepare(
+          `SELECT * FROM host_edges
+           WHERE parent_task_id = ? AND host_name = ?
+             AND credential_hash = ? AND create_key = ?`,
+        )
+        .get(
+          input.parentTaskId,
+          input.hostName,
+          input.credentialHash,
+          input.createKey,
+        ) as HostEdge | undefined;
+      if (existing) {
+        if (existing.request_hash !== input.requestHash) {
+          return { status: "conflict" as const, edge: existing };
+        }
+        return {
+          status: "created" as const,
+          edge: existing,
+        };
+      }
+      if (this.siblingTitleExists(input.parentTaskId, input.title)) {
+        return { status: "conflict" as const, edge: null };
+      }
+      this.db
+        .prepare(
+          `INSERT INTO host_edges
+           (id, parent_task_id, host_name, remote_task_id, display_title,
+            credential_hash, create_key, request_hash, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+        )
+        .run(
+          id,
+          input.parentTaskId,
+          input.hostName,
+          input.remoteTaskId,
+          input.title,
+          input.credentialHash,
+          input.createKey,
+          input.requestHash,
+          now,
+        );
+      this.saveEvent(
+        input.parentTaskId,
+        "system_message",
+        {
+          ...input.event,
+          sourceTaskId: input.parentTaskId,
+          targetTaskId: input.remoteTaskId,
+          externalHost: input.hostName,
+        },
+        { from_ref: "agent" },
+      );
+      return {
+        status: "created" as const,
+        edge: this.getHostEdge(id)!,
+      };
+    })();
+    if (created.status === "created") this.hostFactsPresent = true;
+    return created;
+  }
+
+  private insertHostOutboundMessage(input: {
+    sourceTaskId: string;
+    targetTaskId: string;
+    sourceActor: CollaborationActor;
+    body: string;
+    kind: HostMessageKind;
+    runtimeKind?: string | null;
+    reason?: string | null;
+    writeSourceEvent?: boolean;
+    projectSource?: boolean;
+    sourceLabel?: string;
+    targetLabel?: string;
+  }): {
+    message: CollaborationMessageRow;
+    delivery: CollaborationDeliveryRow;
+  } {
+    const messageId = randomUUID();
+    const deliveryId = randomUUID();
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO messages
+         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        messageId,
+        input.sourceTaskId,
+        input.targetTaskId,
+        input.sourceActor,
+        input.body,
+        now,
+      );
+    if (input.projectSource !== false) {
+      this.db
+        .prepare(
+          `INSERT INTO message_projections
+           (message_id, task_id, role, created_at)
+           VALUES (?, ?, 'source', ?)`,
+        )
+        .run(messageId, input.sourceTaskId, now);
+    }
+    this.db
+      .prepare(
+        `INSERT INTO deliveries
+         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
+         VALUES (?, ?, ?, ?, 'queued', ?)`,
+      )
+      .run(
+        deliveryId,
+        messageId,
+        input.targetTaskId,
+        `${messageId}:${input.targetTaskId}`,
+        now,
+      );
+    this.db
+      .prepare(
+        `INSERT INTO host_message_types
+         (message_id, kind, runtime_kind, reason) VALUES (?, ?, ?, ?)`,
+      )
+      .run(
+        messageId,
+        input.kind,
+        input.runtimeKind ?? null,
+        input.reason ?? null,
+      );
+    if (input.writeSourceEvent) {
+      this.saveEvent(
+        input.sourceTaskId,
+        "system_message",
+        buildCollaborationSystemMessage({
+          messageId,
+          sourceTaskId: input.sourceTaskId,
+          sourceLabel:
+            input.sourceLabel ??
+            this.getTaskIncludingDeleted(input.sourceTaskId)?.title ??
+            input.sourceTaskId.slice(0, 8),
+          targetTaskId: input.targetTaskId,
+          targetLabel: input.targetLabel ?? input.targetTaskId.slice(0, 8),
+          role: "source",
+          body: input.body,
+          ...(input.kind === "runtime_notice"
+            ? { runtimeMessage: "task_outcome_notice" as const }
+            : {}),
+        }),
+        { from_ref: `msg:${messageId}` },
+      );
+    }
+    return {
+      message: this.getCollaborationMessage(messageId)!,
+      delivery: this.getCollaborationDelivery(deliveryId)!,
+    };
+  }
+
+  createHostAgentMessage(input: {
+    sourceTaskId: string;
+    source: HostExternalSource;
+    body: string;
+  }): { message: CollaborationMessageRow; delivery: CollaborationDeliveryRow } {
+    this.requireLiveTask(input.sourceTaskId);
+    return this.db.transaction(() =>
+      this.insertHostOutboundMessage({
+        sourceTaskId: input.sourceTaskId,
+        targetTaskId: input.source.parent_task_id,
+        sourceActor: "agent",
+        body: input.body,
+        kind: "collaboration",
+        writeSourceEvent: true,
+        targetLabel: input.source.parent_task_id,
+      }),
+    )();
+  }
+
+  recordHostWorkflowUpdate(input: {
+    taskId: string;
+    status: Extract<WorkflowStatus, "blocked" | "done">;
+    body: string;
+    source: HostExternalSource;
+  }): { collaborationMessageId: string } {
+    return this.db.transaction(() => {
+      const task = this.requireLiveTask(input.taskId);
+      this.db
+        .prepare("UPDATE tasks SET workflow_status = ? WHERE id = ?")
+        .run(input.status, input.taskId);
+      this.saveEvent(
+        task.id,
+        "task_update",
+        {
+          status: input.status,
+          body: input.body,
+          reason: "settled",
+          sourceTaskId: task.id,
+          targetTaskId: input.source.parent_task_id,
+          externalParent: true,
+        },
+        { from_ref: "agent" },
+      );
+      const created = this.insertHostOutboundMessage({
+        sourceTaskId: input.taskId,
+        targetTaskId: input.source.parent_task_id,
+        sourceActor: "agent",
+        body: `Task status: ${input.status}\n${input.body}`,
+        kind: input.status,
+        writeSourceEvent: true,
+        targetLabel: input.source.parent_task_id,
+      });
+      return { collaborationMessageId: created.message.id };
+    })();
+  }
+
+  createHostRuntimeNotice(input: {
+    sourceTaskId: string;
+    source: HostExternalSource;
+    reason: string;
+    body: string;
+  }): CollaborationMessageRow {
+    return this.db.transaction(() => {
+      const sourceExists = this.getTaskIncludingDeleted(input.sourceTaskId);
+      if (sourceExists) {
+        this.saveEvent(
+          input.sourceTaskId,
+          "task_outcome_notice",
+          {
+            messageId: "",
+            reason: input.reason,
+            sourceTaskId: input.sourceTaskId,
+            targetTaskId: input.sourceTaskId,
+            message: input.body,
+            externalParentTaskId: input.source.parent_task_id,
+          },
+          { from_ref: "system" },
+        );
+      }
+      const created = this.insertHostOutboundMessage({
+        sourceTaskId: input.sourceTaskId,
+        targetTaskId: input.source.parent_task_id,
+        sourceActor: "system",
+        body: input.body,
+        kind: "runtime_notice",
+        runtimeKind: "task_outcome_notice",
+        reason: input.reason,
+        projectSource: sourceExists !== undefined,
+      });
+      if (sourceExists) {
+        this.db
+          .prepare(
+            `UPDATE events SET data = json_set(data, '$.messageId', ?)
+             WHERE task_id = ? AND id = (
+               SELECT MAX(id) FROM events
+               WHERE task_id = ? AND type = 'task_outcome_notice'
+             )`,
+          )
+          .run(created.message.id, input.sourceTaskId, input.sourceTaskId);
+      }
+      return created.message;
+    })();
+  }
+
+  listHostOutbox(credentialHash: string, limit = 100): HostEnvelope[] {
+    return this.db
+      .prepare(
+        `SELECT m.id, m.source_task_id AS owner_task_id,
+                m.direct_target_task_id AS parent_task_id,
+                mt.kind, m.body, mt.runtime_kind, mt.reason, d.queued_at
+         FROM deliveries d
+         JOIN messages m ON m.id = d.message_id
+         JOIN host_message_types mt ON mt.message_id = m.id
+         JOIN host_external_sources es
+           ON es.task_id = m.source_task_id
+          AND es.parent_task_id = m.direct_target_task_id
+         WHERE es.credential_hash = ? AND d.status = 'queued'
+         ORDER BY d.queued_at, d.rowid
+         LIMIT ?`,
+      )
+      .all(credentialHash, limit) as HostEnvelope[];
+  }
+
+  ackHostMessage(
+    credentialHash: string,
+    messageId: string,
+  ): { status: "acked" | "not_found" | "forbidden" } {
+    const row = this.db
+      .prepare(
+        `SELECT d.id AS delivery_id, es.credential_hash
+         FROM deliveries d
+         JOIN messages m ON m.id = d.message_id
+         JOIN host_external_sources es
+           ON es.task_id = m.source_task_id
+          AND es.parent_task_id = m.direct_target_task_id
+         WHERE m.id = ? LIMIT 1`,
+      )
+      .get(messageId) as
+      { delivery_id: string; credential_hash: string } | undefined;
+    if (!row) return { status: "not_found" };
+    if (row.credential_hash !== credentialHash) return { status: "forbidden" };
+    this.db
+      .prepare(
+        `UPDATE deliveries
+         SET status = 'delivered', delivered_at = COALESCE(delivered_at, ?)
+         WHERE id = ? AND status = 'queued'`,
+      )
+      .run(Date.now(), row.delivery_id);
+    this.broadcastDeliveryStatus([row.delivery_id]);
+    return { status: "acked" };
+  }
+
+  createRemoteDispatch(input: {
+    parentTaskId: string;
+    edge: HostEdge;
+    body: string;
+  }): { message: CollaborationMessageRow; delivery: CollaborationDeliveryRow } {
+    return this.db.transaction(() => {
+      const parent = this.requireLiveTask(input.parentTaskId);
+      if (
+        input.edge.parent_task_id !== parent.id ||
+        input.edge.status !== "active"
+      ) {
+        throw new Error("target_not_allowed");
+      }
+      const messageId = randomUUID();
+      const deliveryId = randomUUID();
+      const now = Date.now();
+      this.db
+        .prepare(
+          `INSERT INTO messages
+           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+           VALUES (?, ?, ?, 'agent', ?, ?)`,
+        )
+        .run(messageId, parent.id, input.edge.remote_task_id, input.body, now);
+      this.db
+        .prepare(
+          `INSERT INTO message_projections
+           (message_id, task_id, role, created_at)
+           VALUES (?, ?, 'source', ?)`,
+        )
+        .run(messageId, parent.id, now);
+      this.saveEvent(
+        parent.id,
+        "system_message",
+        buildCollaborationSystemMessage({
+          messageId,
+          sourceTaskId: parent.id,
+          sourceLabel: parent.title ?? parent.id,
+          targetTaskId: input.edge.remote_task_id,
+          targetLabel: input.edge.display_title,
+          role: "source",
+          body: input.body,
+          externalTargetHost: input.edge.host_name,
+        }),
+        { from_ref: `msg:${messageId}` },
+      );
+      this.db
+        .prepare(
+          `INSERT INTO deliveries
+           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
+           VALUES (?, ?, ?, ?, 'queued', ?)`,
+        )
+        .run(
+          deliveryId,
+          messageId,
+          input.edge.remote_task_id,
+          `${messageId}:${input.edge.remote_task_id}`,
+          now,
+        );
+      this.db
+        .prepare(
+          `INSERT INTO host_dispatches
+           (delivery_id, edge_id, state, created_at)
+           VALUES (?, ?, 'pending', ?)`,
+        )
+        .run(deliveryId, input.edge.id, now);
+      this.db
+        .prepare(
+          `INSERT INTO host_message_types
+           (message_id, kind, runtime_kind, reason)
+           VALUES (?, 'collaboration', NULL, NULL)`,
+        )
+        .run(messageId);
+      return {
+        message: this.getCollaborationMessage(messageId)!,
+        delivery: this.getCollaborationDelivery(deliveryId)!,
+      };
+    })();
+  }
+
+  nextHostDispatch(edgeId: string):
+    | {
+        dispatch: HostDispatch;
+        edge: HostEdge;
+        delivery: CollaborationDeliveryRow;
+        message: CollaborationMessageRow;
+      }
+    | undefined {
+    const dispatch = this.db
+      .prepare(
+        `SELECT hd.* FROM host_dispatches hd
+         JOIN deliveries d ON d.id = hd.delivery_id
+         WHERE hd.edge_id = ? AND hd.state = 'pending'
+         ORDER BY d.queued_at, d.rowid LIMIT 1`,
+      )
+      .get(edgeId) as HostDispatch | undefined;
+    if (!dispatch) return undefined;
+    const edge = this.getHostEdge(edgeId);
+    const delivery = this.getCollaborationDelivery(dispatch.delivery_id);
+    if (!edge || !delivery) return undefined;
+    const message = this.getCollaborationMessage(delivery.message_id);
+    if (!message) return undefined;
+    return { dispatch, edge, delivery, message };
+  }
+
+  markHostDispatchHandedOff(deliveryId: string): void {
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE host_dispatches SET state = 'handed_off'
+           WHERE delivery_id = ? AND state = 'pending'`,
+        )
+        .run(deliveryId);
+      this.db
+        .prepare(
+          `UPDATE deliveries SET status = 'delivered', delivered_at = ?
+           WHERE id = ? AND status = 'queued'`,
+        )
+        .run(Date.now(), deliveryId);
+    })();
+    this.broadcastDeliveryStatus([deliveryId]);
+  }
+
+  finishHostDispatch(deliveryId: string, reason: string): void {
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE host_dispatches
+           SET state = 'terminal', ended_reason = ?, ended_at = ?
+           WHERE delivery_id = ?`,
+        )
+        .run(reason, Date.now(), deliveryId);
+      this.db
+        .prepare(
+          `UPDATE deliveries
+           SET status = 'failed', failed_at = ?, failure_reason = ?, delivered_at = NULL
+           WHERE id = ? AND status = 'queued'`,
+        )
+        .run(Date.now(), reason, deliveryId);
+    })();
+    this.broadcastDeliveryStatus([deliveryId]);
+  }
+
+  markHostEdgeRemoved(edgeId: string, reportFailureDeliveryId: string): void {
+    const otherIds: string[] = [];
+    this.db.transaction(() => {
+      const now = Date.now();
+      this.db
+        .prepare(
+          `UPDATE host_edges SET status = 'removed', ended_at = ?
+           WHERE id = ? AND status = 'active'`,
+        )
+        .run(now, edgeId);
+      this.db
+        .prepare(
+          `UPDATE host_dispatches
+           SET state = 'terminal', ended_reason = 'target_removed_edge', ended_at = ?
+           WHERE edge_id = ? AND state IN ('pending', 'handed_off')
+             AND delivery_id != ?`,
+        )
+        .run(now, edgeId, reportFailureDeliveryId);
+      this.db
+        .prepare(
+          `UPDATE deliveries SET status = 'failed', failed_at = ?,
+               failure_reason = 'target_removed_edge'
+           WHERE id IN (
+             SELECT delivery_id FROM host_dispatches
+             WHERE edge_id = ? AND delivery_id != ?
+           ) AND status = 'queued'`,
+        )
+        .run(now, edgeId, reportFailureDeliveryId);
+      for (const row of this.db
+        .prepare(
+          `SELECT delivery_id FROM host_dispatches
+           WHERE edge_id = ? AND ended_reason = 'target_removed_edge'
+             AND delivery_id != ?`,
+        )
+        .all(edgeId, reportFailureDeliveryId) as Array<{
+        delivery_id: string;
+      }>) {
+        otherIds.push(row.delivery_id);
+      }
+    })();
+    this.broadcastDeliveryStatus(otherIds);
+  }
+
+  getHostDispatch(deliveryId: string): HostDispatch | undefined {
+    return this.db
+      .prepare("SELECT * FROM host_dispatches WHERE delivery_id = ?")
+      .get(deliveryId) as HostDispatch | undefined;
+  }
+
+  hasOpenHostDispatch(parentTaskId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 FROM host_dispatches hd
+           JOIN host_edges e ON e.id = hd.edge_id
+           WHERE e.parent_task_id = ? AND e.status = 'active'
+             AND hd.state IN ('pending', 'handed_off')
+           LIMIT 1`,
+        )
+        .get(parentTaskId) !== undefined
+    );
+  }
+
+  isHostReportMessage(messageId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 FROM host_report_receipts
+           WHERE local_message_id = ? LIMIT 1`,
+        )
+        .get(messageId) !== undefined
+    );
+  }
+
+  hostEdgeForReportMessage(messageId: string): HostEdge | undefined {
+    return this.db
+      .prepare(
+        `SELECT e.* FROM host_report_receipts r
+         JOIN host_edges e ON e.id = r.edge_id
+         WHERE r.local_message_id = ?`,
+      )
+      .get(messageId) as HostEdge | undefined;
+  }
+
+  ingestHostReport(input: HostReportReceiptInput): {
+    status: "queued" | "duplicate" | "parent_deleted" | "unmatched";
+    localMessageId?: string;
+  } {
+    const existing = this.db
+      .prepare(
+        `SELECT 1 FROM host_report_receipts
+         WHERE host_name = ? AND credential_hash = ? AND owner_message_id = ?`,
+      )
+      .get(input.hostName, input.credentialHash, input.ownerMessageId);
+    if (existing) return { status: "duplicate" };
+    const edge = this.findHostEdge({
+      hostName: input.hostName,
+      credentialHash: input.credentialHash,
+      remoteTaskId: input.ownerTaskId,
+      parentTaskId: input.parentTaskId,
+    });
+    if (!edge) return { status: "unmatched" };
+    const localMessageId = randomUUID();
+    const deliveryId = randomUUID();
+    const now = Date.now();
+    return this.db.transaction(() => {
+      const currentEdge = this.findHostEdge({
+        hostName: input.hostName,
+        credentialHash: input.credentialHash,
+        remoteTaskId: input.ownerTaskId,
+        parentTaskId: input.parentTaskId,
+      });
+      if (!currentEdge) return { status: "unmatched" as const };
+      const parent = this.getTask(input.parentTaskId);
+      if (!parent) {
+        this.db
+          .prepare(
+            `INSERT INTO host_report_receipts
+             (host_name, credential_hash, owner_message_id, local_message_id, edge_id,
+              parent_task_id, result, received_at)
+             VALUES (?, ?, ?, NULL, ?, ?, 'parent_deleted', ?)`,
+          )
+          .run(
+            input.hostName,
+            input.credentialHash,
+            input.ownerMessageId,
+            currentEdge.id,
+            input.parentTaskId,
+            now,
+          );
+        return { status: "parent_deleted" as const };
+      }
+      const duplicate = this.db
+        .prepare(
+          `SELECT 1 FROM host_report_receipts
+           WHERE host_name = ? AND credential_hash = ? AND owner_message_id = ?`,
+        )
+        .get(input.hostName, input.credentialHash, input.ownerMessageId);
+      if (duplicate) return { status: "duplicate" as const };
+      this.db
+        .prepare(
+          `INSERT INTO messages
+           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          localMessageId,
+          input.ownerTaskId,
+          input.parentTaskId,
+          input.kind === "runtime_notice" ? "system" : "agent",
+          input.body,
+          now,
+        );
+      this.db
+        .prepare(
+          `INSERT INTO message_projections
+           (message_id, task_id, role, created_at)
+           VALUES (?, ?, 'target', ?)`,
+        )
+        .run(localMessageId, input.parentTaskId, now);
+      this.db
+        .prepare(
+          `INSERT INTO deliveries
+           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
+           VALUES (?, ?, ?, ?, 'queued', ?)`,
+        )
+        .run(
+          deliveryId,
+          localMessageId,
+          input.parentTaskId,
+          `${localMessageId}:${input.parentTaskId}`,
+          now,
+        );
+      this.db
+        .prepare(
+          `INSERT INTO host_message_types
+           (message_id, kind, runtime_kind, reason) VALUES (?, ?, ?, ?)`,
+        )
+        .run(
+          localMessageId,
+          input.kind,
+          input.runtimeKind ?? null,
+          input.reason ?? null,
+        );
+      this.db
+        .prepare(
+          `INSERT INTO host_report_receipts
+           (host_name, credential_hash, owner_message_id, local_message_id, edge_id,
+            parent_task_id, result, received_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)`,
+        )
+        .run(
+          input.hostName,
+          input.credentialHash,
+          input.ownerMessageId,
+          localMessageId,
+          currentEdge.id,
+          input.parentTaskId,
+          now,
+        );
+      if (input.kind === "runtime_notice") {
+        this.saveEvent(
+          input.parentTaskId,
+          "task_outcome_notice",
+          {
+            messageId: localMessageId,
+            reason: input.reason ?? "unknown",
+            sourceTaskId: input.ownerTaskId,
+            targetTaskId: input.ownerTaskId,
+            message: input.body,
+            externalSourceHost: input.hostName,
+            externalSourceTaskId: input.ownerTaskId,
+          },
+          { from_ref: `host:${input.hostName}` },
+        );
+      }
+      if (input.kind !== "collaboration") {
+        const endedAt = Date.now();
+        const changed = this.db
+          .prepare(
+            `UPDATE host_dispatches
+             SET state = 'terminal', ended_reason = ?, ended_at = ?
+             WHERE edge_id = ? AND state IN ('pending', 'handed_off')`,
+          )
+          .run(input.kind, endedAt, currentEdge.id);
+        if (changed.changes > 0) {
+          this.db
+            .prepare(
+              `UPDATE deliveries SET status = 'delivered', delivered_at = COALESCE(delivered_at, ?)
+               WHERE id IN (
+                 SELECT delivery_id FROM host_dispatches
+                 WHERE edge_id = ? AND state = 'terminal'
+               ) AND status = 'queued'`,
+            )
+            .run(endedAt, currentEdge.id);
+        }
+      }
+      return { status: "queued" as const, localMessageId };
+    })();
+  }
+
+  activeHostEdges(): HostEdge[] {
+    return this.db
+      .prepare("SELECT * FROM host_edges WHERE status = 'active'")
+      .all() as HostEdge[];
+  }
+
+  listLocalChildren(parentTaskId: string): string[] {
+    return this.listChildren(parentTaskId);
+  }
+
   /** Whether an agent dispatch from this task to a direct child is still queued. */
   hasQueuedDispatchToChild(sourceTaskId: string): boolean {
     return (
@@ -2975,6 +4195,24 @@ export class Store {
     return row.count;
   }
 
+  queuedLocalDeliveryRecipients(): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT DISTINCT d.recipient_task_id
+           FROM deliveries d
+           JOIN tasks t ON t.id = d.recipient_task_id
+           WHERE d.status = 'queued' AND t.deleted_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM host_dispatches hd
+               WHERE hd.delivery_id = d.id
+             )
+           ORDER BY d.queued_at, d.rowid`,
+        )
+        .all() as Array<{ recipient_task_id: string }>
+    ).map((row) => row.recipient_task_id);
+  }
+
   /**
    * Atomically hand over every currently queued Delivery for one target task:
    * the rows become `delivered` now, because the caller passes them to the
@@ -2983,23 +4221,71 @@ export class Store {
   claimQueuedDeliveries(recipientTaskId: string): CollaborationDeliveryRow[] {
     const deliveredAt = Date.now();
     const claimed = this.db.transaction(() => {
-      const ids = this.db
-        .prepare(
-          `SELECT id FROM deliveries
-           WHERE recipient_task_id = ? AND status = 'queued'
-           ORDER BY queued_at, rowid`,
-        )
-        .all(recipientTaskId) as Array<{ id: string }>;
+      const ids = this.hostFactsPresent
+        ? (this.db
+            .prepare(
+              `SELECT d.id, es.parent_task_id AS account_source_task_id
+                      , he.host_name AS external_source_host
+                      , he.display_title AS external_source_label
+               FROM deliveries d
+               LEFT JOIN messages m ON m.id = d.message_id
+               LEFT JOIN host_received_dispatches h ON h.local_message_id = m.id
+               LEFT JOIN host_external_sources es
+                 ON es.task_id = d.recipient_task_id
+                AND es.credential_hash = h.credential_hash
+               LEFT JOIN host_report_receipts hr
+                  ON hr.local_message_id = m.id
+               LEFT JOIN host_edges he ON he.id = hr.edge_id
+               WHERE d.recipient_task_id = ? AND d.status = 'queued'
+               ORDER BY d.queued_at, d.rowid`,
+            )
+            .all(recipientTaskId) as Array<{
+            id: string;
+            account_source_task_id: string | null;
+            external_source_host: string | null;
+            external_source_label: string | null;
+          }>)
+        : (this.db
+            .prepare(
+              `SELECT id, NULL AS account_source_task_id,
+                      NULL AS external_source_host,
+                      NULL AS external_source_label
+               FROM deliveries
+               WHERE recipient_task_id = ? AND status = 'queued'
+               ORDER BY queued_at, rowid`,
+            )
+            .all(recipientTaskId) as Array<{
+            id: string;
+            account_source_task_id: null;
+            external_source_host: null;
+            external_source_label: null;
+          }>);
       const claim = this.db.prepare(
         `UPDATE deliveries
          SET status = 'delivered', delivered_at = ?
          WHERE id = ? AND status = 'queued'`,
       );
       const rows: CollaborationDeliveryRow[] = [];
-      for (const { id } of ids) {
+      for (const {
+        id,
+        account_source_task_id,
+        external_source_host,
+        external_source_label,
+      } of ids) {
         if (claim.run(deliveredAt, id).changes !== 1) continue;
         const delivery = this.getCollaborationDelivery(id);
-        if (delivery) rows.push(delivery);
+        if (delivery) {
+          if (account_source_task_id) {
+            delivery.account_source_task_id = account_source_task_id;
+          }
+          if (external_source_host) {
+            delivery.external_source_host = external_source_host;
+          }
+          if (external_source_label) {
+            delivery.external_source_label = external_source_label;
+          }
+          rows.push(delivery);
+        }
       }
       return rows;
     })();
