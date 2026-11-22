@@ -40,6 +40,7 @@ test("behavior proof: real MCP local paths do not exceed main SQL counts", async
     "child-session",
     "parent",
   );
+  const realDrain = tasks.drainCollaborationDeliveries.bind(tasks);
   tasks.drainCollaborationDeliveries = async () => false;
   tasks.onDeliveriesCommitted((delivery) => {
     hostStore.deliveryCommitAction(delivery.deliveryId);
@@ -58,8 +59,12 @@ test("behavior proof: real MCP local paths do not exceed main SQL counts", async
   const db = (store as unknown as { db: Database.Database }).db;
   const originalPrepare = db.prepare.bind(db);
   let statements = 0;
+  let hostStatements = 0;
   db.prepare = (source: string) => {
     statements += 1;
+    if (/host_|CREATE TABLE IF NOT EXISTS host/.test(source)) {
+      hostStatements += 1;
+    }
     return originalPrepare(source);
   };
   const count = async (operation: () => unknown) => {
@@ -80,6 +85,40 @@ test("behavior proof: real MCP local paths do not exceed main SQL counts", async
   assert.ok(measured.list <= 6, JSON.stringify(measured));
   assert.ok(measured.send <= 14, JSON.stringify(measured));
   assert.ok(measured.update <= 20, JSON.stringify(measured));
+
+  tasks.drainCollaborationDeliveries = realDrain;
+  const archivedChild = store.createTask(
+    "archive-child",
+    dir,
+    "agent",
+    "test-agent",
+    "archive-child-session",
+    "parent",
+  );
+  store.createCollaborationMessage({
+    id: "archive-dispatch",
+    deliveryId: "archive-delivery",
+    sourceTaskId: "parent",
+    directTargetTaskId: archivedChild.id,
+    sourceActor: "agent",
+    body: "queued before archive",
+  });
+  hostStatements = 0;
+  const archiveStatements = statements;
+  tasks.archiveTask(archivedChild.id);
+  const archiveOnlyStatements = statements - archiveStatements;
+  assert.equal(hostStatements, 0);
+  assert.ok(archiveOnlyStatements <= 28);
+  assert.equal(
+    store.getCollaborationDelivery("archive-delivery")?.failure_reason,
+    "archived_edge_cut",
+  );
+  assert.equal(
+    store
+      .getEvents("parent")
+      .filter((event) => event.type === "task_outcome_notice").length,
+    1,
+  );
 
   tasks.dispose();
   store.close();

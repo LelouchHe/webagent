@@ -29,6 +29,11 @@ time. An entry without a "closing condition" is a wish, not an issue.
   share one owner account and one edge hint; it proves presence, not an exact
   request/account mapping. *Closing:* a consumer needs per-dispatch
   correlation and the protocol gains a settlement reference.
+- **A lone 400/409 can leave the edge wake hint behind.** A request-level
+  rejection terminalizes that dispatch but cannot consume the edge-wide hint
+  while another 202 may still owe a reply. A compatible WebAgent peer does not
+  produce this isolated rejection. *Closing:* a supported rejecting peer
+  supplies a per-dispatch hint disposition.
 - **R1 cannot read P's history or status.** The owner has no initiator token,
   so PR 2 exposes only a minimal external-parent row. *Closing:* a reciprocal
   `[hosts]` relationship or a separately authenticated reverse read exists.
@@ -38,6 +43,14 @@ time. An entry without a "closing condition" is a wish, not an issue.
 - **Owner account state is process-local.** Restart forgets it; an existing
   edge can remain a wake hint while queued dispatches re-arm on handoff.
   *Closing:* actual need justifies persisted obligation state.
+- **A hub-local typed-404 notice is not restart-selected.** The notice is
+  durable, but boot recovery selects committed incoming receipts rather than
+  local transport-failure notices. *Closing:* local failure notices need a
+  post-restart ACP wake and receive an explicit recovery selector.
+- **A retired runtime can finish one pull page beside its replacement.**
+  Receipt dedup prevents duplicate local rows and wakes, but strict per-host
+  request serialization is not enforced across reconnect. *Closing:*
+  generation-fenced pulls become required and one pull owner owns each host.
 - **A report page whose every entry is unmatchable stalls pulling.** The loop
   does not ACK those entries and backs off rather than busy-looping. *Closing:*
   a real orphan page blocks delivery and GET gains a bounded cursor or a

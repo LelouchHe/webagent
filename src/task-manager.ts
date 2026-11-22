@@ -3840,10 +3840,6 @@ export class TaskManager implements ObligationRuntime {
     this.obligations.noteAgentActivity(taskId);
   }
 
-  taskRelation(sourceId: string, targetId: string) {
-    return this.locator.relation(sourceId, targetId);
-  }
-
   deliveryRoute(sourceId: string, targetId: string, knownSource?: TaskRow) {
     return this.locator.route(sourceId, targetId, undefined, knownSource);
   }
@@ -4036,6 +4032,7 @@ export class TaskManager implements ObligationRuntime {
           );
         },
       });
+      if (!delivered) throw new Error("task_not_found");
       collaborationMessageId = delivered.message.id;
       sourceLabel = source.title ?? source.id.slice(0, 8);
       targetLabel =
@@ -4132,6 +4129,7 @@ export class TaskManager implements ObligationRuntime {
       body,
       runtimeKind: "task_outcome_notice",
       reason: notice.reason,
+      suppressMissingSource: fact.kind === "delivery_failed",
       mutate: ({ messageId }) => {
         if (!auditTaskId) return;
         this.store.saveEvent(

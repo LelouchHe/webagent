@@ -553,6 +553,14 @@ test("behavior proof: a retired stream request cannot overwrite the current conn
   });
   let streamCount = 0;
   let postCount = 0;
+  let releaseReplacement: () => void = () => {};
+  let replacementStarted: (() => void) | null = null;
+  const replacementStartedPromise = new Promise<void>((resolve) => {
+    replacementStarted = resolve;
+  });
+  const replacementRelease = new Promise<void>((resolve) => {
+    releaseReplacement = resolve;
+  });
   const logLines: string[] = [];
   let resolveSecondConnected: (() => void) | null = null;
   const secondConnected = new Promise<void>((resolve) => {
@@ -610,6 +618,8 @@ test("behavior proof: a retired stream request cannot overwrite the current conn
         await secondConnected;
         return new Response(null, { status: 503 });
       }
+      replacementStarted?.();
+      await replacementRelease;
       return Response.json({ accepted: true }, { status: 202 });
     }
     return new Response(null, { status: 404 });
@@ -634,16 +644,19 @@ test("behavior proof: a retired stream request cannot overwrite the current conn
     store.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  await waitFor(() => streamCount >= 2 && postCount >= 2, {
+  await waitFor(() => streamCount >= 2 && postCount === 2, {
     timeoutMs: 2_000,
   });
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await replacementStartedPromise;
   assert.equal(registry.state("mini")?.status, "ok", logLines.join("\n"));
-  assert.equal(
-    store.getCollaborationDelivery(
-      hostStore.nextHostDispatch(edge.edge.id)?.delivery.id ?? "",
-    )?.status ?? "delivered",
-    "delivered",
+  releaseReplacement();
+  const dispatch = hostStore.nextHostDispatch(edge.edge.id);
+  assert.ok(dispatch);
+  await waitFor(
+    () =>
+      store.getCollaborationDelivery(dispatch.delivery.id)?.status ===
+      "delivered",
+    { timeoutMs: 2_000 },
   );
 });
 
@@ -699,4 +712,42 @@ test("behavior proof: SSE headers do not reset reconnect backoff before a frame"
   });
   await waitFor(() => sleeps.length >= 3, { timeoutMs: 1_000 });
   assert.deepEqual(sleeps.slice(0, 3), [500, 1_000, 2_000]);
+});
+
+test("behavior proof: initial description 503 marks the host unreachable", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "webagent-host-setup-failure-"));
+  const store = new Store(dir);
+  const hostStore = new HostStore(store);
+  const registry = new HostRegistry(
+    { mini: { url: "http://mini.invalid", token: "wat_test_token" } },
+    hostStore,
+    undefined,
+    {
+      fetch: async (input) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        if (url.endsWith("/api/v1/host")) {
+          return new Response(null, { status: 503 });
+        }
+        throw new Error("unexpected request");
+      },
+      sleep: async () => new Promise<void>(() => {}),
+    },
+  );
+  registry.start();
+  t.after(() => {
+    registry.stop();
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  await waitFor(() => registry.state("mini")?.status === "unreachable");
+  assert.match(
+    (registry.state("mini") as { status: "unreachable"; reason: string })
+      .reason,
+    /HTTP 503/,
+  );
 });

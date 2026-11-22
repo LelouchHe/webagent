@@ -154,10 +154,6 @@ export class HostStore implements LocationProvider {
     return result;
   }
 
-  hasHostFacts(): boolean {
-    return this.factsPresent;
-  }
-
   onCommitted(observer: (recipientTaskId: string) => void): void {
     this.committedObservers.push(observer);
   }
@@ -188,7 +184,10 @@ export class HostStore implements LocationProvider {
     if (!this.factsPresent) return null;
     if (this.findHostEdgeForParent(targetId, sourceId)) return "child";
     const external = this.getHostExternalSource(sourceId);
-    return external?.parent_task_id === targetId ? "parent" : null;
+    const source = this.store.getTask(sourceId);
+    return source?.parent_id === null && external?.parent_task_id === targetId
+      ? "parent"
+      : null;
   }
 
   parentOf(taskId: string): string | null {
@@ -243,10 +242,34 @@ export class HostStore implements LocationProvider {
     return this.factsPresent && this.hasOpenHostDispatch(parentId);
   }
 
+  canEnqueueDelivery(request: DeliveryRequest): boolean {
+    if (!this.factsPresent) return false;
+    if (
+      request.kind === "dispatch" &&
+      this.findHostEdgeForParent(request.targetTaskId, request.sourceTaskId)
+    ) {
+      return true;
+    }
+    if (
+      request.kind === "message" &&
+      this.store.getTask(request.sourceTaskId)?.parent_id === null
+    ) {
+      return (
+        this.getHostExternalSource(request.sourceTaskId)?.parent_task_id ===
+        request.targetTaskId
+      );
+    }
+    return (
+      this.getHostExternalSource(request.sourceTaskId)?.parent_task_id ===
+      request.targetTaskId
+    );
+  }
+
   enqueueDelivery(request: DeliveryRequest): {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
   } | null {
+    if (!this.factsPresent) return null;
     const edge = this.findHostEdgeForParent(
       request.targetTaskId,
       request.sourceTaskId,
@@ -260,7 +283,11 @@ export class HostStore implements LocationProvider {
         body: request.body,
       });
     }
-    const source = this.getHostExternalSource(request.sourceTaskId);
+    const sourceTask = this.store.getTask(request.sourceTaskId);
+    const source =
+      request.kind === "message" && sourceTask?.parent_id !== null
+        ? null
+        : this.getHostExternalSource(request.sourceTaskId);
     if (source?.parent_task_id !== request.targetTaskId) return null;
     const sourceExists = this.store.getTask(request.sourceTaskId) !== undefined;
     return this.insertHostOutboundMessage({
@@ -835,13 +862,6 @@ export class HostStore implements LocationProvider {
            VALUES (?, ?) ON CONFLICT(edge_id) DO NOTHING`,
         )
         .run(input.edge.id, now);
-      this.db
-        .prepare(
-          `INSERT INTO host_message_types
-           (message_id, kind, runtime_kind, reason)
-           VALUES (?, 'collaboration', NULL, NULL)`,
-        )
-        .run(messageId);
       return created;
     })();
   }
@@ -1123,17 +1143,6 @@ export class HostStore implements LocationProvider {
         createdAt: now,
         projections: [{ taskId: input.parentTaskId, role: "target" }],
       });
-      this.db
-        .prepare(
-          `INSERT INTO host_message_types
-           (message_id, kind, runtime_kind, reason) VALUES (?, ?, ?, ?)`,
-        )
-        .run(
-          localMessageId,
-          input.kind,
-          input.runtimeKind ?? null,
-          input.reason ?? null,
-        );
       this.db
         .prepare(
           `INSERT INTO host_report_receipts

@@ -32,6 +32,7 @@ export interface EnqueueInput {
   reason?: string | null;
   relationHint?: "parent" | "child";
   knownSource?: TaskRow;
+  suppressMissingSource?: boolean;
 }
 
 export class DeliveryQueue {
@@ -60,14 +61,13 @@ export class DeliveryQueue {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
     route: DeliveryRoute | null;
-  } {
+  } | null {
     if (!route && input.kind === "notice") {
       const messageId = randomUUID();
       const deliveryId = randomUUID();
       const createdAt = Date.now();
       const created = this.store.transaction(() => {
-        input.mutate?.({ messageId, deliveryId });
-        const delegated = this.locator.enqueueOther({
+        const request = {
           messageId,
           deliveryId,
           sourceTaskId: input.sourceId,
@@ -78,11 +78,21 @@ export class DeliveryQueue {
           updateStatus: input.updateStatus,
           runtimeKind: input.runtimeKind,
           reason: input.reason,
-        });
-        if (delegated) return delegated;
-        if (!this.store.getTask(input.targetId)) {
-          throw new Error("task_not_found");
+        } satisfies DeliveryRequest;
+        const delegated = this.locator.canEnqueueOther(request);
+        if (
+          !delegated &&
+          input.suppressMissingSource &&
+          !this.store.getTask(input.sourceId)
+        ) {
+          return null;
         }
+        input.mutate?.({ messageId, deliveryId });
+        const enqueued = this.locator.enqueueOther(request);
+        if (enqueued) {
+          return { ...enqueued, localTarget: false };
+        }
+        if (!this.store.getTask(input.targetId)) return null;
         return this.store.enqueueDeliveryRows({
           messageId,
           deliveryId,
@@ -94,7 +104,12 @@ export class DeliveryQueue {
           projections: [{ taskId: input.targetId, role: "target" }],
         });
       });
-      this.publishCommitted(input, created, true);
+      if (!created) return null;
+      this.publishCommitted(
+        input,
+        created,
+        "localTarget" in created && created.localTarget !== false,
+      );
       return { ...created, route: null };
     }
     if (!route) throw new Error("task_not_found");

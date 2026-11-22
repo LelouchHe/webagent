@@ -140,13 +140,16 @@ test("behavior proof: external parent is queued and acked in the owner outbox", 
     kind: "message",
     body: "progress",
   });
+  assert.ok(message);
+  let allocatedUpdateId: string | null = null;
   const update = queue.enqueue({
     sourceId: created.taskId,
     targetId: parentTaskId,
     kind: "update",
     body: "Task status: done\nfinished",
     updateStatus: "done",
-    mutate: () => {
+    mutate: ({ messageId }) => {
+      allocatedUpdateId = messageId;
       store.recordAgentWorkflowUpdateState(
         created.taskId,
         "done",
@@ -156,6 +159,7 @@ test("behavior proof: external parent is queued and acked in the owner outbox", 
       );
     },
   });
+  assert.ok(update);
   const outbox = hostStore.listHostOutbox(credentialHash);
   assert.deepEqual(
     outbox.map((item) => item.kind),
@@ -163,6 +167,7 @@ test("behavior proof: external parent is queued and acked in the owner outbox", 
   );
   assert.equal(outbox[0].parent_task_id, parentTaskId);
   assert.equal(outbox[1].id, update.message.id);
+  assert.equal(update.message.id, allocatedUpdateId);
   assert.equal(message.delivery.status, "queued");
   const updateAudit = store
     .getEvents(created.taskId)
@@ -471,7 +476,7 @@ test("behavior proof: the additive host schema upgrades a 1bacca0-shaped Store t
     reopenedAgain.getCollaborationDelivery("upgrade-delivery")?.status,
     "queued",
   );
-  assert.equal(reopenedAgainHost.hasHostFacts(), false);
+  assert.deepEqual(reopenedAgainHost.queuedHostReportRecipients(), []);
 });
 
 test("behavior proof: boot replay selects only a committed queued hub receipt", async (t) => {

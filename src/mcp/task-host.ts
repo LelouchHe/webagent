@@ -476,6 +476,7 @@ export function createMcpTaskToolHost(deps: {
         },
         route,
       );
+      if (!created) throw new Error("task_not_found");
       const source = route.source;
       const targetLabel =
         created.route?.description.title ?? targetTaskId.slice(0, 8);

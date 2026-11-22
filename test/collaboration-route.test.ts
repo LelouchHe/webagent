@@ -71,6 +71,29 @@ function get(
   });
 }
 
+function del(
+  port: number,
+  path: string,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      { hostname: "127.0.0.1", port, method: "DELETE", path },
+      (res) => {
+        let source = "";
+        res.on("data", (chunk: Buffer) => (source += chunk.toString()));
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            body: JSON.parse(source) as Record<string, unknown>,
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 describe("S3 collaboration write routes", () => {
   let store: Store;
   let tasks: TaskManager;
@@ -186,6 +209,34 @@ describe("S3 collaboration write routes", () => {
       promptCalls.filter((call) => call.taskId === taskId).length,
       0,
       "a briefless child must not be prompted",
+    );
+  });
+
+  it("behavior proof: REST delete with a queued child dispatch succeeds and broadcasts deletion", async () => {
+    store.createCollaborationMessage({
+      id: "queued-delete-message",
+      deliveryId: "queued-delete-delivery",
+      sourceTaskId: "parent",
+      directTargetTaskId: "sibling",
+      sourceActor: "agent",
+      body: "work",
+    });
+    const deleted = await del(port, "/api/v1/tasks/sibling");
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.body.taskId, "sibling");
+    assert.equal(
+      broadcasts.some(
+        (event) => event.type === "task_deleted" && event.taskId === "sibling",
+      ),
+      true,
+    );
+    const notices = store
+      .getEvents("parent")
+      .filter((event) => event.type === "task_outcome_notice");
+    assert.equal(
+      notices.length,
+      0,
+      JSON.stringify(notices.map((event) => event.data)),
     );
   });
 

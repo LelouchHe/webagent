@@ -64,7 +64,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
   reverted before the gate runs
 - `test/host-local-sql.test.ts` now uses HostStore + TaskLocator + the
   production commit observer wiring, so no-host SQL assertions cover the lower
-  provider's fast path rather than a provider-free fixture
+  provider's fast path rather than a provider-free fixture; a real archive
+  with a queued local dispatch is 26 statements / 0 host statements versus
+  the `ff346a2` archive baseline of 28
 - the lost-ACK test wakes P from the committed receipt before ACK completion;
   restart selection is based on queued receipts, not ACK outcome rows (the
   redundant `host_report_acks` table and code are removed)
