@@ -43,8 +43,6 @@ test("behavior proof: transport safely classifies real rejection, 503, 400, 409,
     remoteTaskId: "remote-child",
     title: "remote",
     credentialHash: hashToken("wat_test_token"),
-    createKey: "edge",
-    requestHash: "request",
     event: {
       title: "remote",
       body: "remote",
@@ -57,30 +55,30 @@ test("behavior proof: transport safely classifies real rejection, 503, 400, 409,
       thinking: null,
     },
   });
-  assert.ok(edge.edge);
+  assert.ok(edge);
   const retried = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
-    edge: edge.edge,
+    edge,
     body: "network",
   });
   const badRequest = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
-    edge: edge.edge,
+    edge,
     body: "bad-400",
   });
   const conflict = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
-    edge: edge.edge,
+    edge,
     body: "bad-409",
   });
   const removed = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
-    edge: edge.edge,
+    edge,
     body: "removed",
   });
   const later = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
-    edge: edge.edge,
+    edge,
     body: "later",
   });
   const bodies: string[] = [];
@@ -227,7 +225,7 @@ test("behavior proof: transport safely classifies real rejection, 503, 400, 409,
     store.getCollaborationDelivery(later.delivery.id)?.failure_reason,
     "target_removed_edge",
   );
-  assert.equal(hostStore.getHostEdge(edge.edge.id)?.status, "removed");
+  assert.equal(hostStore.getHostEdge(edge.id)?.status, "removed");
   assert.equal(store.countQueuedDeliveries(parent.id), 1);
   assert.deepEqual(bodies, [
     "network",
@@ -266,8 +264,6 @@ test("behavior proof: an ACK lost in flight stays dirty without bypassing backof
     remoteTaskId: "remote-child",
     title: "remote",
     credentialHash: hashToken("wat_test_token"),
-    createKey: "ack-edge",
-    requestHash: "ack-edge",
     event: {
       title: "remote",
       body: "remote",
@@ -280,7 +276,7 @@ test("behavior proof: an ACK lost in flight stays dirty without bypassing backof
       thinking: null,
     },
   });
-  assert.ok(edge.edge);
+  assert.ok(edge);
   let getCount = 0;
   let acked = false;
   let streamResponse: import("node:http").ServerResponse | null = null;
@@ -414,8 +410,6 @@ test("behavior proof: mixed report page progress is pulled again immediately", a
     remoteTaskId: "remote-child",
     title: "remote",
     credentialHash: hashToken("wat_test_token"),
-    createKey: "progress-edge",
-    requestHash: "progress-edge",
     event: {
       title: "remote",
       body: "remote",
@@ -428,7 +422,7 @@ test("behavior proof: mixed report page progress is pulled again immediately", a
       thinking: null,
     },
   });
-  assert.ok(edge.edge);
+  assert.ok(edge);
   let gets = 0;
   let lastGetAt = 0;
   let matchedAcked = false;
@@ -531,8 +525,6 @@ test("behavior proof: a retired stream request cannot overwrite the current conn
     remoteTaskId: "remote",
     title: "remote",
     credentialHash: hashToken("wat_test_token"),
-    createKey: "retired-edge",
-    requestHash: "retired-edge",
     event: {
       title: "remote",
       body: "remote",
@@ -545,10 +537,10 @@ test("behavior proof: a retired stream request cannot overwrite the current conn
       thinking: null,
     },
   });
-  assert.ok(edge.edge);
+  assert.ok(edge);
   hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
-    edge: edge.edge,
+    edge,
     body: "old-runtime-post",
   });
   let streamCount = 0;
@@ -650,7 +642,7 @@ test("behavior proof: a retired stream request cannot overwrite the current conn
   await replacementStartedPromise;
   assert.equal(registry.state("mini")?.status, "ok", logLines.join("\n"));
   releaseReplacement();
-  const dispatch = hostStore.nextHostDispatch(edge.edge.id);
+  const dispatch = hostStore.nextHostDispatch(edge.id);
   assert.ok(dispatch);
   await waitFor(
     () =>

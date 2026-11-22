@@ -59,7 +59,7 @@ response is observed. There is no separate ACK outcome table.
 upper layer: task ids only
   TaskManager / MCP / ObligationController / TaskLocator / DeliveryQueue
        |
-       | relation / parentOf / childrenOf / describe / hasChildWakeSource
+       | parentOf / childrenOf / labelOf / hasChildWakeSource
        | enqueue(source task id, target task id, kind, body)
        v
 local SQLite: messages + deliveries + projections

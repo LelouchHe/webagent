@@ -11,16 +11,11 @@ import {
 
 export type DeliveryKind = "dispatch" | "message" | "update" | "notice";
 
-export interface TaskDescription {
-  id: string;
+export interface TaskLabel {
   title: string;
-  relation: CollaborationRelation;
-  local: boolean;
-  presentation?: {
-    external: true;
+  external?: {
     hostLabel?: string;
   };
-  task?: TaskRow;
 }
 
 export interface DeliveryRequest {
@@ -40,7 +35,7 @@ export interface LocationProvider {
   relation(sourceId: string, targetId: string): CollaborationRelation | null;
   parentOf(taskId: string): string | null;
   childrenOf(taskId: string): string[];
-  describe(taskId: string): TaskDescription | null;
+  labelOf(taskId: string): TaskLabel | null;
   hasChildWakeSource(parentId: string): boolean;
   canEnqueueDelivery(request: DeliveryRequest): boolean;
   enqueueDelivery(request: DeliveryRequest): {
@@ -54,7 +49,7 @@ export interface DeliveryRoute {
   targetId: string;
   relation: Exclude<CollaborationRelation, "self">;
   localTask: TaskRow | null;
-  description: TaskDescription;
+  label: TaskLabel;
 }
 
 export class TaskLocator {
@@ -87,20 +82,16 @@ export class TaskLocator {
     return result;
   }
 
-  describe(taskId: string): TaskDescription | null {
+  labelOf(taskId: string): TaskLabel | null {
     const task = this.store.getTask(taskId);
     if (task) {
       return {
-        id: task.id,
         title: task.title ?? task.id,
-        relation: "self",
-        local: true,
-        task,
       };
     }
     for (const provider of this.providers) {
-      const description = provider.describe(taskId);
-      if (description) return description;
+      const label = provider.labelOf(taskId);
+      if (label) return label;
     }
     return null;
   }
@@ -135,23 +126,17 @@ export class TaskLocator {
         targetId,
         relation,
         localTask,
-        description: {
-          id: localTask.id,
-          title: localTask.title ?? localTask.id,
-          relation,
-          local: true,
-          task: localTask,
-        },
+        label: { title: localTask.title ?? localTask.id },
       };
     }
-    const description = this.describe(targetId);
-    if (!description || description.local) return null;
+    const label = this.labelOf(targetId);
+    if (!label) return null;
     return {
       source,
       targetId,
       relation,
       localTask: null,
-      description: { ...description, relation },
+      label,
     };
   }
 

@@ -36,14 +36,12 @@ test("behavior proof: MCP create and send address a remote child by returned tas
   const crossHostCreator = {
     async create(input: { agent: string }) {
       if (input.agent !== "copilot@mini") return { handled: false };
-      const edge = hostStore.createHostEdge({
+      hostStore.createHostEdge({
         parentTaskId: "parent",
         hostName: "mini",
         remoteTaskId: "remote-child-id",
         title: "build",
         credentialHash: "a".repeat(64),
-        createKey: "create",
-        requestHash: "create",
         event: {
           title: "remote",
           body: "remote",
@@ -56,7 +54,6 @@ test("behavior proof: MCP create and send address a remote child by returned tas
           thinking: null,
         },
       });
-      assert.equal(edge.status, "created");
       return { handled: true, taskId: "remote-child-id" };
     },
   };

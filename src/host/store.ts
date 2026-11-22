@@ -13,7 +13,7 @@ import { formatFieldBlock } from "../shared/field-block.ts";
 import type {
   DeliveryRequest,
   LocationProvider,
-  TaskDescription,
+  TaskLabel,
 } from "../task-locator.ts";
 import type { CollaborationRelation } from "../task-collaboration.ts";
 import { reduceObligationOutcome } from "../obligation-outcomes.ts";
@@ -36,8 +36,6 @@ export interface HostEdge {
   remote_task_id: string;
   display_title: string;
   credential_hash: string;
-  create_key: string;
-  request_hash: string;
   status: "active" | "removed" | "abandoned";
   created_at: number;
   ended_at: number | null;
@@ -106,7 +104,7 @@ export class HostStore implements LocationProvider {
       CREATE INDEX IF NOT EXISTS idx_host_external_sources_credential ON host_external_sources (credential_hash);
       CREATE TABLE IF NOT EXISTS host_received_dispatches (credential_hash TEXT NOT NULL, remote_message_id TEXT NOT NULL, local_message_id TEXT NOT NULL, request_hash TEXT NOT NULL, received_at INTEGER NOT NULL, PRIMARY KEY (credential_hash, remote_message_id));
       CREATE INDEX IF NOT EXISTS idx_host_received_dispatches_local ON host_received_dispatches (local_message_id);
-      CREATE TABLE IF NOT EXISTS host_edges (id TEXT PRIMARY KEY, parent_task_id TEXT NOT NULL, host_name TEXT NOT NULL, remote_task_id TEXT NOT NULL, display_title TEXT NOT NULL, credential_hash TEXT NOT NULL, create_key TEXT NOT NULL, request_hash TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('active','removed','abandoned')), created_at INTEGER NOT NULL, ended_at INTEGER, UNIQUE(parent_task_id, host_name, credential_hash, create_key));
+      CREATE TABLE IF NOT EXISTS host_edges (id TEXT PRIMARY KEY, parent_task_id TEXT NOT NULL, host_name TEXT NOT NULL, remote_task_id TEXT NOT NULL, display_title TEXT NOT NULL, credential_hash TEXT NOT NULL, status TEXT NOT NULL CHECK (status IN ('active','removed','abandoned')), created_at INTEGER NOT NULL, ended_at INTEGER);
       CREATE INDEX IF NOT EXISTS idx_host_edges_parent_status ON host_edges (parent_task_id, status);
       CREATE TABLE IF NOT EXISTS host_dispatches (delivery_id TEXT PRIMARY KEY, edge_id TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN ('pending','handed_off','terminal')), ended_reason TEXT, created_at INTEGER NOT NULL, ended_at INTEGER);
       CREATE INDEX IF NOT EXISTS idx_host_dispatches_edge_state ON host_dispatches (edge_id, state);
@@ -202,7 +200,7 @@ export class HostStore implements LocationProvider {
     );
   }
 
-  describe(taskId: string): TaskDescription | null {
+  labelOf(taskId: string): TaskLabel | null {
     if (!this.factsPresent) return null;
     const edge = this.db
       .prepare(
@@ -213,11 +211,8 @@ export class HostStore implements LocationProvider {
       .get(taskId) as HostEdge | undefined;
     if (edge) {
       return {
-        id: edge.remote_task_id,
         title: edge.display_title,
-        relation: "child",
-        local: false,
-        presentation: { external: true, hostLabel: edge.host_name },
+        external: { hostLabel: edge.host_name },
       };
     }
     const source = this.db
@@ -228,11 +223,8 @@ export class HostStore implements LocationProvider {
       .get(taskId) as { task_id: string; parent_task_id: string } | undefined;
     if (source) {
       return {
-        id: source.parent_task_id,
         title: source.parent_task_id,
-        relation: "parent",
-        local: false,
-        presentation: { external: true },
+        external: {},
       };
     }
     return null;
@@ -581,8 +573,6 @@ export class HostStore implements LocationProvider {
     remoteTaskId: string;
     title: string;
     credentialHash: string;
-    createKey: string;
-    requestHash: string;
     event: {
       title: string;
       body: string;
@@ -594,7 +584,7 @@ export class HostStore implements LocationProvider {
       model: string | null;
       thinking: string | null;
     };
-  }): { status: "created" | "conflict"; edge: HostEdge | null } {
+  }): HostEdge {
     const id = randomUUID();
     const now = Date.now();
     const created = this.db.transaction(() => {
@@ -606,56 +596,15 @@ export class HostStore implements LocationProvider {
       if (this.getHostExternalSource(input.remoteTaskId)) {
         throw new Error("host_task_id_conflicts_with_external_parent");
       }
-      const ownedElsewhere = this.db
-        .prepare(
-          `SELECT 1 FROM host_edges
-             WHERE remote_task_id = ?
-               AND NOT (
-                 host_name = ? AND credential_hash = ? AND
-                 parent_task_id = ? AND create_key = ?
-               )
-             LIMIT 1`,
-        )
-        .get(
-          input.remoteTaskId,
-          input.hostName,
-          input.credentialHash,
-          input.parentTaskId,
-          input.createKey,
-        );
-      if (ownedElsewhere) {
-        return { status: "conflict" as const, edge: null };
-      }
-      const existing = this.db
-        .prepare(
-          `SELECT * FROM host_edges
-           WHERE parent_task_id = ? AND host_name = ?
-             AND credential_hash = ? AND create_key = ?`,
-        )
-        .get(
-          input.parentTaskId,
-          input.hostName,
-          input.credentialHash,
-          input.createKey,
-        ) as HostEdge | undefined;
-      if (existing) {
-        if (existing.request_hash !== input.requestHash) {
-          return { status: "conflict" as const, edge: existing };
-        }
-        return {
-          status: "created" as const,
-          edge: existing,
-        };
-      }
       if (this.siblingTitleExists(input.parentTaskId, input.title)) {
-        return { status: "conflict" as const, edge: null };
+        throw new Error("task_title_conflict");
       }
       this.db
         .prepare(
           `INSERT INTO host_edges
            (id, parent_task_id, host_name, remote_task_id, display_title,
-            credential_hash, create_key, request_hash, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+            credential_hash, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`,
         )
         .run(
           id,
@@ -664,8 +613,6 @@ export class HostStore implements LocationProvider {
           input.remoteTaskId,
           input.title,
           input.credentialHash,
-          input.createKey,
-          input.requestHash,
           now,
         );
       this.store.saveEvent(
@@ -679,12 +626,9 @@ export class HostStore implements LocationProvider {
         },
         { from_ref: "agent" },
       );
-      return {
-        status: "created" as const,
-        edge: this.getHostEdge(id)!,
-      };
+      return this.getHostEdge(id)!;
     })();
-    if (created.status === "created") this.factsPresent = true;
+    this.factsPresent = true;
     return created;
   }
 

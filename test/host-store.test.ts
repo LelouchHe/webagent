@@ -35,9 +35,9 @@ test("behavior proof: owner create binding and dispatch dedup survive reopen", a
   const { dir, store, hostStore, close } = await fixture(t);
   const request = {
     credentialHash: "a".repeat(64),
-    parentTaskId: randomUUID(),
     createKey: "create-1",
-    requestHash: requestHash({ parentTaskId: "parent", title: "remote" }),
+    requestHash: requestHash({ title: "remote" }),
+    parentTaskId: randomUUID(),
     agentId: "copilot",
     cwd: dir,
     title: "remote",
@@ -124,9 +124,9 @@ test("behavior proof: external parent is queued and acked in the owner outbox", 
   const parentTaskId = randomUUID();
   const created = hostStore.createHostTask({
     credentialHash,
-    parentTaskId,
     createKey: "create-outbox",
     requestHash: requestHash({ title: "child" }),
+    parentTaskId,
     agentId: "copilot",
     cwd: dir,
     title: "child",
@@ -203,8 +203,6 @@ test("behavior proof: hub locator and report receipt use the persisted edge", as
     remoteTaskId,
     title: "build",
     credentialHash: "e".repeat(64),
-    createKey: "edge-1",
-    requestHash: "request-1",
     event: {
       title: "Created remote task",
       body: "build",
@@ -217,49 +215,49 @@ test("behavior proof: hub locator and report receipt use the persisted edge", as
       thinking: null,
     },
   });
-  assert.equal(edge.status, "created");
-  assert.ok(edge.edge);
-  const duplicate = hostStore.createHostEdge({
-    parentTaskId: parent.id,
-    hostName: "mini",
-    remoteTaskId: randomUUID(),
-    title: "build",
-    credentialHash: "e".repeat(64),
-    createKey: "edge-2",
-    requestHash: "request-2",
-    event: {
-      title: "duplicate",
-      body: "duplicate",
-      kind: "task_created_remote",
-      taskId: "duplicate",
-      taskTitle: "build",
-      agentId: "copilot",
-      cwd: "owner default",
-      model: null,
-      thinking: null,
-    },
-  });
-  assert.equal(duplicate.status, "conflict");
+  assert.ok(edge);
+  assert.throws(
+    () =>
+      hostStore.createHostEdge({
+        parentTaskId: parent.id,
+        hostName: "mini",
+        remoteTaskId: randomUUID(),
+        title: "build",
+        credentialHash: "e".repeat(64),
+        event: {
+          title: "duplicate",
+          body: "duplicate",
+          kind: "task_created_remote",
+          taskId: "duplicate",
+          taskTitle: "build",
+          agentId: "copilot",
+          cwd: "owner default",
+          model: null,
+          thinking: null,
+        },
+      }),
+    /task_title_conflict/,
+  );
   const locator = new TaskLocator(store, [hostStore]);
   const route = locator.route(parent.id, remoteTaskId);
   assert.ok(route);
   assert.equal(route.relation, "child");
   assert.equal(store.getTask(remoteTaskId), undefined);
-  assert.equal(route.description.local, false);
+  assert.ok(route.label.external);
 
   const dispatched = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
-    edge: edge.edge,
+    edge,
     body: "first",
   });
   const second = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
-    edge: edge.edge,
+    edge,
     body: "second",
   });
   assert.equal(hostStore.hasOpenHostDispatch(parent.id), true);
   assert.equal(
-    hostStore.nextHostDispatch(edge.edge.id)?.delivery.id,
+    hostStore.nextHostDispatch(edge.id)?.delivery.id,
     dispatched.delivery.id,
   );
   hostStore.markHostDispatchHandedOff(dispatched.delivery.id);
@@ -293,13 +291,10 @@ test("behavior proof: hub locator and report receipt use the persisted edge", as
     "queued",
   );
   assert.equal(
-    hostStore.nextHostDispatch(edge.edge.id)?.delivery.id,
+    hostStore.nextHostDispatch(edge.id)?.delivery.id,
     second.delivery.id,
   );
-  assert.equal(
-    hostStore.nextHostDispatch(edge.edge.id)?.message.body,
-    "second",
-  );
+  assert.equal(hostStore.nextHostDispatch(edge.id)?.message.body, "second");
 
   store.deleteTask(parent.id);
   assert.equal(
@@ -325,8 +320,6 @@ test("behavior proof: typed-404 transaction rolls back edge, rows, hint, and not
     remoteTaskId: randomUUID(),
     title: "atomic",
     credentialHash: "i".repeat(64),
-    createKey: "atomic-404",
-    requestHash: "atomic-404",
     event: {
       title: "atomic",
       body: "atomic",
@@ -339,10 +332,10 @@ test("behavior proof: typed-404 transaction rolls back edge, rows, hint, and not
       thinking: null,
     },
   });
-  assert.ok(edge.edge);
+  assert.ok(edge);
   const dispatch = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
-    edge: edge.edge,
+    edge,
     body: "remove",
   });
   const original = store.enqueueDeliveryRows.bind(store);
@@ -357,7 +350,7 @@ test("behavior proof: typed-404 transaction rolls back edge, rows, hint, and not
   } finally {
     store.enqueueDeliveryRows = original;
   }
-  assert.equal(hostStore.getHostEdge(edge.edge.id)?.status, "active");
+  assert.equal(hostStore.getHostEdge(edge.id)?.status, "active");
   assert.equal(
     store.getCollaborationDelivery(dispatch.delivery.id)?.status,
     "queued",
@@ -381,8 +374,6 @@ test("regression guard: archive leaves queued external endpoint deliveries alone
     remoteTaskId,
     title: "build",
     credentialHash: "f".repeat(64),
-    createKey: "edge-archive",
-    requestHash: "request-archive",
     event: {
       title: "Created remote task",
       body: "build",
@@ -395,10 +386,10 @@ test("regression guard: archive leaves queued external endpoint deliveries alone
       thinking: null,
     },
   });
-  assert.ok(edge.edge);
+  assert.ok(edge);
   const dispatched = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
-    edge: edge.edge,
+    edge,
     body: "run",
   });
   store.archiveTask(parent.id);
@@ -505,8 +496,6 @@ test("behavior proof: boot replay selects only a committed queued hub receipt", 
     remoteTaskId,
     title: "remote",
     credentialHash: "g".repeat(64),
-    createKey: "boot-edge",
-    requestHash: "boot-edge",
     event: {
       title: "remote",
       body: "remote",
@@ -519,7 +508,7 @@ test("behavior proof: boot replay selects only a committed queued hub receipt", 
       thinking: null,
     },
   });
-  assert.ok(edge.edge);
+  assert.ok(edge);
   const report = hostStore.ingestHostReport({
     hostName: "mini",
     credentialHash: "g".repeat(64),
@@ -582,9 +571,9 @@ test("behavior proof: boot replay selects only a committed queued hub receipt", 
   });
   const external = ownerHost.createHostTask({
     credentialHash: "h".repeat(64),
-    parentTaskId: randomUUID(),
     createKey: "owner-boot",
     requestHash: "owner-boot",
+    parentTaskId: randomUUID(),
     agentId: "copilot",
     cwd: ownerDir,
     title: "external",

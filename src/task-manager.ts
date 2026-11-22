@@ -3852,8 +3852,8 @@ export class TaskManager implements ObligationRuntime {
     return this.locator.childrenOf(taskId);
   }
 
-  describeTask(taskId: string) {
-    return this.locator.describe(taskId);
+  labelTask(taskId: string) {
+    return this.locator.labelOf(taskId);
   }
 
   enqueueDelivery(
@@ -4036,7 +4036,7 @@ export class TaskManager implements ObligationRuntime {
       collaborationMessageId = delivered.message.id;
       sourceLabel = source.title ?? source.id.slice(0, 8);
       targetLabel =
-        delivered.route?.description.title ?? accountTargetTaskId.slice(0, 8);
+        delivered.route?.label.title ?? accountTargetTaskId.slice(0, 8);
     }
     this.obligations.noteUpdate(targetTaskId);
     if (accountSource !== undefined) this.obligations.close(targetTaskId);

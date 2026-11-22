@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { requestHash } from "./protocol.ts";
 import type { HostRegistry } from "./registry.ts";
 import type { HostStore } from "./store.ts";
 
@@ -42,14 +41,12 @@ export class HostTaskCreator {
       request,
     });
     input.assertCaller();
-    const created = this.hostStore.createHostEdge({
+    this.hostStore.createHostEdge({
       parentTaskId: input.sourceTaskId,
       hostName: target.hostName,
       remoteTaskId: result.taskId,
       title: input.title,
       credentialHash: result.credentialHash,
-      createKey,
-      requestHash: requestHash(request),
       event: {
         title: `Created remote task ${input.title} @${target.hostName}`,
         body: `Host: ${target.hostName}\nTask: ${result.taskId}`,
@@ -62,9 +59,6 @@ export class HostTaskCreator {
         thinking: input.thinking ?? null,
       },
     });
-    if (created.status === "conflict" || !created.edge) {
-      throw new Error("task_create_conflict");
-    }
     return { handled: true, taskId: result.taskId };
   }
 }

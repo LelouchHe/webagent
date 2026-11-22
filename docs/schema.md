@@ -297,13 +297,13 @@ host and credential.
 | `remote_task_id` | TEXT NOT NULL | Owner-side task id |
 | `display_title` | TEXT NOT NULL | Last title known at creation |
 | `credential_hash` | TEXT NOT NULL | Fingerprint of the token used for this edge |
-| `create_key` | TEXT NOT NULL | Creation idempotency key |
-| `request_hash` | TEXT NOT NULL | Hash of the normalized create request |
 | `status` | TEXT NOT NULL | `active`, `removed`, or `abandoned` |
 | `created_at` | INTEGER NOT NULL | Unix milliseconds |
 | `ended_at` | INTEGER | Unix milliseconds for a terminal edge state |
 
-Unique: `(parent_task_id, host_name, credential_hash, create_key)`.
+The table has only its `id` primary key. Owner-side idempotency remains in
+`host_external_sources`, and inbound dispatch idempotency remains in
+`host_received_dispatches`.
 
 ### `host_dispatches`
 

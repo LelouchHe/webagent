@@ -207,25 +207,29 @@ export function createMcpTaskToolHost(deps: {
         locatedParent !== source.parent_id &&
         !localIds.has(locatedParent)
       ) {
-        const description = tasks.describeTask(locatedParent);
-        if (description) {
+        const label = tasks.labelTask(locatedParent);
+        if (label) {
           listed.push({
             id: locatedParent,
-            title: description.title,
+            title: label.title,
             relation: "parent",
-            ...(description.presentation ?? {}),
+            ...(label.external
+              ? { external: true, hostLabel: label.external.hostLabel }
+              : {}),
           });
         }
       }
       for (const childId of tasks.childrenOf(source.id)) {
         if (localIds.has(childId)) continue;
-        const description = tasks.describeTask(childId);
-        if (!description) continue;
+        const label = tasks.labelTask(childId);
+        if (!label) continue;
         listed.push({
           id: childId,
-          title: description.title,
+          title: label.title,
           relation: "child",
-          ...(description.presentation ?? {}),
+          ...(label.external
+            ? { external: true, hostLabel: label.external.hostLabel }
+            : {}),
         });
       }
       return listed.sort(
@@ -462,7 +466,7 @@ export function createMcpTaskToolHost(deps: {
       const relation = route?.relation ?? null;
       if (!route || (relation !== "child" && relation !== "parent")) {
         throw new Error(
-          tasks.describeTask(targetTaskId)
+          tasks.labelTask(targetTaskId)
             ? "target_not_allowed"
             : "task_not_found",
         );
@@ -479,7 +483,7 @@ export function createMcpTaskToolHost(deps: {
       if (!created) throw new Error("task_not_found");
       const source = route.source;
       const targetLabel =
-        created.route?.description.title ?? targetTaskId.slice(0, 8);
+        created.route?.label.title ?? targetTaskId.slice(0, 8);
       const sourceLabel = source.title ?? source.id.slice(0, 8);
       broadcastCollaboration?.({
         messageId: created.message.id,
