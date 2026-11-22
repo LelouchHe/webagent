@@ -923,6 +923,56 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(noUpdateRows.length, 0);
   });
 
+  it("closes the rejected dispatch account before failed-status publication and turn cleanup", async () => {
+    seedDispatchFamily();
+    const observed: Array<{
+      accountOpen: boolean;
+      workflowStatus: string | undefined;
+    }> = [];
+    tasks.setDeliveryStatusBroadcast((event) => {
+      if (event.status !== "failed") return;
+      observed.push({
+        accountOpen: tasks.hasOpenObligation("parent", "child"),
+        workflowStatus: store.getTask("child")?.workflow_status,
+      });
+    });
+
+    assert.equal(
+      await tasks.drainCollaborationDeliveries("child", {
+        ...mockBridgeStubs(),
+        async prompt() {
+          throw new Error("rejected");
+        },
+      }),
+      true,
+    );
+    await waitFor(() => observed.length === 1);
+    assert.deepEqual(observed, [
+      { accountOpen: false, workflowStatus: "running" },
+    ]);
+    assert.equal(store.getTask("child")?.workflow_status, "idle");
+  });
+
+  it("persists one notice for one rejected dispatch failure", async () => {
+    seedDispatchFamily();
+    const bridge = {
+      ...mockBridgeStubs(),
+      async prompt() {
+        throw new Error("rejected");
+      },
+    };
+
+    await tasks.drainCollaborationDeliveries("child", bridge);
+    await waitFor(() => sourceNotice("parent") !== undefined);
+    const notices = store
+      .getEvents("parent")
+      .filter((event) => event.type === "task_outcome_notice")
+      .map((event) => JSON.parse(event.data) as Record<string, unknown>);
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].reason, "target_removed");
+    assert.equal(tasks.hasOpenObligation("parent", "child"), false);
+  });
+
   it("does not mark a turn when the update transaction fails", () => {
     seedDispatchFamily();
     armDeliveredDispatch();

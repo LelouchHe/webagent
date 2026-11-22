@@ -7,6 +7,7 @@ import {
   type ObligationNotice,
   type TimerHandle,
 } from "../src/obligation-controller.ts";
+import { reduceObligationOutcome } from "../src/obligation-outcomes.ts";
 
 interface ScheduledTimer {
   at: number;
@@ -33,7 +34,12 @@ function makeHarness() {
     },
     submitReminder: (_sourceTaskId, targetTaskId) =>
       reminders.push(targetTaskId),
-    emitNotice: (notice) => notices.push(notice),
+    emitOutcome: (fact) => {
+      const decision = reduceObligationOutcome(fact);
+      if (decision.kind === "notice" || decision.kind === "close_account") {
+        notices.push(decision.notice);
+      }
+    },
   });
   return {
     controller,
@@ -86,6 +92,8 @@ describe("ObligationController", () => {
   });
 
   it("reminds once, then reports no_update and stops", () => {
+    // Regression guard: the controller emits a fact; the reducer owns the
+    // exact notice reason and text.
     const h = makeHarness();
     h.controller.arm("parent", "child");
 
@@ -102,6 +110,10 @@ describe("ObligationController", () => {
     );
     assert.equal(h.notices[0].sourceTaskId, "parent");
     assert.equal(h.notices[0].targetTaskId, "child");
+    assert.equal(
+      h.notices[0].message,
+      "The target ended another turn without any task_update; the runtime stopped reminding.",
+    );
 
     // Further unaccounted turns stay quiet.
     h.controller.beginTurn("child");
@@ -328,7 +340,12 @@ describe("ObligationController", () => {
       },
       clearTimer: () => {},
       submitReminder: () => {},
-      emitNotice: (notice) => notices.push(notice),
+      emitOutcome: (fact) => {
+        const decision = reduceObligationOutcome(fact);
+        if (decision.kind === "notice" || decision.kind === "close_account") {
+          notices.push(decision.notice);
+        }
+      },
       silenceMs: 90_000,
     });
     controller.arm("parent", "child");
@@ -352,6 +369,10 @@ describe("ObligationController", () => {
     assert.deepEqual(
       h.notices.map((notice) => notice.reason),
       ["target_removed"],
+    );
+    assert.equal(
+      h.notices[0].message,
+      "The target left this edge (deleted or archived); the account is gone.",
     );
     assert.equal(h.controller.hasOpen("parent", "child"), false);
   });
