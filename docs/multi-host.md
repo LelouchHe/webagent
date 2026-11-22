@@ -55,33 +55,49 @@ only after the initiator transaction commits.
 
 ```text
 upper layer: task ids only
-  MCP tools / TaskLocator / DeliveryQueue / accounts / reducer / wake checks
+  TaskManager / MCP / ObligationController / TaskLocator / DeliveryQueue
        |
-       | relation(...), parentOf(...), childrenOf(...), describe(...)
+       | relation / parentOf / childrenOf / describe / hasChildWakeSource
        | enqueue(source task id, target task id, kind, body)
        v
 local SQLite: messages + deliveries + projections
 ====================== delivery-row boundary ======================
        ^
        | lower components
-       +-- owner API: POST create/dispatch, GET outbox, ACK
-       +-- HostRegistry: persistent SSE, ordered POST, pull, retry
-       +-- host bindings/edges/receipts/deduplication
-       +-- TaskLocator resolves local / remote_child / external_parent
+       +-- host/routes.ts: POST create/dispatch, GET outbox, ACK
+       +-- host/registry.ts: persistent SSE, ordered POST, pull, retry
+       +-- host/store.ts: bindings/edges/receipts/deduplication
+       +-- host/protocol.ts + host/create.ts
 ```
 
-`TaskLocator` and `DeliveryQueue` are the upper modules. `DeliveryQueue.enqueue`
-commits locally and only then kicks local drain or host transport. The owner
-endpoint never calls MCP/account business functions: it writes a local queued
-delivery with the persisted external binding. The normal local drain opens the
-account and hands that row to ACP.
+`TaskLocator` and `DeliveryQueue` are the boundary modules. The upper modules
+see only task ids and four delivery kinds (`dispatch`, `message`, `update`,
+`notice`). `DeliveryQueue.enqueue` commits a status mutation and its report in
+one transaction when needed, then emits one generic `deliveries committed`
+signal. The composition root passes that signal to the lower layer, which
+decides whether the target is local, an outbound edge, or an owner outbox.
 
-In `src/task-manager.ts`, local `claim -> arm -> ACP` contains no locator lookup
-or I/O. A task-id route for a non-local endpoint is rejected or selected before
-that synchronous claim path. The locator's `Store.hasHostFacts()` flag is an
-in-process value initialized from persisted facts and changed only after a
-host fact commits, so a database with no host relationships keeps the original
-local SQL path.
+The owner endpoint never calls MCP/account business functions: it writes a
+local queued delivery through the Store's raw row primitive. The normal local
+drain opens the account and hands that row to ACP. In `src/task-manager.ts`,
+local `claim -> arm -> ACP` contains no locator lookup or I/O; generic claim
+metadata supplied by the lower Store module is copied inside the claim
+transaction.
+
+The import direction is lint-enforced. Files outside `src/host/` cannot import
+that directory; only `src/server.ts` composes it. Files inside `src/host/`
+cannot import TaskManager, obligation, or MCP business modules. The one remote
+create exception is one injected lower-layer `CrossHostTaskCreator.create`
+call; it owns coordinate parsing, network work, and edge/event commit.
+
+## File map
+
+| Layer | Files | Interface |
+|---|---|---|
+| Upper | `src/task-manager.ts`, `src/mcp/`, `src/obligation-controller.ts` | task ids, five locator reads, `DeliveryQueue.enqueue`, generic committed signal |
+| Boundary | `src/task-locator.ts`, `src/delivery-queue.ts`, core `src/store.ts` | task descriptions, route, atomic row writes |
+| Lower | `src/host/store.ts`, `registry.ts`, `routes.ts`, `protocol.ts`, `create.ts` | host tables, owner routes, client connection, cross-host create |
+| Composition | `src/server.ts` | constructs both sides and wires callbacks/SSE hints |
 
 An edge's transport state and wake hint are separate facts. A typed terminal
 owner report consumes only the conservative wake hint; it does not mark another

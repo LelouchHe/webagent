@@ -6,13 +6,23 @@ import test from "node:test";
 import { Store } from "../src/store.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
-import type { HostRegistry } from "../src/host-registry.ts";
+import { HostStore } from "../src/host/store.ts";
+import { TaskLocator } from "../src/task-locator.ts";
 
 test("behavior proof: MCP create and send address a remote child by returned task id", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "webagent-host-mcp-"));
   const store = new Store(dir);
   const root = store.ensureRootTask(dir);
-  const tasks = createTaskManager(store, dir, dir);
+  const hostStore = new HostStore(store);
+  const tasks = createTaskManager(
+    store,
+    dir,
+    dir,
+    undefined,
+    undefined,
+    "test-agent",
+    new TaskLocator(store, [hostStore]),
+  );
   store.createTask(
     "parent",
     dir,
@@ -22,27 +32,42 @@ test("behavior proof: MCP create and send address a remote child by returned tas
     root.id,
   );
   const kicks: string[] = [];
-  const registry = {
-    remoteAgentId(value: string) {
-      return value === "copilot@mini"
-        ? {
-            agentId: "copilot",
-            hostName: "mini",
-            credentialHash: "a".repeat(64),
-          }
-        : null;
-    },
-    async createTask() {
-      return {
-        taskId: "remote-child-id",
+  const crossHostCreator = {
+    async create(input: { agent: string }) {
+      if (input.agent !== "copilot@mini") return { handled: false };
+      const edge = hostStore.createHostEdge({
+        parentTaskId: "parent",
+        hostName: "mini",
+        remoteTaskId: "remote-child-id",
+        title: "build",
         credentialHash: "a".repeat(64),
-      };
+        createKey: "create",
+        requestHash: "create",
+        event: {
+          title: "remote",
+          body: "remote",
+          kind: "task_created_remote",
+          taskId: "remote-child-id",
+          taskTitle: "build",
+          agentId: "copilot",
+          cwd: "owner",
+          model: null,
+          thinking: null,
+        },
+      });
+      assert.equal(edge.status, "created");
+      return { handled: true, taskId: "remote-child-id" };
     },
-    kick(edgeId: string) {
-      kicks.push(edgeId);
-    },
-  } as unknown as HostRegistry;
-  const host = createMcpTaskToolHost({ store, tasks, hosts: registry });
+  };
+  tasks.onDeliveriesCommitted((delivery) => {
+    const action = hostStore.deliveryCommitAction(delivery.deliveryId);
+    if (action && "edgeId" in action) kicks.push(action.edgeId);
+  });
+  const host = createMcpTaskToolHost({
+    store,
+    tasks,
+    crossHostCreator,
+  });
   const lease = tasks.authority.leaseFor("parent");
   assert.ok(lease);
   const principal = {
@@ -68,8 +93,8 @@ test("behavior proof: MCP create and send address a remote child by returned tas
       assert.equal(remote.external, true);
 
       await host.send(principal, created.taskId, "run");
-      const dispatch = store.nextHostDispatch(
-        store.listHostEdgesForParent("parent")[0].id,
+      const dispatch = hostStore.nextHostDispatch(
+        hostStore.listHostEdgesForParent("parent")[0].id,
       );
       assert.equal(dispatch?.message.body, "run");
       assert.equal(kicks.length, 1);

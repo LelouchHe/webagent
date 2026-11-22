@@ -1,13 +1,6 @@
-import {
-  readFile,
-  mkdir,
-  rename,
-  unlink,
-  realpath,
-  stat,
-} from "node:fs/promises";
+import { readFile, mkdir, rename, unlink, realpath } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { join, extname, basename, isAbsolute } from "node:path";
+import { join, extname, basename } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import busboy from "busboy";
@@ -43,8 +36,7 @@ import {
 } from "./auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
-import { abbreviateHomePath, expandHomePath } from "./home-path.ts";
-import { canonicalCwd } from "./cwd-path.ts";
+import { abbreviateHomePath } from "./home-path.ts";
 import { log } from "./log.ts";
 import {
   attachCollaborationDeliveryStatus,
@@ -172,13 +164,6 @@ import {
 } from "./attachments.ts";
 import { readImageInfo } from "./image-info.ts";
 import { HTTP_STATUS } from "./http-status.ts";
-import {
-  HOST_API_VERSION,
-  HostCreateSchema,
-  HostDispatchSchema,
-  requestHash,
-  targetNotFoundBody,
-} from "./host-protocol.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -283,6 +268,11 @@ export interface RequestHandlerDeps {
   /** Optional SSE ticket store. Required alongside authStore for the
    *  /api/v1/sse-ticket route and ticket-based SSE auth. */
   ticketStore?: TicketStore;
+  peerEndpoint?: (
+    req: IncomingMessage,
+    res: ServerResponse,
+    principal: TokenRecord,
+  ) => Promise<boolean>;
   /**
    * Support seam: called synchronously when a route starts reading the request
    * body — by definition *after* that route's pre-body checks have passed. It
@@ -803,6 +793,15 @@ export function createRequestHandler(
       }
     }
 
+    const peerPrincipal = principalByRequest.get(req);
+    if (
+      deps.peerEndpoint &&
+      peerPrincipal &&
+      (await deps.peerEndpoint(req, res, peerPrincipal))
+    ) {
+      return;
+    }
+
     // Share routes — early dispatch so /s/* and /api/v1/shares* claim
     // their URL space before the generic /api/v1 branch. When
     // `shareConfig.enabled === false` handleShareRoutes is a no-op.
@@ -852,184 +851,6 @@ export function createRequestHandler(
           },
         });
         return;
-      }
-
-      const hostPrincipal = principalByRequest.get(req);
-      const hostPrefix = "/api/v1/host";
-      if (
-        (url === hostPrefix || url.startsWith(`${hostPrefix}/`)) &&
-        hostPrincipal
-      ) {
-        if (url === hostPrefix && req.method === "GET") {
-          json(res, HTTP_STATUS.OK, {
-            host_api_version: HOST_API_VERSION,
-            agent_ids: deps.agentIds ?? [],
-          });
-          return;
-        }
-
-        if (url === `${hostPrefix}/tasks` && req.method === "POST") {
-          let raw: unknown;
-          try {
-            raw = JSON.parse(await readBody(req));
-          } catch {
-            json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
-            return;
-          }
-          const parsed = HostCreateSchema.safeParse(raw);
-          if (!parsed.success) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "Invalid host create request",
-              code: "invalid_request",
-            });
-            return;
-          }
-          const requestHashValue = requestHash(parsed.data);
-          const replay = store.getHostCreateResult(
-            hostPrincipal.hash,
-            parsed.data.createKey,
-            requestHashValue,
-          );
-          if (replay) {
-            json(
-              res,
-              replay.status === "reused"
-                ? HTTP_STATUS.OK
-                : HTTP_STATUS.CONFLICT,
-              replay.status === "reused"
-                ? { taskId: replay.taskId }
-                : {
-                    error: "createKey already used for a different request",
-                    code: "create_conflict",
-                  },
-            );
-            return;
-          }
-          if (!(deps.agentIds ?? []).includes(parsed.data.agent)) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "Agent is not configured on this host",
-              code: "unknown_agent",
-            });
-            return;
-          }
-          const requestedCwd =
-            parsed.data.cwd ?? deps.defaultCwd ?? process.cwd();
-          const cwd = canonicalCwd(expandHomePath(requestedCwd));
-          if (!isAbsolute(cwd)) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "cwd must be absolute or start with ~",
-              code: "invalid_cwd",
-            });
-            return;
-          }
-          try {
-            const cwdStat = await stat(cwd);
-            if (!cwdStat.isDirectory()) throw new Error("not directory");
-          } catch {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "cwd is not an accessible directory",
-              code: "invalid_cwd",
-            });
-            return;
-          }
-          const created = store.createHostTask({
-            credentialHash: hostPrincipal.hash,
-            parentTaskId: parsed.data.parentTaskId,
-            createKey: parsed.data.createKey,
-            requestHash: requestHashValue,
-            agentId: parsed.data.agent,
-            cwd,
-            title: parsed.data.title,
-            model: parsed.data.model,
-            thinking: parsed.data.thinking,
-          });
-          if (created.status === "conflict") {
-            json(res, HTTP_STATUS.CONFLICT, {
-              error: "createKey already used for a different request",
-              code: "create_conflict",
-            });
-            return;
-          }
-          json(
-            res,
-            created.status === "created" ? HTTP_STATUS.CREATED : HTTP_STATUS.OK,
-            { taskId: created.taskId },
-          );
-          return;
-        }
-
-        if (url === `${hostPrefix}/messages` && req.method === "POST") {
-          let raw: unknown;
-          try {
-            raw = JSON.parse(await readBody(req));
-          } catch {
-            json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
-            return;
-          }
-          const parsed = HostDispatchSchema.safeParse(raw);
-          if (!parsed.success) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "Invalid host dispatch request",
-              code: "invalid_request",
-            });
-            return;
-          }
-          const received = store.receiveHostDispatch({
-            credentialHash: hostPrincipal.hash,
-            remoteMessageId: parsed.data.messageId,
-            requestHash: requestHash(parsed.data),
-            targetTaskId: parsed.data.to,
-            body: parsed.data.body,
-          });
-          if (received.status === "conflict") {
-            json(res, HTTP_STATUS.CONFLICT, {
-              error: "messageId already used for a different request",
-              code: "message_conflict",
-            });
-            return;
-          }
-          if (received.status === "target_not_found") {
-            json(res, HTTP_STATUS.NOT_FOUND, targetNotFoundBody());
-            return;
-          }
-          if (received.status === "forbidden") {
-            json(res, HTTP_STATUS.FORBIDDEN, {
-              error: "Task is not owned by this credential",
-              code: "target_not_allowed",
-            });
-            return;
-          }
-          if (tasks && received.delivery) {
-            void tasks.drainCollaborationDeliveries(parsed.data.to);
-          }
-          json(res, HTTP_STATUS.ACCEPTED, {
-            accepted: true,
-            messageId: received.localMessageId,
-          });
-          return;
-        }
-
-        if (url === `${hostPrefix}/messages` && req.method === "GET") {
-          const messages = store.listHostOutbox(hostPrincipal.hash);
-          json(res, HTTP_STATUS.OK, { messages });
-          return;
-        }
-
-        const ackMatch = url.match(/^\/api\/v1\/host\/messages\/([^/]+)\/ack$/);
-        if (ackMatch && req.method === "POST") {
-          const result = store.ackHostMessage(
-            hostPrincipal.hash,
-            decodeURIComponent(ackMatch[1]),
-          );
-          if (result.status === "acked") {
-            json(res, HTTP_STATUS.OK, { acknowledged: true });
-          } else if (result.status === "forbidden") {
-            json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
-          } else {
-            json(res, HTTP_STATUS.NOT_FOUND, { error: "Message not found" });
-          }
-          return;
-        }
       }
 
       // GET /api/v1/tasks

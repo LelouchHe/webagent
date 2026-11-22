@@ -10,7 +10,11 @@ import { SseManager } from "../src/sse-manager.ts";
 import { TicketStore } from "../src/sse-ticket.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { createTaskManager } from "../src/task-manager.ts";
-import { HostRegistry } from "../src/host-registry.ts";
+import { HostRegistry } from "../src/host/registry.ts";
+import { HostStore } from "../src/host/store.ts";
+import { HostTaskCreator } from "../src/host/create.ts";
+import { handleHostRoutes } from "../src/host/routes.ts";
+import { TaskLocator } from "../src/task-locator.ts";
 import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
 import { mockBridgeStubs, waitFor } from "./fixtures.ts";
 
@@ -26,10 +30,31 @@ test("behavior proof: two runtimes close create, dispatch, update, ACK, and wake
 
   const ownerStore = new Store(ownerDir);
   ownerStore.ensureRootTask(ownerDir);
+  const ownerHostStore = new HostStore(ownerStore);
   const hubStore = new Store(hubDir);
   hubStore.ensureRootTask(hubDir);
-  const ownerTasks = createTaskManager(ownerStore, ownerDir, ownerDir);
-  const hubTasks = createTaskManager(hubStore, hubDir, hubDir);
+  const hubHostStore = new HostStore(hubStore);
+  const ownerTasks = createTaskManager(
+    ownerStore,
+    ownerDir,
+    ownerDir,
+    undefined,
+    undefined,
+    "test-agent",
+    new TaskLocator(ownerStore, [ownerHostStore]),
+  );
+  const hubTasks = createTaskManager(
+    hubStore,
+    hubDir,
+    hubDir,
+    undefined,
+    undefined,
+    "test-agent",
+    new TaskLocator(hubStore, [hubHostStore]),
+  );
+  ownerHostStore.onCommitted((taskId) => {
+    void ownerTasks.drainCollaborationDeliveries(taskId);
+  });
   const ownerPrompts: Array<{ taskId: string; text: string }> = [];
   const hubPrompts: Array<{ taskId: string; text: string }> = [];
   ownerTasks.attachExecutionBridge({
@@ -68,11 +93,6 @@ test("behavior proof: two runtimes close create, dispatch, update, ACK, and wake
   const token = (await authStore.addToken("laptop", "api")).token;
   const ticketStore = new TicketStore();
   const sseManager = new SseManager();
-  ownerTasks.setExternalMessageBroadcast((credentialHash) => {
-    sseManager.broadcastToCredential(credentialHash, {
-      type: "host_message_pending",
-    });
-  });
   sseManager.setRevocationCheck(
     (credentialHash) => !authStore.hasTokenHash(credentialHash),
   );
@@ -89,6 +109,13 @@ test("behavior proof: two runtimes close create, dispatch, update, ACK, and wake
       limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
       authStore,
       ticketStore,
+      peerEndpoint: (req, res, principal) =>
+        handleHostRoutes(req, res, {
+          store: ownerHostStore,
+          agentIds: ["test-agent"],
+          defaultCwd: ownerDir,
+          principal,
+        }),
     }),
   );
   await new Promise<void>((resolve) =>
@@ -102,9 +129,24 @@ test("behavior proof: two runtimes close create, dispatch, update, ACK, and wake
         token,
       },
     },
-    hubStore,
-    hubTasks,
+    hubHostStore,
+    (taskId) => {
+      void hubTasks.drainCollaborationDeliveries(taskId);
+    },
   );
+  const hostTaskCreator = new HostTaskCreator(hubHostStore, hosts);
+  ownerTasks.onDeliveriesCommitted((delivery) => {
+    const action = ownerHostStore.deliveryCommitAction(delivery.deliveryId);
+    if (action && "credentialHash" in action) {
+      sseManager.broadcastToCredential(action.credentialHash, {
+        type: "host_message_pending",
+      });
+    }
+  });
+  hubTasks.onDeliveriesCommitted((delivery) => {
+    const action = hubHostStore.deliveryCommitAction(delivery.deliveryId);
+    if (action && "edgeId" in action) hosts.kick(action.edgeId);
+  });
   hosts.start();
   t.after(async () => {
     hosts.stop();
@@ -128,7 +170,7 @@ test("behavior proof: two runtimes close create, dispatch, update, ACK, and wake
   const mcp = createMcpTaskToolHost({
     store: hubStore,
     tasks: hubTasks,
-    hosts,
+    crossHostCreator: hostTaskCreator,
   });
   const lease = hubTasks.authority.leaseFor("parent");
   assert.ok(lease);
@@ -183,9 +225,12 @@ test("behavior proof: two runtimes close create, dispatch, update, ACK, and wake
   assert.match(hubPrompts[0].text, /finished remotely/);
   const credential = authStore.findByToken(token);
   assert.ok(credential);
-  await waitFor(() => ownerStore.listHostOutbox(credential.hash).length === 0, {
-    timeoutMs: 2000,
-  });
+  await waitFor(
+    () => ownerHostStore.listHostOutbox(credential.hash).length === 0,
+    {
+      timeoutMs: 2000,
+    },
+  );
   assert.equal(hubStore.countQueuedDeliveries("parent"), 0);
 
   const noticeLease = hubTasks.authority.leaseFor("notice-parent");
@@ -200,18 +245,15 @@ test("behavior proof: two runtimes close create, dispatch, update, ACK, and wake
     { title: "notice-source", agent: "test-agent@mini" },
   );
   ownerTasks.liveTasks.add(noticeTask.taskId);
-  const externalSource = ownerStore.getHostExternalSource(noticeTask.taskId);
-  assert.ok(externalSource);
-  ownerStore.createHostRuntimeNotice({
-    sourceTaskId: noticeTask.taskId,
-    source: externalSource,
-    reason: "no_activity",
-    body: "No activity for 15 minutes",
+  ownerTasks.emitObligationOutcome({
+    kind: "silent_account",
+    sourceTaskId: "notice-parent",
+    targetTaskId: noticeTask.taskId,
+    silenceMs: 900_000,
   });
-  ownerTasks.notifyExternalMessage(externalSource.credential_hash);
   await waitFor(() => hubPrompts.length === 2, { timeoutMs: 2000 });
   assert.match(hubPrompts[1].text, /Runtime message:/);
-  assert.match(hubPrompts[1].text, /No activity for 15 minutes/);
+  assert.match(hubPrompts[1].text, /No agent activity for 15 minutes/);
   assert.equal(
     hubStore
       .getEvents("notice-parent")

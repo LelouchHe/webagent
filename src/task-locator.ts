@@ -1,85 +1,176 @@
-import type { HostEdge, Store, TaskRow } from "./store.ts";
+import type {
+  CollaborationDeliveryRow,
+  CollaborationMessageRow,
+  Store,
+  TaskRow,
+} from "./store.ts";
 import {
   collaborationRelation,
   type CollaborationRelation,
 } from "./task-collaboration.ts";
 
-export type TaskEndpoint =
-  | { kind: "local"; task: TaskRow }
-  | { kind: "remote_child"; edge: HostEdge }
-  | {
-      kind: "external_parent";
-      taskId: string;
-      ownerTaskId: string;
-      credentialHash: string;
-    };
+export type DeliveryKind = "dispatch" | "message" | "update" | "notice";
+
+export interface TaskDescription {
+  id: string;
+  title: string;
+  relation: CollaborationRelation;
+  local: boolean;
+  presentation?: Record<string, string | boolean>;
+  task?: TaskRow;
+}
+
+export interface DeliveryRequest {
+  messageId: string;
+  deliveryId: string;
+  sourceTaskId: string;
+  targetTaskId: string;
+  kind: DeliveryKind;
+  body: string;
+  createdAt: number;
+  updateStatus?: "done" | "blocked";
+  runtimeKind?: string | null;
+  reason?: string | null;
+}
+
+export interface LocationProvider {
+  relation(sourceId: string, targetId: string): CollaborationRelation | null;
+  parentOf(taskId: string): string | null;
+  childrenOf(taskId: string): string[];
+  describe(taskId: string): TaskDescription | null;
+  hasChildWakeSource(parentId: string): boolean;
+  enqueueDelivery(request: DeliveryRequest): {
+    message: CollaborationMessageRow;
+    delivery: CollaborationDeliveryRow;
+  } | null;
+}
+
+export interface DeliveryRoute {
+  source: TaskRow;
+  targetId: string;
+  relation: Exclude<CollaborationRelation, "self">;
+  localTask: TaskRow | null;
+  description: TaskDescription;
+}
 
 export class TaskLocator {
   private readonly store: Store;
+  private readonly providers: readonly LocationProvider[];
 
-  constructor(store: Store) {
+  constructor(store: Store, providers: readonly LocationProvider[] = []) {
     this.store = store;
+    this.providers = providers;
+  }
+
+  relation(sourceId: string, targetId: string): CollaborationRelation | null {
+    const source = this.store.getTask(sourceId);
+    const target = this.store.getTask(targetId);
+    if (source && target) return collaborationRelation(source, target);
+    if (!source) return sourceId === targetId ? "self" : null;
+    for (const provider of this.providers) {
+      const relation = provider.relation(sourceId, targetId);
+      if (relation) return relation;
+    }
+    return null;
+  }
+
+  parentOf(taskId: string, knownTask?: TaskRow): string | null {
+    const task = knownTask ?? this.store.getTask(taskId);
+    if (!task) return null;
+    if (task.parent_id !== null) return task.parent_id;
+    for (const provider of this.providers) {
+      const parent = provider.parentOf(taskId);
+      if (parent) return parent;
+    }
+    return null;
+  }
+
+  childrenOf(taskId: string): string[] {
+    const result: string[] = [];
+    for (const provider of this.providers) {
+      for (const childId of provider.childrenOf(taskId)) {
+        if (!result.includes(childId)) result.push(childId);
+      }
+    }
+    return result;
+  }
+
+  describe(taskId: string): TaskDescription | null {
+    const task = this.store.getTask(taskId);
+    if (task) {
+      return {
+        id: task.id,
+        title: task.title ?? task.id,
+        relation: "self",
+        local: true,
+        task,
+      };
+    }
+    for (const provider of this.providers) {
+      const description = provider.describe(taskId);
+      if (description) return description;
+    }
+    return null;
+  }
+
+  hasChildWakeSource(parentId: string): boolean {
+    if (this.store.hasQueuedDispatchToChild(parentId)) return true;
+    return this.providers.some((provider) =>
+      provider.hasChildWakeSource(parentId),
+    );
   }
 
   route(
     sourceId: string,
     targetId: string,
-  ): {
-    relation: CollaborationRelation | null;
-    endpoint: TaskEndpoint | null;
-    source: TaskRow | null;
-  } {
-    const source = this.store.getTask(sourceId);
-    const target = this.store.getTask(targetId);
-    if (!source) return { relation: null, endpoint: null, source: null };
-    if (target) {
+    relationHint?: "parent" | "child",
+    knownSource?: TaskRow,
+  ): DeliveryRoute | null {
+    const source = knownSource ?? this.store.getTask(sourceId);
+    if (!source) return null;
+    const localTask = this.store.getTask(targetId);
+    const relation =
+      relationHint ??
+      (localTask
+        ? collaborationRelation(source, localTask)
+        : this.providers
+            .map((provider) => provider.relation(sourceId, targetId))
+            .find((value): value is CollaborationRelation => value !== null));
+    if (relation !== "parent" && relation !== "child") return null;
+    if (localTask) {
       return {
-        relation: collaborationRelation(source, target),
-        endpoint: { kind: "local", task: target },
         source,
-      };
-    }
-    if (!this.store.hasHostFacts() || sourceId === targetId) {
-      return { relation: null, endpoint: null, source };
-    }
-    const edge = this.store.findHostEdgeForParent(targetId, sourceId);
-    if (edge) {
-      return {
-        relation: "child",
-        endpoint: { kind: "remote_child", edge },
-        source,
-      };
-    }
-    const external = this.store.getHostExternalSource(sourceId);
-    if (source.parent_id === null && external?.parent_task_id === targetId) {
-      return {
-        relation: "parent",
-        endpoint: {
-          kind: "external_parent",
-          taskId: targetId,
-          ownerTaskId: sourceId,
-          credentialHash: external.credential_hash,
+        targetId,
+        relation,
+        localTask,
+        description: {
+          id: localTask.id,
+          title: localTask.title ?? localTask.id,
+          relation,
+          local: true,
+          task: localTask,
         },
-        source,
       };
     }
-    return { relation: null, endpoint: null, source };
+    const description = this.describe(targetId);
+    if (!description || description.local) return null;
+    return {
+      source,
+      targetId,
+      relation,
+      localTask: null,
+      description: { ...description, relation },
+    };
   }
 
-  parentOf(taskId: string): string | null {
-    const task = this.store.getTask(taskId);
-    if (!task) return null;
-    if (task.parent_id !== null) return task.parent_id;
-    if (!this.store.hasHostFacts()) return null;
-    return this.store.getHostExternalSource(taskId)?.parent_task_id ?? null;
-  }
-
-  hasChildWakeSource(parentId: string): boolean {
-    if (!this.store.hasQueuedDispatchToChild(parentId)) {
-      return (
-        this.store.hasHostFacts() && this.store.hasOpenHostDispatch(parentId)
-      );
+  enqueueOther(request: DeliveryRequest): {
+    message: CollaborationMessageRow;
+    delivery: CollaborationDeliveryRow;
+  } | null {
+    for (const provider of this.providers) {
+      const created = provider.enqueueDelivery(request);
+      if (created) return created;
     }
-    return true;
+    return null;
   }
 }

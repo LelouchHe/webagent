@@ -6,15 +6,17 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { Store } from "../src/store.ts";
 import { TaskLocator } from "../src/task-locator.ts";
-import { requestHash } from "../src/host-protocol.ts";
+import { requestHash } from "../src/host/protocol.ts";
 import Database from "better-sqlite3";
 import { createTaskManager } from "../src/task-manager.ts";
 import { waitFor } from "./fixtures.ts";
+import { HostStore } from "../src/host/store.ts";
 
 async function fixture(t: test.TestContext) {
   const dir = await mkdtemp(join(tmpdir(), "webagent-host-store-"));
   const store = new Store(dir);
   store.ensureRootTask(dir);
+  const hostStore = new HostStore(store);
   let closed = false;
   const close = () => {
     if (closed) return;
@@ -25,11 +27,11 @@ async function fixture(t: test.TestContext) {
     close();
     return rm(dir, { recursive: true, force: true });
   });
-  return { dir, store, close };
+  return { dir, store, hostStore, close };
 }
 
 test("behavior proof: owner create binding and dispatch dedup survive reopen", async (t) => {
-  const { dir, store, close } = await fixture(t);
+  const { dir, store, hostStore, close } = await fixture(t);
   const request = {
     credentialHash: "a".repeat(64),
     parentTaskId: randomUUID(),
@@ -39,21 +41,21 @@ test("behavior proof: owner create binding and dispatch dedup survive reopen", a
     cwd: dir,
     title: "remote",
   };
-  const created = store.createHostTask(request);
+  const created = hostStore.createHostTask(request);
   assert.equal(created.status, "created");
   assert.equal(store.getTask(created.taskId)?.parent_id, null);
   assert.equal(store.getTask(created.taskId)?.mode, "agent");
   assert.equal(store.getEventCount(created.taskId), 1);
-  const repeated = store.createHostTask(request);
+  const repeated = hostStore.createHostTask(request);
   assert.equal(repeated.status, "reused");
   assert.equal(repeated.taskId, created.taskId);
-  const conflict = store.createHostTask({
+  const conflict = hostStore.createHostTask({
     ...request,
     requestHash: "different",
   });
   assert.equal(conflict.status, "conflict");
 
-  const received = store.receiveHostDispatch({
+  const received = hostStore.receiveHostDispatch({
     credentialHash: request.credentialHash,
     remoteMessageId: "message-1",
     requestHash: requestHash({ body: "work" }),
@@ -62,7 +64,7 @@ test("behavior proof: owner create binding and dispatch dedup survive reopen", a
   });
   assert.equal(received.status, "accepted");
   assert.equal(
-    store.receiveHostDispatch({
+    hostStore.receiveHostDispatch({
       credentialHash: request.credentialHash,
       remoteMessageId: "message-1",
       requestHash: requestHash({ body: "work" }),
@@ -72,7 +74,7 @@ test("behavior proof: owner create binding and dispatch dedup survive reopen", a
     "accepted",
   );
   assert.equal(
-    store.receiveHostDispatch({
+    hostStore.receiveHostDispatch({
       credentialHash: request.credentialHash,
       remoteMessageId: "message-1",
       requestHash: requestHash({ body: "different" }),
@@ -82,7 +84,7 @@ test("behavior proof: owner create binding and dispatch dedup survive reopen", a
     "conflict",
   );
   assert.equal(
-    store.receiveHostDispatch({
+    hostStore.receiveHostDispatch({
       credentialHash: "b".repeat(64),
       remoteMessageId: "message-2",
       requestHash: requestHash({ body: "work" }),
@@ -94,16 +96,17 @@ test("behavior proof: owner create binding and dispatch dedup survive reopen", a
 
   close();
   const reopened = new Store(dir);
+  const reopenedHost = new HostStore(reopened);
   t.after(() => {
     reopened.close();
   });
-  const reopenedCreate = reopened.createHostTask(request);
+  const reopenedCreate = reopenedHost.createHostTask(request);
   if (reopenedCreate.status === "conflict") {
     assert.fail("reopen unexpectedly conflicted");
   }
   assert.equal(reopenedCreate.taskId, created.taskId);
   assert.equal(
-    reopened.receiveHostDispatch({
+    reopenedHost.receiveHostDispatch({
       credentialHash: request.credentialHash,
       remoteMessageId: "message-1",
       requestHash: requestHash({ body: "work" }),
@@ -115,10 +118,10 @@ test("behavior proof: owner create binding and dispatch dedup survive reopen", a
 });
 
 test("behavior proof: external parent is queued and acked in the owner outbox", async (t) => {
-  const { dir, store } = await fixture(t);
+  const { dir, hostStore } = await fixture(t);
   const credentialHash = "c".repeat(64);
   const parentTaskId = randomUUID();
-  const created = store.createHostTask({
+  const created = hostStore.createHostTask({
     credentialHash,
     parentTaskId,
     createKey: "create-outbox",
@@ -128,22 +131,22 @@ test("behavior proof: external parent is queued and acked in the owner outbox", 
     title: "child",
   });
   assert.equal(created.status, "created");
-  const source = store.getHostExternalSource(created.taskId);
+  const source = hostStore.getHostExternalSource(created.taskId);
   assert.ok(source);
 
-  const message = store.createHostAgentMessage({
+  const message = hostStore.createHostAgentMessage({
     sourceTaskId: created.taskId,
     source,
     body: "progress",
   });
-  const update = store.recordHostWorkflowUpdate({
+  const update = hostStore.recordHostWorkflowUpdate({
     taskId: created.taskId,
     status: "done",
     body: "finished",
     source,
     reason: "settled",
   });
-  const outbox = store.listHostOutbox(credentialHash);
+  const outbox = hostStore.listHostOutbox(credentialHash);
   assert.deepEqual(
     outbox.map((item) => item.kind),
     ["collaboration", "done"],
@@ -153,25 +156,26 @@ test("behavior proof: external parent is queued and acked in the owner outbox", 
   assert.equal(message.delivery.status, "queued");
 
   assert.equal(
-    store.ackHostMessage(credentialHash, message.message.id).status,
+    hostStore.ackHostMessage(credentialHash, message.message.id).status,
     "acked",
   );
   assert.equal(
-    store.ackHostMessage(credentialHash, message.message.id).status,
+    hostStore.ackHostMessage(credentialHash, message.message.id).status,
     "acked",
   );
   assert.equal(
-    store.ackHostMessage("d".repeat(64), update.collaborationMessageId).status,
+    hostStore.ackHostMessage("d".repeat(64), update.collaborationMessageId)
+      .status,
     "forbidden",
   );
-  assert.equal(store.listHostOutbox(credentialHash).length, 1);
+  assert.equal(hostStore.listHostOutbox(credentialHash).length, 1);
 });
 
 test("behavior proof: hub locator and report receipt use the persisted edge", async (t) => {
-  const { dir, store } = await fixture(t);
+  const { dir, store, hostStore } = await fixture(t);
   const parent = store.createTask(randomUUID(), dir, "agent", "copilot");
   const remoteTaskId = randomUUID();
-  const edge = store.createHostEdge({
+  const edge = hostStore.createHostEdge({
     parentTaskId: parent.id,
     hostName: "mini",
     remoteTaskId,
@@ -193,7 +197,7 @@ test("behavior proof: hub locator and report receipt use the persisted edge", as
   });
   assert.equal(edge.status, "created");
   assert.ok(edge.edge);
-  const duplicate = store.createHostEdge({
+  const duplicate = hostStore.createHostEdge({
     parentTaskId: parent.id,
     hostName: "mini",
     remoteTaskId: randomUUID(),
@@ -214,30 +218,31 @@ test("behavior proof: hub locator and report receipt use the persisted edge", as
     },
   });
   assert.equal(duplicate.status, "conflict");
-  const locator = new TaskLocator(store);
+  const locator = new TaskLocator(store, [hostStore]);
   const route = locator.route(parent.id, remoteTaskId);
+  assert.ok(route);
   assert.equal(route.relation, "child");
   assert.equal(store.getTask(remoteTaskId), undefined);
-  assert.equal(route.endpoint?.kind, "remote_child");
+  assert.equal(route.description.local, false);
 
-  const dispatched = store.createRemoteDispatch({
+  const dispatched = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
     edge: edge.edge,
     body: "first",
   });
-  const second = store.createRemoteDispatch({
+  const second = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
     edge: edge.edge,
     body: "second",
   });
-  assert.equal(store.hasOpenHostDispatch(parent.id), true);
+  assert.equal(hostStore.hasOpenHostDispatch(parent.id), true);
   assert.equal(
-    store.nextHostDispatch(edge.edge.id)?.delivery.id,
+    hostStore.nextHostDispatch(edge.edge.id)?.delivery.id,
     dispatched.delivery.id,
   );
-  store.markHostDispatchHandedOff(dispatched.delivery.id);
+  hostStore.markHostDispatchHandedOff(dispatched.delivery.id);
 
-  const received = store.ingestHostReport({
+  const received = hostStore.ingestHostReport({
     hostName: "mini",
     credentialHash: "e".repeat(64),
     ownerMessageId: "owner-message-1",
@@ -248,7 +253,7 @@ test("behavior proof: hub locator and report receipt use the persisted edge", as
   });
   assert.equal(received.status, "queued");
   assert.equal(
-    store.ingestHostReport({
+    hostStore.ingestHostReport({
       hostName: "mini",
       credentialHash: "e".repeat(64),
       ownerMessageId: "owner-message-1",
@@ -259,21 +264,24 @@ test("behavior proof: hub locator and report receipt use the persisted edge", as
     }).status,
     "duplicate",
   );
-  assert.equal(store.hasOpenHostDispatch(parent.id), false);
-  assert.equal(store.getHostDispatch(second.delivery.id)?.state, "pending");
+  assert.equal(hostStore.hasOpenHostDispatch(parent.id), false);
+  assert.equal(hostStore.getHostDispatch(second.delivery.id)?.state, "pending");
   assert.equal(
     store.getCollaborationDelivery(second.delivery.id)?.status,
     "queued",
   );
   assert.equal(
-    store.nextHostDispatch(edge.edge.id)?.delivery.id,
+    hostStore.nextHostDispatch(edge.edge.id)?.delivery.id,
     second.delivery.id,
   );
-  assert.equal(store.nextHostDispatch(edge.edge.id)?.message.body, "second");
+  assert.equal(
+    hostStore.nextHostDispatch(edge.edge.id)?.message.body,
+    "second",
+  );
 
   store.deleteTask(parent.id);
   assert.equal(
-    store.ingestHostReport({
+    hostStore.ingestHostReport({
       hostName: "mini",
       credentialHash: "e".repeat(64),
       ownerMessageId: "late-message",
@@ -287,10 +295,10 @@ test("behavior proof: hub locator and report receipt use the persisted edge", as
 });
 
 test("regression guard: archive leaves queued external endpoint deliveries alone", async (t) => {
-  const { dir, store } = await fixture(t);
+  const { dir, store, hostStore } = await fixture(t);
   const parent = store.createTask(randomUUID(), dir, "agent", "copilot");
   const remoteTaskId = randomUUID();
-  const edge = store.createHostEdge({
+  const edge = hostStore.createHostEdge({
     parentTaskId: parent.id,
     hostName: "mini",
     remoteTaskId,
@@ -311,7 +319,7 @@ test("regression guard: archive leaves queued external endpoint deliveries alone
     },
   });
   assert.ok(edge.edge);
-  const dispatched = store.createRemoteDispatch({
+  const dispatched = hostStore.createRemoteDispatch({
     parentTaskId: parent.id,
     edge: edge.edge,
     body: "run",
@@ -378,6 +386,7 @@ test("behavior proof: the additive host schema upgrades a 1bacca0-shaped Store t
   const reopened = new Store(dir);
   reopened.close();
   const reopenedAgain = new Store(dir);
+  const reopenedAgainHost = new HostStore(reopenedAgain);
   t.after(() => {
     reopenedAgain.close();
   });
@@ -391,11 +400,11 @@ test("behavior proof: the additive host schema upgrades a 1bacca0-shaped Store t
     reopenedAgain.getCollaborationDelivery("upgrade-delivery")?.status,
     "queued",
   );
-  assert.equal(reopenedAgain.hasHostFacts(), false);
+  assert.equal(reopenedAgainHost.hasHostFacts(), false);
 });
 
 test("behavior proof: boot replay selects only a committed ACKed hub report", async (t) => {
-  const { dir, store, close } = await fixture(t);
+  const { dir, store, hostStore, close } = await fixture(t);
   const parent = store.createTask(randomUUID(), dir, "agent", "copilot");
   const localTarget = store.createTask(
     randomUUID(),
@@ -414,7 +423,7 @@ test("behavior proof: boot replay selects only a committed ACKed hub report", as
     body: "local work",
   });
   const remoteTaskId = randomUUID();
-  const edge = store.createHostEdge({
+  const edge = hostStore.createHostEdge({
     parentTaskId: parent.id,
     hostName: "mini",
     remoteTaskId,
@@ -435,7 +444,7 @@ test("behavior proof: boot replay selects only a committed ACKed hub report", as
     },
   });
   assert.ok(edge.edge);
-  const report = store.ingestHostReport({
+  const report = hostStore.ingestHostReport({
     hostName: "mini",
     credentialHash: "g".repeat(64),
     ownerMessageId: "acked-report",
@@ -445,17 +454,28 @@ test("behavior proof: boot replay selects only a committed ACKed hub report", as
     body: "needs input",
   });
   assert.equal(report.status, "queued");
-  store.markHostReportAck("mini", "g".repeat(64), "acked-report");
+  hostStore.markHostReportAck("mini", "g".repeat(64), "acked-report");
   close();
 
   const reopened = new Store(dir);
-  const tasks = createTaskManager(reopened, dir, dir);
+  const reopenedHost = new HostStore(reopened);
+  const tasks = createTaskManager(
+    reopened,
+    dir,
+    dir,
+    undefined,
+    undefined,
+    "test-agent",
+    new TaskLocator(reopened, [reopenedHost]),
+  );
   const replayed: string[] = [];
   tasks.drainCollaborationDeliveries = async (taskId: string) => {
     replayed.push(taskId);
     return true;
   };
-  tasks.recoverPersistedDeliveries();
+  for (const taskId of reopenedHost.queuedAckedHostReportRecipients()) {
+    void tasks.drainCollaborationDeliveries(taskId);
+  }
   await waitFor(() => replayed.length > 0);
   assert.deepEqual(replayed, [parent.id]);
   assert.equal(
@@ -467,6 +487,7 @@ test("behavior proof: boot replay selects only a committed ACKed hub report", as
 
   const ownerDir = await mkdtemp(join(tmpdir(), "webagent-owner-boot-"));
   const owner = new Store(ownerDir);
+  const ownerHost = new HostStore(owner);
   const ownerRoot = owner.ensureRootTask(ownerDir);
   const ownerLocal = owner.createTask(
     randomUUID(),
@@ -484,7 +505,7 @@ test("behavior proof: boot replay selects only a committed ACKed hub report", as
     sourceActor: "agent",
     body: "do not replay on owner boot",
   });
-  const external = owner.createHostTask({
+  const external = ownerHost.createHostTask({
     credentialHash: "h".repeat(64),
     parentTaskId: randomUUID(),
     createKey: "owner-boot",
@@ -496,13 +517,16 @@ test("behavior proof: boot replay selects only a committed ACKed hub report", as
   assert.notEqual(external.status, "conflict");
   owner.close();
   const reopenedOwner = new Store(ownerDir);
+  const reopenedOwnerHost = new HostStore(reopenedOwner);
   const ownerTasks = createTaskManager(reopenedOwner, ownerDir, ownerDir);
   const ownerReplays: string[] = [];
   ownerTasks.drainCollaborationDeliveries = async (taskId: string) => {
     ownerReplays.push(taskId);
     return true;
   };
-  ownerTasks.recoverPersistedDeliveries();
+  for (const taskId of reopenedOwnerHost.queuedAckedHostReportRecipients()) {
+    void ownerTasks.drainCollaborationDeliveries(taskId);
+  }
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.deepEqual(ownerReplays, []);
   ownerTasks.dispose();

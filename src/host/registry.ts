@@ -1,17 +1,16 @@
 import { execFile } from "node:child_process";
-import { hashToken } from "./auth.ts";
-import type { HostConfig } from "./config.ts";
-import { log } from "./log.ts";
+import { hashToken } from "../auth.ts";
+import type { HostConfig } from "../config.ts";
+import { log } from "../log.ts";
 import {
   HOST_API_VERSION,
   parseHostDescription,
   parseHostEnvelope,
   requestHash,
   type HostDescription,
-} from "./host-protocol.ts";
-import type { HostEnvelope, Store } from "./store.ts";
-import type { TaskManager } from "./task-manager.ts";
-import { HTTP_STATUS } from "./http-status.ts";
+} from "./protocol.ts";
+import type { HostEnvelope, HostStore } from "./store.ts";
+import { HTTP_STATUS } from "../http-status.ts";
 
 const slog = log.scope("hosts");
 const REQUEST_TIMEOUT_MS = 8_000;
@@ -91,12 +90,12 @@ interface HostRegistryOptions {
   log?: (line: string) => void;
 }
 
-type NextHostDispatch = NonNullable<ReturnType<Store["nextHostDispatch"]>>;
+type NextHostDispatch = NonNullable<ReturnType<HostStore["nextHostDispatch"]>>;
 
 export class HostRegistry {
   private readonly hosts: Record<string, HostConfig>;
-  private readonly store: Store;
-  private readonly tasks: TaskManager;
+  private readonly store: HostStore;
+  private readonly onLocalDelivery: (recipientTaskId: string) => void;
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly runtimes = new Map<string, HostRuntime>();
   private readonly states = new Map<string, HostConnectionState>();
@@ -116,13 +115,13 @@ export class HostRegistry {
 
   constructor(
     hosts: Record<string, HostConfig>,
-    store: Store,
-    tasks: TaskManager,
+    store: HostStore,
+    onLocalDelivery: (recipientTaskId: string) => void = () => {},
     options: HostRegistryOptions = {},
   ) {
     this.hosts = hosts;
     this.store = store;
-    this.tasks = tasks;
+    this.onLocalDelivery = onLocalDelivery;
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
     this.now = options.now ?? Date.now;
@@ -483,7 +482,7 @@ export class HostRegistry {
       envelope.id,
     );
     if (recipient) {
-      void this.tasks.drainCollaborationDeliveries(recipient);
+      this.onLocalDelivery(recipient);
     }
   }
 
@@ -529,9 +528,6 @@ export class HostRegistry {
       reason: envelope.reason,
     });
     if (result.status === "unmatched") return "unmatched";
-    if (result.status === "queued") {
-      void this.tasks.drainCollaborationDeliveries(envelope.parent_task_id);
-    }
     return "matched";
   }
 
@@ -650,9 +646,7 @@ export class HostRegistry {
       if (body?.code === "target_not_found") {
         const failed = this.store.failHostEdgeTargetNotFound(next.delivery.id);
         if (failed.noticeRecipientTaskId) {
-          void this.tasks.drainCollaborationDeliveries(
-            failed.noticeRecipientTaskId,
-          );
+          this.onLocalDelivery(failed.noticeRecipientTaskId);
         }
         this.reachable(next.edge.host_name, runtime);
         return false;

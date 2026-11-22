@@ -12,6 +12,9 @@ import { SseManager } from "../src/sse-manager.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { TicketStore } from "../src/sse-ticket.ts";
 import { createTaskManager } from "../src/task-manager.ts";
+import { HostStore } from "../src/host/store.ts";
+import { TaskLocator } from "../src/task-locator.ts";
+import { handleHostRoutes } from "../src/host/routes.ts";
 
 interface Reply {
   status: number;
@@ -20,6 +23,7 @@ interface Reply {
 
 let dir: string;
 let store: Store;
+let hostStore: HostStore;
 let authStore: AuthStore;
 let ticketStore: TicketStore;
 let sseManager: SseManager;
@@ -69,12 +73,24 @@ beforeEach(async () => {
   writeFileSync(join(publicDir, "index.html"), "<p>test</p>");
   store = new Store(dir);
   store.ensureRootTask(dir);
+  hostStore = new HostStore(store);
   authStore = new AuthStore(join(dir, "auth.json"), 0);
   await authStore.load();
   apiToken = (await authStore.addToken("laptop", "api")).token;
   ticketStore = new TicketStore();
   agentIds = ["copilot"];
-  const tasks = createTaskManager(store, dir, dir);
+  const tasks = createTaskManager(
+    store,
+    dir,
+    dir,
+    undefined,
+    undefined,
+    "test-agent",
+    new TaskLocator(store, [hostStore]),
+  );
+  hostStore.onCommitted((taskId) => {
+    void tasks.drainCollaborationDeliveries(taskId);
+  });
   sseManager = new SseManager(10);
   sseManager.setRevocationCheck(
     (credentialHash) => !authStore.hasTokenHash(credentialHash),
@@ -91,6 +107,13 @@ beforeEach(async () => {
     limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
     authStore,
     ticketStore,
+    peerEndpoint: (req, res, principal) =>
+      handleHostRoutes(req, res, {
+        store: hostStore,
+        agentIds,
+        defaultCwd: dir,
+        principal,
+      }),
   });
   server = createServer(handler);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -296,10 +319,10 @@ test("behavior proof: outbox ACK belongs to the exact credential", async () => {
   });
   const taskId = String(created.body.taskId);
   const task = store.getTask(taskId);
-  const binding = store.getHostExternalSource(taskId);
+  const binding = hostStore.getHostExternalSource(taskId);
   assert.ok(task);
   assert.ok(binding);
-  store.recordHostWorkflowUpdate({
+  hostStore.recordHostWorkflowUpdate({
     taskId,
     status: "done",
     body: "finished",

@@ -1,8 +1,9 @@
 # Database Schema
 
 WebAgent persists state to a single SQLite database at `<data_dir>/webagent.db`
-(`better-sqlite3`, WAL journal mode). All tables are created by
-`src/store.ts` `initializeSchema()`, which runs on every server start. This is
+(`better-sqlite3`, WAL journal mode). Core tables are created by
+`src/store.ts`; additive host tables are created by `src/host/store.ts`.
+The composition root constructs both on every server start. This is
 not a general compatibility migration layer. Multi-host storage is
 deliberately additive: an existing `main@1bacca0` database opens without
 reset, while other unsupported pre-1.0 schema changes retain the reset policy
@@ -679,6 +680,6 @@ never edits an old database.
 ## Schema Coverage Test
 
 `test/schema-coverage.test.ts` parses `CREATE TABLE` statements out of
-`src/store.ts` at test time and asserts every table name appears as a heading
-in this document. If you add a new table, this test will fail until you add a
-section for it here.
+`src/store.ts` and `src/host/store.ts` at test time and asserts every table
+name appears as a heading in this document. If you add a new table, this test
+will fail until you add a section for it here.

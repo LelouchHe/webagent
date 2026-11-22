@@ -54,8 +54,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   `no_update`, real fake-clock `no_activity` across unarchive→archive, and MCP
   `agent@host` creation followed by send to the returned task id
 - `test/host-local-sql.test.ts` measures the production MCP local `list`, `send`,
-  and `update` paths: 6 / 14 / 19 prepared statements versus the measured
+  and `update` paths: 6 / 12 / 16 prepared statements versus the measured
   `ff346a2` baseline 6 / 14 / 20
+- `npm run lint` enforces the physical boundary: only `src/server.ts` may
+  import `src/host/`, and `src/host/` may not import TaskManager, obligation,
+  or MCP business modules. A one-off `task-manager.ts` import of
+  `src/host/store.ts` fails with the restricted-import diagnostic and is
+  reverted before the gate runs
 
 ### Multi-agent runtime
 

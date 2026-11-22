@@ -1,95 +1,167 @@
+import { randomUUID } from "node:crypto";
 import type {
   CollaborationDeliveryRow,
   CollaborationMessageRow,
   Store,
   TaskRow,
 } from "./store.ts";
-import type { TaskLocator } from "./task-locator.ts";
-import type { TaskEndpoint } from "./task-locator.ts";
+import type {
+  DeliveryKind,
+  DeliveryRequest,
+  DeliveryRoute,
+  TaskLocator,
+} from "./task-locator.ts";
 
-export interface EnqueueHooks {
-  drainLocal: (taskId: string) => void;
-  kickEdge: (edgeId: string) => void;
-  notifyExternal: (credentialHash: string) => void;
+export interface CommittedDelivery {
+  messageId: string;
+  deliveryId: string;
+  sourceTaskId: string;
+  targetTaskId: string;
+  kind: DeliveryKind;
+  localTarget: boolean;
+}
+
+export interface EnqueueInput {
+  sourceId: string;
+  targetId: string;
+  kind: DeliveryKind;
+  body: string;
+  mutate?: (ids: { messageId: string; deliveryId: string }) => void;
+  updateStatus?: "done" | "blocked";
+  runtimeKind?: string | null;
+  reason?: string | null;
+  relationHint?: "parent" | "child";
+  knownSource?: TaskRow;
 }
 
 export class DeliveryQueue {
   private readonly store: Store;
   private readonly locator: TaskLocator;
-  private readonly hooks: EnqueueHooks;
+  private readonly observers: Array<(delivery: CommittedDelivery) => void> = [];
 
-  constructor(store: Store, locator: TaskLocator, hooks: EnqueueHooks) {
+  constructor(store: Store, locator: TaskLocator) {
     this.store = store;
     this.locator = locator;
-    this.hooks = hooks;
+  }
+
+  onCommitted(observer: (delivery: CommittedDelivery) => void): void {
+    this.observers.push(observer);
   }
 
   enqueue(
-    input: {
-      sourceId: string;
-      targetId: string;
-      kind: "dispatch" | "message";
-      body: string;
-    },
-    routeInput?: ReturnType<TaskLocator["route"]>,
+    input: EnqueueInput,
+    route: DeliveryRoute | null = this.locator.route(
+      input.sourceId,
+      input.targetId,
+      input.relationHint,
+      input.knownSource,
+    ),
   ): {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
-    relation: "parent" | "child";
-    endpoint: TaskEndpoint;
-    source: TaskRow;
+    route: DeliveryRoute | null;
   } {
-    const route =
-      routeInput ?? this.locator.route(input.sourceId, input.targetId);
-    const endpoint = route.endpoint;
-    if (!endpoint) throw new Error("task_not_found");
-    if (!route.source) throw new Error("task_not_found");
-    if (route.relation !== "parent" && route.relation !== "child") {
-      throw new Error("target_not_allowed");
+    if (
+      !route &&
+      input.kind === "notice" &&
+      this.store.getTask(input.targetId)
+    ) {
+      const messageId = randomUUID();
+      const deliveryId = randomUUID();
+      const createdAt = Date.now();
+      const created = this.store.transaction(() => {
+        input.mutate?.({ messageId, deliveryId });
+        return this.store.enqueueDeliveryRows({
+          messageId,
+          deliveryId,
+          sourceTaskId: input.sourceId,
+          directTargetTaskId: input.targetId,
+          sourceActor: "system",
+          body: input.body,
+          createdAt,
+          projections: [{ taskId: input.targetId, role: "target" }],
+        });
+      });
+      this.publishCommitted(input, created, true);
+      return { ...created, route: null };
     }
+    if (!route) throw new Error("task_not_found");
     const expectedKind = route.relation === "child" ? "dispatch" : "message";
-    if (input.kind !== expectedKind) {
+    if (
+      (input.kind === "dispatch" || input.kind === "message") &&
+      input.kind !== expectedKind
+    ) {
       throw new Error("message_kind_not_allowed");
     }
-    let created: {
+    const messageId = randomUUID();
+    const deliveryId = randomUUID();
+    const createdAt = Date.now();
+    const created = this.store.transaction(() => {
+      input.mutate?.({ messageId, deliveryId });
+      const request: DeliveryRequest = {
+        messageId,
+        deliveryId,
+        sourceTaskId: input.sourceId,
+        targetTaskId: input.targetId,
+        kind: input.kind,
+        body: input.body,
+        createdAt,
+        updateStatus: input.updateStatus,
+        runtimeKind: input.runtimeKind,
+        reason: input.reason,
+      };
+      if (route.localTask) {
+        return input.kind === "notice"
+          ? this.store.enqueueDeliveryRows({
+              messageId,
+              deliveryId,
+              sourceTaskId: input.sourceId,
+              directTargetTaskId: input.targetId,
+              sourceActor: "system",
+              body: input.body,
+              createdAt,
+              projections: [{ taskId: input.targetId, role: "target" }],
+            })
+          : this.store.createCollaborationMessageInStoreTransaction(
+              {
+                id: messageId,
+                deliveryId,
+                sourceTaskId: input.sourceId,
+                directTargetTaskId: input.targetId,
+                sourceActor: "agent",
+                body: input.body,
+                createdAt,
+              },
+              {
+                source: route.source,
+                target: route.localTask,
+              },
+            );
+      }
+      const delegated = this.locator.enqueueOther(request);
+      if (!delegated) throw new Error("task_not_found");
+      return delegated;
+    });
+    this.publishCommitted(input, created, route.localTask !== null);
+    return { ...created, route };
+  }
+
+  private publishCommitted(
+    input: EnqueueInput,
+    created: {
       message: CollaborationMessageRow;
       delivery: CollaborationDeliveryRow;
+    },
+    localTarget: boolean,
+  ): void {
+    const committed: CommittedDelivery = {
+      messageId: created.message.id,
+      deliveryId: created.delivery.id,
+      sourceTaskId: input.sourceId,
+      targetTaskId: input.targetId,
+      kind: input.kind,
+      localTarget,
     };
-    if (endpoint.kind === "local") {
-      created = this.store.createCollaborationMessage({
-        id: randomUUID(),
-        deliveryId: randomUUID(),
-        sourceTaskId: input.sourceId,
-        directTargetTaskId: endpoint.task.id,
-        sourceActor: "agent",
-        body: input.body,
-      });
-      this.hooks.drainLocal(endpoint.task.id);
-    } else if (endpoint.kind === "remote_child") {
-      created = this.store.createRemoteDispatch({
-        parentTaskId: input.sourceId,
-        edge: endpoint.edge,
-        body: input.body,
-      });
-      this.hooks.kickEdge(endpoint.edge.id);
-    } else {
-      const source = this.store.getHostExternalSource(input.sourceId);
-      if (source?.parent_task_id !== input.targetId) {
-        throw new Error("target_not_allowed");
-      }
-      created = this.store.createHostAgentMessage({
-        sourceTaskId: input.sourceId,
-        source,
-        body: input.body,
-      });
-      this.hooks.notifyExternal(source.credential_hash);
-    }
-    return {
-      ...created,
-      relation: route.relation,
-      endpoint,
-      source: route.source,
-    };
+    for (const observer of this.observers) observer(committed);
   }
 }
-import { randomUUID } from "node:crypto";
