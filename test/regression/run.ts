@@ -222,7 +222,11 @@ async function createInstance(
     pathToFileURL(observer).href,
     mock,
   ].join(" ");
-  writeSpecConfig(configPath, { dataDir, agentCommand });
+  writeSpecConfig(configPath, {
+    dataDir,
+    defaultCwd: "/",
+    agentCommand,
+  });
   let server: SpecServer;
   try {
     server = await startSpecServer(configPath, {

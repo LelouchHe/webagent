@@ -12,6 +12,8 @@ finishing and cleaning up.
 
 Each run gets a temporary data directory, home directory, random port, config,
 real WebAgent server, global SSE subscription, and deterministic ACP agent.
+The config fixes every task's default cwd to `/`, so path-sensitive byte counts
+are stable before golden normalization; regression tasks do not read files.
 Setup and steps use authenticated REST or MCP-over-HTTP only. The agent is
 declared in the scenario and communicates over real ACP. No scenario can
 control, hold, or release the agent while a run is active.

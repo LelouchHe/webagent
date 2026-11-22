@@ -28,8 +28,8 @@
             {
               "type": "task_created",
               "taskId": "00000000-0000-4000-8000-000000000001",
-              "cwd": "<REPOSITORY>",
-              "cwdDisplay": "<REPOSITORY>",
+              "cwd": "/",
+              "cwdDisplay": "/",
               "title": "root",
               "parentId": null,
               "parentAgentId": null,
@@ -73,7 +73,7 @@
               "kind": "acp",
               "method": "session/new",
               "sessionId": "00000000-0000-4000-8000-000000000001",
-              "cwd": "<REPOSITORY>"
+              "cwd": "/"
             }
           ]
         }
@@ -154,7 +154,7 @@
               "taskTitle": "Unique child",
               "role": "source",
               "title": "Created task @\"Unique child\"",
-              "body": "Task ID: 00000000-0000-4000-8000-000000000005\nagent: mock\ncwd: <REPOSITORY>\nmodel: mock-model\nthinking: medium"
+              "body": "Task ID: 00000000-0000-4000-8000-000000000005\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
             },
             {
               "type": "state_patch",
@@ -231,8 +231,8 @@
               "type": "task_created",
               "taskId": "00000000-0000-4000-8000-000000000005",
               "agentId": "mock",
-              "cwd": "<REPOSITORY>",
-              "cwdDisplay": "<REPOSITORY>",
+              "cwd": "/",
+              "cwdDisplay": "/",
               "title": "Unique child",
               "parentId": "00000000-0000-4000-8000-000000000001",
               "parentAgentId": "mock",
@@ -435,7 +435,7 @@
               "kind": "acp",
               "method": "session/new",
               "sessionId": "00000000-0000-4000-8000-000000000002",
-              "cwd": "<REPOSITORY>"
+              "cwd": "/"
             }
           ]
         },
@@ -446,7 +446,7 @@
               "kind": "acp",
               "method": "session/new",
               "sessionId": "00000000-0000-4000-8000-000000000003",
-              "cwd": "<REPOSITORY>"
+              "cwd": "/"
             }
           ]
         }
@@ -477,7 +477,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 2,
                 "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Unique child\",\"agentId\":\"mock\",\"cwd\":\"<REPOSITORY>\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Unique child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"}",
+                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Unique child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Unique child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
                 "agent",
                 1789333200000
               ]
@@ -518,7 +518,7 @@
               "kind": "write",
               "method": "run",
               "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
-              "args": ["<REPOSITORY>", 1789333200000]
+              "args": ["/", 1789333200000]
             }
           ],
           [
@@ -528,7 +528,7 @@
               "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000005",
-                "<REPOSITORY>",
+                "/",
                 "agent",
                 "00000000-0000-4000-8000-000000000001",
                 "Unique child",
@@ -556,7 +556,7 @@
               "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000007",
-                "<REPOSITORY>",
+                "/",
                 "agent",
                 "00000000-0000-4000-8000-000000000001",
                 "Unique child",
@@ -607,7 +607,7 @@
     "tasks": [
       {
         "id": "00000000-0000-4000-8000-000000000001",
-        "cwd": "<REPOSITORY>",
+        "cwd": "/",
         "title": "root",
         "workflow_status": "idle",
         "parent_id": null,
@@ -622,7 +622,7 @@
       },
       {
         "id": "00000000-0000-4000-8000-000000000005",
-        "cwd": "<REPOSITORY>",
+        "cwd": "/",
         "title": "Unique child",
         "workflow_status": "idle",
         "parent_id": "00000000-0000-4000-8000-000000000001",
@@ -665,7 +665,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 2,
         "type": "system_message",
-        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Unique child\",\"agentId\":\"mock\",\"cwd\":\"<REPOSITORY>\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Unique child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: <REPOSITORY>\\nmodel: mock-model\\nthinking: medium\"}",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Unique child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Unique child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
@@ -694,7 +694,7 @@
     "client_ops": [],
     "recent_paths": [
       {
-        "cwd": "<REPOSITORY>",
+        "cwd": "/",
         "last_used_at": 1789333200000
       }
     ]

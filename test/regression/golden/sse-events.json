@@ -28,8 +28,8 @@
             {
               "type": "task_created",
               "taskId": "00000000-0000-4000-8000-000000000001",
-              "cwd": "<REPOSITORY>",
-              "cwdDisplay": "<REPOSITORY>",
+              "cwd": "/",
+              "cwdDisplay": "/",
               "title": "root",
               "parentId": null,
               "parentAgentId": null,
@@ -73,7 +73,7 @@
               "kind": "acp",
               "method": "session/new",
               "sessionId": "00000000-0000-4000-8000-000000000001",
-              "cwd": "<REPOSITORY>"
+              "cwd": "/"
             }
           ]
         }
@@ -294,7 +294,7 @@
               "kind": "write",
               "method": "run",
               "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
-              "args": ["<REPOSITORY>", 1789333200000]
+              "args": ["/", 1789333200000]
             }
           ],
           [
@@ -314,7 +314,7 @@
     "tasks": [
       {
         "id": "00000000-0000-4000-8000-000000000001",
-        "cwd": "<REPOSITORY>",
+        "cwd": "/",
         "title": "SSE root",
         "workflow_status": "idle",
         "parent_id": null,
@@ -371,7 +371,7 @@
     "client_ops": [],
     "recent_paths": [
       {
-        "cwd": "<REPOSITORY>",
+        "cwd": "/",
         "last_used_at": 1789333200000
       }
     ]

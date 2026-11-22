@@ -27,6 +27,7 @@ export interface SpecServer {
 
 export interface SpecServerConfig {
   dataDir: string;
+  defaultCwd?: string;
   /** Omit to allocate a fresh port; a restart passes the previous one so the
    *  already-open page reconnects to the same origin. */
   port?: number;
@@ -66,6 +67,9 @@ export function writeSpecConfig(
     // than inside the server; the bound port is still read from its log.)
     `port = ${config.port ?? pickFreePort()}`,
     `data_dir = ${JSON.stringify(config.dataDir)}`,
+    ...(config.defaultCwd
+      ? [`default_cwd = ${JSON.stringify(config.defaultCwd)}`]
+      : []),
     `public_dir = "dist-dev"`,
     `default_agent = "mock"`,
     `[agents.mock]`,
