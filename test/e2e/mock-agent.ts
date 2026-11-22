@@ -19,13 +19,23 @@ import {
   type SessionConfigOption,
 } from "@agentclientprotocol/sdk";
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Readable, Writable } from "node:stream";
 import { deflateSync } from "node:zlib";
 import type { McpServer, McpServerHttp } from "@agentclientprotocol/sdk";
+import type {
+  McpAction,
+  MockBehavior,
+  PromptBehavior,
+} from "../regression/types.ts";
 
 // Optional capability profile + call log for the resume-restore E2E spec.
 //   node mock-agent.ts resume-only <calls.jsonl>
@@ -36,6 +46,12 @@ const MOCK_PROFILE = process.argv[2] ?? "load";
 // "-" means "record nothing": a configured agent's command line needs a
 // placeholder when only later arguments are used.
 const MOCK_CALLS_PATH = process.argv[3] === "-" ? undefined : process.argv[3];
+const REGRESSION_BEHAVIOR_PATH = process.env.WEBAGENT_REGRESSION_BEHAVIOR_PATH;
+const REGRESSION_CALLS_PATH = process.env.WEBAGENT_REGRESSION_CALLS_PATH;
+const REGRESSION_BEHAVIOR: MockBehavior | null =
+  REGRESSION_BEHAVIOR_PATH === undefined
+    ? null
+    : JSON.parse(readFileSync(REGRESSION_BEHAVIOR_PATH, "utf8"));
 /**
  * Optional delay before a restored session reports its schema and commands.
  * A real CLI replays history on `session/load`, which can take seconds; tests
@@ -97,6 +113,31 @@ const RESUME_ONLY = MOCK_PROFILE === "resume-only";
 function recordSessionCall(method: "load" | "resume", params: unknown): void {
   if (!MOCK_CALLS_PATH) return;
   appendFileSync(MOCK_CALLS_PATH, JSON.stringify({ method, params }) + "\n");
+}
+
+function recordRegression(entry: Record<string, unknown>): void {
+  if (!REGRESSION_CALLS_PATH) return;
+  appendFileSync(REGRESSION_CALLS_PATH, `${JSON.stringify(entry)}\n`);
+}
+
+async function regressionTimed<T>(
+  label: string,
+  promise: Promise<T>,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`regression mock timed out waiting for ${label}`));
+        }, 10_000);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 type SessionState = {
@@ -249,9 +290,155 @@ class MockAgent {
   private toolCallCounter = 0;
   private pendingPrompts = new Map<string, PendingPrompt>();
   private retryCancelAttempts = new Map<string, number>();
+  private regressionFirstMcp: McpServer[] | null = null;
+  private regressionLastCreatedTaskId: string | null = null;
 
   constructor(connection: AgentContext) {
     this.connection = connection;
+  }
+
+  private async runRegressionPrompt(
+    params: PromptRequest,
+    declared: PromptBehavior,
+  ): Promise<PromptResponse> {
+    for (const action of declared.actions) {
+      if (action.type === "reply") {
+        await regressionTimed(
+          "session update",
+          this.connection.notify("session/update", {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: action.text },
+            },
+          }),
+        );
+      } else if (action.type === "mcp") {
+        const servers =
+          action.capability === "first"
+            ? (this.regressionFirstMcp ?? [])
+            : (this.mcpServersBySession.get(params.sessionId) ?? []);
+        await this.runRegressionMcp(
+          servers,
+          action.calls,
+          action.capability === "missing",
+        );
+      } else if (action.type === "fail") {
+        throw new Error(action.message);
+      } else {
+        recordRegression({
+          kind: "wait",
+          label: action.label,
+          sessionId: params.sessionId,
+        });
+        await this.connection.notify("session/update", {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: {
+              type: "text",
+              text: `REGRESSION_WAIT: ${action.label}`,
+            },
+          },
+        });
+        return new Promise<PromptResponse>((resolve) => {
+          this.pendingPrompts.set(params.sessionId, { resolve });
+        });
+      }
+    }
+    return { stopReason: "end_turn" };
+  }
+
+  private async runRegressionMcp(
+    servers: McpServer[],
+    calls: McpAction[],
+    omitAuthorization = false,
+  ): Promise<void> {
+    const candidate = servers.find(
+      (server) => "url" in server && "headers" in server,
+    );
+    if (!candidate) throw new Error("No HTTP MCP server supplied by ACP");
+    const entry = candidate as unknown as McpServerHttp;
+    const authorization = entry.headers.find(
+      (header) => header.name === "Authorization",
+    )?.value;
+    if (!authorization) throw new Error("No MCP capability supplied by ACP");
+    const headers = {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      ...(omitAuthorization ? {} : { Authorization: authorization }),
+    };
+    const post = async (body: Record<string, unknown>) => {
+      const response = await regressionTimed(
+        "MCP request",
+        fetch(entry.url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        }),
+      );
+      const text = await regressionTimed("MCP response", response.text());
+      return {
+        status: response.status,
+        body: text ? (JSON.parse(text) as Record<string, unknown>) : null,
+      };
+    };
+    await post({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "regression-agent", version: "0.1.0" },
+      },
+    });
+    await post({ jsonrpc: "2.0", method: "notifications/initialized" });
+    for (const [index, call] of calls.entries()) {
+      const args = this.replaceRegressionTask(call.arguments ?? {});
+      const response = await post({
+        jsonrpc: "2.0",
+        id: index + 2,
+        method: "tools/call",
+        params: { name: call.tool, arguments: args },
+      });
+      recordRegression({
+        kind: "mcp",
+        tool: call.tool,
+        arguments: args,
+        status: response.status,
+        result: response.body,
+      });
+      const result = response.body?.result as
+        { content?: Array<{ text?: string }> } | undefined;
+      const content = result?.content?.map((part) => part.text ?? "").join("");
+      if (call.tool === "task_create" && content) {
+        try {
+          const parsed = JSON.parse(content) as { taskId?: string };
+          if (parsed.taskId) this.regressionLastCreatedTaskId = parsed.taskId;
+        } catch {
+          // The MCP error itself is the useful external observation.
+        }
+      }
+    }
+  }
+
+  private replaceRegressionTask(value: unknown): unknown {
+    if (value === "$lastCreatedTaskId") {
+      return this.regressionLastCreatedTaskId;
+    }
+    if (Array.isArray(value)) {
+      return value.map((item) => this.replaceRegressionTask(item));
+    }
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [
+          key,
+          this.replaceRegressionTask(item),
+        ]),
+      );
+    }
+    return value;
   }
 
   /** Emit a plan update and park the prompt (assert-from-far e2e fixture). */
@@ -673,6 +860,7 @@ class MockAgent {
   }
 
   async initialize(_params: InitializeRequest): Promise<InitializeResponse> {
+    recordRegression({ kind: "acp", method: "initialize" });
     return {
       protocolVersion: PROTOCOL_VERSION,
       agentInfo: { name: "mock-agent", version: "0.1.0" },
@@ -687,6 +875,20 @@ class MockAgent {
       await new Promise((done) => setTimeout(done, MOCK_NEW_DELAY_MS));
     }
     const sessionId = randomUUID();
+    if (REGRESSION_BEHAVIOR) {
+      recordRegression({
+        kind: "acp",
+        method: "session/new",
+        cwd: params.cwd,
+      });
+      this.regressionFirstMcp ??= params.mcpServers;
+      if (REGRESSION_BEHAVIOR.onNew?.calls) {
+        await this.runRegressionMcp(
+          params.mcpServers,
+          REGRESSION_BEHAVIOR.onNew.calls,
+        );
+      }
+    }
     if (params.mcpServers.length > 0) {
       this.mcpServersBySession.set(sessionId, params.mcpServers);
     }
@@ -800,6 +1002,17 @@ class MockAgent {
       .map((part) => part.text)
       .join(" ")
       .trim();
+    if (REGRESSION_BEHAVIOR) {
+      recordRegression({
+        kind: "acp",
+        method: "session/prompt",
+        text,
+      });
+      const declared = REGRESSION_BEHAVIOR.prompts.find(
+        (entry) => text === entry.match,
+      );
+      if (declared) return await this.runRegressionPrompt(params, declared);
+    }
     return await this.runPrimaryPrompt(params, text);
   }
 
@@ -1459,6 +1672,7 @@ class MockAgent {
   }
 
   async cancel(params: CancelNotification): Promise<void> {
+    recordRegression({ kind: "acp", method: "session/cancel" });
     const pending = this.pendingPrompts.get(params.sessionId);
     if (!pending) return;
     const retryAttempts = this.retryCancelAttempts.get(params.sessionId);
@@ -1468,6 +1682,7 @@ class MockAgent {
     }
     this.retryCancelAttempts.delete(params.sessionId);
     this.pendingPrompts.delete(params.sessionId);
+    recordRegression({ kind: "wait-released", sessionId: params.sessionId });
     pending.resolve({ stopReason: "cancelled" });
   }
 

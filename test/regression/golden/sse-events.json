@@ -1,0 +1,240 @@
+{
+  "steps": [
+    {
+      "name": "rename-task",
+      "response": {
+        "status": 200,
+        "body": {
+          "title": "SSE root"
+        }
+      },
+      "sse": [
+        {
+          "type": "task_title_updated",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "title": "SSE root"
+        }
+      ],
+      "mock": [],
+      "sql": {
+        "writes": [
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET title = ? WHERE id = ?",
+            "args": ["SSE root", "00000000-0000-4000-8000-000000000001"]
+          }
+        ],
+        "reads": 1
+      }
+    },
+    {
+      "name": "prompt-task",
+      "response": {
+        "status": 202,
+        "body": {
+          "status": "accepted"
+        }
+      },
+      "sse": [
+        {
+          "type": "user_message",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "text": "emit response",
+          "clientOpId": "00000000-0000-4000-8000-000000000004"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 1,
+          "patch": {
+            "runtime": {
+              "busy": {
+                "kind": "agent",
+                "since": "2026-09-13T21:00:00.000Z",
+                "promptId": "prompt-1",
+                "cancelStatus": null
+              }
+            }
+          }
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 2,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": true,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "message_chunk",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "text": "SSE response."
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 3,
+          "patch": {
+            "runtime": {
+              "busy": null
+            }
+          }
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 4,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": false,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "prompt_done",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "stopReason": "end_turn",
+          "promptId": "prompt-1"
+        }
+      ],
+      "mock": [
+        {
+          "kind": "acp",
+          "method": "session/prompt",
+          "text": "emit response"
+        }
+      ],
+      "sql": {
+        "writes": [
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              1,
+              "user_message",
+              "{\"text\":\"emit response\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+              "user",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+            "args": [1789333200000, "00000000-0000-4000-8000-000000000001"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+            "args": ["/Users/lelouch/mine/code/webagent/main", 1789333200000]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              2,
+              "assistant_message",
+              "{\"text\":\"SSE response.\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              3,
+              "prompt_done",
+              "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+              "agent",
+              1789333200000
+            ]
+          }
+        ],
+        "reads": 22
+      }
+    }
+  ],
+  "snapshot": {
+    "tasks": [
+      {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "title": "SSE root",
+        "workflow_status": "idle",
+        "parent_id": null,
+        "pending_compact_summary": null,
+        "model": null,
+        "mode": null,
+        "reasoning_effort": null,
+        "source": "root",
+        "deleted_at": null,
+        "created_at": 1789333200000,
+        "last_active_at": 1789333200000
+      }
+    ],
+    "agent_sessions": [
+      {
+        "agent_key": "mock",
+        "agent_session_id": "00000000-0000-4000-8000-000000000001",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "created_at": 1789333200000
+      }
+    ],
+    "events": [
+      {
+        "id": 1,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 1,
+        "type": "user_message",
+        "data": "{\"text\":\"emit response\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+        "created_at": 1789333200000,
+        "from_ref": "user"
+      },
+      {
+        "id": 2,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 2,
+        "type": "assistant_message",
+        "data": "{\"text\":\"SSE response.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 3,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 3,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      }
+    ],
+    "messages": [],
+    "message_projections": [],
+    "deliveries": [],
+    "client_ops": [],
+    "recent_paths": [
+      {
+        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "last_used_at": 1789333200000
+      }
+    ]
+  }
+}

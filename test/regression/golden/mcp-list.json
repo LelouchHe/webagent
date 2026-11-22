@@ -1,0 +1,318 @@
+{
+  "steps": [
+    {
+      "name": "list-query-read",
+      "response": {
+        "status": 202,
+        "body": {
+          "status": "accepted"
+        }
+      },
+      "sse": [
+        {
+          "type": "user_message",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "text": "inspect family",
+          "clientOpId": "00000000-0000-4000-8000-000000000004"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 1,
+          "patch": {
+            "runtime": {
+              "busy": {
+                "kind": "agent",
+                "since": "2026-09-13T21:00:00.000Z",
+                "promptId": "prompt-1",
+                "cancelStatus": null
+              }
+            }
+          }
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 2,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": true,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "message_chunk",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "text": "Family inspected."
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 3,
+          "patch": {
+            "runtime": {
+              "busy": null
+            }
+          }
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 4,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": false,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "prompt_done",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "stopReason": "end_turn",
+          "promptId": "prompt-1"
+        }
+      ],
+      "mock": [
+        {
+          "kind": "acp",
+          "method": "session/prompt",
+          "text": "inspect family"
+        },
+        {
+          "kind": "mcp",
+          "tool": "task_list",
+          "arguments": {},
+          "status": 200,
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":null,\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"}]}"
+                }
+              ]
+            },
+            "jsonrpc": "2.0",
+            "id": 2
+          }
+        },
+        {
+          "kind": "mcp",
+          "tool": "task_query",
+          "arguments": {
+            "range": [-10, -1]
+          },
+          "status": 200,
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000001\",\"max_seq\":1,\"rows\":[{\"seq\":1,\"type\":\"user_message\",\"bytes\":77,\"field\":\"text\",\"text\":\"inspect family\"}]}"
+                }
+              ]
+            },
+            "jsonrpc": "2.0",
+            "id": 3
+          }
+        },
+        {
+          "kind": "mcp",
+          "tool": "task_read",
+          "arguments": {
+            "seqs": [1]
+          },
+          "status": 200,
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000001\",\"rows\":[{\"seq\":1,\"type\":\"user_message\",\"at\":\"2026-09-13T21:00:00.000Z\",\"from\":\"user\",\"data\":{\"text\":\"inspect family\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}}]}"
+                }
+              ]
+            },
+            "jsonrpc": "2.0",
+            "id": 4
+          }
+        }
+      ],
+      "sql": {
+        "writes": [
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              1,
+              "user_message",
+              "{\"text\":\"inspect family\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+              "user",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+            "args": [1789333200000, "00000000-0000-4000-8000-000000000001"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+            "args": ["/Users/lelouch/mine/code/webagent/main", 1789333200000]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              2,
+              "assistant_message",
+              "{\"text\":\"Family inspected.\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              3,
+              "prompt_done",
+              "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+              "agent",
+              1789333200000
+            ]
+          }
+        ],
+        "reads": 35
+      }
+    },
+    {
+      "name": "read-transcript",
+      "response": {
+        "status": 200,
+        "body": {
+          "events": [
+            {
+              "id": 1,
+              "task_id": "00000000-0000-4000-8000-000000000001",
+              "seq": 1,
+              "type": "user_message",
+              "data": "{\"text\":\"inspect family\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+              "created_at": "2026-09-13T21:00:00.000Z",
+              "from_ref": "user"
+            },
+            {
+              "id": 2,
+              "task_id": "00000000-0000-4000-8000-000000000001",
+              "seq": 2,
+              "type": "assistant_message",
+              "data": "{\"text\":\"Family inspected.\"}",
+              "created_at": "2026-09-13T21:00:00.000Z",
+              "from_ref": "agent"
+            },
+            {
+              "id": 3,
+              "task_id": "00000000-0000-4000-8000-000000000001",
+              "seq": 3,
+              "type": "prompt_done",
+              "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+              "created_at": "2026-09-13T21:00:00.000Z",
+              "from_ref": "agent"
+            }
+          ],
+          "streaming": {
+            "thinking": false,
+            "assistant": false
+          },
+          "imageReferences": []
+        }
+      },
+      "sse": [],
+      "mock": [],
+      "sql": {
+        "writes": [],
+        "reads": 3
+      }
+    }
+  ],
+  "snapshot": {
+    "tasks": [
+      {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "title": "root",
+        "workflow_status": "idle",
+        "parent_id": null,
+        "pending_compact_summary": null,
+        "model": null,
+        "mode": null,
+        "reasoning_effort": null,
+        "source": "root",
+        "deleted_at": null,
+        "created_at": 1789333200000,
+        "last_active_at": 1789333200000
+      }
+    ],
+    "agent_sessions": [
+      {
+        "agent_key": "mock",
+        "agent_session_id": "00000000-0000-4000-8000-000000000001",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "created_at": 1789333200000
+      }
+    ],
+    "events": [
+      {
+        "id": 1,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 1,
+        "type": "user_message",
+        "data": "{\"text\":\"inspect family\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+        "created_at": 1789333200000,
+        "from_ref": "user"
+      },
+      {
+        "id": 2,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 2,
+        "type": "assistant_message",
+        "data": "{\"text\":\"Family inspected.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 3,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 3,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      }
+    ],
+    "messages": [],
+    "message_projections": [],
+    "deliveries": [],
+    "client_ops": [],
+    "recent_paths": [
+      {
+        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "last_used_at": 1789333200000
+      }
+    ]
+  }
+}

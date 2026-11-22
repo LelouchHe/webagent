@@ -20,10 +20,21 @@ npm run dev           # port 6801, esbuild watch + server auto-restart on file c
 
 ```bash
 npm test              # unit + integration
+npm run test:regression # external behavior golden suite (A/A)
 npm run test:e2e      # Playwright browser E2E
 ```
 
 - `TEST_SCENARIOS.md` is the scenario-level coverage map for the current suite.
+
+### External behavior regression tests
+
+`npm run test:regression` starts an isolated real server and deterministic ACP
+peer for each scenario, runs every scenario twice, and compares public REST,
+SSE, MCP, mock-call, SQL, and final database observations with a checked-in
+golden. Use `npm run test:regression -- <scenario>` for one scenario. Use
+`--update` only after reviewing an intentional external behavior change. See
+[`test/regression/README.md`](../test/regression/README.md) for the architecture,
+golden review process, and how to add scenarios.
 - Use it when reviewing what is already protected before adding new tests or auditing gaps.
 - The E2E suite covers task lifecycle, reconnect/restart recovery, permissions, cancel flows, bash lifecycle, media persistence, slash-menu UX, config persistence/inheritance, and multi-client config behavior.
 

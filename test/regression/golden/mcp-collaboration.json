@@ -1,0 +1,1891 @@
+{
+  "steps": [
+    {
+      "name": "delegate-send-update",
+      "response": {
+        "status": 202,
+        "body": {
+          "status": "accepted"
+        }
+      },
+      "sse": [
+        {
+          "type": "user_message",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "text": "delegate review",
+          "clientOpId": "00000000-0000-4000-8000-000000000004"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 1,
+          "patch": {
+            "runtime": {
+              "busy": {
+                "kind": "agent",
+                "since": "2026-09-13T21:00:00.000Z",
+                "promptId": "prompt-1",
+                "cancelStatus": null
+              }
+            }
+          }
+        },
+        {
+          "type": "available_commands_update",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "commands": [
+            {
+              "name": "context",
+              "description": "Show context usage"
+            },
+            {
+              "name": "compact",
+              "description": "Compact conversation",
+              "input": {
+                "hint": "focus instructions"
+              }
+            }
+          ],
+          "epoch": "00000000-0000-4000-8000-000000000003",
+          "revision": 1
+        },
+        {
+          "type": "task_created",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "agentId": "mock",
+          "cwd": "/Users/lelouch/mine/code/webagent/main",
+          "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+          "title": "Regression review",
+          "parentId": "00000000-0000-4000-8000-000000000001",
+          "parentAgentId": "mock",
+          "configOptions": [
+            {
+              "type": "select",
+              "id": "model",
+              "name": "Model",
+              "category": "model",
+              "currentValue": "mock-model",
+              "options": [
+                {
+                  "value": "mock-model",
+                  "name": "Mock Model"
+                },
+                {
+                  "value": "mock-model-2",
+                  "name": "Mock Model 2"
+                }
+              ]
+            },
+            {
+              "type": "select",
+              "id": "mode",
+              "name": "Mode",
+              "category": "mode",
+              "currentValue": "agent",
+              "options": [
+                {
+                  "value": "agent",
+                  "name": "Agent"
+                },
+                {
+                  "value": "chat#plan",
+                  "name": "Plan"
+                },
+                {
+                  "value": "chat#autopilot",
+                  "name": "Autopilot"
+                }
+              ]
+            },
+            {
+              "type": "select",
+              "id": "reasoning_effort",
+              "name": "Reasoning",
+              "category": "thought_level",
+              "currentValue": "medium",
+              "options": [
+                {
+                  "value": "low",
+                  "name": "Low"
+                },
+                {
+                  "value": "medium",
+                  "name": "Medium"
+                },
+                {
+                  "value": "high",
+                  "name": "High"
+                }
+              ]
+            }
+          ],
+          "agentCommands": {
+            "epoch": "00000000-0000-4000-8000-000000000003",
+            "revision": 1,
+            "commands": [
+              {
+                "name": "context",
+                "description": "Show context usage"
+              },
+              {
+                "name": "compact",
+                "description": "Compact conversation",
+                "input": {
+                  "hint": "focus instructions"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "system_message",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "kind": "task_created",
+          "messageId": "00000000-0000-4000-8000-000000000006",
+          "sourceTaskId": "00000000-0000-4000-8000-000000000001",
+          "targetTaskId": "00000000-0000-4000-8000-000000000005",
+          "taskTitle": "Regression review",
+          "role": "source",
+          "title": "Created task @\"Regression review\"",
+          "body": "Task ID: 00000000-0000-4000-8000-000000000005\nagent: mock\ncwd: /Users/lelouch/mine/code/webagent/main\nmodel: mock-model\nthinking: medium"
+        },
+        {
+          "type": "system_message",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "kind": "collaboration",
+          "messageId": "00000000-0000-4000-8000-000000000007",
+          "sourceTaskId": "00000000-0000-4000-8000-000000000001",
+          "sourceLabel": "root",
+          "targetTaskId": "00000000-0000-4000-8000-000000000005",
+          "targetLabel": "Regression review",
+          "role": "source",
+          "title": "@root sent @\"Regression review\"",
+          "body": "park regression review",
+          "deliveryStatus": "queued"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "seq": 1,
+          "patch": {
+            "runtime": {
+              "busy": {
+                "kind": "agent",
+                "since": "2026-09-13T21:00:00.000Z",
+                "promptId": "prompt-2",
+                "cancelStatus": null
+              }
+            }
+          }
+        },
+        {
+          "type": "collaboration_delivery",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "messageId": "00000000-0000-4000-8000-000000000007",
+          "status": "delivered",
+          "deliveredAt": "2026-09-13T21:00:00.000Z"
+        },
+        {
+          "type": "system_message",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "kind": "collaboration",
+          "messageId": "00000000-0000-4000-8000-000000000007",
+          "sourceTaskId": "00000000-0000-4000-8000-000000000001",
+          "sourceLabel": "root",
+          "targetTaskId": "00000000-0000-4000-8000-000000000005",
+          "targetLabel": "Regression review",
+          "role": "target",
+          "title": "@root sent @\"Regression review\"",
+          "body": "park regression review"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "seq": 2,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": true,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "message_chunk",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "text": "Echo: From \"root\" (task id 00000000-0000-4000-8000-000000000001):\n---8<---\npark regression review\n---8<---"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "seq": 3,
+          "patch": {
+            "runtime": {
+              "busy": null
+            }
+          }
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "seq": 4,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": false,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "prompt_done",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "stopReason": "end_turn",
+          "promptId": "prompt-2"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "seq": 5,
+          "patch": {
+            "runtime": {
+              "busy": {
+                "kind": "agent",
+                "since": "2026-09-13T21:00:00.000Z",
+                "promptId": "prompt-3",
+                "cancelStatus": null
+              }
+            }
+          }
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 2,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": true,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "message_chunk",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "text": "Review delegated."
+        },
+        {
+          "type": "system_message",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "kind": "handoff_reminder",
+          "messageId": "00000000-0000-4000-8000-000000000009",
+          "targetTaskId": "00000000-0000-4000-8000-000000000005",
+          "targetLabel": "Regression review",
+          "role": "target",
+          "title": "Task handoff required",
+          "body": "## Task Handoff Required\n\nThis is a runtime-injected closing turn: report what this turn established\nand end it.\n\nDo not begin new work as part of this closing turn.\n\nReport what this turn established, then call exactly one of:\n- `task_update(done, ...)` with the completion report.\n- `task_update(blocked, ...)` and explain what is missing.\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\n  background work will wake you; waiting on a person or an external event\n  is `blocked`.\n\nIf the user cancelled this turn, say so plainly in that report instead of\nresuming the cancelled work. Do not start new work, and do not end this turn\nwith a prose answer only."
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 3,
+          "patch": {
+            "runtime": {
+              "busy": null
+            }
+          }
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 4,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": false,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "prompt_done",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "stopReason": "end_turn",
+          "promptId": "prompt-1"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "seq": 6,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": true,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "message_chunk",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "text": "Echo: Runtime message:\n---8<---\n## Task Handoff Required\n\nThis is a runtime-injected closing turn: report what this turn established\nand end it.\n\nDo not begin new work as part of this closing turn.\n\nReport what this turn established, then call exactly one of:\n- `task_update(done, ...)` with the completion report.\n- `task_update(blocked, ...)` and explain what is missing.\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\n  background work will wake you; waiting on a person or an external event\n  is `blocked`.\n\nIf the user cancelled this turn, say so plainly in that report instead of\nresuming the cancelled work. Do not start new work, and do not end this turn\nwith a prose answer only.\n---8<---"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "seq": 7,
+          "patch": {
+            "runtime": {
+              "busy": null
+            }
+          }
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "seq": 8,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": false,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "prompt_done",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "stopReason": "end_turn",
+          "promptId": "prompt-3"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 5,
+          "patch": {
+            "runtime": {
+              "busy": {
+                "kind": "agent",
+                "since": "2026-09-13T21:00:00.000Z",
+                "promptId": "prompt-4",
+                "cancelStatus": null
+              }
+            }
+          }
+        },
+        {
+          "type": "system_message",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "kind": "task_outcome_notice",
+          "messageId": "00000000-0000-4000-8000-00000000000b",
+          "targetTaskId": "00000000-0000-4000-8000-000000000001",
+          "targetLabel": "root",
+          "role": "target",
+          "title": "Task handoff notice",
+          "body": "target: Regression review (00000000-0000-4000-8000-000000000005)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding."
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 6,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": true,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "message_chunk",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "text": "Echo: Runtime message:\n---8<---\ntarget: Regression review (00000000-0000-4000-8000-000000000005)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\n---8<---"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 7,
+          "patch": {
+            "runtime": {
+              "busy": null
+            }
+          }
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 8,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": false,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "prompt_done",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "stopReason": "end_turn",
+          "promptId": "prompt-4"
+        }
+      ],
+      "mock": [
+        {
+          "kind": "acp",
+          "method": "session/prompt",
+          "text": "delegate review"
+        },
+        {
+          "kind": "acp",
+          "method": "session/new",
+          "cwd": "/Users/lelouch/mine/code/webagent/main"
+        },
+        {
+          "kind": "mcp",
+          "tool": "task_create",
+          "arguments": {
+            "title": "Regression review",
+            "cwd": "."
+          },
+          "status": 200,
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"taskId\":\"00000000-0000-4000-8000-000000000005\"}"
+                }
+              ]
+            },
+            "jsonrpc": "2.0",
+            "id": 2
+          }
+        },
+        {
+          "kind": "acp",
+          "method": "session/prompt",
+          "text": "From \"root\" (task id 00000000-0000-4000-8000-000000000001):\n---8<---\npark regression review\n---8<---"
+        },
+        {
+          "kind": "mcp",
+          "tool": "task_send",
+          "arguments": {
+            "target": "00000000-0000-4000-8000-000000000005",
+            "body": "park regression review"
+          },
+          "status": 200,
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"accepted\":true}"
+                }
+              ]
+            },
+            "jsonrpc": "2.0",
+            "id": 3
+          }
+        },
+        {
+          "kind": "acp",
+          "method": "session/prompt",
+          "text": "Runtime message:\n---8<---\n## Task Handoff Required\n\nThis is a runtime-injected closing turn: report what this turn established\nand end it.\n\nDo not begin new work as part of this closing turn.\n\nReport what this turn established, then call exactly one of:\n- `task_update(done, ...)` with the completion report.\n- `task_update(blocked, ...)` and explain what is missing.\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\n  background work will wake you; waiting on a person or an external event\n  is `blocked`.\n\nIf the user cancelled this turn, say so plainly in that report instead of\nresuming the cancelled work. Do not start new work, and do not end this turn\nwith a prose answer only.\n---8<---"
+        },
+        {
+          "kind": "acp",
+          "method": "session/prompt",
+          "text": "Runtime message:\n---8<---\ntarget: Regression review (00000000-0000-4000-8000-000000000005)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\n---8<---"
+        }
+      ],
+      "sql": {
+        "writes": [
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              1,
+              "user_message",
+              "{\"text\":\"delegate review\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+              "user",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+            "args": [1789333200000, "00000000-0000-4000-8000-000000000001"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+            "args": ["/Users/lelouch/mine/code/webagent/main", 1789333200000]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              "/Users/lelouch/mine/code/webagent/main",
+              "agent",
+              "00000000-0000-4000-8000-000000000001",
+              "Regression review",
+              "idle",
+              1789333200000,
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+            "args": [
+              "mock",
+              "00000000-0000-4000-8000-000000000002",
+              "00000000-0000-4000-8000-000000000005",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+            "args": ["mock-model", "00000000-0000-4000-8000-000000000005"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+            "args": ["agent", "00000000-0000-4000-8000-000000000005"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+            "args": ["medium", "00000000-0000-4000-8000-000000000005"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              2,
+              "system_message",
+              "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Regression review\",\"agentId\":\"mock\",\"cwd\":\"/Users/lelouch/mine/code/webagent/main\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Regression review\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /Users/lelouch/mine/code/webagent/main\\nmodel: mock-model\\nthinking: medium\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000007",
+              "00000000-0000-4000-8000-000000000001",
+              "00000000-0000-4000-8000-000000000005",
+              "agent",
+              "park regression review",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000007",
+              "00000000-0000-4000-8000-000000000001",
+              "source",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000007",
+              "00000000-0000-4000-8000-000000000005",
+              "target",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              3,
+              "system_message",
+              "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000005\",\"targetLabel\":\"Regression review\",\"role\":\"source\",\"title\":\"@root sent @\\\"Regression review\\\"\",\"body\":\"park regression review\"}",
+              "msg:00000000-0000-4000-8000-000000000007",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000008",
+              "00000000-0000-4000-8000-000000000007",
+              "00000000-0000-4000-8000-000000000005",
+              "00000000-0000-4000-8000-000000000007:00000000-0000-4000-8000-000000000005",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE deliveries\n         SET status = 'delivered', delivered_at = ?\n         WHERE id = ? AND status = 'queued'",
+            "args": [1789333200000, "00000000-0000-4000-8000-000000000008"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              1,
+              "system_message",
+              "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000005\",\"targetLabel\":\"Regression review\",\"role\":\"target\",\"title\":\"@root sent @\\\"Regression review\\\"\",\"body\":\"park regression review\"}",
+              "msg:00000000-0000-4000-8000-000000000007",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              2,
+              "collaboration_prompt",
+              "{\"messageIds\":[\"00000000-0000-4000-8000-000000000007\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8000-000000000001):\\n---8<---\\npark regression review\\n---8<---\",\"truncated\":false,\"rawSize\":100}",
+              "system",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+            "args": ["running", "00000000-0000-4000-8000-000000000005"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              3,
+              "handoff_reminder",
+              "{\"messageId\":\"00000000-0000-4000-8000-000000000009\",\"reason\":\"closing_reminder\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000005\",\"body\":\"## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\"}",
+              "system",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'system', ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000009",
+              "00000000-0000-4000-8000-000000000001",
+              "00000000-0000-4000-8000-000000000005",
+              "## Task Handoff Required\n\nThis is a runtime-injected closing turn: report what this turn established\nand end it.\n\nDo not begin new work as part of this closing turn.\n\nReport what this turn established, then call exactly one of:\n- `task_update(done, ...)` with the completion report.\n- `task_update(blocked, ...)` and explain what is missing.\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\n  background work will wake you; waiting on a person or an external event\n  is `blocked`.\n\nIf the user cancelled this turn, say so plainly in that report instead of\nresuming the cancelled work. Do not start new work, and do not end this turn\nwith a prose answer only.",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000009",
+              "00000000-0000-4000-8000-000000000005",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
+            "args": [
+              "00000000-0000-4000-8000-00000000000a",
+              "00000000-0000-4000-8000-000000000009",
+              "00000000-0000-4000-8000-000000000005",
+              "00000000-0000-4000-8000-000000000009:00000000-0000-4000-8000-000000000005",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              4,
+              "assistant_message",
+              "{\"text\":\"Echo: From \\\"root\\\" (task id 00000000-0000-4000-8000-000000000001):\\n---8<---\\npark regression review\\n---8<---\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              5,
+              "prompt_done",
+              "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+            "args": ["idle", "00000000-0000-4000-8000-000000000005"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE deliveries\n         SET status = 'delivered', delivered_at = ?\n         WHERE id = ? AND status = 'queued'",
+            "args": [1789333200000, "00000000-0000-4000-8000-00000000000a"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              6,
+              "system_message",
+              "{\"kind\":\"handoff_reminder\",\"messageId\":\"00000000-0000-4000-8000-000000000009\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000005\",\"targetLabel\":\"Regression review\",\"role\":\"target\",\"title\":\"Task handoff required\",\"body\":\"## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\"}",
+              "msg:00000000-0000-4000-8000-000000000009",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              7,
+              "collaboration_prompt",
+              "{\"messageIds\":[\"00000000-0000-4000-8000-000000000009\"],\"text\":\"Runtime message:\\n---8<---\\n## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\\n---8<---\",\"truncated\":false,\"rawSize\":718}",
+              "system",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+            "args": ["running", "00000000-0000-4000-8000-000000000005"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              4,
+              "assistant_message",
+              "{\"text\":\"Review delegated.\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              5,
+              "prompt_done",
+              "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              6,
+              "task_outcome_notice",
+              "{\"messageId\":\"00000000-0000-4000-8000-00000000000b\",\"reason\":\"no_update\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000005\",\"message\":\"The target ended another turn without any task_update; the runtime stopped reminding.\"}",
+              "system",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'system', ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-00000000000b",
+              "00000000-0000-4000-8000-000000000005",
+              "00000000-0000-4000-8000-000000000001",
+              "target: Regression review (00000000-0000-4000-8000-000000000005)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+            "args": [
+              "00000000-0000-4000-8000-00000000000b",
+              "00000000-0000-4000-8000-000000000001",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
+            "args": [
+              "00000000-0000-4000-8000-00000000000c",
+              "00000000-0000-4000-8000-00000000000b",
+              "00000000-0000-4000-8000-000000000001",
+              "00000000-0000-4000-8000-00000000000b:00000000-0000-4000-8000-000000000001",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              8,
+              "assistant_message",
+              "{\"text\":\"Echo: Runtime message:\\n---8<---\\n## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\\n---8<---\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              9,
+              "prompt_done",
+              "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+            "args": ["idle", "00000000-0000-4000-8000-000000000005"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE deliveries\n         SET status = 'delivered', delivered_at = ?\n         WHERE id = ? AND status = 'queued'",
+            "args": [1789333200000, "00000000-0000-4000-8000-00000000000c"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              7,
+              "system_message",
+              "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8000-00000000000b\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Regression review (00000000-0000-4000-8000-000000000005)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\"}",
+              "msg:00000000-0000-4000-8000-00000000000b",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              8,
+              "collaboration_prompt",
+              "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000b\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Regression review (00000000-0000-4000-8000-000000000005)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\\n---8<---\",\"truncated\":false,\"rawSize\":194}",
+              "system",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+            "args": ["running", "00000000-0000-4000-8000-000000000001"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              9,
+              "assistant_message",
+              "{\"text\":\"Echo: Runtime message:\\n---8<---\\ntarget: Regression review (00000000-0000-4000-8000-000000000005)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\\n---8<---\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              10,
+              "prompt_done",
+              "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+            "args": ["idle", "00000000-0000-4000-8000-000000000001"]
+          }
+        ],
+        "reads": 159
+      }
+    },
+    {
+      "name": "cancel-child-wait",
+      "response": [
+        {
+          "status": 200,
+          "body": [
+            {
+              "id": "00000000-0000-4000-8000-000000000001",
+              "cwd": "/Users/lelouch/mine/code/webagent/main",
+              "title": "root",
+              "workflow_status": "idle",
+              "parent_id": null,
+              "model": null,
+              "mode": null,
+              "reasoning_effort": null,
+              "source": "root",
+              "deleted_at": null,
+              "created_at": "2026-09-13T21:00:00.000Z",
+              "last_active_at": "2026-09-13T21:00:00.000Z",
+              "agentId": "mock",
+              "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+              "hasUserInput": true,
+              "isRoot": true,
+              "archived": false
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000005",
+              "cwd": "/Users/lelouch/mine/code/webagent/main",
+              "title": "Regression review",
+              "workflow_status": "idle",
+              "parent_id": "00000000-0000-4000-8000-000000000001",
+              "model": "mock-model",
+              "mode": "agent",
+              "reasoning_effort": "medium",
+              "source": "agent",
+              "deleted_at": null,
+              "created_at": "2026-09-13T21:00:00.000Z",
+              "last_active_at": "2026-09-13T21:00:00.000Z",
+              "agentId": "mock",
+              "cwdDisplay": "/Users/lelouch/mine/code/webagent/main",
+              "hasUserInput": false,
+              "isRoot": false,
+              "archived": false
+            }
+          ]
+        },
+        {
+          "status": 200,
+          "body": {
+            "ok": true,
+            "status": "idle"
+          }
+        }
+      ],
+      "sse": [],
+      "mock": [],
+      "sql": {
+        "writes": [],
+        "reads": 6
+      }
+    },
+    {
+      "name": "finish-child-update",
+      "response": {
+        "status": 202,
+        "body": {
+          "status": "accepted"
+        }
+      },
+      "sse": [
+        {
+          "type": "user_message",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "text": "complete regression review",
+          "clientOpId": "00000000-0000-4000-8000-00000000000d"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "seq": 9,
+          "patch": {
+            "runtime": {
+              "busy": {
+                "kind": "agent",
+                "since": "2026-09-13T21:00:00.000Z",
+                "promptId": "prompt-5",
+                "cancelStatus": null
+              }
+            }
+          }
+        },
+        {
+          "type": "system_message",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "kind": "collaboration",
+          "messageId": "00000000-0000-4000-8000-00000000000e",
+          "sourceTaskId": "00000000-0000-4000-8000-000000000005",
+          "sourceLabel": "Regression review",
+          "targetTaskId": "00000000-0000-4000-8000-000000000001",
+          "targetLabel": "root",
+          "role": "source",
+          "title": "@\"Regression review\" sent @root",
+          "body": "Task status: done\nReview complete.",
+          "deliveryStatus": "queued"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 9,
+          "patch": {
+            "runtime": {
+              "busy": {
+                "kind": "agent",
+                "since": "2026-09-13T21:00:00.000Z",
+                "promptId": "prompt-6",
+                "cancelStatus": null
+              }
+            }
+          }
+        },
+        {
+          "type": "collaboration_delivery",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "messageId": "00000000-0000-4000-8000-00000000000e",
+          "status": "delivered",
+          "deliveredAt": "2026-09-13T21:00:00.000Z"
+        },
+        {
+          "type": "system_message",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "kind": "collaboration",
+          "messageId": "00000000-0000-4000-8000-00000000000e",
+          "sourceTaskId": "00000000-0000-4000-8000-000000000005",
+          "sourceLabel": "Regression review",
+          "targetTaskId": "00000000-0000-4000-8000-000000000001",
+          "targetLabel": "root",
+          "role": "target",
+          "title": "@\"Regression review\" sent @root",
+          "body": "Task status: done\nReview complete."
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 10,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": true,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "message_chunk",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "text": "Echo: From \"Regression review\" (task id 00000000-0000-4000-8000-000000000005):\n---8<---\nTask status: done\nReview complete.\n---8<---"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 11,
+          "patch": {
+            "runtime": {
+              "busy": null
+            }
+          }
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "seq": 12,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": false,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "prompt_done",
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "stopReason": "end_turn",
+          "promptId": "prompt-6"
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "seq": 10,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": true,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "message_chunk",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "text": "Review finished."
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "seq": 11,
+          "patch": {
+            "runtime": {
+              "busy": null
+            }
+          }
+        },
+        {
+          "type": "state_patch",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "seq": 12,
+          "patch": {
+            "runtime": {
+              "streaming": {
+                "assistant": false,
+                "thinking": false
+              }
+            }
+          }
+        },
+        {
+          "type": "prompt_done",
+          "taskId": "00000000-0000-4000-8000-000000000005",
+          "stopReason": "end_turn",
+          "promptId": "prompt-5"
+        }
+      ],
+      "mock": [
+        {
+          "kind": "acp",
+          "method": "session/prompt",
+          "text": "complete regression review"
+        },
+        {
+          "kind": "acp",
+          "method": "session/prompt",
+          "text": "From \"Regression review\" (task id 00000000-0000-4000-8000-000000000005):\n---8<---\nTask status: done\nReview complete.\n---8<---"
+        },
+        {
+          "kind": "mcp",
+          "tool": "task_update",
+          "arguments": {
+            "status": "done",
+            "body": "Review complete."
+          },
+          "status": 200,
+          "result": {
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"accepted\":true}"
+                }
+              ]
+            },
+            "jsonrpc": "2.0",
+            "id": 2
+          }
+        }
+      ],
+      "sql": {
+        "writes": [
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              10,
+              "user_message",
+              "{\"text\":\"complete regression review\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000d\"}",
+              "user",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+            "args": [1789333200000, "00000000-0000-4000-8000-000000000005"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+            "args": ["/Users/lelouch/mine/code/webagent/main", 1789333200000]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+            "args": ["done", "00000000-0000-4000-8000-000000000005"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              11,
+              "task_update",
+              "{\"status\":\"done\",\"body\":\"Review complete.\",\"reason\":\"settled\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-00000000000e",
+              "00000000-0000-4000-8000-000000000005",
+              "00000000-0000-4000-8000-000000000001",
+              "agent",
+              "Task status: done\nReview complete.",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-00000000000e",
+              "00000000-0000-4000-8000-000000000005",
+              "source",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-00000000000e",
+              "00000000-0000-4000-8000-000000000001",
+              "target",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              12,
+              "system_message",
+              "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"sourceLabel\":\"Regression review\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Regression review\\\" sent @root\",\"body\":\"Task status: done\\nReview complete.\"}",
+              "msg:00000000-0000-4000-8000-00000000000e",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
+            "args": [
+              "00000000-0000-4000-8000-00000000000f",
+              "00000000-0000-4000-8000-00000000000e",
+              "00000000-0000-4000-8000-000000000001",
+              "00000000-0000-4000-8000-00000000000e:00000000-0000-4000-8000-000000000001",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE deliveries\n         SET status = 'delivered', delivered_at = ?\n         WHERE id = ? AND status = 'queued'",
+            "args": [1789333200000, "00000000-0000-4000-8000-00000000000f"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              11,
+              "system_message",
+              "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"sourceLabel\":\"Regression review\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Regression review\\\" sent @root\",\"body\":\"Task status: done\\nReview complete.\"}",
+              "msg:00000000-0000-4000-8000-00000000000e",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              12,
+              "collaboration_prompt",
+              "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000e\"],\"text\":\"From \\\"Regression review\\\" (task id 00000000-0000-4000-8000-000000000005):\\n---8<---\\nTask status: done\\nReview complete.\\n---8<---\",\"truncated\":false,\"rawSize\":125}",
+              "system",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+            "args": ["running", "00000000-0000-4000-8000-000000000001"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              13,
+              "assistant_message",
+              "{\"text\":\"Echo: From \\\"Regression review\\\" (task id 00000000-0000-4000-8000-000000000005):\\n---8<---\\nTask status: done\\nReview complete.\\n---8<---\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000001",
+              14,
+              "prompt_done",
+              "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-6\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+            "args": ["idle", "00000000-0000-4000-8000-000000000001"]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              13,
+              "assistant_message",
+              "{\"text\":\"Review finished.\"}",
+              "agent",
+              1789333200000
+            ]
+          },
+          {
+            "kind": "write",
+            "method": "run",
+            "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "args": [
+              "00000000-0000-4000-8000-000000000005",
+              14,
+              "prompt_done",
+              "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-5\"}",
+              "agent",
+              1789333200000
+            ]
+          }
+        ],
+        "reads": 64
+      }
+    }
+  ],
+  "snapshot": {
+    "tasks": [
+      {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "title": "root",
+        "workflow_status": "idle",
+        "parent_id": null,
+        "pending_compact_summary": null,
+        "model": null,
+        "mode": null,
+        "reasoning_effort": null,
+        "source": "root",
+        "deleted_at": null,
+        "created_at": 1789333200000,
+        "last_active_at": 1789333200000
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000005",
+        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "title": "Regression review",
+        "workflow_status": "done",
+        "parent_id": "00000000-0000-4000-8000-000000000001",
+        "pending_compact_summary": null,
+        "model": "mock-model",
+        "mode": "agent",
+        "reasoning_effort": "medium",
+        "source": "agent",
+        "deleted_at": null,
+        "created_at": 1789333200000,
+        "last_active_at": 1789333200000
+      }
+    ],
+    "agent_sessions": [
+      {
+        "agent_key": "mock",
+        "agent_session_id": "00000000-0000-4000-8000-000000000001",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "created_at": 1789333200000
+      },
+      {
+        "agent_key": "mock",
+        "agent_session_id": "00000000-0000-4000-8000-000000000002",
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "created_at": 1789333200000
+      }
+    ],
+    "events": [
+      {
+        "id": 1,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 1,
+        "type": "user_message",
+        "data": "{\"text\":\"delegate review\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+        "created_at": 1789333200000,
+        "from_ref": "user"
+      },
+      {
+        "id": 2,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 2,
+        "type": "system_message",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Regression review\",\"agentId\":\"mock\",\"cwd\":\"/Users/lelouch/mine/code/webagent/main\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Regression review\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /Users/lelouch/mine/code/webagent/main\\nmodel: mock-model\\nthinking: medium\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 3,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 3,
+        "type": "system_message",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000005\",\"targetLabel\":\"Regression review\",\"role\":\"source\",\"title\":\"@root sent @\\\"Regression review\\\"\",\"body\":\"park regression review\"}",
+        "created_at": 1789333200000,
+        "from_ref": "msg:00000000-0000-4000-8000-000000000007"
+      },
+      {
+        "id": 4,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 1,
+        "type": "system_message",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000005\",\"targetLabel\":\"Regression review\",\"role\":\"target\",\"title\":\"@root sent @\\\"Regression review\\\"\",\"body\":\"park regression review\"}",
+        "created_at": 1789333200000,
+        "from_ref": "msg:00000000-0000-4000-8000-000000000007"
+      },
+      {
+        "id": 5,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 2,
+        "type": "collaboration_prompt",
+        "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000007\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8000-000000000001):\\n---8<---\\npark regression review\\n---8<---\",\"truncated\":false,\"rawSize\":100}",
+        "created_at": 1789333200000,
+        "from_ref": "system"
+      },
+      {
+        "id": 6,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 3,
+        "type": "handoff_reminder",
+        "data": "{\"messageId\":\"00000000-0000-4000-8000-000000000009\",\"reason\":\"closing_reminder\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000005\",\"body\":\"## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "system"
+      },
+      {
+        "id": 7,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 4,
+        "type": "assistant_message",
+        "data": "{\"text\":\"Echo: From \\\"root\\\" (task id 00000000-0000-4000-8000-000000000001):\\n---8<---\\npark regression review\\n---8<---\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 8,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 5,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 9,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 6,
+        "type": "system_message",
+        "data": "{\"kind\":\"handoff_reminder\",\"messageId\":\"00000000-0000-4000-8000-000000000009\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000005\",\"targetLabel\":\"Regression review\",\"role\":\"target\",\"title\":\"Task handoff required\",\"body\":\"## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "msg:00000000-0000-4000-8000-000000000009"
+      },
+      {
+        "id": 10,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 7,
+        "type": "collaboration_prompt",
+        "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000009\"],\"text\":\"Runtime message:\\n---8<---\\n## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\\n---8<---\",\"truncated\":false,\"rawSize\":718}",
+        "created_at": 1789333200000,
+        "from_ref": "system"
+      },
+      {
+        "id": 11,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 4,
+        "type": "assistant_message",
+        "data": "{\"text\":\"Review delegated.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 12,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 5,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 13,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 6,
+        "type": "task_outcome_notice",
+        "data": "{\"messageId\":\"00000000-0000-4000-8000-00000000000b\",\"reason\":\"no_update\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000005\",\"message\":\"The target ended another turn without any task_update; the runtime stopped reminding.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "system"
+      },
+      {
+        "id": 14,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 8,
+        "type": "assistant_message",
+        "data": "{\"text\":\"Echo: Runtime message:\\n---8<---\\n## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\\n---8<---\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 15,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 9,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 16,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 7,
+        "type": "system_message",
+        "data": "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8000-00000000000b\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Regression review (00000000-0000-4000-8000-000000000005)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "msg:00000000-0000-4000-8000-00000000000b"
+      },
+      {
+        "id": 17,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 8,
+        "type": "collaboration_prompt",
+        "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000b\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Regression review (00000000-0000-4000-8000-000000000005)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\\n---8<---\",\"truncated\":false,\"rawSize\":194}",
+        "created_at": 1789333200000,
+        "from_ref": "system"
+      },
+      {
+        "id": 18,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 9,
+        "type": "assistant_message",
+        "data": "{\"text\":\"Echo: Runtime message:\\n---8<---\\ntarget: Regression review (00000000-0000-4000-8000-000000000005)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\\n---8<---\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 19,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 10,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 20,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 10,
+        "type": "user_message",
+        "data": "{\"text\":\"complete regression review\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000d\"}",
+        "created_at": 1789333200000,
+        "from_ref": "user"
+      },
+      {
+        "id": 21,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 11,
+        "type": "task_update",
+        "data": "{\"status\":\"done\",\"body\":\"Review complete.\",\"reason\":\"settled\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 22,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 12,
+        "type": "system_message",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"sourceLabel\":\"Regression review\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Regression review\\\" sent @root\",\"body\":\"Task status: done\\nReview complete.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "msg:00000000-0000-4000-8000-00000000000e"
+      },
+      {
+        "id": 23,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 11,
+        "type": "system_message",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"sourceLabel\":\"Regression review\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Regression review\\\" sent @root\",\"body\":\"Task status: done\\nReview complete.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "msg:00000000-0000-4000-8000-00000000000e"
+      },
+      {
+        "id": 24,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 12,
+        "type": "collaboration_prompt",
+        "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000e\"],\"text\":\"From \\\"Regression review\\\" (task id 00000000-0000-4000-8000-000000000005):\\n---8<---\\nTask status: done\\nReview complete.\\n---8<---\",\"truncated\":false,\"rawSize\":125}",
+        "created_at": 1789333200000,
+        "from_ref": "system"
+      },
+      {
+        "id": 25,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 13,
+        "type": "assistant_message",
+        "data": "{\"text\":\"Echo: From \\\"Regression review\\\" (task id 00000000-0000-4000-8000-000000000005):\\n---8<---\\nTask status: done\\nReview complete.\\n---8<---\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 26,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 14,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-6\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 27,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 13,
+        "type": "assistant_message",
+        "data": "{\"text\":\"Review finished.\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 28,
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "seq": 14,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-5\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      }
+    ],
+    "messages": [
+      {
+        "id": "00000000-0000-4000-8000-000000000007",
+        "source_task_id": "00000000-0000-4000-8000-000000000001",
+        "direct_target_task_id": "00000000-0000-4000-8000-000000000005",
+        "source_actor": "agent",
+        "body": "park regression review",
+        "created_at": 1789333200000
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000009",
+        "source_task_id": "00000000-0000-4000-8000-000000000001",
+        "direct_target_task_id": "00000000-0000-4000-8000-000000000005",
+        "source_actor": "system",
+        "body": "## Task Handoff Required\n\nThis is a runtime-injected closing turn: report what this turn established\nand end it.\n\nDo not begin new work as part of this closing turn.\n\nReport what this turn established, then call exactly one of:\n- `task_update(done, ...)` with the completion report.\n- `task_update(blocked, ...)` and explain what is missing.\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\n  background work will wake you; waiting on a person or an external event\n  is `blocked`.\n\nIf the user cancelled this turn, say so plainly in that report instead of\nresuming the cancelled work. Do not start new work, and do not end this turn\nwith a prose answer only.",
+        "created_at": 1789333200000
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000000b",
+        "source_task_id": "00000000-0000-4000-8000-000000000005",
+        "direct_target_task_id": "00000000-0000-4000-8000-000000000001",
+        "source_actor": "system",
+        "body": "target: Regression review (00000000-0000-4000-8000-000000000005)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.",
+        "created_at": 1789333200000
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000000e",
+        "source_task_id": "00000000-0000-4000-8000-000000000005",
+        "direct_target_task_id": "00000000-0000-4000-8000-000000000001",
+        "source_actor": "agent",
+        "body": "Task status: done\nReview complete.",
+        "created_at": 1789333200000
+      }
+    ],
+    "message_projections": [
+      {
+        "message_id": "00000000-0000-4000-8000-000000000007",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "role": "source",
+        "created_at": 1789333200000
+      },
+      {
+        "message_id": "00000000-0000-4000-8000-000000000007",
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "role": "target",
+        "created_at": 1789333200000
+      },
+      {
+        "message_id": "00000000-0000-4000-8000-000000000009",
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "role": "target",
+        "created_at": 1789333200000
+      },
+      {
+        "message_id": "00000000-0000-4000-8000-00000000000b",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "role": "target",
+        "created_at": 1789333200000
+      },
+      {
+        "message_id": "00000000-0000-4000-8000-00000000000e",
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "role": "source",
+        "created_at": 1789333200000
+      },
+      {
+        "message_id": "00000000-0000-4000-8000-00000000000e",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "role": "target",
+        "created_at": 1789333200000
+      }
+    ],
+    "deliveries": [
+      {
+        "id": "00000000-0000-4000-8000-000000000008",
+        "message_id": "00000000-0000-4000-8000-000000000007",
+        "recipient_task_id": "00000000-0000-4000-8000-000000000005",
+        "idempotency_key": "00000000-0000-4000-8000-000000000007:00000000-0000-4000-8000-000000000005",
+        "status": "delivered",
+        "queued_at": 1789333200000,
+        "delivered_at": 1789333200000,
+        "failed_at": null,
+        "failure_reason": null
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000000a",
+        "message_id": "00000000-0000-4000-8000-000000000009",
+        "recipient_task_id": "00000000-0000-4000-8000-000000000005",
+        "idempotency_key": "00000000-0000-4000-8000-000000000009:00000000-0000-4000-8000-000000000005",
+        "status": "delivered",
+        "queued_at": 1789333200000,
+        "delivered_at": 1789333200000,
+        "failed_at": null,
+        "failure_reason": null
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000000c",
+        "message_id": "00000000-0000-4000-8000-00000000000b",
+        "recipient_task_id": "00000000-0000-4000-8000-000000000001",
+        "idempotency_key": "00000000-0000-4000-8000-00000000000b:00000000-0000-4000-8000-000000000001",
+        "status": "delivered",
+        "queued_at": 1789333200000,
+        "delivered_at": 1789333200000,
+        "failed_at": null,
+        "failure_reason": null
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000000f",
+        "message_id": "00000000-0000-4000-8000-00000000000e",
+        "recipient_task_id": "00000000-0000-4000-8000-000000000001",
+        "idempotency_key": "00000000-0000-4000-8000-00000000000e:00000000-0000-4000-8000-000000000001",
+        "status": "delivered",
+        "queued_at": 1789333200000,
+        "delivered_at": 1789333200000,
+        "failed_at": null,
+        "failure_reason": null
+      }
+    ],
+    "client_ops": [],
+    "recent_paths": [
+      {
+        "cwd": "/Users/lelouch/mine/code/webagent/main",
+        "last_used_at": 1789333200000
+      }
+    ]
+  }
+}

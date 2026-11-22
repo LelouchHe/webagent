@@ -44,6 +44,12 @@ export interface SpecServerConfig {
   template?: string;
 }
 
+export interface SpecServerSpawnOptions {
+  nodeArgs?: string[];
+  env?: NodeJS.ProcessEnv;
+  quiet?: boolean;
+}
+
 const LISTENING = /\[server\] listening on http:\/\/localhost:(\d+)/;
 
 export function writeSpecConfig(
@@ -129,16 +135,26 @@ export function seedSpecAuth(dataDir: string, token: string): void {
   );
 }
 
-export async function startSpecServer(configPath: string): Promise<SpecServer> {
+export async function startSpecServer(
+  configPath: string,
+  options: SpecServerSpawnOptions = {},
+): Promise<SpecServer> {
   const child = spawn(
     process.execPath,
-    ["--experimental-strip-types", "src/server.ts", "--config", configPath],
+    [
+      "--experimental-strip-types",
+      ...(options.nodeArgs ?? []),
+      "src/server.ts",
+      "--config",
+      configPath,
+    ],
     {
       cwd: REPO_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
       // Process-group leader: stopSpecServer kills -pid, which reaches every
       // agent the server spawned.
       detached: true,
+      env: { ...process.env, ...options.env },
     },
   );
 
@@ -160,7 +176,7 @@ export async function startSpecServer(configPath: string): Promise<SpecServer> {
     };
     child.stdout.on("data", (chunk: Buffer) => {
       output += chunk.toString();
-      process.stdout.write(chunk);
+      if (!options.quiet) process.stdout.write(chunk);
       const match = LISTENING.exec(output);
       if (match) {
         finish(() => {
@@ -170,7 +186,7 @@ export async function startSpecServer(configPath: string): Promise<SpecServer> {
     });
     child.stderr.on("data", (chunk: Buffer) => {
       output += chunk.toString();
-      process.stderr.write(chunk);
+      if (!options.quiet) process.stderr.write(chunk);
     });
     child.once("exit", (code, signal) => {
       finish(() => {
