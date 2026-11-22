@@ -1,10 +1,13 @@
 # Database Schema
 
 WebAgent persists state to a single SQLite database at `<data_dir>/webagent.db`
-(`better-sqlite3`, WAL journal mode). All tables are created by
-`src/store.ts` `initializeSchema()`, which runs on every server start. This is
-not a compatibility migration layer: pre-1.0 data directories with an old
-schema must be backed up and removed before starting a new release.
+(`better-sqlite3`, WAL journal mode). Core tables are created by
+`src/store.ts`; additive host tables are created by `src/host/store.ts`.
+The composition root constructs both on every server start. This is
+not a general compatibility migration layer. Multi-host storage is
+deliberately additive: an existing `main@1bacca0` database opens without
+reset, while other unsupported pre-1.0 schema changes retain the reset policy
+below.
 
 Timestamps are stored as **INTEGER unix milliseconds**. Writers pass
 `Date.now()` explicitly; the `DEFAULT 0` in the DDL is a schema placeholder and
@@ -29,6 +32,13 @@ or counters rather than instants (`ttl_hours`, `share_snapshot_seq`,
   - [messages](#messages)
   - [message_projections](#message_projections)
   - [deliveries](#deliveries)
+  - [host_external_sources](#host_external_sources)
+  - [host_received_dispatches](#host_received_dispatches)
+  - [host_edges](#host_edges)
+  - [host_dispatches](#host_dispatches)
+  - [host_wake_hints](#host_wake_hints)
+  - [host_message_types](#host_message_types)
+  - [host_report_receipts](#host_report_receipts)
   - [client_ops](#client_ops)
   - [recent_paths](#recent_paths)
   - [shares](#shares)
@@ -240,6 +250,117 @@ on target task deletion; deletion explicitly terminalizes pending rows as
 | `failed_at` | INTEGER | Set when the row could not be handed over |
 | `failure_reason` | TEXT | Stable terminal failure reason, e.g. `target_deleted` |
 
+### `host_external_sources`
+
+The owner-side binding for a task created by another host. It deliberately has
+no foreign key: after the local task is deleted, queued reports and idempotent
+retries still name the original credential fingerprint and external parent.
+
+| Column | Type | Notes |
+|---|---|---|
+| `task_id` | TEXT PRIMARY KEY | Local owner task id |
+| `credential_hash` | TEXT NOT NULL | SHA-256 fingerprint of the caller's bearer credential |
+| `parent_task_id` | TEXT NOT NULL | Task id on the initiating host |
+| `create_key` | TEXT NOT NULL | Creator-scoped idempotency key |
+| `request_hash` | TEXT NOT NULL | Hash of the normalized create request |
+| `created_at` | INTEGER NOT NULL | Unix milliseconds |
+
+Unique: `(credential_hash, create_key)`.
+
+### `host_received_dispatches`
+
+Maps an initiating host's dispatch id to the owner's immutable local message.
+The check happens before target existence checks, so retries after deletion
+still return the original `202`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `credential_hash` | TEXT NOT NULL | Caller identity namespace |
+| `remote_message_id` | TEXT NOT NULL | Initiator message id |
+| `local_message_id` | TEXT NOT NULL | Owner-side `messages.id` |
+| `request_hash` | TEXT NOT NULL | Hash of the complete dispatch request |
+| `received_at` | INTEGER NOT NULL | Unix milliseconds |
+
+Primary key: `(credential_hash, remote_message_id)`.
+
+### `host_edges`
+
+Initiator-side persisted mapping from a local parent task to a remote child.
+Removed or abandoned rows remain to validate a late report from the original
+host and credential.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | TEXT PRIMARY KEY | Local edge id |
+| `parent_task_id` | TEXT NOT NULL | Initiating parent task id |
+| `host_name` | TEXT NOT NULL | Local `[hosts.<name>]` alias |
+| `remote_task_id` | TEXT NOT NULL | Owner-side task id |
+| `display_title` | TEXT NOT NULL | Last title known at creation |
+| `credential_hash` | TEXT NOT NULL | Fingerprint of the token used for this edge |
+| `create_key` | TEXT NOT NULL | Creation idempotency key |
+| `request_hash` | TEXT NOT NULL | Hash of the normalized create request |
+| `status` | TEXT NOT NULL | `active`, `removed`, or `abandoned` |
+| `created_at` | INTEGER NOT NULL | Unix milliseconds |
+| `ended_at` | INTEGER | Unix milliseconds for a terminal edge state |
+
+Unique: `(parent_task_id, host_name, credential_hash, create_key)`.
+
+### `host_dispatches`
+
+Transport state for one existing `deliveries` row whose recipient is a
+remote child. The delivery status remains the common upper-layer fact.
+
+| Column | Type | Notes |
+|---|---|---|
+| `delivery_id` | TEXT PRIMARY KEY | Existing `deliveries.id` |
+| `edge_id` | TEXT NOT NULL | `host_edges.id` selected at enqueue time |
+| `state` | TEXT NOT NULL | `pending`, `handed_off`, or `terminal` |
+| `ended_reason` | TEXT | Stable terminal transport reason |
+| `created_at` | INTEGER NOT NULL | Unix milliseconds |
+| `ended_at` | INTEGER | Unix milliseconds |
+
+### `host_wake_hints`
+
+One conservative “a child may owe a report” fact per initiator edge. Transport
+rows remain independent, so a returned terminal report removes this hint but
+does not alter an unrelated pending POST.
+
+| Column | Type | Notes |
+|---|---|---|
+| `edge_id` | TEXT PRIMARY KEY | `host_edges.id` |
+| `created_at` | INTEGER NOT NULL | Enqueue time in unix milliseconds |
+
+### `host_message_types`
+
+Persistent message classification for host outbox envelopes. Runtime notice
+kind is not inferred from body text.
+
+| Column | Type | Notes |
+|---|---|---|
+| `message_id` | TEXT PRIMARY KEY | Existing `messages.id` |
+| `kind` | TEXT NOT NULL | `collaboration`, `done`, `blocked`, or `runtime_notice` |
+| `runtime_kind` | TEXT | Structured runtime event kind |
+| `reason` | TEXT | Structured outcome reason |
+
+### `host_report_receipts`
+
+Initiator-side deduplication and terminal records for owner outbox items.
+Receipt rows are independent from task events, projections, and transcript
+compaction.
+
+| Column | Type | Notes |
+|---|---|---|
+| `host_name` | TEXT NOT NULL | Local host alias |
+| `credential_hash` | TEXT NOT NULL | Credential identity of this relationship |
+| `owner_message_id` | TEXT NOT NULL | Owner-side `messages.id` |
+| `local_message_id` | TEXT | Local copied `messages.id`; `NULL` when the parent was already deleted |
+| `edge_id` | TEXT NOT NULL | Edge used to validate the report |
+| `parent_task_id` | TEXT NOT NULL | Original local parent id |
+| `result` | TEXT NOT NULL | `queued` or `parent_deleted` |
+| `received_at` | INTEGER NOT NULL | Unix milliseconds |
+
+Primary key: `(host_name, credential_hash, owner_message_id)`.
+
 ### `client_ops`
 
 Idempotency cache for mutating REST calls (M2 of client-server-split). Lets a
@@ -350,6 +471,10 @@ predates this table and is refused at startup (see
 | `idx_messages_target_created` | `messages` | `(direct_target_task_id, created_at)` | Target-side coordination history |
 | `idx_message_projections_task_created` | `message_projections` | `(task_id, created_at)` | Task timeline collaboration records |
 | `idx_deliveries_recipient_status_queued` | `deliveries` | `(recipient_task_id, status, queued_at)` | FIFO queue drain |
+| `idx_host_external_sources_credential` | `host_external_sources` | `(credential_hash)` | Owner outbox and credential lookup |
+| `idx_host_received_dispatches_local` | `host_received_dispatches` | `(local_message_id)` | Dispatch-to-binding lookup |
+| `idx_host_edges_parent_status` | `host_edges` | `(parent_task_id, status)` | Remote children and wake-source lookup |
+| `idx_host_dispatches_edge_state` | `host_dispatches` | `(edge_id, state)` | Per-edge ordered transport |
 | `idx_tasks_parent_title_live` | `tasks` | `(parent_id, title) WHERE deleted_at IS NULL AND title IS NOT NULL` | Unique live sibling title (defaults to task id, so always populated) |
 | `idx_shares_task` | `shares` | `(task_id, created_at DESC)` | Owner share-list view |
 | `shares_one_active_preview` | `shares` | `(task_id) WHERE shared_at IS NULL` | At most one preview per task (partial UNIQUE) |
@@ -504,8 +629,10 @@ data directory before restarting. This includes a `tasks.workflow_status` CHECK
 that predates `waiting`: the constraint is part of the contract, so such a
 database is refused at startup rather than at the first `task_update(waiting)`.
 Likewise a `deliveries` table that still has `claimed_at` or a `draining`
-status is refused. Four narrow, in-place schema edits are the
-explicit exceptions (three column-scoped and one index swap), and all converge
+status is refused. The multi-host tables are additive (`CREATE TABLE IF NOT
+EXISTS` / index creation) and are the upgrade exception for `main@1bacca0`.
+Four narrow, in-place schema edits remain the explicit old-schema exceptions
+(three column-scoped and one index swap), and all converge
 an existing database on the current schema instead of requiring a reset:
 
 - the `system_message` payload normalization described above for the current
@@ -536,6 +663,6 @@ never edits an old database.
 ## Schema Coverage Test
 
 `test/schema-coverage.test.ts` parses `CREATE TABLE` statements out of
-`src/store.ts` at test time and asserts every table name appears as a heading
-in this document. If you add a new table, this test will fail until you add a
-section for it here.
+`src/store.ts` and `src/host/store.ts` at test time and asserts every table
+name appears as a heading in this document. If you add a new table, this test
+will fail until you add a section for it here.

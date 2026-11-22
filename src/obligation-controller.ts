@@ -274,14 +274,15 @@ export class ObligationController {
   /** Archiving cut this edge; the target left the source. */
   dropEdge(sourceTaskId: string, targetTaskId: string): void {
     const account = this.accounts.get(targetTaskId);
-    if (account?.sourceTaskId === sourceTaskId) {
-      this.accounts.delete(targetTaskId);
-      this.emitOutcome({
-        kind: "target_unavailable",
-        sourceTaskId: account.sourceTaskId,
-        targetTaskId,
-      });
+    if (account?.sourceTaskId !== sourceTaskId) {
+      return;
     }
+    this.accounts.delete(targetTaskId);
+    this.emitOutcome({
+      kind: "target_unavailable",
+      sourceTaskId: account.sourceTaskId,
+      targetTaskId,
+    });
     this.watches.delete(targetTaskId);
     this.updated.delete(targetTaskId);
     this.schedule();

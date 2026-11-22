@@ -22,6 +22,9 @@ data_dir = "data"
 # Static assets directory (default: "dist")
 public_dir = "dist"
 
+# Optional outbound WebAgent hosts. Replace this empty table when enabling one.
+hosts = {}
+
 # Configured ACP agents. The table key is the agent id (also its display
 # name): lowercase letters, digits, and dashes, starting with a letter/digit.
 # `cmd` is split on whitespace (paths containing spaces are not supported).
@@ -37,6 +40,13 @@ cmd = "copilot --acp"
 # Add more agents by adding tables:
 # [agents.opencode]
 # cmd = "opencode acp"
+
+# Other WebAgent hosts. The name is local to this machine; the token is issued
+# by the host being connected to. Prefix a token with ! to resolve it via
+# `/bin/sh -c` at connection time; command output remains in memory only.
+# [hosts.mini]
+# url = "http://127.0.0.1:7800"
+# token = "!security find-generic-password -s webagent-mini -w"
 
 [limits]
 # Max bash output stored in DB per command (bytes, default 1 MB)

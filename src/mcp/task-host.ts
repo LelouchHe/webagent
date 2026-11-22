@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import type { Store, TaskRow } from "../store.ts";
-import {
-  isLocalCollaborationTarget,
-  collaborationRelation,
-} from "../task-collaboration.ts";
+import { collaborationRelation } from "../task-collaboration.ts";
 import {
   TaskConfigOverrideError,
   reportedExecutionConfig,
@@ -12,7 +9,9 @@ import {
   type TaskManager,
 } from "../task-manager.ts";
 import { expandHomePath } from "../home-path.ts";
-import { errorMessage } from "../types.ts";
+import { errorMessage, type AgentEvent } from "../types.ts";
+import { formatFieldBlock } from "../shared/field-block.ts";
+import { formatTaskReference } from "../shared/task-reference.ts";
 import { isoFromMillisOrNull } from "../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
 import { formatSilence } from "../obligation-controller.ts";
@@ -26,12 +25,6 @@ import type {
   McpTaskCreateResult,
 } from "./tools.ts";
 import { queryTaskHistory, readTaskHistory } from "./task-history.ts";
-import {
-  buildMcpTaskCancelFact,
-  cancelMcpTask,
-  persistMcpTaskCancelAuditSide,
-  type McpTaskCancelNotice,
-} from "./task-cancel.ts";
 import {
   agentStartError,
   configOverrideError,
@@ -64,6 +57,18 @@ export interface McpTaskCreatedEvent {
   body: string;
 }
 
+export interface CrossHostTaskCreator {
+  create(input: {
+    sourceTaskId: string;
+    title: string;
+    agent: string;
+    cwd?: string;
+    model?: string;
+    thinking?: string;
+    assertCaller: () => void;
+  }): Promise<{ handled: boolean; taskId?: string }>;
+}
+
 /**
  * The one record of an agent-issued cancellation.
  *
@@ -75,7 +80,10 @@ export interface McpTaskCreatedEvent {
  * frontend branch. A user-initiated cancel stays deliberately different and
  * writes nothing here.
  */
-export type { McpTaskCancelNotice } from "./task-cancel.ts";
+export type McpTaskCancelNotice = Extract<
+  AgentEvent,
+  { type: "system_message" }
+>;
 
 function relationOrder(relation: McpTaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2 }[relation];
@@ -88,6 +96,7 @@ export function createMcpTaskToolHost(deps: {
   broadcastCollaboration?: (event: McpTaskCollaborationEvent) => void;
   broadcastTaskCreated?: (event: McpTaskCreatedEvent) => void;
   broadcastTaskCancelNotice?: (event: McpTaskCancelNotice) => void;
+  crossHostCreator?: CrossHostTaskCreator;
 }): McpTaskToolHost {
   const {
     store,
@@ -129,22 +138,14 @@ export function createMcpTaskToolHost(deps: {
     return task;
   }
 
-  function requireLocalTarget(sourceTaskId: string, targetTaskId: string) {
-    const source = requireTask(sourceTaskId);
-    const target = requireTask(targetTaskId);
-    if (!isLocalCollaborationTarget(source, target)) {
-      throw new Error("target_not_allowed");
-    }
-    return { source, target };
-  }
-
   function requireHistoryTarget(sourceTaskId: string, targetTaskId: string) {
     const source = store.getTask(sourceTaskId);
     const target = store.getTask(targetTaskId);
     if (
       !source ||
       !target ||
-      (source.id !== target.id && !isLocalCollaborationTarget(source, target))
+      (source.id !== target.id &&
+        collaborationRelation(source, target) === null)
     ) {
       throw new Error("target_not_allowed");
     }
@@ -189,7 +190,7 @@ export function createMcpTaskToolHost(deps: {
       const lastEventTimes = store.getLatestEventTimes(
         entries.map((entry) => entry.task.id),
       );
-      return entries.map(({ task, relation }): McpTaskListItem => ({
+      const listed = entries.map(({ task, relation }): McpTaskListItem => ({
         id: task.id,
         title: task.title ?? task.id,
         relation,
@@ -198,6 +199,40 @@ export function createMcpTaskToolHost(deps: {
         lastAgentActivityAt: tasks.getLastAgentActivityAt(task.id),
         lastEventAt: isoFromMillisOrNull(lastEventTimes.get(task.id)),
       }));
+      const localIds = new Set(listed.map((item) => item.id));
+      const locatedParent =
+        source.parent_id === null ? tasks.parentOf(source.id) : null;
+      if (
+        locatedParent &&
+        locatedParent !== source.parent_id &&
+        !localIds.has(locatedParent)
+      ) {
+        const description = tasks.describeTask(locatedParent);
+        if (description) {
+          listed.push({
+            id: locatedParent,
+            title: description.title,
+            relation: "parent",
+            ...(description.presentation ?? {}),
+          });
+        }
+      }
+      for (const childId of tasks.childrenOf(source.id)) {
+        if (localIds.has(childId)) continue;
+        const description = tasks.describeTask(childId);
+        if (!description) continue;
+        listed.push({
+          id: childId,
+          title: description.title,
+          relation: "child",
+          ...(description.presentation ?? {}),
+        });
+      }
+      return listed.sort(
+        (a, b) =>
+          relationOrder(a.relation) - relationOrder(b.relation) ||
+          a.id.localeCompare(b.id),
+      );
     },
 
     query(principal, input): McpTaskQueryResult {
@@ -229,6 +264,23 @@ export function createMcpTaskToolHost(deps: {
       // diverge from the caller's binding, and it is resolved *before* anything
       // is created so an unusable target leaves no trace.
       const requestedAgent = input.agent;
+      if (requestedAgent && deps.crossHostCreator) {
+        const result = await deps.crossHostCreator.create({
+          sourceTaskId,
+          title: input.title,
+          agent: requestedAgent,
+          cwd: input.cwd,
+          model: input.model,
+          thinking: input.thinking,
+          assertCaller: () => {
+            authorize(principal);
+          },
+        });
+        if (result.handled) {
+          if (!result.taskId) throw new Error("task_create_failed");
+          return { taskId: result.taskId };
+        }
+      }
       let targetAgentId: string;
       let targetBridge: DeliveryBridge;
       if (requestedAgent !== undefined) {
@@ -333,9 +385,10 @@ export function createMcpTaskToolHost(deps: {
       authorize(principal);
       const sourceTaskId = principal.taskId;
       const { target } = requireChildTarget(sourceTaskId, targetTaskId);
-      const result = await cancelMcpTask(
-        tasks,
+      const bridge = tasks.existingTaskExecution(target.id)?.bridge ?? null;
+      const result = await tasks.cancelTaskExecution(
         target.id,
+        bridge,
         deps.cancelTimeoutMs ?? 0,
       );
       // The cancel awaited a transport round trip; the record of what happened
@@ -348,45 +401,90 @@ export function createMcpTaskToolHost(deps: {
       // from the live task rows, with the same short-id fallback collaboration
       // uses; a cancelled task may already be soft-deleted, hence
       // `getTaskIncludingDeleted`.
-      const fact = buildMcpTaskCancelFact(store, {
-        sourceTaskId,
-        targetTaskId: target.id,
-        reason,
-        result,
-      });
-      persistMcpTaskCancelAuditSide(
-        store,
-        fact,
-        "source",
-        broadcastTaskCancelNotice,
-      );
-      persistMcpTaskCancelAuditSide(
-        store,
-        fact,
-        "target",
-        broadcastTaskCancelNotice,
-      );
+      const sourceTask = store.getTaskIncludingDeleted(sourceTaskId);
+      const targetTask = store.getTaskIncludingDeleted(target.id);
+      const sourceLabel = sourceTask?.title ?? sourceTaskId.slice(0, 8);
+      const targetLabel = targetTask?.title ?? target.id.slice(0, 8);
+      const sourceRef = formatTaskReference(sourceLabel);
+      const targetRef = formatTaskReference(targetLabel);
+      const body = formatFieldBlock([
+        { label: "reason", value: reason },
+        { label: "status", value: result.status },
+      ]);
+      const rows = [
+        {
+          taskId: sourceTaskId,
+          role: "source" as const,
+          title: `${sourceRef} cancelled ${targetRef}`,
+        },
+        {
+          taskId: target.id,
+          role: "target" as const,
+          title: `Cancelled by ${sourceRef}`,
+        },
+      ];
+      for (const row of rows) {
+        const data = {
+          kind: "task_cancel" as const,
+          role: row.role,
+          sourceTaskId,
+          sourceLabel,
+          targetTaskId: target.id,
+          targetLabel,
+          reason,
+          status: result.status,
+          title: row.title,
+          body,
+        };
+        store.saveEvent(row.taskId, "system_message", data, {
+          from_ref: "agent",
+        });
+        broadcastTaskCancelNotice?.({
+          type: "system_message",
+          taskId: row.taskId,
+          kind: data.kind,
+          role: data.role,
+          sourceTaskId,
+          sourceLabel,
+          targetTaskId: target.id,
+          targetLabel,
+          title: data.title,
+          body,
+        });
+      }
       return { accepted: true, taskId: target.id, status: result.status };
     },
 
     async send(principal, targetTaskId, body) {
       authorize(principal);
       const sourceTaskId = principal.taskId;
-      const { source, target } = requireLocalTarget(sourceTaskId, targetTaskId);
-      const created = store.createCollaborationMessage({
-        id: randomUUID(),
-        deliveryId: randomUUID(),
-        sourceTaskId,
-        directTargetTaskId: target.id,
-        sourceActor: "agent",
-        body,
-      });
+      const route = tasks.deliveryRoute(sourceTaskId, targetTaskId);
+      const relation = route?.relation ?? null;
+      if (!route || (relation !== "child" && relation !== "parent")) {
+        throw new Error(
+          tasks.describeTask(targetTaskId)
+            ? "target_not_allowed"
+            : "task_not_found",
+        );
+      }
+      const created = tasks.enqueueDelivery(
+        {
+          sourceId: sourceTaskId,
+          targetId: targetTaskId,
+          kind: relation === "child" ? "dispatch" : "message",
+          body,
+        },
+        route,
+      );
+      if (!created) throw new Error("task_not_found");
+      const source = route.source;
+      const targetLabel =
+        created.route?.description.title ?? targetTaskId.slice(0, 8);
       const sourceLabel = source.title ?? source.id.slice(0, 8);
-      const targetLabel = target.title ?? target.id.slice(0, 8);
       broadcastCollaboration?.({
         messageId: created.message.id,
         sourceTaskId,
-        targetTaskId: target.id,
+        targetTaskId,
         sourceLabel,
         targetLabel,
         body: created.message.body,
@@ -394,7 +492,6 @@ export function createMcpTaskToolHost(deps: {
         role: "source",
         deliveryStatus: "queued",
       });
-      void tasks.drainCollaborationDeliveries(target.id);
     },
 
     async update(principal, status, body) {
@@ -403,23 +500,25 @@ export function createMcpTaskToolHost(deps: {
       // `waiting` only records the status. `done` and `blocked` settle the
       // target's open account and are delivered to its source, or fall back to
       // the current parent when no account is open.
-      const { collaborationMessageId, accountTargetTaskId, silenceWatchMs } =
-        tasks.settleAgentUpdate(sourceTaskId, status, body);
+      const {
+        collaborationMessageId,
+        accountTargetTaskId,
+        sourceLabel,
+        targetLabel,
+        silenceWatchMs,
+      } = tasks.settleAgentUpdate(sourceTaskId, status, body);
       if (collaborationMessageId && accountTargetTaskId) {
-        const source = requireTask(sourceTaskId);
-        const target = requireTask(accountTargetTaskId);
         broadcastCollaboration?.({
           messageId: collaborationMessageId,
           sourceTaskId,
           targetTaskId: accountTargetTaskId,
-          sourceLabel: source.title ?? source.id.slice(0, 8),
-          targetLabel: target.title ?? target.id.slice(0, 8),
+          sourceLabel: sourceLabel ?? sourceTaskId.slice(0, 8),
+          targetLabel: targetLabel ?? accountTargetTaskId.slice(0, 8),
           body: `Task status: ${status}\n${body}`,
           taskId: sourceTaskId,
           role: "source",
           deliveryStatus: "queued",
         });
-        void tasks.drainCollaborationDeliveries(accountTargetTaskId);
       }
       if (silenceWatchMs === undefined) return {};
       return {

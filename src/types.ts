@@ -392,7 +392,11 @@ export type AgentEvent =
       taskTitle?: string;
       sourceLabel?: string;
       targetLabel?: string;
+      externalSourceHost?: string;
+      externalTargetHost?: string;
+      externalSource?: boolean;
     }
+  | { type: "host_message_pending" }
   | {
       /**
        * Lightweight live refresh of one sender-side delivery mark. Broadcast

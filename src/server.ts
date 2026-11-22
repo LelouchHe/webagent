@@ -43,6 +43,11 @@ import {
   type InterceptorCounters,
 } from "./attachment-interceptor.ts";
 import type { AgentEvent } from "./types.ts";
+import { HostStore } from "./host/store.ts";
+import { HostRegistry } from "./host/registry.ts";
+import { HostTaskCreator } from "./host/create.ts";
+import { handleHostRoutes } from "./host/routes.ts";
+import { TaskLocator } from "./task-locator.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
 for (const method of ["log", "error", "warn"] as const) {
@@ -83,6 +88,8 @@ const PKG_VERSION = (() => {
 
 const store = new Store(config.data_dir);
 store.ensureRootTask(config.default_cwd);
+const hostStore = new HostStore(store);
+const locator = new TaskLocator(store, [hostStore]);
 console.log(`[store] using ${config.data_dir}/`);
 
 // Pin <data_dir>/tasks realpath at boot so all later anchor checks
@@ -155,9 +162,27 @@ const tasks = new TaskManager({
   authority: executionAuthority,
   agents: agentRegistry,
   obligations: obligationController,
+  locator,
 });
 taskManagerRef.current = tasks;
 const sseManager = new SseManager();
+const hosts = new HostRegistry(config.hosts, hostStore, (taskId) => {
+  void tasks.drainCollaborationDeliveries(taskId);
+});
+const hostTaskCreator = new HostTaskCreator(hostStore, hosts);
+hostStore.onCommitted((taskId) => {
+  void tasks.drainCollaborationDeliveries(taskId);
+});
+tasks.onDeliveriesCommitted((delivery) => {
+  const action = hostStore.deliveryCommitAction(delivery.deliveryId);
+  if (!action) return;
+  if ("edgeId" in action) hosts.kick(action.edgeId);
+  else {
+    sseManager.broadcastToCredential(action.credentialHash, {
+      type: "host_message_pending",
+    });
+  }
+});
 const clientRegistry = new ClientRegistry();
 const pushService = new PushService(
   store,
@@ -184,7 +209,7 @@ const attachmentSecret = randomBytes(32);
 // SSE heartbeat re-checks token revocation; revoked → connection closed
 // within one heartbeat interval (≤15s).
 sseManager.setRevocationCheck(
-  (tokenName) => !authStore.hasTokenName(tokenName),
+  (tokenHash) => !authStore.hasTokenHash(tokenHash),
 );
 sseManager.setAttachmentSecret(attachmentSecret);
 sseManager.setLabelMapProvider((taskId) => tasks.getLabelMap(taskId));
@@ -215,6 +240,7 @@ const mcpTaskTools = createMcpTaskToolHost({
   store,
   tasks,
   cancelTimeoutMs: config.limits.cancel_timeout,
+  crossHostCreator: hostTaskCreator,
   broadcastCollaboration,
   broadcastTaskCreated: (event) => {
     sseManager.broadcast(buildTaskCreatedBroadcast(event));
@@ -245,11 +271,19 @@ const requestHandler = createRequestHandler({
   dataDir: config.data_dir,
   limits: config.limits,
   agentIds: Object.keys(config.agents),
+  defaultCwd: config.default_cwd,
   pushService,
   serverVersion: PKG_VERSION,
   debugLevel: config.debug.level,
   authStore,
   ticketStore,
+  peerEndpoint: (req, res, principal) =>
+    handleHostRoutes(req, res, {
+      store: hostStore,
+      agentIds: Object.keys(config.agents),
+      defaultCwd: config.default_cwd,
+      principal,
+    }),
   attachmentSecret,
   shareConfig: config.share,
   mcpEndpoint: createMcpEndpoint({
@@ -259,7 +293,10 @@ const requestHandler = createRequestHandler({
     // Discovery for `task_create(agent: …)` comes from the running
     // configuration, not from a static schema that would have to be rebuilt by
     // hand whenever an agent is added.
-    configuredAgentIds: Object.keys(config.agents),
+    configuredAgentIds: () => [
+      ...Object.keys(config.agents),
+      ...hosts.agentCoordinates(),
+    ],
   }),
 });
 
@@ -316,6 +353,7 @@ async function shutdown() {
   messageCleanup.stop();
   sharePreviewCleanup?.stop();
   tasks.killAllBashProcs();
+  hosts.stop();
   await agentRegistry.shutdownAll();
   await authStore.close();
   store.close();
@@ -381,6 +419,10 @@ server.listen(config.port, config.host, () => {
     // demand. A missing or broken agent binary is therefore a runtime
     // condition, never a boot gate or a daemon restart.
     tasks.hydrate();
+    for (const taskId of hostStore.queuedHostReportRecipients()) {
+      void tasks.drainCollaborationDeliveries(taskId);
+    }
+    hosts.start();
     console.log(
       `[agents] ${Object.keys(config.agents).join(", ")} start on demand`,
     );
