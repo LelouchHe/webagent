@@ -32,6 +32,7 @@ test("behavior proof: MCP create and send address a remote child by returned tas
     root.id,
   );
   const kicks: string[] = [];
+  let committedMessageId: string | null = null;
   const crossHostCreator = {
     async create(input: { agent: string }) {
       if (input.agent !== "copilot@mini") return { handled: false };
@@ -60,6 +61,7 @@ test("behavior proof: MCP create and send address a remote child by returned tas
     },
   };
   tasks.onDeliveriesCommitted((delivery) => {
+    committedMessageId = delivery.messageId;
     const action = hostStore.deliveryCommitAction(delivery.deliveryId);
     if (action && "edgeId" in action) kicks.push(action.edgeId);
   });
@@ -96,7 +98,14 @@ test("behavior proof: MCP create and send address a remote child by returned tas
       const dispatch = hostStore.nextHostDispatch(
         hostStore.listHostEdgesForParent("parent")[0].id,
       );
-      assert.equal(dispatch?.message.body, "run");
+      assert.ok(dispatch);
+      assert.equal(dispatch.message.body, "run");
+      assert.equal(dispatch.message.id, committedMessageId);
+      const audit = store
+        .getEvents("parent")
+        .map((event) => JSON.parse(event.data) as Record<string, unknown>)
+        .find((data) => data.kind === "collaboration" && data.body === "run");
+      assert.equal(audit?.messageId, committedMessageId);
       assert.equal(kicks.length, 1);
     });
 });

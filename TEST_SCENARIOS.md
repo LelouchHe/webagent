@@ -48,7 +48,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/host-registry.test.ts` covers `!` token command timeout/redaction,
   real HTTP socket rejection, `503` backoff/state, ordered per-edge POST,
   `400`/`409` terminalization, atomic typed-404 edge/rows/notice, ACK loss,
-  and dirty hints that do not bypass an armed GET/ACK backoff
+  mixed-page progress, retired-runtime state isolation, and reconnect backoff
+  that resets only on a real SSE frame
 - `test/host-account.test.ts` and `test/host-mcp.test.ts` cover external account
   arming versus archived fallback, `waiting` silence observation, repeated-turn
   `no_update`, real fake-clock `no_activity` across unarchive→archive, and MCP
@@ -61,6 +62,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   or MCP business modules. A one-off `task-manager.ts` import of
   `src/host/store.ts` fails with the restricted-import diagnostic and is
   reverted before the gate runs
+- `test/host-local-sql.test.ts` now uses HostStore + TaskLocator + the
+  production commit observer wiring, so no-host SQL assertions cover the lower
+  provider's fast path rather than a provider-free fixture
+- the lost-ACK test wakes P from the committed receipt before ACK completion;
+  restart selection is based on queued receipts, not ACK outcome rows (the
+  redundant `host_report_acks` table and code are removed)
 
 ### Multi-agent runtime
 

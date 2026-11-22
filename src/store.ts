@@ -241,13 +241,13 @@ export interface CollaborationDeliveryRow {
   /** Runtime-only fact copied into the claim transaction for external dispatch. */
   account_source_task_id?: string;
   source_endpoint_label?: string;
-  source_presentation?: Record<string, string | boolean>;
+  source_presentation?: { externalSource: true };
 }
 
 export interface DeliveryClaimMetadata {
   accountSourceTaskId?: string;
   sourceEndpointLabel?: string;
-  sourcePresentation?: Record<string, string | boolean>;
+  sourcePresentation?: { externalSource: true };
 }
 
 export interface CollaborationDeliveryStatusChange {

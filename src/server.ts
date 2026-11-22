@@ -419,7 +419,7 @@ server.listen(config.port, config.host, () => {
     // demand. A missing or broken agent binary is therefore a runtime
     // condition, never a boot gate or a daemon restart.
     tasks.hydrate();
-    for (const taskId of hostStore.queuedAckedHostReportRecipients()) {
+    for (const taskId of hostStore.queuedHostReportRecipients()) {
       void tasks.drainCollaborationDeliveries(taskId);
     }
     hosts.start();

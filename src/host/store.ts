@@ -7,7 +7,6 @@ import {
   type CollaborationMessageRow,
   type DeliveryClaimMetadata,
   type Store,
-  type WorkflowStatus,
 } from "../store.ts";
 import { buildCollaborationSystemMessage } from "../collaboration-message.ts";
 import { formatFieldBlock } from "../shared/field-block.ts";
@@ -17,6 +16,7 @@ import type {
   TaskDescription,
 } from "../task-locator.ts";
 import type { CollaborationRelation } from "../task-collaboration.ts";
+import { reduceObligationOutcome } from "../obligation-outcomes.ts";
 
 export type HostMessageKind =
   "collaboration" | "done" | "blocked" | "runtime_notice";
@@ -113,19 +113,19 @@ export class HostStore implements LocationProvider {
       CREATE TABLE IF NOT EXISTS host_wake_hints (edge_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS host_message_types (message_id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('collaboration','done','blocked','runtime_notice')), runtime_kind TEXT, reason TEXT);
       CREATE TABLE IF NOT EXISTS host_report_receipts (host_name TEXT NOT NULL, credential_hash TEXT NOT NULL, owner_message_id TEXT NOT NULL, local_message_id TEXT, edge_id TEXT NOT NULL, parent_task_id TEXT NOT NULL, result TEXT NOT NULL CHECK (result IN ('queued','parent_deleted')), received_at INTEGER NOT NULL, PRIMARY KEY(host_name, credential_hash, owner_message_id));
-      CREATE TABLE IF NOT EXISTS host_report_acks (host_name TEXT NOT NULL, credential_hash TEXT NOT NULL, owner_message_id TEXT NOT NULL, acked_at INTEGER NOT NULL, PRIMARY KEY(host_name, credential_hash, owner_message_id));
     `);
   }
 
   private isTransportDelivery(deliveryId: string): boolean {
-    return this.getHostDispatch(deliveryId) !== undefined;
+    return this.factsPresent && this.getHostDispatch(deliveryId) !== undefined;
   }
   private isReportMessage(messageId: string): boolean {
-    return this.isHostReportMessage(messageId);
+    return this.factsPresent && this.isHostReportMessage(messageId);
   }
   private claimMetadata(
     recipientTaskId: string,
   ): Map<string, DeliveryClaimMetadata> {
+    if (!this.factsPresent) return new Map();
     const rows = this.db
       .prepare(
         "SELECT d.id, es.parent_task_id, he.display_title, CASE WHEN h.local_message_id IS NOT NULL THEN 1 ELSE 0 END AS inbound_external, he.host_name IS NOT NULL AS returned_external FROM deliveries d LEFT JOIN messages m ON m.id = d.message_id LEFT JOIN host_received_dispatches h ON h.local_message_id = m.id LEFT JOIN host_external_sources es ON es.task_id = d.recipient_task_id AND es.credential_hash = h.credential_hash LEFT JOIN host_report_receipts hr ON hr.local_message_id = m.id LEFT JOIN host_edges he ON he.id = hr.edge_id WHERE d.recipient_task_id = ? AND d.status = 'queued'",
@@ -165,6 +165,7 @@ export class HostStore implements LocationProvider {
   deliveryCommitAction(
     deliveryId: string,
   ): { edgeId: string } | { credentialHash: string } | null {
+    if (!this.factsPresent) return null;
     const dispatch = this.db
       .prepare(`SELECT edge_id FROM host_dispatches WHERE delivery_id = ?`)
       .get(deliveryId) as { edge_id: string } | undefined;
@@ -184,27 +185,26 @@ export class HostStore implements LocationProvider {
   }
 
   relation(sourceId: string, targetId: string): CollaborationRelation | null {
+    if (!this.factsPresent) return null;
     if (this.findHostEdgeForParent(targetId, sourceId)) return "child";
-    const source = this.store.getTask(sourceId);
     const external = this.getHostExternalSource(sourceId);
-    return source?.parent_id === null && external?.parent_task_id === targetId
-      ? "parent"
-      : null;
+    return external?.parent_task_id === targetId ? "parent" : null;
   }
 
   parentOf(taskId: string): string | null {
-    const task = this.store.getTask(taskId);
-    if (task?.parent_id !== null) return null;
+    if (!this.factsPresent) return null;
     return this.getHostExternalSource(taskId)?.parent_task_id ?? null;
   }
 
   childrenOf(taskId: string): string[] {
+    if (!this.factsPresent) return [];
     return this.listHostEdgesForParent(taskId).map(
       (edge) => edge.remote_task_id,
     );
   }
 
   describe(taskId: string): TaskDescription | null {
+    if (!this.factsPresent) return null;
     const edge = this.db
       .prepare(
         `SELECT * FROM host_edges
@@ -240,7 +240,7 @@ export class HostStore implements LocationProvider {
   }
 
   hasChildWakeSource(parentId: string): boolean {
-    return this.hasOpenHostDispatch(parentId);
+    return this.factsPresent && this.hasOpenHostDispatch(parentId);
   }
 
   enqueueDelivery(request: DeliveryRequest): {
@@ -253,6 +253,8 @@ export class HostStore implements LocationProvider {
     );
     if (edge && request.kind === "dispatch") {
       return this.createRemoteDispatch({
+        messageId: request.messageId,
+        deliveryId: request.deliveryId,
         parentTaskId: request.sourceTaskId,
         edge,
         body: request.body,
@@ -260,7 +262,10 @@ export class HostStore implements LocationProvider {
     }
     const source = this.getHostExternalSource(request.sourceTaskId);
     if (source?.parent_task_id !== request.targetTaskId) return null;
+    const sourceExists = this.store.getTask(request.sourceTaskId) !== undefined;
     return this.insertHostOutboundMessage({
+      messageId: request.messageId,
+      deliveryId: request.deliveryId,
       sourceTaskId: request.sourceTaskId,
       targetTaskId: request.targetTaskId,
       sourceActor: request.kind === "notice" ? "system" : "agent",
@@ -273,7 +278,8 @@ export class HostStore implements LocationProvider {
             : "runtime_notice",
       runtimeKind: request.runtimeKind,
       reason: request.reason,
-      writeSourceEvent: true,
+      writeSourceEvent: sourceExists,
+      projectSource: sourceExists,
       targetLabel: request.targetTaskId,
     });
   }
@@ -470,6 +476,7 @@ export class HostStore implements LocationProvider {
       };
     })();
     if (created.status === "accepted") {
+      this.factsPresent = true;
       for (const observer of this.committedObservers) {
         observer(input.targetTaskId);
       }
@@ -655,6 +662,8 @@ export class HostStore implements LocationProvider {
   }
 
   private insertHostOutboundMessage(input: {
+    messageId?: string;
+    deliveryId?: string;
     sourceTaskId: string;
     targetTaskId: string;
     sourceActor: CollaborationActor;
@@ -670,8 +679,8 @@ export class HostStore implements LocationProvider {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
   } {
-    const messageId = randomUUID();
-    const deliveryId = randomUUID();
+    const messageId = input.messageId ?? randomUUID();
+    const deliveryId = input.deliveryId ?? randomUUID();
     const now = Date.now();
     const created = this.store.enqueueDeliveryRows({
       messageId,
@@ -720,121 +729,6 @@ export class HostStore implements LocationProvider {
       );
     }
     return created;
-  }
-
-  createHostAgentMessage(input: {
-    sourceTaskId: string;
-    source: HostExternalSource;
-    body: string;
-  }): { message: CollaborationMessageRow; delivery: CollaborationDeliveryRow } {
-    this.store.requireLiveTask(input.sourceTaskId);
-    return this.db.transaction(() =>
-      this.insertHostOutboundMessage({
-        sourceTaskId: input.sourceTaskId,
-        targetTaskId: input.source.parent_task_id,
-        sourceActor: "agent",
-        body: input.body,
-        kind: "collaboration",
-        writeSourceEvent: true,
-        targetLabel: input.source.parent_task_id,
-      }),
-    )();
-  }
-
-  recordHostWorkflowUpdate(input: {
-    taskId: string;
-    status: Extract<WorkflowStatus, "blocked" | "done">;
-    body: string;
-    source: HostExternalSource;
-    reason: "settled" | "fallback";
-  }): {
-    collaborationMessageId: string;
-    sourceLabel: string;
-    targetLabel: string;
-  } {
-    return this.db.transaction(() => {
-      const task = this.store.requireLiveTask(input.taskId);
-      this.db
-        .prepare("UPDATE tasks SET workflow_status = ? WHERE id = ?")
-        .run(input.status, input.taskId);
-      this.store.saveEvent(
-        task.id,
-        "task_update",
-        {
-          status: input.status,
-          body: input.body,
-          reason: input.reason,
-          sourceTaskId: task.id,
-          targetTaskId: input.source.parent_task_id,
-          externalParent: true,
-        },
-        { from_ref: "agent" },
-      );
-      const created = this.insertHostOutboundMessage({
-        sourceTaskId: input.taskId,
-        targetTaskId: input.source.parent_task_id,
-        sourceActor: "agent",
-        body: `Task status: ${input.status}\n${input.body}`,
-        kind: input.status,
-        writeSourceEvent: true,
-        targetLabel: input.source.parent_task_id,
-      });
-      return {
-        collaborationMessageId: created.message.id,
-        sourceLabel: task.title ?? task.id.slice(0, 8),
-        targetLabel: input.source.parent_task_id,
-      };
-    })();
-  }
-
-  createHostRuntimeNotice(input: {
-    sourceTaskId: string;
-    source: HostExternalSource;
-    reason: string;
-    body: string;
-  }): CollaborationMessageRow {
-    return this.db.transaction(() => {
-      const sourceExists = this.store.getTaskIncludingDeleted(
-        input.sourceTaskId,
-      );
-      if (sourceExists) {
-        this.store.saveEvent(
-          input.sourceTaskId,
-          "task_outcome_notice",
-          {
-            messageId: "",
-            reason: input.reason,
-            sourceTaskId: input.sourceTaskId,
-            targetTaskId: input.sourceTaskId,
-            message: input.body,
-            externalParentTaskId: input.source.parent_task_id,
-          },
-          { from_ref: "system" },
-        );
-      }
-      const created = this.insertHostOutboundMessage({
-        sourceTaskId: input.sourceTaskId,
-        targetTaskId: input.source.parent_task_id,
-        sourceActor: "system",
-        body: input.body,
-        kind: "runtime_notice",
-        runtimeKind: "task_outcome_notice",
-        reason: input.reason,
-        projectSource: sourceExists !== undefined,
-      });
-      if (sourceExists) {
-        this.db
-          .prepare(
-            `UPDATE events SET data = json_set(data, '$.messageId', ?)
-             WHERE task_id = ? AND id = (
-               SELECT MAX(id) FROM events
-               WHERE task_id = ? AND type = 'task_outcome_notice'
-             )`,
-          )
-          .run(created.message.id, input.sourceTaskId, input.sourceTaskId);
-      }
-      return created.message;
-    })();
   }
 
   listHostOutbox(credentialHash: string, limit = 100): HostEnvelope[] {
@@ -886,6 +780,8 @@ export class HostStore implements LocationProvider {
   }
 
   createRemoteDispatch(input: {
+    messageId?: string;
+    deliveryId?: string;
     parentTaskId: string;
     edge: HostEdge;
     body: string;
@@ -898,8 +794,8 @@ export class HostStore implements LocationProvider {
       ) {
         throw new Error("target_not_allowed");
       }
-      const messageId = randomUUID();
-      const deliveryId = randomUUID();
+      const messageId = input.messageId ?? randomUUID();
+      const deliveryId = input.deliveryId ?? randomUUID();
       const now = Date.now();
       const created = this.store.enqueueDeliveryRows({
         messageId,
@@ -1009,14 +905,6 @@ export class HostStore implements LocationProvider {
            WHERE id = ? AND status = 'queued'`,
         )
         .run(Date.now(), reason, deliveryId);
-      this.db
-        .prepare(
-          `DELETE FROM host_wake_hints
-           WHERE edge_id = (
-             SELECT edge_id FROM host_dispatches WHERE delivery_id = ?
-           )`,
-        )
-        .run(deliveryId);
     })();
     this.store.broadcastDeliveryStatus([deliveryId]);
   }
@@ -1049,6 +937,30 @@ export class HostStore implements LocationProvider {
         };
       }
       const now = Date.now();
+      const trigger = this.store.getCollaborationDelivery(deliveryId);
+      const triggerMessage = trigger
+        ? this.store.getCollaborationMessage(trigger.message_id)
+        : undefined;
+      const outcome =
+        trigger && triggerMessage
+          ? reduceObligationOutcome({
+              kind: "delivery_failed",
+              change: {
+                deliveryId: trigger.id,
+                messageId: trigger.message_id,
+                sourceTaskId: triggerMessage.source_task_id,
+                recipientTaskId: trigger.recipient_task_id,
+                status: "failed",
+                deliveredAt: null,
+                failureReason: "target_removed",
+              },
+              message: triggerMessage,
+              openAccountSourceTaskId: undefined,
+            })
+          : { kind: "none" as const };
+      if (outcome.kind === "none") {
+        throw new Error("host target_removed notice classification failed");
+      }
       const pending = this.db
         .prepare(
           `SELECT delivery_id FROM host_dispatches
@@ -1092,15 +1004,15 @@ export class HostStore implements LocationProvider {
       }
       const messageId = randomUUID();
       const noticeDeliveryId = randomUUID();
-      const message = `Task ${dispatch.display_title} (${dispatch.remote_task_id}) was removed before the host accepted the dispatch.`;
+      const message = outcome.notice.message;
       this.store.saveEvent(
         dispatch.parent_task_id,
         "task_outcome_notice",
         {
           messageId,
-          reason: "target_removed",
-          sourceTaskId: dispatch.parent_task_id,
-          targetTaskId: dispatch.remote_task_id,
+          reason: outcome.notice.reason,
+          sourceTaskId: outcome.notice.sourceTaskId,
+          targetTaskId: outcome.notice.targetTaskId,
           message,
         },
         { from_ref: "system" },
@@ -1108,7 +1020,7 @@ export class HostStore implements LocationProvider {
       this.store.enqueueDeliveryRows({
         messageId,
         deliveryId: noticeDeliveryId,
-        sourceTaskId: dispatch.remote_task_id,
+        sourceTaskId: outcome.notice.targetTaskId,
         directTargetTaskId: dispatch.parent_task_id,
         sourceActor: "system",
         body: formatFieldBlock([
@@ -1167,7 +1079,7 @@ export class HostStore implements LocationProvider {
     const localMessageId = randomUUID();
     const deliveryId = randomUUID();
     const now = Date.now();
-    return this.db.transaction(() => {
+    const result = this.db.transaction(() => {
       const existing = this.db
         .prepare(
           `SELECT 1 FROM host_report_receipts
@@ -1261,65 +1173,12 @@ export class HostStore implements LocationProvider {
       }
       return { status: "queued" as const, localMessageId };
     })();
-  }
-
-  markHostReportAck(
-    hostName: string,
-    credentialHash: string,
-    ownerMessageId: string,
-  ): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT r.local_message_id, d.recipient_task_id, d.status
-         FROM host_report_receipts r
-         LEFT JOIN messages m ON m.id = r.local_message_id
-         LEFT JOIN deliveries d ON d.message_id = m.id
-         WHERE r.host_name = ? AND r.credential_hash = ?
-           AND r.owner_message_id = ?`,
-      )
-      .get(hostName, credentialHash, ownerMessageId) as
-      | {
-          local_message_id: string | null;
-          recipient_task_id: string | null;
-          status: string | null;
-        }
-      | undefined;
-    if (!row) return null;
-    this.db
-      .prepare(
-        `INSERT INTO host_report_acks
-         (host_name, credential_hash, owner_message_id, acked_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(host_name, credential_hash, owner_message_id)
-         DO NOTHING`,
-      )
-      .run(hostName, credentialHash, ownerMessageId, Date.now());
-    return row.local_message_id !== null && row.status === "queued"
-      ? row.recipient_task_id
-      : null;
-  }
-
-  hostReportPageStillQueued(
-    hostName: string,
-    credentialHash: string,
-    ownerMessageIds: readonly string[],
-  ): boolean {
-    if (ownerMessageIds.length === 0) return false;
-    return (
-      this.db
-        .prepare(
-          `SELECT 1
-           FROM json_each(?) page
-           WHERE NOT EXISTS (
-             SELECT 1 FROM host_report_acks
-             WHERE host_name = ? AND credential_hash = ?
-               AND owner_message_id = page.value
-           )
-           LIMIT 1`,
-        )
-        .get(JSON.stringify(ownerMessageIds), hostName, credentialHash) !==
-      undefined
-    );
+    if (result.status === "queued") {
+      for (const observer of this.committedObservers) {
+        observer(input.parentTaskId);
+      }
+    }
+    return result;
   }
 
   activeHostEdges(): HostEdge[] {
@@ -1328,16 +1187,13 @@ export class HostStore implements LocationProvider {
       .all() as HostEdge[];
   }
 
-  queuedAckedHostReportRecipients(): string[] {
+  queuedHostReportRecipients(): string[] {
+    if (!this.factsPresent) return [];
     return (
       this.db
         .prepare(
           `SELECT DISTINCT d.recipient_task_id
-           FROM host_report_acks a
-           JOIN host_report_receipts r
-             ON r.host_name = a.host_name
-            AND r.credential_hash = a.credential_hash
-            AND r.owner_message_id = a.owner_message_id
+           FROM host_report_receipts r
            JOIN deliveries d ON d.message_id = r.local_message_id
            JOIN tasks t ON t.id = d.recipient_task_id
            WHERE d.status = 'queued' AND t.deleted_at IS NULL

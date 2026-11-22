@@ -4113,10 +4113,9 @@ export class TaskManager implements ObligationRuntime {
     const target = this.store.getTaskIncludingDeleted(notice.targetTaskId);
     const auditTaskId = this.store.getTask(notice.sourceTaskId)
       ? notice.sourceTaskId
-      : notice.targetTaskId;
-    if (!this.store.getTaskIncludingDeleted(auditTaskId)) {
-      return;
-    }
+      : this.store.getTask(notice.targetTaskId)
+        ? notice.targetTaskId
+        : null;
     const body = formatFieldBlock([
       {
         label: "target",
@@ -4134,6 +4133,7 @@ export class TaskManager implements ObligationRuntime {
       runtimeKind: "task_outcome_notice",
       reason: notice.reason,
       mutate: ({ messageId }) => {
+        if (!auditTaskId) return;
         this.store.saveEvent(
           auditTaskId,
           "task_outcome_notice",

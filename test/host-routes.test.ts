@@ -15,6 +15,7 @@ import { createTaskManager } from "../src/task-manager.ts";
 import { HostStore } from "../src/host/store.ts";
 import { TaskLocator } from "../src/task-locator.ts";
 import { handleHostRoutes } from "../src/host/routes.ts";
+import { DeliveryQueue } from "../src/delivery-queue.ts";
 
 interface Reply {
   status: number;
@@ -179,6 +180,15 @@ test("behavior proof: host routes enforce scope and owner create semantics", asy
   });
   assert.equal(homeCreated.status, 201);
   assert.equal(store.getTask(String(homeCreated.body.taskId))?.cwd, homedir());
+  const collapsed = await call("POST", "/api/v1/host/tasks", apiToken, {
+    createKey: "create-collapsed-cwd",
+    parentTaskId: "collapsed-parent",
+    agent: "copilot",
+    title: "collapsed",
+    cwd: `${dir}/does-not-exist/..`,
+  });
+  assert.equal(collapsed.status, 201);
+  assert.equal(store.getTask(String(collapsed.body.taskId))?.cwd, dir);
   assert.equal(
     (
       await call("POST", "/api/v1/host/tasks", apiToken, {
@@ -319,15 +329,22 @@ test("behavior proof: outbox ACK belongs to the exact credential", async () => {
   });
   const taskId = String(created.body.taskId);
   const task = store.getTask(taskId);
-  const binding = hostStore.getHostExternalSource(taskId);
   assert.ok(task);
-  assert.ok(binding);
-  hostStore.recordHostWorkflowUpdate({
-    taskId,
-    status: "done",
-    body: "finished",
-    source: binding,
-    reason: "settled",
+  new DeliveryQueue(store, new TaskLocator(store, [hostStore])).enqueue({
+    sourceId: taskId,
+    targetId: "parent-id",
+    kind: "update",
+    body: "Task status: done\nfinished",
+    updateStatus: "done",
+    mutate: () => {
+      store.recordAgentWorkflowUpdateState(
+        taskId,
+        "done",
+        "finished",
+        "parent-id",
+        "settled",
+      );
+    },
   });
   const outbox = await call("GET", "/api/v1/host/messages");
   assert.equal(outbox.status, 200);

@@ -197,3 +197,27 @@ test("behavior proof: waiting is watched and repeated turns emit an external not
     .find((item) => item.kind === "runtime_notice");
   assert.equal(notice?.reason, "no_update");
 });
+
+test("behavior proof: deleting queued R1 still emits exactly one notice to P", async () => {
+  hostStore.receiveHostDispatch({
+    credentialHash,
+    remoteMessageId: "dispatch-delete",
+    requestHash: requestHash({ body: "work" }),
+    targetTaskId: remoteTaskId,
+    body: "work",
+  });
+  assert.equal(store.countQueuedDeliveries(remoteTaskId), 1);
+
+  await tasks.deleteTask(undefined, remoteTaskId);
+
+  const outbox = hostStore.listHostOutbox(credentialHash);
+  assert.equal(outbox.length, 1);
+  assert.equal(outbox[0].kind, "runtime_notice");
+  assert.equal(outbox[0].reason, "target_removed");
+  assert.equal(
+    store
+      .getEvents(remoteTaskId)
+      .filter((event) => event.type === "task_outcome_notice").length,
+    0,
+  );
+});

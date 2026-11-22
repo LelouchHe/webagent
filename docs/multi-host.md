@@ -49,7 +49,9 @@ its configured token, describes the owner, opens a ticket-authenticated global
 SSE stream, and then performs a baseline `GET`. The `host_message_pending`
 frame carries only its event type, not a message id or payload. Disconnection
 changes no business state; reconnect performs another pull. A report is ACKed
-only after the initiator transaction commits.
+only after the initiator transaction commits. The committed receipt is also
+the restart/wake fact: P is kicked immediately, independent of whether the ACK
+response is observed. There is no separate ACK outcome table.
 
 ## Layer boundary
 
@@ -79,10 +81,11 @@ decides whether the target is local, an outbound edge, or an owner outbox.
 
 The owner endpoint never calls MCP/account business functions: it writes a
 local queued delivery through the Store's raw row primitive. The normal local
-drain opens the account and hands that row to ACP. In `src/task-manager.ts`,
+drain is scheduled by `src/task-manager.ts`; it opens the account and hands
+that row to ACP. In `src/task-manager.ts`,
 local `claim -> arm -> ACP` contains no locator lookup or I/O; generic claim
-metadata supplied by the lower Store module is copied inside the claim
-transaction.
+metadata is copied inside the claim transaction only when persisted host facts
+exist.
 
 The import direction is lint-enforced. Files outside `src/host/` cannot import
 that directory; only `src/server.ts` composes it. Files inside `src/host/`
@@ -101,7 +104,8 @@ call; it owns coordinate parsing, network work, and edge/event commit.
 
 An edge's transport state and wake hint are separate facts. A typed terminal
 owner report consumes only the conservative wake hint; it does not mark another
-pending POST as delivered. A typed `target_not_found`, by contrast, removes the
+pending POST as delivered. A request-level `400`/`409` also does not consume the
+hint. A typed `target_not_found`, by contrast, removes the
 edge and terminalizes its still-untransferred rows plus the one local
 `target_removed` notice in one transaction.
 

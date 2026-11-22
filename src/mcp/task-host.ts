@@ -213,7 +213,7 @@ export function createMcpTaskToolHost(deps: {
             id: locatedParent,
             title: description.title,
             relation: "parent",
-            ...description.presentation,
+            ...(description.presentation ?? {}),
           });
         }
       }
@@ -225,7 +225,7 @@ export function createMcpTaskToolHost(deps: {
           id: childId,
           title: description.title,
           relation: "child",
-          ...description.presentation,
+          ...(description.presentation ?? {}),
         });
       }
       return listed.sort(
