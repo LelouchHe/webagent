@@ -108,6 +108,7 @@ Locate and read only the sections relevant to the task.
 | Upload, attachment, and signed-URL lifecycle | [`docs/uploads.md`](./docs/uploads.md) |
 | Directed-dispatch obligation mechanism | [`docs/task-obligations.md`](./docs/task-obligations.md) |
 | Task states, transitions, and what each keeps or drops | [`docs/task-lifecycle.md`](./docs/task-lifecycle.md) |
+| Multi-host delivery boundary and host flows | [`docs/multi-host.md`](./docs/multi-host.md) |
 | Vocabulary and naming contract | [`docs/vocabulary.md`](./docs/vocabulary.md) |
 | Security model and CSP invariants | [`docs/security.md`](./docs/security.md) |
 | Streaming render performance | [`docs/performance.md`](./docs/performance.md) |

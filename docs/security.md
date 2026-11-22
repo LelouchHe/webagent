@@ -150,9 +150,13 @@ Anything else (chat history, prompt submission, model selection, bash, push subs
 
 `EventSource` cannot set custom headers, so SSE auth uses a short-lived ticket:
 
-1. Client `POST /api/v1/sse-ticket` with `Authorization: Bearer <token>` → server generates a 32-byte random ticket, stores `{ticket, principal, exp: now+60s}` in memory, returns `{ticket}`.
-2. Client opens `EventSource('/api/v1/events/stream?ticket=' + ticket)`. Server consumes the ticket (single-use, deleted on first match) and binds the SSE connection to the resolved principal.
-3. The 15s heartbeat doubles as a recheck: if the underlying token is revoked (and `auth.json` reloaded via `SIGHUP`), the next heartbeat write fails and the SSE stream closes.
+1. Client `POST /api/v1/sse-ticket` with `Authorization: Bearer <token>` → server generates a 32-byte random ticket, stores the principal's scope, display name, **credential fingerprint**, and expiry in memory, and returns `{ticket}`.
+2. Client opens `EventSource('/api/v1/events/stream?ticket=' + ticket)`. Server consumes the ticket (single-use, deleted on first match), verifies that exact fingerprint is still active, and binds the SSE connection to it.
+3. The 15s heartbeat doubles as a fingerprint recheck: if that credential was revoked (and `auth.json` reloaded via `SIGHUP`), the stream closes. Minting a same-named replacement token does not keep the old ticket or stream alive.
+
+Host-to-host `host_message_pending` events use this fingerprint binding as the
+delivery identity and are written only to matching streams. The fingerprint
+is never emitted over the API and is stored without the raw token.
 
 Tickets are in-memory only; restarting the server invalidates all of them. Clients reconnect automatically and re-issue.
 
@@ -255,7 +259,9 @@ The CLI does **not** currently expose `--list-tokens` or `--revoke-token`; use t
 kill -HUP $(pgrep -f "webagent.*--config")
 ```
 
-Existing SSE connections are NOT dropped. Tokens that were revoked are kicked at the next 15s heartbeat (when the in-memory cache rechecks).
+SSE connections are not dropped immediately by the file edit; revoked
+credentials are kicked at the next 15s heartbeat (when the in-memory cache
+rechecks their fingerprint).
 
 ### Rotation
 
