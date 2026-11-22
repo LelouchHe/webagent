@@ -19,6 +19,7 @@ import { TaskStateManager } from "../src/task-state.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { HostStore } from "../src/host/store.ts";
 import { TaskLocator } from "../src/task-locator.ts";
+import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
 
 let dir: string;
 let store: Store;
@@ -157,6 +158,21 @@ test("behavior proof: archive preserves an already-open external account", async
   await tasks.drainCollaborationDeliveries(remoteTaskId, bridge);
 
   assert.equal(store.unarchiveTask(remoteTaskId).status, "unarchived");
+  const lease = tasks.authority.adopt(remoteTaskId);
+  const mcp = createMcpTaskToolHost({ store, tasks });
+  await assert.rejects(
+    mcp.send(
+      {
+        taskId: remoteTaskId,
+        agentId: "test-agent",
+        generation: lease.generation,
+        initializing: false,
+      },
+      parentTaskId,
+      "ordinary message after unarchive",
+    ),
+    /target_not_allowed|task_not_found/,
+  );
   const waiting = tasks.settleAgentUpdate(
     remoteTaskId,
     "waiting",
@@ -207,6 +223,10 @@ test("behavior proof: deleting queued R1 still emits exactly one notice to P", a
     body: "work",
   });
   assert.equal(store.countQueuedDeliveries(remoteTaskId), 1);
+  const localTargets: boolean[] = [];
+  tasks.onDeliveriesCommitted((delivery) => {
+    if (delivery.kind === "notice") localTargets.push(delivery.localTarget);
+  });
 
   await tasks.deleteTask(undefined, remoteTaskId);
 
@@ -214,6 +234,7 @@ test("behavior proof: deleting queued R1 still emits exactly one notice to P", a
   assert.equal(outbox.length, 1);
   assert.equal(outbox[0].kind, "runtime_notice");
   assert.equal(outbox[0].reason, "target_removed");
+  assert.deepEqual(localTargets, [false]);
   assert.equal(
     store
       .getEvents(remoteTaskId)

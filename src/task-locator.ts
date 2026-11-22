@@ -42,6 +42,7 @@ export interface LocationProvider {
   childrenOf(taskId: string): string[];
   describe(taskId: string): TaskDescription | null;
   hasChildWakeSource(parentId: string): boolean;
+  canEnqueueDelivery(request: DeliveryRequest): boolean;
   enqueueDelivery(request: DeliveryRequest): {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
@@ -63,18 +64,6 @@ export class TaskLocator {
   constructor(store: Store, providers: readonly LocationProvider[] = []) {
     this.store = store;
     this.providers = providers;
-  }
-
-  relation(sourceId: string, targetId: string): CollaborationRelation | null {
-    const source = this.store.getTask(sourceId);
-    const target = this.store.getTask(targetId);
-    if (source && target) return collaborationRelation(source, target);
-    if (!source && sourceId === targetId) return "self";
-    for (const provider of this.providers) {
-      const relation = provider.relation(sourceId, targetId);
-      if (relation) return relation;
-    }
-    return null;
   }
 
   parentOf(taskId: string, knownTask?: TaskRow): string | null {
@@ -175,5 +164,11 @@ export class TaskLocator {
       if (created) return created;
     }
     return null;
+  }
+
+  canEnqueueOther(request: DeliveryRequest): boolean {
+    return this.providers.some((provider) =>
+      provider.canEnqueueDelivery(request),
+    );
   }
 }

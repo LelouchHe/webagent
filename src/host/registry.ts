@@ -262,10 +262,8 @@ export class HostRegistry {
     let backoff = MIN_RETRY_MS;
     while (!this.stopped) {
       let streamAbort: AbortController | undefined;
-      let activeRuntime: HostRuntime | undefined;
       try {
         const runtime = await this.resolve(name);
-        activeRuntime = runtime;
         const descriptionResponse = await this.request(runtime, "/api/v1/host");
         if (!descriptionResponse.ok) {
           throw new Error(`HTTP ${descriptionResponse.status}`);
@@ -321,10 +319,12 @@ export class HostRegistry {
           const safeReason =
             error instanceof SecretResolutionError
               ? error.message
-              : isTimeoutError(error)
-                ? "connection timed out"
-                : "connection failed";
-          this.unreachable(name, safeReason, activeRuntime);
+              : error instanceof Error && /^HTTP \d+$/.test(error.message)
+                ? error.message
+                : isTimeoutError(error)
+                  ? "connection timed out"
+                  : "connection failed";
+          this.unreachable(name, safeReason);
         }
       } finally {
         streamAbort?.abort();
