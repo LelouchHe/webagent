@@ -54,6 +54,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   arming versus archived fallback, `waiting` silence observation, repeated-turn
   `no_update`, real fake-clock `no_activity` across unarchive→archive, and MCP
   `agent@host` creation followed by send to the returned task id
+- `test/collaboration-route.test.ts` proves queued local hard-delete:
+  deleting only C returns 200 and gives live P exactly one `target_removed`;
+  deleting P and C as one subtree queues none
+- `test/host-account.test.ts` also covers an already-open local account with a
+  second queued dispatch: deletion closes/report once, not twice
 - `test/host-local-sql.test.ts` measures the production MCP local `list`, `send`,
   and `update` paths: 6 / 12 / 16 prepared statements versus the measured
   `ff346a2` baseline 6 / 14 / 20

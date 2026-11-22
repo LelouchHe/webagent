@@ -32,7 +32,6 @@ export interface EnqueueInput {
   reason?: string | null;
   relationHint?: "parent" | "child";
   knownSource?: TaskRow;
-  suppressMissingSource?: boolean;
 }
 
 export class DeliveryQueue {
@@ -80,29 +79,27 @@ export class DeliveryQueue {
           reason: input.reason,
         } satisfies DeliveryRequest;
         const delegated = this.locator.canEnqueueOther(request);
-        if (
-          !delegated &&
-          input.suppressMissingSource &&
-          !this.store.getTask(input.sourceId)
-        ) {
-          return null;
-        }
-        input.mutate?.({ messageId, deliveryId });
-        const enqueued = this.locator.enqueueOther(request);
-        if (enqueued) {
+        if (delegated) {
+          input.mutate?.({ messageId, deliveryId });
+          const enqueued = this.locator.enqueueOther(request);
+          if (!enqueued) return null;
           return { ...enqueued, localTarget: false };
         }
+        input.mutate?.({ messageId, deliveryId });
         if (!this.store.getTask(input.targetId)) return null;
-        return this.store.enqueueDeliveryRows({
-          messageId,
-          deliveryId,
-          sourceTaskId: input.sourceId,
-          directTargetTaskId: input.targetId,
-          sourceActor: "system",
-          body: input.body,
-          createdAt,
-          projections: [{ taskId: input.targetId, role: "target" }],
-        });
+        return {
+          ...this.store.enqueueDeliveryRows({
+            messageId,
+            deliveryId,
+            sourceTaskId: input.sourceId,
+            directTargetTaskId: input.targetId,
+            sourceActor: "system",
+            body: input.body,
+            createdAt,
+            projections: [{ taskId: input.targetId, role: "target" }],
+          }),
+          localTarget: true,
+        };
       });
       if (!created) return null;
       this.publishCommitted(
@@ -139,31 +136,37 @@ export class DeliveryQueue {
       };
       if (route.localTask) {
         return input.kind === "notice"
-          ? this.store.enqueueDeliveryRows({
-              messageId,
-              deliveryId,
-              sourceTaskId: input.sourceId,
-              directTargetTaskId: input.targetId,
-              sourceActor: "system",
-              body: input.body,
-              createdAt,
-              projections: [{ taskId: input.targetId, role: "target" }],
-            })
-          : this.store.createCollaborationMessageInStoreTransaction(
-              {
-                id: messageId,
+          ? {
+              ...this.store.enqueueDeliveryRows({
+                messageId,
                 deliveryId,
                 sourceTaskId: input.sourceId,
                 directTargetTaskId: input.targetId,
-                sourceActor: "agent",
+                sourceActor: "system",
                 body: input.body,
                 createdAt,
-              },
-              {
-                source: route.source,
-                target: route.localTask,
-              },
-            );
+                projections: [{ taskId: input.targetId, role: "target" }],
+              }),
+              localTarget: true,
+            }
+          : {
+              ...this.store.createCollaborationMessageInStoreTransaction(
+                {
+                  id: messageId,
+                  deliveryId,
+                  sourceTaskId: input.sourceId,
+                  directTargetTaskId: input.targetId,
+                  sourceActor: "agent",
+                  body: input.body,
+                  createdAt,
+                },
+                {
+                  source: route.source,
+                  target: route.localTask,
+                },
+              ),
+              localTarget: true,
+            };
       }
       const delegated = this.locator.enqueueOther(request);
       if (!delegated) throw new Error("task_not_found");

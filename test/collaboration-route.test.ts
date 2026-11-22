@@ -235,8 +235,28 @@ describe("S3 collaboration write routes", () => {
       .filter((event) => event.type === "task_outcome_notice");
     assert.equal(
       notices.length,
-      0,
+      1,
       JSON.stringify(notices.map((event) => event.data)),
+    );
+    assert.equal(JSON.parse(notices[0].data).reason, "target_removed");
+  });
+
+  it("behavior proof: deleting the whole source/recipient subtree queues no failure notice", async () => {
+    store.createCollaborationMessage({
+      id: "whole-subtree-message",
+      deliveryId: "whole-subtree-delivery",
+      sourceTaskId: "parent",
+      directTargetTaskId: "sibling",
+      sourceActor: "agent",
+      body: "work",
+    });
+    const deleted = await del(port, "/api/v1/tasks/parent");
+    assert.equal(deleted.status, 200);
+    assert.equal(
+      store
+        .getEvents(store.rootTaskId)
+        .filter((event) => event.type === "task_outcome_notice").length,
+      0,
     );
   });
 

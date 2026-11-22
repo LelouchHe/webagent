@@ -235,6 +235,55 @@ test("behavior proof: deleting queued R1 still emits exactly one notice to P", a
   assert.equal(outbox[0].kind, "runtime_notice");
   assert.equal(outbox[0].reason, "target_removed");
   assert.deepEqual(localTargets, [false]);
+});
+
+test("behavior proof: open local account plus queued second dispatch still reports deletion once", async () => {
+  store.attachAgentSession(
+    store.ensureRootTask(dir).id,
+    "test-agent",
+    "account-root",
+  );
+  store.createTask(
+    "local-parent",
+    dir,
+    "agent",
+    "test-agent",
+    "local-parent-session",
+    store.rootTaskId,
+  );
+  store.createTask(
+    "local-child",
+    dir,
+    "agent",
+    "test-agent",
+    "local-child-session",
+    "local-parent",
+  );
+  tasks.liveTasks.add("local-child");
+  store.createCollaborationMessage({
+    id: "first-dispatch",
+    deliveryId: "first-delivery",
+    sourceTaskId: "local-parent",
+    directTargetTaskId: "local-child",
+    sourceActor: "agent",
+    body: "first",
+  });
+  const bridge = { ...mockBridgeStubs(), prompt: async () => {} };
+  await tasks.drainCollaborationDeliveries("local-child", bridge);
+  tasks.endTurn("local-child");
+  store.createCollaborationMessage({
+    id: "second-dispatch",
+    deliveryId: "second-delivery",
+    sourceTaskId: "local-parent",
+    directTargetTaskId: "local-child",
+    sourceActor: "agent",
+    body: "second",
+  });
+  await tasks.deleteTask(undefined, "local-child");
+  const notices = store
+    .getEvents("local-parent")
+    .filter((event) => event.type === "task_outcome_notice");
+  assert.equal(notices.length, 1);
   assert.equal(
     store
       .getEvents(remoteTaskId)
