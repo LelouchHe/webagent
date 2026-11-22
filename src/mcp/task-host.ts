@@ -12,7 +12,9 @@ import {
   type TaskManager,
 } from "../task-manager.ts";
 import { expandHomePath } from "../home-path.ts";
-import { errorMessage } from "../types.ts";
+import { errorMessage, type AgentEvent } from "../types.ts";
+import { formatFieldBlock } from "../shared/field-block.ts";
+import { formatTaskReference } from "../shared/task-reference.ts";
 import { isoFromMillisOrNull } from "../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
 import { formatSilence } from "../obligation-controller.ts";
@@ -26,12 +28,6 @@ import type {
   McpTaskCreateResult,
 } from "./tools.ts";
 import { queryTaskHistory, readTaskHistory } from "./task-history.ts";
-import {
-  buildMcpTaskCancelFact,
-  cancelMcpTask,
-  persistMcpTaskCancelAuditSide,
-  type McpTaskCancelNotice,
-} from "./task-cancel.ts";
 import {
   agentStartError,
   configOverrideError,
@@ -75,7 +71,10 @@ export interface McpTaskCreatedEvent {
  * frontend branch. A user-initiated cancel stays deliberately different and
  * writes nothing here.
  */
-export type { McpTaskCancelNotice } from "./task-cancel.ts";
+export type McpTaskCancelNotice = Extract<
+  AgentEvent,
+  { type: "system_message" }
+>;
 
 function relationOrder(relation: McpTaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2 }[relation];
@@ -333,9 +332,10 @@ export function createMcpTaskToolHost(deps: {
       authorize(principal);
       const sourceTaskId = principal.taskId;
       const { target } = requireChildTarget(sourceTaskId, targetTaskId);
-      const result = await cancelMcpTask(
-        tasks,
+      const bridge = tasks.existingTaskExecution(target.id)?.bridge ?? null;
+      const result = await tasks.cancelTaskExecution(
         target.id,
+        bridge,
         deps.cancelTimeoutMs ?? 0,
       );
       // The cancel awaited a transport round trip; the record of what happened
@@ -348,24 +348,57 @@ export function createMcpTaskToolHost(deps: {
       // from the live task rows, with the same short-id fallback collaboration
       // uses; a cancelled task may already be soft-deleted, hence
       // `getTaskIncludingDeleted`.
-      const fact = buildMcpTaskCancelFact(store, {
-        sourceTaskId,
-        targetTaskId: target.id,
-        reason,
-        result,
-      });
-      persistMcpTaskCancelAuditSide(
-        store,
-        fact,
-        "source",
-        broadcastTaskCancelNotice,
-      );
-      persistMcpTaskCancelAuditSide(
-        store,
-        fact,
-        "target",
-        broadcastTaskCancelNotice,
-      );
+      const sourceTask = store.getTaskIncludingDeleted(sourceTaskId);
+      const targetTask = store.getTaskIncludingDeleted(target.id);
+      const sourceLabel = sourceTask?.title ?? sourceTaskId.slice(0, 8);
+      const targetLabel = targetTask?.title ?? target.id.slice(0, 8);
+      const sourceRef = formatTaskReference(sourceLabel);
+      const targetRef = formatTaskReference(targetLabel);
+      const body = formatFieldBlock([
+        { label: "reason", value: reason },
+        { label: "status", value: result.status },
+      ]);
+      const rows = [
+        {
+          taskId: sourceTaskId,
+          role: "source" as const,
+          title: `${sourceRef} cancelled ${targetRef}`,
+        },
+        {
+          taskId: target.id,
+          role: "target" as const,
+          title: `Cancelled by ${sourceRef}`,
+        },
+      ];
+      for (const row of rows) {
+        const data = {
+          kind: "task_cancel" as const,
+          role: row.role,
+          sourceTaskId,
+          sourceLabel,
+          targetTaskId: target.id,
+          targetLabel,
+          reason,
+          status: result.status,
+          title: row.title,
+          body,
+        };
+        store.saveEvent(row.taskId, "system_message", data, {
+          from_ref: "agent",
+        });
+        broadcastTaskCancelNotice?.({
+          type: "system_message",
+          taskId: row.taskId,
+          kind: data.kind,
+          role: data.role,
+          sourceTaskId,
+          sourceLabel,
+          targetTaskId: target.id,
+          targetLabel,
+          title: data.title,
+          body,
+        });
+      }
       return { accepted: true, taskId: target.id, status: result.status };
     },
 
