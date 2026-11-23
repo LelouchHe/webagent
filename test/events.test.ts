@@ -3142,16 +3142,17 @@ describe("events", () => {
           tasks,
           broadcastTaskCancelNotice: (event) => frames.push(event),
         });
-        await host.cancel(
-          {
+        await host.cancel({
+          kind: "agent",
+          principal: {
             taskId: source.id,
             agentId: "test-agent",
             generation: lease.generation,
             initializing: false,
           },
-          child.id,
-          "no longer needed",
-        );
+          targetTaskId: child.id,
+          reason: "no longer needed",
+        });
         const asStored = (rows: ReturnType<typeof store.getEvents>) =>
           rows.map((row): StoredEvent => ({
             id: row.id,

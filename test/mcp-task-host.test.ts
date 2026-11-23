@@ -589,7 +589,12 @@ describe("MCP Task tool host", () => {
       tasks,
     });
     assert.deepEqual(
-      await host.cancel(principal(), "alpha-child", "No longer needed"),
+      await host.cancel({
+        kind: "agent",
+        principal: principal(),
+        targetTaskId: "alpha-child",
+        reason: "No longer needed",
+      }),
       {
         accepted: true,
         taskId: "alpha-child",
@@ -602,7 +607,13 @@ describe("MCP Task tool host", () => {
       /No longer needed/,
     );
     await assert.rejects(
-      () => host.cancel(principal(), "beta", "wrong scope"),
+      () =>
+        host.cancel({
+          kind: "agent",
+          principal: principal(),
+          targetTaskId: "beta",
+          reason: "wrong scope",
+        }),
       /target_not_allowed/,
     );
   });
@@ -615,7 +626,12 @@ describe("MCP Task tool host", () => {
       broadcastTaskCancelNotice: (event) => broadcasted.push(event),
     });
 
-    await host.cancel(principal(), "alpha-child", "stop before start");
+    await host.cancel({
+      kind: "agent",
+      principal: principal(),
+      targetTaskId: "alpha-child",
+      reason: "stop before start",
+    });
 
     // One fact, one row per side of the edge: the canceller reads it as an act,
     // the cancelled task as something done to it. Machine fields ride in
@@ -695,7 +711,12 @@ describe("MCP Task tool host", () => {
   it("returns idle when a direct child has no active execution", async () => {
     const host = createLocalTaskOps({ store, tasks });
     assert.deepEqual(
-      await host.cancel(principal(), "alpha-child", "stop before start"),
+      await host.cancel({
+        kind: "agent",
+        principal: principal(),
+        targetTaskId: "alpha-child",
+        reason: "stop before start",
+      }),
       {
         accepted: true,
         taskId: "alpha-child",

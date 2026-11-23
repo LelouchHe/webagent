@@ -273,7 +273,14 @@ export function registerMcpTools(
     },
     async ({ target, reason }) => {
       guard();
-      return jsonContent(await host!.cancel(principal, target, reason));
+      return jsonContent(
+        await host!.cancel({
+          kind: "agent",
+          principal,
+          targetTaskId: target,
+          reason,
+        }),
+      );
     },
   );
 

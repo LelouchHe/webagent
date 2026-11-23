@@ -44,8 +44,9 @@ server through two entrypoints, and the server holds the logic.
 | Server | [Server Architecture](server.md) | Entrypoint handling, domain core, execution, events and egress, cross-cutting mechanisms, request paths |
 | Multi-host | [Multi-host](multi-host.md) | Instances connected to each other; the `TaskOps` port and the local / remote split |
 
-The server is not yet fully neutral: today MCP reaches the domain core through
-the `TaskOps` port while REST handlers call it directly.
+The server is not yet fully neutral: today MCP and the migrated REST create and
+cancel commands reach the domain core through the `TaskOps` port while other
+REST handlers call it directly.
 [Server Architecture](server.md#where-the-server-is-not-yet-neutral) lists the
 gaps, and [Multi-host](multi-host.md) describes how they close.
 

@@ -56,10 +56,10 @@ The entrypoint contracts live in [Client Architecture](client.md) and
  Host layer (src/host/remote/): outbound connections to other instances
 ```
 
-MCP and the general REST task-create entry both reach the domain core through
-the same `TaskOps` port instance. The other REST routes still call the domain
-core directly. Both create entrypoints therefore share one server command while
-retaining their own request and response presentations.
+MCP, the general REST task-create entry, and REST task cancellation reach the
+domain core through the same `TaskOps` port instance. The other REST routes
+still call the domain core directly. Shared commands retain each entrypoint's
+request, authorization, audit, and response presentation.
 
 ## Entrypoints
 
@@ -67,8 +67,8 @@ retaining their own request and response presentations.
 
 `createRequestHandler()` in `src/http/routes.ts` owns the HTTP dispatcher and
 handles requests in this order. The composition root injects the shared
-`TaskOps` instance; the `POST /api/v1/tasks` branch parses and presents REST
-data while calling that port once.
+`TaskOps` instance; the `POST /api/v1/tasks` and task cancel branches parse and
+present REST data while calling that port once.
 
 1. **MCP** — `/mcp` is claimed first; that endpoint authenticates with its own
    per-session capability, not with a Bearer token.
@@ -241,6 +241,12 @@ the task's submission slot, resolves its execution (resuming it if needed), and
 submits through `AgentBridge` → ACP events stream back through
 `handleAgentEvent()` → SSE.
 
+**A user cancels a task**: `POST /api/v1/tasks/:id/cancel` → the route checks
+task existence and client-op replay → `TaskOps.cancel()` resolves only an
+already-running execution, with no agent warm-up → the existing cancellation
+state machine and SSE behavior apply. Unlike MCP cancellation, this user command
+does not write agent cancellation audit rows.
+
 **An agent dispatches to a child** (`task_send`): MCP → `TaskOps.send()` → the
 message and its delivery are committed → the recipient is kicked → the
 delivery is drained into the child's next turn, and an obligation account opens
@@ -270,12 +276,13 @@ the rules.
 ## Where the server is not yet neutral
 
 - **Two command surfaces.** MCP goes through `TaskOps`; REST handlers call the
-  domain core directly except for general task creation, and some handlers
+  domain core directly except for general task creation and cancellation, and some handlers
   orchestrate it themselves (the prompt route reserves, resumes, submits, and
   releases through several `TaskManager` calls).
 - **Entry-specific behavior.** Creating a task applies intentionally different
-  caller defaults inside the shared command, and an MCP cancel writes source
-  and target audit rows that a REST cancel does not.
+  caller defaults inside the shared command. Cancellation deliberately keeps
+  MCP parent/child authorization, generation fencing, and source/target audit
+  separate from REST's bearer authorization and existing replay/no-audit path.
 - **Entry-specific mechanisms.** Idempotency exists only for REST and is keyed
   by task; errors have two presentations.
 
