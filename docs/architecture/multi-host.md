@@ -109,6 +109,11 @@ exponential backoff. Every successful connection invokes an empty catch-up
 hook; later delivery work will replace that hook without changing the connection
 mechanism.
 Connection state never writes to SQLite and never changes Task facts.
+Connections authenticated with the `host` scope receive only the minimal
+`connected` handshake and heartbeat frames: task and global business broadcasts
+are filtered before they reach the socket. Host tickets are refused on per-task
+streams. Older `api`/`admin` connection credentials keep their existing
+connection behavior.
 
 The public version endpoint advertises `hostProtocol`; the authenticated
 verify endpoint reports the caller's token name, scope, and SHA-256 `hash`.

@@ -1242,6 +1242,12 @@ Requires a valid `Authorization: Bearer <token>` header. Returns `401` otherwise
 
 The SSE stream re-checks the bound token on every heartbeat (≤15 s). If the token is revoked mid-stream, the connection is closed within one heartbeat interval; the client must mint a fresh ticket and reconnect.
 
+A `host`-scoped ticket is limited to the global Host connection channel: it
+receives `connected` plus heartbeat frames so B1 connection health can be
+observed, but no task or application-state broadcasts. Its `connected` payload
+also omits the normal `debugLevel` and pending-inbox count. A Host ticket is
+rejected on a per-task stream.
+
 ---
 
 ### Tokens
@@ -1716,7 +1722,10 @@ Retrieve a previously uploaded attachment. Responses are immutably cached
 
 #### `GET /api/v1/events/stream`
 
-**Global SSE stream.** Receives all events from all tasks. This is the primary stream used by the WebAgent frontend.
+**Global SSE stream.** Receives all events from all tasks for ordinary user
+tickets. This is the primary stream used by the WebAgent frontend. Host
+tickets connect only for connection/heartbeat transport and receive no business
+broadcasts.
 
 **Response:** `text/event-stream`
 
@@ -1739,6 +1748,7 @@ data: {"type":"message_chunk","taskId":"abc-123","text":"Hello"}
 #### `GET /api/v1/tasks/:id/events/stream`
 
 **Per-task SSE stream.** Only receives events for the specified task. Supports `Last-Event-ID` header for reconnection replay.
+Host tickets are not accepted on this endpoint.
 
 **Response:** `text/event-stream`
 

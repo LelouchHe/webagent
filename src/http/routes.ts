@@ -3307,6 +3307,7 @@ export function createRequestHandler(
         // When authStore is configured, every SSE connection MUST present a
         // valid single-use ticket from POST /api/v1/sse-ticket.
         let tokenName: string | undefined;
+        let receiveBusinessEvents = true;
         if (deps.authStore) {
           const ticket =
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
@@ -3318,6 +3319,7 @@ export function createRequestHandler(
             return;
           }
           tokenName = principal.tokenName;
+          receiveBusinessEvents = principal.scope !== "host";
         }
 
         const clientId = sseManager.generateClientId();
@@ -3332,15 +3334,21 @@ export function createRequestHandler(
           id: clientId,
           res,
           tokenName,
+          receiveBusinessEvents,
         };
         sseManager.add(client);
 
         // Send connected event
+        const pendingCount = store.countUnprocessed();
         sseManager.sendEvent(client, {
           type: "connected",
           clientId,
-          debugLevel: deps.debugLevel ?? "off",
-          pendingCount: store.countUnprocessed(),
+          ...(receiveBusinessEvents
+            ? {
+                debugLevel: deps.debugLevel ?? "off",
+                pendingCount,
+              }
+            : {}),
         } as unknown as AgentEvent);
         sseManager.writeHeartbeat(client);
         return;
@@ -3354,6 +3362,7 @@ export function createRequestHandler(
         const taskId = decodeURIComponent(sseTaskMatch[1]);
 
         let tokenName: string | undefined;
+        let scope: "admin" | "api" | "host" | "read" | undefined;
         if (deps.authStore) {
           const ticket =
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
@@ -3365,6 +3374,13 @@ export function createRequestHandler(
             return;
           }
           tokenName = principal.tokenName;
+          scope = principal.scope;
+          if (scope === "host") {
+            json(res, HTTP_STATUS.FORBIDDEN, {
+              error: "Host tickets cannot subscribe to task events",
+            });
+            return;
+          }
         }
 
         const task = store.getTask(taskId);

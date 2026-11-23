@@ -53,6 +53,7 @@ describe("SSE ticket flow", () => {
   let server: http.Server;
   let port: number;
   let token: string;
+  let hostToken: string;
 
   before(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-sse-ticket-"));
@@ -64,6 +65,7 @@ describe("SSE ticket flow", () => {
     authStore = new AuthStore(join(tmpDir, "auth.json"));
     await authStore.load();
     token = (await authStore.addToken("ui", "api")).token;
+    hostToken = (await authStore.addToken("hub", "host")).token;
 
     ticketStore = new TicketStore({ ttlMs: 60_000 });
     sseManager = new SseManager(60_000); // long heartbeat (won't fire in test)
@@ -147,6 +149,121 @@ describe("SSE ticket flow", () => {
       );
       r.on("error", reject);
       r.end();
+    });
+  });
+
+  it("keeps ordinary ticket connection data unchanged", async () => {
+    const ticketResp = await req(port, "POST", "/api/v1/sse-ticket", {
+      Authorization: `Bearer ${token}`,
+      "Content-Length": "0",
+    });
+    const ticket = JSON.parse(ticketResp.body).ticket;
+
+    const data = await new Promise<string>((resolve, reject) => {
+      const request = http.request(
+        {
+          hostname: "127.0.0.1",
+          port,
+          path: `/api/v1/events/stream?ticket=${ticket}`,
+          method: "GET",
+        },
+        (response) => {
+          response.once("data", (chunk: Buffer) => {
+            resolve(chunk.toString());
+            response.destroy();
+          });
+          response.on("error", reject);
+        },
+      );
+      request.on("error", reject);
+      request.end();
+    });
+
+    const connected = JSON.parse(
+      data
+        .split("\n\n")
+        .map((block) =>
+          block
+            .split("\n")
+            .find((line) => line.startsWith("data: "))
+            ?.slice(6),
+        )
+        .find(Boolean)!,
+    ) as Record<string, unknown>;
+    assert.equal(connected.type, "connected");
+    assert.equal(connected.debugLevel, "off");
+    assert.equal(connected.pendingCount, 0);
+  });
+
+  it("lets host tickets connect and heartbeat without receiving business events", async () => {
+    const ticketResp = await req(port, "POST", "/api/v1/sse-ticket", {
+      Authorization: `Bearer ${hostToken}`,
+      "Content-Length": "0",
+    });
+    const ticket = JSON.parse(ticketResp.body).ticket;
+    let received = "";
+    const ready = new Promise<void>((resolve, reject) => {
+      const request = http.request(
+        {
+          hostname: "127.0.0.1",
+          port,
+          path: `/api/v1/events/stream?ticket=${ticket}`,
+          method: "GET",
+        },
+        (response) => {
+          assert.equal(response.statusCode, 200);
+          response.on("data", (chunk: Buffer) => {
+            received += chunk.toString();
+            if (received.includes("event: heartbeat")) resolve();
+          });
+          response.on("error", reject);
+        },
+      );
+      request.on("error", reject);
+      request.end();
+    });
+    await ready;
+
+    sseManager.broadcast({
+      type: "task_created",
+      taskId: "business-task",
+      configOptions: [],
+    } as never);
+    sseManager.broadcastGlobal({
+      type: "inbox_count_changed",
+      pendingCount: 4,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    assert.match(received, /event: heartbeat/);
+    assert.match(received, /"type":"connected"/);
+    assert.doesNotMatch(received, /business-task/);
+    assert.doesNotMatch(received, /inbox_count_changed/);
+    assert.doesNotMatch(received, /pendingCount/);
+    assert.doesNotMatch(received, /debugLevel/);
+
+    const hostClient = [...sseManager.clients.values()].find(
+      (client) => client.tokenName === "hub",
+    );
+    assert.ok(hostClient);
+    hostClient.res.destroy();
+  });
+
+  it("rejects host tickets for per-task streams", async () => {
+    const ticketResp = await req(port, "POST", "/api/v1/sse-ticket", {
+      Authorization: `Bearer ${hostToken}`,
+      "Content-Length": "0",
+    });
+    const ticket = JSON.parse(ticketResp.body).ticket;
+    const response = await req(
+      port,
+      "GET",
+      `/api/v1/tasks/any/events/stream?ticket=${ticket}`,
+    );
+
+    assert.equal(response.status, 403);
+    assert.deepEqual(JSON.parse(response.body), {
+      error: "Host tickets cannot subscribe to task events",
     });
   });
 
