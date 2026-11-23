@@ -8,7 +8,7 @@ import {
   createRequestHandler,
   HTML_ENTRYPOINTS,
   CSP_POLICY,
-} from "../src/routes.ts";
+} from "../src/http/routes.ts";
 import { Store } from "../src/store.ts";
 
 /**

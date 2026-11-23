@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 
 function makeRequest(
   port: number,

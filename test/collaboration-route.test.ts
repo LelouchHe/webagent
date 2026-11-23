@@ -5,12 +5,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
-import { createTaskCreateEndpoint } from "../src/http/server.ts";
 import { buildCollaborationBroadcast } from "../src/collaboration-message.ts";
 import {
   buildTaskCreatedBroadcast,
@@ -120,17 +119,15 @@ describe("S3 collaboration write routes", () => {
       }),
       store,
       tasks,
-      taskCreateEndpoint: createTaskCreateEndpoint({
-        taskOps: createLocalTaskOps({
-          store,
-          tasks,
-          broadcastTaskCreated: (event) => {
-            broadcasts.push(buildTaskCreatedBroadcast(event));
-          },
-          broadcastConfigUpdate: (event) => {
-            broadcasts.push(event);
-          },
-        }),
+      taskOps: createLocalTaskOps({
+        store,
+        tasks,
+        broadcastTaskCreated: (event) => {
+          broadcasts.push(buildTaskCreatedBroadcast(event));
+        },
+        broadcastConfigUpdate: (event) => {
+          broadcasts.push(event);
+        },
       }),
       publicDir,
       dataDir: tmpDir,

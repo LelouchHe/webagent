@@ -12,14 +12,13 @@ import { AgentRegistry } from "./agent-registry.ts";
 import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
-import { createTaskCreateEndpoint } from "./http/server.ts";
 import { createLocalTaskOps } from "./host/local/adapter.ts";
 import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
 import {
   buildCollaborationBroadcast,
   type CollaborationBroadcastRequest,
 } from "./collaboration-message.ts";
-import { createRequestHandler } from "./routes.ts";
+import { createRequestHandler } from "./http/routes.ts";
 import { withRequestErrorBoundary } from "./request-boundary.ts";
 import { handleAgentEvent } from "./event-handler.ts";
 import { PushService } from "./push-service.ts";
@@ -245,9 +244,7 @@ let sharePreviewCleanup: SharePreviewCleanupHandle | null = null;
 const requestHandler = createRequestHandler({
   store,
   tasks,
-  taskCreateEndpoint: createTaskCreateEndpoint({
-    taskOps,
-  }),
+  taskOps,
   sseManager,
   clientRegistry,
   publicDir: PUBLIC_DIR,

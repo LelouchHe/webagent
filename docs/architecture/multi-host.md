@@ -117,12 +117,12 @@ regression observation. The browser UI does not consume it yet. See
 | Location | Responsibility |
 | --- | --- |
 | `src/mcp/` | MCP protocol handling, tool registration, capabilities, tool descriptions, and adaptation of protocol input/output |
-| `src/http/` | HTTP protocol adaptation for migrated commands; today only `POST /api/v1/tasks` parsing, response projection, and error mapping |
+| `src/http/` | HTTP entrypoint, including the main request/auth/router order, REST/SSE presentation, and the migrated `POST /api/v1/tasks` call to `TaskOps` |
 | `src/host/task-ops.ts` | The neutral `TaskOps` interface, command DTOs, and caller |
 | `src/host/local/adapter.ts` | The local `TaskOps` implementation over this instance's TaskManager and Store |
 | `src/host/local/` | Local projection and error helpers; cannot depend on remote implementations |
 | `src/host/remote/` | Current hub connection, token hash verification, retry/backoff, and in-memory status; the remote `adapter.ts` and Task delivery transport are planned |
-| `src/server.ts` | The only assembly point; it creates the local `TaskOps` and injects the same instance into HTTP task create and MCP |
+| `src/server.ts` | The only assembly point; it creates the local `TaskOps` and injects the same instance into the HTTP router and MCP |
 
 ESLint's `no-restricted-imports` guards direct static dependencies:
 `src/http/**` and `src/mcp/**` cannot import each other or a host module other
@@ -137,6 +137,10 @@ are injected through `TaskOps`. `src/host/local/` cannot import
 depth are covered, and `npm run lint` fails on a violation. The rules do not
 follow the module graph, dynamic `import()`, or inline `import("…").Type`
 references; those indirect paths are left to review.
+The moved main router has one line-level exception for the legacy host
+protocol version import. It remains until that protocol fact lives in a
+neutral host contract; the route's registry dependency is structural rather
+than a direct `HostRegistry` implementation import.
 
 ## `TaskOps` port
 

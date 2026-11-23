@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import type { AgentEvent, ConfigOption } from "../src/types.ts";
 

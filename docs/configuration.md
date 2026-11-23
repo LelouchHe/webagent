@@ -55,7 +55,7 @@ Codex runs normally under WebAgent — task listing, file edits, and permission 
 - Absolute paths and file-edit tools (which take absolute paths anyway) work correctly per-task, including permission boundary checks against `task.cwd`.
 - In practice the agent uses absolute paths most of the time, so this is rarely visible. If you want `pwd` and shell-relative paths to also match the task cwd, launch `webagent` from your project directory (`cd ~/myproject && webagent`).
 
-**This does NOT affect WebAgent's own `!command` shell** — that always honors the current task's cwd (`spawn(..., { cwd: task.cwd })` in `routes.ts`), regardless of which agent is in use. The caveat above is purely about the shell tool that the Codex *agent itself* invokes.
+**This does NOT affect WebAgent's own `!command` shell** — that always honors the current task's cwd (`spawn(..., { cwd: task.cwd })` in `src/http/routes.ts`), regardless of which agent is in use. The caveat above is purely about the shell tool that the Codex *agent itself* invokes.
 
 This is by design in `codex-rs` (Zed's editor spawns one `codex-acp` per project, so process cwd ≡ task cwd by construction). Copilot CLI and Claude Code instead honor ACP `task.cwd` in their own shell tools too.
 

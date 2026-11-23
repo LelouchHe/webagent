@@ -11,7 +11,7 @@ import {
   type TaskManager,
 } from "../src/task-manager.ts";
 import { SseManager } from "../src/sse-manager.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 import { AuthStore } from "../src/auth-store.ts";
 
 interface Resp {

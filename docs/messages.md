@@ -194,7 +194,7 @@ Pass `X-Client-Op-Id: <uuid>`; repeated requests return the same message id (res
 | Concern                                                                  | File                                                                                                            |
 | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | Zod schema, `from_ref` regex                                             | `src/types.ts` (`MessageIngressSchema`)                                                                         |
-| REST routes (`POST`, `GET`, `consume`, `ack`)                            | `src/routes.ts`                                                                                                 |
+| REST routes (`POST`, `GET`, `consume`, `ack`)                            | `src/http/routes.ts`                                                                                                 |
 | DB operations (`consumeMessageTx`, `findBySupersede`, `deleteOlderThan`) | `src/store.ts`                                                                                                  |
 | Push tag derivation, `task:<id>` routing                              | `src/push-service.ts` (`sendForMessage`, `tagToTopic`)                                                          |
 | Inbox slash tree (`/inbox`, `/inbox dismiss`) + actions              | `public/js/slash-commands.ts` (`listInbox`, `consumeInbox`, `ackInbox`)                                         |

@@ -15,7 +15,7 @@ import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 
 /**
  * Read paths under three genuinely different kinds of unavailability, plus the

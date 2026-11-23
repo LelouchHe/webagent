@@ -22,8 +22,8 @@ The entrypoint contracts live in [Client Architecture](client.md) and
           |                                          |
           v                                          v
  +-------------------------------+     +----------------------------------+
- | HTTP router (routes.ts)       |     | MCP entry  (mcp/server.ts)       |
- |  task create (http/server.ts) |     |                                  |
+ | HTTP router (http/routes.ts)  |     | MCP entry  (mcp/server.ts)       |
+ |  auth, REST, SSE, static      |     |                                  |
  |  request boundary             |     |  capability token -> TaskCaller  |
  |  auth gate (auth-middleware)  |     |  tool registration (mcp/tools.ts)|
  |  share / files sub-routers    |     +----------------+-----------------+
@@ -65,10 +65,10 @@ retaining their own request and response presentations.
 
 ### HTTP
 
-`createRequestHandler()` in `src/routes.ts` remains the legacy HTTP dispatcher
-and handles requests in this order. The composition root injects the narrow
-`createTaskCreateEndpoint()` handler from `src/http/server.ts`; that handler
-owns `POST /api/v1/tasks` parsing, response projection, and error mapping.
+`createRequestHandler()` in `src/http/routes.ts` owns the HTTP dispatcher and
+handles requests in this order. The composition root injects the shared
+`TaskOps` instance; the `POST /api/v1/tasks` branch parses and presents REST
+data while calling that port once.
 
 1. **MCP** — `/mcp` is claimed first; that endpoint authenticates with its own
    per-session capability, not with a Bearer token.
@@ -112,7 +112,7 @@ configuration. The tool contracts are in [Task MCP Control Plane](../task-mcp.md
 configuration, constructs the Store, TaskManager, AgentRegistry, SseManager,
 PushService, ClientRegistry, AuthStore, TicketStore, and HostRegistry, wires the
 broadcast callbacks, creates the local `TaskOps` adapter, injects that same
-instance into the HTTP task-create and MCP entry factories, builds the request
+instance into the HTTP router and MCP entry factory, builds the request
 handler, and creates one transport per agent with its event listener. It also
 owns graceful shutdown. `src/startup-checks.ts` and `src/preflight.ts` run
 before any of this on every launch path, and
@@ -258,7 +258,9 @@ implementation; the entrypoints may use only the neutral
 `src/host/task-ops.ts` host contract. MCP also cannot import Store or
 TaskManager. Core and host modules cannot import either entrypoint except in the
 assembly root, with `src/task-manager.ts` retaining only its two named legacy MCP
-imports. `src/host/task-ops.ts` is neutral; `src/host/local/` and
+imports. `src/http/routes.ts` has one line-level exception for the legacy host
+protocol version constant, to be removed when that fact moves to a neutral host
+contract. `src/host/task-ops.ts` is neutral; `src/host/local/` and
 `src/host/remote/` cannot import each other; `src/host/remote/` cannot import
 Store or TaskManager. The rules cover nested paths and static value, type, and
 re-export imports. See

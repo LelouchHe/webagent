@@ -8,7 +8,7 @@ SQLite (`better-sqlite3`), Zod, and esbuild.
 ## Core modules
 
 - `server.ts` — HTTP server bootstrap
-- `routes.ts` — static files, REST API, and uploads
+- `http/routes.ts` — static files, REST API, SSE dispatch, and uploads
 - `event-handler.ts` — ACP event routing and SSE broadcast
 - `task-manager.ts` — live tasks, buffers, bash processes, and model cache
 - `bridge.ts` — ACP agent subprocess lifecycle
@@ -75,7 +75,7 @@ Solve the case a real path reaches; do not build for the one it cannot.
 
 - Bearer authentication is required. Public-route whitelist changes belong in
   `src/auth-middleware.ts`; HTML entrypoints must be registered in
-  `HTML_ENTRYPOINTS` in `src/routes.ts`; frontend token code imports
+  `HTML_ENTRYPOINTS` in `src/http/routes.ts`; frontend token code imports
   `TOKEN_STORAGE_KEY` instead of hardcoding it. Follow
   [`docs/security.md`](./docs/security.md) for signed URLs, CSP, and assets.
 - The database stores raw ACP events. Display-only attachment labels and signed

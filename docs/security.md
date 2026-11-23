@@ -210,7 +210,7 @@ No `unsafe-inline` for scripts. No `unsafe-eval`. The script-src includes the na
 - `marked` and `dompurify` are bundled into `app.[hash].js`. `highlight.js` common (36 languages) is dynamically imported into a separate `chunk.[hash].js`, preloaded via `<link rel="modulepreload">` — still all served from `'self'`, no `cdn.jsdelivr.net` at runtime.
 - `frame-ancestors 'none'` prevents any other site from embedding webagent in an `<iframe>`.
 
-The HTML entrypoint set is the **single source of truth** in `src/routes.ts`:
+The HTML entrypoint set is the **single source of truth** in `src/http/routes.ts`:
 
 ```ts
 export const HTML_ENTRYPOINTS = [
