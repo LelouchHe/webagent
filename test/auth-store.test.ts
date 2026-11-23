@@ -9,10 +9,16 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { AuthStore } from "../src/auth-store.ts";
+import { AUTH_SCOPES, AuthStore, isScope } from "../src/auth-store.ts";
 import { generateToken, hashToken } from "../src/auth.ts";
 
 describe("AuthStore", () => {
+  it("defines the complete scope vocabulary in one place", () => {
+    assert.deepEqual(AUTH_SCOPES, ["admin", "api", "host", "read"]);
+    assert.equal(isScope("host"), true);
+    assert.equal(isScope("write"), false);
+    assert.equal(isScope(undefined), false);
+  });
   let tmpDir: string;
   let authPath: string;
   let store: AuthStore;

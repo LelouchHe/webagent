@@ -1,8 +1,9 @@
 import { generateSseTicket } from "./tokens.ts";
+import type { Scope } from "./auth-store.ts";
 
 export interface TicketPrincipal {
   tokenName: string;
-  scope: "admin" | "api" | "host" | "read";
+  scope: Scope;
 }
 
 interface TicketRecord extends TicketPrincipal {

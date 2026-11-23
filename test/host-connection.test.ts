@@ -89,6 +89,11 @@ describe("host connection helpers", () => {
       "Bearer wat_host",
     );
     assert.equal(requests[0]?.init?.redirect, "error");
+    assert.ok(requests[0]?.init?.signal);
+    assert.equal(
+      new Headers(requests[0]?.init?.headers).get("content-type"),
+      "application/json",
+    );
     const requestBody = requests[0]?.init?.body;
     if (typeof requestBody !== "string") {
       throw new Error("expected a JSON request body");
@@ -207,6 +212,11 @@ describe("host connection helpers", () => {
         return Response.json({ hostProtocol: 1 });
       }
       if (url.endsWith("/api/v1/auth/verify")) {
+        assert.equal(
+          new Headers(init?.headers).get("authorization"),
+          "Bearer wat_hub",
+        );
+        assert.ok(init?.signal);
         const token = "wat_hub";
         return Response.json({
           ok: true,
@@ -216,6 +226,11 @@ describe("host connection helpers", () => {
         });
       }
       if (url.endsWith("/api/v1/sse-ticket")) {
+        assert.equal(
+          new Headers(init?.headers).get("authorization"),
+          "Bearer wat_hub",
+        );
+        assert.ok(init?.signal);
         return Response.json({ ticket: "ticket" });
       }
       sseAttempts += 1;

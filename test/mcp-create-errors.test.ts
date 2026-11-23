@@ -8,6 +8,13 @@ import {
   configOverrideError,
   unconfiguredAgentError,
 } from "../src/mcp/create-errors.ts";
+import {
+  classifyTaskCreateError,
+  TaskRemoteCreateNotSentError,
+  TaskRemoteCreatePartialSuccessError,
+  TaskRemoteCreateRejectedError,
+  TaskRemoteCreateUnknownError,
+} from "../src/api/tasks.ts";
 
 /**
  * Boundary tests for the bounded `task_create` error text.
@@ -38,6 +45,42 @@ const INVALID_GUIDANCE =
   "Omit model to use the target's default, or ask the user which value to use.";
 
 describe("task_create error text", () => {
+  it("classifies remote outcomes once for entrypoint-specific presentation", () => {
+    assert.deepEqual(
+      classifyTaskCreateError(
+        new TaskRemoteCreateRejectedError("mini", 409, "conflict"),
+      ),
+      {
+        kind: "rejected",
+        host: "mini",
+        status: 409,
+        reason: "conflict",
+      },
+    );
+    assert.deepEqual(
+      classifyTaskCreateError(
+        new TaskRemoteCreateNotSentError("mini", "credential"),
+      ),
+      { kind: "not_sent", host: "mini", reason: "credential" },
+    );
+    assert.deepEqual(
+      classifyTaskCreateError(
+        new TaskRemoteCreateUnknownError("mini", "timeout"),
+      ),
+      { kind: "unknown", host: "mini", reason: "timeout" },
+    );
+    assert.deepEqual(
+      classifyTaskCreateError(
+        new TaskRemoteCreatePartialSuccessError("mini", "remote-task"),
+      ),
+      {
+        kind: "partial_success",
+        host: "mini",
+        remoteTaskId: "remote-task",
+      },
+    );
+    assert.equal(classifyTaskCreateError(new Error("legacy")), null);
+  });
   it("drops an id that cannot fit instead of truncating it", () => {
     const id = "a".repeat(900);
     const text = unconfiguredAgentError(id);

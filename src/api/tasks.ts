@@ -312,6 +312,84 @@ export class TaskCreateInputError extends Error {
   }
 }
 
+export type TaskCreateError =
+  | { kind: "agent_id_type" }
+  | { kind: "agent_not_configured"; agentId: string }
+  | {
+      kind: "agent_start";
+      agentId: string;
+      reason: string;
+      unavailable: boolean;
+    }
+  | { kind: "config"; error: TaskCreateConfigError }
+  | { kind: "input"; code: string; message: string }
+  | { kind: "host_not_configured"; host: string }
+  | { kind: "remote_config"; logicalId: "model" | "thinking" }
+  | {
+      kind: "rejected";
+      host: string;
+      status: number;
+      reason: string;
+    }
+  | { kind: "not_sent"; host: string; reason: string }
+  | { kind: "unknown"; host: string; reason: string }
+  | {
+      kind: "partial_success";
+      host: string;
+      remoteTaskId: string;
+    };
+
+export function classifyTaskCreateError(
+  error: unknown,
+): TaskCreateError | null {
+  if (error instanceof TaskAgentIdTypeError) return { kind: "agent_id_type" };
+  if (error instanceof TaskAgentNotConfiguredError) {
+    return { kind: "agent_not_configured", agentId: error.agentId };
+  }
+  if (error instanceof TaskAgentStartError) {
+    return {
+      kind: "agent_start",
+      agentId: error.agentId,
+      reason: error.reason,
+      unavailable: error.unavailable,
+    };
+  }
+  if (error instanceof TaskCreateConfigError) {
+    return { kind: "config", error };
+  }
+  if (error instanceof TaskCreateInputError) {
+    return { kind: "input", code: error.code, message: error.clientMessage };
+  }
+  if (error instanceof TaskHostNotConfiguredError) {
+    return { kind: "host_not_configured", host: error.host };
+  }
+  if (error instanceof TaskRemoteCreateConfigError) {
+    return { kind: "remote_config", logicalId: error.logicalId };
+  }
+  if (error instanceof TaskRemoteCreateRejectedError) {
+    return {
+      kind: "rejected",
+      host: error.host,
+      status: error.status,
+      reason: error.reason,
+    };
+  }
+  if (error instanceof TaskRemoteCreateNotSentError) {
+    return { kind: "not_sent", host: error.host, reason: error.reason };
+  }
+  if (error instanceof TaskRemoteCreateUnknownError) {
+    return { kind: "unknown", host: error.host, reason: error.reason };
+  }
+  if (error instanceof TaskRemoteCreatePartialSuccessError) {
+    return {
+      kind: "partial_success",
+      host: error.host,
+      remoteTaskId: error.remoteTaskId,
+    };
+  }
+  return null;
+}
+
 /**
  * The caller identity of one MCP request, captured once at the endpoint and
  * never mutated.

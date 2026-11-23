@@ -70,6 +70,11 @@ exist now.
 transport; the established-Task resolver, router, and delivery transport are
 planned.
 
+Create error classes are classified once by `classifyTaskCreateError()` in
+`src/api/tasks.ts`. REST and MCP consume that discriminant only for their own
+status/body or tool-text presentation; they do not maintain separate
+error-class chains.
+
 ## Scope of the host layer (planned)
 
 The host layer is an execution library: it hides where execution happens. A
@@ -147,10 +152,10 @@ task is later used.
 | `src/http/` | HTTP entrypoint, including the main request/auth/router order, REST/SSE presentation, and the migrated REST task create and cancel calls to `TaskOps` |
 | `src/api/tasks.ts` | The neutral `TaskOps` interface, command DTOs, caller, and minimal `TaskCreateHost` port |
 | `src/task-ops.ts` | Create command: caller/parent authorization, raw coordinate parsing, one Host call, and narrow accepted-result completion callback |
-| `src/host/tasks.ts` | Host selector: direct LocalHost vs RemoteHost choice from `{agentId, host?}` |
+| `src/host/tasks.ts` | `createTaskHost`: direct LocalHost vs RemoteHost choice from `{agentId, host?}` |
 | `src/host/local/adapter.ts` | LocalHost `TaskOps` implementation over this instance's TaskManager and Store; no remote transport or raw coordinate parsing |
 | `src/host/local/` | Local projection and error helpers; cannot depend on remote implementations |
-| `src/host/remote/` | RemoteHost connection, token hash verification, retry/backoff, in-memory status, and one-shot remote create transport |
+| `src/host/remote/` | RemoteHost connection, token hash verification, retry/backoff, in-memory status, and one-shot remote create transport; `HostConnection` owns the URL, bearer header, timeout, and raw fetch seam |
 | `src/server.ts` | The only assembly point; it injects LocalHost and RemoteHost into the Host selector, then injects the same routed `TaskOps` into HTTP and MCP |
 
 ESLint's `no-restricted-imports` guards direct static dependencies:

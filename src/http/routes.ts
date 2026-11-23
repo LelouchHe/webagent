@@ -45,18 +45,7 @@ import {
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { validateTaskTitle } from "../shared/task-title.ts";
 import type { TaskOps } from "../api/tasks.ts";
-import {
-  TaskAgentIdTypeError,
-  TaskAgentNotConfiguredError,
-  TaskAgentStartError,
-  TaskCreateInputError,
-  TaskHostNotConfiguredError,
-  TaskRemoteCreateConfigError,
-  TaskRemoteCreateNotSentError,
-  TaskRemoteCreatePartialSuccessError,
-  TaskRemoteCreateRejectedError,
-  TaskRemoteCreateUnknownError,
-} from "../api/tasks.ts";
+import { classifyTaskCreateError } from "../api/tasks.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -156,7 +145,7 @@ function compactPreviousSeq(
   }
 }
 
-import type { AuthStore, TokenRecord } from "../auth-store.ts";
+import type { AuthStore, Scope, TokenRecord } from "../auth-store.ts";
 import type { TicketStore } from "../sse-ticket.ts";
 import {
   signAttachmentUrl,
@@ -3102,63 +3091,80 @@ export function createRequestHandler(
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (err instanceof TaskAgentIdTypeError) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "agentId must be a string",
-            });
-          } else if (err instanceof TaskCreateInputError) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: err.clientMessage,
-              code: err.code,
-            });
-          } else if (err instanceof TaskAgentNotConfiguredError) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: `Agent ${err.agentId} is not configured`,
-            });
-          } else if (err instanceof TaskAgentStartError) {
-            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-              error: err.unavailable
-                ? `Agent ${err.agentId} is not available: ${err.reason}`
-                : err.reason,
-              agentId: err.agentId,
-            });
-          } else if (err instanceof TaskHostNotConfiguredError) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: `Host ${err.host} is not configured`,
-            });
-          } else if (err instanceof TaskRemoteCreateConfigError) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: `Remote task creation does not support ${err.logicalId} overrides`,
-            });
-          } else if (err instanceof TaskRemoteCreateRejectedError) {
-            json(res, HTTP_STATUS.BAD_GATEWAY, {
-              error: err.reason,
-              host: err.host,
-              remoteStatus: err.status,
-              outcome: "rejected",
-            });
-          } else if (err instanceof TaskRemoteCreateNotSentError) {
-            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-              error: `Remote task request was not sent: ${err.reason}`,
-              host: err.host,
-              outcome: "not_sent",
-            });
-          } else if (err instanceof TaskRemoteCreateUnknownError) {
-            json(res, HTTP_STATUS.BAD_GATEWAY, {
-              error: "Remote task creation result is unknown",
-              reason: err.reason,
-              host: err.host,
-              outcome: "unknown",
-            });
-          } else if (err instanceof TaskRemoteCreatePartialSuccessError) {
-            json(res, HTTP_STATUS.BAD_GATEWAY, {
-              error:
-                "Remote task was created, but the local link could not be registered",
-              host: err.host,
-              remoteTaskId: err.remoteTaskId,
-              outcome: "partial_success",
-            });
-          } else if (msg === "parent_not_found") {
+          const classified = classifyTaskCreateError(err);
+          if (classified) {
+            switch (classified.kind) {
+              case "agent_id_type":
+                json(res, HTTP_STATUS.BAD_REQUEST, {
+                  error: "agentId must be a string",
+                });
+                return;
+              case "input":
+                json(res, HTTP_STATUS.BAD_REQUEST, {
+                  error: classified.message,
+                  code: classified.code,
+                });
+                return;
+              case "agent_not_configured":
+                json(res, HTTP_STATUS.BAD_REQUEST, {
+                  error: `Agent ${classified.agentId} is not configured`,
+                });
+                return;
+              case "agent_start":
+                json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+                  error: classified.unavailable
+                    ? `Agent ${classified.agentId} is not available: ${classified.reason}`
+                    : classified.reason,
+                  agentId: classified.agentId,
+                });
+                return;
+              case "host_not_configured":
+                json(res, HTTP_STATUS.BAD_REQUEST, {
+                  error: `Host ${classified.host} is not configured`,
+                });
+                return;
+              case "remote_config":
+                json(res, HTTP_STATUS.BAD_REQUEST, {
+                  error: `Remote task creation does not support ${classified.logicalId} overrides`,
+                });
+                return;
+              case "rejected":
+                json(res, HTTP_STATUS.BAD_GATEWAY, {
+                  error: classified.reason,
+                  host: classified.host,
+                  remoteStatus: classified.status,
+                  outcome: "rejected",
+                });
+                return;
+              case "not_sent":
+                json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+                  error: `Remote task request was not sent: ${classified.reason}`,
+                  host: classified.host,
+                  outcome: "not_sent",
+                });
+                return;
+              case "unknown":
+                json(res, HTTP_STATUS.BAD_GATEWAY, {
+                  error: "Remote task creation result is unknown",
+                  reason: classified.reason,
+                  host: classified.host,
+                  outcome: "unknown",
+                });
+                return;
+              case "partial_success":
+                json(res, HTTP_STATUS.BAD_GATEWAY, {
+                  error:
+                    "Remote task was created, but the local link could not be registered",
+                  host: classified.host,
+                  remoteTaskId: classified.remoteTaskId,
+                  outcome: "partial_success",
+                });
+                return;
+              case "config":
+                break;
+            }
+          }
+          if (msg === "parent_not_found") {
             json(res, HTTP_STATUS.BAD_REQUEST, {
               error: "Parent task not found",
             });
@@ -3375,7 +3381,7 @@ export function createRequestHandler(
         const taskId = decodeURIComponent(sseTaskMatch[1]);
 
         let tokenName: string | undefined;
-        let scope: "admin" | "api" | "host" | "read" | undefined;
+        let scope: Scope | undefined;
         if (deps.authStore) {
           const ticket =
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";

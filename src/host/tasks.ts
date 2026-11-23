@@ -10,7 +10,7 @@ import {
   TaskRemoteCreatePartialSuccessError,
 } from "../api/tasks.ts";
 
-export function createTaskCreateHost(deps: {
+export function createTaskHost(deps: {
   local: TaskOps;
   remote: RemoteTaskCreateTransport;
 }): TaskCreateHost {

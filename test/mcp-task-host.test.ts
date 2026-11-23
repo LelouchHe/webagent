@@ -18,7 +18,7 @@ import {
   type TaskCreateHost,
 } from "../src/api/tasks.ts";
 import { createTaskOpsCore } from "../src/task-ops.ts";
-import { createTaskCreateHost } from "../src/host/tasks.ts";
+import { createTaskHost } from "../src/host/tasks.ts";
 import { projectTaskHistoryRow } from "../src/host/local/task-history.ts";
 import type { AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
@@ -104,7 +104,7 @@ describe("MCP Task tool host", () => {
     return {
       ...local,
       ...createTaskOpsCore({
-        host: createTaskCreateHost({ local, remote }),
+        host: createTaskHost({ local, remote }),
         store,
         tasks,
       }),
@@ -152,7 +152,7 @@ describe("MCP Task tool host", () => {
     const routed = {
       ...local,
       ...createTaskOpsCore({
-        host: createTaskCreateHost({
+        host: createTaskHost({
           local,
           remote: {
             async create() {
@@ -356,7 +356,7 @@ describe("MCP Task tool host", () => {
     const routed = {
       ...local,
       ...createTaskOpsCore({
-        host: createTaskCreateHost({
+        host: createTaskHost({
           local,
           remote: {
             async create() {

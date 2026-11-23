@@ -4,7 +4,15 @@ import lockfile from "proper-lockfile";
 import { generateToken, hashToken, verifyToken } from "./auth.ts";
 import { atomicWriteFile } from "./atomic-write.ts";
 
-export type Scope = "admin" | "api" | "host" | "read";
+export const AUTH_SCOPES = ["admin", "api", "host", "read"] as const;
+export type Scope = (typeof AUTH_SCOPES)[number];
+
+export function isScope(value: unknown): value is Scope {
+  return (
+    typeof value === "string" &&
+    (AUTH_SCOPES as readonly string[]).includes(value)
+  );
+}
 
 export interface TokenRecord {
   name: string;
@@ -19,12 +27,7 @@ interface AuthFileShape {
 }
 
 const VALID_NAME = /^[A-Za-z0-9_-]{1,64}$/;
-const VALID_SCOPE: ReadonlySet<string> = new Set([
-  "admin",
-  "api",
-  "host",
-  "read",
-]);
+const VALID_SCOPE: ReadonlySet<string> = new Set(AUTH_SCOPES);
 const FILE_MODE = 0o600;
 const LOCK_OPTS = {
   retries: { retries: 10, factor: 2, minTimeout: 20, maxTimeout: 200 },
@@ -287,12 +290,7 @@ function parseAuthFile(raw: string): AuthFileShape {
     const e = entry as Record<string, unknown>;
     if (typeof e.name !== "string")
       throw new Error(`auth.json tokens[${i}].name missing`);
-    if (
-      e.scope !== "admin" &&
-      e.scope !== "api" &&
-      e.scope !== "host" &&
-      e.scope !== "read"
-    )
+    if (!isScope(e.scope))
       throw new Error(`auth.json tokens[${i}].scope invalid`);
     if (typeof e.hash !== "string" || !/^[a-f0-9]{64}$/i.test(e.hash)) {
       throw new Error(`auth.json tokens[${i}].hash invalid`);
@@ -305,8 +303,7 @@ function parseAuthFile(raw: string): AuthFileShape {
     }
     return {
       name: e.name,
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- narrowed by line 280 check but TSC needs cast from unknown
-      scope: e.scope as Scope,
+      scope: e.scope,
       hash: e.hash.toLowerCase(),
       createdAt: e.createdAt,
       lastUsedAt: lastUsedAt,

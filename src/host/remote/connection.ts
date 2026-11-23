@@ -1,4 +1,5 @@
 import { hashToken } from "../../auth.ts";
+import { isScope } from "../../auth-store.ts";
 import { z } from "zod";
 import { HTTP_STATUS } from "../../http-status.ts";
 import {
@@ -97,6 +98,16 @@ function endpoint(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${path}`;
 }
 
+interface HostFetchOptions {
+  signal?: AbortSignal;
+  token?: string;
+  method?: string;
+  body?: unknown;
+  headers?: HeadersInit;
+  redirect?: RequestRedirect;
+  timeoutMs?: number | null;
+}
+
 export class HostConnection {
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly config: HostConfig;
@@ -135,26 +146,19 @@ export class HostConnection {
   ): Promise<HostTaskCreateAttempt> {
     let token: string;
     try {
-      token = await resolveHostToken(this.config.token);
+      token = await this.resolveToken();
     } catch {
       return { kind: "not_sent", reason: "Host credential is unavailable" };
     }
 
     let response: Response;
     try {
-      response = await this.fetchImpl(
-        endpoint(this.config.url, "/api/v1/tasks"),
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(input),
-          redirect: "error",
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        },
-      );
+      response = await this.fetchResponse("/api/v1/tasks", {
+        token,
+        method: "POST",
+        body: input,
+        redirect: "error",
+      });
     } catch (error) {
       return {
         kind: "unknown",
@@ -226,13 +230,7 @@ export class HostConnection {
       throw new HostConnectionFailure("protocol_mismatch");
     }
     const identity = caller as { hash?: unknown; scope?: unknown };
-    if (
-      identity.hash !== hashToken(token) ||
-      (identity.scope !== "read" &&
-        identity.scope !== "api" &&
-        identity.scope !== "host" &&
-        identity.scope !== "admin")
-    ) {
+    if (identity.hash !== hashToken(token) || !isScope(identity.scope)) {
       throw new HostConnectionFailure("protocol_mismatch");
     }
     if (identity.scope === "read") {
@@ -251,9 +249,9 @@ export class HostConnection {
     if (typeof ticket !== "string" || !ticket) {
       throw new HostConnectionFailure("protocol_mismatch");
     }
-    const response = await this.fetchImpl(
-      `${endpoint(this.config.url, "/api/v1/events/stream")}?ticket=${encodeURIComponent(ticket)}`,
-      { signal: attempt.signal },
+    const response = await this.fetchResponse(
+      `/api/v1/events/stream?ticket=${encodeURIComponent(ticket)}`,
+      { signal: attempt.signal, timeoutMs: null },
     );
     if (!response.ok) throw this.httpFailure(response.status);
     if (!response.body) throw new HostConnectionFailure("protocol_mismatch");
@@ -266,20 +264,24 @@ export class HostConnection {
     return "network";
   }
 
-  private async resolveToken(attempt: StreamAttempt): Promise<string> {
+  private async resolveToken(attempt?: StreamAttempt): Promise<string> {
     while (this.tokenCommand) {
       try {
         await this.tokenCommand;
       } catch {
         // The prior attempt reports its own outcome.
       }
-      if (!attempt.isCurrent()) throw new Error("stale host attempt");
+      if (attempt && !attempt.isCurrent()) {
+        throw new Error("stale host attempt");
+      }
     }
-    if (!attempt.isCurrent()) throw new Error("stale host attempt");
+    if (attempt && !attempt.isCurrent()) {
+      throw new Error("stale host attempt");
+    }
     const command = resolveHostToken(
       this.config.token,
       undefined,
-      attempt.signal,
+      attempt?.signal,
     );
     this.tokenCommand = command;
     try {
@@ -297,13 +299,10 @@ export class HostConnection {
   ): Promise<unknown> {
     let response: Response;
     try {
-      response = await this.fetchImpl(endpoint(this.config.url, path), {
+      response = await this.fetchResponse(path, {
+        signal,
+        token,
         method,
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        signal: AbortSignal.any([
-          signal,
-          AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        ]),
       });
     } catch (error) {
       if (signal.aborted) throw error;
@@ -315,6 +314,36 @@ export class HostConnection {
     } catch {
       throw new HostConnectionFailure("protocol_mismatch");
     }
+  }
+
+  private fetchResponse(
+    path: string,
+    options: HostFetchOptions = {},
+  ): Promise<Response> {
+    const headers = new Headers(options.headers);
+    if (options.token) {
+      headers.set("Authorization", `Bearer ${options.token}`);
+    }
+    const body =
+      options.body === undefined ? undefined : JSON.stringify(options.body);
+    if (body !== undefined && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+    const timeoutSignal =
+      options.timeoutMs === null
+        ? null
+        : AbortSignal.timeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+    const signal =
+      options.signal && timeoutSignal
+        ? AbortSignal.any([options.signal, timeoutSignal])
+        : (options.signal ?? timeoutSignal ?? undefined);
+    return this.fetchImpl(endpoint(this.config.url, path), {
+      method: options.method ?? "GET",
+      headers,
+      body,
+      ...(options.redirect ? { redirect: options.redirect } : {}),
+      signal,
+    });
   }
 
   private httpFailure(status: number): HostConnectionFailure {
