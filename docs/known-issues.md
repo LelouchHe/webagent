@@ -139,7 +139,10 @@ time. An entry without a "closing condition" is a wish, not an issue.
   pipe can therefore delay that host's next retry beyond the five-second
   command timeout; other configured hosts do not share the wait. *Closing:*
   handle this after a real command demonstrates the behavior, then choose an
-  explicit process-tree termination mechanism.
+  explicit process-tree termination mechanism. While the command is still
+  pending, the attempt watchdog continues from its original start, so the
+  diagnostic host state may alternate between `connecting` and
+  `unreachable(network)` every 45–50 seconds; no second command starts.
 - **`MAX_ACP_MESSAGE_BYTES` is a hardcoded 128 MiB cap.** It is not derived from
   configured limits, so raising `file_upload` above roughly 120 MiB still hits
   it. *Closing:* derive the cap from the configured upload limit (with a

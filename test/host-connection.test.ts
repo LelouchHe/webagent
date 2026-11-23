@@ -61,6 +61,34 @@ describe("host connection helpers", () => {
     await assert.rejects(pending, TokenCommandError);
   });
 
+  it("caps retained token-command output and sends one termination signal", async () => {
+    const root = mkdtempSync(join(tmpdir(), "webagent-token-output-"));
+    const signals = join(root, "signals");
+    const command = [
+      `trap 'echo TERM >> ${JSON.stringify(signals)}' TERM`,
+      "dd if=/dev/zero bs=1024 count=256 2>/dev/null | tr '\\0' x",
+      "sleep 0.15",
+    ].join("; ");
+    try {
+      const error = await resolveHostToken(`!${command}`, 2_000).then(
+        () => null,
+        (cause: unknown) => cause,
+      );
+      assert.ok(error instanceof TokenCommandError);
+      assert.ok(error.retainedBytes <= 64 * 1024);
+      assert.equal(error.terminationSignals, 1);
+      assert.equal(
+        existsSync(signals)
+          ? readFileSync(signals, "utf8").trim().split("\n").filter(Boolean)
+              .length
+          : 0,
+        1,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("times out a stalled SSE handshake, marks unreachable, and retries", async () => {
     let sseAttempts = 0;
     let observedRetryState = false;
