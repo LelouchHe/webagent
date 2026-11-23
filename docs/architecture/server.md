@@ -125,6 +125,11 @@ listener. It also owns graceful shutdown. `src/startup-checks.ts` and
 | `src/obligation-controller.ts`, `src/task-collaboration.ts`, `src/collaboration-message.ts` | Directed-dispatch accounts, reminders, and notices; the arming policy; runtime message titles. See [Task Obligations](../task-obligations.md). |
 | `src/task-tree-lock.ts` | In-process hierarchical lock for structural tree mutations. |
 
+Behavior that spans these modules:
+
+- **Busy→idle unfinished-work recovery**: `TaskManager.syncBusy()` is the single normal state edge for recovery. When a task transitions from busy to idle, it schedules one microtask through its private `scheduleUnfinishedWorkRecovery()` helper if queued collaboration deliveries remain; the recovery drains deliveries and never submits a handoff reminder. Per-task deduplication prevents re-entry loops, and deletion/reset/rotation guards prevent work from being started during cleanup. The condition is intentionally independent of which busy source just ended, so new busy sources cannot silently strand work. **Reload exception:** `bridge.restart()` intentionally clears busy state directly while the ACP bridge is unavailable and cancels pending submissions; it does not submit recovery during restart, and queued work waits for the next explicit interaction/drain after the bridge is ready.
+- **Model inheritance**: A newly created task inherits the current task's saved model when available; restored tasks keep their own persisted model. Mode is NOT inherited — new tasks always start in agent mode.
+
 The task model — states, transitions, and what each keeps or drops — is in
 [Task Lifecycle](../task-lifecycle.md); naming is in
 [Vocabulary](../vocabulary.md).
@@ -143,6 +148,13 @@ the first operation that needs a task's execution resolves its agent through
 the registry. ACP compatibility and extensions are in
 [ACP Integration](../acp.md).
 
+Behavior of an agent's execution:
+
+- **Handshake protocol version is checked**: `bridge.start()` refuses an agent whose `InitializeResponse.protocolVersion` is not exactly `PROTOCOL_VERSION`, on the same path as a refused handshake — the child process is reaped, the bridge stays not-ready, and the error names the version the agent reported. *Why:* `protocolVersion` is the only signal that says which event stream we will be reading, so an unknown version means every later render and persisted row would be an interpretation we cannot defend; a failed start is diagnosable, a silent mis-read is not. Capability gates (below) describe drift *within* v1; this refuses a different protocol.
+- **Agent reload**: `bridge.restart()` kills and re-spawns the agent subprocess without restarting the server. Cancels active prompts, flushes buffers, cleans up state. Tasks restore lazily via `ensureResumed()`. Triggered by `/reload` slash command or `POST /api/v1/bridge/reload`. Retries start 3× with exponential backoff.
+- **Task restore**: `bridge.loadSession()` restores ACP context after server restart, preferring advertised `session/resume` over advertised `session/load`. Capability gates come from `InitializeResponse.agentCapabilities`, with resume/retirement under `sessionCapabilities`; neither restore capability means a user-actionable failure, never a fresh session. During restore, `restoringTasks` Set suppresses duplicate transcript storage/broadcast.
+- **Silent sessions**: The bridge's silent-session variant suppresses normal UI events for internally created sessions and for the temporary text capture behind compact summarization. Silence is an execution property, not a creation property: a session mapped to a real Task is never silent, so a persisted, user-visible Task keeps streaming and persisting from its first prompt. Suppressing a Task's *creation announcement* is a separate decision (`announce: false`, used by inbox consume); it must not also mute the execution. `promptForText` restores whatever silence a session already had instead of unmuting it when the capture ends. Automatic task-title generation was removed; titles come from creation (`+<title>`, `/rename`) or default to the task id.
+
 ## Events and egress
 
 `AgentBridge` emits `AgentEvent`s. `handleAgentEvent()` in
@@ -158,12 +170,35 @@ persists events to the Store, updates `TaskState`, and hands frames to the
   leaves the server; attachment paths are relabeled and image URLs are signed at
   egress, never in storage
   ([Attachment label egress rewrite](../implementation-invariants.md#attachment-label-egress-rewrite)).
-- **Push** — Web Push with global per-task visibility suppression, tracked by
-  `src/client-registry.ts` (details below).
+- **Event aggregation** — `message_chunk` / `thought_chunk` are buffered in memory, flushed to DB as full `assistant_message` / `thinking` on boundaries (tool_call, plan, prompt_done).
+- **Multi-client** — every connected client receives the events of the tasks
+  it watches, so permission responses, user messages, and bash output stay in
+  sync across devices; `broadcast()` supports sender exclusion.
+- **Push** — see [Web Push](#web-push).
 
 The SSE frame formats and replay rules are in the
 [API Reference](../api.md#sse-event-reference); the client side of the stream
 is in [Client Architecture](client.md#connection-lifecycle).
+
+### Web Push
+
+`src/push-service.ts` sends VAPID-based Web Push notifications through
+`web-push` for `permission_request`, `prompt_done`, and `bash_done`.
+Subscriptions are stored in SQLite. The endpoints live under `/api/beta/`
+because push is browser-specific; other client types would need their own
+notification mechanism.
+
+- **Global task visibility** — if any client is visible and viewing a task,
+  push for that task is suppressed on every endpoint; a task the user is not
+  looking at still pushes to all devices. `src/client-registry.ts` holds the
+  visibility records; how and when clients report them is in
+  [Client Architecture](client.md#visibility-sync--push-suppression).
+- **Subscription cleanup** — a `410 Gone` removes the endpoint immediately; any
+  other error repeated 5 times in a row (`MAX_CONSECUTIVE_FAILURES`) removes
+  it; a successful send resets the count.
+
+Activating push on a device and troubleshooting are in
+[Features](../features.md#push-notifications).
 
 ## Cross-cutting mechanisms
 
@@ -234,31 +269,3 @@ the rules.
 [Multi-host](multi-host.md) describes the direction: every entrypoint converges
 on one server interface, below which execution is dispatched to the local
 instance or another one.
-
-## Runtime notes
-
-Operational behavior of the runtime, moved here from Implementation Invariants.
-
-- **One bridge per started agent**: Each configured agent that has been started has one `AgentBridge` (one ACP subprocess), and that agent's tasks are multiplexed over it.
-- **Handshake protocol version is checked**: `bridge.start()` refuses an agent whose `InitializeResponse.protocolVersion` is not exactly `PROTOCOL_VERSION`, on the same path as a refused handshake — the child process is reaped, the bridge stays not-ready, and the error names the version the agent reported. *Why:* `protocolVersion` is the only signal that says which event stream we will be reading, so an unknown version means every later render and persisted row would be an interpretation we cannot defend; a failed start is diagnosable, a silent mis-read is not. Capability gates (below) describe drift *within* v1; this refuses a different protocol.
-- **Busy→idle unfinished-work recovery**: `TaskManager.syncBusy()` is the single normal state edge for recovery. When a task transitions from busy to idle, it schedules one microtask through its private `scheduleUnfinishedWorkRecovery()` helper if queued collaboration deliveries remain; the recovery drains deliveries and never submits a handoff reminder. Per-task deduplication prevents re-entry loops, and deletion/reset/rotation guards prevent work from being started during cleanup. The condition is intentionally independent of which busy source just ended, so new busy sources cannot silently strand work. **Reload exception:** `bridge.restart()` intentionally clears busy state directly while the ACP bridge is unavailable and cancels pending submissions; it does not submit recovery during restart, and queued work waits for the next explicit interaction/drain after the bridge is ready.
-- **Directed dispatch closure**: The directed-dispatch obligation mechanism — the one-account rule, the arming predicate, the record's identities and fact vocabulary, settlement, recovery, and notices — is documented in [`task-obligations.md`](../task-obligations.md). The runtime records and reports facts and never concludes for the accountable party; see [Task semantic authority](../implementation-invariants.md#task-semantic-authority) above.
-- **Agent reload**: `bridge.restart()` kills and re-spawns the agent subprocess without restarting the server. Cancels active prompts, flushes buffers, cleans up state. Tasks restore lazily via `ensureResumed()`. Triggered by `/reload` slash command or `POST /api/v1/bridge/reload`. Retries start 3× with exponential backoff.
-- **Task restore**: `bridge.loadSession()` restores ACP context after server restart, preferring advertised `session/resume` over advertised `session/load`. Capability gates come from `InitializeResponse.agentCapabilities`, with resume/retirement under `sessionCapabilities`; neither restore capability means a user-actionable failure, never a fresh session. During restore, `restoringTasks` Set suppresses duplicate transcript storage/broadcast.
-- **On-demand tasks**: No pre-warming. Tasks created via `+` / autocomplete, auto-resumed on page open.
-- **Model inheritance**: A newly created task inherits the current task's saved model when available; restored tasks keep their own persisted model. Mode is NOT inherited — new tasks always start in agent mode.
-- **Auto-resume**: Frontend resumes the most recent task with user-originated input on page open (no hash → fetch `/api/v1/tasks` → choose the first `hasUserInput` task); Root is the fallback when no task has user input.
-- **Event aggregation**: `message_chunk` / `thought_chunk` are buffered in memory, flushed to DB as full `assistant_message` / `thinking` on boundaries (tool_call, plan, prompt_done).
-- **Silent sessions**: The bridge's silent-session variant suppresses normal UI events for internally created sessions and for the temporary text capture behind compact summarization. Silence is an execution property, not a creation property: a session mapped to a real Task is never silent, so a persisted, user-visible Task keeps streaming and persisting from its first prompt. Suppressing a Task's *creation announcement* is a separate decision (`announce: false`, used by inbox consume); it must not also mute the execution. `promptForText` restores whatever silence a session already had instead of unmuting it when the capture ends. Automatic task-title generation was removed; titles come from creation (`+<title>`, `/rename`) or default to the task id.
-- **Multi-client broadcast**: Events broadcast to all SSE clients. Permission responses, user messages, bash output sync across devices. `broadcast()` supports sender exclusion.
-- **PWA**: Minimal service worker (no offline cache), manifest.json, installable to home screen.
-- **Web Push**: VAPID-based push notifications via `web-push`. Global task-level visibility suppression: if any client is actively viewing a task, push is suppressed for that task across all endpoints/devices. Subscriptions stored in SQLite. Notifiable events: `permission_request`, `prompt_done`, `bash_done`. Note: Web Push is browser-specific; other client types would need their own notification mechanism. These endpoints live under `/api/beta/` to reflect their experimental, browser-specific nature.
-  - **Global task visibility**: Each SSE client registers its push endpoint via `/api/beta/push/register-client` on connect and reports its current task via `POST /api/beta/clients/:clientId/visibility` with `{ visible: boolean, taskId?: string }`. `sendToAll()` checks globally whether **any** client is both visible and viewing the notification's task — if so, push is suppressed for **all** endpoints. This means: laptop viewing task A → phone also won't buzz for task A. But task B completing in the background still pushes to all devices.
-  - **Visibility reporting**: The frontend reports visibility on three occasions: (1) SSE connect, (2) `visibilitychange` event, (3) task switch (`task_created` handler). All three include the current `state.taskId`. A client with no task set does not suppress any push.
-  - **Subscription cleanup**: Stale endpoints are auto-removed in two ways: (1) 410 Gone responses are removed immediately; (2) any other error that occurs 5 consecutive times removes the subscription (`MAX_CONSECUTIVE_FAILURES` in `push-service.ts`). A single successful send resets the counter. This prevents expired tokens (e.g. WNS returning 403) from spamming logs indefinitely.
-  - **Troubleshooting lost notifications**: If a client stops receiving push notifications, run `/notify off` then `/notify on` to re-subscribe with a fresh endpoint. Old endpoints may have been auto-cleaned after repeated failures.
-  - **Activating push on a new device**:
-    1. **iOS**: Install PWA to home screen (Add to Home Screen) — Safari tabs don't support Push API.
-    2. Open the app and type `/notify on`. The browser will prompt for notification permission — allow it.
-    3. If notifications stop working after a server update or VAPID key change, re-install the PWA (delete from home screen, re-add), then `/notify on` again. Simply toggling `/notify off` → `/notify on` may not be enough if the Service Worker cache is stale.
-  - **iOS PWA quirks**: Apple's push service (`web.push.apple.com`) rejects VAPID subjects with `localhost` domains (`403 BadJwtToken`) — use a real-looking email like `mailto:noreply@example.com`. When changing `push.vapid_subject`, delete `data/vapid.json` to regenerate keys, then all clients must re-subscribe.

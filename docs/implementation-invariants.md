@@ -215,7 +215,7 @@ The operational form of that sentence:
 
 ## Architecture Notes
 
-Runtime behavior notes (agent bridges, restore, reload, event aggregation, broadcast, push) now live in [Server Architecture: Runtime notes](./architecture/server.md#runtime-notes).
+Runtime behavior notes now live with the part they describe: execution (handshake, reload, restore, silent sessions) and domain behavior (unfinished-work recovery, model inheritance) in [Server Architecture](./architecture/server.md), Web Push in [Server Architecture: Web Push](./architecture/server.md#web-push), auto-resume in [Client Architecture](./architecture/client.md#hash-routing), and push setup in [Features](./features.md#push-notifications).
 
 ## ACP config choices and model identity
 

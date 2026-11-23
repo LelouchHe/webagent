@@ -200,6 +200,29 @@ interfering with native double-tap text selection inside the textarea.
 - Terminal-style UI (monospace font, `>_` logo)
 - Preference saved to localStorage
 
+## Push notifications
+
+`/notify on` subscribes the current device; push is suppressed for a task while
+any of your clients is viewing it.
+
+- **Activating on a new device**
+  1. **iOS**: install the PWA to the home screen (Add to Home Screen) — Safari
+     tabs do not support the Push API.
+  2. Open the app and type `/notify on`, then allow the browser's notification
+     permission prompt.
+  3. If notifications stop after a server update or a VAPID key change,
+     re-install the PWA (remove it from the home screen and add it again), then
+     `/notify on` again. Toggling `/notify off` → `/notify on` may not be enough
+     while the service worker cache is stale.
+- **Lost notifications** — run `/notify off` then `/notify on` to re-subscribe
+  with a fresh endpoint; an old endpoint may have been removed after repeated
+  delivery failures.
+- **iOS and the VAPID subject** — Apple's push service rejects VAPID subjects
+  with a `localhost` domain (`403 BadJwtToken`); set `push.vapid_subject` to a
+  real-looking address such as `mailto:noreply@example.com`
+  ([Configuration](configuration.md)). After changing it, delete
+  `data/vapid.json` to regenerate the keys; every client must subscribe again.
+
 ## Other
 
 - PWA support (installable to home screen)

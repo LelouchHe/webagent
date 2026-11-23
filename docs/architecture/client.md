@@ -264,6 +264,12 @@ SSE liveness is the single authoritative "this client is reachable" signal: conn
 - `sendClose(sess-${sid}-done)` + permission cleanup fire **only** on that edge, not on every 15s heartbeat refresh — otherwise one focused client would hammer banner recall on every device every 15s
 - Body parsing distinguishes `taskId` omitted (preserve prior) from explicit `null` (clear) via `"taskId" in body` on raw JSON before Zod collapses both to `undefined`
 
+**When the client reports:** each SSE client registers its push endpoint with
+`POST /api/beta/push/register-client` on connect, and reports
+`{ visible, taskId? }` to `POST /api/beta/clients/:clientId/visibility` on SSE
+connect, on `visibilitychange`, and on task switch (the `task_created`
+handler). A client with no current task suppresses nothing.
+
 **Emergency rollback:** set `push.global_visibility_suppression = false` in the service config and reload — disables cross-device suppression without code change.
 
 #### What still can't be fixed
@@ -419,6 +425,10 @@ reload returns to the Task that was open. A URL with no hash is not Root: it
 means "resume the most recent Task" (below). The client keeps no Root identity
 of its own: the one place it needs to know which Task is Root (the hashless
 fallback) reads the task list's `isRoot` flag.
+
+**Auto-resume:** with no hash, the client fetches `/api/v1/tasks` and opens the
+first Task with user-originated input (`hasUserInput`); Root is the fallback
+when no Task has any.
 
 The client has one connection identity, the **connection epoch**
 (`state.connectionEpoch`, bumped by `beginConnectionEpoch` on every connect and
