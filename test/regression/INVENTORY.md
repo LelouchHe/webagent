@@ -9,13 +9,13 @@ routing seam for that caller.
 
 | Caller | Task-command seam | A0 disposition |
 |---|---|---|
-| `src/mcp/tools.ts` `task_list` | `McpTaskToolHost.list` -> family scan and live projection | `mcp-list`, `mcp-cold-family`; `mcp-authorization` for initializing capability |
-| `task_query` | `McpTaskToolHost.query` -> bounded history index | `mcp-list`, `mcp-lifecycle`, `mcp-authorization-tree`, `mcp-cold-family`; shape/range limits remain in `test/mcp-task-host.test.ts` |
-| `task_read` | `McpTaskToolHost.read` -> selected persisted rows | `mcp-list`, `mcp-authorization-tree`, `mcp-cold-family`; byte limits and structured rows remain in `test/mcp-task-host.test.ts` |
-| `task_create` | `McpTaskToolHost.create` -> manager creation, source event and broadcast | `mcp-lifecycle`, `mcp-collaboration`, `mcp-create-errors` |
-| `task_cancel` | `McpTaskToolHost.cancel` -> execution cancellation and audits | `mcp-lifecycle` |
-| `task_send` | `McpTaskToolHost.send` -> Store message/delivery creation and kick | `mcp-lifecycle`, `mcp-collaboration`, `mcp-authorization-tree` |
-| `task_update` | `McpTaskToolHost.update` -> settle typed update and side effects | `mcp-collaboration`, `mcp-update-status` |
+| `src/mcp/tools.ts` `task_list` | `TaskOps.list` in `src/host/types.ts` -> `src/host/local.ts` family scan and live projection | `mcp-list`, `mcp-cold-family`; `mcp-authorization` for initializing capability |
+| `task_query` | `TaskOps.query` -> bounded history index | `mcp-list`, `mcp-lifecycle`, `mcp-authorization-tree`, `mcp-cold-family`; shape/range limits remain in `test/mcp-task-host.test.ts` |
+| `task_read` | `TaskOps.read` -> selected persisted rows | `mcp-list`, `mcp-authorization-tree`, `mcp-cold-family`; byte limits and structured rows remain in `test/mcp-task-host.test.ts` |
+| `task_create` | `TaskOps.create` -> manager creation, source event and broadcast | `mcp-lifecycle`, `mcp-collaboration`, `mcp-create-errors` |
+| `task_cancel` | `TaskOps.cancel` -> execution cancellation and audits | `mcp-lifecycle` |
+| `task_send` | `TaskOps.send` -> Store message/delivery creation and kick | `mcp-lifecycle`, `mcp-collaboration`, `mcp-authorization-tree` |
+| `task_update` | `TaskOps.update` -> settle typed update and side effects | `mcp-collaboration`, `mcp-update-status` |
 | Tool registration and capability discovery in `src/mcp/server.ts` / `src/mcp/tools.ts` | frozen principal and initialization window; not a task command | `mcp-authorization`; detailed rotation/revocation guards in `test/mcp.test.ts` and `test/multi-agent-mcp.test.ts` |
 | `hasOpenAsSource` -> queued wake-source checks in `TaskManager.settleAgentUpdate` | internal synchronous seam, one caller, no public command | not a A0 assertion; SQL short-circuit and await-order tests remain in the existing task/obligation suites |
 

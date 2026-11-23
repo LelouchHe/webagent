@@ -132,6 +132,10 @@ Tech stack: Node.js + TypeScript (`--experimental-strip-types`), SQLite (`better
 
 Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single content-hashed JS file. See [Client Architecture](docs/client-architecture.md).
 
+Task command implementation is separated from MCP by the neutral `TaskOps`
+port. The local adapter exists today; remote ownership, routing, and transport
+are planned in [Multi-host task operations](docs/multi-host.md).
+
 ## Documentation
 
 | Document                                                | Contents                                                                       |
@@ -141,6 +145,7 @@ Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single cont
 | **[Task Manual](docs/task-manual.md)**                  | Principles for using Tasks effectively                                 |
 | **[Task Examples](docs/task-examples.md)**              | Short examples of direct work, delegation, handoff, and coordination     |
 | **[Task MCP Control Plane](docs/task-mcp.md)**          | Task tools, compact history, capability scope, and provider-schema compatibility |
+| **[Multi-host task operations](docs/multi-host.md)**    | `TaskOps` boundary, host ownership, local adapter, and planned remote routing |
 | **[Task Obligations](docs/task-obligations.md)**        | Directed-dispatch accounts: opening, statuses, reminders, and notices |
 | **[Task Lifecycle](docs/task-lifecycle.md)**            | Task states, the transitions between them, and what each one keeps or drops |
 | **[Vocabulary](docs/vocabulary.md)**                    | Task vs ACP session naming, and the storage, API, and UI vocabulary contract |

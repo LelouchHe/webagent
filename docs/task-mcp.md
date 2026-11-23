@@ -14,6 +14,7 @@ call records. Each fact has one home:
 | --- | --- |
 | What each tool and parameter does, as the agent sees it | tool and parameter descriptions in [`src/mcp/tools.ts`](../src/mcp/tools.ts) and [`src/mcp/task-create-description.ts`](../src/mcp/task-create-description.ts) |
 | The cross-tool model advertised at `initialize` | `MCP_SERVER_INSTRUCTIONS` in [`src/mcp/server.ts`](../src/mcp/server.ts) |
+| Host ownership and the implementation boundary behind task commands | [Multi-host task operations](multi-host.md) |
 | Accounts, reminders, notices, and settlement | [Task Obligations](task-obligations.md) |
 | How to use Tasks well | [Task Manual](task-manual.md) and [Task Examples](task-examples.md) |
 
