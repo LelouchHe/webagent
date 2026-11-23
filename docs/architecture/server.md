@@ -30,9 +30,13 @@ The entrypoint contracts live in [Client Architecture](client.md) and
  |  /api/v1 route handlers       |                      |
  +---------------+---------------+                      v
                  |                       TaskOps port (api/tasks.ts)
-                 |                       local adapter (host/local/adapter.ts)
+                 |                       Core create command (core/task-ops.ts)
                  |                                      |
-                 v                                      v
+                 |                                      v
+                 |                       one Host create port (host selection)
+                 |                              /               \
+                 v                             v                 v
+                                      LocalHost          RemoteHost
  +--------------------------------------------------------------------------+
  | Domain core                                                              |
  |  TaskManager (task-manager.ts): tasks, prompts, buffers, deliveries,     |
@@ -57,7 +61,11 @@ The entrypoint contracts live in [Client Architecture](client.md) and
 ```
 
 MCP, the general REST task-create entry, and REST task cancellation reach the
-domain core through the same `TaskOps` port instance. The other REST routes
+domain core through the same `TaskOps` port instance. Creation's shared Core
+command parses `agent@host` into `{ agentId, host? }`, authorizes the caller,
+then calls one injected Host create port exactly once. The Host implementation
+alone selects LocalHost or RemoteHost; neither HTTP nor MCP nor Core chooses a
+concrete adapter. The other REST routes
 still call the domain core directly. Shared commands retain each entrypoint's
 request, authorization, audit, and response presentation.
 
@@ -111,7 +119,8 @@ configuration. The tool contracts are in [Task MCP Control Plane](../task-mcp.md
 `src/server.ts` is the only place that assembles the server. It loads the
 configuration, constructs the Store, TaskManager, AgentRegistry, SseManager,
 PushService, ClientRegistry, AuthStore, TicketStore, and HostRegistry, wires the
-broadcast callbacks, creates the local `TaskOps` adapter, injects that same
+broadcast callbacks, creates the LocalHost `TaskOps`, the Host create selector, and the Core create
+command, injects that same routed
 instance into the HTTP router and MCP entry factory, builds the request
 handler, and creates one transport per agent with its event listener. It also
 owns graceful shutdown. `src/startup-checks.ts` and `src/preflight.ts` run
@@ -226,23 +235,30 @@ Activating push on a device and troubleshooting are in
 
 **A browser creates a task** (`/new`, `+`): `POST /api/v1/tasks` → the narrow
 HTTP entry parses its REST fields and calls `TaskOps.create()` with a user caller,
-explicit parent, and independent inheritance source → the local adapter
-chooses the target agent, resolves its transport, and calls
+explicit parent, and independent inheritance source → the Core command parses
+the target coordinate and calls the one Host create port → Host selects
+LocalHost → LocalHost chooses the target agent, resolves its transport, and calls
 `TaskManager.createTask()` → the task row, binding, and creation record are
 persisted → `task_created` is broadcast.
 
 **A browser or agent creates a remote task** (`agent@host`): both entrypoints
-call the same `TaskOps.create()` → the local adapter validates the initiating
-caller/parent and generation, then performs one request through the configured
-Host connection → the peer executes its existing `POST /api/v1/tasks` as a
-Host-scoped caller → a Task, empty execution binding, and external-parent link
-commit without ACP → the initiator records only its child link and preserves
-the REST or MCP response shape.
+call the same `TaskOps.create()` → the Core command validates the initiating
+caller/parent, produces `{agentId, host}`, and calls the one Host create port →
+Host selects RemoteHost → RemoteHost re-checks through the Core-supplied fence,
+performs one request through the configured Host connection, then submits the
+accepted result through the Core's narrow completion callback → the peer
+executes its existing `POST /api/v1/tasks` as a Host-scoped caller → a Task,
+empty execution binding, and external-parent link commit without ACP → the
+initiator records only its child link and preserves the REST or MCP response
+shape. The owner request carries a short agent id and therefore enters LocalHost
+without another remote dispatch.
 
 **An agent creates a task** (`task_create`): MCP → the same
-`TaskOps.create()` command with an agent caller → the local adapter checks the
-caller's generation, resolves the target agent and cwd relative to the caller
-→ `TaskManager.createTask()` → the caller's transcript records the creation.
+`TaskOps.create()` command with an agent caller → Core validates the
+generation-fenced principal, resolves the structured target, and calls the same
+Host create port → Host selects LocalHost for a short agent id → LocalHost
+resolves cwd relative to the caller and calls `TaskManager.createTask()` →
+the caller's transcript records the creation.
 
 **A user sends a prompt**: `POST /api/v1/tasks/:id/prompt` → the route reserves
 the task's submission slot, resolves its execution (resuming it if needed), and
@@ -269,14 +285,17 @@ through the transport that holds the pending request.
 ESLint's `no-restricted-imports` enforces direct static dependencies:
 `src/http/**` and `src/mcp/**` cannot import each other or select a host
 implementation; the entrypoints may use only the neutral
-`src/api/tasks.ts` host contract. MCP also cannot import Store or
+`src/api/tasks.ts` host contract. Core receives only the minimal
+`TaskCreateHost` port for create. MCP also cannot import Store or
 TaskManager. Core and host modules cannot import either entrypoint except in the
 assembly root, with `src/task-manager.ts` retaining only its two named legacy MCP
 imports. `src/http/routes.ts` has one line-level exception for the legacy host
 protocol version constant, to be removed when that fact moves to a neutral host
 contract. `src/api/tasks.ts` is neutral; `src/host/local/` and
 `src/host/remote/` cannot import each other; `src/host/remote/` cannot import
-Store or TaskManager. The rules cover nested paths and static value, type, and
+Store or TaskManager. `src/host/tasks.ts` is the Host selector; it depends only
+on the neutral contracts and injected Local/Remote create executors. The rules
+cover nested paths and static value, type, and
 re-export imports. See
 [Multi-host](multi-host.md#directories-and-dependencies) for the exact scope of
 the rules.

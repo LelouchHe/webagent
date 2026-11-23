@@ -29,16 +29,12 @@ import type {
   TaskReadResult,
   TaskCreateInput,
   TaskCreateResult,
-  RemoteTaskCreateTransport,
 } from "../../api/tasks.ts";
 import {
   TaskAgentIdTypeError,
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
   TaskCreateConfigError,
-  TaskHostNotConfiguredError,
-  TaskRemoteCreateConfigError,
-  TaskRemoteCreatePartialSuccessError,
 } from "../../api/tasks.ts";
 import {
   parseTaskHistoryData,
@@ -96,17 +92,6 @@ function relationOrder(relation: TaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2 }[relation];
 }
 
-function parseRemoteTarget(
-  agentId: unknown,
-): { agentId: string; host: string } | null {
-  if (typeof agentId !== "string" || !agentId.includes("@")) return null;
-  const at = agentId.indexOf("@");
-  if (at <= 0 || at !== agentId.lastIndexOf("@") || at === agentId.length - 1) {
-    throw new Error("invalid_remote_agent");
-  }
-  return { agentId: agentId.slice(0, at), host: agentId.slice(at + 1) };
-}
-
 export function createLocalTaskOps(deps: {
   store: Store;
   tasks: TaskManager;
@@ -117,7 +102,6 @@ export function createLocalTaskOps(deps: {
     event: Extract<AgentEvent, { type: "config_option_update" }>,
   ) => void;
   broadcastTaskCancelNotice?: (event: TaskCancelNotice) => void;
-  remoteTaskCreate?: RemoteTaskCreateTransport;
 }): TaskOps {
   const {
     store,
@@ -126,7 +110,6 @@ export function createLocalTaskOps(deps: {
     broadcastTaskCreated,
     broadcastConfigUpdate,
     broadcastTaskCancelNotice,
-    remoteTaskCreate,
   } = deps;
 
   /**
@@ -430,59 +413,6 @@ export function createLocalTaskOps(deps: {
       const requestedAgent = input.agentId;
       if (requestedAgent !== undefined && typeof requestedAgent !== "string") {
         throw new TaskAgentIdTypeError();
-      }
-      const remoteTarget = parseRemoteTarget(requestedAgent);
-      if (remoteTarget) {
-        if (!remoteTaskCreate) {
-          throw new TaskHostNotConfiguredError(remoteTarget.host);
-        }
-        if (input.model) {
-          throw new TaskRemoteCreateConfigError("model");
-        }
-        if (input.thinking) {
-          throw new TaskRemoteCreateConfigError("thinking");
-        }
-        const localParentId = agentCaller?.taskId ?? effectiveParentId;
-        if (!localParentId) throw new Error("parent_not_found");
-        const remote = await remoteTaskCreate.create(remoteTarget.host, {
-          agentId: remoteTarget.agentId,
-          parentId: localParentId,
-          ...(input.title === undefined ? {} : { title: input.title }),
-          ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
-          source: input.source ?? (agentCaller ? "agent" : "auto"),
-        });
-        try {
-          if (agentCaller) authorize(agentCaller);
-          else if (!store.getParentTask(localParentId)) {
-            throw new Error("parent_not_found");
-          }
-          store.recordRemoteTaskChild(
-            localParentId,
-            remote.taskId,
-            remoteTarget.host,
-          );
-        } catch (error) {
-          throw new TaskRemoteCreatePartialSuccessError(
-            remoteTarget.host,
-            remote.taskId,
-            { cause: error },
-          );
-        }
-        if (agentCaller) return { taskId: remote.taskId };
-        if (!remote.activation) {
-          throw new TaskRemoteCreatePartialSuccessError(
-            remoteTarget.host,
-            remote.taskId,
-          );
-        }
-        return {
-          taskId: remote.taskId,
-          activation: {
-            ...remote.activation,
-            parentId: localParentId,
-            parentAgentId: store.getBindingAgent(localParentId) ?? null,
-          },
-        };
       }
       let targetAgentId: string;
       let targetBridge: DeliveryBridge;

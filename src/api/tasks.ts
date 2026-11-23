@@ -203,6 +203,25 @@ export interface RemoteTaskCreateInput {
   source: string;
 }
 
+export interface TaskCreateTarget {
+  agentId?: string;
+  host?: string;
+}
+
+export interface TaskCreateHostCommand {
+  caller: TaskCreateCaller;
+  input: TaskCreateInput;
+  target: TaskCreateTarget;
+  parentId?: string;
+  assertCaller: () => void;
+  assertRemoteCaller: () => void;
+  completeRemote: (result: TaskCreateResult, host: string) => TaskCreateResult;
+}
+
+export interface TaskCreateHost {
+  create(command: TaskCreateHostCommand): Promise<TaskCreateResult>;
+}
+
 export interface RemoteTaskCreateTransport {
   create(host: string, input: RemoteTaskCreateInput): Promise<TaskCreateResult>;
 }

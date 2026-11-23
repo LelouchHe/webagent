@@ -33,6 +33,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - only the executor owns the Task row; both instances persist their one-sided relation after restart
   - executor bindings remain empty (`no-execution:`) and no remote ACP process starts
 - `test/mcp-task-host.test.ts` and `test/host-connection.test.ts`
+  - Core emits one structured `{agentId, host?}` target through one injected `TaskCreateHost` call
+  - Host selector alone chooses LocalHost or RemoteHost; an owner Host request cannot redispatch on `@host`
   - one dispatch/no automatic retry, exact short-agent/parent payload, generation re-check, unknown outcome, local partial-success, and pre-dispatch config rejection
 
 ## Unit / Integration Scenarios

@@ -262,6 +262,25 @@ export default tseslint.config(
   },
 
   {
+    files: ["src/core/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            noEntrypointDependency,
+            {
+              group: ["**/host/**"],
+              message:
+                "Core code must use the neutral Host port from api/**, not concrete Host implementations.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
     files: ["src/host/remote/**/*.ts"],
     rules: {
       "no-restricted-imports": [
