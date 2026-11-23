@@ -1,6 +1,6 @@
 # WebAgent Client Architecture
 
-WebAgent is a terminal-style web UI for ACP-compatible agents. This document describes the frontend architecture: module structure, data flow, how the client uses the [Server API](api.md), and key design patterns.
+WebAgent is a terminal-style web UI for ACP-compatible agents. This document describes the client entry: how the browser client reaches the server through the HTTP API (REST + SSE) — module structure, data flow, how the client uses the [Server API](../api.md), and key design patterns. What the server does with those requests is in [Server Architecture](server.md); how the parts fit together is in [Architecture](README.md).
 
 ---
 
@@ -92,7 +92,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`event-interpreter.ts`** | Pure data transformation for ACP events — zero DOM dependency                                       | `interpretToolCall()`, `classifyPermissionOption()`, `parseDiff()`, etc.                        |
 | **`constants.ts`**         | Display constants (tool icons, plan status icons)                                                   | `TOOL_ICONS`, `PLAN_STATUS_ICONS`                                                               |
 | **`input.ts`**             | User input: send messages, cancel, keyboard shortcuts, mode cycling                                 | —                                                                                               |
-| **`commands.ts`**          | Slash command parsing, menu UI, `/switch`, `/new`, `/exit`, `/rename`, `/model`, `/mode`, `/notify` | `handleSlashCommand()`, `hideSlashMenu()`                                                       |
+| **`commands.ts`**          | Slash menu UI: open, update, keyboard handling; the command tree itself lives in `slash-commands.ts` | `updateSlashMenu()`, `hideSlashMenu()`, `handleSlashMenuKey()`                                  |
 | **`attachments.ts`**       | Attach (click/drag/paste) for images and files, preview, upload to server                          | `renderAttachPreview()`                                                                         |
 | **`render.ts`**            | DOM helpers: add messages, streaming markdown render, theme, scroll, diff HTML generation           | `addMessage()`, `addSystem()`, `scrollToBottom()`, `updateMarkdownStream()`, `resetMarkdownStream()` |
 | **`api.ts`**               | REST client — typed `fetch` wrappers for every server endpoint                                      | `createTask()`, `sendMessage()`, `cancelTask()`, etc.                                     |
@@ -100,6 +100,18 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | **`task-topology.ts`**     | The current task's parent reference, the list-arrival flag, and the pickers' display cache | `loadTaskList()`, `taskListSource`, `setCurrentTask()`, `noteTaskArchived()`, `parentOf()`, `isParentResolved()`, `entryAgentLabel()` |
 | **`create-command.ts`**    | Shared `+` / `/new` / `/clear` helpers: coordinate parsing, cwd resolution, preview, failure rescue   | `parseCoordinate()`, `resolveCreateCwd()`, `agentRescueCommand()`                                |
 | **`agent-hint.ts`**        | The menus' one-line agent hint (non-selectable): configured agents and the coordinate syntax once    | `agentHintRow()`                                                                                 |
+
+The remaining modules, by area:
+
+| Area | Modules |
+| --- | --- |
+| Slash menu | `slash-tree.ts` (`CmdNode` type), `slash-commands.ts` (the command tree), `slash-render.ts` (item template), `slash-exec.ts` (Enter-key dispatch) — see [Slash Menu](../slash-menu.md) |
+| Task commands | `input-command.ts` (`+` / `@` markers), `task-command.ts` (`+` create and `@` message parsing and execution), `cancel-command.ts`, `task-actions.ts` (exit, archive, unarchive, compact, replace), `task-navigation.ts` (switching, notification navigation), `task-ref-marks.ts` (marks on rows that reference other tasks) |
+| Input area | `input-actions.ts` (attach / send button slots), `input-focus-recovery.ts` (iOS keyboard focus recovery) |
+| Rendering | `render-event.ts` (shared content-event renderer, also used by the share viewer), `markdown-stream.ts` (streaming markdown pipeline), `highlight.ts` (lazy highlight.js), `math.ts` (Temml), `structured-diff.ts`, `plan-view.ts`, `plan-panel.ts`, `orphan-tool-updates.ts`, `stored-image.ts`, `markdown-image-references.ts`, `lightbox.ts`, `relative-time.ts`, `path-display.ts` |
+| Files | `file-browser.ts` (`/view` path semantics), `view-command.ts` (`/view` menu), `file-viewer.ts` (read-only viewer) |
+| Shell | `auth-fetch.ts` (Bearer injection, 401 handling), `login.ts` / `login-core.ts`, `theme.ts`, `log.ts` (in-page logger), `local-reset.ts`, `inbox-indicator.ts`, `live-source.ts` |
+| Share viewer | `share/viewer.ts`, `share/commands.ts`, `share/attachment-rewriter.ts` — see [Share Links](../share.md) |
 
 **Dependency graph** (arrows = imports):
 
@@ -167,7 +179,7 @@ order is kept on purpose: history and detail are read a round trip after the
 stream opens, by which time it has registered in practice, so events persisted
 around registration reach the client one way or the other. That is relied on,
 not enforced. See the boot waterfall entry in
-[known-issues](known-issues.md).
+[known-issues](../known-issues.md).
 
 **SSE message handling:**
 
@@ -251,6 +263,12 @@ SSE liveness is the single authoritative "this client is reachable" signal: conn
 - `ClientRegistry.setVisibility` returns `{ becameVisibleFor }`, non-null **only** on the edge (invisible OR different task → visible + task=X). PushService observes that signal (via the `/visibility` handler) to fire close-banner side effects.
 - `sendClose(sess-${sid}-done)` + permission cleanup fire **only** on that edge, not on every 15s heartbeat refresh — otherwise one focused client would hammer banner recall on every device every 15s
 - Body parsing distinguishes `taskId` omitted (preserve prior) from explicit `null` (clear) via `"taskId" in body` on raw JSON before Zod collapses both to `undefined`
+
+**When the client reports:** each SSE client registers its push endpoint with
+`POST /api/beta/push/register-client` on connect, and reports
+`{ visible, taskId? }` to `POST /api/beta/clients/:clientId/visibility` on SSE
+connect, on `visibilitychange`, and on task switch (the `task_created`
+handler). A client with no current task suppresses nothing.
 
 **Emergency rollback:** set `push.global_visibility_suppression = false` in the service config and reload — disables cross-device suppression without code change.
 
@@ -407,6 +425,10 @@ reload returns to the Task that was open. A URL with no hash is not Root: it
 means "resume the most recent Task" (below). The client keeps no Root identity
 of its own: the one place it needs to know which Task is Root (the hashless
 fallback) reads the task list's `isRoot` flag.
+
+**Auto-resume:** with no hash, the client fetches `/api/v1/tasks` and opens the
+first Task with user-originated input (`hasUserInput`); Root is the fallback
+when no Task has any.
 
 The client has one connection identity, the **connection epoch**
 (`state.connectionEpoch`, bumped by `beginConnectionEpoch` on every connect and
@@ -596,7 +618,7 @@ current binding changes while it is open) uses the new baseline.
 ### Task-List Display Cache
 
 The `@` picker and `/switch` show the shared list through `taskListSource`, a
-`LiveSource` (see [Slash Menu](slash-menu.md#live-data)). Its value is the last
+`LiveSource` (see [Slash Menu](../slash-menu.md#live-data)). Its value is the last
 list a read resolved with; starting a watch refreshes it with `loadTaskList()`,
 which issues a read or joins one already in flight. An already-visited menu
 therefore paints at once and repaints when the fresh result lands, and the
@@ -896,7 +918,7 @@ updateMarkdownStream(state.currentAssistantEl, state.currentAssistantText);
 
 `updateMarkdownStream()` (in `markdown-stream.ts`) reuses cached tokens for the unchanged prefix, hashes each block by its raw text to skip parse/sanitize/DOM mutation for unchanged blocks, and uses a single-token fast path for the trailing miss block. A `requestAnimationFrame` coalescer batches bursts of chunks into one render per frame.
 
-See [Streaming Render Performance](performance.md) for the full pipeline (rAF coalescing → incremental lex → per-block memo → `marked.parser` fast path), correctness invariants, observability hooks, and engine-specific notes (iOS Safari).
+See [Streaming Render Performance](../performance.md) for the full pipeline (rAF coalescing → incremental lex → per-block memo → `marked.parser` fast path), correctness invariants, observability hooks, and engine-specific notes (iOS Safari).
 
 When a turn boundary occurs (`tool_call`, `plan`, `prompt_done`), the streaming element is finalized via `finishAssistant()`, which synchronously flushes any pending rAF.
 

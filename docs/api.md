@@ -911,7 +911,6 @@ row:
 A failed delivery carries `failureReason` instead of `deliveredAt`. The event is
 best effort; a reload reads the delivery row.
 
-````
 
 The `streaming` flags indicate whether unflushed buffers were present when the request was made. If `true`, the corresponding buffer was flushed into the event list and the frontend should keep the last element open for continued live streaming (to avoid duplicate thinking/assistant blocks on reconnect).
 
@@ -939,7 +938,7 @@ Resolve a pending permission request (approve or deny).
 
 ```json
 { "optionId": "allow_once" }
-````
+```
 
 **Request body (deny):**
 
@@ -1125,8 +1124,8 @@ Read the hub's in-memory owner-connection states. Every authenticated scope,
 including `read`, may call this endpoint. An owner with no `[hosts.<name>]`
 configuration returns an empty array. This endpoint is for operational
 diagnostics and regression tests that need to observe connection state from
-outside the process. The browser UI will consume it starting with the D1
-multi-host gateway work.
+outside the process. The browser UI does not consume it
+yet.
 
 **Response** `200`:
 
@@ -1709,7 +1708,7 @@ Then all subsequent events are streamed as they occur:
 data: {"type":"message_chunk","taskId":"abc-123","text":"Hello"}
 ```
 
-**Heartbeat:** A named `event: heartbeat\ndata: {}` frame is sent every 15 seconds (and once immediately on connect) to prevent proxy/QUIC idle timeouts. Frontend also listens to this event to drive per-task visibility refresh — see [Visibility Sync & Push Suppression](client-architecture.md#visibility-sync--push-suppression).
+**Heartbeat:** A named `event: heartbeat\ndata: {}` frame is sent every 15 seconds (and once immediately on connect) to prevent proxy/QUIC idle timeouts. Frontend also listens to this event to drive per-task visibility refresh — see [Visibility Sync & Push Suppression](architecture/client.md#visibility-sync--push-suppression).
 
 ---
 
@@ -2019,7 +2018,7 @@ Associate an SSE client with a push subscription endpoint. Used for per-task vis
 
 #### `POST /api/beta/clients/:clientId/visibility`
 
-Report client visibility state (foreground/background) and which task the client is viewing. Used by the push notification service for **global, task-scoped** suppression — if any client is viewing task X, push for task X is suppressed on **all** endpoints across all devices. See [Visibility Sync & Push Suppression](client-architecture.md#visibility-sync--push-suppression) for the full architecture (60s TTL, named-event heartbeat, edge-triggered banner recall).
+Report client visibility state (foreground/background) and which task the client is viewing. Used by the push notification service for **global, task-scoped** suppression — if any client is viewing task X, push for task X is suppressed on **all** endpoints across all devices. See [Visibility Sync & Push Suppression](architecture/client.md#visibility-sync--push-suppression) for the full architecture (60s TTL, named-event heartbeat, edge-triggered banner recall).
 
 **Request body:**
 
@@ -2181,7 +2180,7 @@ The `SseManager` class (`src/sse-manager.ts`) manages all SSE connections:
 - **Global clients** (`/api/v1/events/stream`): `taskId` is `undefined`, receives all events
 - **Per-task clients** (`/api/v1/tasks/:id/events/stream`): only receives events for that task
 - **Broadcast logic**: iterates all clients; skips per-task clients whose `taskId` doesn't match
-- **Heartbeat**: Named `event: heartbeat\ndata: {}\n\n` every 15s (plus once immediately on connect). Prevents Cloudflare HTTP/3 (QUIC) and other proxies from closing idle connections. The frontend also listens via `EventSource.addEventListener("heartbeat", ...)` to drive per-task visibility refresh (see [Visibility Sync & Push Suppression](client-architecture.md#visibility-sync--push-suppression)). Timer uses `.unref()` to not block Node.js process exit.
+- **Heartbeat**: Named `event: heartbeat\ndata: {}\n\n` every 15s (plus once immediately on connect). Prevents Cloudflare HTTP/3 (QUIC) and other proxies from closing idle connections. The frontend also listens via `EventSource.addEventListener("heartbeat", ...)` to drive per-task visibility refresh (see [Visibility Sync & Push Suppression](architecture/client.md#visibility-sync--push-suppression)). Timer uses `.unref()` to not block Node.js process exit.
 - **Auto-reconnect with replay**: Per-task streams support `Last-Event-ID` header. On reconnect, the server replays all events after the given seq from the database.
 - **Cleanup**: Clients are removed on `res.close` event (browser disconnect, network drop)
 

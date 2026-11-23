@@ -6,6 +6,10 @@ session. The name is a client-visible label (some clients namespace tools as
 lets an agent inspect and coordinate with tasks in its local task family without
 granting access to unrelated tasks.
 
+This document is the reference for the task tools. Where MCP sits in the
+server as a whole — the agent entry and what lies behind it — is in
+[MCP in the architecture](architecture/mcp.md).
+
 This document is the reference for what the code does not say to the agent:
 authentication, transport, result shapes, limits, errors, and the rows each
 call records. Each fact has one home:
@@ -14,7 +18,7 @@ call records. Each fact has one home:
 | --- | --- |
 | What each tool and parameter does, as the agent sees it | tool and parameter descriptions in [`src/mcp/tools.ts`](../src/mcp/tools.ts) and [`src/mcp/task-create-description.ts`](../src/mcp/task-create-description.ts) |
 | The cross-tool model advertised at `initialize` | `MCP_SERVER_INSTRUCTIONS` in [`src/mcp/server.ts`](../src/mcp/server.ts) |
-| Host ownership and the implementation boundary behind task commands | [Multi-host task operations](multi-host.md) |
+| Host ownership and the implementation boundary behind task commands | [Multi-host task operations](architecture/multi-host.md) |
 | Accounts, reminders, notices, and settlement | [Task Obligations](task-obligations.md) |
 | How to use Tasks well | [Task Manual](task-manual.md) and [Task Examples](task-examples.md) |
 

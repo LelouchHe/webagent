@@ -114,10 +114,10 @@ Data (SQLite database, uploaded files) lives in `./data/` by default. See [Confi
 
 ```
 Browser ←── REST + SSE ──→ Server ←── ACP ──→ Agent CLI
-  (thin client)            (Node.js)           (copilot/claude/gemini)
+  (thin client)            (Node.js) ←── MCP ── (copilot/claude/gemini)
 ```
 
-The frontend is a standard browser client that talks to the server over REST + SSE. The API is the boundary — anyone can build their own client.
+The frontend is a standard browser client that talks to the server over REST + SSE. The API is the boundary — anyone can build their own client. Agents run as ACP subprocesses and reach back into the server through the injected MCP task tools.
 
 | Module               | Role                                                        |
 | -------------------- | ----------------------------------------------------------- |
@@ -127,25 +127,30 @@ The frontend is a standard browser client that talks to the server over REST + S
 | `bridge.ts`          | ACP bridge — agent subprocess lifecycle                     |
 | `store.ts`           | SQLite persistence (WAL mode)                               |
 | `daemon.ts`          | Background service with crash recovery                      |
+| `mcp/`               | MCP task tools injected into agent sessions                 |
+| `host/`              | `TaskOps` port, local adapter, and host connections         |
 
 Tech stack: Node.js + TypeScript (`--experimental-strip-types`), SQLite (`better-sqlite3`), Zod validation, esbuild bundling.
 
-Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single content-hashed JS file. See [Client Architecture](docs/client-architecture.md).
+Frontend source lives in `public/js/*.ts`, bundled by esbuild into a single content-hashed JS file.
 
-Task command implementation is separated from MCP by the neutral `TaskOps`
-port. The local adapter exists today; remote ownership, routing, and transport
-are planned in [Multi-host task operations](docs/multi-host.md).
+Clients reach the server through the HTTP API and agents through MCP tools; the
+server behind both is neutral, and multi-host execution is planned below it. See
+[Architecture](docs/architecture/README.md) for how the client entry, agent
+entry, server, and multi-host parts fit together.
 
 ## Documentation
 
 | Document                                                | Contents                                                                       |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| **[Architecture](docs/architecture/README.md)**         | Overview: client entry (REST + SSE), agent entry (MCP), neutral server, multi-host |
+| **[Server Architecture](docs/architecture/server.md)**  | Entrypoint handling, domain core, execution, events and egress, request paths |
 | **[Features](docs/features.md)**                        | Chat, attachments, bash, tasks, slash commands, keyboard shortcuts, themes  |
 | **[Task UX](docs/task-ux.md)**                          | `+` creation, `@` paths, autocomplete, navigation, and collaboration       |
 | **[Task Manual](docs/task-manual.md)**                  | Principles for using Tasks effectively                                 |
 | **[Task Examples](docs/task-examples.md)**              | Short examples of direct work, delegation, handoff, and coordination     |
 | **[Task MCP Control Plane](docs/task-mcp.md)**          | Task tools, compact history, capability scope, and provider-schema compatibility |
-| **[Multi-host task operations](docs/multi-host.md)**    | `TaskOps` boundary, host ownership, local adapter, and planned remote routing |
+| **[Multi-host](docs/architecture/multi-host.md)**      | Host layer scope, `TaskOps` port, connections, and planned local / remote execution |
 | **[Task Obligations](docs/task-obligations.md)**        | Directed-dispatch accounts: opening, statuses, reminders, and notices |
 | **[Task Lifecycle](docs/task-lifecycle.md)**            | Task states, the transitions between them, and what each one keeps or drops |
 | **[Vocabulary](docs/vocabulary.md)**                    | Task vs ACP session naming, and the storage, API, and UI vocabulary contract |
@@ -155,7 +160,7 @@ are planned in [Multi-host task operations](docs/multi-host.md).
 | **[Attachments](docs/uploads.md)**                      | Upload pipeline, on-disk layout, lifecycle, permission auto-approve, observability |
 | **[Agent image rendering](docs/image-rendering.md)**    | Stored agent/tool/Copilot image ingestion, placement, replay, and security |
 | **[ACP Integration](docs/acp.md)**                      | Client extensions, protocol scope, current limits                              |
-| **[Client Architecture](docs/client-architecture.md)**  | Frontend modules, data flow, conventions                                       |
+| **[Client Architecture](docs/architecture/client.md)**  | Browser client: modules, connection lifecycle, data flow, conventions          |
 | **[Streaming Render Performance](docs/performance.md)** | rAF coalescing, incremental lex, per-block memo, single-token fast path        |
 | **[Slash Menu](docs/slash-menu.md)**                    | Walker pipeline, `CmdNode` tree, Tab/Enter/Click contract, how to add commands |
 | **[Messages / Inbox](docs/messages.md)**                | `/inbox` slash command, POST ingress, bound vs unbound messages                |

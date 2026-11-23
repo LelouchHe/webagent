@@ -9,23 +9,25 @@ local store.
 
 ## Goals and non-goals
 
-The goal is to separate Task commands from the question of which WebAgent
-instance owns a Task. MCP and future clients can address a Task by id, then
-hand the command to a host layer that resolves the owner and selects the local
-or remote execution path.
+The goal is that clients and agents do not care where a Task runs. The HTTP
+API (for the browser and other clients) and the MCP tools (for agents) keep
+their shapes; with hosts configured, a remote Task is addressed and operated
+exactly like a local one. Inside the server, every entrypoint converges on one
+server interface (see [Architecture](README.md)); below it, a host layer selects
+local or remote execution.
 
-This document describes the architecture and the connection layer that exists
-today. It does not add remote Task resolution, Task routing, shared storage,
-cross-instance idempotency, or a new public MCP/REST Task shape. Browser and REST
-operations that need owner-local execution facts remain local.
+This document describes that direction and the parts that exist today: the
+`TaskOps` port and the connection layer. Remote Task resolution, routing,
+cross-instance idempotency, and delivery are not implemented yet. Instances
+never share storage.
 
 ## Architecture
 
 ```text
 Entry points
   MCP [now]: capability authenticates the caller; principal frozen
-  Browser REST [plan: via a gateway]: bearer token scope, already
-    enforced today on the local routes
+  Browser REST [plan: through the same port]: bearer token scope,
+    already enforced today on the local routes
                          |
                          v
                 TaskOps port [now]
@@ -52,6 +54,25 @@ Today MCP calls the local adapter directly through `TaskOps`; there is no
 directly. `src/host/task-ops.ts` and `src/host/local/adapter.ts` exist now.
 `src/host/remote/` currently contains the cross-instance connection only; the
 resolver, remote Task adapter, Task router, and delivery transport are planned.
+
+## Scope of the host layer (planned)
+
+The host layer is an execution library: it hides where execution happens. A
+capability belongs to it when its result depends on which instance executes
+it and it is extended to remote instances:
+
+| Capability | Why it depends on location |
+| --- | --- |
+| Task operations: create, list, history, cancel, messages and updates, prompt, configuration, bash, attachments, permissions, events | They run where the Task lives |
+| Agent catalog: configured agents, models, commands | Each instance configures its own agents |
+| Recent paths and file browsing | They describe that instance's file system |
+
+Capabilities that do not depend on location stay in the server: tokens, SSE
+tickets, push and client visibility, the inbox, shares, host status. A
+cross-instance call is an ordinary operation whose other side is on another
+instance: it enters the peer through the peer's existing entrypoints with a
+host credential, and the peer runs it as an ordinary local operation. There is
+no separate host protocol.
 
 ## Connections
 
@@ -87,8 +108,8 @@ The public version endpoint advertises `hostProtocol`; the authenticated
 verify endpoint reports the caller's token name, scope, and SHA-256 `hash`.
 `GET /api/v1/hosts` reports the hub's connection state for diagnostics and
 regression observation. The browser UI does not consume it yet. See
-[the API reference](api.md#hosts) for exact response shapes and
-[configuration](configuration.md#multi-host-connection) for token commands.
+[the API reference](../api.md#hosts) for exact response shapes and
+[configuration](../configuration.md#multi-host-connection) for token commands.
 
 ## Directories and dependencies
 
@@ -170,7 +191,7 @@ semantics there.
 
 The external regression suite records REST, MCP, SSE, ACP, and SQL-visible
 behavior in golden fixtures. Its operation and workflow are documented in
-[`test/regression/README.md`](../test/regression/README.md). Multi-host
+[`test/regression/README.md`](../../test/regression/README.md). Multi-host
 changes must keep existing single-instance behavior unchanged, so they pass
 that suite without changing an existing golden. New cross-instance behavior
 adds its own scenarios; an intended change to local behavior shows up as a
