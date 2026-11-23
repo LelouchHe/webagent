@@ -404,6 +404,21 @@ describe("MCP Task tool host", () => {
     );
   });
 
+  it("rejects an empty parent before dispatching a user's remote create", async () => {
+    const host = createRoutedTaskOps({
+      async create() {
+        assert.fail("invalid parent must not reach the remote host");
+      },
+    });
+    await assert.rejects(
+      host.create(
+        { kind: "user" },
+        { agentId: "test-agent@mini", parentId: "" },
+      ),
+      { message: "parent_not_found" },
+    );
+  });
+
   it("dispatches agent@host once without leaking local inheritance data", async () => {
     const calls: unknown[] = [];
     const host = createRoutedTaskOps({

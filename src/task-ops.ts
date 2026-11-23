@@ -105,7 +105,9 @@ export function createTaskOpsCore(deps: {
         assertRemoteCaller: () => {
           if (
             caller.kind === "user" &&
-            (!localParentId || !store.getParentTask(localParentId))
+            (typeof localParentId !== "string" ||
+              !localParentId.trim() ||
+              !store.getParentTask(localParentId))
           ) {
             throw new Error("parent_not_found");
           }

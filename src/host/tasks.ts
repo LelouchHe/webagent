@@ -29,9 +29,10 @@ export function createTaskCreateHost(deps: {
       }
       const host = command.target.host;
       const agentId = command.target.agentId;
-      if (agentId === undefined || !command.parentId) {
+      if (agentId === undefined) {
         throw new Error("invalid_remote_create");
       }
+      if (!command.parentId) throw new Error("parent_not_found");
       command.assertRemoteCaller();
       const remote = await deps.remote.create(host, {
         agentId,
