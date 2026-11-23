@@ -811,9 +811,15 @@ function normalize(value: unknown, instances: Map<string, Instance>): unknown {
 }
 
 function readLines(path: string): Json[] {
-  const raw = readFileSync(path, "utf8").trim();
-  if (!raw) return [];
-  return raw.split("\n").map((line) => JSON.parse(line) as Json);
+  // Other processes append to these logs while the runner reads them, so the
+  // last line may still be partial. Only newline-terminated lines are complete;
+  // a partial tail is read again on the next poll.
+  const raw = readFileSync(path, "utf8");
+  const complete = raw.slice(0, raw.lastIndexOf("\n") + 1);
+  return complete
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as Json);
 }
 
 async function stopInstance(instance: Instance): Promise<void> {
