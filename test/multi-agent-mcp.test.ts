@@ -8,8 +8,8 @@ import { tmpdir } from "node:os";
 
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
-import type { McpCallerPrincipal, McpTaskToolHost } from "../src/mcp/tools.ts";
-import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
+import type { TaskCaller, TaskOps } from "../src/host/task-ops.ts";
+import { createLocalTaskOps } from "../src/host/local.ts";
 import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { StaticAgentEnvironment } from "../src/agent-registry.ts";
@@ -19,7 +19,7 @@ import { Store } from "../src/store.ts";
 /**
  * The MCP control plane is where a capability's authority has to be real.
  *
- * Every test here assembles the **production host** (`createMcpTaskToolHost`)
+ * Every test here assembles the **production host** (`createLocalTaskOps`)
  * and the production endpoint over a real Store, generation ledger, and task
  * runtime — no stand-in that re-implements the check being tested. A stand-in
  * would prove nothing about the wiring, which is exactly how an unwired
@@ -161,7 +161,7 @@ describe("mcp authority over the production host", () => {
   let authority: ExecutionAuthority;
   let tasks: TaskManager;
   let endpoint: Endpoint;
-  let host: McpTaskToolHost;
+  let host: TaskOps;
   let bridge: DeliveryBridge;
   let newSessionHook:
     ((options?: { mcpServers?: McpEntry[] }) => Promise<void>) | undefined;
@@ -185,7 +185,7 @@ describe("mcp authority over the production host", () => {
       agents: new StaticAgentEnvironment("agent-a"),
     });
     tasks.attachExecutionBridge(bridge);
-    host = createMcpTaskToolHost({ store, tasks });
+    host = createLocalTaskOps({ store, tasks });
     endpoint = await startEndpoint({
       capabilities,
       isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
@@ -201,7 +201,7 @@ describe("mcp authority over the production host", () => {
   });
 
   /** The principal the endpoint builds for one token. */
-  function principalFor(token: string): McpCallerPrincipal {
+  function principalFor(token: string): TaskCaller {
     const grant = capabilities.resolve(token);
     assert.ok(grant, "the token must resolve");
     return Object.freeze({

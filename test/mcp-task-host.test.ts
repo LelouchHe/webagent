@@ -7,10 +7,10 @@ import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import {
-  createMcpTaskToolHost,
-  type McpTaskCancelNotice,
-} from "../src/mcp/task-host.ts";
-import { projectTaskHistoryRow } from "../src/mcp/task-history.ts";
+  createLocalTaskOps,
+  type TaskCancelNotice,
+} from "../src/host/local.ts";
+import { projectTaskHistoryRow } from "../src/host/task-history.ts";
 import type { AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
 
@@ -92,7 +92,7 @@ describe("MCP Task tool host", () => {
 
   it("lists an archived tree from one of its tasks", () => {
     store.archiveTask("alpha");
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     const listed = host.list(principal("alpha"));
     // Self must survive: a task inside an archived tree still needs its own
     // row, and its local child remains reachable. Root and beta are outside
@@ -122,7 +122,7 @@ describe("MCP Task tool host", () => {
         .prepare("UPDATE events SET created_at = ? WHERE task_id = ?")
         .run(stamp, id);
     }
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     const listed = host.list(principal());
     assert.deepEqual(
       listed.map(({ id, relation }) => ({ id, relation })),
@@ -208,7 +208,7 @@ describe("MCP Task tool host", () => {
       },
       { from_ref: "agent" },
     );
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     const all = host.query(principal(), {});
     assert.deepEqual(
       all.rows.map((row) => row.seq),
@@ -232,7 +232,7 @@ describe("MCP Task tool host", () => {
         { from_ref: "user" },
       );
     }
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     assert.deepEqual(
       host.query(principal(), { range: [-20, -1] }).rows.map((r) => r.seq),
       Array.from({ length: 20 }, (_, i) => i + 11),
@@ -266,7 +266,7 @@ describe("MCP Task tool host", () => {
       return originalGetEvents(taskId, options);
     };
     try {
-      const host = createMcpTaskToolHost({
+      const host = createLocalTaskOps({
         store,
         tasks,
       });
@@ -309,7 +309,7 @@ describe("MCP Task tool host", () => {
       { entries: [{ content: long }] },
       { from_ref: "agent" },
     );
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     const rows = host.query(principal(), {}).rows;
     assert.equal(Array.from(rows[0].text ?? "").length, 200);
     assert.match(rows[0].text ?? "", /…$/);
@@ -335,7 +335,7 @@ describe("MCP Task tool host", () => {
     const event = store.saveEvent("alpha", "thinking", original, {
       from_ref: "agent",
     });
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     const result = host.read(principal(), {
       taskId: "alpha",
       seqs: [event.seq, event.seq],
@@ -360,7 +360,7 @@ describe("MCP Task tool host", () => {
         from_ref: "agent",
       },
     );
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     const explicit = host.read(principal(), {
       taskId: "alpha",
       seqs: [event.seq],
@@ -371,7 +371,7 @@ describe("MCP Task tool host", () => {
   });
 
   it("rejects unknown and out-of-family targets identically", () => {
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     assert.throws(
       () => host.query(principal(), { taskId: "missing" }),
       /target_not_allowed/,
@@ -413,7 +413,7 @@ describe("MCP Task tool host", () => {
       { text: "x" },
       { from_ref: "user" },
     );
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     assert.throws(
       () => host.read(principal(), { taskId: "alpha", seqs: [1, 99] }),
       /unknown_seq/,
@@ -425,7 +425,7 @@ describe("MCP Task tool host", () => {
     const event = store.saveEvent("alpha", "assistant_message", payload, {
       from_ref: "agent",
     });
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     const result = host.read(principal(), {
       taskId: "alpha",
       seqs: [event.seq],
@@ -448,7 +448,7 @@ describe("MCP Task tool host", () => {
       { text: "small" },
       { from_ref: "user" },
     );
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     assert.deepEqual(
       host.read(principal(), { taskId: "alpha", seqs: [big.seq] }).rows[0].data,
       payload,
@@ -479,7 +479,7 @@ describe("MCP Task tool host", () => {
         { from_ref: "agent" },
       );
     }
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     const page = host.query(principal(), { range: [-50, -1] });
     assert.equal(page.rows.length, 50);
     const bytes = Buffer.byteLength(JSON.stringify(page), "utf8");
@@ -492,7 +492,7 @@ describe("MCP Task tool host", () => {
     const event = store.saveEvent("alpha", "assistant_message", data, {
       from_ref: "agent",
     });
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     assert.throws(
       () => host.read(principal(), { taskId: "alpha", seqs: [event.seq] }),
       (error: unknown) => {
@@ -530,7 +530,7 @@ describe("MCP Task tool host", () => {
     for (let i = 0; i < 6_000; i++) {
       store.saveEvent("alpha", "future_event", {}, { from_ref: "system" });
     }
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     assert.throws(
       () => host.query(principal(), {}),
       (error: unknown) => {
@@ -584,7 +584,7 @@ describe("MCP Task tool host", () => {
     });
     tasks.activePrompts.add("alpha-child");
     tasks.syncBusy("alpha-child", "prompt-1");
-    const host = createMcpTaskToolHost({
+    const host = createLocalTaskOps({
       store,
       tasks,
     });
@@ -608,8 +608,8 @@ describe("MCP Task tool host", () => {
   });
 
   it("records one cancellation row per side and broadcasts both", async () => {
-    const broadcasted: McpTaskCancelNotice[] = [];
-    const host = createMcpTaskToolHost({
+    const broadcasted: TaskCancelNotice[] = [];
+    const host = createLocalTaskOps({
       store,
       tasks,
       broadcastTaskCancelNotice: (event) => broadcasted.push(event),
@@ -693,7 +693,7 @@ describe("MCP Task tool host", () => {
   });
 
   it("returns idle when a direct child has no active execution", async () => {
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     assert.deepEqual(
       await host.cancel(principal(), "alpha-child", "stop before start"),
       {
@@ -732,7 +732,7 @@ describe("MCP Task tool host", () => {
         return { taskId: "created-child", configOptions: [] };
       },
     } as unknown as TaskManager;
-    const host = createMcpTaskToolHost({
+    const host = createLocalTaskOps({
       store,
       tasks: fakeTasks,
     });
@@ -791,7 +791,7 @@ describe("MCP Task tool host", () => {
       bridge,
     });
     try {
-      const host = createMcpTaskToolHost({ store, tasks });
+      const host = createLocalTaskOps({ store, tasks });
       const created = await host.create(principal(), {
         title: "Agent child",
       });
@@ -813,7 +813,7 @@ describe("MCP Task tool host", () => {
   });
 
   it("rejects a sibling target everywhere it is addressable", async () => {
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     await assert.rejects(
       () => host.send(principal(), "beta", "hello sibling"),
       /target_not_allowed/,
@@ -829,7 +829,7 @@ describe("MCP Task tool host", () => {
   });
 
   it("queues an agent message without returning delivery metadata", async () => {
-    const host = createMcpTaskToolHost({ store, tasks });
+    const host = createLocalTaskOps({ store, tasks });
     await host.send(principal(), "alpha-child", "hello child");
     const messages = store
       .getEvents("alpha")

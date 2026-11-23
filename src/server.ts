@@ -12,7 +12,7 @@ import { AgentRegistry } from "./agent-registry.ts";
 import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
-import { createMcpTaskToolHost } from "./mcp/task-host.ts";
+import { createLocalTaskOps } from "./host/local.ts";
 import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
 import {
   buildCollaborationBroadcast,
@@ -211,7 +211,7 @@ tasks.setRuntimeWarmBroadcast((event) => {
 tasks.setTaskCreatedBroadcast((event) => {
   sseManager.broadcast(event);
 });
-const mcpTaskTools = createMcpTaskToolHost({
+const mcpTaskTools = createLocalTaskOps({
   store,
   tasks,
   cancelTimeoutMs: config.limits.cancel_timeout,

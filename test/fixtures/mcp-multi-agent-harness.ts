@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 
 import { CapabilityStore } from "../../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../../src/mcp/server.ts";
-import { createMcpTaskToolHost } from "../../src/mcp/task-host.ts";
-import type { McpTaskToolHost } from "../../src/mcp/tools.ts";
+import { createLocalTaskOps } from "../../src/host/local.ts";
+import type { TaskOps } from "../../src/host/task-ops.ts";
 import { TaskManager, type DeliveryBridge } from "../../src/task-manager.ts";
 import { TaskStateManager } from "../../src/task-state.ts";
 import {
@@ -193,7 +193,7 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
     return token;
   };
 
-  const host: McpTaskToolHost = createMcpTaskToolHost({ store, tasks });
+  const host: TaskOps = createLocalTaskOps({ store, tasks });
   const endpoint = createMcpEndpoint({
     capabilities,
     isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),

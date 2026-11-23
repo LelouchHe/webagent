@@ -9,7 +9,7 @@ import { createRequestHandler } from "../src/routes.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
-import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
+import { createLocalTaskOps } from "../src/host/local.ts";
 import { buildCollaborationBroadcast } from "../src/collaboration-message.ts";
 import {
   buildTaskCreatedBroadcast,
@@ -219,7 +219,7 @@ describe("S3 collaboration write routes", () => {
 
     // The agent path writes into the same stream through the same builder, so
     // both initiators produce one identical row shape.
-    const host = createMcpTaskToolHost({
+    const host = createLocalTaskOps({
       store,
       tasks,
       broadcastTaskCreated: (event) =>
