@@ -43,12 +43,12 @@ import {
 } from "../collaboration-message.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { validateTaskTitle } from "../shared/task-title.ts";
-import type { TaskOps } from "../host/task-ops.ts";
+import type { TaskOps } from "../api/tasks.ts";
 import {
   TaskAgentIdTypeError,
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
-} from "../host/task-ops.ts";
+} from "../api/tasks.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -1307,18 +1307,12 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.OK, idleBody);
           return;
         }
-        // Cancellation addresses the task's own execution: the transport that
-        // is driving its prompt, never a caller-selected process.
-        const bridge = tasks.hasAgentTurn(taskId)
-          ? (tasks.existingTaskExecution(taskId)?.bridge ?? null)
-          : null;
+        if (!deps.taskOps) {
+          throw new Error("Task operations are not configured");
+        }
         let result;
         try {
-          result = await tasks.cancelTaskExecution(
-            taskId,
-            bridge,
-            deps.limits.cancel_timeout ?? 0,
-          );
+          result = await deps.taskOps.cancel({ kind: "user", taskId });
         } catch (error) {
           if (error instanceof AgentNotReadyError) {
             json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {

@@ -10,14 +10,9 @@ import globals from "globals";
 
 const hostImplementationPatterns = [
   {
-    group: [
-      "**/host/*",
-      "**/host/local/**",
-      "**/host/remote/**",
-      "!**/host/task-ops.ts",
-    ],
+    group: ["**/host/**"],
     message:
-      "Entrypoints may select only the neutral host/task-ops.ts contract, not host implementations.",
+      "Entrypoints may use neutral api/** contracts, not concrete Host implementations.",
   },
 ];
 
@@ -171,7 +166,7 @@ export default tseslint.config(
             {
               group: ["**/store.ts", "**/task-manager.ts"],
               message:
-                "MCP code must use TaskOps from host/task-ops.ts instead of importing local domain services.",
+                "MCP code must use TaskOps from api/tasks.ts instead of importing local domain services.",
             },
             ...entrypointBoundary("http"),
           ],
@@ -248,7 +243,7 @@ export default tseslint.config(
   },
 
   {
-    files: ["src/host/task-ops.ts"],
+    files: ["src/api/**/*.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -256,9 +251,9 @@ export default tseslint.config(
           patterns: [
             noEntrypointDependency,
             {
-              group: ["**/store.ts", "**/task-manager.ts"],
+              group: ["**/host/**", "**/store.ts", "**/task-manager.ts"],
               message:
-                "host/task-ops.ts is neutral and cannot depend on local domain services.",
+                "api/** is a thin contract layer and cannot depend on entrypoints, Host implementations, or local persistence/runtime services.",
             },
           ],
         },

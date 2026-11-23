@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
-import type { TaskCaller, TaskOps } from "../src/host/task-ops.ts";
+import type { TaskCaller, TaskOps } from "../src/api/tasks.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";

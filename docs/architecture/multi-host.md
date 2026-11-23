@@ -26,7 +26,7 @@ never share storage.
 ```text
 Entry points
   MCP [now]: capability authenticates the caller; principal frozen
-  Browser REST create [now]: HTTP adapter behind the bearer-authenticated router
+  Browser REST create/cancel [now]: bearer-authenticated HTTP adapters
   Other browser REST commands [plan]
                          |
                          v
@@ -50,9 +50,10 @@ Entry points
 ```
 
 Today MCP and the general REST task-create route call the local adapter through
-the same `TaskOps.create()` command; there is no `resolve(id)` step yet, and the
-other REST routes still call the local domain code directly.
-`src/host/task-ops.ts` and `src/host/local/adapter.ts` exist now.
+the same `TaskOps.create()` command, and REST task cancellation and MCP
+`task_cancel` share `TaskOps.cancel()`. There is no `resolve(id)` step yet, and
+the other REST routes still call the local domain code directly.
+`src/api/tasks.ts` and `src/host/local/adapter.ts` exist now.
 `src/host/remote/` currently contains the cross-instance connection only; the
 resolver, remote Task adapter, Task router, and delivery transport are planned.
 
@@ -117,20 +118,22 @@ regression observation. The browser UI does not consume it yet. See
 | Location | Responsibility |
 | --- | --- |
 | `src/mcp/` | MCP protocol handling, tool registration, capabilities, tool descriptions, and adaptation of protocol input/output |
-| `src/http/` | HTTP entrypoint, including the main request/auth/router order, REST/SSE presentation, and the migrated `POST /api/v1/tasks` call to `TaskOps` |
-| `src/host/task-ops.ts` | The neutral `TaskOps` interface, command DTOs, and caller |
+| `src/http/` | HTTP entrypoint, including the main request/auth/router order, REST/SSE presentation, and the migrated REST task create and cancel calls to `TaskOps` |
+| `src/api/tasks.ts` | The neutral `TaskOps` interface, command DTOs, and caller |
 | `src/host/local/adapter.ts` | The local `TaskOps` implementation over this instance's TaskManager and Store |
 | `src/host/local/` | Local projection and error helpers; cannot depend on remote implementations |
 | `src/host/remote/` | Current hub connection, token hash verification, retry/backoff, and in-memory status; the remote `adapter.ts` and Task delivery transport are planned |
 | `src/server.ts` | The only assembly point; it creates the local `TaskOps` and injects the same instance into the HTTP router and MCP |
 
 ESLint's `no-restricted-imports` guards direct static dependencies:
-`src/http/**` and `src/mcp/**` cannot import each other or a host module other
-than `src/host/task-ops.ts`; MCP also cannot import Store or TaskManager.
+`src/http/**` and `src/mcp/**` cannot import each other or a Host module and
+use `src/api/tasks.ts` for the task command contract; MCP also cannot import
+Store or TaskManager.
 Core and host modules cannot import HTTP or MCP entrypoints. `src/server.ts` is
 the assembly exception, and `src/task-manager.ts` retains only its two named
 legacy MCP imports (`buildMcpServerEntry` and the `CapabilityStore` type).
-`src/host/task-ops.ts` cannot import Store or TaskManager. `src/host/remote/`
+`src/api/tasks.ts` cannot import entrypoints, Host modules, Store, or
+TaskManager. `src/host/remote/`
 cannot import Store, TaskManager, or `src/host/local/`; owner-side local commands
 are injected through `TaskOps`. `src/host/local/` cannot import
 `src/host/remote/`. Static value and type imports and re-exports at any nested
@@ -152,7 +155,7 @@ has been neutralized for its first REST caller.
 | `list(principal)` | MCP `task_list` | Synchronous `TaskListItem[]` |
 | `query(principal, input)` | MCP `task_query` | Synchronous `TaskQueryResult` |
 | `read(principal, input)` | MCP `task_read` | Synchronous `TaskReadResult` |
-| `cancel(principal, targetTaskId, reason)` | MCP `task_cancel` | `Promise<TaskCancelOutcome>` |
+| `cancel(command)` | MCP `task_cancel`, REST `POST /api/v1/tasks/:id/cancel` | `Promise<TaskCancelOutcome>` |
 | `create(caller, input)` | MCP `task_create`, REST `POST /api/v1/tasks` | `Promise<TaskCreateResult>` |
 | `send(principal, targetTaskId, body)` | MCP `task_send` | `Promise<void>` |
 | `update(principal, status, body)` | MCP `task_update` | `Promise<{ note?: string }>` |
@@ -160,7 +163,9 @@ has been neutralized for its first REST caller.
 Authorization is split between the two sides of the port today. The MCP entry
 (`src/mcp/server.ts`) authenticates the capability, checks that the task is
 active, and freezes the caller principal; it does not decide what that caller
-may do to a target. Each `TaskOps` command in `src/host/local/adapter.ts` then checks
+may do to a target. REST cancellation authenticates with the existing HTTP
+bearer gate, checks task existence, and applies client-op replay before calling
+the shared command. Each agent `TaskOps` command in `src/host/local/adapter.ts` then checks
 the principal's current execution generation and its relation to the target
 before any side effect, and re-checks at the write fences after each await. An
 authenticated principal is therefore not yet an authorized action. For planned cross-instance
@@ -173,6 +178,14 @@ source. An agent caller maps to its own parent and cwd context and is
 generation-fenced; a user caller carries the authenticated REST route's
 independent `parentId` and `inheritFromTaskId`. The user result carries complete activation facts, which REST exposes directly;
 the MCP projection remains the existing `{ taskId }` result.
+
+Cancellation keeps the two caller policies separate. An agent command requires
+a direct-child relation, carries a generation-fenced principal and reason, and
+writes the existing source/target audit rows after re-checking that principal.
+A user command carries only the target Task id: HTTP owns its authorization and
+replay policy, and cancellation keeps the existing REST behavior of writing no
+agent cancellation audit rows. Both commands resolve only an existing local
+execution and therefore do not warm an agent process.
 
 Other operations still use the MCP tool result contract: snake_case fields such as
 `task_id` and `max_seq`, and the current byte limits. `TaskCaller.initializing`

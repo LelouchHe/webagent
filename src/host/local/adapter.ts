@@ -29,13 +29,13 @@ import type {
   TaskReadResult,
   TaskCreateInput,
   TaskCreateResult,
-} from "../task-ops.ts";
+} from "../../api/tasks.ts";
 import {
   TaskAgentIdTypeError,
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
   TaskCreateConfigError,
-} from "../task-ops.ts";
+} from "../../api/tasks.ts";
 import {
   parseTaskHistoryData,
   projectTaskHistoryRow,
@@ -226,6 +226,13 @@ export function createLocalTaskOps(deps: {
       throw new Error("target_not_allowed");
     }
     return { source, target };
+  }
+
+  async function cancelExecution(taskId: string) {
+    const bridge = tasks.hasAgentTurn(taskId)
+      ? (tasks.existingTaskExecution(taskId)?.bridge ?? null)
+      : null;
+    return tasks.cancelTaskExecution(taskId, bridge, deps.cancelTimeoutMs ?? 0);
   }
 
   return {
@@ -537,19 +544,23 @@ export function createLocalTaskOps(deps: {
       };
     },
 
-    async cancel(principal, targetTaskId, reason) {
-      authorize(principal);
-      const sourceTaskId = principal.taskId;
-      const { target } = requireChildTarget(sourceTaskId, targetTaskId);
-      const bridge = tasks.existingTaskExecution(target.id)?.bridge ?? null;
-      const result = await tasks.cancelTaskExecution(
-        target.id,
-        bridge,
-        deps.cancelTimeoutMs ?? 0,
-      );
+    async cancel(command) {
+      if (command.kind === "user") {
+        const result = await cancelExecution(command.taskId);
+        return {
+          accepted: true,
+          taskId: command.taskId,
+          status: result.status,
+        };
+      }
+
+      authorize(command.principal);
+      const sourceTaskId = command.principal.taskId;
+      const { target } = requireChildTarget(sourceTaskId, command.targetTaskId);
+      const result = await cancelExecution(target.id);
       // The cancel awaited a transport round trip; the record of what happened
       // is only written while the caller still owns its execution.
-      authorize(principal);
+      authorize(command.principal);
       // One fact, two rows, one per side of the edge: the canceller reads it as
       // an act, the cancelled task as something done to it. Both are ordinary
       // `system_message` rows (machine fields in `data`), so each side renders
@@ -566,7 +577,7 @@ export function createLocalTaskOps(deps: {
       const sourceRef = formatTaskReference(sourceLabel);
       const targetRef = formatTaskReference(targetLabel);
       const body = formatFieldBlock([
-        { label: "reason", value: reason },
+        { label: "reason", value: command.reason },
         { label: "status", value: result.status },
       ]);
       const rows = [
@@ -592,7 +603,7 @@ export function createLocalTaskOps(deps: {
             sourceLabel,
             targetTaskId: target.id,
             targetLabel,
-            reason,
+            reason: command.reason,
             status: result.status,
             title: row.title,
             body,

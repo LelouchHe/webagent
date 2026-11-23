@@ -6,7 +6,7 @@ import {
   TaskCreateConfigError,
   type TaskCaller,
   type TaskOps,
-} from "../host/task-ops.ts";
+} from "../api/tasks.ts";
 import { buildTaskCreateDescription } from "./task-create-description.ts";
 import {
   agentStartError,
@@ -273,7 +273,14 @@ export function registerMcpTools(
     },
     async ({ target, reason }) => {
       guard();
-      return jsonContent(await host!.cancel(principal, target, reason));
+      return jsonContent(
+        await host!.cancel({
+          kind: "agent",
+          principal,
+          targetTaskId: target,
+          reason,
+        }),
+      );
     },
   );
 

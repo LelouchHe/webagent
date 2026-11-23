@@ -83,6 +83,18 @@ export interface TaskCancelOutcome {
   status: "idle" | "cancelling" | "cancelled" | "superseded";
 }
 
+export type TaskCancelCommand =
+  | {
+      kind: "user";
+      taskId: string;
+    }
+  | {
+      kind: "agent";
+      principal: TaskCaller;
+      targetTaskId: string;
+      reason: string;
+    };
+
 export interface TaskCreateInput {
   title?: string;
   cwd?: string;
@@ -212,11 +224,7 @@ export interface TaskOps {
   list(principal: TaskCaller): TaskListItem[];
   query(principal: TaskCaller, input: TaskQueryInput): TaskQueryResult;
   read(principal: TaskCaller, input: TaskReadInput): TaskReadResult;
-  cancel(
-    principal: TaskCaller,
-    targetTaskId: string,
-    reason: string,
-  ): Promise<TaskCancelOutcome>;
+  cancel(command: TaskCancelCommand): Promise<TaskCancelOutcome>;
   create(
     caller: TaskCreateCaller,
     input: TaskCreateInput,

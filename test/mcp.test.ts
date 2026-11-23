@@ -656,7 +656,7 @@ describe("createMcpEndpoint", () => {
       auth(token),
     );
     assert.equal(update.status, 200);
-    // Every host call carries the request's caller principal first.
+    // Every host call carries the request's caller principal.
     for (const entry of calls) {
       const { kind, args } = entry as { kind: string; args?: unknown[] };
       if (!args) continue;
@@ -667,6 +667,13 @@ describe("createMcpEndpoint", () => {
         };
         assert.equal(caller.kind, "agent");
         assert.equal(caller.principal.taskId, "web-1");
+      } else if (kind === "cancel") {
+        const command = args[0] as {
+          kind: string;
+          principal: { taskId: string };
+        };
+        assert.equal(command.kind, "agent");
+        assert.equal(command.principal.taskId, "web-1");
       } else {
         assert.equal((args[0] as { taskId: string }).taskId, "web-1");
       }
@@ -675,7 +682,22 @@ describe("createMcpEndpoint", () => {
     // own arguments, so the rest of each call is compared without it.
     const withoutPrincipal = calls.map((entry) => {
       const row = entry as { kind: string; args?: unknown[]; input?: unknown };
-      return row.args ? { kind: row.kind, args: row.args.slice(1) } : row;
+      return row.args
+        ? {
+            kind: row.kind,
+            args:
+              row.kind === "cancel"
+                ? [
+                    {
+                      kind: "agent",
+                      targetTaskId: (row.args[0] as { targetTaskId: string })
+                        .targetTaskId,
+                      reason: (row.args[0] as { reason: string }).reason,
+                    },
+                  ]
+                : row.args.slice(1),
+          }
+        : row;
     });
     assert.deepEqual(withoutPrincipal, [
       {
@@ -703,7 +725,16 @@ describe("createMcpEndpoint", () => {
           },
         ],
       },
-      { kind: "cancel", args: ["task-2", "superseded"] },
+      {
+        kind: "cancel",
+        args: [
+          {
+            kind: "agent",
+            targetTaskId: "task-2",
+            reason: "superseded",
+          },
+        ],
+      },
       { kind: "send", args: ["task-2", "hello"] },
       { kind: "update", args: ["done", "finished"] },
     ]);

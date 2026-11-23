@@ -97,6 +97,7 @@ describe("Operations REST API", () => {
   let server: http.Server;
   let port: number;
   let mockBridge: ReturnType<typeof createMockBridge>;
+  let cancelCommands: unknown[];
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-ops-"));
@@ -109,10 +110,22 @@ describe("Operations REST API", () => {
     mockBridge = createMockBridge();
     tasks.attachExecutionBridge(mockBridge);
 
+    cancelCommands = [];
+    const localTaskOps = createLocalTaskOps({
+      store,
+      tasks,
+      cancelTimeoutMs: 10000,
+    });
     const handler = createRequestHandler({
       store,
       tasks,
-      taskOps: createLocalTaskOps({ store, tasks }),
+      taskOps: {
+        ...localTaskOps,
+        cancel: async (command) => {
+          cancelCommands.push(command);
+          return localTaskOps.cancel(command);
+        },
+      },
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1024, image_upload: 1024, cancel_timeout: 10000 },
@@ -169,6 +182,7 @@ describe("Operations REST API", () => {
       });
       assert.ok(cancelCalled);
       assert.equal(tasks.activePrompts.has(taskId), true);
+      assert.deepEqual(cancelCommands, [{ kind: "user", taskId }]);
     });
 
     it("kills running bash process", async () => {
@@ -218,6 +232,10 @@ describe("Operations REST API", () => {
       const handler = createRequestHandler({
         store,
         tasks: offlineTasks,
+        taskOps: createLocalTaskOps({
+          store,
+          tasks: offlineTasks,
+        }),
         publicDir,
         dataDir: tmpDir,
         limits: { bash_output: 1024, image_upload: 1024 },
@@ -307,6 +325,10 @@ describe("Operations REST API", () => {
       const handler = createRequestHandler({
         store,
         tasks: offlineTasks,
+        taskOps: createLocalTaskOps({
+          store,
+          tasks: offlineTasks,
+        }),
         publicDir,
         dataDir: tmpDir,
         limits: { bash_output: 1024, image_upload: 1024 },

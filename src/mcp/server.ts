@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
-import type { TaskCaller, TaskOps } from "../host/task-ops.ts";
+import type { TaskCaller, TaskOps } from "../api/tasks.ts";
 import type { CapabilityStore } from "./capability.ts";
 import { registerMcpTools } from "./tools.ts";
 import { HTTP_STATUS } from "../http-status.ts";
