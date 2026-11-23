@@ -23,15 +23,15 @@ facts remain local rather than being moved into this port.
 
 ```text
 Entry points
-  MCP: capability authorizes the request
-  Browser REST: bearer token scope authorizes the request
+  MCP [now]: capability authorizes the request
+  Browser REST [plan]: bearer token scope authorizes the request
                          |
                          v
-                    TaskOps port
+                TaskOps port [now]
               (neutral types; 7 commands)
                          |
                          v
-                 Host layer: resolve(id)
+           Host layer: resolve(id) [plan]
                  synchronous, read-only,
              persistent facts only; no network
                          |
@@ -46,9 +46,11 @@ Entry points
    local TaskManager + Store
 ```
 
-`src/host/types.ts` and the local adapter in `src/host/local.ts` exist now.
-The remote adapter, router, and transport are planned; no production code in
-this layer currently contacts another instance.
+Today MCP calls the local adapter directly through `TaskOps`; there is no
+`resolve(id)` step yet, and browser REST routes still call the local domain
+code directly. `src/host/types.ts` and `src/host/local.ts` exist now. The
+resolver, remote adapter, router, and transport are planned; no production code
+in this layer currently contacts another instance.
 
 ## Directories and dependencies
 
@@ -97,11 +99,11 @@ owner-local lifecycle behavior also remain outside the port.
 
 ## Delivery model (planned)
 
-At the owner, sending a message or reporting a typed update is a synchronous
-local commit with the existing durability boundary: once accepted, the durable
-fact exists before the call is reported complete. Cross-instance transport is a
-background concern that persists and retries transport facts without changing
-that local commit model.
+Sending a message or reporting a typed update is a synchronous local commit on
+the caller's own instance: the call returns once that instance has durably
+accepted it. Moving the message to another instance is background transport
+that persists and retries its own facts; network delivery, reachability, and
+the remote outcome are never part of the synchronous result.
 
 The obligation account is maintained on the side that executes the Task. A
 remote caller can submit the command, but the owner records delivery and
@@ -113,6 +115,7 @@ semantics there.
 The external regression suite records REST, MCP, SSE, ACP, and SQL-visible
 behavior in golden fixtures. Its operation and workflow are documented in
 [`test/regression/README.md`](../test/regression/README.md). Multi-host
-structural changes must pass that suite without changing a golden; any intended
-external behavior change belongs to a later decision and a separate regression
-update.
+changes must keep existing single-instance behavior unchanged, so they pass
+that suite without changing an existing golden. New cross-instance behavior
+adds its own scenarios; an intended change to local behavior shows up as a
+reviewed golden diff.
