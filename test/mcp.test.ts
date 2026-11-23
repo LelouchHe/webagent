@@ -658,8 +658,18 @@ describe("createMcpEndpoint", () => {
     assert.equal(update.status, 200);
     // Every host call carries the request's caller principal first.
     for (const entry of calls) {
-      const args = (entry as { args?: unknown[] }).args;
-      if (args) assert.equal((args[0] as { taskId: string }).taskId, "web-1");
+      const { kind, args } = entry as { kind: string; args?: unknown[] };
+      if (!args) continue;
+      if (kind === "create") {
+        const caller = args[0] as {
+          kind: string;
+          principal: { taskId: string };
+        };
+        assert.equal(caller.kind, "agent");
+        assert.equal(caller.principal.taskId, "web-1");
+      } else {
+        assert.equal((args[0] as { taskId: string }).taskId, "web-1");
+      }
     }
     // The principal is transport-level identity, not part of the operation's
     // own arguments, so the rest of each call is compared without it.
@@ -684,9 +694,12 @@ describe("createMcpEndpoint", () => {
           {
             title: "child",
             cwd: undefined,
-            agent: undefined,
+            agentId: undefined,
             model: "model-x",
             thinking: undefined,
+            parentId: "web-1",
+            inheritFromTaskId: "web-1",
+            source: "agent",
           },
         ],
       },

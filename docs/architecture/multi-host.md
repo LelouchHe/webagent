@@ -26,8 +26,8 @@ never share storage.
 ```text
 Entry points
   MCP [now]: capability authenticates the caller; principal frozen
-  Browser REST [plan: through the same port]: bearer token scope,
-    already enforced today on the local routes
+  Browser REST create [now]: bearer scope already enforced on the local route
+  Other browser REST commands [plan]
                          |
                          v
                 TaskOps port [now]
@@ -49,9 +49,10 @@ Entry points
                                   Task transport [plan]
 ```
 
-Today MCP calls the local adapter directly through `TaskOps`; there is no
-`resolve(id)` step yet, and browser REST routes still call the local domain code
-directly. `src/host/task-ops.ts` and `src/host/local/adapter.ts` exist now.
+Today MCP and the general REST task-create route call the local adapter through
+the same `TaskOps.create()` command; there is no `resolve(id)` step yet, and the
+other REST routes still call the local domain code directly.
+`src/host/task-ops.ts` and `src/host/local/adapter.ts` exist now.
 `src/host/remote/` currently contains the cross-instance connection only; the
 resolver, remote Task adapter, Task router, and delivery transport are planned.
 
@@ -137,7 +138,8 @@ left to review.
 
 ## `TaskOps` port
 
-All methods retain their current parameters and result shapes.
+The existing MCP-only methods retain their parameters and result shapes. Create
+has been neutralized for its first REST caller.
 
 | Method | Current caller | Result |
 | --- | --- | --- |
@@ -145,7 +147,7 @@ All methods retain their current parameters and result shapes.
 | `query(principal, input)` | MCP `task_query` | Synchronous `TaskQueryResult` |
 | `read(principal, input)` | MCP `task_read` | Synchronous `TaskReadResult` |
 | `cancel(principal, targetTaskId, reason)` | MCP `task_cancel` | `Promise<TaskCancelOutcome>` |
-| `create(principal, input)` | MCP `task_create` | `Promise<TaskCreateResult>` |
+| `create(caller, input)` | MCP `task_create`, REST `POST /api/v1/tasks` | `Promise<TaskCreateResult>` |
 | `send(principal, targetTaskId, body)` | MCP `task_send` | `Promise<void>` |
 | `update(principal, status, body)` | MCP `task_update` | `Promise<{ note?: string }>` |
 
@@ -160,11 +162,16 @@ forwarding, transport must carry trusted host action context, and the owning
 host must verify that context before executing the command. Possession of a
 Task id alone never grants access.
 
-The port still uses the MCP tool result contract: snake_case fields such as
+Create keeps caller kind separate from the requested parent and inheritance
+source. An agent caller maps to its own parent and cwd context and is
+generation-fenced; a user caller carries the authenticated REST route's
+independent `parentId` and `inheritFromTaskId`. The user result carries complete activation facts, which REST exposes directly;
+the MCP projection remains the existing `{ taskId }` result.
+
+Other operations still use the MCP tool result contract: snake_case fields such as
 `task_id` and `max_seq`, and the current byte limits. `TaskCaller.initializing`
 also names a concept from the MCP handshake period. These couplings remain
-while MCP is the only caller; a second caller is the point at which they
-should be separated.
+until each operation gains a second caller.
 
 ## Owner-local facts
 

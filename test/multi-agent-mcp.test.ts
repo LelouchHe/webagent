@@ -529,7 +529,15 @@ describe("mcp authority over the production host", () => {
       return [modelOption];
     };
 
-    const pending = host.create(principalFor(token), { title: "kept child" });
+    const pending = host.create(
+      { kind: "agent", principal: principalFor(token) },
+      {
+        title: "kept child",
+        parentId: source.taskId,
+        inheritFromTaskId: source.taskId,
+        source: "agent",
+      },
+    );
     await inInherit;
     // The source rotates while the child's inheritance is still in flight.
     await tasks.clearTask(bridge, source.taskId);

@@ -1,7 +1,18 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { TaskCaller, TaskOps } from "../host/task-ops.ts";
+import {
+  TaskAgentNotConfiguredError,
+  TaskAgentStartError,
+  TaskCreateConfigError,
+  type TaskCaller,
+  type TaskOps,
+} from "../host/task-ops.ts";
 import { buildTaskCreateDescription } from "./task-create-description.ts";
+import {
+  agentStartError,
+  configOverrideError,
+  unconfiguredAgentError,
+} from "./create-errors.ts";
 
 const TASK_ID = z.string().trim().min(1).max(256);
 const BODY = z
@@ -213,15 +224,40 @@ export function registerMcpTools(
     },
     async ({ title, cwd, agent, model, thinking }) => {
       guard();
-      return jsonContent(
-        await host!.create(principal, {
-          title,
-          cwd: cwd ?? undefined,
-          agent: agent ?? undefined,
-          model: model ?? undefined,
-          thinking: thinking ?? undefined,
-        }),
-      );
+      try {
+        return jsonContent({
+          taskId: (
+            await host!.create(
+              { kind: "agent", principal },
+              {
+                title,
+                cwd: cwd ?? undefined,
+                agentId: agent ?? undefined,
+                model: model ?? undefined,
+                thinking: thinking ?? undefined,
+                parentId: principal.taskId,
+                inheritFromTaskId: principal.taskId,
+                source: "agent",
+              },
+            )
+          ).taskId,
+        });
+      } catch (error) {
+        if (error instanceof TaskAgentNotConfiguredError) {
+          throw new Error(unconfiguredAgentError(error.agentId), {
+            cause: error,
+          });
+        }
+        if (error instanceof TaskAgentStartError) {
+          throw new Error(agentStartError(error.agentId, error.reason), {
+            cause: error,
+          });
+        }
+        if (error instanceof TaskCreateConfigError) {
+          throw new Error(configOverrideError(error), { cause: error });
+        }
+        throw error;
+      }
     },
   );
 

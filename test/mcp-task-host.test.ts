@@ -737,13 +737,21 @@ describe("MCP Task tool host", () => {
       tasks: fakeTasks,
     });
     assert.deepEqual(
-      await host.create(principal(), {
-        title: "New child",
-        cwd: "subdir",
-        model: "m",
-        thinking: "high",
-      }),
-      { taskId: "created-child" },
+      (
+        await host.create(
+          { kind: "agent", principal: principal() },
+          {
+            title: "New child",
+            cwd: "subdir",
+            model: "m",
+            thinking: "high",
+            parentId: "alpha",
+            inheritFromTaskId: "alpha",
+            source: "agent",
+          },
+        )
+      ).taskId,
+      "created-child",
     );
     assert.ok(createCall);
     // The persist boundary re-validates the same caller; it is a function, not
@@ -792,9 +800,15 @@ describe("MCP Task tool host", () => {
     });
     try {
       const host = createLocalTaskOps({ store, tasks });
-      const created = await host.create(principal(), {
-        title: "Agent child",
-      });
+      const created = await host.create(
+        { kind: "agent", principal: principal() },
+        {
+          title: "Agent child",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          source: "agent",
+        },
+      );
       const announced = announcements.filter(
         (event) => event.type === "task_created",
       );

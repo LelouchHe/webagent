@@ -55,9 +55,10 @@ The entrypoint contracts live in [Client Architecture](client.md) and
  Host layer (src/host/remote/): outbound connections to other instances
 ```
 
-MCP reaches the domain core through the `TaskOps` port. REST route handlers
-call `TaskManager` and `Store` directly. Both paths end in the same domain
-core, but they do not yet share one command surface.
+MCP reaches the domain core through the `TaskOps` port. The general REST task
+create route uses the same port for creation; its other routes still call the
+domain core directly. Both create entrypoints therefore share one server
+command while retaining their own request and response presentations.
 
 ## Entrypoints
 
@@ -209,7 +210,7 @@ Activating push on a device and troubleshooting are in
   id into their broadcasts for correlation. MCP tools carry no op id.
 - **Errors** — REST answers with an HTTP status and a JSON `{ error }` body;
   MCP answers with tool-error text written for the calling agent
-  (`src/host/local/create-errors.ts` for `task_create`).
+  (`src/mcp/create-errors.ts` for `task_create`).
 - **Logging** — runtime code uses `src/log.ts`, the mirror of the frontend
   logger; one `debug.level` setting controls both.
 - **Configuration** — TOML parsed and validated in `src/config.ts`
@@ -220,15 +221,16 @@ Activating push on a device and troubleshooting are in
 ## Request paths
 
 **A browser creates a task** (`/new`, `+`): `POST /api/v1/tasks` → the route
-chooses the target agent (explicit, else the parent's binding, else the
-default) and resolves its transport through the registry →
+parses its REST fields and calls `TaskOps.create()` with a user caller,
+explicit parent, and independent inheritance source → the local adapter
+chooses the target agent, resolves its transport, and calls
 `TaskManager.createTask()` → the task row, binding, and creation record are
 persisted → `task_created` is broadcast.
 
-**An agent creates a task** (`task_create`): MCP → `TaskOps.create()` → the
-local adapter checks the caller's generation, resolves the target agent and cwd
-relative to the caller → `TaskManager.createTask()` → the caller's transcript
-records the creation.
+**An agent creates a task** (`task_create`): MCP → the same
+`TaskOps.create()` command with an agent caller → the local adapter checks the
+caller's generation, resolves the target agent and cwd relative to the caller
+→ `TaskManager.createTask()` → the caller's transcript records the creation.
 
 **A user sends a prompt**: `POST /api/v1/tasks/:id/prompt` → the route reserves
 the task's submission slot, resolves its execution (resuming it if needed), and
@@ -257,12 +259,12 @@ the rules.
 ## Where the server is not yet neutral
 
 - **Two command surfaces.** MCP goes through `TaskOps`; REST handlers call the
-  domain core directly, and some handlers orchestrate it themselves (the prompt
-  route reserves, resumes, submits, and releases through several
-  `TaskManager` calls).
-- **Entry-specific behavior.** Creating a task chooses the agent and cwd by
-  different rules on the two entrypoints, and an MCP cancel writes source and
-  target audit rows that a REST cancel does not.
+  domain core directly except for general task creation, and some handlers
+  orchestrate it themselves (the prompt route reserves, resumes, submits, and
+  releases through several `TaskManager` calls).
+- **Entry-specific behavior.** Creating a task applies intentionally different
+  caller defaults inside the shared command, and an MCP cancel writes source
+  and target audit rows that a REST cancel does not.
 - **Entry-specific mechanisms.** Idempotency exists only for REST and is keyed
   by task; errors have two presentations.
 

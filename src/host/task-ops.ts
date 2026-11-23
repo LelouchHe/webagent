@@ -1,3 +1,5 @@
+import type { AgentCommandSnapshot, ConfigOption } from "../types.ts";
+
 export type TaskWorkflowStatus =
   "running" | "idle" | "waiting" | "blocked" | "done";
 
@@ -82,20 +84,101 @@ export interface TaskCancelOutcome {
 }
 
 export interface TaskCreateInput {
-  title: string;
+  title?: string;
   cwd?: string;
+  agentId?: unknown;
   model?: string;
   thinking?: string;
-  /**
-   * The execution agent the child is created for, as configured at startup.
-   * Omitted means "this Task's agent", which is the only value the caller can
-   * always derive without knowing the deployment.
-   */
-  agent?: string;
+  parentId?: string;
+  inheritFromTaskId?: string;
+  source?: string;
+  clientOpId?: string;
+  workflowStatus?: TaskWorkflowStatus;
+}
+
+export type TaskCreateCaller =
+  { kind: "user" } | { kind: "agent"; principal: TaskCaller };
+
+export class TaskAgentNotConfiguredError extends Error {
+  readonly agentId: string;
+
+  constructor(agentId: string) {
+    super("agent_not_configured");
+    this.name = "TaskAgentNotConfiguredError";
+    this.agentId = agentId;
+  }
+}
+
+export class TaskAgentIdTypeError extends Error {
+  constructor() {
+    super("invalid_agent_id_type");
+    this.name = "TaskAgentIdTypeError";
+  }
+}
+
+export class TaskAgentStartError extends Error {
+  readonly agentId: string;
+  readonly reason: string;
+  readonly unavailable: boolean;
+
+  constructor(
+    agentId: string,
+    reason: string,
+    unavailable: boolean,
+    options?: ErrorOptions,
+  ) {
+    super("agent_start_failed", options);
+    this.name = "TaskAgentStartError";
+    this.agentId = agentId;
+    this.reason = reason;
+    this.unavailable = unavailable;
+  }
+}
+
+export class TaskCreateConfigError extends Error {
+  readonly reason: "unsupported" | "invalid";
+  readonly logicalId: "model" | "thinking";
+  readonly agentId: string;
+  readonly requestedValue: string;
+  readonly supportedValues: readonly string[];
+  readonly currentValue: string | null;
+
+  constructor(
+    details: {
+      reason: "unsupported" | "invalid";
+      logicalId: "model" | "thinking";
+      agentId: string;
+      requestedValue: string;
+      supportedValues: readonly string[];
+      currentValue: string | null;
+    },
+    options?: ErrorOptions,
+  ) {
+    super("task_config_override_failed", options);
+    this.name = "TaskCreateConfigError";
+    this.reason = details.reason;
+    this.logicalId = details.logicalId;
+    this.agentId = details.agentId;
+    this.requestedValue = details.requestedValue;
+    this.supportedValues = details.supportedValues;
+    this.currentValue = details.currentValue;
+  }
 }
 
 export interface TaskCreateResult {
   taskId: string;
+  activation?: {
+    cwd: string;
+    cwdDisplay: string;
+    title: string | null;
+    parentId: string | null;
+    parentAgentId: string | null;
+    agentId: string | null;
+    workflowStatus: TaskWorkflowStatus;
+    source: string;
+    configOptions: ConfigOption[];
+    agentCommands: AgentCommandSnapshot;
+  };
 }
 
 /**
@@ -120,10 +203,10 @@ export interface TaskCaller {
 /**
  * Task operations supplied by the host behind task command entrypoints.
  *
- * Every operation takes the request's immutable caller principal: the write
- * operations re-check it at their own submission boundary (immediately before
- * the first side effect), so a rotation that lands while a request is in
- * flight cannot be written through.
+ * Agent operations take the request's immutable caller principal; create also
+ * accepts a user caller. Agent writes re-check that principal at their own
+ * submission boundary (immediately before the first side effect), so a
+ * rotation that lands while a request is in flight cannot be written through.
  */
 export interface TaskOps {
   list(principal: TaskCaller): TaskListItem[];
@@ -135,7 +218,7 @@ export interface TaskOps {
     reason: string,
   ): Promise<TaskCancelOutcome>;
   create(
-    principal: TaskCaller,
+    caller: TaskCreateCaller,
     input: TaskCreateInput,
   ): Promise<TaskCreateResult>;
   send(

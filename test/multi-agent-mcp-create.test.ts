@@ -53,6 +53,27 @@ describe("task_create with an explicit agent", () => {
     return createParentOnA(harness);
   }
 
+  it("routes REST and MCP through the same create command", async () => {
+    harness = await startHarness({
+      agents: [{ id: A, schema: SCHEMA_A }],
+    });
+    const parent = await parentOnA();
+
+    const rest = await harness.request("POST", "/api/v1/tasks", {
+      cwd: harness.dir,
+      parentId: parent.taskId,
+      title: "REST child",
+    });
+    assert.equal(rest.status, 201);
+
+    const mcp = await callTool(harness, parent.token, "task_create", {
+      title: "MCP child",
+    });
+    assert.equal(toolResult(mcp.json).isError, undefined);
+
+    assert.deepEqual(harness.createCalls, ["user", "agent"]);
+  });
+
   it("creates the child on B, sessions included, and records exactly one row", async () => {
     harness = await startHarness({
       agents: [
