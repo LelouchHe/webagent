@@ -213,13 +213,16 @@ tasks.setRuntimeWarmBroadcast((event) => {
 tasks.setTaskCreatedBroadcast((event) => {
   sseManager.broadcast(event);
 });
-const mcpTaskTools = createLocalTaskOps({
+const taskOps = createLocalTaskOps({
   store,
   tasks,
   cancelTimeoutMs: config.limits.cancel_timeout,
   broadcastCollaboration,
   broadcastTaskCreated: (event) => {
     sseManager.broadcast(buildTaskCreatedBroadcast(event));
+  },
+  broadcastConfigUpdate: (event) => {
+    sseManager.broadcast(event);
   },
   broadcastTaskCancelNotice: (event) => {
     // One record, one frame: the transcript row is the whole cancellation and
@@ -241,6 +244,7 @@ let sharePreviewCleanup: SharePreviewCleanupHandle | null = null;
 const requestHandler = createRequestHandler({
   store,
   tasks,
+  taskOps,
   sseManager,
   clientRegistry,
   publicDir: PUBLIC_DIR,
@@ -258,7 +262,7 @@ const requestHandler = createRequestHandler({
   mcpEndpoint: createMcpEndpoint({
     capabilities,
     isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
-    taskTools: mcpTaskTools,
+    taskTools: taskOps,
     // Discovery for `task_create(agent: …)` comes from the running
     // configuration, not from a static schema that would have to be rebuilt by
     // hand whenever an agent is added.

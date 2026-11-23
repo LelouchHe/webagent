@@ -119,6 +119,16 @@ describe("S3 collaboration write routes", () => {
       }),
       store,
       tasks,
+      taskOps: createLocalTaskOps({
+        store,
+        tasks,
+        broadcastTaskCreated: (event) => {
+          broadcasts.push(buildTaskCreatedBroadcast(event));
+        },
+        broadcastConfigUpdate: (event) => {
+          broadcasts.push(event);
+        },
+      }),
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
@@ -229,12 +239,20 @@ describe("S3 collaboration write routes", () => {
     assert.ok(parentLease, "the parent task must have a generation");
     await host.create(
       {
-        taskId: "parent",
-        agentId: "test-agent",
-        generation: parentLease.generation,
-        initializing: false,
+        kind: "agent",
+        principal: {
+          taskId: "parent",
+          agentId: "test-agent",
+          generation: parentLease.generation,
+          initializing: false,
+        },
       },
-      { title: "agent-child" },
+      {
+        title: "agent-child",
+        parentId: "parent",
+        inheritFromTaskId: "parent",
+        source: "agent",
+      },
     );
 
     const agentRow = systemRows().find((row) => row.from_ref === "agent");

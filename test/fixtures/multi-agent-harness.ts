@@ -16,6 +16,7 @@ import {
 } from "../../src/agent-registry.ts";
 import { TaskManager } from "../../src/task-manager.ts";
 import { createRequestHandler } from "../../src/routes.ts";
+import { createLocalTaskOps } from "../../src/host/local/adapter.ts";
 import type { ConfigOption } from "../../src/types.ts";
 import {
   createProfiledAgent,
@@ -187,6 +188,7 @@ export async function startHarness(
     createRequestHandler({
       store,
       tasks: tasks!,
+      taskOps: createLocalTaskOps({ store, tasks: tasks! }),
       sseManager: Object.assign(new SseManager(), { broadcast() {} }),
       publicDir: join(dir, "public"),
       dataDir: dir,

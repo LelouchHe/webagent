@@ -23,7 +23,6 @@ import {
   TaskBusyError,
   TaskNotFoundError,
   TaskTreeBusyError,
-  reportedExecutionConfig,
 } from "./task-manager.ts";
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
@@ -43,10 +42,12 @@ import {
   buildCollaborationBroadcast,
 } from "./collaboration-message.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "./shared/time.ts";
+import type { TaskOps } from "./host/task-ops.ts";
 import {
-  buildTaskCreatedBroadcast,
-  buildTaskCreatedSystemMessage,
-} from "./task-created-message.ts";
+  TaskAgentIdTypeError,
+  TaskAgentNotConfiguredError,
+  TaskAgentStartError,
+} from "./host/task-ops.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -237,6 +238,7 @@ export const CSP_POLICY = [
 export interface RequestHandlerDeps {
   store: Store;
   tasks?: TaskManager;
+  taskOps?: TaskOps;
   sseManager: SseManager;
   clientRegistry?: ClientRegistry;
   publicDir: string;
@@ -1121,7 +1123,7 @@ export function createRequestHandler(
       // Targets the binding agent of `taskId` when supplied; otherwise every
       // agent that already has a process. A reload never starts an agent.
       if (url === "/api/v1/bridge/reload" && req.method === "POST") {
-        if (!tasks) {
+        if (!tasks || !deps.taskOps) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task manager not available",
           });
@@ -1301,7 +1303,7 @@ export function createRequestHandler(
         const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
         if (replayed) return;
 
-        if (!tasks) {
+        if (!tasks || !deps.taskOps) {
           const idleBody = { ok: true, status: "idle" };
           saveClientOpResult(store, opId, taskId, HTTP_STATUS.OK, idleBody);
           json(res, HTTP_STATUS.OK, idleBody);
@@ -3018,7 +3020,8 @@ export function createRequestHandler(
       // POST /api/v1/tasks (create new task)
       if (url === "/api/v1/tasks" && req.method === "POST") {
         const clientOpId = getClientOpId(req);
-        if (!tasks) {
+        const taskOps = deps.taskOps;
+        if (!tasks || !taskOps) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task manager not available",
           });
@@ -3058,162 +3061,54 @@ export function createRequestHandler(
           });
           return;
         }
-        // The parent must be a live task; the FK would reject a dangling
-        // reference with a raw database error otherwise. A live row is enough
-        // — it need not have an execution yet (an unbound Root is real).
-        if (body.parentId) {
-          if (!store.getParentTask(body.parentId)) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "Parent task not found",
-            });
-            return;
-          }
-        }
-        // An explicit target is the caller's declared execution environment; it
-        // is checked before anything starts, so an unknown id is a client error
-        // rather than a late failure, and a start failure keeps its real reason.
-        if (body.agentId !== undefined && typeof body.agentId !== "string") {
-          json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "agentId must be a string",
-          });
-          return;
-        }
-        const explicitAgent = body.agentId;
-        if (
-          explicitAgent !== undefined &&
-          !tasks.isAgentConfigured(explicitAgent)
-        ) {
-          json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: `Agent ${explicitAgent} is not configured`,
-          });
-          return;
-        }
-        // The new task runs where its parent runs, unless that agent is no
-        // longer available: then the child is created for the default agent.
-        // Either way the *parent's* binding is untouched — creating a child is
-        // not a reason to rotate an existing execution.
-        // An unnamed task attaches to Root, so the effective parent decides
-        // the target agent too — not just an explicit `parentId`.
-        const effectiveParentId =
-          body.parentId ??
-          (store.getTaskIncludingDeleted(store.rootTaskId)
-            ? store.rootTaskId
-            : undefined);
-        const parentAgent = effectiveParentId
-          ? store.getBindingAgent(effectiveParentId)
-          : undefined;
-        const targetAgentId =
-          explicitAgent ??
-          (parentAgent && tasks.isAgentConfigured(parentAgent)
-            ? parentAgent
-            : tasks.defaultAgentId);
-        let bridge;
         try {
-          bridge = await tasks.resolveAgentTransport(targetAgentId);
-        } catch (err) {
-          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            // A failed start keeps its real reason, whichever way the target
-            // was chosen: "unavailable" alone cannot be acted on, and the
-            // caller must not be told a different agent answered instead.
-            error:
-              err instanceof AgentUnavailableError
-                ? `Agent ${targetAgentId} is not available: ${errorMessage(err)}`
-                : errorMessage(err),
-            // The create target may be inherited (parent binding, else the
-            // default): name what was really attempted so a rescue can exclude
-            // it instead of guessing.
-            agentId: targetAgentId,
-          });
-          return;
-        }
-        try {
-          const { taskId, configOptions } = await tasks.createTask(
-            bridge,
-            body.cwd,
-            body.inheritFromTaskId,
-            source,
+          const created = await taskOps.create(
+            { kind: "user" },
             {
+              cwd: body.cwd,
+              inheritFromTaskId: body.inheritFromTaskId,
+              source,
               parentId: body.parentId,
               title: title ?? undefined,
               workflowStatus: title ? "idle" : undefined,
-              agentId: explicitAgent,
+              agentId: body.agentId,
               clientOpId: clientOpId ?? undefined,
             },
           );
-          const task = store.getTask(taskId);
-          // The creation itself broadcast `task_created` (see
-          // `TaskManager.createTask`), with this request's `clientOpId`.
-          // One record shape for every initiator: the parent task's stream gets
-          // the same row the agent's task_create tool writes, with the user as
-          // its origin. Broadcast too, so live clients see it without a reload.
-          // An untitled task (the bare `/new` flow) records nothing: the row
-          // exists to name the child, and "Created task @<uuid>" names nothing.
-          // The stored title cannot answer that — an untitled task defaults to
-          // its own id (`store.ts`), so only the request knows a name was given.
-          const createdParentId = task?.parent_id ?? body.parentId;
-          // Same value the store kept: the validated (trimmed) title, so the
-          // reference in the row always addresses the task it names.
-          const createdTitle = typeof title === "string" ? title : null;
-          if (createdParentId && createdTitle) {
-            // The same effective values the row and reads show: an explicit
-            // override, the value inherited from a same-agent source, or the
-            // target session's reported current value. `inherited` is reserved
-            // for a value that genuinely cannot be determined.
-            const reported = reportedExecutionConfig(configOptions);
-            const taskCreated = buildTaskCreatedSystemMessage({
-              taskId,
-              taskTitle: createdTitle,
-              agentId: store.getBindingAgent(taskId) ?? targetAgentId,
-              cwd: task?.cwd ?? body.cwd ?? process.cwd(),
-              model: reported.model ?? null,
-              thinking: reported.reasoning_effort ?? null,
-            });
-            store.saveEvent(
-              createdParentId,
-              "system_message",
-              taskCreated.data,
-              { from_ref: "user" },
-            );
-            sseManager.broadcast(
-              buildTaskCreatedBroadcast({
-                messageId: randomUUID(),
-                sourceTaskId: createdParentId,
-                targetTaskId: taskId,
-                taskTitle: createdTitle,
-                title: taskCreated.title,
-                body: taskCreated.body,
-              }),
-            );
-          }
-          // ACP's task_created event fires before inheritance runs, so
-          // broadcast final configOptions so SSE clients get the inherited values.
-          if (configOptions.length) {
-            sseManager.broadcast({
-              type: "config_option_update",
-              taskId,
-              configOptions,
-            });
-          }
+          const activation = created.activation;
+          if (!activation) throw new Error("missing_create_activation");
           json(res, HTTP_STATUS.CREATED, {
-            id: taskId,
-            // The create echo installs the task's binding agent on the client,
-            // exactly like the broadcast; without it the echo would downgrade
-            // the agent the client already knows.
-            ...activationFields(task, {
-              taskId,
-              parentId: body.parentId ?? null,
-            }),
-            cwd: task?.cwd ?? body.cwd,
-            title: task?.title ?? null,
-            workflowStatus: task?.workflow_status ?? "idle",
-            source: task?.source ?? source,
-            configOptions,
-            agentCommands: tasks.getAgentCommands(taskId),
+            id: created.taskId,
+            cwd: activation.cwd,
+            cwdDisplay: activation.cwdDisplay,
+            parentId: activation.parentId,
+            parentAgentId: activation.parentAgentId,
+            agentId: activation.agentId,
+            title: activation.title,
+            workflowStatus: activation.workflowStatus,
+            source: activation.source,
+            configOptions: activation.configOptions,
+            agentCommands: activation.agentCommands,
             clientOpId: clientOpId ?? undefined,
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (
+          if (err instanceof TaskAgentIdTypeError) {
+            json(res, HTTP_STATUS.BAD_REQUEST, { error: err.message });
+          } else if (err instanceof TaskAgentNotConfiguredError) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: `Agent ${err.agentId} is not configured`,
+            });
+          } else if (err instanceof TaskAgentStartError) {
+            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+              error: err.restMessage,
+              agentId: err.agentId,
+            });
+          } else if (msg === "parent_not_found") {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "Parent task not found",
+            });
+          } else if (
             err instanceof InvalidTaskDirectoryError ||
             err instanceof TaskNotFoundError
           ) {

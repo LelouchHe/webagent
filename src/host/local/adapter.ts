@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
+import { AgentUnavailableError } from "../../agent-registry.ts";
 import type { Store, TaskRow } from "../../store.ts";
 import {
   isLocalCollaborationTarget,
@@ -18,14 +19,21 @@ import { formatTaskReference } from "../../shared/task-reference.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../../task-created-message.ts";
 import { formatSilence } from "../../obligation-controller.ts";
+import { abbreviateHomePath } from "../../home-path.ts";
 import type {
   TaskCaller,
+  TaskCreateCaller,
   TaskQueryResult,
   TaskListItem,
   TaskOps,
   TaskReadResult,
   TaskCreateInput,
   TaskCreateResult,
+} from "../task-ops.ts";
+import {
+  TaskAgentIdTypeError,
+  TaskAgentNotConfiguredError,
+  TaskAgentStartError,
 } from "../task-ops.ts";
 import {
   parseTaskHistoryData,
@@ -94,6 +102,9 @@ export function createLocalTaskOps(deps: {
   cancelTimeoutMs?: number;
   broadcastCollaboration?: (event: TaskCollaborationEvent) => void;
   broadcastTaskCreated?: (event: TaskCreatedEvent) => void;
+  broadcastConfigUpdate?: (
+    event: Extract<AgentEvent, { type: "config_option_update" }>,
+  ) => void;
   broadcastTaskCancelNotice?: (event: TaskCancelNotice) => void;
 }): TaskOps {
   const {
@@ -101,6 +112,7 @@ export function createLocalTaskOps(deps: {
     tasks,
     broadcastCollaboration,
     broadcastTaskCreated,
+    broadcastConfigUpdate,
     broadcastTaskCancelNotice,
   } = deps;
 
@@ -156,6 +168,30 @@ export function createLocalTaskOps(deps: {
       throw new Error("target_not_allowed");
     }
     return target;
+  }
+
+  function recordTaskCreated(input: {
+    taskId: string;
+    taskTitle: string;
+    sourceTaskId: string;
+    agentId: string;
+    cwd: string;
+    model: string | null;
+    thinking: string | null;
+    fromRef: "agent" | "user";
+  }): void {
+    const taskCreated = buildTaskCreatedSystemMessage(input);
+    store.saveEvent(input.sourceTaskId, "system_message", taskCreated.data, {
+      from_ref: input.fromRef,
+    });
+    broadcastTaskCreated?.({
+      messageId: randomUUID(),
+      sourceTaskId: input.sourceTaskId,
+      targetTaskId: input.taskId,
+      taskTitle: input.taskTitle,
+      title: taskCreated.title,
+      body: taskCreated.body,
+    });
   }
 
   function responseTooLarge(
@@ -302,27 +338,57 @@ export function createLocalTaskOps(deps: {
       return result;
     },
 
+    // eslint-disable-next-line complexity -- one command owns both caller-specific target resolution and shared create effects.
     async create(
-      principal: TaskCaller,
+      caller: TaskCreateCaller,
       input: TaskCreateInput,
     ): Promise<TaskCreateResult> {
-      authorize(principal);
-      const sourceTaskId = principal.taskId;
-      // The child runs where the caller says, or — when it says nothing — in
-      // the source task's execution environment. Only an explicit `agent` may
-      // diverge from the caller's binding, and it is resolved *before* anything
-      // is created so an unusable target leaves no trace.
-      const requestedAgent = input.agent;
+      const agentCaller = caller.kind === "agent" ? caller.principal : null;
+      if (agentCaller) authorize(agentCaller);
+      if (
+        agentCaller &&
+        (input.parentId !== agentCaller.taskId ||
+          input.inheritFromTaskId !== agentCaller.taskId)
+      ) {
+        throw new Error("target_not_allowed");
+      }
+      const source =
+        agentCaller?.taskId !== undefined
+          ? requireTask(agentCaller.taskId)
+          : null;
+      let effectiveParentId: string | undefined;
+      if (!agentCaller) {
+        effectiveParentId =
+          input.parentId ??
+          (store.getTaskIncludingDeleted(store.rootTaskId)
+            ? store.rootTaskId
+            : undefined);
+        if (input.parentId && !store.getParentTask(input.parentId)) {
+          throw new Error("parent_not_found");
+        }
+      }
+      const requestedAgent = input.agentId;
+      if (requestedAgent !== undefined && typeof requestedAgent !== "string") {
+        throw new TaskAgentIdTypeError();
+      }
       let targetAgentId: string;
       let targetBridge: DeliveryBridge;
       if (requestedAgent !== undefined) {
         if (!tasks.isAgentConfigured(requestedAgent)) {
-          throw new Error(unconfiguredAgentError(requestedAgent));
+          throw new TaskAgentNotConfiguredError(
+            requestedAgent,
+            unconfiguredAgentError(requestedAgent),
+          );
         }
         try {
           targetBridge = await tasks.resolveAgentTransport(requestedAgent);
         } catch (error) {
-          throw new Error(
+          throw new TaskAgentStartError(
+            requestedAgent,
+            errorMessage(error),
+            error instanceof AgentUnavailableError
+              ? `Agent ${requestedAgent} is not available: ${errorMessage(error)}`
+              : errorMessage(error),
             agentStartError(requestedAgent, errorMessage(error)),
             {
               cause: error,
@@ -330,31 +396,61 @@ export function createLocalTaskOps(deps: {
           );
         }
         targetAgentId = requestedAgent;
-      } else {
-        const execution = await tasks.resolveTaskExecution(sourceTaskId);
+      } else if (source && agentCaller) {
+        const execution = await tasks.resolveTaskExecution(source.id);
         targetBridge = execution.bridge;
         targetAgentId = execution.agentId;
+      } else {
+        const parentAgent = effectiveParentId
+          ? store.getBindingAgent(effectiveParentId)
+          : undefined;
+        targetAgentId =
+          parentAgent && tasks.isAgentConfigured(parentAgent)
+            ? parentAgent
+            : tasks.defaultAgentId;
+        try {
+          targetBridge = await tasks.resolveAgentTransport(targetAgentId);
+        } catch (error) {
+          throw new TaskAgentStartError(
+            targetAgentId,
+            errorMessage(error),
+            error instanceof AgentUnavailableError
+              ? `Agent ${targetAgentId} is not available: ${errorMessage(error)}`
+              : errorMessage(error),
+            agentStartError(targetAgentId, errorMessage(error)),
+            { cause: error },
+          );
+        }
       }
       // The resolution above awaited; the caller must still own its execution
       // before anything is created.
-      authorize(principal);
-      const source = requireTask(sourceTaskId);
-      const requestedCwd = input.cwd ? expandHomePath(input.cwd) : source.cwd;
-      const cwd = isAbsolute(requestedCwd)
-        ? requestedCwd
-        : resolve(source.cwd, requestedCwd);
+      if (agentCaller) authorize(agentCaller);
+      const cwd =
+        source && agentCaller
+          ? (() => {
+              const requestedCwd = input.cwd
+                ? expandHomePath(input.cwd)
+                : source.cwd;
+              return isAbsolute(requestedCwd)
+                ? requestedCwd
+                : resolve(source.cwd, requestedCwd);
+            })()
+          : input.cwd;
       let created: Awaited<ReturnType<TaskManager["createTask"]>>;
       try {
         created = await tasks.createTask(
           targetBridge,
           cwd,
-          source.id,
-          "agent",
+          input.inheritFromTaskId,
+          input.source ?? (agentCaller ? "agent" : "auto"),
           {
-            parentId: source.id,
+            parentId: input.parentId,
             title: input.title,
             model: input.model,
             thinking: input.thinking,
+            ...(input.workflowStatus === undefined
+              ? {}
+              : { workflowStatus: input.workflowStatus }),
             // Only a caller-chosen target is declared here: inheritance keeps
             // the parent-binding assertion in `createTask`, which is the guard
             // that refuses a silently different execution environment.
@@ -362,9 +458,16 @@ export function createLocalTaskOps(deps: {
             // Third boundary: the task is persisted only while the caller still
             // owns its execution. `newSession` and the tree lock are awaits, and
             // a rotation can land inside either of them.
-            assertCaller: () => {
-              authorize(principal);
-            },
+            ...(agentCaller
+              ? {
+                  assertCaller: () => {
+                    authorize(agentCaller);
+                  },
+                }
+              : {}),
+            ...(input.clientOpId === undefined
+              ? {}
+              : { clientOpId: input.clientOpId }),
           },
         );
       } catch (error) {
@@ -385,32 +488,66 @@ export function createLocalTaskOps(deps: {
       // config inheritance since the persist boundary — so the caller is
       // validated again immediately before the source-side commit, with no
       // await in between.
-      authorize(principal);
+      if (agentCaller) authorize(agentCaller);
       const reported = reportedExecutionConfig(created.configOptions);
-      const taskCreatedMessageId = randomUUID();
-      const taskCreated = buildTaskCreatedSystemMessage({
-        taskId: created.taskId,
-        taskTitle: input.title,
-        agentId: store.getBindingAgent(created.taskId) ?? targetAgentId,
-        cwd,
-        // What took effect, not what was asked: an explicit value that the
-        // target accepted, the value inherited from a same-agent source, or
-        // the target session's own current value.
-        model: input.model ?? reported.model ?? null,
-        thinking: input.thinking ?? reported.reasoning_effort ?? null,
-      });
-      store.saveEvent(source.id, "system_message", taskCreated.data, {
-        from_ref: "agent",
-      });
-      broadcastTaskCreated?.({
-        messageId: taskCreatedMessageId,
-        sourceTaskId: source.id,
-        targetTaskId: created.taskId,
-        taskTitle: input.title,
-        title: taskCreated.title,
-        body: taskCreated.body,
-      });
-      return { taskId: created.taskId };
+      if (agentCaller) {
+        if (input.title) {
+          recordTaskCreated({
+            taskId: created.taskId,
+            taskTitle: input.title,
+            agentId: store.getBindingAgent(created.taskId) ?? targetAgentId,
+            cwd: cwd!,
+            model: input.model ?? reported.model ?? null,
+            thinking: input.thinking ?? reported.reasoning_effort ?? null,
+            sourceTaskId: agentCaller.taskId,
+            fromRef: "agent",
+          });
+        }
+        return { taskId: created.taskId };
+      }
+
+      const task = requireTask(created.taskId);
+      const auditParentId = task.parent_id;
+      if (input.title && auditParentId) {
+        recordTaskCreated({
+          taskId: created.taskId,
+          taskTitle: input.title,
+          agentId: store.getBindingAgent(created.taskId) ?? targetAgentId,
+          cwd: task.cwd,
+          // What took effect, not what was asked: an explicit value that the
+          // target accepted, the value inherited from a same-agent source, or
+          // the target session's own current value.
+          model: input.model ?? reported.model ?? null,
+          thinking: input.thinking ?? reported.reasoning_effort ?? null,
+          sourceTaskId: auditParentId,
+          fromRef: "user",
+        });
+      }
+      if (created.configOptions.length) {
+        broadcastConfigUpdate?.({
+          type: "config_option_update",
+          taskId: created.taskId,
+          configOptions: created.configOptions,
+        });
+      }
+      return {
+        taskId: task.id,
+        activation: {
+          cwd: task.cwd,
+          cwdDisplay: abbreviateHomePath(task.cwd),
+          title: task.title,
+          parentId: task.parent_id,
+          parentAgentId:
+            task.parent_id !== null
+              ? (store.getBindingAgent(task.parent_id) ?? null)
+              : null,
+          agentId: store.getBindingAgent(task.id) ?? null,
+          workflowStatus: task.workflow_status,
+          source: task.source,
+          configOptions: created.configOptions,
+          agentCommands: tasks.getAgentCommands(task.id),
+        },
+      };
     },
 
     async cancel(principal, targetTaskId, reason) {

@@ -14,6 +14,8 @@ import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
+import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { buildTaskCreatedBroadcast } from "../src/task-created-message.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
 
@@ -145,6 +147,16 @@ describe("Task REST API", () => {
     const handler = createRequestHandler({
       store,
       tasks,
+      taskOps: createLocalTaskOps({
+        store,
+        tasks,
+        broadcastTaskCreated: (event) => {
+          broadcastEvents.push(buildTaskCreatedBroadcast(event));
+        },
+        broadcastConfigUpdate: (event) => {
+          broadcastEvents.push(event);
+        },
+      }),
       onRequestBodyReadStart: (url) => {
         markBodyReadStarted(url);
       },

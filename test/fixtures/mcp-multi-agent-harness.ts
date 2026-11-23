@@ -101,6 +101,7 @@ export interface Harness {
   agents: Record<string, HarnessAgent>;
   /** Tokens minted for tasks, in order. */
   minted: Array<{ taskId: string; token: string }>;
+  createCalls: Array<"user" | "agent">;
   baseUrl(): string;
   request(
     method: string,
@@ -193,7 +194,15 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
     return token;
   };
 
-  const host: TaskOps = createLocalTaskOps({ store, tasks });
+  const createCalls: Array<"user" | "agent"> = [];
+  const localTaskOps = createLocalTaskOps({ store, tasks });
+  const host: TaskOps = {
+    ...localTaskOps,
+    async create(caller, input) {
+      createCalls.push(caller.kind);
+      return localTaskOps.create(caller, input);
+    },
+  };
   const endpoint = createMcpEndpoint({
     capabilities,
     isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
@@ -204,6 +213,7 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
   const handler = createRequestHandler({
     store,
     tasks,
+    taskOps: host,
     sseManager,
     publicDir: join(dir, "public"),
     dataDir: dir,
@@ -222,6 +232,7 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
     tasks,
     agents,
     minted,
+    createCalls,
     baseUrl: () => `http://127.0.0.1:${port}`,
     request: (method, path, body) =>
       new Promise((resolve, reject) => {

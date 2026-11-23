@@ -213,15 +213,23 @@ export function registerMcpTools(
     },
     async ({ title, cwd, agent, model, thinking }) => {
       guard();
-      return jsonContent(
-        await host!.create(principal, {
-          title,
-          cwd: cwd ?? undefined,
-          agent: agent ?? undefined,
-          model: model ?? undefined,
-          thinking: thinking ?? undefined,
-        }),
-      );
+      return jsonContent({
+        taskId: (
+          await host!.create(
+            { kind: "agent", principal },
+            {
+              title,
+              cwd: cwd ?? undefined,
+              agentId: agent ?? undefined,
+              model: model ?? undefined,
+              thinking: thinking ?? undefined,
+              parentId: principal.taskId,
+              inheritFromTaskId: principal.taskId,
+              source: "agent",
+            },
+          )
+        ).taskId,
+      });
     },
   );
 
