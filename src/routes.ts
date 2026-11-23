@@ -22,7 +22,6 @@ import {
   InvalidTaskDirectoryError,
   TaskBusyError,
   TaskNotFoundError,
-  TaskTreeBusyError,
 } from "./task-manager.ts";
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
@@ -42,12 +41,7 @@ import {
   buildCollaborationBroadcast,
 } from "./collaboration-message.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "./shared/time.ts";
-import type { TaskOps } from "./host/task-ops.ts";
-import {
-  TaskAgentIdTypeError,
-  TaskAgentNotConfiguredError,
-  TaskAgentStartError,
-} from "./host/task-ops.ts";
+import { validateTaskTitle } from "./shared/task-title.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -238,7 +232,6 @@ export const CSP_POLICY = [
 export interface RequestHandlerDeps {
   store: Store;
   tasks?: TaskManager;
-  taskOps?: TaskOps;
   sseManager: SseManager;
   clientRegistry?: ClientRegistry;
   publicDir: string;
@@ -290,6 +283,15 @@ export interface RequestHandlerDeps {
    * by per-task capability (see src/mcp/server.ts).
    */
   mcpEndpoint?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
+  /**
+   * Narrow HTTP task-create adapter. The route keeps dispatch order; the
+   * endpoint owns REST parsing, response projection, and error mapping.
+   */
+  taskCreateEndpoint?: (
+    req: IncomingMessage,
+    res: ServerResponse,
+    onRequestBodyReadStart?: (url: string) => void,
+  ) => Promise<boolean>;
 }
 
 /** Read the full request body as a string. */
@@ -374,22 +376,6 @@ function saveClientOpResult(
 ): void {
   if (!opId) return;
   store.saveClientOp(taskId, opId, { status, body });
-}
-
-function validateCollaborationTitle(title: unknown): string | null {
-  if (typeof title !== "string") return null;
-  // Normalize here: the stored title and the `Created task @<title>` reference
-  // must be the same string, or the reference cannot address the task.
-  const trimmed = title.trim();
-  if (
-    !trimmed ||
-    trimmed.includes("/") ||
-    trimmed === "." ||
-    trimmed === ".."
-  ) {
-    return null;
-  }
-  return trimmed;
 }
 
 /** Send a JSON response, gzip-compressed when the client supports it. */
@@ -2217,7 +2203,7 @@ export function createRequestHandler(
         // The live sibling-title unique index turns an unguarded rename into
         // a thrown constraint error; validate the same grammar as creation
         // and reject collisions before the store sees them.
-        const title = validateCollaborationTitle(body.value);
+        const title = validateTaskTitle(body.value);
         if (title === null) {
           json(res, HTTP_STATUS.BAD_REQUEST, {
             error:
@@ -3019,120 +3005,13 @@ export function createRequestHandler(
 
       // POST /api/v1/tasks (create new task)
       if (url === "/api/v1/tasks" && req.method === "POST") {
-        const clientOpId = getClientOpId(req);
-        const taskOps = deps.taskOps;
-        if (!tasks || !taskOps) {
+        if (!deps.taskCreateEndpoint) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task manager not available",
           });
           return;
         }
-        let body: {
-          cwd?: string;
-          inheritFromTaskId?: string;
-          source?: string;
-          parentId?: string;
-          title?: string;
-          agentId?: unknown;
-        };
-        try {
-          body = JSON.parse(await readBody(req)) as {
-            cwd?: string;
-            inheritFromTaskId?: string;
-            source?: string;
-            parentId?: string;
-            title?: string;
-            agentId?: unknown;
-          };
-        } catch {
-          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
-          return;
-        }
-        const source = body.source ?? "auto";
-        // A named child belongs to a parent; an unnamed one is the bare `/new`
-        // task and needs neither.
-        const title =
-          body.title !== undefined
-            ? validateCollaborationTitle(body.title)
-            : undefined;
-        if (title !== undefined && (title === null || !body.parentId)) {
-          json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "a named child needs a non-empty title and a parent",
-          });
-          return;
-        }
-        try {
-          const created = await taskOps.create(
-            { kind: "user" },
-            {
-              cwd: body.cwd,
-              inheritFromTaskId: body.inheritFromTaskId,
-              source,
-              parentId: body.parentId,
-              title: title ?? undefined,
-              workflowStatus: title ? "idle" : undefined,
-              agentId: body.agentId,
-              clientOpId: clientOpId ?? undefined,
-            },
-          );
-          const activation = created.activation;
-          if (!activation) throw new Error("missing_create_activation");
-          json(res, HTTP_STATUS.CREATED, {
-            id: created.taskId,
-            cwd: activation.cwd,
-            cwdDisplay: activation.cwdDisplay,
-            parentId: activation.parentId,
-            parentAgentId: activation.parentAgentId,
-            agentId: activation.agentId,
-            title: activation.title,
-            workflowStatus: activation.workflowStatus,
-            source: activation.source,
-            configOptions: activation.configOptions,
-            agentCommands: activation.agentCommands,
-            clientOpId: clientOpId ?? undefined,
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (err instanceof TaskAgentIdTypeError) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "agentId must be a string",
-            });
-          } else if (err instanceof TaskAgentNotConfiguredError) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: `Agent ${err.agentId} is not configured`,
-            });
-          } else if (err instanceof TaskAgentStartError) {
-            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-              error: err.unavailable
-                ? `Agent ${err.agentId} is not available: ${err.reason}`
-                : err.reason,
-              agentId: err.agentId,
-            });
-          } else if (msg === "parent_not_found") {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "Parent task not found",
-            });
-          } else if (
-            err instanceof InvalidTaskDirectoryError ||
-            err instanceof TaskNotFoundError
-          ) {
-            json(res, HTTP_STATUS.BAD_REQUEST, { error: msg });
-          } else if (err instanceof TaskTreeBusyError) {
-            json(res, HTTP_STATUS.CONFLICT, { error: msg });
-          } else if (
-            msg.includes(
-              "UNIQUE constraint failed: tasks.parent_id, tasks.title",
-            )
-          ) {
-            // The store's live sibling-title unique index is the authority;
-            // surface it as a client error instead of a raw 500.
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "A sibling task already has that title",
-            });
-          } else {
-            json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
-          }
-        }
+        await deps.taskCreateEndpoint(req, res, deps.onRequestBodyReadStart);
         return;
       }
 

@@ -10,6 +10,7 @@ import { SseManager } from "../src/sse-manager.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createTaskCreateEndpoint } from "../src/http/server.ts";
 import { buildCollaborationBroadcast } from "../src/collaboration-message.ts";
 import {
   buildTaskCreatedBroadcast,
@@ -119,15 +120,17 @@ describe("S3 collaboration write routes", () => {
       }),
       store,
       tasks,
-      taskOps: createLocalTaskOps({
-        store,
-        tasks,
-        broadcastTaskCreated: (event) => {
-          broadcasts.push(buildTaskCreatedBroadcast(event));
-        },
-        broadcastConfigUpdate: (event) => {
-          broadcasts.push(event);
-        },
+      taskCreateEndpoint: createTaskCreateEndpoint({
+        taskOps: createLocalTaskOps({
+          store,
+          tasks,
+          broadcastTaskCreated: (event) => {
+            broadcasts.push(buildTaskCreatedBroadcast(event));
+          },
+          broadcastConfigUpdate: (event) => {
+            broadcasts.push(event);
+          },
+        }),
       }),
       publicDir,
       dataDir: tmpDir,

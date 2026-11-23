@@ -18,6 +18,7 @@ import type { ExecutionAdapter } from "../src/execution-adapter.ts";
 import type { AgentBridge } from "../src/bridge.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createTaskCreateEndpoint } from "../src/http/server.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import type { AgentEvent } from "../src/types.ts";
@@ -271,7 +272,9 @@ describe("turn slot", () => {
       createRequestHandler({
         store,
         tasks,
-        taskOps: createLocalTaskOps({ store, tasks }),
+        taskCreateEndpoint: createTaskCreateEndpoint({
+          taskOps: createLocalTaskOps({ store, tasks }),
+        }),
         publicDir,
         dataDir: tmpDir,
         limits: {

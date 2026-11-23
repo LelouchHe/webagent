@@ -8,6 +8,29 @@ import tseslint from "typescript-eslint";
 import prettier from "eslint-config-prettier";
 import globals from "globals";
 
+const hostImplementationPatterns = [
+  {
+    group: [
+      "**/host/*",
+      "**/host/local/**",
+      "**/host/remote/**",
+      "!**/host/task-ops.ts",
+    ],
+    message:
+      "Entrypoints may select only the neutral host/task-ops.ts contract, not host implementations.",
+  },
+];
+
+function entrypointBoundary(peer) {
+  return [
+    ...hostImplementationPatterns,
+    {
+      group: [`**/${peer}/**`],
+      message: "HTTP and MCP entrypoints cannot depend on each other.",
+    },
+  ];
+}
+
 export default tseslint.config(
   {
     ignores: [
@@ -144,15 +167,79 @@ export default tseslint.config(
               message:
                 "MCP code must use TaskOps from host/task-ops.ts instead of importing local domain services.",
             },
+            ...entrypointBoundary("http"),
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    files: ["src/http/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: entrypointBoundary("mcp"),
+        },
+      ],
+    },
+  },
+
+  {
+    files: ["src/**/*.ts"],
+    ignores: [
+      "src/server.ts",
+      "src/http/**/*.ts",
+      "src/mcp/**/*.ts",
+      "src/task-manager.ts",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/http/**", "**/mcp/**"],
+              message:
+                "Core and host code cannot depend on HTTP or MCP entrypoints; assemble them in server.ts.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    files: ["src/task-manager.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "./mcp/server.ts",
+              allowImportNames: ["buildMcpServerEntry"],
+              message:
+                "TaskManager may use only its legacy buildMcpServerEntry import.",
+            },
+            {
+              name: "./mcp/capability.ts",
+              allowImportNames: ["CapabilityStore"],
+              message:
+                "TaskManager may use only its legacy CapabilityStore type import.",
+            },
+          ],
+          patterns: [
             {
               group: [
-                "**/host/*",
-                "**/host/local/**",
-                "**/host/remote/**",
-                "!**/host/task-ops.ts",
+                "**/http/**",
+                "**/mcp/**",
+                "!**/mcp/server.ts",
+                "!**/mcp/capability.ts",
               ],
               message:
-                "MCP code may import only the neutral host/task-ops.ts boundary.",
+                "TaskManager has only two named MCP legacy dependencies and cannot depend on HTTP entrypoints.",
             },
           ],
         },

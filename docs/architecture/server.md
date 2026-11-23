@@ -22,7 +22,8 @@ The entrypoint contracts live in [Client Architecture](client.md) and
           |                                          |
           v                                          v
  +-------------------------------+     +----------------------------------+
- | HTTP entry  (routes.ts)       |     | MCP entry  (mcp/server.ts)       |
+ | HTTP router (routes.ts)       |     | MCP entry  (mcp/server.ts)       |
+ |  task create (http/server.ts) |     |                                  |
  |  request boundary             |     |  capability token -> TaskCaller  |
  |  auth gate (auth-middleware)  |     |  tool registration (mcp/tools.ts)|
  |  share / files sub-routers    |     +----------------+-----------------+
@@ -55,17 +56,19 @@ The entrypoint contracts live in [Client Architecture](client.md) and
  Host layer (src/host/remote/): outbound connections to other instances
 ```
 
-MCP reaches the domain core through the `TaskOps` port. The general REST task
-create route uses the same port for creation; its other routes still call the
-domain core directly. Both create entrypoints therefore share one server
-command while retaining their own request and response presentations.
+MCP and the general REST task-create entry both reach the domain core through
+the same `TaskOps` port instance. The other REST routes still call the domain
+core directly. Both create entrypoints therefore share one server command while
+retaining their own request and response presentations.
 
 ## Entrypoints
 
 ### HTTP
 
-`createRequestHandler()` in `src/routes.ts` handles every request in this
-order:
+`createRequestHandler()` in `src/routes.ts` remains the legacy HTTP dispatcher
+and handles requests in this order. The composition root injects the narrow
+`createTaskCreateEndpoint()` handler from `src/http/server.ts`; that handler
+owns `POST /api/v1/tasks` parsing, response projection, and error mapping.
 
 1. **MCP** — `/mcp` is claimed first; that endpoint authenticates with its own
    per-session capability, not with a Bearer token.
@@ -108,10 +111,11 @@ configuration. The tool contracts are in [Task MCP Control Plane](../task-mcp.md
 `src/server.ts` is the only place that assembles the server. It loads the
 configuration, constructs the Store, TaskManager, AgentRegistry, SseManager,
 PushService, ClientRegistry, AuthStore, TicketStore, and HostRegistry, wires the
-broadcast callbacks, creates the local `TaskOps` adapter and the MCP endpoint,
-builds the request handler, and creates one transport per agent with its event
-listener. It also owns graceful shutdown. `src/startup-checks.ts` and
-`src/preflight.ts` run before any of this on every launch path, and
+broadcast callbacks, creates the local `TaskOps` adapter, injects that same
+instance into the HTTP task-create and MCP entry factories, builds the request
+handler, and creates one transport per agent with its event listener. It also
+owns graceful shutdown. `src/startup-checks.ts` and `src/preflight.ts` run
+before any of this on every launch path, and
 `src/daemon.ts` implements the background service commands
 ([Configuration & Operations](../configuration.md)).
 
@@ -220,8 +224,8 @@ Activating push on a device and troubleshooting are in
 
 ## Request paths
 
-**A browser creates a task** (`/new`, `+`): `POST /api/v1/tasks` → the route
-parses its REST fields and calls `TaskOps.create()` with a user caller,
+**A browser creates a task** (`/new`, `+`): `POST /api/v1/tasks` → the narrow
+HTTP entry parses its REST fields and calls `TaskOps.create()` with a user caller,
 explicit parent, and independent inheritance source → the local adapter
 chooses the target agent, resolves its transport, and calls
 `TaskManager.createTask()` → the task row, binding, and creation record are
@@ -249,10 +253,15 @@ through the transport that holds the pending request.
 ## Module boundaries
 
 ESLint's `no-restricted-imports` enforces direct static dependencies:
-`src/mcp/**` may import only `src/host/task-ops.ts` from the host layer and
-never Store or TaskManager; `src/host/task-ops.ts` is neutral; `src/host/local/`
-and `src/host/remote/` cannot import each other; `src/host/remote/` cannot
-import Store or TaskManager. `src/routes.ts` has no such restriction. See
+`src/http/**` and `src/mcp/**` cannot import each other or select a host
+implementation; the entrypoints may use only the neutral
+`src/host/task-ops.ts` host contract. MCP also cannot import Store or
+TaskManager. Core and host modules cannot import either entrypoint except in the
+assembly root, with `src/task-manager.ts` retaining only its two named legacy MCP
+imports. `src/host/task-ops.ts` is neutral; `src/host/local/` and
+`src/host/remote/` cannot import each other; `src/host/remote/` cannot import
+Store or TaskManager. The rules cover nested paths and static value, type, and
+re-export imports. See
 [Multi-host](multi-host.md#directories-and-dependencies) for the exact scope of
 the rules.
 

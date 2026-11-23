@@ -26,7 +26,7 @@ never share storage.
 ```text
 Entry points
   MCP [now]: capability authenticates the caller; principal frozen
-  Browser REST create [now]: bearer scope already enforced on the local route
+  Browser REST create [now]: HTTP adapter behind the bearer-authenticated router
   Other browser REST commands [plan]
                          |
                          v
@@ -117,24 +117,26 @@ regression observation. The browser UI does not consume it yet. See
 | Location | Responsibility |
 | --- | --- |
 | `src/mcp/` | MCP protocol handling, tool registration, capabilities, tool descriptions, and adaptation of protocol input/output |
+| `src/http/` | HTTP protocol adaptation for migrated commands; today only `POST /api/v1/tasks` parsing, response projection, and error mapping |
 | `src/host/task-ops.ts` | The neutral `TaskOps` interface, command DTOs, and caller |
 | `src/host/local/adapter.ts` | The local `TaskOps` implementation over this instance's TaskManager and Store |
 | `src/host/local/` | Local projection and error helpers; cannot depend on remote implementations |
 | `src/host/remote/` | Current hub connection, token hash verification, retry/backoff, and in-memory status; the remote `adapter.ts` and Task delivery transport are planned |
-| `src/server.ts` | The only assembly point; it creates the local `TaskOps` and injects it into MCP |
+| `src/server.ts` | The only assembly point; it creates the local `TaskOps` and injects the same instance into HTTP task create and MCP |
 
-ESLint's `no-restricted-imports` guards the direct static dependencies:
-`src/mcp/**` cannot import Store, TaskManager, or a host module other than
-`src/host/task-ops.ts`, and `src/host/task-ops.ts` cannot import Store or
-TaskManager. Direct files in `src/host/remote/` cannot import Store, TaskManager,
-or `src/host/local/`; owner-side local commands will be injected through
-`TaskOps`. Direct files in `src/host/local/` cannot import `src/host/remote/`.
-Static value and type imports and re-exports are covered, and `npm run lint`
-fails on a violation. The current relative-import restrictions cover these
-direct files; if either directory gains nested subdirectories, extend the lint
-patterns at that point. The rule does not follow the module graph, dynamic
-`import()`, or inline `import("…").Type` references; those indirect paths are
-left to review.
+ESLint's `no-restricted-imports` guards direct static dependencies:
+`src/http/**` and `src/mcp/**` cannot import each other or a host module other
+than `src/host/task-ops.ts`; MCP also cannot import Store or TaskManager.
+Core and host modules cannot import HTTP or MCP entrypoints. `src/server.ts` is
+the assembly exception, and `src/task-manager.ts` retains only its two named
+legacy MCP imports (`buildMcpServerEntry` and the `CapabilityStore` type).
+`src/host/task-ops.ts` cannot import Store or TaskManager. `src/host/remote/`
+cannot import Store, TaskManager, or `src/host/local/`; owner-side local commands
+are injected through `TaskOps`. `src/host/local/` cannot import
+`src/host/remote/`. Static value and type imports and re-exports at any nested
+depth are covered, and `npm run lint` fails on a violation. The rules do not
+follow the module graph, dynamic `import()`, or inline `import("…").Type`
+references; those indirect paths are left to review.
 
 ## `TaskOps` port
 

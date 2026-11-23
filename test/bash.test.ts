@@ -9,6 +9,7 @@ import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createTaskCreateEndpoint } from "../src/http/server.ts";
 import type { AgentEvent, ConfigOption } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
 
@@ -101,7 +102,9 @@ describe("Bash REST API", () => {
     const handler = createRequestHandler({
       store,
       tasks,
-      taskOps: createLocalTaskOps({ store, tasks }),
+      taskCreateEndpoint: createTaskCreateEndpoint({
+        taskOps: createLocalTaskOps({ store, tasks }),
+      }),
       sseManager: mockSseManager as any,
       publicDir,
       dataDir: tmpDir,

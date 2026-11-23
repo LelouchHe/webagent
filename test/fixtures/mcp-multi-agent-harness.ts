@@ -19,6 +19,7 @@ import { ExecutionAuthority } from "../../src/execution-authority.ts";
 import { Store } from "../../src/store.ts";
 import { SseManager } from "../../src/sse-manager.ts";
 import { createRequestHandler } from "../../src/routes.ts";
+import { createTaskCreateEndpoint } from "../../src/http/server.ts";
 import { handleAgentEvent } from "../../src/event-handler.ts";
 import type { AgentBridge } from "../../src/bridge.ts";
 import type { ConfigOption } from "../../src/types.ts";
@@ -213,7 +214,7 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
   const handler = createRequestHandler({
     store,
     tasks,
-    taskOps: host,
+    taskCreateEndpoint: createTaskCreateEndpoint({ taskOps: host }),
     sseManager,
     publicDir: join(dir, "public"),
     dataDir: dir,

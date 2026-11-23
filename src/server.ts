@@ -12,6 +12,7 @@ import { AgentRegistry } from "./agent-registry.ts";
 import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
+import { createTaskCreateEndpoint } from "./http/server.ts";
 import { createLocalTaskOps } from "./host/local/adapter.ts";
 import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
 import {
@@ -244,7 +245,9 @@ let sharePreviewCleanup: SharePreviewCleanupHandle | null = null;
 const requestHandler = createRequestHandler({
   store,
   tasks,
-  taskOps,
+  taskCreateEndpoint: createTaskCreateEndpoint({
+    taskOps,
+  }),
   sseManager,
   clientRegistry,
   publicDir: PUBLIC_DIR,
