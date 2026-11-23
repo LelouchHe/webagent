@@ -182,6 +182,46 @@ recent_paths_ttl = 60
     assert.equal(parsed.success, false);
   });
 
+  it("loads strict host connection entries", () => {
+    const parsed = ConfigSchema.parse({
+      default_agent: "copilot",
+      agents: { copilot: { cmd: "copilot --acp" } },
+      hosts: {
+        desk: {
+          url: "http://desk.example.test",
+          token: "!security find-generic-password -a webagent",
+        },
+      },
+    });
+    assert.deepEqual(parsed.hosts, {
+      desk: {
+        url: "http://desk.example.test",
+        token: "!security find-generic-password -a webagent",
+      },
+    });
+  });
+
+  it("rejects invalid host ids, URLs, and unknown host keys", () => {
+    for (const hosts of [
+      { "Desk Host": { url: "http://desk", token: "wat_token" } },
+      { desk: { url: "ftp://desk.example", token: "wat_token" } },
+      {
+        desk: {
+          url: "http://desk.example",
+          token: "wat_token",
+          toekn: "typo",
+        },
+      },
+    ]) {
+      const parsed = ConfigSchema.safeParse({
+        default_agent: "copilot",
+        agents: { copilot: { cmd: "copilot --acp" } },
+        hosts,
+      });
+      assert.equal(parsed.success, false);
+    }
+  });
+
   it("keeps nested tables lenient (unknown nested keys are stripped)", () => {
     const parsed = ConfigSchema.safeParse({
       default_agent: "copilot",

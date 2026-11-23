@@ -21,6 +21,7 @@ WebAgent exposes a **REST + SSE** API for managing agent tasks, sending prompts,
   - [Config](#config)
   - [Recent Paths](#recent-paths)
   - [Version](#version)
+  - [Hosts](#hosts)
   - [Auth](#auth)
   - [Tokens](#tokens)
   - [Bash](#bash)
@@ -124,6 +125,8 @@ API discovery endpoint. Returns the API version and top-level endpoint paths.
     "files": "/api/v1/files",
     "config": "/api/v1/config",
     "events_stream": "/api/v1/events/stream",
+    "host": "/api/v1/host",
+    "hosts": "/api/v1/hosts",
     "prompt": "/api/beta/prompt",
     "push": "/api/beta/push",
     "clients": "/api/beta/clients"
@@ -1113,6 +1116,66 @@ Get server and agent version information.
 
 ---
 
+### Hosts
+
+#### `GET /api/v1/host`
+
+Describe this WebAgent instance to an authenticated hub. This is an owner-side
+endpoint: it requires an `api`- or `admin`-scope Bearer token. A `read` token
+returns `403`.
+
+**Response** `200`:
+
+```json
+{
+  "protocol": 1,
+  "server": "0.13.1",
+  "caller": {
+    "name": "laptop-hub",
+    "scope": "api",
+    "fingerprint": "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+  }
+}
+```
+
+The `fingerprint` is the SHA-256 digest of the presented token, matching the
+token's `hash` in the owner's `auth.json`. It changes when the token changes.
+No raw token is returned.
+
+#### `GET /api/v1/hosts`
+
+Read the hub's in-memory owner-connection states. Every authenticated scope,
+including `read`, may call this endpoint. An owner with no `[hosts.<name>]`
+configuration returns an empty array.
+
+**Response** `200`:
+
+```json
+[
+  {
+    "name": "workstation",
+    "url": "http://127.0.0.1:6800",
+    "state": "connected",
+    "since": "2026-11-23T02:00:00.000Z"
+  },
+  {
+    "name": "laptop",
+    "url": "http://laptop.example:6800",
+    "state": "unreachable",
+    "reason": "unauthorized",
+    "since": "2026-11-23T02:00:04.000Z"
+  }
+]
+```
+
+`state` is `connecting`, `connected`, or `unreachable`. Unreachable entries
+include a stable machine-readable `reason`, currently
+`token_command_failed`, `unauthorized`, `network`, or `protocol_mismatch`.
+`since` is the start of the current state in ISO-8601 UTC form. The response
+never contains credentials or token command output.
+
+---
+
 ### Auth
 
 #### `GET /api/v1/auth/verify`
@@ -1135,7 +1198,7 @@ This endpoint **always requires** a valid `Authorization: Bearer <token>` header
 | ------- | ------- | ---------------------------------------------------- |
 | `ok`    | boolean | Always `true` on success                             |
 | `name`  | string  | Token's human-readable name (e.g. `"laptop"`)        |
-| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"read"` (pure reads only: task list, task detail, events, status, permissions, version, auth/verify; events never flushes and no read warms) |
+| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"read"` (pure reads only: host status, task list, task detail, events, status, permissions, version, auth/verify; events never flushes and no read warms) |
 
 **Response** `401`:
 

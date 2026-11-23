@@ -16,8 +16,10 @@ import { format } from "prettier";
 import type {
   Json,
   JsonObject,
-  MockBehavior,
+  RegressionClient,
   RegressionScenario,
+  RegressionInstanceContext,
+  RegressionInstanceSpec,
   RestResponse,
 } from "./types.ts";
 import {
@@ -27,6 +29,7 @@ import {
   writeSpecConfig,
   type SpecServer,
 } from "../e2e/spawn-server.ts";
+import { pickFreePort } from "../e2e/run-context.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCENARIO_DIR = join(ROOT, "test", "regression", "scenarios");
@@ -39,13 +42,26 @@ const requested = process.argv
   .slice(2)
   .filter((arg) => arg !== "--update" && !arg.startsWith("--"));
 
-interface StepResult {
+interface SingleStepResult {
   name: string;
   response: unknown;
   sse: Array<{ taskId: string; events: Json[] }>;
   mock: Array<{ sessionId: string; calls: Json[] }>;
   sql: { writes: Json[][]; reads: number };
 }
+
+interface MultiStepResult {
+  name: string;
+  response: unknown;
+  instances: Array<{
+    name: string;
+    sse: Array<{ taskId: string; events: Json[] }>;
+    mock: Array<{ sessionId: string; calls: Json[] }>;
+    sql: { writes: Json[][]; reads: number };
+  }>;
+}
+
+type StepResult = SingleStepResult | MultiStepResult;
 
 interface Instance {
   name: string;
@@ -56,6 +72,9 @@ interface Instance {
   observerLog: string;
   databasePath: string;
   server: SpecServer;
+  configPath: string;
+  nodeArgs: string[];
+  env: NodeJS.ProcessEnv;
   abortSse: AbortController;
   sse: Json[];
   sseError: Error | null;
@@ -159,46 +178,156 @@ async function runOnce(
   name: string,
   definition: RegressionScenario<unknown>,
 ): Promise<Json> {
-  const instance = await createInstance(name, definition.mock);
+  const instances = await createInstances(name, definition);
+  const primary = [...instances.values()][0];
   try {
-    const client = createClient(instance);
-    await connectSse(instance);
-    markCursor(instance);
+    const client = createClient(instances);
+    await Promise.all([...instances.values()].map(connectSse));
+    for (const instance of instances.values()) markCursor(instance);
+    const context = createContext(instances);
     const state = await timed(`${name}: setup`, () =>
       definition.setup({
-        root: instance.root,
+        ...client,
+        root: primary.root,
         token: TOKEN,
-        rest: client.rest,
+        instances: context,
       }),
     );
-    await settle(instance, "setup");
-    const steps: StepResult[] = [observeStep(instance, "setup", state)];
+    await settle(instances, "setup");
+    const steps: StepResult[] = [observeSteps(instances, "setup", state)];
     for (const step of definition.steps(client, state)) {
       const response = await timed(`${name}: step ${step.name}`, () =>
         step.action(client, state),
       );
-      await settle(instance, step.name);
-      steps.push(observeStep(instance, step.name, response));
+      await settle(instances, step.name);
+      steps.push(observeSteps(instances, step.name, response));
     }
-    const snapshot = databaseSnapshot(instance);
-    return normalize({ steps, snapshot }, instance) as Json;
+    const snapshot =
+      instances.size === 1
+        ? databaseSnapshot(primary)
+        : [...instances.values()].map((instance) => ({
+            name: instance.name,
+            snapshot: databaseSnapshot(instance),
+          }));
+    return normalize({ steps, snapshot }, instances) as Json;
   } catch (error) {
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)}\nmock:\n${readFileSync(instance.mockLog, "utf8")}`,
+      `${error instanceof Error ? error.message : String(error)}\nmock:\n${[
+        ...instances.values(),
+      ]
+        .map(
+          (instance) =>
+            `[${instance.name}]\n${readFileSync(instance.mockLog, "utf8")}`,
+        )
+        .join("\n")}`,
       { cause: error },
     );
   } finally {
-    await stopInstance(instance);
+    await stopInstances(instances);
   }
 }
 
-async function createInstance(
+interface InstancePlan {
+  name: string;
+  root: string;
+  dataDir: string;
+  home: string;
+  behaviorPath: string;
+  mockLog: string;
+  observerLog: string;
+  configPath: string;
+  databasePath: string;
+  nodeArgs: string[];
+  env: NodeJS.ProcessEnv;
+  port: number;
+  spec: RegressionInstanceSpec;
+}
+
+async function createInstances(
   name: string,
-  behavior: MockBehavior,
-): Promise<Instance> {
+  definition: RegressionScenario<unknown>,
+): Promise<Map<string, Instance>> {
+  const specs: Record<string, RegressionInstanceSpec> =
+    definition.instances ?? {
+      default: { mock: definition.mock },
+    };
+  const plans = Object.entries(specs).map(([instanceName, spec]) =>
+    createInstancePlan(name, instanceName, spec),
+  );
+  const contexts = Object.fromEntries(
+    plans.map((plan) => [
+      plan.name,
+      {
+        name: plan.name,
+        root: plan.root,
+        origin: `http://127.0.0.1:${plan.port}`,
+        port: plan.port,
+        token: TOKEN,
+        rest: () => {
+          throw new Error("instance config cannot make REST requests");
+        },
+      } satisfies RegressionInstanceContext,
+    ]),
+  );
+  for (const plan of plans) {
+    writeSpecConfig(plan.configPath, {
+      dataDir: plan.dataDir,
+      defaultCwd: "/",
+      port: plan.port,
+      agentCommand: [
+        process.execPath,
+        "--experimental-strip-types",
+        "--import",
+        pathToFileURL(join(ROOT, "test", "regression", "observer.ts")).href,
+        join(ROOT, "test", "e2e", "mock-agent.ts"),
+      ].join(" "),
+      extra: plan.spec.extraConfig?.(contexts),
+    });
+  }
+  const instances = new Map<string, Instance>();
+  try {
+    for (const plan of plans) {
+      const server = await startSpecServer(plan.configPath, {
+        nodeArgs: plan.nodeArgs,
+        env: plan.env,
+        quiet: true,
+      });
+      instances.set(plan.name, {
+        name: plan.name,
+        root: plan.root,
+        origin: server.origin,
+        port: server.port,
+        mockLog: plan.mockLog,
+        observerLog: plan.observerLog,
+        databasePath: plan.databasePath,
+        server,
+        configPath: plan.configPath,
+        nodeArgs: plan.nodeArgs,
+        env: plan.env,
+        abortSse: new AbortController(),
+        sse: [],
+        sseError: null,
+        stepCursor: { sse: 0, mock: 0, observer: 0 },
+        busy: new Set(),
+      });
+    }
+    return instances;
+  } catch (error) {
+    await stopInstances(instances);
+    for (const plan of plans)
+      rmSync(plan.root, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function createInstancePlan(
+  scenarioName: string,
+  instanceName: string,
+  spec: RegressionInstanceSpec,
+): InstancePlan {
   const root = join(
     tmpdir(),
-    `webagent-regression-${name}-${randomBytes(4).toString("hex")}`,
+    `webagent-regression-${scenarioName}-${instanceName}-${randomBytes(4).toString("hex")}`,
   );
   const dataDir = join(root, "data");
   const home = join(root, "home");
@@ -209,61 +338,87 @@ async function createInstance(
   const observerLog = join(root, "observer.jsonl");
   const configPath = join(root, "config.toml");
   const databasePath = join(dataDir, "webagent.db");
-  writeFileSync(behaviorPath, JSON.stringify(behavior));
+  writeFileSync(behaviorPath, JSON.stringify(spec.mock));
   writeFileSync(mockLog, "");
   writeFileSync(observerLog, "");
   seedSpecAuth(dataDir, TOKEN);
   const observer = join(ROOT, "test", "regression", "observer.ts");
-  const mock = join(ROOT, "test", "e2e", "mock-agent.ts");
-  const agentCommand = [
-    process.execPath,
-    "--experimental-strip-types",
-    "--import",
-    pathToFileURL(observer).href,
-    mock,
-  ].join(" ");
-  writeSpecConfig(configPath, {
-    dataDir,
-    defaultCwd: "/",
-    agentCommand,
-  });
-  let server: SpecServer;
-  try {
-    server = await startSpecServer(configPath, {
-      nodeArgs: ["--import", pathToFileURL(observer).href],
-      env: {
-        HOME: home,
-        WEBAGENT_STARTUP_CHECKED: "1",
-        WEBAGENT_REGRESSION_OBSERVER: observerLog,
-        WEBAGENT_REGRESSION_SQL: "1",
-        WEBAGENT_REGRESSION_BEHAVIOR_PATH: behaviorPath,
-        WEBAGENT_REGRESSION_CALLS_PATH: mockLog,
-      },
-      quiet: true,
-    });
-  } catch (error) {
-    rmSync(root, { recursive: true, force: true });
-    throw error;
-  }
-  const instance: Instance = {
-    name,
+  const nodeArgs = ["--import", pathToFileURL(observer).href];
+  return {
+    name: instanceName,
     root,
-    origin: server.origin,
-    port: server.port,
+    dataDir,
+    home,
+    behaviorPath,
     mockLog,
     observerLog,
+    configPath,
     databasePath,
-    server,
-    abortSse: new AbortController(),
-    sse: [],
-    sseError: null,
-    stepCursor: { sse: 0, mock: 0, observer: 0 },
-    busy: new Set(),
+    nodeArgs,
+    env: {
+      HOME: home,
+      WEBAGENT_STARTUP_CHECKED: "1",
+      WEBAGENT_REGRESSION_OBSERVER: observerLog,
+      WEBAGENT_REGRESSION_SQL: "1",
+      WEBAGENT_REGRESSION_BEHAVIOR_PATH: behaviorPath,
+      WEBAGENT_REGRESSION_CALLS_PATH: mockLog,
+    },
+    port: pickFreePort(),
+    spec,
   };
+}
+
+function createContext(
+  instances: Map<string, Instance>,
+): Record<string, RegressionInstanceContext> {
+  return Object.fromEntries(
+    [...instances.entries()].map(([name, instance]) => [
+      name,
+      {
+        name,
+        root: instance.root,
+        origin: instance.origin,
+        port: instance.port,
+        token: TOKEN,
+        rest: createInstanceClient(instance),
+      },
+    ]),
+  );
+}
+
+function createClient(instances: Map<string, Instance>): RegressionClient {
+  const primary = [...instances.values()][0];
+  const build = (selected: Instance): RegressionClient => ({
+    rest: createInstanceClient(selected),
+    instance: (name: string) => build(requireInstance(instances, name)),
+    restart: async (name: string, offlineMs?: number) =>
+      restartInstance(requireInstance(instances, name), offlineMs),
+    waitForHost: async (
+      instanceName: string,
+      hostName: string,
+      state: "connecting" | "connected" | "unreachable",
+      reason?: string,
+    ) =>
+      waitForHost(
+        requireInstance(instances, instanceName),
+        hostName,
+        state,
+        reason,
+      ),
+  });
+  return build(primary);
+}
+
+function requireInstance(
+  instances: Map<string, Instance>,
+  name: string,
+): Instance {
+  const instance = instances.get(name);
+  if (!instance) throw new Error(`Unknown regression instance: ${name}`);
   return instance;
 }
 
-function createClient(instance: Instance) {
+function createInstanceClient(instance: Instance) {
   const rest = async (
     method: string,
     path: string,
@@ -291,10 +446,11 @@ function createClient(instance: Instance) {
     if (raw) parsed = JSON.parse(raw) as Json;
     return { status: response.status, body: parsed };
   };
-  return { rest };
+  return rest;
 }
 
 async function connectSse(instance: Instance): Promise<void> {
+  const previousLength = instance.sse.length;
   const ticket = await timed(`${instance.name}: SSE ticket`, () =>
     fetch(`${instance.origin}/api/v1/sse-ticket`, {
       method: "POST",
@@ -323,9 +479,9 @@ async function connectSse(instance: Instance): Promise<void> {
   await waitUntil(
     () => {
       if (instance.sseError) throw instance.sseError;
-      return instance.sse.some(
-        (event) => (event as JsonObject).type === "connected",
-      );
+      return instance.sse
+        .slice(previousLength)
+        .some((event) => (event as JsonObject).type === "connected");
     },
     2_000,
     `${instance.name}: SSE connected event`,
@@ -383,33 +539,74 @@ function trackBusy(instance: Instance, event: JsonObject): void {
   else instance.busy.add(event.taskId);
 }
 
-async function settle(instance: Instance, step: string): Promise<void> {
-  let last = fingerprint(instance);
+async function settle(
+  instances: Map<string, Instance>,
+  step: string,
+): Promise<void> {
+  let last = await fingerprint(instances);
   let quietSince = performance.now();
   await waitUntil(
-    () => {
-      if (instance.sseError) throw instance.sseError;
-      const current = fingerprint(instance);
+    async () => {
+      for (const instance of instances.values()) {
+        if (instance.sseError) throw instance.sseError;
+      }
+      const hostStates = await readHostStates(instances);
+      const current = await fingerprint(instances, hostStates);
       if (current !== last) {
         last = current;
         quietSince = performance.now();
         return false;
       }
-      const busyCovered = uncoveredBusyTasks(instance).length === 0;
-      return performance.now() - quietSince >= QUIET_MS && busyCovered;
+      const busyCovered = [...instances.values()].every(
+        (instance) => uncoveredBusyTasks(instance).length === 0,
+      );
+      const connecting = hostStates.some((entry) =>
+        entry.hosts.some((host) => host.state === "connecting"),
+      );
+      return (
+        performance.now() - quietSince >= QUIET_MS && busyCovered && !connecting
+      );
     },
     SETTLE_TIMEOUT_MS,
     () =>
-      `[${instance.name}] step ${step} did not settle; ${settleStatus(instance)}`,
+      `[${step}] did not settle; ${[...instances.values()]
+        .map(settleStatus)
+        .join(" ")}`,
   );
 }
 
-function fingerprint(instance: Instance): string {
-  return JSON.stringify([
-    instance.sse.length,
-    readLines(instance.mockLog).length,
-    readLines(instance.observerLog).length,
-  ]);
+async function fingerprint(
+  instances: Map<string, Instance>,
+  suppliedHostStates?: Array<{ instance: string; hosts: HostState[] }>,
+): Promise<string> {
+  const hostStates = suppliedHostStates ?? (await readHostStates(instances));
+  return JSON.stringify({
+    instances: [...instances.values()].map((instance) => [
+      instance.name,
+      instance.sse.length,
+      readLines(instance.mockLog).length,
+      readLines(instance.observerLog).length,
+    ]),
+    hostStates,
+  });
+}
+
+interface HostState {
+  state: string;
+  name: string;
+}
+
+async function readHostStates(
+  instances: Map<string, Instance>,
+): Promise<Array<{ instance: string; hosts: HostState[] }>> {
+  return Promise.all(
+    [...instances.values()].map(async (instance) => ({
+      instance: instance.name,
+      hosts: (await createInstanceClient(instance)("GET", "/api/v1/hosts").then(
+        (response) => response.body,
+      )) as unknown as HostState[],
+    })),
+  );
 }
 
 function activeWaits(instance: Instance): JsonObject[] {
@@ -451,7 +648,7 @@ function settleStatus(instance: Instance): string {
     sessionId: wait.sessionId ?? null,
     label: wait.label ?? null,
   }));
-  return `busy=${JSON.stringify(busy)} waits=${JSON.stringify(waits)}`;
+  return `${instance.name}: busy=${JSON.stringify(busy)} waits=${JSON.stringify(waits)}`;
 }
 
 function taskSessions(instance: Instance): Map<string, string> {
@@ -478,7 +675,7 @@ function observeStep(
   instance: Instance,
   name: string,
   response: unknown,
-): StepResult {
+): SingleStepResult {
   const mock = readLines(instance.mockLog).slice(instance.stepCursor.mock);
   const observer = readLines(instance.observerLog).slice(
     instance.stepCursor.observer,
@@ -492,6 +689,7 @@ function observeStep(
       `[${instance.name}] step ${name} received an undeclared prompt: ${JSON.stringify(undeclared)}`,
     );
   }
+
   const result = {
     name,
     response,
@@ -525,6 +723,35 @@ function observeStep(
     observer: instance.stepCursor.observer + observer.length,
   };
   return result;
+}
+
+function observeSteps(
+  instances: Map<string, Instance>,
+  name: string,
+  response: unknown,
+): StepResult {
+  if (instances.size === 1) {
+    return observeStep([...instances.values()][0], name, response);
+  }
+  const observed = [...instances.values()].map((instance) => {
+    const step = observeStep(instance, name, null);
+    return {
+      instance: instance.name,
+      sse: step.sse,
+      mock: step.mock,
+      sql: step.sql,
+    };
+  });
+  return {
+    name,
+    response,
+    instances: observed.map(({ instance, sse, mock, sql }) => ({
+      name: instance,
+      sse,
+      mock,
+      sql,
+    })),
+  };
 }
 
 function groupRecords<Key extends string, Records extends string>(
@@ -585,20 +812,27 @@ function databaseSnapshot(instance: Instance): JsonObject {
   }
 }
 
-function normalize(value: unknown, instance: Instance): unknown {
+function normalize(value: unknown, instances: Map<string, Instance>): unknown {
   if (typeof value === "string") {
-    return value
-      .replaceAll(instance.root, "<INSTANCE>")
-      .replaceAll(`127.0.0.1:${instance.port}`, "<ORIGIN>")
-      .replaceAll(ROOT, "<REPOSITORY>");
+    let normalized = value.replaceAll(ROOT, "<REPOSITORY>");
+    for (const instance of instances.values()) {
+      const rootToken =
+        instances.size === 1 ? "<INSTANCE>" : `<INSTANCE:${instance.name}>`;
+      const originToken =
+        instances.size === 1 ? "<ORIGIN>" : `<ORIGIN:${instance.name}>`;
+      normalized = normalized
+        .replaceAll(instance.root, rootToken)
+        .replaceAll(`127.0.0.1:${instance.port}`, originToken);
+    }
+    return normalized;
   }
   if (Array.isArray(value))
-    return value.map((item) => normalize(item, instance));
+    return value.map((item) => normalize(item, instances));
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
         key,
-        normalize(item, instance),
+        normalize(item, instances),
       ]),
     );
   }
@@ -617,6 +851,66 @@ async function stopInstance(instance: Instance): Promise<void> {
     stopSpecServer(instance.server),
   );
   rmSync(instance.root, { recursive: true, force: true });
+}
+
+async function stopInstances(instances: Map<string, Instance>): Promise<void> {
+  await Promise.all([...instances.values()].map(stopInstance));
+}
+
+async function restartInstance(
+  instance: Instance,
+  offlineMs = 0,
+): Promise<Json> {
+  instance.abortSse.abort();
+  await stopSpecServer(instance.server);
+  if (offlineMs > 0) await delay(offlineMs);
+  instance.server = await startSpecServer(instance.configPath, {
+    nodeArgs: instance.nodeArgs,
+    env: instance.env,
+    quiet: true,
+  });
+  instance.origin = instance.server.origin;
+  instance.port = instance.server.port;
+  instance.abortSse = new AbortController();
+  instance.sseError = null;
+  instance.busy.clear();
+  await connectSse(instance);
+  return {
+    name: instance.name,
+    restarted: true,
+  };
+}
+
+async function waitForHost(
+  instance: Instance,
+  hostName: string,
+  state: "connecting" | "connected" | "unreachable",
+  reason?: string,
+): Promise<Json> {
+  let latest: Json = null;
+  await waitUntil(
+    async () => {
+      const response = await createInstanceClient(instance)(
+        "GET",
+        "/api/v1/hosts",
+      );
+      latest = response.body;
+      if (!Array.isArray(latest)) return false;
+      const host = latest.find(
+        (entry) =>
+          entry !== null &&
+          typeof entry === "object" &&
+          (entry as JsonObject).name === hostName,
+      ) as JsonObject | undefined;
+      return (
+        host?.state === state &&
+        (reason === undefined || host.reason === reason)
+      );
+    },
+    SETTLE_TIMEOUT_MS,
+    `${instance.name}: ${hostName} did not become ${state}${reason ? ` (${reason})` : ""}`,
+  );
+  return latest;
 }
 
 async function waitUntil(

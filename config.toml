@@ -31,6 +31,12 @@ public_dir = "dist"
 # it is not a "current agent" for existing tasks.
 default_agent = "copilot"
 
+# Hub-to-owner connections. Keep empty unless this instance should initiate
+# connections; owners need no matching [hosts.<name>] entry.
+# hosts = { workstation = { url = "http://127.0.0.1:6800", token = "wat_..." } }
+# hosts = { workstation = { url = "http://127.0.0.1:6800", token = "!security find-generic-password -a webagent-workstation -w" } }
+hosts = {}
+
 [agents.copilot]
 cmd = "copilot --acp"
 

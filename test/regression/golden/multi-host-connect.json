@@ -1,0 +1,143 @@
+{
+  "steps": [
+    {
+      "name": "setup",
+      "response": {
+        "tokenPath": "<INSTANCE:hub>/owner-token",
+        "created": {
+          "status": 201,
+          "name": "hub-connection",
+          "scope": "api"
+        }
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 1
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "describe-owner-and-read-hub-status",
+      "response": [
+        {
+          "status": 200,
+          "body": {
+            "protocol": 1,
+            "server": "0.13.1",
+            "caller": {
+              "name": "hub-connection",
+              "scope": "api",
+              "fingerprint": "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+            }
+          }
+        },
+        {
+          "status": 200,
+          "body": [
+            {
+              "name": "owner",
+              "url": "http://<ORIGIN:owner>",
+              "state": "connected",
+              "since": "2026-09-13T21:00:00.000Z"
+            }
+          ]
+        }
+      ],
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        }
+      ]
+    }
+  ],
+  "snapshot": [
+    {
+      "name": "owner",
+      "snapshot": {
+        "tasks": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "cwd": "/",
+            "title": "root",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "pending_compact_summary": null,
+            "model": null,
+            "mode": null,
+            "reasoning_effort": null,
+            "source": "root",
+            "deleted_at": null,
+            "created_at": 1789333200000,
+            "last_active_at": 1789333200000
+          }
+        ],
+        "agent_sessions": [],
+        "events": [],
+        "messages": [],
+        "message_projections": [],
+        "deliveries": [],
+        "client_ops": [],
+        "recent_paths": []
+      }
+    },
+    {
+      "name": "hub",
+      "snapshot": {
+        "tasks": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "cwd": "/",
+            "title": "root",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "pending_compact_summary": null,
+            "model": null,
+            "mode": null,
+            "reasoning_effort": null,
+            "source": "root",
+            "deleted_at": null,
+            "created_at": 1789333200000,
+            "last_active_at": 1789333200000
+          }
+        ],
+        "agent_sessions": [],
+        "events": [],
+        "messages": [],
+        "message_projections": [],
+        "deliveries": [],
+        "client_ops": [],
+        "recent_paths": []
+      }
+    }
+  ]
+}

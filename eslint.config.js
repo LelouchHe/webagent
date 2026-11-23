@@ -173,6 +173,24 @@ export default tseslint.config(
     },
   },
 
+  {
+    files: ["src/host/hosts/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/store.ts", "**/task-manager.ts"],
+              message:
+                "Host connection code cannot depend on local task persistence or runtime services.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   // public/js: browser globals + strict console ban.
   // Convention (CLAUDE.md): use `log.*` (public/js/log.ts) so entries appear
   // in the inline debug panel. console.* bypasses that channel entirely.

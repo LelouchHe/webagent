@@ -14,10 +14,10 @@ instance owns a Task. MCP and future clients can address a Task by id, then
 hand the command to a host layer that resolves the owner and selects the local
 or remote execution path.
 
-This document describes architecture only. It does not add remote resolution,
-routing, transport, shared storage, cross-instance idempotency, or a new public
-MCP/REST shape. Browser and REST operations that need owner-local execution
-facts remain local rather than being moved into this port.
+This document describes the architecture and the connection layer that exists
+today. It does not add remote Task resolution, Task routing, shared storage,
+cross-instance idempotency, or a new public MCP/REST Task shape. Browser and REST
+operations that need owner-local execution facts remain local.
 
 ## Architecture
 
@@ -48,10 +48,41 @@ Entry points
 ```
 
 Today MCP calls the local adapter directly through `TaskOps`; there is no
-`resolve(id)` step yet, and browser REST routes still call the local domain
-code directly. `src/host/task-ops.ts` and `src/host/local.ts` exist now. The
-resolver, remote adapter, router, and transport are planned; no production code
-in this layer currently contacts another instance.
+`resolve(id)` step yet, and browser REST routes still call the local domain code
+directly. `src/host/task-ops.ts` and `src/host/local.ts` exist now. The
+resolver, remote Task adapter, and Task router are planned.
+
+## Connections
+
+A hub keeps one independent, in-memory connection per configured
+`[hosts.<name>]` entry. The owner does not need matching configuration. Each hub
+host connection uses an owner-issued Bearer token and exposes no raw token or
+token-command output through the API or logs.
+
+```text
+hub                                      owner
+ |-- GET /api/v1/host ---------------------->| describe + credential fingerprint
+ |<------------------------------------------|
+ |-- POST /api/v1/sse-ticket --------------->| short-lived stream ticket
+ |<------------------------------------------|
+ |-- GET /api/v1/events/stream?ticket=… ---->| persistent global SSE
+ |<============ connected + heartbeat =======|
+ |                                           |
+ |           reconnect with capped backoff after EOF, timeout, or failure
+```
+
+The connection becomes `connected` after the SSE handshake. Each owner heartbeat
+refreshes liveness; three missed 15-second heartbeat intervals disconnect the
+stream. A disconnected host retries independently with capped exponential
+backoff. Every successful connection invokes an empty catch-up hook; later
+delivery work will replace that hook without changing the connection mechanism.
+Connection state never writes to SQLite and never changes Task facts.
+
+`GET /api/v1/host` is the owner identity endpoint. It reports protocol version,
+server version, and the authenticated caller's token name, scope, and SHA-256
+fingerprint. `GET /api/v1/hosts` reports the hub's connection state. See
+[the API reference](api.md#hosts) for exact response shapes and
+[configuration](configuration.md#multi-host-connection) for token commands.
 
 ## Directories and dependencies
 
@@ -60,16 +91,18 @@ in this layer currently contacts another instance.
 | `src/mcp/` | MCP protocol handling, tool registration, capabilities, tool descriptions, and adaptation of protocol input/output |
 | `src/host/task-ops.ts` | The neutral `TaskOps` interface, command DTOs, and caller |
 | `src/host/local.ts` | The local `TaskOps` implementation over this instance's TaskManager and Store |
+| `src/host/hosts/` | Hub host configuration use, credential hashing, connection loops, retry/backoff, and in-memory status |
 | `src/host/` support modules | Projection and error helpers used only by the local implementation |
 | `src/server.ts` | The only assembly point; it creates the local `TaskOps` and injects it into MCP |
 
 ESLint's `no-restricted-imports` guards the direct static dependencies:
 `src/mcp/**` cannot import Store, TaskManager, or a host module other than
 `src/host/task-ops.ts`, and `src/host/task-ops.ts` cannot import Store or
-TaskManager. Static value and type imports and re-exports are covered, and
-`npm run lint` fails on a violation. The rule does not follow the module graph,
-dynamic `import()`, or inline `import("…").Type` references; those indirect
-paths are left to review.
+TaskManager. `src/host/hosts/**` cannot import Store or TaskManager either.
+Static value and type imports and re-exports are covered, and `npm run lint`
+fails on a violation. The rule does not follow the module graph, dynamic
+`import()`, or inline `import("…").Type` references; those indirect paths are
+left to review.
 
 ## `TaskOps` port
 

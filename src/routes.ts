@@ -164,6 +164,8 @@ import {
 } from "./attachments.ts";
 import { readImageInfo } from "./image-info.ts";
 import { HTTP_STATUS } from "./http-status.ts";
+import type { HostRegistry } from "./host/hosts/registry.ts";
+import { HOST_PROTOCOL_VERSION } from "./host/hosts/protocol.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -267,6 +269,8 @@ export interface RequestHandlerDeps {
   /** Optional SSE ticket store. Required alongside authStore for the
    *  /api/v1/sse-ticket route and ticket-based SSE auth. */
   ticketStore?: TicketStore;
+  /** In-memory hub-to-owner connection status. Empty on an owner-only server. */
+  hostRegistry?: HostRegistry;
   /**
    * Support seam: called synchronously when a route starts reading the request
    * body — by definition *after* that route's pre-body checks have passed. It
@@ -833,8 +837,48 @@ export function createRequestHandler(
             prompt: "/api/beta/prompt",
             push: "/api/beta/push",
             clients: "/api/beta/clients",
+            host: "/api/v1/host",
+            hosts: "/api/v1/hosts",
           },
         });
+        return;
+      }
+
+      // GET /api/v1/host — describe the owner to an authenticated hub.
+      if (url === "/api/v1/host" && req.method === "GET") {
+        const principal = principalByRequest.get(req);
+        if (
+          !principal ||
+          (principal.scope !== "api" && principal.scope !== "admin")
+        ) {
+          json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
+          return;
+        }
+        json(res, HTTP_STATUS.OK, {
+          protocol: HOST_PROTOCOL_VERSION,
+          server: deps.serverVersion ?? "unknown",
+          caller: {
+            name: principal.name,
+            scope: principal.scope,
+            fingerprint: principal.hash,
+          },
+        });
+        return;
+      }
+
+      // GET /api/v1/hosts — read in-memory outbound host connection states.
+      if (url === "/api/v1/hosts" && req.method === "GET") {
+        json(
+          res,
+          HTTP_STATUS.OK,
+          (deps.hostRegistry?.list() ?? []).map((host) => ({
+            name: host.name,
+            url: host.url,
+            state: host.state,
+            ...(host.reason ? { reason: host.reason } : {}),
+            since: isoFromMillis(host.since),
+          })),
+        );
         return;
       }
 

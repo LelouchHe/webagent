@@ -110,6 +110,8 @@ An agent table and `default_agent` are required, so a config file must define bo
 | `public_dir`                         | `dist`                      | Static assets directory                                                                                                                                                                                                                                                                                              |
 | `default_agent`                      | — (required)                | Id of the agent a task targets when it has no binding to inherit from (first task, Root's first use, an inbox message, `/clear` without `agentId`). Must name one of the `[agents.<id>]` tables.                                                                                                                     |
 | `agents.<id>.cmd`                    | — (required)                | ACP launch command for that agent, split on whitespace. `<id>` must match `[a-z0-9][a-z0-9-]*`. Paths containing spaces are not supported.                                                                                                                                                                          |
+| `hosts.<name>.url`                   | —                           | Owner WebAgent HTTP(S) base URL. `<name>` follows the agent-id pattern `[a-z0-9][a-z0-9-]*`.                                                                                                                                                                                                                        |
+| `hosts.<name>.token`                 | —                           | Owner-issued Bearer token, either a literal or a command prefixed with `!`. Commands run through `/bin/sh -c` on each connection attempt; trimmed stdout is kept only in memory.                                                                                                                                        |
 | `limits.bash_output`                 | `1048576` (1 MB)            | Max bash output stored in DB per command                                                                                                                                                                                                                                                                             |
 | `limits.image_upload`                | `10485760` (10 MB)          | Max image upload size                                                                                                                                                                                                                                                                                                |
 | `limits.file_upload`                 | `52428800` (50 MB)          | Max non-image attachment upload size. Server picks the cap from sniffed MIME (`image/*` → `image_upload`, otherwise → `file_upload`).                                                                                                                                                                                |
@@ -129,8 +131,9 @@ An agent table and `default_agent` are required, so a config file must define bo
 
 Unknown top-level keys and unknown keys inside the existing nested tables
 (`limits`/`push`/`debug`/`messages`/`share`/`auth`) are ignored, so a config
-shared with another build can carry its own sections. Agent entries are strict:
-a typo such as `cmdd` under `[agents.<id>]` fails startup.
+shared with another build can carry its own sections. Agent and host entries
+are strict: a typo such as `cmdd` under `[agents.<id>]` or `toekn` under
+`[hosts.<name>]` fails startup.
 The legacy `agent_cmd` key is always rejected rather than ignored.
 
 To use a different ACP-compatible agent backend, change `default_agent` and add its table:
@@ -141,6 +144,23 @@ default_agent = "claude"
 [agents.claude]
 cmd = "claude-agent-acp"
 ```
+
+### Multi-host connection
+
+Only the hub declares owner connections:
+
+```toml
+[hosts.workstation]
+url = "http://127.0.0.1:6800"
+token = "!security find-generic-password -a webagent-workstation -w"
+```
+
+The command form resolves a fresh value on every connection attempt. A failed
+or empty command, rejected token, network failure, or incompatible protocol
+makes only that host unreachable; it does not prevent WebAgent from starting.
+The resolved token and its fingerprint stay in memory. See
+[Multi-host connections](multi-host.md#connections) and the
+[`/api/v1/hosts`](api.md#hosts) status endpoint.
 
 ## Pre-1.0 storage reset
 
