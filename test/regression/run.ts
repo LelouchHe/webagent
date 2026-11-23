@@ -84,6 +84,7 @@ interface Instance {
     observer: number;
   };
   busy: Set<string>;
+  pendingPromptSse: Set<string>;
 }
 
 async function main(): Promise<void> {
@@ -303,6 +304,7 @@ async function createInstances(
         sseError: null,
         stepCursor: { sse: 0, mock: 0, observer: 0 },
         busy: new Set(),
+        pendingPromptSse: new Set(),
       });
     }
     return instances;
@@ -404,6 +406,7 @@ function createInstanceClient(instance: Instance) {
     body?: Json,
     token = TOKEN,
   ): Promise<RestResponse> => {
+    const sseCursor = instance.sse.length;
     const response = await timed(
       `${instance.name}: ${method} ${path}`,
       async () =>
@@ -423,6 +426,30 @@ function createInstanceClient(instance: Instance) {
     );
     let parsed: Json = null;
     if (raw) parsed = JSON.parse(raw) as Json;
+    if (
+      method === "POST" &&
+      response.status === 202 &&
+      /^\/api\/v1\/tasks\/([^/]+)\/prompt(?:\?|$|\/)/.test(path)
+    ) {
+      const match = path.match(/^\/api\/v1\/tasks\/([^/]+)\/prompt(?:\?|$|\/)/);
+      if (match) {
+        const taskId = decodeURIComponent(match[1]);
+        const busyAlreadyObserved = instance.sse
+          .slice(sseCursor)
+          .some((event) => {
+            if (
+              (event as JsonObject).type !== "state_patch" ||
+              (event as JsonObject).taskId !== taskId
+            ) {
+              return false;
+            }
+            const patch = (event as JsonObject).patch as JsonObject | undefined;
+            const runtime = patch?.runtime as JsonObject | undefined;
+            return runtime?.busy != null;
+          });
+        if (!busyAlreadyObserved) instance.pendingPromptSse.add(taskId);
+      }
+    }
     return { status: response.status, body: parsed };
   };
   return rest;
@@ -515,7 +542,10 @@ function trackBusy(instance: Instance, event: JsonObject): void {
   const runtime = patch?.runtime as JsonObject | undefined;
   if (!runtime || !("busy" in runtime)) return;
   if (runtime.busy === null) instance.busy.delete(event.taskId);
-  else instance.busy.add(event.taskId);
+  else {
+    instance.busy.add(event.taskId);
+    instance.pendingPromptSse.delete(event.taskId);
+  }
 }
 
 async function settle(
@@ -535,10 +565,12 @@ async function settle(
         quietSince = performance.now();
         return false;
       }
-      const busyCovered = [...instances.values()].every(
-        (instance) => uncoveredBusyTasks(instance).length === 0,
+      const streamsCaughtUp = [...instances.values()].every(
+        (instance) =>
+          instance.pendingPromptSse.size === 0 &&
+          uncoveredBusyTasks(instance).length === 0,
       );
-      return performance.now() - quietSince >= QUIET_MS && busyCovered;
+      return performance.now() - quietSince >= QUIET_MS && streamsCaughtUp;
     },
     SETTLE_TIMEOUT_MS,
     () =>
@@ -598,7 +630,7 @@ function settleStatus(instance: Instance): string {
     sessionId: wait.sessionId ?? null,
     label: wait.label ?? null,
   }));
-  return `${instance.name}: busy=${JSON.stringify(busy)} waits=${JSON.stringify(waits)}`;
+  return `${instance.name}: busy=${JSON.stringify(busy)} waits=${JSON.stringify(waits)} pendingPromptSse=${JSON.stringify([...instance.pendingPromptSse])}`;
 }
 
 function taskSessions(instance: Instance): Map<string, string> {
@@ -812,6 +844,7 @@ async function restartInstance(
   instance.port = instance.server.port;
   instance.sseError = null;
   instance.busy.clear();
+  instance.pendingPromptSse.clear();
   return {
     name: instance.name,
     restarted: true,

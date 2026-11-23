@@ -146,19 +146,22 @@ adding a table column, reformatting SQL, or shifting deterministic IDs is
 review evidence, but does not by itself prove a user-visible regression.
 
 After every step, the runner alone calls `settle()`. It probes every 25ms and
-declares the run quiet after 250ms with no new observer, ACP, or SSE output.
-Every busy task must correspond to a declared wait on that task's own ACP
-session; a timeout reports the busy task-to-session mapping and all active waits
-at the timeout instant. A missing wait or an unexpected SSE EOF, including a
-normal EOF, is an error.
+declares the run quiet after 250ms with no new observer, ACP, or SSE output. A
+prompt request that returned `202 Accepted` is not settled until the task's SSE
+stream has delivered its first non-null runtime `busy` patch. That is the
+external acknowledgement that the accepted turn crossed onto the stream; the
+rest of the turn is then governed by the normal busy rule. Every busy task must
+correspond to a declared wait on that task's own ACP session; a timeout reports
+the busy task-to-session mapping, active waits, and accepted prompts still
+waiting for SSE acknowledgement. A missing wait or an unexpected SSE EOF,
+including a normal EOF, is an error.
 Scenarios do not wait for named task events or inspect internal state.
 
-This fixed quiet window has a known limitation: a step that pauses for more
-than 250ms without producing output can be mistaken for settled. Usually the
-late output shows up in the next step or as an A/A mismatch, but after the
-final step the instance is torn down immediately, so output that is late in
-both runs can be missed entirely. Tighten the declared behavior when such a
-late continuation becomes reproducible.
+The accepted-prompt acknowledgement removes the silent gap between HTTP
+acceptance and the SSE consumer. The fixed quiet window can still miss an
+external asynchronous action that has no corresponding observable start state
+yet; such a path needs its own public acknowledgement barrier, not a longer
+timer or a scenario-specific sleep.
 
 `--update` still performs the A/A check, then replaces the selected goldens.
 Review those diffs by asking what external behavior changed, whether the SQL
