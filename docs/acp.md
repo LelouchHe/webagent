@@ -215,7 +215,7 @@ ACP allows the client to inject extra capabilities into the agent on top of its 
 | `terminal`                          | Declared but not wired | `!<command>` runs via the app's own local bash bridge, not ACP `terminal/*`                                            |
 | `mcpServers`                       | `lelouchhe_webagent` (Task Server) | Client injects the `lelouchhe_webagent` Task control-plane server (Streamable HTTP at `/mcp`, per-task capability Bearer token). The current S2 surface exposes `task_list`, `task_query`, `task_read`, `task_cancel`, `task_create`, `task_send`, and `task_update`; decision tooling remains deferred |
 
-`lelouchhe_webagent` is additive: the agent still loads its own configured MCP servers independently, and a backend that cannot consume client-provided MCP keeps its native MCP behavior (Task collaboration simply stays disabled for it). See [Task MCP Control Plane](task-mcp.md) for its capability scope, tool contracts, and compact-history record format.
+`lelouchhe_webagent` is additive: the agent still loads its own configured MCP servers independently, and a backend that cannot consume client-provided MCP keeps its native MCP behavior (Task collaboration simply stays disabled for it). See [Task MCP Control Plane](architecture/mcp.md) for its capability scope, tool contracts, and compact-history record format.
 
 ## Current Limits
 

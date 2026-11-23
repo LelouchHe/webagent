@@ -24,7 +24,7 @@ import { HTTP_STATUS } from "../http-status.ts";
 /**
  * `mcpServers` label, not an internal id: clients namespace tools by it and
  * Claude Code refuses the generic `webagent`, hence the vendor prefix.
- * See `docs/task-mcp.md` → "The server name".
+ * See `docs/architecture/mcp.md` → "The server name".
  */
 export const MCP_SERVER_NAME = "lelouchhe_webagent";
 

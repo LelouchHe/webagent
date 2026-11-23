@@ -4,7 +4,7 @@ This is a field guide to using Tasks well: the policy and mental model, not
 the mechanism. What each tool does is in its description
 ([`src/mcp/tools.ts`](../src/mcp/tools.ts)), the accounting rules are in
 [Task Obligations](task-obligations.md), and the reference contract is in
-[Task MCP Control Plane](task-mcp.md). See [Task Examples](task-examples.md)
+[Task MCP Control Plane](architecture/mcp.md). See [Task Examples](task-examples.md)
 for short usage patterns.
 
 ## Who decides

@@ -5,7 +5,7 @@ collaboration shape, not on a particular application or model.
 
 For the underlying principles, see [Task Manual](task-manual.md). What each
 tool does is in its own description; the reference contract is in
-[Task MCP Control Plane](task-mcp.md).
+[Task MCP Control Plane](architecture/mcp.md).
 
 ## Work directly in the current Task
 

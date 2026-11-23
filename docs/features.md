@@ -106,7 +106,7 @@ leaves a two-sided transcript row naming who cancelled what and why.
 
 Only agents that consume the injected `mcpServers` entry can collaborate; one
 that ignores it still works as a chat backend, it just cannot call `task_*`
-tools. See [Task MCP Control Plane](task-mcp.md).
+tools. See [Task MCP Control Plane](architecture/mcp.md).
 
 ## Slash Commands
 
@@ -206,7 +206,7 @@ interfering with native double-tap text selection inside the textarea.
 - Web Push notifications — background alerts when no browser tab is visible (use `/notify on`)
 - Inbox (`/inbox`) — a structured-notification primitive for cron jobs, webhooks, and other local tools. External senders `POST` to `/api/v1/messages`; the user engages on their own terms. See [Messages / Inbox](messages.md).
 - SSE auto-reconnect (3s retry on disconnect)
-- 15s SSE heartbeat keepalive (also drives push visibility refresh — see [architecture](client-architecture.md#visibility-sync--push-suppression))
+- 15s SSE heartbeat keepalive (also drives push visibility refresh — see [architecture](architecture/client.md#visibility-sync--push-suppression))
 - Auto-expanding input box
 - Mobile-friendly layout
 - Multi-client broadcast (events synced across devices)

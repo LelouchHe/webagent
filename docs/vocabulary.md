@@ -194,7 +194,7 @@ docs → tests). When executing it:
   never compare against a literal value or a prefix. Server code asks
   `Store.isRootTaskId`.
 - Sweep: `docs/schema.md`, `docs/api.md`, `docs/share.md`, `docs/features.md`,
-  `docs/client-architecture.md`, `docs/performance.md`, `README.md`,
+  `docs/architecture/client.md`, `docs/performance.md`, `README.md`,
   `CLAUDE.md`, `TEST_SCENARIOS.md`, and the unit/e2e suites.
 - Log each ambiguity (`rotateAgentSession`-style judgments) against this
   document; the rule is: **primary subject is the product entity → `task`,

@@ -312,7 +312,7 @@ paths. `/switch` remains available as a temporary low-frequency navigation
 fallback.
 
 Agent collaboration uses the separate MCP control plane documented in
-[Task MCP Control Plane](task-mcp.md). The recommended message-first workflow
+[Task MCP Control Plane](architecture/mcp.md). The recommended message-first workflow
 is documented in the [Task Manual](task-manual.md). This
 document describes browser input semantics; it does not redefine MCP tool
 contracts.

@@ -6,17 +6,23 @@ session. The name is a client-visible label (some clients namespace tools as
 lets an agent inspect and coordinate with tasks in its local task family without
 granting access to unrelated tasks.
 
+This is the agent entry into the server. The tools are a thin adapter: they
+authenticate the caller and call the server's task operations through the
+`TaskOps` port. What happens behind the port is in
+[Server Architecture](server.md); how the parts fit together is in
+[Architecture](README.md).
+
 This document is the reference for what the code does not say to the agent:
 authentication, transport, result shapes, limits, errors, and the rows each
 call records. Each fact has one home:
 
 | Fact | Home |
 | --- | --- |
-| What each tool and parameter does, as the agent sees it | tool and parameter descriptions in [`src/mcp/tools.ts`](../src/mcp/tools.ts) and [`src/mcp/task-create-description.ts`](../src/mcp/task-create-description.ts) |
-| The cross-tool model advertised at `initialize` | `MCP_SERVER_INSTRUCTIONS` in [`src/mcp/server.ts`](../src/mcp/server.ts) |
+| What each tool and parameter does, as the agent sees it | tool and parameter descriptions in [`src/mcp/tools.ts`](../../src/mcp/tools.ts) and [`src/mcp/task-create-description.ts`](../../src/mcp/task-create-description.ts) |
+| The cross-tool model advertised at `initialize` | `MCP_SERVER_INSTRUCTIONS` in [`src/mcp/server.ts`](../../src/mcp/server.ts) |
 | Host ownership and the implementation boundary behind task commands | [Multi-host task operations](multi-host.md) |
-| Accounts, reminders, notices, and settlement | [Task Obligations](task-obligations.md) |
-| How to use Tasks well | [Task Manual](task-manual.md) and [Task Examples](task-examples.md) |
+| Accounts, reminders, notices, and settlement | [Task Obligations](../task-obligations.md) |
+| How to use Tasks well | [Task Manual](../task-manual.md) and [Task Examples](../task-examples.md) |
 
 ## Scope and authentication
 
@@ -72,7 +78,7 @@ has no task tools, and the client does not treat the failure as fatal.
 The definitions are per session, which is also why this entry cannot live in a
 static MCP configuration file: the endpoint carries a capability token minted
 for one task. Which agents put the definitions to use is noted in
-[Configuration & Operations](configuration.md#acp-compatible-agents).
+[Configuration & Operations](../configuration.md#acp-compatible-agents).
 
 ### The server name
 
@@ -91,7 +97,7 @@ in tool descriptions, parameter meanings in parameter descriptions, and usage
 policy in skills.
 
 The text is `MCP_SERVER_INSTRUCTIONS` in
-[`src/mcp/server.ts`](../src/mcp/server.ts); it is not copied here so the two
+[`src/mcp/server.ts`](../../src/mcp/server.ts); it is not copied here so the two
 cannot drift.
 
 Clients may surface these instructions through their own discovery UI or tool;
@@ -282,7 +288,7 @@ keeps its normal contrast.
 collaboration row. A user-initiated cancel writes neither row.
 
 How a cancelled turn affects an open account is defined in
-[Task Obligations](task-obligations.md#turn-end-check).
+[Task Obligations](../task-obligations.md#turn-end-check).
 
 ### `task_create`
 
@@ -337,7 +343,7 @@ defaults instead of claiming an inheritance that did not happen.
 
 The message is stored before the call returns, so it survives a restart, and is
 delivered in order with any other queued items. Whether it opens an account is
-defined in [Task Obligations](task-obligations.md#opening-an-account).
+defined in [Task Obligations](../task-obligations.md#opening-an-account).
 
 ### `task_update`
 
@@ -347,5 +353,5 @@ task_update(status: "waiting" | "blocked" | "done", body: string)
 
 The call records one `task_update` event on the current Task and sets its
 `workflowStatus`. Routing, settlement, the `waiting` precondition, and the
-turn-end check are defined in [Task Obligations](task-obligations.md). A
+turn-end check are defined in [Task Obligations](../task-obligations.md). A
 refused `waiting` is an MCP tool error and records nothing.

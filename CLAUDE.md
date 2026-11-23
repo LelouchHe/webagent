@@ -16,6 +16,8 @@ SQLite (`better-sqlite3`), Zod, and esbuild.
 - `push-service.ts` — Web Push delivery and visibility suppression
 - `daemon.ts` — background service management
 - `types.ts` — shared types and validation schemas
+- `mcp/` — MCP task tools for agents (agent entry)
+- `host/` — `TaskOps` port, local adapter, host connections
 - `public/js/` — frontend TypeScript modules bundled by esbuild
 - `public/styles.css` — all application CSS
 
@@ -100,9 +102,13 @@ Locate and read only the sections relevant to the task.
 
 | Topic | Reference |
 |---|---|
+| Architecture overview: client entry, agent entry, neutral server, multi-host | [`docs/architecture/README.md`](./docs/architecture/README.md) |
+| Server layers, request paths, and runtime notes | [`docs/architecture/server.md`](./docs/architecture/server.md) |
 | Detailed runtime, security, protocol, frontend, browser, and platform invariants | [`docs/implementation-invariants.md`](./docs/implementation-invariants.md) |
 | REST/SSE behavior and database API | [`docs/api.md`](./docs/api.md) |
-| Frontend lifecycle and reconciliation | [`docs/client-architecture.md`](./docs/client-architecture.md) |
+| Frontend lifecycle and reconciliation | [`docs/architecture/client.md`](./docs/architecture/client.md) |
+| Agent-facing MCP tools and capability scope | [`docs/architecture/mcp.md`](./docs/architecture/mcp.md) |
+| Host layer and local / remote execution | [`docs/architecture/multi-host.md`](./docs/architecture/multi-host.md) |
 | Slash menu framework: command tree, walker, candidate order, argument fields | [`docs/slash-menu.md`](./docs/slash-menu.md) |
 | ACP surface and agent compatibility | [`docs/acp.md`](./docs/acp.md) |
 | Upload, attachment, and signed-URL lifecycle | [`docs/uploads.md`](./docs/uploads.md) |

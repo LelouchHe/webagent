@@ -7,7 +7,7 @@ import { registerMcpTools } from "../src/mcp/tools.ts";
 import { MCP_SERVER_INSTRUCTIONS } from "../src/mcp/server.ts";
 
 const ROOT = join(import.meta.dirname, "..");
-const MCP_DOC = readFileSync(join(ROOT, "docs/task-mcp.md"), "utf-8");
+const MCP_DOC = readFileSync(join(ROOT, "docs/architecture/mcp.md"), "utf-8");
 
 type Fence = { info: string; content: string; line: number };
 
@@ -124,7 +124,7 @@ describe("MCP documentation coverage", () => {
           new RegExp(
             `\\b${property.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")}\\b`,
           ),
-          `${name}.${property} is in the schema but missing from docs/task-mcp.md`,
+          `${name}.${property} is in the schema but missing from docs/architecture/mcp.md`,
         );
       }
     });
@@ -135,9 +135,12 @@ describe("MCP documentation coverage", () => {
     const heading = headings.find(
       (item) => item.text === "## Server instructions",
     );
-    assert.ok(heading, "docs/task-mcp.md must document the instructions");
+    assert.ok(
+      heading,
+      "docs/architecture/mcp.md must document the instructions",
+    );
     assert.match(MCP_DOC, /`MCP_SERVER_INSTRUCTIONS`/);
-    assert.match(MCP_DOC, /\(\.\.\/src\/mcp\/server\.ts\)/);
+    assert.match(MCP_DOC, /\(\.\.\/\.\.\/src\/mcp\/server\.ts\)/);
     assert.ok(MCP_SERVER_INSTRUCTIONS.length > 0);
     assert.equal(
       MCP_DOC.includes(MCP_SERVER_INSTRUCTIONS.split("\n")[0]),
