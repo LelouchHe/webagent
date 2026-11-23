@@ -12,7 +12,7 @@ import { AgentRegistry } from "./agent-registry.ts";
 import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
-import { createLocalTaskOps } from "./host/local.ts";
+import { createLocalTaskOps } from "./host/local/adapter.ts";
 import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
 import {
   buildCollaborationBroadcast,
@@ -43,6 +43,7 @@ import {
   type InterceptorCounters,
 } from "./attachment-interceptor.ts";
 import type { AgentEvent } from "./types.ts";
+import { HostRegistry } from "./host/remote/registry.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
 for (const method of ["log", "error", "warn"] as const) {
@@ -178,6 +179,7 @@ sseManager.startHeartbeat();
 
 const authStore = new AuthStore(pathJoin(config.data_dir, "auth.json"));
 const ticketStore = new TicketStore();
+const hostRegistry = new HostRegistry(config.hosts);
 // In-memory image signing secret; regenerated on every restart so previously
 // leaked URLs become invalid the moment the server is bounced.
 const attachmentSecret = randomBytes(32);
@@ -250,6 +252,7 @@ const requestHandler = createRequestHandler({
   debugLevel: config.debug.level,
   authStore,
   ticketStore,
+  hostRegistry,
   attachmentSecret,
   shareConfig: config.share,
   mcpEndpoint: createMcpEndpoint({
@@ -312,6 +315,7 @@ function createAgentTransport(agentId: string): AgentBridge {
 
 async function shutdown() {
   console.log("\n[server] shutting down...");
+  hostRegistry.stopAll();
   sseManager.stopHeartbeat();
   messageCleanup.stop();
   sharePreviewCleanup?.stop();
@@ -381,6 +385,7 @@ server.listen(config.port, config.host, () => {
     // demand. A missing or broken agent binary is therefore a runtime
     // condition, never a boot gate or a daemon restart.
     tasks.hydrate();
+    hostRegistry.start();
     console.log(
       `[agents] ${Object.keys(config.agents).join(", ")} start on demand`,
     );

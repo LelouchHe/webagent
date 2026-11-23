@@ -21,6 +21,7 @@ WebAgent exposes a **REST + SSE** API for managing agent tasks, sending prompts,
   - [Config](#config)
   - [Recent Paths](#recent-paths)
   - [Version](#version)
+  - [Hosts](#hosts)
   - [Auth](#auth)
   - [Tokens](#tokens)
   - [Bash](#bash)
@@ -124,6 +125,7 @@ API discovery endpoint. Returns the API version and top-level endpoint paths.
     "files": "/api/v1/files",
     "config": "/api/v1/config",
     "events_stream": "/api/v1/events/stream",
+    "hosts": "/api/v1/hosts",
     "prompt": "/api/beta/prompt",
     "push": "/api/beta/push",
     "clients": "/api/beta/clients"
@@ -1100,7 +1102,8 @@ Get server and agent version information.
 ```json
 {
   "server": "0.1.10",
-  "agent": { "name": "Copilot CLI", "version": "1.0.5" }
+  "agent": { "name": "Copilot CLI", "version": "1.0.5" },
+  "hostProtocol": 1
 }
 ```
 
@@ -1110,6 +1113,47 @@ Get server and agent version information.
 | `agent`         | object \| null | Default agent's ACP identity; `null` until it has started (reading metadata never starts it) |
 | `agent.name`    | string         | Agent name reported via ACP                               |
 | `agent.version` | string         | Agent version reported via ACP                            |
+| `hostProtocol`  | number         | Multi-host connection protocol; `1` currently             |
+
+---
+
+### Hosts
+
+#### `GET /api/v1/hosts`
+
+Read the hub's in-memory owner-connection states. Every authenticated scope,
+including `read`, may call this endpoint. An owner with no `[hosts.<name>]`
+configuration returns an empty array. This endpoint is for operational
+diagnostics and regression tests that need to observe connection state from
+outside the process. The browser UI will consume it starting with the D1
+multi-host gateway work.
+
+**Response** `200`:
+
+```json
+[
+  {
+    "name": "workstation",
+    "url": "http://127.0.0.1:6800",
+    "state": "connected",
+    "since": "2026-11-23T02:00:00.000Z"
+  },
+  {
+    "name": "laptop",
+    "url": "http://laptop.example:6800",
+    "state": "unreachable",
+    "reason": "unauthorized",
+    "since": "2026-11-23T02:00:04.000Z"
+  }
+]
+```
+
+`state` is `connecting`, `connected`, or `unreachable`. Unreachable entries
+include a stable machine-readable `reason`, currently
+`token_command_failed`, `unauthorized`, `insufficient_scope`, `network`, or
+`protocol_mismatch`.
+`since` is the start of the current state in ISO-8601 UTC form. The response
+never contains credentials or token command output.
 
 ---
 
@@ -1127,7 +1171,8 @@ This endpoint **always requires** a valid `Authorization: Bearer <token>` header
 {
   "ok": true,
   "name": "laptop",
-  "scope": "admin"
+  "scope": "admin",
+  "hash": "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
 }
 ```
 
@@ -1135,7 +1180,8 @@ This endpoint **always requires** a valid `Authorization: Bearer <token>` header
 | ------- | ------- | ---------------------------------------------------- |
 | `ok`    | boolean | Always `true` on success                             |
 | `name`  | string  | Token's human-readable name (e.g. `"laptop"`)        |
-| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"read"` (pure reads only: task list, task detail, events, status, permissions, version, auth/verify; events never flushes and no read warms) |
+| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"read"` (pure reads only: host status, task list, task detail, events, status, permissions, version, auth/verify; events never flushes and no read warms) |
+| `hash`  | string  | SHA-256 hex digest of the presented token, matching its stored `hash` |
 
 **Response** `401`:
 

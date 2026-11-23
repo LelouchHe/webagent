@@ -1,5 +1,5 @@
-import { classifyToolContentItem } from "../shared/tool-content.ts";
-import type { TaskHistoryRow } from "./task-ops.ts";
+import { classifyToolContentItem } from "../../shared/tool-content.ts";
+import type { TaskHistoryRow } from "../task-ops.ts";
 
 const MAX_TEXT_CHARS = 200;
 const MATCH_WINDOW_RADIUS = 100;

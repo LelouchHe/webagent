@@ -11,9 +11,9 @@ npm run test:regression [scenario ...] [--update]
         v
 run.ts -- loads scenarios/*.ts; scenarios run in parallel, each one twice (A/A)
         |
-        |  each run = a fresh instance in a temporary directory, deleted afterwards
+        |  each run = one or more fresh instances, deleted afterwards
         v
-+- instance -----------------------------------------------------------+
++- instance set -------------------------------------------------------+
 |                                                                      |
 |  run.ts (test side)                                                  |
 |    | (1) REST / MCP requests ------+                                 |
@@ -62,13 +62,34 @@ parallel; every scenario runs twice (A/A) before either result is compared with
 `golden/<name>.json`. One scenario's failure does not stop the others from
 finishing and cleaning up.
 
-Each run gets a temporary data directory, home directory, random port, config,
-real WebAgent server, global SSE subscription, and deterministic ACP agent.
+Each run gets temporary data and home directories, random ports, configs, real
+WebAgent servers, global SSE subscriptions, and deterministic ACP agents. A
+scenario may declare a single implicit `default` instance or a named
+`instances` map such as `owner` and `hub`. The runner allocates every port
+before rendering configs, so an `extraConfig` callback can point one instance
+at another.
 The config fixes every task's default cwd to `/`, so path-sensitive byte counts
 are stable before golden normalization; regression tasks do not read files.
 Setup and steps use authenticated REST or MCP-over-HTTP only. The agent is
 declared in the scenario and communicates over real ACP. No scenario can
 control, hold, or release the agent while a run is active.
+
+Multi-instance setup uses the normal public token API on the owner, then places
+the one-time raw token in a private test directory. The hub token command
+reads that file at connection time, matching the production `!` credential form
+without writing `auth.json` directly. `restart(name)` is a generic step action
+that preserves the instance's data directory and config while restarting the
+process on the same port. The runner deliberately does not open a replacement
+test-side SSE subscription to the restarted instance, because the hub may also
+subscribe during restart and their order would consume that process's random
+stream nondeterministically. Subsequent observations of the restarted instance
+use REST, SQL, and its final database snapshot. `restart(name, whileStopped)`
+can wait on a generic callback while the process is down, so a scenario can
+prove another instance observed the disconnect. `waitForHost()` waits for an
+explicit state and optional reason before a step completes.
+The connection path uses the public version and auth verification endpoints
+before minting its stream ticket, so the golden observes protocol and token-hash
+compatibility without a dedicated host identity endpoint.
 
 The server and agent are preloaded with `observer.ts`. It only observes
 `better-sqlite3` statement calls, while fixing the clock, UUID stream, and
@@ -126,18 +147,20 @@ review evidence, but does not by itself prove a user-visible regression.
 
 After every step, the runner alone calls `settle()`. It probes every 25ms and
 declares the run quiet after 250ms with no new observer, ACP, or SSE output.
-Every busy task must correspond to a declared wait on that task's own ACP
-session; a timeout reports the busy task-to-session mapping and all active waits
-at the timeout instant. A missing wait or an unexpected SSE EOF, including a
-normal EOF, is an error.
-Scenarios do not wait for named events or inspect internal state.
+The server observer also counts every frame written to this runner's SSE
+response, including heartbeats, while the runner counts every complete frame it
+has consumed. A step cannot settle until those counts match, so an HTTP action
+cannot outrun the SSE stream regardless of route semantics. Re-started
+instances are intentionally not re-subscribed by the runner and are excluded
+from this comparison. Every busy task must correspond to a declared wait on that
+task's own ACP session; a timeout reports the busy task-to-session mapping,
+active waits, and written/consumed SSE frame counts. A missing wait or an
+unexpected SSE EOF, including a normal EOF, is an error.
+Scenarios do not wait for named task events or inspect internal state.
 
-This fixed quiet window has a known limitation: a step that pauses for more
-than 250ms without producing output can be mistaken for settled. Usually the
-late output shows up in the next step or as an A/A mismatch, but after the
-final step the instance is torn down immediately, so output that is late in
-both runs can be missed entirely. Tighten the declared behavior when such a
-late continuation becomes reproducible.
+The frame-count comparison removes the silent gap between a server-side SSE
+write and the test consumer. The remaining quiet window is for unrelated
+observer, ACP, and SSE ordering after the stream has drained.
 
 `--update` still performs the A/A check, then replaces the selected goldens.
 Review those diffs by asking what external behavior changed, whether the SQL
@@ -182,8 +205,7 @@ Keep these elsewhere:
 
 - internal ordering, fences, timing windows and race interleavings, which need
   orchestration to observe: unit tests, listed in `COVERAGE.md`;
-- behavior that needs a process restart, real agents, browsers or the UI:
-  unit or E2E tests;
+- behavior that needs real agents, browsers or the UI: unit or E2E tests;
 - pure logic with no server-visible effect: unit tests.
 
 If a scenario needs a new harness mechanism (a control channel, a gate, a hook

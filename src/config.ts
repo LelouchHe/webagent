@@ -23,6 +23,53 @@ const AgentConfigSchema = z.strictObject({
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
+const HostUrlSchema = z
+  .string()
+  .trim()
+  .min(1, "host url must be non-empty")
+  .superRefine((value, ctx) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      ctx.addIssue({
+        code: "custom",
+        message: "host url must be a valid HTTP(S) URL",
+      });
+      return;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      ctx.addIssue({
+        code: "custom",
+        message: "host url must use http or https",
+      });
+    }
+    if (parsed.username || parsed.password) {
+      ctx.addIssue({
+        code: "custom",
+        message: "host url must not include userinfo",
+      });
+    }
+    if (
+      parsed.search ||
+      parsed.hash ||
+      value.includes("?") ||
+      value.includes("#")
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "host url must not include query or fragment",
+      });
+    }
+  });
+
+const HostConfigSchema = z.strictObject({
+  url: HostUrlSchema,
+  token: z.string().trim().min(1, "token must be non-empty"),
+});
+
+export type HostConfig = z.infer<typeof HostConfigSchema>;
+
 export const ConfigSchema = z
   .object({
     port: z.number().int().positive().default(6800),
@@ -48,6 +95,9 @@ export const ConfigSchema = z
       .refine((agents) => Object.keys(agents).length > 0, {
         message: "at least one [agents.<id>] entry is required",
       }),
+    // Each hub-owned host entry is strict. Unknown keys are likely typos and
+    // must not silently weaken the configured connection.
+    hosts: z.record(AgentIdSchema, HostConfigSchema).default({}),
 
     limits: z
       .object({
@@ -193,7 +243,9 @@ export function loadConfigFromPath(configPath: string | null): Config {
       raw = parseTOML(content);
       console.log(`[config] loaded: ${configPath}`);
     } catch (err) {
-      console.error(`[config] failed to read ${configPath}:`, err);
+      console.error(
+        `[config] failed to read ${configPath}: ${configErrorSummary(err)}`,
+      );
       process.exit(1);
     }
   } else {
@@ -230,4 +282,21 @@ export function loadConfigFromPath(configPath: string | null): Config {
 export function getConfig(): Config {
   if (!_config) throw new Error("Config not loaded. Call loadConfig() first.");
   return _config;
+}
+
+function configErrorSummary(error: unknown): string {
+  if (!error || typeof error !== "object") return "unknown error";
+  const record = error as Record<string, unknown>;
+  const category =
+    typeof record.code === "string"
+      ? record.code
+      : typeof (record.constructor as { name?: unknown } | undefined)?.name ===
+          "string"
+        ? (record.constructor as { name: string }).name
+        : "Error";
+  const location =
+    typeof record.line === "number" && typeof record.column === "number"
+      ? ` at line ${record.line}, column ${record.column}`
+      : "";
+  return `${category}${location}`;
 }

@@ -1,0 +1,164 @@
+{
+  "steps": [
+    {
+      "name": "setup",
+      "response": {
+        "tokenPath": "<INSTANCE:hub>/owner-token",
+        "created": {
+          "status": 201,
+          "name": "hub-connection",
+          "scope": "api"
+        }
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 1
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "restart-owner-and-wait-for-reconnect",
+      "response": {
+        "restart": {
+          "name": "owner",
+          "restarted": true,
+          "whileStopped": [
+            {
+              "name": "owner",
+              "url": "http://<ORIGIN:owner>",
+              "state": "unreachable",
+              "reason": "network",
+              "since": "2026-09-13T21:00:00.000Z"
+            }
+          ]
+        },
+        "status": [
+          {
+            "name": "owner",
+            "url": "http://<ORIGIN:owner>",
+            "state": "connected",
+            "since": "2026-09-13T21:00:00.000Z"
+          }
+        ]
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "DELETE FROM inbox_messages WHERE created_at < ?",
+                  "args": [1786741200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ?",
+                  "args": ["00000000-0000-4000-8000-000000000001"]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
+                  "args": ["00000000-0000-4000-8000-000000000001"]
+                }
+              ]
+            ],
+            "reads": 45
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        }
+      ]
+    }
+  ],
+  "snapshot": [
+    {
+      "name": "owner",
+      "snapshot": {
+        "tasks": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "cwd": "/",
+            "title": "root",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "pending_compact_summary": null,
+            "model": null,
+            "mode": null,
+            "reasoning_effort": null,
+            "source": "root",
+            "deleted_at": null,
+            "created_at": 1789333200000,
+            "last_active_at": 1789333200000
+          }
+        ],
+        "agent_sessions": [],
+        "events": [],
+        "messages": [],
+        "message_projections": [],
+        "deliveries": [],
+        "client_ops": [],
+        "recent_paths": []
+      }
+    },
+    {
+      "name": "hub",
+      "snapshot": {
+        "tasks": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "cwd": "/",
+            "title": "root",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "pending_compact_summary": null,
+            "model": null,
+            "mode": null,
+            "reasoning_effort": null,
+            "source": "root",
+            "deleted_at": null,
+            "created_at": 1789333200000,
+            "last_active_at": 1789333200000
+          }
+        ],
+        "agent_sessions": [],
+        "events": [],
+        "messages": [],
+        "message_projections": [],
+        "deliveries": [],
+        "client_ops": [],
+        "recent_paths": []
+      }
+    }
+  ]
+}

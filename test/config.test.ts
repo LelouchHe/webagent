@@ -182,6 +182,86 @@ recent_paths_ttl = 60
     assert.equal(parsed.success, false);
   });
 
+  it("loads strict host connection entries", () => {
+    const parsed = ConfigSchema.parse({
+      default_agent: "copilot",
+      agents: { copilot: { cmd: "copilot --acp" } },
+      hosts: {
+        desk: {
+          url: "http://desk.example.test",
+          token: "!security find-generic-password -a webagent",
+        },
+      },
+    });
+    assert.deepEqual(parsed.hosts, {
+      desk: {
+        url: "http://desk.example.test",
+        token: "!security find-generic-password -a webagent",
+      },
+    });
+  });
+
+  it("rejects invalid host ids, URLs, and unknown host keys", () => {
+    for (const hosts of [
+      { "Desk Host": { url: "http://desk", token: "wat_token" } },
+      { desk: { url: "ftp://desk.example", token: "wat_token" } },
+      { desk: { url: "not a url", token: "wat_token" } },
+      {
+        desk: {
+          url: "http://user:pass@desk.example",
+          token: "wat_token",
+        },
+      },
+      {
+        desk: {
+          url: "http://desk.example?token=leak",
+          token: "wat_token",
+        },
+      },
+      {
+        desk: {
+          url: "http://desk.example#fragment",
+          token: "wat_token",
+        },
+      },
+      { desk: { url: "http://desk.example?", token: "wat_token" } },
+      { desk: { url: "http://desk.example#", token: "wat_token" } },
+      {
+        desk: {
+          url: "http://desk.example",
+          token: "wat_token",
+          toekn: "typo",
+        },
+      },
+    ]) {
+      const parsed = ConfigSchema.safeParse({
+        default_agent: "copilot",
+        agents: { copilot: { cmd: "copilot --acp" } },
+        hosts,
+      });
+      assert.equal(parsed.success, false);
+    }
+  });
+
+  it("does not leak token text from TOML syntax errors", () => {
+    let stderr = "";
+    console.error = ((...args: unknown[]) => {
+      stderr += args.map(String).join(" ") + "\n";
+    }) as any;
+    assert.throws(
+      () =>
+        load(
+          writeConfig(
+            `${MINIMAL}\n[hosts.owner]\nurl = "http://owner.example"\ntoken = "synthetic-secret"\nbad = [\n`,
+          ),
+        ),
+      /exit:1/,
+    );
+    assert.doesNotMatch(stderr, /synthetic-secret/);
+    assert.match(stderr, /TomlError/);
+    assert.match(stderr, /line \d+, column \d+/);
+  });
+
   it("keeps nested tables lenient (unknown nested keys are stripped)", () => {
     const parsed = ConfigSchema.safeParse({
       default_agent: "copilot",

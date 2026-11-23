@@ -4,6 +4,7 @@ import type { AgentEvent } from "./types.ts";
 import { reSignAttachmentUrlsInJson } from "./auth.ts";
 import { enrichEventForDisplay, type LabelMap } from "./attachment-labels.ts";
 import { log } from "./log.ts";
+import { SSE_HEARTBEAT_INTERVAL_MS } from "./shared/stream-supervisor.ts";
 
 const slog = log.scope("sse");
 
@@ -38,7 +39,7 @@ export class SseManager {
   private attachmentSecret: Buffer | null = null;
   private getLabelMap: ((taskId: string) => LabelMap) | null = null;
 
-  constructor(heartbeatMs = 15_000) {
+  constructor(heartbeatMs = SSE_HEARTBEAT_INTERVAL_MS) {
     this.heartbeatInterval = heartbeatMs;
   }
 

@@ -9,8 +9,8 @@ import { createTaskManager } from "../src/task-manager.ts";
 import {
   createLocalTaskOps,
   type TaskCancelNotice,
-} from "../src/host/local.ts";
-import { projectTaskHistoryRow } from "../src/host/task-history.ts";
+} from "../src/host/local/adapter.ts";
+import { projectTaskHistoryRow } from "../src/host/local/task-history.ts";
 import type { AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
 

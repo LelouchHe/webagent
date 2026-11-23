@@ -1,23 +1,23 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
-import type { Store, TaskRow } from "../store.ts";
+import type { Store, TaskRow } from "../../store.ts";
 import {
   isLocalCollaborationTarget,
   collaborationRelation,
-} from "../task-collaboration.ts";
+} from "../../task-collaboration.ts";
 import {
   TaskConfigOverrideError,
   reportedExecutionConfig,
   type DeliveryBridge,
   type TaskManager,
-} from "../task-manager.ts";
-import { expandHomePath } from "../home-path.ts";
-import { errorMessage, type AgentEvent } from "../types.ts";
-import { formatFieldBlock } from "../shared/field-block.ts";
-import { formatTaskReference } from "../shared/task-reference.ts";
-import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
-import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
-import { formatSilence } from "../obligation-controller.ts";
+} from "../../task-manager.ts";
+import { expandHomePath } from "../../home-path.ts";
+import { errorMessage, type AgentEvent } from "../../types.ts";
+import { formatFieldBlock } from "../../shared/field-block.ts";
+import { formatTaskReference } from "../../shared/task-reference.ts";
+import { isoFromMillis, isoFromMillisOrNull } from "../../shared/time.ts";
+import { buildTaskCreatedSystemMessage } from "../../task-created-message.ts";
+import { formatSilence } from "../../obligation-controller.ts";
 import type {
   TaskCaller,
   TaskQueryResult,
@@ -26,7 +26,7 @@ import type {
   TaskReadResult,
   TaskCreateInput,
   TaskCreateResult,
-} from "./task-ops.ts";
+} from "../task-ops.ts";
 import {
   parseTaskHistoryData,
   projectTaskHistoryRow,

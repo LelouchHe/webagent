@@ -13,11 +13,35 @@ export interface RegressionClient {
     body?: Json,
     token?: string,
   ): Promise<RestResponse>;
+  instance(name: string): RegressionInstanceClient;
+  restart(name: string, whileStopped?: () => Promise<Json>): Promise<Json>;
+}
+
+export interface RegressionInstanceClient {
+  rest(
+    method: string,
+    path: string,
+    body?: Json,
+    token?: string,
+  ): Promise<RestResponse>;
 }
 
 export interface RegressionContext extends RegressionClient {
   root: string;
   token: string;
+  instances: Record<string, RegressionInstanceContext>;
+}
+
+export interface RegressionInstanceContext {
+  root: string;
+  origin: string;
+}
+
+export interface RegressionInstanceSpec {
+  mock: MockBehavior;
+  extraConfig?: (
+    instances: Record<string, RegressionInstanceContext>,
+  ) => string[];
 }
 
 export interface McpAction {
@@ -54,6 +78,7 @@ export interface ScenarioStep<State> {
 
 export interface RegressionScenario<State> {
   mock: MockBehavior;
+  instances?: Record<string, RegressionInstanceSpec>;
   setup(context: RegressionContext): Promise<State> | State;
   steps: (client: RegressionClient, state: State) => ScenarioStep<State>[];
 }

@@ -4,7 +4,7 @@ import {
   classifyToolContentItem,
   parseImageAttachment,
 } from "../src/shared/tool-content.ts";
-import { projectTaskHistoryRow } from "../src/host/task-history.ts";
+import { projectTaskHistoryRow } from "../src/host/local/task-history.ts";
 import { extractToolCallContent } from "../public/js/event-interpreter.ts";
 import { buildStructuredDiffLines } from "../public/js/structured-diff.ts";
 import type { ToolContentItem } from "../src/types.ts";

@@ -38,6 +38,15 @@ cmd = "copilot --acp"
 # [agents.opencode]
 # cmd = "opencode acp"
 
+# Other WebAgent instances this one connects to (optional; none by default).
+# The table key is the host name (used for `agent@host` in a later release):
+# lowercase letters, digits, and dashes. `token` is a literal token issued by that host, or a
+# `!command` whose trimmed output is the token, run on each connection.
+# The other host needs no matching entry.
+# [hosts.workstation]
+# url = "http://127.0.0.1:6800"
+# token = "!security find-generic-password -a webagent-workstation -w"
+
 [limits]
 # Max bash output stored in DB per command (bytes, default 1 MB)
 bash_output = 1_048_576

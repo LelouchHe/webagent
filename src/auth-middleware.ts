@@ -108,6 +108,7 @@ export function isWhitelistedPath(method: string, path: string): boolean {
 const READ_SCOPE_PATHS: readonly WhitelistEntry[] = [
   { method: "GET", test: (p) => p === "/api/v1/version" },
   { method: "GET", test: (p) => p === "/api/v1/auth/verify" },
+  { method: "GET", test: (p) => p === "/api/v1/hosts" },
   { method: "GET", test: (p) => p === "/api/v1/tasks" },
   { method: "GET", test: (p) => /^\/api\/v1\/tasks\/[^/]+\/?$/.test(p) },
   {
