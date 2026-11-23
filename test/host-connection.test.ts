@@ -1,11 +1,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  hostCredentialFingerprint,
   resolveHostToken,
   TokenCommandError,
 } from "../src/host/remote/credentials.ts";
-import { parseHostDescription } from "../src/host/remote/protocol.ts";
 import { retryDelay } from "../src/host/remote/state.ts";
 import { hashToken } from "../src/auth.ts";
 import { HostRegistry } from "../src/host/remote/registry.ts";
@@ -38,12 +36,8 @@ async function until(condition: () => boolean, timeoutMs = 1_000) {
 }
 
 describe("host connection helpers", () => {
-  it("keeps literal credentials and hashes them with the auth primitive", async () => {
+  it("keeps literal credentials unchanged", async () => {
     assert.equal(await resolveHostToken("wat_literal"), "wat_literal");
-    assert.equal(
-      hostCredentialFingerprint("wat_literal"),
-      hashToken("wat_literal"),
-    );
   });
 
   it("resolves command output from /bin/sh and trims it", async () => {
@@ -76,16 +70,16 @@ describe("host connection helpers", () => {
           : input instanceof URL
             ? input.href
             : input.url;
-      if (url.endsWith("/api/v1/host")) {
+      if (url.endsWith("/api/v1/version")) {
+        return Response.json({ hostProtocol: 1 });
+      }
+      if (url.endsWith("/api/v1/auth/verify")) {
         const token = "wat_hub";
         return Response.json({
-          protocol: 1,
-          server: "1.2.3",
-          caller: {
-            name: "hub",
-            scope: "api",
-            fingerprint: hashToken(token),
-          },
+          ok: true,
+          name: "hub",
+          scope: "api",
+          hash: hashToken(token),
         });
       }
       if (url.endsWith("/api/v1/sse-ticket")) {
@@ -178,15 +172,15 @@ describe("host connection helpers", () => {
           : input instanceof URL
             ? input.href
             : input.url;
-      if (url.endsWith("/api/v1/host")) {
+      if (url.endsWith("/api/v1/version")) {
+        return Response.json({ hostProtocol: 1 });
+      }
+      if (url.endsWith("/api/v1/auth/verify")) {
         return Response.json({
-          protocol: 1,
-          server: "1.2.3",
-          caller: {
-            name: "hub",
-            scope: "api",
-            fingerprint: hashToken("wat_hub"),
-          },
+          ok: true,
+          name: "hub",
+          scope: "api",
+          hash: hashToken("wat_hub"),
         });
       }
       if (url.endsWith("/api/v1/sse-ticket")) {
@@ -234,25 +228,5 @@ describe("host connection helpers", () => {
       [500, 1_000, 2_000, 4_000, 30_000],
     );
     assert.throws(() => retryDelay(-1), RangeError);
-  });
-
-  it("strictly parses the owner description", () => {
-    const description = parseHostDescription({
-      protocol: 1,
-      server: "1.2.3",
-      caller: {
-        name: "hub",
-        scope: "api",
-        fingerprint: hashToken("wat_hub"),
-      },
-    });
-    assert.equal(description.protocol, 1);
-    assert.throws(() =>
-      parseHostDescription({
-        protocol: 2,
-        server: "1.2.3",
-        caller: description.caller,
-      }),
-    );
   });
 });

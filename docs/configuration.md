@@ -158,7 +158,7 @@ token = "!security find-generic-password -a webagent-workstation -w"
 The command form resolves a fresh value on every connection attempt. A failed
 or empty command, rejected token, network failure, or incompatible protocol
 makes only that host unreachable; it does not prevent WebAgent from starting.
-The resolved token and its fingerprint stay in memory. See
+The resolved token and its hash stay in memory. See
 [Multi-host connections](multi-host.md#connections) and the
 [`/api/v1/hosts`](api.md#hosts) status endpoint.
 

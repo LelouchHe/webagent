@@ -543,7 +543,7 @@ async function settle(
   instances: Map<string, Instance>,
   step: string,
 ): Promise<void> {
-  let last = await fingerprint(instances);
+  let last = await settleSignature(instances);
   let quietSince = performance.now();
   await waitUntil(
     async () => {
@@ -551,7 +551,7 @@ async function settle(
         if (instance.sseError) throw instance.sseError;
       }
       const hostStates = await readHostStates(instances);
-      const current = await fingerprint(instances, hostStates);
+      const current = await settleSignature(instances, hostStates);
       if (current !== last) {
         last = current;
         quietSince = performance.now();
@@ -575,7 +575,7 @@ async function settle(
   );
 }
 
-async function fingerprint(
+async function settleSignature(
   instances: Map<string, Instance>,
   suppliedHostStates?: Array<{ instance: string; hosts: HostState[] }>,
 ): Promise<string> {

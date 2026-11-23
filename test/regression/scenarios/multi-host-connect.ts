@@ -21,7 +21,13 @@ export default scenario<ProvisionedHostToken>({
         Promise.all([
           client
             .instance("owner")
-            .rest("GET", "/api/v1/host", undefined, readHostToken(state)),
+            .rest(
+              "GET",
+              "/api/v1/auth/verify",
+              undefined,
+              readHostToken(state),
+            ),
+          client.instance("owner").rest("GET", "/api/v1/version"),
           client.instance("hub").rest("GET", "/api/v1/hosts"),
         ]),
     },

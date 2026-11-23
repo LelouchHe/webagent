@@ -39,12 +39,13 @@ export async function provisionHostToken(
   tokenTransform: (token: string) => string = (token) => token,
   writeToken = true,
   waitForConnected = true,
+  scope: "api" | "read" = "api",
 ): Promise<ProvisionedHostToken> {
   const response = await context
     .instance("owner")
     .rest("POST", "/api/v1/tokens", {
       name: "hub-connection",
-      scope: "api",
+      scope,
     });
   const body = response.body as JsonObject;
   if (

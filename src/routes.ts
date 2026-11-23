@@ -165,7 +165,6 @@ import {
 import { readImageInfo } from "./image-info.ts";
 import { HTTP_STATUS } from "./http-status.ts";
 import type { HostRegistry } from "./host/remote/registry.ts";
-import { HOST_PROTOCOL_VERSION } from "./host/remote/protocol.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -837,30 +836,7 @@ export function createRequestHandler(
             prompt: "/api/beta/prompt",
             push: "/api/beta/push",
             clients: "/api/beta/clients",
-            host: "/api/v1/host",
             hosts: "/api/v1/hosts",
-          },
-        });
-        return;
-      }
-
-      // GET /api/v1/host — describe the owner to an authenticated hub.
-      if (url === "/api/v1/host" && req.method === "GET") {
-        const principal = principalByRequest.get(req);
-        if (
-          !principal ||
-          (principal.scope !== "api" && principal.scope !== "admin")
-        ) {
-          json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
-          return;
-        }
-        json(res, HTTP_STATUS.OK, {
-          protocol: HOST_PROTOCOL_VERSION,
-          server: deps.serverVersion ?? "unknown",
-          caller: {
-            name: principal.name,
-            scope: principal.scope,
-            fingerprint: principal.hash,
           },
         });
         return;
@@ -985,6 +961,7 @@ export function createRequestHandler(
         json(res, HTTP_STATUS.OK, {
           server: deps.serverVersion ?? "unknown",
           agent: tasks?.agentInfoFor(tasks.defaultAgentId) ?? null,
+          hostProtocol: 1,
         });
         return;
       }
@@ -1000,6 +977,7 @@ export function createRequestHandler(
           ok: true,
           name: principal.name,
           scope: principal.scope,
+          hash: principal.hash,
         });
         return;
       }

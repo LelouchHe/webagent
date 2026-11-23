@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { hashToken } from "../../auth.ts";
 
 const TOKEN_COMMAND_TIMEOUT_MS = 5_000;
 const TOKEN_COMMAND_MAX_BUFFER = 64 * 1024;
@@ -40,8 +39,4 @@ export async function resolveHostToken(
   const token = stdout.trim();
   if (!token) throw new TokenCommandError();
   return token;
-}
-
-export function hostCredentialFingerprint(token: string): string {
-  return hashToken(token);
 }

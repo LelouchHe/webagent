@@ -91,24 +91,30 @@ describe("multi-host routes", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("describes an api caller without exposing the raw token", async () => {
-    const response = await request(port, "/api/v1/host", apiToken);
-    assert.equal(response.status, 200);
-    assert.deepEqual(response.body, {
-      protocol: 1,
-      server: "1.2.3",
-      caller: {
-        name: "hub",
-        scope: "api",
-        fingerprint: hashToken(apiToken),
-      },
+  it("describes the owner protocol and caller hash with existing endpoints", async () => {
+    const version = await request(port, "/api/v1/version", apiToken);
+    const verified = await request(port, "/api/v1/auth/verify", apiToken);
+    assert.equal(version.status, 200);
+    assert.equal((version.body as { hostProtocol: number }).hostProtocol, 1);
+    assert.equal(verified.status, 200);
+    assert.deepEqual(verified.body, {
+      ok: true,
+      name: "hub",
+      scope: "api",
+      hash: hashToken(apiToken),
     });
-    assert.equal(JSON.stringify(response.body).includes(apiToken), false);
+    assert.equal(JSON.stringify(verified.body).includes(apiToken), false);
   });
 
-  it("refuses a read caller on the owner endpoint", async () => {
-    const response = await request(port, "/api/v1/host", readToken);
-    assert.equal(response.status, 403);
+  it("allows read callers to verify their own token hash", async () => {
+    const response = await request(port, "/api/v1/auth/verify", readToken);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      ok: true,
+      name: "reader",
+      scope: "read",
+      hash: hashToken(readToken),
+    });
   });
 
   it("allows every authenticated scope to read host status", async () => {

@@ -37,13 +37,18 @@
         {
           "status": 200,
           "body": {
-            "protocol": 1,
+            "ok": true,
+            "name": "hub-connection",
+            "scope": "api",
+            "hash": "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
             "server": "0.13.1",
-            "caller": {
-              "name": "hub-connection",
-              "scope": "api",
-              "fingerprint": "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
-            }
+            "agent": null,
+            "hostProtocol": 1
           }
         },
         {

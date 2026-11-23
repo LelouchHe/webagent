@@ -87,6 +87,9 @@ use REST, SQL, and its final database snapshot. `restart(name, whileStopped)`
 can wait on a generic callback while the process is down, so a scenario can
 prove another instance observed the disconnect. `waitForHost()` waits for an
 explicit state and optional reason before a step completes.
+The connection path uses the public version and auth verification endpoints
+before minting its stream ticket, so the golden observes protocol and token-hash
+compatibility without a dedicated host identity endpoint.
 
 The server and agent are preloaded with `observer.ts`. It only observes
 `better-sqlite3` statement calls, while fixing the clock, UUID stream, and

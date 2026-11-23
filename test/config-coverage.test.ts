@@ -189,6 +189,20 @@ describe("config coverage", async () => {
         );
         return;
       }
+      if (k.path === "hosts") {
+        const hostTable = /^\s*# \[hosts\.[a-z0-9][a-z0-9-]*\]\s*$/m.exec(
+          mainSrc,
+        );
+        assert.ok(
+          hostTable,
+          "config.toml must document one commented [hosts.<name>] table",
+        );
+        const tail = mainSrc.slice(hostTable.index + hostTable[0].length);
+        const block = tail.split(/^\s*[^#\n].*$/m, 1)[0];
+        assert.match(block, /^# url = /m);
+        assert.match(block, /^# token = /m);
+        return;
+      }
       const block = sectionBlock(mainSrc, k.section);
       const live = sourceHasLive(block, k.leaf);
       const commented = sourceHasCommented(block, k.leaf);

@@ -62,7 +62,9 @@ token-command output through the API or logs.
 
 ```text
 hub                                      owner
- |-- GET /api/v1/host ---------------------->| describe + credential fingerprint
+ |-- GET /api/v1/version ------------------->| host protocol
+ |<------------------------------------------|
+ |-- GET /api/v1/auth/verify --------------->| token hash + scope
  |<------------------------------------------|
  |-- POST /api/v1/sse-ticket --------------->| short-lived stream ticket
  |<------------------------------------------|
@@ -81,9 +83,10 @@ hook; later delivery work will replace that hook without changing the connection
 mechanism.
 Connection state never writes to SQLite and never changes Task facts.
 
-`GET /api/v1/host` is the owner identity endpoint. It reports protocol version,
-server version, and the authenticated caller's token name, scope, and SHA-256
-fingerprint. `GET /api/v1/hosts` reports the hub's connection state. See
+The public version endpoint advertises `hostProtocol`; the authenticated
+verify endpoint reports the caller's token name, scope, and SHA-256 `hash`.
+`GET /api/v1/hosts` reports the hub's connection state for diagnostics and
+regression observation. The browser UI does not consume it yet. See
 [the API reference](api.md#hosts) for exact response shapes and
 [configuration](configuration.md#multi-host-connection) for token commands.
 
@@ -95,7 +98,7 @@ fingerprint. `GET /api/v1/hosts` reports the hub's connection state. See
 | `src/host/task-ops.ts` | The neutral `TaskOps` interface, command DTOs, and caller |
 | `src/host/local/adapter.ts` | The local `TaskOps` implementation over this instance's TaskManager and Store |
 | `src/host/local/` | Local projection and error helpers; cannot depend on remote implementations |
-| `src/host/remote/` | Current hub connection, credential hashing, retry/backoff, and in-memory status; the remote `adapter.ts` and Task delivery transport are planned |
+| `src/host/remote/` | Current hub connection, token hash verification, retry/backoff, and in-memory status; the remote `adapter.ts` and Task delivery transport are planned |
 | `src/server.ts` | The only assembly point; it creates the local `TaskOps` and injects it into MCP |
 
 ESLint's `no-restricted-imports` guards the direct static dependencies:

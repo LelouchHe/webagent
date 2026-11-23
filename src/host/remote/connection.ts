@@ -1,11 +1,7 @@
 import type { HostConfig } from "../../config.ts";
 import { HTTP_STATUS } from "../../http-status.ts";
-import {
-  hostCredentialFingerprint,
-  resolveHostToken,
-  TokenCommandError,
-} from "./credentials.ts";
-import { parseHostDescription, type HostDescription } from "./protocol.ts";
+import { hashToken } from "../../auth.ts";
+import { resolveHostToken, TokenCommandError } from "./credentials.ts";
 import type { HostConnectionState, HostUnreachableReason } from "./state.ts";
 import {
   StreamSupervisor,
@@ -31,7 +27,7 @@ export interface HostConnectionOptions {
     state: HostConnectionState,
     reason?: HostUnreachableReason,
   ) => void;
-  onConnected?: (description: HostDescription) => void | Promise<void>;
+  onConnected?: () => void | Promise<void>;
 }
 
 class HostConnectionFailure extends Error {
@@ -105,13 +101,16 @@ export class HostConnection {
     this.options.onState?.("connecting");
     const token = await this.resolveToken(attempt);
     if (!attempt.isCurrent()) return;
-    const fingerprint = hostCredentialFingerprint(token);
-    const description = await this.describe(token, attempt.signal);
-    if (description.caller.fingerprint !== fingerprint) {
+    await this.checkProtocol(attempt.signal);
+    const caller = await this.verifyCaller(token, attempt.signal);
+    if (caller.hash !== hashToken(token)) {
       throw new HostConnectionFailure("protocol_mismatch");
     }
+    if (caller.scope === "read") {
+      throw new HostConnectionFailure("insufficient_scope");
+    }
     const ticket = await this.ticket(token, attempt.signal);
-    await this.openStream(ticket, description, attempt);
+    await this.openStream(ticket, attempt);
   }
 
   static failureReason(error: unknown): HostUnreachableReason {
@@ -147,7 +146,6 @@ export class HostConnection {
 
   private async openStream(
     ticket: string,
-    description: HostDescription,
     attempt: StreamAttempt,
   ): Promise<void> {
     const response = await this.fetchImpl(
@@ -163,17 +161,41 @@ export class HostConnection {
     if (!response.body) {
       throw new HostConnectionFailure("protocol_mismatch");
     }
-    await this.consume(response.body, description, attempt);
+    await this.consume(response.body, attempt);
   }
 
-  private async describe(
-    token: string,
-    stopSignal: AbortSignal,
-  ): Promise<HostDescription> {
+  private async checkProtocol(stopSignal: AbortSignal): Promise<void> {
     let response: Response;
     try {
       response = await this.fetchImpl(
-        endpoint(this.config.url, "/api/v1/host"),
+        endpoint(this.config.url, "/api/v1/version"),
+        {
+          signal: timeoutSignal(stopSignal, this.requestTimeoutMs),
+        },
+      );
+    } catch (error) {
+      if (stopSignal.aborted) throw error;
+      throw new HostConnectionFailure("network");
+    }
+    if (!response.ok) throw new HostConnectionFailure("network");
+    const body = await responseJson(response);
+    const protocol =
+      body && typeof body === "object"
+        ? (body as { hostProtocol?: unknown }).hostProtocol
+        : undefined;
+    if (protocol !== 1) {
+      throw new HostConnectionFailure("protocol_mismatch");
+    }
+  }
+
+  private async verifyCaller(
+    token: string,
+    stopSignal: AbortSignal,
+  ): Promise<{ hash: string; scope: "api" | "admin" | "read" }> {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(
+        endpoint(this.config.url, "/api/v1/auth/verify"),
         {
           headers: authorizeHeaders(token),
           signal: timeoutSignal(stopSignal, this.requestTimeoutMs),
@@ -190,11 +212,20 @@ export class HostConnection {
       throw new HostConnectionFailure("unauthorized");
     }
     if (!response.ok) throw new HostConnectionFailure("network");
-    try {
-      return parseHostDescription(await responseJson(response));
-    } catch {
+    const body = await responseJson(response);
+    if (!body || typeof body !== "object") {
       throw new HostConnectionFailure("protocol_mismatch");
     }
+    const record = body as { hash?: unknown; scope?: unknown };
+    if (
+      typeof record.hash !== "string" ||
+      (record.scope !== "api" &&
+        record.scope !== "admin" &&
+        record.scope !== "read")
+    ) {
+      throw new HostConnectionFailure("protocol_mismatch");
+    }
+    return { hash: record.hash, scope: record.scope };
   }
 
   private async ticket(
@@ -235,7 +266,6 @@ export class HostConnection {
 
   private async consume(
     body: ReadableStream<Uint8Array>,
-    description: HostDescription,
     attempt: StreamAttempt,
   ): Promise<void> {
     const reader = body.getReader();
@@ -276,7 +306,7 @@ export class HostConnection {
               if (!attempt.isCurrent()) return;
               this.options.onState?.("connected");
               if (attempt.isCurrent()) {
-                void this.options.onConnected?.(description);
+                void this.options.onConnected?.();
               }
             }
           }
