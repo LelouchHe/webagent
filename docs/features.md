@@ -106,7 +106,7 @@ leaves a two-sided transcript row naming who cancelled what and why.
 
 Only agents that consume the injected `mcpServers` entry can collaborate; one
 that ignores it still works as a chat backend, it just cannot call `task_*`
-tools. See [Task MCP Control Plane](architecture/mcp.md).
+tools. See [Task MCP Control Plane](task-mcp.md).
 
 ## Slash Commands
 

@@ -40,7 +40,7 @@ server through two entrypoints, and the server holds the logic.
 | Part | Document | Covers |
 | --- | --- | --- |
 | Client entry | [Client Architecture](client.md) | The browser client: modules, connection lifecycle, data flow, task switching, event handling |
-| Agent entry | [Task MCP Control Plane](mcp.md) | The MCP server injected into agent sessions: tools, capability scope, history format, compatibility |
+| Agent entry | [MCP](mcp.md) | The MCP endpoint as the agent entry: how it reaches sessions, authenticates the caller, and hands commands to the server |
 | Server | [Server Architecture](server.md) | Entrypoint handling, domain core, execution, events and egress, cross-cutting mechanisms, request paths |
 | Multi-host | [Multi-host](multi-host.md) | Instances connected to each other; the `TaskOps` port and the local / remote split |
 
@@ -54,7 +54,7 @@ gaps, and [Multi-host](multi-host.md) describes how they close.
 | Part | Reference documents |
 | --- | --- |
 | Client entry | [API Reference](../api.md), [Features](../features.md), [Task UX](../task-ux.md), [Slash Menu](../slash-menu.md), [Streaming Render Performance](../performance.md), [Agent image rendering](../image-rendering.md) |
-| Agent entry | [Task Manual](../task-manual.md), [Task Examples](../task-examples.md) |
+| Agent entry | [Task MCP Control Plane](../task-mcp.md) (tool reference), [Task Manual](../task-manual.md), [Task Examples](../task-examples.md) |
 | Server | [Task Lifecycle](../task-lifecycle.md), [Task Obligations](../task-obligations.md), [Database Schema](../schema.md), [ACP Integration](../acp.md), [Attachments](../uploads.md), [Messages / Inbox](../messages.md), [Share Links](../share.md), [Security](../security.md) |
 | All parts | [Implementation Invariants](../implementation-invariants.md), [Vocabulary](../vocabulary.md), [Known Issues](../known-issues.md) |
 | Operations | [Configuration & Operations](../configuration.md), [Auto-Start on Boot](../autostart.md), [Development](../development.md) |

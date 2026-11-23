@@ -4,7 +4,7 @@ This is a field guide to using Tasks well: the policy and mental model, not
 the mechanism. What each tool does is in its description
 ([`src/mcp/tools.ts`](../src/mcp/tools.ts)), the accounting rules are in
 [Task Obligations](task-obligations.md), and the reference contract is in
-[Task MCP Control Plane](architecture/mcp.md). See [Task Examples](task-examples.md)
+[Task MCP Control Plane](task-mcp.md). See [Task Examples](task-examples.md)
 for short usage patterns.
 
 ## Who decides
@@ -93,6 +93,8 @@ The normal delegated shape is:
 flowchart TD
     A[Create Task] --> B[Send first Task Contract]
     B --> C[Run the work]
+    C -->|Work continues without the requester| W[Record waiting and end the turn]
+    W -->|Own child or background work wakes it| C
     C --> D[Submit typed done or blocked handoff]
     D --> E[Parent receives full handoff]
     E --> F{Parent verifies contract, result, and evidence}
@@ -107,14 +109,18 @@ flowchart TD
 `task_update(done, ...)` submits a result; it does not mean a parent accepted
 it. The handoff should include the conclusion, satisfied criteria, evidence,
 limitations, and a next step when useful. `task_update(blocked, ...)` should name the missing input or
-decision and explain how the Task can resume.
+decision and explain how the Task can resume. `task_update(waiting, ...)` records
+that the work continues without the requester — a Task this one dispatched, or
+its own background work, will wake it. It is not delivered, wakes no one, and
+does not settle anything: the Task still owes a later `done` or `blocked`.
 
 `task_send` is for ordinary coordination, questions, progress, and follow-up;
 it is not a terminal lifecycle handoff. A Task may send useful information and
 still need to continue or later submit `done` or `blocked`.
 
-A delegated child owes its requester a typed `done` or `blocked`; the runtime
-reminds it and then tells the requester when it does not report (see
+A delegated child owes its requester a typed `done` or `blocked`; `waiting`
+does not discharge that debt. The runtime reminds a child that ends a turn
+without any update and then tells the requester when it still does not report (see
 [Task Obligations](task-obligations.md)). A user-created interactive Task owes
 nothing after each turn. After a parent accepts a result, the Task remains
 available for history and follow-up.
@@ -124,7 +130,8 @@ available for history and follow-up.
 Use messages as the normal coordination path. A Task should send useful
 progress, questions, findings, and decisions to the relevant Task as they arise.
 Use `task_update` when the current assignment becomes materially blocked or
-complete; its status is a typed message, not Task deletion. A final result
+complete, or to record `waiting` before ending a turn while your own dispatched
+or background work continues; its status is a typed fact, not Task deletion. A final result
 should include the conclusion and the evidence needed by the recipient to act
 on it. The recipient receives the full handoff body, including important
 findings; it should summarize rather than blindly forward a child's raw report.
@@ -237,6 +244,8 @@ During work:
 - Is the parent allowing children to work independently where appropriate?
 - Is a blocked state asking for an actionable decision?
 - Is anyone polling instead of waiting for delivery?
+- Before ending a turn while dispatched or background work continues, did the
+  Task record `waiting`?
 
 Before finishing:
 

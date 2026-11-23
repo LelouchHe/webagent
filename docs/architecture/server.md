@@ -10,7 +10,7 @@ This document describes the server **as it is built today**, including the
 places where it is not yet neutral (see
 [Where the server is not yet neutral](#where-the-server-is-not-yet-neutral)).
 The entrypoint contracts live in [Client Architecture](client.md) and
-[Task MCP Control Plane](mcp.md); the cross-instance direction lives in
+[MCP](mcp.md); the cross-instance direction lives in
 [Multi-host](multi-host.md). Rules that every change must keep are in
 [Implementation Invariants](../implementation-invariants.md).
 
@@ -100,7 +100,7 @@ that the task is active and freezes the caller as a `TaskCaller` (the task, its
 agent, and the execution generation the capability was promoted for).
 `src/mcp/tools.ts` registers the `task_*` tools and calls the `TaskOps` port;
 the `task_create` description is rebuilt per request from the running
-configuration. The tool contracts are in [Task MCP Control Plane](mcp.md).
+configuration. The tool contracts are in [Task MCP Control Plane](../task-mcp.md).
 
 ### Composition root
 

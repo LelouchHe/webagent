@@ -107,7 +107,7 @@ Locate and read only the sections relevant to the task.
 | Detailed runtime, security, protocol, frontend, browser, and platform invariants | [`docs/implementation-invariants.md`](./docs/implementation-invariants.md) |
 | REST/SSE behavior and database API | [`docs/api.md`](./docs/api.md) |
 | Frontend lifecycle and reconciliation | [`docs/architecture/client.md`](./docs/architecture/client.md) |
-| Agent-facing MCP tools and capability scope | [`docs/architecture/mcp.md`](./docs/architecture/mcp.md) |
+| Agent-facing MCP tools and capability scope | [`docs/task-mcp.md`](./docs/task-mcp.md) |
 | Host layer and local / remote execution | [`docs/architecture/multi-host.md`](./docs/architecture/multi-host.md) |
 | Slash menu framework: command tree, walker, candidate order, argument fields | [`docs/slash-menu.md`](./docs/slash-menu.md) |
 | ACP surface and agent compatibility | [`docs/acp.md`](./docs/acp.md) |
