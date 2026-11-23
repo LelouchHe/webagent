@@ -45,6 +45,10 @@ import {
   getStartupMessageIntent,
   processStartupMessageIntent,
 } from "./task-navigation.ts";
+import {
+  StreamSupervisor,
+  type StreamAttempt,
+} from "../../src/shared/stream-supervisor.ts";
 
 /** If the browser has an active push subscription, tell the server which
  *  clientId owns it so per-subscription visibility filtering works. */
@@ -63,119 +67,57 @@ async function registerPushEndpoint(clientId: string) {
   }
 }
 
-/**
- * How long the stream may stay silent before we treat it as dead. The server
- * emits a heartbeat every 15s, so three missed beats is decisive without being
- * trigger-happy on a slow link.
- */
-const STALL_TIMEOUT_MS = 45_000;
-const WATCHDOG_INTERVAL_MS = 5_000;
 const RECONNECT_DELAY_MS = 3_000;
 
-/**
- * Timestamp of the last byte seen on the stream, or 0 when no stream is
- * established. EventSource can stay in `readyState === OPEN` indefinitely after
- * a NAT rebind, an HTTP/3 stall, or an OS resume — no bytes arrive and no
- * `error` event fires, so the onerror-driven reconnect never runs and the UI
- * keeps claiming it is connected. Silence is the only signal we get.
- *
- * Tracked here rather than on the EventSource because the stream may fail
- * before one exists at all (a hung ticket mint leaves `state.eventSource` null),
- * and a watchdog bound to an instance would have nothing to attach to.
- */
-let lastStreamActivity = 0;
-let watchdogTimer: ReturnType<typeof setInterval> | null = null;
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** Schedule at most one pending reconnect. */
-function scheduleReconnect(): void {
-  if (reconnectTimer) return;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    connect();
-  }, RECONNECT_DELAY_MS);
-  (reconnectTimer as { unref?: () => void }).unref?.();
-}
-
-function noteStreamActivity(): void {
-  lastStreamActivity = Date.now();
-}
-
-function startWatchdog(): void {
-  if (watchdogTimer) return;
-  watchdogTimer = setInterval(checkStreamLiveness, WATCHDOG_INTERVAL_MS);
-  (watchdogTimer as { unref?: () => void }).unref?.();
-}
-
-/**
- * Tear down a silent stream and start a new one. Exported so the
- * visibility handler can also probe on resume, where the interval itself may
- * not have run (a suspended runtime freezes its own timers).
- */
-export function checkStreamLiveness(): void {
-  if (!lastStreamActivity) return;
-  if (Date.now() - lastStreamActivity < STALL_TIMEOUT_MS) return;
-  // Disarm before reconnecting: the replacement stream re-arms on open, and
-  // until then a second check must not judge it by its predecessor's clock.
-  // Rendered inline in the conversation flow at `/log warn`, which is the only
-  // way to observe this on a device with no DevTools (iOS PWA). If a user
-  // reports the transcript freezing, the presence or absence of this line says
-  // whether the transport died or the render pipeline did.
-  clog.warn("stream silent, reconnecting", {
-    silentMs: Date.now() - lastStreamActivity,
-  });
-  lastStreamActivity = 0;
-  const dead = state.eventSource;
-  if (dead) {
-    // Drop the handler first — a close() that synchronously fires onerror
-    // would schedule a second, competing reconnect.
-    dead.onerror = null;
-    dead.close();
-  }
-  cleanup();
-  connect();
-}
+const streamSupervisor = new StreamSupervisor({
+  retryDelay: (_failures, failure) =>
+    failure.kind === "stalled" ? 0 : RECONNECT_DELAY_MS,
+  run: (attempt) => {
+    const connectionEpoch = beginConnectionEpoch();
+    const activeTaskId = state.taskId;
+    setConnectionStatus("connecting", "connecting");
+    return openStream(attempt, connectionEpoch, activeTaskId);
+  },
+  onFailure: ({ kind, silentMs }) => {
+    if (kind !== "stalled") return;
+    // Rendered inline in the conversation flow at `/log warn`, which is the only
+    // way to observe this on a device with no DevTools (iOS PWA). If a user
+    // reports the transcript freezing, the presence or absence of this line says
+    // whether the transport died or the render pipeline did.
+    clog.warn("stream silent, reconnecting", { silentMs: silentMs ?? 0 });
+    const dead = state.eventSource;
+    if (dead) {
+      // Drop the handler first — a close() that synchronously fires onerror
+      // would schedule a second, competing reconnect.
+      dead.onerror = null;
+      dead.close();
+    }
+    cleanup();
+  },
+});
 
 export function connect() {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  // Supersede any attempt still in flight. Opening a stream awaits a ticket
-  // mint, so without an epoch the continuation of a superseded attempt would
-  // construct a second EventSource that nothing owns or closes; an orphan's
-  // `onmessage` keeps marking activity, which would make a genuinely dead
-  // current stream look alive forever.
-  const connectionEpoch = beginConnectionEpoch();
-  const activeTaskId = state.taskId;
-  setConnectionStatus("connecting", "connecting");
+  streamSupervisor.start();
+}
 
-  // SSE for receiving server events. EventSource cannot send Authorization,
-  // so we exchange a Bearer for a single-use 60s ticket first, then open
-  // the stream with ?ticket=…
-  void openStream(connectionEpoch, activeTaskId);
+/** Probe on resume when a suspended browser runtime froze watchdog timers. */
+export function checkStreamLiveness(): void {
+  streamSupervisor.checkLiveness();
 }
 
 async function openStream(
+  attempt: StreamAttempt,
   connectionEpoch: number,
   activeTaskId: string | null,
 ) {
-  // Arm before the ticket mint so a stream that never opens is also covered.
-  noteStreamActivity();
-  startWatchdog();
-  let ticket: string;
-  try {
-    const resp = await api.mintSseTicket();
-    ticket = resp.ticket;
-  } catch {
-    // Auth wrapper already redirects to /login on 401. For transient errors
-    // schedule a retry on the same cadence as the SSE reconnect path.
-    if (connectionEpoch === state.connectionEpoch) scheduleReconnect();
-    return;
-  }
+  // Arm before ticket mint is owned by StreamSupervisor, covering a stream
+  // that never opens just like NAT rebind and HTTP/3 stalls after handshake.
+  const { ticket } = await api.mintSseTicket();
   // A newer attempt started while we were awaiting the mint; this ticket and
   // everything downstream of it belongs to a connection nobody is waiting for.
-  if (connectionEpoch !== state.connectionEpoch) return;
+  if (!attempt.isCurrent() || connectionEpoch !== state.connectionEpoch) {
+    return;
+  }
 
   const es = new EventSource(
     `/api/v1/events/stream?ticket=${encodeURIComponent(ticket)}`,
@@ -183,11 +125,11 @@ async function openStream(
   state.eventSource = es;
 
   es.onmessage = (e: MessageEvent) => {
-    if (connectionEpoch !== state.connectionEpoch) {
+    if (!attempt.isCurrent() || connectionEpoch !== state.connectionEpoch) {
       es.close();
       return;
     }
-    noteStreamActivity();
+    streamSupervisor.noteActivity(attempt);
     const msg = JSON.parse(e.data as string) as {
       type: string;
       clientId?: string;
@@ -197,6 +139,7 @@ async function openStream(
     };
     // SSE initial handshake: server assigns clientId (no agent field)
     if (msg.type === "connected" && msg.clientId) {
+      streamSupervisor.connected(attempt);
       state.clientId = msg.clientId;
       // The stream is registered from this frame on. The startup list read ran
       // in parallel with the registration, so a task created in that window is
@@ -231,12 +174,11 @@ async function openStream(
 
   es.onerror = () => {
     es.close();
-    if (connectionEpoch !== state.connectionEpoch) return; // superseded stream: close and stay quiet
-    // Disarm the watchdog for the backoff window, or it would see the stale
-    // timestamp and connect in parallel with the scheduled retry.
-    lastStreamActivity = 0;
+    if (!attempt.isCurrent() || connectionEpoch !== state.connectionEpoch) {
+      return;
+    }
     cleanup();
-    scheduleReconnect();
+    streamSupervisor.reconnect(attempt);
   };
 
   // SSE "heartbeat" named event — server emits one every 15s, plus one
@@ -249,8 +191,10 @@ async function openStream(
   // listener to this specific EventSource — on reconnect the old one is
   // GC'd with its parent; we install a fresh listener on the fresh `es`.
   es.addEventListener("heartbeat", () => {
-    if (connectionEpoch !== state.connectionEpoch) return;
-    noteStreamActivity();
+    if (!attempt.isCurrent() || connectionEpoch !== state.connectionEpoch) {
+      return;
+    }
+    streamSupervisor.noteActivity(attempt);
     if (!state.clientId) return;
     if (document.hidden) return; // visibilitychange owns the hidden path
     void api.postVisibility(state.clientId, true, state.taskId ?? undefined);

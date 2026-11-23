@@ -78,12 +78,11 @@ describe("host connection helpers", () => {
       { owner: { url: "http://owner.example", token: "wat_hub" } },
       {
         fetch: fetchImpl,
-        requestTimeoutMs: 20,
+        heartbeatTimeoutMs: 20,
         minimumRetryMs: 1,
         maximumRetryMs: 1,
-        sleep: async () => {
-          const state = registry.list()[0];
-          if (state.state === "unreachable" && state.reason === "network") {
+        onState: (_name, state, reason) => {
+          if (state === "unreachable" && reason === "network") {
             observedRetryState = true;
           }
         },
