@@ -7,9 +7,9 @@ import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 import { Store } from "../src/store.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import {
-  createMcpTaskToolHost,
+  createLocalTaskOps,
   type McpTaskCancelNotice,
-} from "../src/mcp/task-host.ts";
+} from "../src/host/local.ts";
 import type { StoredEvent } from "../src/types.ts";
 
 /* eslint-disable @typescript-eslint/no-unsafe-function-type -- Promise resolver pattern uses generic Function type */
@@ -3137,7 +3137,7 @@ describe("events", () => {
         const lease = tasks.authority.leaseFor(source.id);
         assert.ok(lease, "the source task has a generation");
         const frames: McpTaskCancelNotice[] = [];
-        const host = createMcpTaskToolHost({
+        const host = createLocalTaskOps({
           store,
           tasks,
           broadcastTaskCancelNotice: (event) => frames.push(event),

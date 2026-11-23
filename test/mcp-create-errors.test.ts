@@ -7,7 +7,7 @@ import {
   composeError,
   configOverrideError,
   unconfiguredAgentError,
-} from "../src/mcp/create-errors.ts";
+} from "../src/host/create-errors.ts";
 
 /**
  * Boundary tests for the bounded `task_create` error text.

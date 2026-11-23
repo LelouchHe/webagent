@@ -1,21 +1,10 @@
 import { classifyToolContentItem } from "../shared/tool-content.ts";
+import type { McpTaskHistoryRow } from "./types.ts";
 
 const MAX_TEXT_CHARS = 200;
 const MATCH_WINDOW_RADIUS = 100;
 
 export type JsonObject = Record<string, unknown>;
-
-export interface McpTaskHistoryRow {
-  seq: number;
-  type: string;
-  bytes: number;
-  group?: string;
-  title?: string;
-  field?: string;
-  text?: string;
-  content_shape?: "unknown";
-  unprojected?: true;
-}
 
 function isObject(value: unknown): value is JsonObject {
   return value !== null && typeof value === "object" && !Array.isArray(value);

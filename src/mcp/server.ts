@@ -2,12 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
+import type { McpCallerPrincipal, TaskOps } from "../host/types.ts";
 import type { CapabilityStore } from "./capability.ts";
-import {
-  registerMcpTools,
-  type McpCallerPrincipal,
-  type McpTaskToolHost,
-} from "./tools.ts";
+import { registerMcpTools } from "./tools.ts";
 import { HTTP_STATUS } from "../http-status.ts";
 
 /**
@@ -81,7 +78,7 @@ export interface McpEndpointOptions {
    */
   isTaskActive?: (taskId: string) => boolean;
   /** Task control-plane operations used by the four direct tools. */
-  taskTools?: McpTaskToolHost;
+  taskTools?: TaskOps;
   /**
    * Configured agent ids from the startup snapshot. `task_create`'s description
    * advertises them, which is the only always-visible discovery channel (an MCP

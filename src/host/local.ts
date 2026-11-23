@@ -22,11 +22,11 @@ import type {
   McpCallerPrincipal,
   McpTaskQueryResult,
   McpTaskListItem,
-  McpTaskToolHost,
+  TaskOps,
   McpTaskReadResult,
   McpTaskCreateInput,
   McpTaskCreateResult,
-} from "./tools.ts";
+} from "./types.ts";
 import {
   parseTaskHistoryData,
   projectTaskHistoryRow,
@@ -91,14 +91,14 @@ function relationOrder(relation: McpTaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2 }[relation];
 }
 
-export function createMcpTaskToolHost(deps: {
+export function createLocalTaskOps(deps: {
   store: Store;
   tasks: TaskManager;
   cancelTimeoutMs?: number;
   broadcastCollaboration?: (event: McpTaskCollaborationEvent) => void;
   broadcastTaskCreated?: (event: McpTaskCreatedEvent) => void;
   broadcastTaskCancelNotice?: (event: McpTaskCancelNotice) => void;
-}): McpTaskToolHost {
+}): TaskOps {
   const {
     store,
     tasks,

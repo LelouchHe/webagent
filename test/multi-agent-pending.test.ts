@@ -10,8 +10,8 @@ import { AgentBridge } from "../src/bridge.ts";
 import { AgentRegistry } from "../src/agent-registry.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
-import { createMcpTaskToolHost } from "../src/mcp/task-host.ts";
-import type { McpTaskToolHost } from "../src/mcp/tools.ts";
+import { createLocalTaskOps } from "../src/host/local.ts";
+import type { TaskOps } from "../src/host/types.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { Store } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";
@@ -56,7 +56,7 @@ describe("pending capability over a real ACP session", () => {
     // eslint-disable-next-line prefer-const
     let tasks: TaskManager;
     // eslint-disable-next-line prefer-const
-    let taskTools: McpTaskToolHost | undefined;
+    let taskTools: TaskOps | undefined;
     const endpoint = createMcpEndpoint({
       capabilities,
       isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
@@ -106,7 +106,7 @@ describe("pending capability over a real ACP session", () => {
       authority,
       agents: registry,
     });
-    taskTools = createMcpTaskToolHost({ store, tasks });
+    taskTools = createLocalTaskOps({ store, tasks });
 
     try {
       const created = await tasks.createTask(
