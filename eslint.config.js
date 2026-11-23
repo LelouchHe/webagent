@@ -132,6 +132,47 @@ export default tseslint.config(
     languageOptions: { globals: { ...globals.node } },
   },
 
+  {
+    files: ["src/mcp/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/store.ts", "**/task-manager.ts"],
+              message:
+                "MCP code must use TaskOps from host/types.ts instead of importing local domain services.",
+            },
+            {
+              group: ["**/host/*", "!**/host/types.ts"],
+              message:
+                "MCP code may import only the neutral host/types.ts boundary.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    files: ["src/host/types.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/store.ts", "**/task-manager.ts"],
+              message:
+                "host/types.ts is neutral and cannot depend on local domain services.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   // public/js: browser globals + strict console ban.
   // Convention (CLAUDE.md): use `log.*` (public/js/log.ts) so entries appear
   // in the inline debug panel. console.* bypasses that channel entirely.
