@@ -102,8 +102,8 @@ export type TaskCreateCaller =
 export class TaskAgentNotConfiguredError extends Error {
   readonly agentId: string;
 
-  constructor(agentId: string, message: string) {
-    super(message);
+  constructor(agentId: string) {
+    super("agent_not_configured");
     this.name = "TaskAgentNotConfiguredError";
     this.agentId = agentId;
   }
@@ -111,7 +111,7 @@ export class TaskAgentNotConfiguredError extends Error {
 
 export class TaskAgentIdTypeError extends Error {
   constructor() {
-    super("agentId must be a string");
+    super("invalid_agent_id_type");
     this.name = "TaskAgentIdTypeError";
   }
 }
@@ -119,20 +119,49 @@ export class TaskAgentIdTypeError extends Error {
 export class TaskAgentStartError extends Error {
   readonly agentId: string;
   readonly reason: string;
-  readonly restMessage: string;
+  readonly unavailable: boolean;
 
   constructor(
     agentId: string,
     reason: string,
-    restMessage: string,
-    message: string,
+    unavailable: boolean,
     options?: ErrorOptions,
   ) {
-    super(message, options);
+    super("agent_start_failed", options);
     this.name = "TaskAgentStartError";
     this.agentId = agentId;
     this.reason = reason;
-    this.restMessage = restMessage;
+    this.unavailable = unavailable;
+  }
+}
+
+export class TaskCreateConfigError extends Error {
+  readonly reason: "unsupported" | "invalid";
+  readonly logicalId: "model" | "thinking";
+  readonly agentId: string;
+  readonly requestedValue: string;
+  readonly supportedValues: readonly string[];
+  readonly currentValue: string | null;
+
+  constructor(
+    details: {
+      reason: "unsupported" | "invalid";
+      logicalId: "model" | "thinking";
+      agentId: string;
+      requestedValue: string;
+      supportedValues: readonly string[];
+      currentValue: string | null;
+    },
+    options?: ErrorOptions,
+  ) {
+    super("task_config_override_failed", options);
+    this.name = "TaskCreateConfigError";
+    this.reason = details.reason;
+    this.logicalId = details.logicalId;
+    this.agentId = details.agentId;
+    this.requestedValue = details.requestedValue;
+    this.supportedValues = details.supportedValues;
+    this.currentValue = details.currentValue;
   }
 }
 

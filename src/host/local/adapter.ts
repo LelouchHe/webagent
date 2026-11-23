@@ -34,17 +34,13 @@ import {
   TaskAgentIdTypeError,
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
+  TaskCreateConfigError,
 } from "../task-ops.ts";
 import {
   parseTaskHistoryData,
   projectTaskHistoryRow,
   TASK_HISTORY_LIMITS,
 } from "./task-history.ts";
-import {
-  agentStartError,
-  configOverrideError,
-  unconfiguredAgentError,
-} from "./create-errors.ts";
 
 const {
   queryBytes: QUERY_LIMIT_BYTES,
@@ -375,10 +371,7 @@ export function createLocalTaskOps(deps: {
       let targetBridge: DeliveryBridge;
       if (requestedAgent !== undefined) {
         if (!tasks.isAgentConfigured(requestedAgent)) {
-          throw new TaskAgentNotConfiguredError(
-            requestedAgent,
-            unconfiguredAgentError(requestedAgent),
-          );
+          throw new TaskAgentNotConfiguredError(requestedAgent);
         }
         try {
           targetBridge = await tasks.resolveAgentTransport(requestedAgent);
@@ -386,10 +379,7 @@ export function createLocalTaskOps(deps: {
           throw new TaskAgentStartError(
             requestedAgent,
             errorMessage(error),
-            error instanceof AgentUnavailableError
-              ? `Agent ${requestedAgent} is not available: ${errorMessage(error)}`
-              : errorMessage(error),
-            agentStartError(requestedAgent, errorMessage(error)),
+            error instanceof AgentUnavailableError ? true : false,
             {
               cause: error,
             },
@@ -414,10 +404,7 @@ export function createLocalTaskOps(deps: {
           throw new TaskAgentStartError(
             targetAgentId,
             errorMessage(error),
-            error instanceof AgentUnavailableError
-              ? `Agent ${targetAgentId} is not available: ${errorMessage(error)}`
-              : errorMessage(error),
-            agentStartError(targetAgentId, errorMessage(error)),
+            error instanceof AgentUnavailableError ? true : false,
             { cause: error },
           );
         }
@@ -475,8 +462,8 @@ export function createLocalTaskOps(deps: {
         // must be this session's, so they travel on the error rather than
         // being looked up in the agent-level cache after the fact.
         if (error instanceof TaskConfigOverrideError) {
-          throw new Error(
-            configOverrideError({ ...error, agentId: targetAgentId }),
+          throw new TaskCreateConfigError(
+            { ...error, agentId: targetAgentId },
             { cause: error },
           );
         }

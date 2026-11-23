@@ -1123,7 +1123,7 @@ export function createRequestHandler(
       // Targets the binding agent of `taskId` when supplied; otherwise every
       // agent that already has a process. A reload never starts an agent.
       if (url === "/api/v1/bridge/reload" && req.method === "POST") {
-        if (!tasks || !deps.taskOps) {
+        if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task manager not available",
           });
@@ -1303,7 +1303,7 @@ export function createRequestHandler(
         const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
         if (replayed) return;
 
-        if (!tasks || !deps.taskOps) {
+        if (!tasks) {
           const idleBody = { ok: true, status: "idle" };
           saveClientOpResult(store, opId, taskId, HTTP_STATUS.OK, idleBody);
           json(res, HTTP_STATUS.OK, idleBody);
@@ -3094,14 +3094,18 @@ export function createRequestHandler(
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (err instanceof TaskAgentIdTypeError) {
-            json(res, HTTP_STATUS.BAD_REQUEST, { error: err.message });
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "agentId must be a string",
+            });
           } else if (err instanceof TaskAgentNotConfiguredError) {
             json(res, HTTP_STATUS.BAD_REQUEST, {
               error: `Agent ${err.agentId} is not configured`,
             });
           } else if (err instanceof TaskAgentStartError) {
             json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-              error: err.restMessage,
+              error: err.unavailable
+                ? `Agent ${err.agentId} is not available: ${err.reason}`
+                : err.reason,
               agentId: err.agentId,
             });
           } else if (msg === "parent_not_found") {

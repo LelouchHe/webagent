@@ -210,7 +210,7 @@ Activating push on a device and troubleshooting are in
   id into their broadcasts for correlation. MCP tools carry no op id.
 - **Errors** — REST answers with an HTTP status and a JSON `{ error }` body;
   MCP answers with tool-error text written for the calling agent
-  (`src/host/local/create-errors.ts` for `task_create`).
+  (`src/mcp/create-errors.ts` for `task_create`).
 - **Logging** — runtime code uses `src/log.ts`, the mirror of the frontend
   logger; one `debug.level` setting controls both.
 - **Configuration** — TOML parsed and validated in `src/config.ts`
