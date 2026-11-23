@@ -142,12 +142,12 @@ export default tseslint.config(
             {
               group: ["**/store.ts", "**/task-manager.ts"],
               message:
-                "MCP code must use TaskOps from host/types.ts instead of importing local domain services.",
+                "MCP code must use TaskOps from host/task-ops.ts instead of importing local domain services.",
             },
             {
-              group: ["**/host/*", "!**/host/types.ts"],
+              group: ["**/host/*", "!**/host/task-ops.ts"],
               message:
-                "MCP code may import only the neutral host/types.ts boundary.",
+                "MCP code may import only the neutral host/task-ops.ts boundary.",
             },
           ],
         },
@@ -156,7 +156,7 @@ export default tseslint.config(
   },
 
   {
-    files: ["src/host/types.ts"],
+    files: ["src/host/task-ops.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -165,7 +165,7 @@ export default tseslint.config(
             {
               group: ["**/store.ts", "**/task-manager.ts"],
               message:
-                "host/types.ts is neutral and cannot depend on local domain services.",
+                "host/task-ops.ts is neutral and cannot depend on local domain services.",
             },
           ],
         },

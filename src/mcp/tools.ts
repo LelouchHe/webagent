@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { McpCallerPrincipal, TaskOps } from "../host/types.ts";
+import type { TaskCaller, TaskOps } from "../host/task-ops.ts";
 import { buildTaskCreateDescription } from "./task-create-description.ts";
 
 const TASK_ID = z.string().trim().min(1).max(256);
@@ -40,7 +40,7 @@ export interface McpToolRegistrationOptions {
 /** Register the Agent-facing Task control-plane tools. */
 export function registerMcpTools(
   server: McpServer,
-  principal: McpCallerPrincipal,
+  principal: TaskCaller,
   host?: TaskOps,
   options: McpToolRegistrationOptions = {},
 ): void {

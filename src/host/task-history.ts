@@ -1,5 +1,5 @@
 import { classifyToolContentItem } from "../shared/tool-content.ts";
-import type { McpTaskHistoryRow } from "./types.ts";
+import type { TaskHistoryRow } from "./task-ops.ts";
 
 const MAX_TEXT_CHARS = 200;
 const MATCH_WINDOW_RADIUS = 100;
@@ -277,7 +277,7 @@ function projected(
 export function projectTaskHistoryRow(
   record: { seq: number; type: string; data: string },
   query?: string,
-): McpTaskHistoryRow {
+): TaskHistoryRow {
   const bytes = Buffer.byteLength(record.data, "utf8");
   let data: unknown;
   try {
@@ -285,7 +285,7 @@ export function projectTaskHistoryRow(
   } catch {
     return { seq: record.seq, type: record.type, bytes };
   }
-  const row: McpTaskHistoryRow = { seq: record.seq, type: record.type, bytes };
+  const row: TaskHistoryRow = { seq: record.seq, type: record.type, bytes };
   if (isObject(data)) {
     if (record.type === "tool_call" || record.type === "tool_call_update") {
       if (typeof data.id === "string") row.group = data.id;

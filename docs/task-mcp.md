@@ -108,7 +108,7 @@ status-sorted, so the caller reads the statuses instead of inheriting a second
 prioritization policy. A sibling is not visible.
 
 ```ts
-type McpTaskListItem = {
+type TaskListItem = {
   id: string;
   title: string;
   relation: "self" | "parent" | "child";

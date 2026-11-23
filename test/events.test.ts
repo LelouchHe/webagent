@@ -8,7 +8,7 @@ import { Store } from "../src/store.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import {
   createLocalTaskOps,
-  type McpTaskCancelNotice,
+  type TaskCancelNotice,
 } from "../src/host/local.ts";
 import type { StoredEvent } from "../src/types.ts";
 
@@ -3136,7 +3136,7 @@ describe("events", () => {
         );
         const lease = tasks.authority.leaseFor(source.id);
         assert.ok(lease, "the source task has a generation");
-        const frames: McpTaskCancelNotice[] = [];
+        const frames: TaskCancelNotice[] = [];
         const host = createLocalTaskOps({
           store,
           tasks,

@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
-import type { McpCallerPrincipal, TaskOps } from "../src/host/types.ts";
+import type { TaskCaller, TaskOps } from "../src/host/task-ops.ts";
 import { createLocalTaskOps } from "../src/host/local.ts";
 import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
@@ -201,7 +201,7 @@ describe("mcp authority over the production host", () => {
   });
 
   /** The principal the endpoint builds for one token. */
-  function principalFor(token: string): McpCallerPrincipal {
+  function principalFor(token: string): TaskCaller {
     const grant = capabilities.resolve(token);
     assert.ok(grant, "the token must resolve");
     return Object.freeze({

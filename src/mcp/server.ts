@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
-import type { McpCallerPrincipal, TaskOps } from "../host/types.ts";
+import type { TaskCaller, TaskOps } from "../host/task-ops.ts";
 import type { CapabilityStore } from "./capability.ts";
 import { registerMcpTools } from "./tools.ts";
 import { HTTP_STATUS } from "../http-status.ts";
@@ -174,7 +174,7 @@ export function createMcpEndpoint(
     // one the *token* was minted for, never the task's current value — an old
     // token must not ride a newer execution. The host owns the validation
     // (it has the store and the authority); this layer only builds the value.
-    const principal: McpCallerPrincipal = Object.freeze({
+    const principal: TaskCaller = Object.freeze({
       taskId: grant.taskId,
       agentId: grant.agentId,
       generation: grant.generation,

@@ -49,7 +49,7 @@ Entry points
 
 Today MCP calls the local adapter directly through `TaskOps`; there is no
 `resolve(id)` step yet, and browser REST routes still call the local domain
-code directly. `src/host/types.ts` and `src/host/local.ts` exist now. The
+code directly. `src/host/task-ops.ts` and `src/host/local.ts` exist now. The
 resolver, remote adapter, router, and transport are planned; no production code
 in this layer currently contacts another instance.
 
@@ -58,14 +58,14 @@ in this layer currently contacts another instance.
 | Location | Responsibility |
 | --- | --- |
 | `src/mcp/` | MCP protocol handling, tool registration, capabilities, tool descriptions, and adaptation of protocol input/output |
-| `src/host/types.ts` | The neutral `TaskOps` interface, command DTOs, and caller principal |
+| `src/host/task-ops.ts` | The neutral `TaskOps` interface, command DTOs, and caller |
 | `src/host/local.ts` | The local `TaskOps` implementation over this instance's TaskManager and Store |
 | `src/host/` support modules | Projection and error helpers used only by the local implementation |
 | `src/server.ts` | The only assembly point; it creates the local `TaskOps` and injects it into MCP |
 
 ESLint's `no-restricted-imports` guards the direct static dependencies:
 `src/mcp/**` cannot import Store, TaskManager, or a host module other than
-`src/host/types.ts`, and `src/host/types.ts` cannot import Store or
+`src/host/task-ops.ts`, and `src/host/task-ops.ts` cannot import Store or
 TaskManager. Static value and type imports and re-exports are covered, and
 `npm run lint` fails on a violation. The rule does not follow the module graph,
 dynamic `import()`, or inline `import("…").Type` references; those indirect
@@ -77,11 +77,11 @@ All methods retain their current parameters and result shapes.
 
 | Method | Current caller | Result |
 | --- | --- | --- |
-| `list(principal)` | MCP `task_list` | Synchronous `McpTaskListItem[]` |
-| `query(principal, input)` | MCP `task_query` | Synchronous `McpTaskQueryResult` |
-| `read(principal, input)` | MCP `task_read` | Synchronous `McpTaskReadResult` |
-| `cancel(principal, targetTaskId, reason)` | MCP `task_cancel` | `Promise<McpTaskCancelResult>` |
-| `create(principal, input)` | MCP `task_create` | `Promise<McpTaskCreateResult>` |
+| `list(principal)` | MCP `task_list` | Synchronous `TaskListItem[]` |
+| `query(principal, input)` | MCP `task_query` | Synchronous `TaskQueryResult` |
+| `read(principal, input)` | MCP `task_read` | Synchronous `TaskReadResult` |
+| `cancel(principal, targetTaskId, reason)` | MCP `task_cancel` | `Promise<TaskCancelOutcome>` |
+| `create(principal, input)` | MCP `task_create` | `Promise<TaskCreateResult>` |
 | `send(principal, targetTaskId, body)` | MCP `task_send` | `Promise<void>` |
 | `update(principal, status, body)` | MCP `task_update` | `Promise<{ note?: string }>` |
 
@@ -95,6 +95,12 @@ authenticated principal is therefore not yet an authorized action. For planned c
 forwarding, transport must carry trusted host action context, and the owning
 host must verify that context before executing the command. Possession of a
 Task id alone never grants access.
+
+The port still uses the MCP tool result contract: snake_case fields such as
+`task_id` and `max_seq`, and the current byte limits. `TaskCaller.initializing`
+also names a concept from the MCP handshake period. These couplings remain
+while MCP is the only caller; a second caller is the point at which they
+should be separated.
 
 ## Owner-local facts
 

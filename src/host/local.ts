@@ -19,14 +19,14 @@ import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../task-created-message.ts";
 import { formatSilence } from "../obligation-controller.ts";
 import type {
-  McpCallerPrincipal,
-  McpTaskQueryResult,
-  McpTaskListItem,
+  TaskCaller,
+  TaskQueryResult,
+  TaskListItem,
   TaskOps,
-  McpTaskReadResult,
-  McpTaskCreateInput,
-  McpTaskCreateResult,
-} from "./types.ts";
+  TaskReadResult,
+  TaskCreateInput,
+  TaskCreateResult,
+} from "./task-ops.ts";
 import {
   parseTaskHistoryData,
   projectTaskHistoryRow,
@@ -45,7 +45,7 @@ const {
   readSeqs: MAX_READ_SEQS,
 } = TASK_HISTORY_LIMITS;
 
-export interface McpTaskCollaborationEvent {
+export interface TaskCollaborationEvent {
   messageId: string;
   sourceTaskId: string;
   targetTaskId: string;
@@ -61,7 +61,7 @@ export interface McpTaskCollaborationEvent {
   deliveryFailureReason?: string;
 }
 
-export interface McpTaskCreatedEvent {
+export interface TaskCreatedEvent {
   messageId: string;
   sourceTaskId: string;
   targetTaskId: string;
@@ -82,12 +82,9 @@ export interface McpTaskCreatedEvent {
  * frontend branch. A user-initiated cancel stays deliberately different and
  * writes nothing here.
  */
-export type McpTaskCancelNotice = Extract<
-  AgentEvent,
-  { type: "system_message" }
->;
+export type TaskCancelNotice = Extract<AgentEvent, { type: "system_message" }>;
 
-function relationOrder(relation: McpTaskListItem["relation"]): number {
+function relationOrder(relation: TaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2 }[relation];
 }
 
@@ -95,9 +92,9 @@ export function createLocalTaskOps(deps: {
   store: Store;
   tasks: TaskManager;
   cancelTimeoutMs?: number;
-  broadcastCollaboration?: (event: McpTaskCollaborationEvent) => void;
-  broadcastTaskCreated?: (event: McpTaskCreatedEvent) => void;
-  broadcastTaskCancelNotice?: (event: McpTaskCancelNotice) => void;
+  broadcastCollaboration?: (event: TaskCollaborationEvent) => void;
+  broadcastTaskCreated?: (event: TaskCreatedEvent) => void;
+  broadcastTaskCancelNotice?: (event: TaskCancelNotice) => void;
 }): TaskOps {
   const {
     store,
@@ -121,7 +118,7 @@ export function createLocalTaskOps(deps: {
    * Fail closed: a principal without a generation, or one whose generation is
    * no longer current, is refused.
    */
-  function authorize(principal: McpCallerPrincipal): void {
+  function authorize(principal: TaskCaller): void {
     if (principal.generation === null) throw new Error("execution_replaced");
     if (
       !tasks.authority.accepts({
@@ -217,7 +214,7 @@ export function createLocalTaskOps(deps: {
             entry,
           ): entry is {
             task: TaskRow;
-            relation: McpTaskListItem["relation"];
+            relation: TaskListItem["relation"];
           } => entry.relation !== null,
         )
         .sort(
@@ -228,7 +225,7 @@ export function createLocalTaskOps(deps: {
       const lastEventTimes = store.getLatestEventTimes(
         entries.map((entry) => entry.task.id),
       );
-      return entries.map(({ task, relation }): McpTaskListItem => ({
+      return entries.map(({ task, relation }): TaskListItem => ({
         id: task.id,
         title: task.title ?? task.id,
         relation,
@@ -239,7 +236,7 @@ export function createLocalTaskOps(deps: {
       }));
     },
 
-    query(principal, input): McpTaskQueryResult {
+    query(principal, input): TaskQueryResult {
       authorize(principal);
       const sourceTaskId = principal.taskId;
       const targetId = input.taskId ?? sourceTaskId;
@@ -256,7 +253,7 @@ export function createLocalTaskOps(deps: {
       const rows = events
         .map((event) => projectTaskHistoryRow(event, input.text))
         .filter((row) => input.text === undefined || row.field !== undefined);
-      const result: McpTaskQueryResult = {
+      const result: TaskQueryResult = {
         task_id: target.id,
         max_seq: maxSeq,
         rows,
@@ -271,7 +268,7 @@ export function createLocalTaskOps(deps: {
       return result;
     },
 
-    read(principal, input): McpTaskReadResult {
+    read(principal, input): TaskReadResult {
       authorize(principal);
       const sourceTaskId = principal.taskId;
       const target = requireHistoryTarget(
@@ -294,7 +291,7 @@ export function createLocalTaskOps(deps: {
         from: event!.from_ref,
         data: parseTaskHistoryData(event!.data),
       }));
-      const result: McpTaskReadResult = { task_id: target.id, rows };
+      const result: TaskReadResult = { task_id: target.id, rows };
       // A single-seq request is exempt from the batch byte budget so one
       // legitimate event is never permanently unreadable.
       const limitBytes =
@@ -306,9 +303,9 @@ export function createLocalTaskOps(deps: {
     },
 
     async create(
-      principal: McpCallerPrincipal,
-      input: McpTaskCreateInput,
-    ): Promise<McpTaskCreateResult> {
+      principal: TaskCaller,
+      input: TaskCreateInput,
+    ): Promise<TaskCreateResult> {
       authorize(principal);
       const sourceTaskId = principal.taskId;
       // The child runs where the caller says, or — when it says nothing — in

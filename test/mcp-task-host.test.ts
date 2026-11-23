@@ -8,7 +8,7 @@ import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import {
   createLocalTaskOps,
-  type McpTaskCancelNotice,
+  type TaskCancelNotice,
 } from "../src/host/local.ts";
 import { projectTaskHistoryRow } from "../src/host/task-history.ts";
 import type { AgentEvent } from "../src/types.ts";
@@ -608,7 +608,7 @@ describe("MCP Task tool host", () => {
   });
 
   it("records one cancellation row per side and broadcasts both", async () => {
-    const broadcasted: McpTaskCancelNotice[] = [];
+    const broadcasted: TaskCancelNotice[] = [];
     const host = createLocalTaskOps({
       store,
       tasks,

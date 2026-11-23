@@ -1,7 +1,7 @@
-export type McpWorkflowStatus =
+export type TaskWorkflowStatus =
   "running" | "idle" | "waiting" | "blocked" | "done";
 
-export interface McpTaskHistoryRow {
+export interface TaskHistoryRow {
   seq: number;
   type: string;
   bytes: number;
@@ -13,7 +13,7 @@ export interface McpTaskHistoryRow {
   unprojected?: true;
 }
 
-export interface McpTaskListItem {
+export interface TaskListItem {
   id: string;
   title: string;
   relation: "self" | "parent" | "child";
@@ -21,7 +21,7 @@ export interface McpTaskListItem {
    * Lifecycle status of the Task's last turn, matching `task_query`'s
    * `workflowStatus`. `done` is per turn, not a lifecycle terminal.
    */
-  workflowStatus: McpWorkflowStatus;
+  workflowStatus: TaskWorkflowStatus;
   /**
    * Live execution source from the runtime: `agent` while an ACP turn or
    * delivery is running, `bash` while a user shell command owns the task, and
@@ -45,26 +45,24 @@ export interface McpTaskListItem {
   lastEventAt: string | null;
 }
 
-export type McpTaskHistoryRecord = McpTaskHistoryRow;
-
-export interface McpTaskQueryInput {
+export interface TaskQueryInput {
   taskId?: string;
   text?: string;
   range?: [number, number];
 }
 
-export interface McpTaskQueryResult {
+export interface TaskQueryResult {
   task_id: string;
   max_seq: number;
-  rows: McpTaskHistoryRow[];
+  rows: TaskHistoryRow[];
 }
 
-export interface McpTaskReadInput {
+export interface TaskReadInput {
   taskId?: string;
   seqs: number[];
 }
 
-export interface McpTaskReadRow {
+export interface TaskReadRow {
   seq: number;
   type: string;
   at: string;
@@ -72,18 +70,18 @@ export interface McpTaskReadRow {
   data: unknown;
 }
 
-export interface McpTaskReadResult {
+export interface TaskReadResult {
   task_id: string;
-  rows: McpTaskReadRow[];
+  rows: TaskReadRow[];
 }
 
-export interface McpTaskCancelResult {
+export interface TaskCancelOutcome {
   accepted: true;
   taskId: string;
   status: "idle" | "cancelling" | "cancelled" | "superseded";
 }
 
-export interface McpTaskCreateInput {
+export interface TaskCreateInput {
   title: string;
   cwd?: string;
   model?: string;
@@ -96,7 +94,7 @@ export interface McpTaskCreateInput {
   agent?: string;
 }
 
-export interface McpTaskCreateResult {
+export interface TaskCreateResult {
   taskId: string;
 }
 
@@ -112,7 +110,7 @@ export interface McpTaskCreateResult {
  * pending window of a session creation, where only the protocol handshake is
  * allowed.
  */
-export interface McpCallerPrincipal {
+export interface TaskCaller {
   readonly taskId: string;
   readonly agentId: string;
   readonly generation: number | null;
@@ -128,31 +126,25 @@ export interface McpCallerPrincipal {
  * flight cannot be written through.
  */
 export interface TaskOps {
-  list(principal: McpCallerPrincipal): McpTaskListItem[];
-  query(
-    principal: McpCallerPrincipal,
-    input: McpTaskQueryInput,
-  ): McpTaskQueryResult;
-  read(
-    principal: McpCallerPrincipal,
-    input: McpTaskReadInput,
-  ): McpTaskReadResult;
+  list(principal: TaskCaller): TaskListItem[];
+  query(principal: TaskCaller, input: TaskQueryInput): TaskQueryResult;
+  read(principal: TaskCaller, input: TaskReadInput): TaskReadResult;
   cancel(
-    principal: McpCallerPrincipal,
+    principal: TaskCaller,
     targetTaskId: string,
     reason: string,
-  ): Promise<McpTaskCancelResult>;
+  ): Promise<TaskCancelOutcome>;
   create(
-    principal: McpCallerPrincipal,
-    input: McpTaskCreateInput,
-  ): Promise<McpTaskCreateResult>;
+    principal: TaskCaller,
+    input: TaskCreateInput,
+  ): Promise<TaskCreateResult>;
   send(
-    principal: McpCallerPrincipal,
+    principal: TaskCaller,
     targetTaskId: string,
     body: string,
   ): Promise<void>;
   update(
-    principal: McpCallerPrincipal,
+    principal: TaskCaller,
     status: "waiting" | "blocked" | "done",
     body: string,
   ): Promise<{ note?: string }>;
