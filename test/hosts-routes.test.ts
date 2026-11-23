@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { AuthStore } from "../src/auth-store.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 import { hashToken } from "../src/auth.ts";
 import { HostRegistry } from "../src/host/remote/registry.ts";
 

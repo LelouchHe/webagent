@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { HTML_ENTRYPOINTS } from "../src/routes.ts";
+import { HTML_ENTRYPOINTS } from "../src/http/routes.ts";
 
 function walkTs(dir: string): string[] {
   const out: string[] = [];

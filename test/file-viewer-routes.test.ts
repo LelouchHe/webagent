@@ -15,7 +15,7 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { signAttachmentUrl } from "../src/auth.ts";
 import {

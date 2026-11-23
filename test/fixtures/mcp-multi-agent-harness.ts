@@ -18,7 +18,7 @@ import {
 import { ExecutionAuthority } from "../../src/execution-authority.ts";
 import { Store } from "../../src/store.ts";
 import { SseManager } from "../../src/sse-manager.ts";
-import { createRequestHandler } from "../../src/routes.ts";
+import { createRequestHandler } from "../../src/http/routes.ts";
 import { handleAgentEvent } from "../../src/event-handler.ts";
 import type { AgentBridge } from "../../src/bridge.ts";
 import type { ConfigOption } from "../../src/types.ts";

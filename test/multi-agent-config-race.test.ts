@@ -14,7 +14,7 @@ import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { TaskManager } from "../src/task-manager.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 
 /**
  * A configuration request that is already in flight when the task rotates.

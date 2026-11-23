@@ -2,11 +2,11 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { HTML_ENTRYPOINTS } from "../src/routes.ts";
+import { HTML_ENTRYPOINTS } from "../src/http/routes.ts";
 
 /**
  * Security invariant: Every `public/*.html` file on disk MUST be registered
- * in HTML_ENTRYPOINTS (src/routes.ts). Conversely, every entry in
+ * in HTML_ENTRYPOINTS (src/http/routes.ts). Conversely, every entry in
  * HTML_ENTRYPOINTS must point to a real file.
  *
  * Why: HTML_ENTRYPOINTS drives CSP header injection, the auth-middleware
@@ -30,7 +30,7 @@ describe("HTML entrypoint registry", () => {
     for (const f of onDisk) {
       assert.ok(
         registered.includes(f as (typeof HTML_ENTRYPOINTS)[number]["file"]),
-        `public/${f} exists on disk but is NOT registered in HTML_ENTRYPOINTS (src/routes.ts). ` +
+        `public/${f} exists on disk but is NOT registered in HTML_ENTRYPOINTS (src/http/routes.ts). ` +
           `Add { urlPath: "...", file: "${f}" } to HTML_ENTRYPOINTS so CSP, auth whitelist, ` +
           `and inline-asset tests cover it.`,
       );

@@ -2,7 +2,7 @@
 
 WebAgent exposes a **REST + SSE** API for managing agent tasks, sending prompts, handling permissions, running shell commands, and receiving real-time events. This document is the authoritative reference for every endpoint and SSE event.
 
-> **Staleness guard:** Endpoint paths are validated by the `test/doc-coverage.test.ts` test suite. If a route is added to `routes.ts` without updating this document, CI fails.
+> **Staleness guard:** Endpoint paths are validated by the `test/doc-coverage.test.ts` test suite. If a route is added to `src/http/routes.ts` without updating this document, CI fails.
 >
 > **Type source of truth:** Runtime validation uses Zod schemas in `src/types.ts`. This document references schema/type names so changes are grep-traceable.
 
@@ -2186,7 +2186,7 @@ The `SseManager` class (`src/sse-manager.ts`) manages all SSE connections:
 
 ### Gzip Compression
 
-The `json()` helper in `src/routes.ts` compresses responses when:
+The `json()` helper in `src/http/routes.ts` compresses responses when:
 
 1. The request has `Accept-Encoding: gzip`
 2. The response body is > 1024 bytes

@@ -30,7 +30,7 @@ an `attachmentId`, every subsequent reference uses just the ID:
 The server resolves the on-disk path itself by joining the per-task
 attachments directory with the row keyed by `(taskId, attachmentId)`.
 For images, dimensions are also server-derived from the uploaded file and
-stored on the attachment row. **Strict validation** in `src/routes.ts`
+stored on the attachment row. **Strict validation** in `src/http/routes.ts`
 rejects any prompt body whose `attachments[]` entries carry `uri`, `data`,
 `path`, `width`, or `height` fields with `400` — it's not just ignored,
 it's a hard fail, so a compromised browser cannot smuggle arbitrary paths

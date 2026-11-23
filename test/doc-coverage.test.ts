@@ -15,14 +15,14 @@ function toAnchor(heading: string): string {
 }
 
 /**
- * Staleness guard: Ensures docs/api.md covers all REST endpoints defined in routes.ts.
+ * Staleness guard: Ensures docs/api.md covers all REST endpoints defined in the HTTP router.
  *
  * How it works:
- *  1. Extracts endpoint paths from routes.ts by scanning for URL patterns and route comments.
+ *  1. Extracts endpoint paths from route modules by scanning URL patterns and comments.
  *  2. Reads docs/api.md content.
  *  3. Asserts every discovered endpoint path appears in the docs.
  *
- * If this test fails, you added or renamed an endpoint in routes.ts without updating docs/api.md.
+ * If this test fails, you added or renamed an endpoint without updating docs/api.md.
  */
 
 const ROOT = join(import.meta.dirname, "..");
@@ -30,15 +30,15 @@ const ROOT = join(import.meta.dirname, "..");
 describe("doc coverage", () => {
   // Scan all top-level route files. Each must use the `// METHOD /api/...`
   // comment convention to declare its endpoints (the existing scheme on
-  // src/routes.ts; src/share/routes.ts adopts it too).
-  const ROUTE_FILES = ["src/routes.ts", "src/share/routes.ts"];
+  // src/http/routes.ts; src/share/routes.ts adopts it too).
+  const ROUTE_FILES = ["src/http/routes.ts", "src/share/routes.ts"];
   const routesSrc = ROUTE_FILES.map((p) =>
     readFileSync(join(ROOT, p), "utf-8"),
   ).join("\n");
   const apiDoc = readFileSync(join(ROOT, "docs/api.md"), "utf-8");
 
   // Extract endpoint paths from route comments in routes.ts files.
-  // Both styles accepted (existing convention in src/routes.ts):
+  // Both styles accepted (existing convention in src/http/routes.ts):
   //   // GET /api/v1/tasks
   //   // --- POST /api/v1/bridge/reload ---
   const commentRoutes = [

@@ -8,46 +8,47 @@ import {
   isEmptyExecutionSlot,
   type PendingCompactSummary,
   type Store,
-} from "./store.ts";
-import type { TaskManager } from "./task-manager.ts";
-import { AgentUnavailableError } from "./agent-registry.ts";
-import type { SseManager } from "./sse-manager.ts";
-import type { Config } from "./config.ts";
-import type { PushService } from "./push-service.ts";
-import type { ClientRegistry } from "./client-registry.ts";
-import { errorMessage, MessageIngressSchema } from "./types.ts";
-import type { AgentEvent, ConfigOption } from "./types.ts";
+} from "../store.ts";
+import type { TaskManager } from "../task-manager.ts";
+import { AgentUnavailableError } from "../agent-registry.ts";
+import type { SseManager } from "../sse-manager.ts";
+import type { Config } from "../config.ts";
+import type { PushService } from "../push-service.ts";
+import type { ClientRegistry } from "../client-registry.ts";
+import { errorMessage, MessageIngressSchema } from "../types.ts";
+import type { AgentEvent, ConfigOption } from "../types.ts";
 import {
   AgentNotReadyError,
   InvalidTaskDirectoryError,
   TaskBusyError,
   TaskNotFoundError,
   TaskTreeBusyError,
-} from "./task-manager.ts";
+} from "../task-manager.ts";
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { handleShareRoutes } from "./share/routes.ts";
-import { handleFileRoutes } from "./files/routes.ts";
+import { handleShareRoutes } from "../share/routes.ts";
+import { handleFileRoutes } from "../files/routes.ts";
 import {
   authenticate,
   isReadScopeAllowedPath,
   isWhitelistedPath,
-} from "./auth-middleware.ts";
-import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
-import { agentCommandToken, resolveAgentCommand } from "./agent-commands.ts";
-import { abbreviateHomePath } from "./home-path.ts";
-import { log } from "./log.ts";
+} from "../auth-middleware.ts";
+import { enrichStoredEventsForDisplay } from "../attachment-labels.ts";
+import { agentCommandToken, resolveAgentCommand } from "../agent-commands.ts";
+import { abbreviateHomePath } from "../home-path.ts";
+import { log } from "../log.ts";
 import {
   attachCollaborationDeliveryStatus,
   buildCollaborationBroadcast,
-} from "./collaboration-message.ts";
-import { isoFromMillis, isoFromMillisOrNull } from "./shared/time.ts";
-import type { TaskOps } from "./host/task-ops.ts";
+} from "../collaboration-message.ts";
+import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
+import { validateTaskTitle } from "../shared/task-title.ts";
+import type { TaskOps } from "../host/task-ops.ts";
 import {
   TaskAgentIdTypeError,
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
-} from "./host/task-ops.ts";
+} from "../host/task-ops.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -147,14 +148,14 @@ function compactPreviousSeq(
   }
 }
 
-import type { AuthStore, TokenRecord } from "./auth-store.ts";
-import type { TicketStore } from "./sse-ticket.ts";
+import type { AuthStore, TokenRecord } from "../auth-store.ts";
+import type { TicketStore } from "../sse-ticket.ts";
 import {
   signAttachmentUrl,
   verifyAttachmentSig,
   reSignAttachmentUrlsInJson,
-} from "./auth.ts";
-import { projectMarkdownImageReferences } from "./markdown-image-references.ts";
+} from "../auth.ts";
+import { projectMarkdownImageReferences } from "../markdown-image-references.ts";
 import {
   buildContentDisposition,
   classifyKind,
@@ -162,11 +163,14 @@ import {
   mimeToExt,
   normalizeDisplayName,
   sniffMime,
-} from "./attachments.ts";
-import { readImageInfo } from "./image-info.ts";
-import { HTTP_STATUS } from "./http-status.ts";
-import type { HostRegistry } from "./host/remote/registry.ts";
-import { HOST_PROTOCOL_VERSION } from "./host/remote/state.ts";
+} from "../attachments.ts";
+import { readImageInfo } from "../image-info.ts";
+import { HTTP_STATUS } from "../http-status.ts";
+// FIXME(a3-http-boundaries): HTTP still serves the legacy host protocol
+// version directly from remote state. Move this protocol fact to a neutral
+// host contract when the host status route is migrated.
+// eslint-disable-next-line no-restricted-imports
+import { HOST_PROTOCOL_VERSION } from "../host/remote/state.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -235,6 +239,16 @@ export const CSP_POLICY = [
   "form-action 'self'",
 ].join("; ");
 
+interface HostStatusRegistry {
+  list(): Array<{
+    name: string;
+    url: string;
+    state: string;
+    reason?: string | null;
+    since: number;
+  }>;
+}
+
 export interface RequestHandlerDeps {
   store: Store;
   tasks?: TaskManager;
@@ -272,7 +286,7 @@ export interface RequestHandlerDeps {
    *  /api/v1/sse-ticket route and ticket-based SSE auth. */
   ticketStore?: TicketStore;
   /** In-memory hub-to-owner connection status. Empty on an owner-only server. */
-  hostRegistry?: HostRegistry;
+  hostRegistry?: HostStatusRegistry;
   /**
    * Support seam: called synchronously when a route starts reading the request
    * body — by definition *after* that route's pre-body checks have passed. It
@@ -374,22 +388,6 @@ function saveClientOpResult(
 ): void {
   if (!opId) return;
   store.saveClientOp(taskId, opId, { status, body });
-}
-
-function validateCollaborationTitle(title: unknown): string | null {
-  if (typeof title !== "string") return null;
-  // Normalize here: the stored title and the `Created task @<title>` reference
-  // must be the same string, or the reference cannot address the task.
-  const trimmed = title.trim();
-  if (
-    !trimmed ||
-    trimmed.includes("/") ||
-    trimmed === "." ||
-    trimmed === ".."
-  ) {
-    return null;
-  }
-  return trimmed;
 }
 
 /** Send a JSON response, gzip-compressed when the client supports it. */
@@ -2217,7 +2215,7 @@ export function createRequestHandler(
         // The live sibling-title unique index turns an unguarded rename into
         // a thrown constraint error; validate the same grammar as creation
         // and reject collisions before the store sees them.
-        const title = validateCollaborationTitle(body.value);
+        const title = validateTaskTitle(body.value);
         if (title === null) {
           json(res, HTTP_STATUS.BAD_REQUEST, {
             error:
@@ -3036,25 +3034,14 @@ export function createRequestHandler(
           agentId?: unknown;
         };
         try {
-          body = JSON.parse(await readBody(req)) as {
-            cwd?: string;
-            inheritFromTaskId?: string;
-            source?: string;
-            parentId?: string;
-            title?: string;
-            agentId?: unknown;
-          };
+          body = JSON.parse(await readBody(req)) as typeof body;
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
         const source = body.source ?? "auto";
-        // A named child belongs to a parent; an unnamed one is the bare `/new`
-        // task and needs neither.
         const title =
-          body.title !== undefined
-            ? validateCollaborationTitle(body.title)
-            : undefined;
+          body.title !== undefined ? validateTaskTitle(body.title) : undefined;
         if (title !== undefined && (title === null || !body.parentId)) {
           json(res, HTTP_STATUS.BAD_REQUEST, {
             error: "a named child needs a non-empty title and a parent",
@@ -3124,8 +3111,6 @@ export function createRequestHandler(
               "UNIQUE constraint failed: tasks.parent_id, tasks.title",
             )
           ) {
-            // The store's live sibling-title unique index is the authority;
-            // surface it as a client error instead of a raw 500.
             json(res, HTTP_STATUS.BAD_REQUEST, {
               error: "A sibling task already has that title",
             });
@@ -3293,7 +3278,7 @@ export function createRequestHandler(
           Connection: "keep-alive",
         });
 
-        const client: import("./sse-manager.ts").SseClient = {
+        const client: import("../sse-manager.ts").SseClient = {
           id: clientId,
           res,
           tokenName,
@@ -3345,7 +3330,7 @@ export function createRequestHandler(
           Connection: "keep-alive",
         });
 
-        const client: import("./sse-manager.ts").SseClient = {
+        const client: import("../sse-manager.ts").SseClient = {
           id: clientId,
           res,
           taskId,

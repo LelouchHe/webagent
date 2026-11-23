@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 import { withRequestErrorBoundary } from "../src/request-boundary.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import type { AgentEvent } from "../src/types.ts";

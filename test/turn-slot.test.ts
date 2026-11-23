@@ -16,7 +16,7 @@ import type { AgentEnvironment } from "../src/agent-registry.ts";
 import { StaticAgentEnvironment } from "../src/agent-registry.ts";
 import type { ExecutionAdapter } from "../src/execution-adapter.ts";
 import type { AgentBridge } from "../src/bridge.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
 import { SseManager } from "../src/sse-manager.ts";

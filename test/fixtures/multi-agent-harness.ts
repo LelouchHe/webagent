@@ -15,7 +15,7 @@ import {
   StaticAgentEnvironment,
 } from "../../src/agent-registry.ts";
 import { TaskManager } from "../../src/task-manager.ts";
-import { createRequestHandler } from "../../src/routes.ts";
+import { createRequestHandler } from "../../src/http/routes.ts";
 import { createLocalTaskOps } from "../../src/host/local/adapter.ts";
 import type { ConfigOption } from "../../src/types.ts";
 import {

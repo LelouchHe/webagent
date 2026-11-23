@@ -187,7 +187,7 @@ docs → tests). When executing it:
 - The REST and SSE rename is a hard break with **no alias** (pre-1.0; the
   frontend and API move together). Route docs are validated by
   `test/doc-coverage.test.ts`, so `docs/api.md` must move in the same
-  commit as `src/routes.ts`.
+  commit as `src/http/routes.ts`.
 - URL hashes stay `#<task-id>`, Root included; a hashless URL resumes the most
   recent task. Root identity is reported by `GET /api/v1/config`
   (`rootTaskId`) and by the task list's `isRoot` flag, nowhere else; clients

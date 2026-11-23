@@ -14,7 +14,7 @@ import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { TaskManager, type TaskManagerOptions } from "../src/task-manager.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 
 /** `POST /api/v1/tasks/:id/clear` is the operator's resort when a task's
  * binding agent is gone: it must take the task over onto a configured agent,

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import type { TaskManager } from "../src/task-manager.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 import { PushService } from "../src/push-service.ts";
 import { ClientRegistry } from "../src/client-registry.ts";
 import { jpeg } from "./image-bytes.ts";

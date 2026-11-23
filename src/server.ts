@@ -18,7 +18,7 @@ import {
   buildCollaborationBroadcast,
   type CollaborationBroadcastRequest,
 } from "./collaboration-message.ts";
-import { createRequestHandler } from "./routes.ts";
+import { createRequestHandler } from "./http/routes.ts";
 import { withRequestErrorBoundary } from "./request-boundary.ts";
 import { handleAgentEvent } from "./event-handler.ts";
 import { PushService } from "./push-service.ts";

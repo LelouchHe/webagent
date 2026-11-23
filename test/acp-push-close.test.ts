@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
-import { createRequestHandler } from "../src/routes.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { PushService } from "../src/push-service.ts";
 import { ClientRegistry } from "../src/client-registry.ts";
