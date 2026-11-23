@@ -1,7 +1,7 @@
 # Multi-host task operations
 
-WebAgent's multi-host model lets a Task live on another WebAgent instance while
-callers continue to use its Task id. A Task id is an address, not an
+WebAgent's multi-host model is planned to let a Task live on another WebAgent
+instance while callers continue to use its Task id. A Task id is an address, not an
 authorization grant: every entrypoint must establish the caller's authority
 before it performs a command. Each instance owns its own SQLite database;
 instances do not share database files or treat another instance's database as a
@@ -23,8 +23,9 @@ facts remain local rather than being moved into this port.
 
 ```text
 Entry points
-  MCP [now]: capability authorizes the request
-  Browser REST [plan]: bearer token scope authorizes the request
+  MCP [now]: capability authenticates the caller; principal frozen
+  Browser REST [plan: via a gateway]: bearer token scope, already
+    enforced today on the local routes
                          |
                          v
                 TaskOps port [now]
@@ -62,11 +63,13 @@ in this layer currently contacts another instance.
 | `src/host/` support modules | Projection and error helpers used only by the local implementation |
 | `src/server.ts` | The only assembly point; it creates the local `TaskOps` and injects it into MCP |
 
-The dependency direction is enforced by ESLint with
-`no-restricted-imports`. `src/mcp/**` cannot import Store, TaskManager, or a host
-module other than `src/host/types.ts`. `src/host/types.ts` cannot import Store
-or TaskManager. The restrictions apply to value and type imports alike, and
-`npm run lint` fails on a violation.
+ESLint's `no-restricted-imports` guards the direct static dependencies:
+`src/mcp/**` cannot import Store, TaskManager, or a host module other than
+`src/host/types.ts`, and `src/host/types.ts` cannot import Store or
+TaskManager. Static value and type imports and re-exports are covered, and
+`npm run lint` fails on a violation. The rule does not follow the module graph,
+dynamic `import()`, or inline `import("…").Type` references; those indirect
+paths are left to review.
 
 ## `TaskOps` port
 
@@ -82,9 +85,13 @@ All methods retain their current parameters and result shapes.
 | `send(principal, targetTaskId, body)` | MCP `task_send` | `Promise<void>` |
 | `update(principal, status, body)` | MCP `task_update` | `Promise<{ note?: string }>` |
 
-Authorization remains at the command entrypoint. The immutable principal is
-part of the port because the local implementation must re-check execution
-ownership at the write fences it already uses. For planned cross-instance
+Authorization is split between the two sides of the port today. The MCP entry
+(`src/mcp/server.ts`) authenticates the capability, checks that the task is
+active, and freezes the caller principal; it does not decide what that caller
+may do to a target. Each `TaskOps` command in `src/host/local.ts` then checks
+the principal's current execution generation and its relation to the target
+before any side effect, and re-checks at the write fences after each await. An
+authenticated principal is therefore not yet an authorized action. For planned cross-instance
 forwarding, transport must carry trusted host action context, and the owning
 host must verify that context before executing the command. Possession of a
 Task id alone never grants access.
