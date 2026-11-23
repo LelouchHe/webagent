@@ -9,7 +9,7 @@ routing seam for that caller.
 
 | Caller | Task-command seam | A0 disposition |
 |---|---|---|
-| `src/mcp/tools.ts` `task_list` | `TaskOps.list` in `src/host/task-ops.ts` -> `src/host/local/adapter.ts` family scan and live projection | `mcp-list`, `mcp-cold-family`; `mcp-authorization` for initializing capability |
+| `src/mcp/tools.ts` `task_list` | `TaskOps.list` in `src/api/tasks.ts` -> `src/host/local/adapter.ts` family scan and live projection | `mcp-list`, `mcp-cold-family`; `mcp-authorization` for initializing capability |
 | `GET /api/v1/version`, `GET /api/v1/auth/verify` | Remote host handshake protocol and caller hash/scope validation | `multi-host-connect`, `multi-host-insufficient-scope`, `multi-host-unauthorized` |
 | `task_query` | `TaskOps.query` -> bounded history index | `mcp-list`, `mcp-lifecycle`, `mcp-authorization-tree`, `mcp-cold-family`; shape/range limits remain in `test/mcp-task-host.test.ts` |
 | `task_read` | `TaskOps.read` -> selected persisted rows | `mcp-list`, `mcp-authorization-tree`, `mcp-cold-family`; byte limits and structured rows remain in `test/mcp-task-host.test.ts` |

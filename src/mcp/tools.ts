@@ -6,7 +6,7 @@ import {
   TaskCreateConfigError,
   type TaskCaller,
   type TaskOps,
-} from "../host/task-ops.ts";
+} from "../api/tasks.ts";
 import { buildTaskCreateDescription } from "./task-create-description.ts";
 import {
   agentStartError,

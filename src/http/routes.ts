@@ -43,12 +43,12 @@ import {
 } from "../collaboration-message.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { validateTaskTitle } from "../shared/task-title.ts";
-import type { TaskOps } from "../host/task-ops.ts";
+import type { TaskOps } from "../api/tasks.ts";
 import {
   TaskAgentIdTypeError,
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
-} from "../host/task-ops.ts";
+} from "../api/tasks.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");

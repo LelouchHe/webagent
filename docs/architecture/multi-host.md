@@ -52,7 +52,7 @@ Entry points
 Today MCP and the general REST task-create route call the local adapter through
 the same `TaskOps.create()` command; there is no `resolve(id)` step yet, and the
 other REST routes still call the local domain code directly.
-`src/host/task-ops.ts` and `src/host/local/adapter.ts` exist now.
+`src/api/tasks.ts` and `src/host/local/adapter.ts` exist now.
 `src/host/remote/` currently contains the cross-instance connection only; the
 resolver, remote Task adapter, Task router, and delivery transport are planned.
 
@@ -118,19 +118,21 @@ regression observation. The browser UI does not consume it yet. See
 | --- | --- |
 | `src/mcp/` | MCP protocol handling, tool registration, capabilities, tool descriptions, and adaptation of protocol input/output |
 | `src/http/` | HTTP entrypoint, including the main request/auth/router order, REST/SSE presentation, and the migrated `POST /api/v1/tasks` call to `TaskOps` |
-| `src/host/task-ops.ts` | The neutral `TaskOps` interface, command DTOs, and caller |
+| `src/api/tasks.ts` | The neutral `TaskOps` interface, command DTOs, and caller |
 | `src/host/local/adapter.ts` | The local `TaskOps` implementation over this instance's TaskManager and Store |
 | `src/host/local/` | Local projection and error helpers; cannot depend on remote implementations |
 | `src/host/remote/` | Current hub connection, token hash verification, retry/backoff, and in-memory status; the remote `adapter.ts` and Task delivery transport are planned |
 | `src/server.ts` | The only assembly point; it creates the local `TaskOps` and injects the same instance into the HTTP router and MCP |
 
 ESLint's `no-restricted-imports` guards direct static dependencies:
-`src/http/**` and `src/mcp/**` cannot import each other or a host module other
-than `src/host/task-ops.ts`; MCP also cannot import Store or TaskManager.
+`src/http/**` and `src/mcp/**` cannot import each other or a Host module and
+use `src/api/tasks.ts` for the task command contract; MCP also cannot import
+Store or TaskManager.
 Core and host modules cannot import HTTP or MCP entrypoints. `src/server.ts` is
 the assembly exception, and `src/task-manager.ts` retains only its two named
 legacy MCP imports (`buildMcpServerEntry` and the `CapabilityStore` type).
-`src/host/task-ops.ts` cannot import Store or TaskManager. `src/host/remote/`
+`src/api/tasks.ts` cannot import entrypoints, Host modules, Store, or
+TaskManager. `src/host/remote/`
 cannot import Store, TaskManager, or `src/host/local/`; owner-side local commands
 are injected through `TaskOps`. `src/host/local/` cannot import
 `src/host/remote/`. Static value and type imports and re-exports at any nested

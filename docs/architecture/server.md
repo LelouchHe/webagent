@@ -29,7 +29,7 @@ The entrypoint contracts live in [Client Architecture](client.md) and
  |  share / files sub-routers    |     +----------------+-----------------+
  |  /api/v1 route handlers       |                      |
  +---------------+---------------+                      v
-                 |                       TaskOps port (host/task-ops.ts)
+                 |                       TaskOps port (api/tasks.ts)
                  |                       local adapter (host/local/adapter.ts)
                  |                                      |
                  v                                      v
@@ -255,12 +255,12 @@ through the transport that holds the pending request.
 ESLint's `no-restricted-imports` enforces direct static dependencies:
 `src/http/**` and `src/mcp/**` cannot import each other or select a host
 implementation; the entrypoints may use only the neutral
-`src/host/task-ops.ts` host contract. MCP also cannot import Store or
+`src/api/tasks.ts` host contract. MCP also cannot import Store or
 TaskManager. Core and host modules cannot import either entrypoint except in the
 assembly root, with `src/task-manager.ts` retaining only its two named legacy MCP
 imports. `src/http/routes.ts` has one line-level exception for the legacy host
 protocol version constant, to be removed when that fact moves to a neutral host
-contract. `src/host/task-ops.ts` is neutral; `src/host/local/` and
+contract. `src/api/tasks.ts` is neutral; `src/host/local/` and
 `src/host/remote/` cannot import each other; `src/host/remote/` cannot import
 Store or TaskManager. The rules cover nested paths and static value, type, and
 re-export imports. See

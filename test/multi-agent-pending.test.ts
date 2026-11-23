@@ -11,7 +11,7 @@ import { AgentRegistry } from "../src/agent-registry.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../src/mcp/server.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
-import type { TaskOps } from "../src/host/task-ops.ts";
+import type { TaskOps } from "../src/api/tasks.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { Store } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";

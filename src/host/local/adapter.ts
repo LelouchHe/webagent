@@ -29,13 +29,13 @@ import type {
   TaskReadResult,
   TaskCreateInput,
   TaskCreateResult,
-} from "../task-ops.ts";
+} from "../../api/tasks.ts";
 import {
   TaskAgentIdTypeError,
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
   TaskCreateConfigError,
-} from "../task-ops.ts";
+} from "../../api/tasks.ts";
 import {
   parseTaskHistoryData,
   projectTaskHistoryRow,
