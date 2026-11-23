@@ -31,6 +31,12 @@ function entrypointBoundary(peer) {
   ];
 }
 
+const noEntrypointDependency = {
+  group: ["**/http/**", "**/mcp/**"],
+  message:
+    "Core and host code cannot depend on HTTP or MCP entrypoints; assemble them in server.ts.",
+};
+
 export default tseslint.config(
   {
     ignores: [
@@ -198,13 +204,7 @@ export default tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          patterns: [
-            {
-              group: ["**/http/**", "**/mcp/**"],
-              message:
-                "Core and host code cannot depend on HTTP or MCP entrypoints; assemble them in server.ts.",
-            },
-          ],
+          patterns: [noEntrypointDependency],
         },
       ],
     },
@@ -254,6 +254,7 @@ export default tseslint.config(
         "error",
         {
           patterns: [
+            noEntrypointDependency,
             {
               group: ["**/store.ts", "**/task-manager.ts"],
               message:
@@ -272,6 +273,7 @@ export default tseslint.config(
         "error",
         {
           patterns: [
+            noEntrypointDependency,
             {
               group: [
                 "**/store.ts",
@@ -295,6 +297,7 @@ export default tseslint.config(
         "error",
         {
           patterns: [
+            noEntrypointDependency,
             {
               group: ["**/host/remote/**", "../remote/**"],
               message:
