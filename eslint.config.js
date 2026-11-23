@@ -262,7 +262,7 @@ export default tseslint.config(
   },
 
   {
-    files: ["src/core/**/*.ts"],
+    files: ["src/task-ops.ts"],
     rules: {
       "no-restricted-imports": [
         "error",

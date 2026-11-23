@@ -1152,15 +1152,19 @@ export class Store {
     cwd: string;
     source: string;
     agentId: string;
-    externalParentId: string | null;
+    externalParentId: string;
     peerTokenHash: string;
     title?: string;
     workflowStatus?: WorkflowStatus;
+    creationAnchor: Record<string, unknown>;
   }): TaskRow {
     if (this.isRootTaskId(input.id)) {
       throw new Error(
         `Reserved Root id cannot be created as an ordinary task: ${input.id}`,
       );
+    }
+    if (!input.externalParentId.trim() || !input.peerTokenHash) {
+      throw new Error("invalid_external_parent");
     }
     return this.writeBindings(() => {
       if (!this.getTaskIncludingDeleted(this.rootTaskId)) {
@@ -1188,15 +1192,16 @@ export class Store {
         emptyExecutionSlot(input.id),
       );
       this.collectBindingChange(input.id, null);
-      if (input.externalParentId !== null) {
-        this.db
-          .prepare(
-            `INSERT INTO remote_task_links
+      this.db
+        .prepare(
+          `INSERT INTO remote_task_links
              (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)
              VALUES (?, ?, 'parent', NULL, ?)`,
-          )
-          .run(input.id, input.externalParentId, input.peerTokenHash);
-      }
+        )
+        .run(input.id, input.externalParentId, input.peerTokenHash);
+      this.saveEvent(input.id, "system_message", input.creationAnchor, {
+        from_ref: "system",
+      });
       return this.db
         .prepare("SELECT * FROM tasks WHERE id = ?")
         .get(input.id) as TaskRow;

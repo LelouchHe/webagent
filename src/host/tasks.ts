@@ -18,7 +18,6 @@ export function createTaskCreateHost(deps: {
     async create(command: TaskCreateHostCommand): Promise<TaskCreateResult> {
       // This is the only location branch for task creation.
       if (command.target.host === undefined) {
-        command.assertCaller();
         return deps.local.create(command.caller, {
           ...command.input,
           agentId: command.target.agentId,

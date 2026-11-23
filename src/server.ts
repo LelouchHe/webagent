@@ -14,7 +14,7 @@ import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
 import { createLocalTaskOps } from "./host/local/adapter.ts";
 import { createTaskCreateHost } from "./host/tasks.ts";
-import { createTaskOpsCore } from "./core/task-ops.ts";
+import { createTaskOpsCore } from "./task-ops.ts";
 import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
 import {
   buildCollaborationBroadcast,

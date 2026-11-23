@@ -5,6 +5,7 @@ import {
   EMPTY_MOCK,
   hubHostConfig,
   provisionHostToken,
+  readHostToken,
   type ProvisionedHostToken,
 } from "../multi-host.ts";
 
@@ -85,6 +86,72 @@ export default scenario<State>({
           }),
       },
       {
+        name: "host-token-requires-an-external-parent-and-cannot-relay",
+        action: (client) =>
+          Promise.all([
+            client.instance("owner").rest(
+              "POST",
+              "/api/v1/tasks",
+              {
+                agentId: "owner-only",
+                title: "Missing parent",
+              },
+              readHostToken(state.provisioned),
+            ),
+            client.instance("owner").rest(
+              "POST",
+              "/api/v1/tasks",
+              {
+                agentId: "owner-only",
+                parentId: "   ",
+                title: "Blank parent",
+              },
+              readHostToken(state.provisioned),
+            ),
+            client.instance("owner").rest(
+              "POST",
+              "/api/v1/tasks",
+              {
+                agentId: "owner-only",
+                parentId: 42,
+                title: "Non-string parent",
+              },
+              readHostToken(state.provisioned),
+            ),
+            client.instance("owner").rest(
+              "POST",
+              "/api/v1/tasks",
+              {
+                agentId: "owner-only@owner",
+                parentId: "external-parent",
+                title: "Attempted relay",
+              },
+              readHostToken(state.provisioned),
+            ),
+          ]),
+      },
+      {
+        name: "initiator-rejects-malformed-targets-before-dispatch",
+        action: (client) =>
+          Promise.all([
+            client.instance("hub").rest("POST", "/api/v1/tasks", {
+              agentId: "@owner",
+              parentId: state.hubParentId,
+              title: "Missing agent",
+            }),
+            client.instance("hub").rest("POST", "/api/v1/tasks", {
+              agentId: "owner-only@",
+              parentId: state.hubParentId,
+              title: "Missing host",
+            }),
+            client.instance("hub").rest("POST", "/api/v1/tasks", {
+              agentId: "owner-only@@owner",
+              parentId: state.hubParentId,
+              title: "Extra separator",
+            }),
+          ]),
+      },
+      {
         name: "rest-creates-remote-task",
         action: (client) =>
           client.instance("hub").rest("POST", "/api/v1/tasks", {
@@ -130,6 +197,12 @@ export default scenario<State>({
               state.ownerDb,
               `SELECT task_id, agent_key, agent_session_id
                FROM agent_sessions ORDER BY created_at, task_id`,
+            ),
+            ownerAnchors: readRows(
+              state.ownerDb,
+              `SELECT task_id, type, json_extract(data, '$.kind') AS kind
+               FROM events WHERE type = 'system_message'
+               ORDER BY task_id, seq`,
             ),
           };
         },

@@ -58,6 +58,7 @@ import {
   type ExecutionLease,
 } from "./execution-authority.ts";
 import { abbreviateHomePath } from "./home-path.ts";
+import { buildTaskCreatedSystemMessage } from "./task-created-message.ts";
 import { canonicalCwd } from "./cwd-path.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { log } from "./log.ts";
@@ -1573,11 +1574,14 @@ export class TaskManager implements ObligationHost {
     agentId: string;
     cwd?: string;
     source: string;
-    externalParentId: string | null;
+    externalParentId: string;
     peerTokenHash: string;
     title?: string;
     workflowStatus?: WorkflowStatus;
   }): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+    if (!input.externalParentId.trim()) {
+      throw new Error("external_parent_required");
+    }
     if (!this.isAgentConfigured(input.agentId)) {
       throw new Error(`Agent ${input.agentId} is not configured`);
     }
@@ -1589,6 +1593,14 @@ export class TaskManager implements ObligationHost {
       throw new InvalidTaskDirectoryError(taskCwd);
     }
     const taskId = randomUUID();
+    const creationAnchor = buildTaskCreatedSystemMessage({
+      taskId,
+      taskTitle: input.title ?? taskId,
+      agentId: input.agentId,
+      cwd: taskCwd,
+      model: null,
+      thinking: null,
+    }).data;
     this.store.createDeferredRemoteTask({
       id: taskId,
       cwd: taskCwd,
@@ -1598,6 +1610,7 @@ export class TaskManager implements ObligationHost {
       peerTokenHash: input.peerTokenHash,
       title: input.title,
       workflowStatus: input.workflowStatus,
+      creationAnchor,
     });
     return { taskId, configOptions: [] };
   }

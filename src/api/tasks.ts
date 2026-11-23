@@ -213,7 +213,6 @@ export interface TaskCreateHostCommand {
   input: TaskCreateInput;
   target: TaskCreateTarget;
   parentId?: string;
-  assertCaller: () => void;
   assertRemoteCaller: () => void;
   completeRemote: (result: TaskCreateResult, host: string) => TaskCreateResult;
 }
@@ -298,6 +297,18 @@ export class TaskRemoteCreateConfigError extends Error {
     super("remote_task_create_config_unsupported");
     this.name = "TaskRemoteCreateConfigError";
     this.logicalId = logicalId;
+  }
+}
+
+export class TaskCreateInputError extends Error {
+  readonly code: string;
+  readonly clientMessage: string;
+
+  constructor(code: string, clientMessage: string) {
+    super(code);
+    this.name = "TaskCreateInputError";
+    this.code = code;
+    this.clientMessage = clientMessage;
   }
 }
 

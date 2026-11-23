@@ -64,7 +64,7 @@ executor directly. The RemoteHost path includes the send-before, response-after,
 and partial-success rules; LocalHost has no RemoteHost transport and no raw
 coordinate parser. There is no `resolve(id)` step yet, and the other REST routes
 still call the local domain code directly.
-`src/api/tasks.ts`, `src/core/task-ops.ts`, and `src/host/local/adapter.ts`
+`src/api/tasks.ts`, `src/task-ops.ts`, and `src/host/local/adapter.ts`
 exist now.
 `src/host/remote/` contains the cross-instance connection and one-shot create
 transport; the established-Task resolver, router, and delivery transport are
@@ -146,7 +146,7 @@ task is later used.
 | `src/mcp/` | MCP protocol handling, tool registration, capabilities, tool descriptions, and adaptation of protocol input/output |
 | `src/http/` | HTTP entrypoint, including the main request/auth/router order, REST/SSE presentation, and the migrated REST task create and cancel calls to `TaskOps` |
 | `src/api/tasks.ts` | The neutral `TaskOps` interface, command DTOs, caller, and minimal `TaskCreateHost` port |
-| `src/core/task-ops.ts` | Create command: caller/parent authorization, raw coordinate parsing, one Host call, and narrow accepted-result completion callback |
+| `src/task-ops.ts` | Create command: caller/parent authorization, raw coordinate parsing, one Host call, and narrow accepted-result completion callback |
 | `src/host/tasks.ts` | Host selector: direct LocalHost vs RemoteHost choice from `{agentId, host?}` |
 | `src/host/local/adapter.ts` | LocalHost `TaskOps` implementation over this instance's TaskManager and Store; no remote transport or raw coordinate parsing |
 | `src/host/local/` | Local projection and error helpers; cannot depend on remote implementations |
@@ -218,6 +218,14 @@ uncertainty is unknown, and local persistence failure is partial success. A
 short/local target goes from the same Host port directly to LocalHost. LocalHost
 does not receive raw coordinates or a remote transport. The initiator never
 copies the peer Task.
+
+The owner creates this Task as a parentless archived top: its local
+`tasks.parent_id` is `NULL`, while `remote_task_links` records the logical
+external parent. Local parent structure remains authoritative; the external
+relation is used only when there is no local parent. A same-transaction,
+non-broadcast `system_message` with kind `task_created` is the normal creation
+fact that keeps this deferred Task out of empty-task GC. This slice does not
+change local archive/unarchive or add remote lifecycle behavior.
 
 Cancellation keeps the two caller policies separate. An agent command requires
 a direct-child relation, carries a generation-fenced principal and reason, and

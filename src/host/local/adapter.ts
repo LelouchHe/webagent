@@ -34,6 +34,7 @@ import {
   TaskAgentIdTypeError,
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
+  TaskCreateInputError,
   TaskCreateConfigError,
 } from "../../api/tasks.ts";
 import {
@@ -360,11 +361,20 @@ export function createLocalTaskOps(deps: {
         if (!tasks.isAgentConfigured(requestedAgent)) {
           throw new TaskAgentNotConfiguredError(requestedAgent);
         }
+        if (
+          typeof input.parentId !== "string" ||
+          input.parentId.trim() === ""
+        ) {
+          throw new TaskCreateInputError(
+            "external_parent_required",
+            "Host task creation requires a non-empty parentId",
+          );
+        }
         const created = await tasks.createDeferredRemoteTask({
           agentId: requestedAgent,
           cwd: input.cwd,
           source: input.source ?? "host",
-          externalParentId: input.parentId ?? null,
+          externalParentId: input.parentId,
           peerTokenHash: caller.peerTokenHash,
           title: input.title,
           workflowStatus: input.workflowStatus,
@@ -387,14 +397,6 @@ export function createLocalTaskOps(deps: {
         };
       }
       const agentCaller = caller.kind === "agent" ? caller.principal : null;
-      if (agentCaller) authorize(agentCaller);
-      if (
-        agentCaller &&
-        (input.parentId !== agentCaller.taskId ||
-          input.inheritFromTaskId !== agentCaller.taskId)
-      ) {
-        throw new Error("target_not_allowed");
-      }
       const source =
         agentCaller?.taskId !== undefined
           ? requireTask(agentCaller.taskId)

@@ -165,6 +165,105 @@
       ]
     },
     {
+      "name": "host-token-requires-an-external-parent-and-cannot-relay",
+      "response": [
+        {
+          "status": 400,
+          "body": {
+            "error": "Host task creation requires a non-empty parentId",
+            "code": "external_parent_required"
+          }
+        },
+        {
+          "status": 400,
+          "body": {
+            "error": "Host task creation requires a non-empty parentId",
+            "code": "external_parent_required"
+          }
+        },
+        {
+          "status": 400,
+          "body": {
+            "error": "Host task creation requires a non-empty parentId",
+            "code": "external_parent_required"
+          }
+        },
+        {
+          "status": 400,
+          "body": {
+            "error": "Host credentials cannot relay an agent@host target",
+            "code": "invalid_remote_agent"
+          }
+        }
+      ],
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "initiator-rejects-malformed-targets-before-dispatch",
+      "response": [
+        {
+          "status": 400,
+          "body": {
+            "error": "Invalid agent@host target",
+            "code": "invalid_remote_agent"
+          }
+        },
+        {
+          "status": 400,
+          "body": {
+            "error": "Invalid agent@host target",
+            "code": "invalid_remote_agent"
+          }
+        },
+        {
+          "status": 400,
+          "body": {
+            "error": "Invalid agent@host target",
+            "code": "invalid_remote_agent"
+          }
+        }
+      ],
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        }
+      ]
+    },
+    {
       "name": "rest-creates-remote-task",
       "response": {
         "status": 201,
@@ -228,10 +327,23 @@
                     "00000000-0000-4000-8000-000000000001",
                     "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
                   ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
+                    1,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "system",
+                    1789333200000
+                  ]
                 }
               ]
             ],
-            "reads": 6
+            "reads": 8
           }
         },
         {
@@ -308,10 +420,23 @@
                     "00000000-0000-4000-8000-000000000001",
                     "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
                   ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000003",
+                    1,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "system",
+                    1789333200000
+                  ]
                 }
               ]
             ],
-            "reads": 6
+            "reads": 8
           }
         },
         {
@@ -535,7 +660,7 @@
                 }
               ]
             ],
-            "reads": 23
+            "reads": 22
           }
         }
       ]
@@ -609,6 +734,18 @@
             "task_id": "00000000-0000-4000-8000-000000000003",
             "agent_key": "owner-only",
             "agent_session_id": "no-execution:00000000-0000-4000-8000-000000000003"
+          }
+        ],
+        "ownerAnchors": [
+          {
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "type": "system_message",
+            "kind": "task_created"
+          },
+          {
+            "task_id": "00000000-0000-4000-8000-000000000003",
+            "type": "system_message",
+            "kind": "task_created"
           }
         ]
       },
@@ -745,7 +882,26 @@
             "created_at": 1789333200000
           }
         ],
-        "events": [],
+        "events": [
+          {
+            "id": 1,
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "seq": 1,
+            "type": "system_message",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 2,
+            "task_id": "00000000-0000-4000-8000-000000000003",
+            "seq": 1,
+            "type": "system_message",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          }
+        ],
         "messages": [],
         "message_projections": [],
         "deliveries": [],

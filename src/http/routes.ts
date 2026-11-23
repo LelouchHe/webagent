@@ -49,6 +49,7 @@ import {
   TaskAgentIdTypeError,
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
+  TaskCreateInputError,
   TaskHostNotConfiguredError,
   TaskRemoteCreateConfigError,
   TaskRemoteCreateNotSentError,
@@ -3050,20 +3051,27 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
+        const requestPrincipal = principalByRequest.get(req);
         const source = body.source ?? "auto";
         const title =
           body.title !== undefined ? validateTaskTitle(body.title) : undefined;
-        if (title !== undefined && (title === null || !body.parentId)) {
+        if (
+          title !== undefined &&
+          (title === null ||
+            (!body.parentId && requestPrincipal?.scope !== "host"))
+        ) {
           json(res, HTTP_STATUS.BAD_REQUEST, {
             error: "a named child needs a non-empty title and a parent",
           });
           return;
         }
         try {
-          const principal = principalByRequest.get(req);
           const created = await taskOps.create(
-            principal?.scope === "host"
-              ? { kind: "host", peerTokenHash: principal.hash }
+            requestPrincipal?.scope === "host"
+              ? {
+                  kind: "host",
+                  peerTokenHash: requestPrincipal.hash,
+                }
               : { kind: "user" },
             {
               cwd: body.cwd,
@@ -3097,6 +3105,11 @@ export function createRequestHandler(
           if (err instanceof TaskAgentIdTypeError) {
             json(res, HTTP_STATUS.BAD_REQUEST, {
               error: "agentId must be a string",
+            });
+          } else if (err instanceof TaskCreateInputError) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: err.clientMessage,
+              code: err.code,
             });
           } else if (err instanceof TaskAgentNotConfiguredError) {
             json(res, HTTP_STATUS.BAD_REQUEST, {

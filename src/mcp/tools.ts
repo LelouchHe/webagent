@@ -4,6 +4,7 @@ import {
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
   TaskCreateConfigError,
+  TaskCreateInputError,
   TaskHostNotConfiguredError,
   TaskRemoteCreateConfigError,
   TaskRemoteCreateNotSentError,
@@ -265,6 +266,9 @@ export function registerMcpTools(
         }
         if (error instanceof TaskCreateConfigError) {
           throw new Error(configOverrideError(error), { cause: error });
+        }
+        if (error instanceof TaskCreateInputError) {
+          throw new Error(error.clientMessage, { cause: error });
         }
         if (error instanceof TaskHostNotConfiguredError) {
           throw new Error(`Host ${error.host} is not configured`, {

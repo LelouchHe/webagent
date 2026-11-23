@@ -36,6 +36,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - Core emits one structured `{agentId, host?}` target through one injected `TaskCreateHost` call
   - Host selector alone chooses LocalHost or RemoteHost; an owner Host request cannot redispatch on `@host`
   - one dispatch/no automatic retry, exact short-agent/parent payload, generation re-check, unknown outcome, local partial-success, and pre-dispatch config rejection
+  - Host external parents are required as non-empty strings; owner relay and malformed coordinates are input errors, not transport outcomes
+  - deferred owner creation has a same-transaction, non-broadcast creation anchor; aged tasks survive normal empty-task GC while ordinary empty tasks are still removed
 
 ## Unit / Integration Scenarios
 

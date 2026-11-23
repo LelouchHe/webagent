@@ -29,8 +29,8 @@ The entrypoint contracts live in [Client Architecture](client.md) and
  |  share / files sub-routers    |     +----------------+-----------------+
  |  /api/v1 route handlers       |                      |
  +---------------+---------------+                      v
-                 |                       TaskOps port (api/tasks.ts)
-                 |                       Core create command (core/task-ops.ts)
+                 | TaskOps port (api/tasks.ts)
+                                  |                       Core create command (task-ops.ts)
                  |                                      |
                  |                                      v
                  |                       one Host create port (host selection)
@@ -286,7 +286,8 @@ ESLint's `no-restricted-imports` enforces direct static dependencies:
 `src/http/**` and `src/mcp/**` cannot import each other or select a host
 implementation; the entrypoints may use only the neutral
 `src/api/tasks.ts` host contract. Core receives only the minimal
-`TaskCreateHost` port for create. MCP also cannot import Store or
+`TaskCreateHost` port for create; `src/task-ops.ts` is linted against concrete
+Host imports. MCP also cannot import Store or
 TaskManager. Core and host modules cannot import either entrypoint except in the
 assembly root, with `src/task-manager.ts` retaining only its two named legacy MCP
 imports. `src/http/routes.ts` has one line-level exception for the legacy host
