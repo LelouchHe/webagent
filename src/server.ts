@@ -216,6 +216,7 @@ tasks.setTaskCreatedBroadcast((event) => {
 const taskOps = createLocalTaskOps({
   store,
   tasks,
+  remoteTaskCreate: hostRegistry,
   cancelTimeoutMs: config.limits.cancel_timeout,
   broadcastCollaboration,
   broadcastTaskCreated: (event) => {
@@ -267,6 +268,7 @@ const requestHandler = createRequestHandler({
     // configuration, not from a static schema that would have to be rebuilt by
     // hand whenever an agent is added.
     configuredAgentIds: Object.keys(config.agents),
+    configuredHostIds: Object.keys(config.hosts),
   }),
 });
 

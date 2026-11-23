@@ -250,13 +250,32 @@ Execution config does not cross agents: a new task created for a different agent
 than `inheritFromTaskId`'s does not inherit that task's `model` or
 `reasoning_effort`. A same-agent creation keeps inheriting them.
 
+An `agentId` of `agent@host` creates the Task on a configured Host. The shared
+`TaskOps.create` command validates the local parent and caller first, sends one
+`POST /api/v1/tasks` with the short agent id and local parent id, and never
+sends the local inheritance id or a locally resolved cwd. An omitted cwd uses
+the peer's `default_cwd`; an explicit cwd is interpreted by the peer. The peer
+must recognize its configured agent and a Host-scoped credential. Its task row,
+empty execution binding, and external-parent link commit together without
+starting ACP. The initiator then records the returned task id and Host name
+beside the local parent.
+
+Remote creation does not retry. A 4xx rejection is returned as `502` with its
+`remoteStatus`; a lost or incomplete response reports `outcome: "unknown"`; and
+a peer success followed by a local link failure reports
+`outcome: "partial_success"` with the remote task id. Explicit model/thinking
+overrides are rejected before dispatch because this create slice does not copy
+execution configuration between hosts. Local inheritance defaults are not
+forwarded; the remote task starts with the peer agent's own environment.
+
 **Errors:** `400` (directory doesn't exist, `agentId` not configured or not a
-string), `503` (the target agent could not be started; the body carries `error`
-plus `agentId`, the agent really attempted)
+string; Host config error), `502` (remote rejection, unknown result, or partial
+success), `503` (the target agent could not be started, or the remote request
+was not sent; the body carries `error` plus `agentId` for a local agent)
 
 **Side effects:**
 
-- Broadcasts `task_created` to all SSE clients. The event is emitted by task
+- A local creation broadcasts `task_created` to all SSE clients. The event is emitted by task
   creation itself, so the quick prompt and the Agent's `task_create` tool
   announce the same event; a request's `X-Client-Op-Id` rides it as
   `clientOpId`, which is how a client whose create response was lost matches
@@ -264,14 +283,17 @@ plus `agentId`, the agent really attempted)
   the caller did not ask for — the message-consume carrier — is not announced:
   its own route answers with the id and the client switches there, so an
   announcement would install it first and make that switch a no-op
-- Broadcasts `config_option_update` if config was inherited
-- Records and broadcasts a `system_message` (`kind: task_created`) on the parent
+- A local creation broadcasts `config_option_update` if config was inherited
+- A local creation records and broadcasts a `system_message` (`kind: task_created`) on the parent
   task — the same row the Agent's `task_create` tool writes, with `from_ref`
   `user` instead of `agent` — so user- and agent-created tasks look identical in
   the task flow and survive a reload. The row names the agent the task landed on
   and the `model` / `thinking` values that took effect (an inherited, explicit,
   or target-reported value; `inherited` only when none can be determined)
-- Cleans up empty tasks older than 60 seconds
+- Local creation cleans up empty tasks older than 60 seconds
+- Remote creation stores only `remote_task_links` on the initiator. Neither side
+  copies a Task row or forwards SSE/ACP; the executor's empty binding materializes
+  on its first later use.
 
 ---
 
@@ -1224,7 +1246,7 @@ The SSE stream re-checks the bound token on every heartbeat (≤15 s). If the to
 
 ### Tokens
 
-Manage Bearer tokens stored in `data/auth.json`. All endpoints require an admin-scope token; api- and read-scope tokens get `403`.
+Manage Bearer tokens stored in `data/auth.json`. All endpoints require an admin-scope token; api-, host-, and read-scope tokens get `403`.
 
 #### `GET /api/v1/tokens`
 

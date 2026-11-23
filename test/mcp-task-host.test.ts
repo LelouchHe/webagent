@@ -10,6 +10,11 @@ import {
   createLocalTaskOps,
   type TaskCancelNotice,
 } from "../src/host/local/adapter.ts";
+import {
+  TaskRemoteCreateConfigError,
+  TaskRemoteCreatePartialSuccessError,
+  TaskRemoteCreateUnknownError,
+} from "../src/api/tasks.ts";
 import { projectTaskHistoryRow } from "../src/host/local/task-history.ts";
 import type { AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
@@ -159,6 +164,42 @@ describe("MCP Task tool host", () => {
     );
   });
 
+  it("validates the executor agent and cwd before committing", async () => {
+    const host = createLocalTaskOps({ store, tasks });
+    await assert.rejects(
+      host.create(
+        { kind: "host", peerTokenHash: "peer-hash" },
+        {
+          agentId: "missing",
+          parentId: "external-parent",
+          title: "Remote child",
+          cwd: dir,
+        },
+      ),
+      (error) =>
+        error instanceof Error && error.message === "agent_not_configured",
+    );
+    await assert.rejects(
+      host.create(
+        { kind: "host", peerTokenHash: "peer-hash" },
+        {
+          agentId: "test-agent",
+          parentId: "external-parent",
+          title: "Remote child",
+          cwd: join(dir, "missing"),
+        },
+      ),
+      /invalid.*director|directory/i,
+    );
+    assert.deepEqual(
+      store
+        .listTasks()
+        .map((task) => task.title)
+        .sort(),
+      ["Alpha", "Alpha child", "Beta", "root"],
+    );
+  });
+
   it("keeps an ordinary caller from using an unknown external parent", async () => {
     const host = createLocalTaskOps({ store, tasks });
     await assert.rejects(
@@ -173,6 +214,186 @@ describe("MCP Task tool host", () => {
       ),
       /parent_not_found/,
     );
+  });
+
+  it("dispatches agent@host once without leaking local inheritance data", async () => {
+    const calls: unknown[] = [];
+    const host = createLocalTaskOps({
+      store,
+      tasks,
+      remoteTaskCreate: {
+        async create(remoteHost, input) {
+          calls.push({ remoteHost, input });
+          return {
+            taskId: "remote-child",
+            activation: {
+              cwd: dir,
+              cwdDisplay: dir,
+              title: "Remote child",
+              parentId: null,
+              parentAgentId: null,
+              agentId: "test-agent",
+              workflowStatus: "idle",
+              source: "agent",
+              configOptions: [],
+              agentCommands: {
+                epoch: "remote",
+                revision: 0,
+                commands: [],
+              },
+            },
+          };
+        },
+      },
+    });
+
+    const created = await host.create(
+      { kind: "agent", principal: principal() },
+      {
+        agentId: "test-agent@mini",
+        parentId: "alpha",
+        inheritFromTaskId: "alpha",
+        title: "Remote child",
+        cwd: "./remote-relative",
+        source: "agent",
+      },
+    );
+
+    assert.equal(created.taskId, "remote-child");
+    assert.deepEqual(calls, [
+      {
+        remoteHost: "mini",
+        input: {
+          agentId: "test-agent",
+          parentId: "alpha",
+          title: "Remote child",
+          cwd: "./remote-relative",
+          source: "agent",
+        },
+      },
+    ]);
+    assert.deepEqual(store.getRemoteTaskLinks("alpha"), [
+      {
+        local_task_id: "alpha",
+        remote_task_id: "remote-child",
+        remote_role: "child",
+        remote_host: "mini",
+        peer_token_hash: null,
+      },
+    ]);
+    assert.equal(store.getTask("remote-child"), undefined);
+  });
+
+  it("reports remote creation as partial when the generation changes", async () => {
+    let calls = 0;
+    const host = createLocalTaskOps({
+      store,
+      tasks,
+      remoteTaskCreate: {
+        async create() {
+          calls += 1;
+          store.replaceAgentSession(
+            "alpha",
+            "test-agent",
+            "session-alpha-replaced",
+          );
+          return {
+            taskId: "remote-child",
+            activation: {
+              cwd: dir,
+              cwdDisplay: dir,
+              title: null,
+              parentId: null,
+              parentAgentId: null,
+              agentId: "test-agent",
+              workflowStatus: "idle",
+              source: "agent",
+              configOptions: [],
+              agentCommands: {
+                epoch: "remote",
+                revision: 0,
+                commands: [],
+              },
+            },
+          };
+        },
+      },
+    });
+
+    await assert.rejects(
+      host.create(
+        { kind: "agent", principal: principal() },
+        {
+          agentId: "test-agent@mini",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Remote child",
+        },
+      ),
+      (error) =>
+        error instanceof TaskRemoteCreatePartialSuccessError &&
+        error.remoteTaskId === "remote-child",
+    );
+    assert.equal(calls, 1);
+    assert.deepEqual(store.getRemoteTaskLinks("alpha"), []);
+  });
+
+  it("does not retry unknown remote outcomes", async () => {
+    let calls = 0;
+    const host = createLocalTaskOps({
+      store,
+      tasks,
+      remoteTaskCreate: {
+        async create(remoteHost) {
+          calls += 1;
+          throw new TaskRemoteCreateUnknownError(
+            remoteHost,
+            "connection closed",
+          );
+        },
+      },
+    });
+    await assert.rejects(
+      host.create(
+        { kind: "agent", principal: principal() },
+        {
+          agentId: "test-agent@mini",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Remote child",
+        },
+      ),
+      TaskRemoteCreateUnknownError,
+    );
+    assert.equal(calls, 1);
+  });
+
+  it("refuses config overrides before dispatching remotely", async () => {
+    let calls = 0;
+    const host = createLocalTaskOps({
+      store,
+      tasks,
+      remoteTaskCreate: {
+        async create() {
+          calls += 1;
+          throw new Error("unreachable");
+        },
+      },
+    });
+    await assert.rejects(
+      host.create(
+        { kind: "agent", principal: principal() },
+        {
+          agentId: "test-agent@mini",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Remote child",
+          model: "gpt-5",
+        },
+      ),
+      TaskRemoteCreateConfigError,
+    );
+    assert.equal(calls, 0);
   });
 
   it("lists an archived tree from one of its tasks", () => {

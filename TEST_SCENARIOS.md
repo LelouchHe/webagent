@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-11-19
+Last updated: 2026-11-23
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -23,6 +23,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - Share links (token issue, owner auth, sanitizer, viewer routes, attachment proxy, build prune)
   - Attachment upload pipeline (image + file, send-time upload, atomic disk writes)
   - Local file viewer (arbitrary paths, signed bytes, slash picker, responsive viewer)
+  - first cross-instance Task create slice (Host-scoped credentials, deferred ACP, durable links)
+
+### Multi-host create slice
+
+- `test/regression/scenarios/multi-host-create.ts` (two real runtimes, distinct agent directories)
+  - REST and MCP both create `agent@host` Tasks through the same `TaskOps` command
+  - an ordinary token cannot reinterpret an unknown or colliding local id as an external parent
+  - only the executor owns the Task row; both instances persist their one-sided relation after restart
+  - executor bindings remain empty (`no-execution:`) and no remote ACP process starts
+- `test/mcp-task-host.test.ts` and `test/host-connection.test.ts`
+  - one dispatch/no automatic retry, exact short-agent/parent payload, generation re-check, unknown outcome, local partial-success, and pre-dispatch config rejection
 
 ## Unit / Integration Scenarios
 

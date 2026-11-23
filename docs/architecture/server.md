@@ -231,6 +231,14 @@ chooses the target agent, resolves its transport, and calls
 `TaskManager.createTask()` → the task row, binding, and creation record are
 persisted → `task_created` is broadcast.
 
+**A browser or agent creates a remote task** (`agent@host`): both entrypoints
+call the same `TaskOps.create()` → the local adapter validates the initiating
+caller/parent and generation, then performs one request through the configured
+Host connection → the peer executes its existing `POST /api/v1/tasks` as a
+Host-scoped caller → a Task, empty execution binding, and external-parent link
+commit without ACP → the initiator records only its child link and preserves
+the REST or MCP response shape.
+
 **An agent creates a task** (`task_create`): MCP → the same
 `TaskOps.create()` command with an agent caller → the local adapter checks the
 caller's generation, resolves the target agent and cwd relative to the caller

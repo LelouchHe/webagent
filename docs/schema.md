@@ -143,8 +143,9 @@ edge. Task rows are never copied between instances.
 | `peer_token_hash` | TEXT | SHA-256 fingerprint of the authenticated Host credential; required only for `parent`, null otherwise |
 
 CHECK constraints keep the direction-specific fields exclusive. Partial unique
-indexes permit at most one external parent per local Task and one local link per
-remote child id. The table deliberately stores no title, timestamp, or status.
+indexes `remote_task_links_one_parent` and `remote_task_links_one_child` permit
+at most one external parent per local Task and one local link per remote child
+id. The table deliberately stores no title, timestamp, or status.
 
 ### `events`
 

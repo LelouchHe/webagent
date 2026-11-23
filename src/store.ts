@@ -1224,6 +1224,20 @@ export class Store {
     }>;
   }
 
+  recordRemoteTaskChild(
+    localParentTaskId: string,
+    remoteTaskId: string,
+    remoteHost: string,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO remote_task_links
+         (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)
+         VALUES (?, ?, 'child', ?, NULL)`,
+      )
+      .run(localParentTaskId, remoteTaskId, remoteHost);
+  }
+
   /**
    * Live tasks, globally visible by default.
    *

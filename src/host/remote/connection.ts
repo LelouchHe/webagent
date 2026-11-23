@@ -1,4 +1,5 @@
 import { hashToken } from "../../auth.ts";
+import { z } from "zod";
 import { HTTP_STATUS } from "../../http-status.ts";
 import {
   StreamSupervisor,
@@ -7,14 +8,69 @@ import {
   type StreamFailure,
 } from "../../shared/stream-supervisor.ts";
 import type { HostConfig } from "../../config.ts";
+import { errorMessage } from "../../types.ts";
 import { resolveHostToken, TokenCommandError } from "./credentials.ts";
 import {
   HOST_PROTOCOL_VERSION,
   type HostConnectionState,
   type HostUnreachableReason,
 } from "./state.ts";
+import type {
+  RemoteTaskCreateInput,
+  TaskCreateResult,
+} from "../../api/tasks.ts";
 
 const REQUEST_TIMEOUT_MS = 8_000;
+
+const ConfigOptionSchema = z.union([
+  z.object({
+    type: z.literal("select").optional(),
+    id: z.string(),
+    name: z.string(),
+    category: z.string().nullable().optional(),
+    currentValue: z.string(),
+    options: z.array(
+      z.object({ value: z.string(), name: z.string() }).passthrough(),
+    ),
+  }),
+  z.object({
+    type: z.literal("boolean"),
+    id: z.string(),
+    name: z.string(),
+    category: z.string().nullable().optional(),
+    currentValue: z.boolean(),
+  }),
+]);
+
+const TaskCreateResponseSchema = z.object({
+  id: z.string().min(1),
+  cwd: z.string(),
+  cwdDisplay: z.string(),
+  parentId: z.string().nullable(),
+  parentAgentId: z.string().nullable(),
+  agentId: z.string().nullable(),
+  title: z.string().nullable(),
+  workflowStatus: z.enum(["running", "idle", "waiting", "blocked", "done"]),
+  source: z.string(),
+  configOptions: z.array(ConfigOptionSchema),
+  agentCommands: z.object({
+    epoch: z.string(),
+    revision: z.number().int().nonnegative(),
+    commands: z.array(
+      z.object({
+        name: z.string(),
+        description: z.string(),
+        input: z.object({ hint: z.string() }).optional(),
+      }),
+    ),
+  }),
+});
+
+export type HostTaskCreateAttempt =
+  | { kind: "success"; result: TaskCreateResult }
+  | { kind: "rejected"; status: number; reason: string }
+  | { kind: "unknown"; reason: string }
+  | { kind: "not_sent"; reason: string };
 
 export interface HostConnectionOptions {
   fetch?: typeof globalThis.fetch;
@@ -72,6 +128,79 @@ export class HostConnection {
 
   stop(): void {
     this.supervisor.stop();
+  }
+
+  async createTask(
+    input: RemoteTaskCreateInput,
+  ): Promise<HostTaskCreateAttempt> {
+    let token: string;
+    try {
+      token = await resolveHostToken(this.config.token);
+    } catch {
+      return { kind: "not_sent", reason: "Host credential is unavailable" };
+    }
+
+    let response: Response;
+    try {
+      response = await this.fetchImpl(
+        endpoint(this.config.url, "/api/v1/tasks"),
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(input),
+          redirect: "error",
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        },
+      );
+    } catch (error) {
+      return {
+        kind: "unknown",
+        reason: errorMessage(error),
+      };
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    if (!response.ok) {
+      const reason =
+        body &&
+        typeof body === "object" &&
+        typeof (body as { error?: unknown }).error === "string"
+          ? (body as { error: string }).error
+          : `HTTP ${response.status}`;
+      return response.status >= HTTP_STATUS.BAD_REQUEST &&
+        response.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
+        ? { kind: "rejected", status: response.status, reason }
+        : { kind: "unknown", reason };
+    }
+    if (response.status !== HTTP_STATUS.CREATED) {
+      return {
+        kind: "unknown",
+        reason: `Unexpected HTTP ${response.status}`,
+      };
+    }
+    const parsed = TaskCreateResponseSchema.safeParse(body);
+    if (!parsed.success) {
+      return {
+        kind: "unknown",
+        reason: "Remote returned an incomplete task-create response",
+      };
+    }
+    const activation = parsed.data;
+    return {
+      kind: "success",
+      result: {
+        taskId: activation.id,
+        activation,
+      },
+    };
   }
 
   private async runAttempt(attempt: StreamAttempt): Promise<void> {

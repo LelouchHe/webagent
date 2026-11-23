@@ -85,6 +85,7 @@ export interface McpEndpointOptions {
    * server is rebuilt per request, so this needs no static schema).
    */
   configuredAgentIds?: readonly string[];
+  configuredHostIds?: readonly string[];
   /** Mount path; the response `true` claims that path. */
   path?: string;
 }
@@ -186,6 +187,7 @@ export function createMcpEndpoint(
     );
     registerMcpTools(server, principal, options.taskTools, {
       configuredAgentIds: options.configuredAgentIds,
+      configuredHostIds: options.configuredHostIds,
     });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,

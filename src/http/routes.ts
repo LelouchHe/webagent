@@ -49,6 +49,12 @@ import {
   TaskAgentIdTypeError,
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
+  TaskHostNotConfiguredError,
+  TaskRemoteCreateConfigError,
+  TaskRemoteCreateNotSentError,
+  TaskRemoteCreatePartialSuccessError,
+  TaskRemoteCreateRejectedError,
+  TaskRemoteCreateUnknownError,
 } from "../api/tasks.ts";
 
 const rlog = log.scope("routes");
@@ -1041,7 +1047,7 @@ export function createRequestHandler(
         return;
       }
 
-      // POST /api/v1/tokens — create new api-scope token, return raw value once
+      // POST /api/v1/tokens — create a non-admin token, return raw value once
       if (url === "/api/v1/tokens" && req.method === "POST") {
         const principal = principalByRequest.get(req);
         if (!deps.authStore || !principal) {
@@ -3102,6 +3108,42 @@ export function createRequestHandler(
                 ? `Agent ${err.agentId} is not available: ${err.reason}`
                 : err.reason,
               agentId: err.agentId,
+            });
+          } else if (err instanceof TaskHostNotConfiguredError) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: `Host ${err.host} is not configured`,
+            });
+          } else if (err instanceof TaskRemoteCreateConfigError) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: `Remote task creation does not support ${err.logicalId} overrides`,
+            });
+          } else if (err instanceof TaskRemoteCreateRejectedError) {
+            json(res, HTTP_STATUS.BAD_GATEWAY, {
+              error: err.reason,
+              host: err.host,
+              remoteStatus: err.status,
+              outcome: "rejected",
+            });
+          } else if (err instanceof TaskRemoteCreateNotSentError) {
+            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+              error: `Remote task request was not sent: ${err.reason}`,
+              host: err.host,
+              outcome: "not_sent",
+            });
+          } else if (err instanceof TaskRemoteCreateUnknownError) {
+            json(res, HTTP_STATUS.BAD_GATEWAY, {
+              error: "Remote task creation result is unknown",
+              reason: err.reason,
+              host: err.host,
+              outcome: "unknown",
+            });
+          } else if (err instanceof TaskRemoteCreatePartialSuccessError) {
+            json(res, HTTP_STATUS.BAD_GATEWAY, {
+              error:
+                "Remote task was created, but the local link could not be registered",
+              host: err.host,
+              remoteTaskId: err.remoteTaskId,
+              outcome: "partial_success",
             });
           } else if (msg === "parent_not_found") {
             json(res, HTTP_STATUS.BAD_REQUEST, {

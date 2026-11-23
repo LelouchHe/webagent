@@ -195,6 +195,93 @@ export interface TaskCreateResult {
   };
 }
 
+export interface RemoteTaskCreateInput {
+  agentId: string;
+  parentId: string;
+  title?: string;
+  cwd?: string;
+  source: string;
+}
+
+export interface RemoteTaskCreateTransport {
+  create(host: string, input: RemoteTaskCreateInput): Promise<TaskCreateResult>;
+}
+
+export class TaskHostNotConfiguredError extends Error {
+  readonly host: string;
+
+  constructor(host: string) {
+    super("host_not_configured");
+    this.name = "TaskHostNotConfiguredError";
+    this.host = host;
+  }
+}
+
+export class TaskRemoteCreateRejectedError extends Error {
+  readonly host: string;
+  readonly status: number;
+  readonly reason: string;
+
+  constructor(
+    host: string,
+    status: number,
+    reason: string,
+    options?: ErrorOptions,
+  ) {
+    super("remote_task_create_rejected", options);
+    this.name = "TaskRemoteCreateRejectedError";
+    this.host = host;
+    this.status = status;
+    this.reason = reason;
+  }
+}
+
+export class TaskRemoteCreateUnknownError extends Error {
+  readonly host: string;
+  readonly reason: string;
+
+  constructor(host: string, reason: string, options?: ErrorOptions) {
+    super("remote_task_create_result_unknown", options);
+    this.name = "TaskRemoteCreateUnknownError";
+    this.host = host;
+    this.reason = reason;
+  }
+}
+
+export class TaskRemoteCreateNotSentError extends Error {
+  readonly host: string;
+  readonly reason: string;
+
+  constructor(host: string, reason: string, options?: ErrorOptions) {
+    super("remote_task_create_not_sent", options);
+    this.name = "TaskRemoteCreateNotSentError";
+    this.host = host;
+    this.reason = reason;
+  }
+}
+
+export class TaskRemoteCreatePartialSuccessError extends Error {
+  readonly host: string;
+  readonly remoteTaskId: string;
+
+  constructor(host: string, remoteTaskId: string, options?: ErrorOptions) {
+    super("remote_task_create_partial_success", options);
+    this.name = "TaskRemoteCreatePartialSuccessError";
+    this.host = host;
+    this.remoteTaskId = remoteTaskId;
+  }
+}
+
+export class TaskRemoteCreateConfigError extends Error {
+  readonly logicalId: "model" | "thinking";
+
+  constructor(logicalId: "model" | "thinking") {
+    super("remote_task_create_config_unsupported");
+    this.name = "TaskRemoteCreateConfigError";
+    this.logicalId = logicalId;
+  }
+}
+
 /**
  * The caller identity of one MCP request, captured once at the endpoint and
  * never mutated.

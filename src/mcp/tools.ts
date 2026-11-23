@@ -4,6 +4,12 @@ import {
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
   TaskCreateConfigError,
+  TaskHostNotConfiguredError,
+  TaskRemoteCreateConfigError,
+  TaskRemoteCreateNotSentError,
+  TaskRemoteCreatePartialSuccessError,
+  TaskRemoteCreateRejectedError,
+  TaskRemoteCreateUnknownError,
   type TaskCaller,
   type TaskOps,
 } from "../api/tasks.ts";
@@ -46,6 +52,7 @@ export interface McpToolRegistrationOptions {
    * deployment that is actually running instead of a static schema.
    */
   configuredAgentIds?: readonly string[];
+  configuredHostIds?: readonly string[];
 }
 
 /** Register the Agent-facing Task control-plane tools. */
@@ -172,7 +179,10 @@ export function registerMcpTools(
   server.registerTool(
     "task_create",
     {
-      description: buildTaskCreateDescription(options.configuredAgentIds ?? []),
+      description: buildTaskCreateDescription(
+        options.configuredAgentIds ?? [],
+        options.configuredHostIds ?? [],
+      ),
       inputSchema: {
         title: z
           .string()
@@ -255,6 +265,41 @@ export function registerMcpTools(
         }
         if (error instanceof TaskCreateConfigError) {
           throw new Error(configOverrideError(error), { cause: error });
+        }
+        if (error instanceof TaskHostNotConfiguredError) {
+          throw new Error(`Host ${error.host} is not configured`, {
+            cause: error,
+          });
+        }
+        if (error instanceof TaskRemoteCreateConfigError) {
+          throw new Error(
+            `Remote task creation does not support ${error.logicalId} overrides`,
+            { cause: error },
+          );
+        }
+        if (error instanceof TaskRemoteCreateRejectedError) {
+          throw new Error(
+            `Remote task creation rejected by ${error.host}: ${error.reason}`,
+            { cause: error },
+          );
+        }
+        if (error instanceof TaskRemoteCreateNotSentError) {
+          throw new Error(
+            `Remote task request was not sent to ${error.host}: ${error.reason}`,
+            { cause: error },
+          );
+        }
+        if (error instanceof TaskRemoteCreateUnknownError) {
+          throw new Error(
+            `Remote task creation result is unknown for ${error.host}: ${error.reason}`,
+            { cause: error },
+          );
+        }
+        if (error instanceof TaskRemoteCreatePartialSuccessError) {
+          throw new Error(
+            `Remote task ${error.remoteTaskId} was created on ${error.host}, but the local link could not be registered`,
+            { cause: error },
+          );
         }
         throw error;
       }
