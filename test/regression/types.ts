@@ -14,7 +14,7 @@ export interface RegressionClient {
     token?: string,
   ): Promise<RestResponse>;
   instance(name: string): RegressionClient;
-  restart(name: string, offlineMs?: number): Promise<Json>;
+  restart(name: string, whileStopped?: () => Promise<Json>): Promise<Json>;
   waitForHost(
     instanceName: string,
     hostName: string,

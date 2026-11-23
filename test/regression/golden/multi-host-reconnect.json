@@ -36,7 +36,16 @@
       "response": {
         "restart": {
           "name": "owner",
-          "restarted": true
+          "restarted": true,
+          "whileStopped": [
+            {
+              "name": "owner",
+              "url": "http://<ORIGIN:owner>",
+              "state": "unreachable",
+              "reason": "network",
+              "since": "2026-09-13T21:00:00.000Z"
+            }
+          ]
         },
         "status": [
           {
@@ -50,19 +59,7 @@
       "instances": [
         {
           "name": "owner",
-          "sse": [
-            {
-              "taskId": "*",
-              "events": [
-                {
-                  "type": "connected",
-                  "clientId": "cl-393a3b3c3d3e",
-                  "debugLevel": "off",
-                  "pendingCount": 0
-                }
-              ]
-            }
-          ],
+          "sse": [],
           "mock": [],
           "sql": {
             "writes": [
@@ -89,7 +86,7 @@
                 }
               ]
             ],
-            "reads": 46
+            "reads": 45
           }
         },
         {

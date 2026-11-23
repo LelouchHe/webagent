@@ -14,6 +14,7 @@ export class TokenCommandError extends Error {
 export async function resolveHostToken(
   configured: string,
   timeoutMs = TOKEN_COMMAND_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (!configured.startsWith("!")) return configured;
   const command = configured.slice(1);
@@ -25,6 +26,7 @@ export async function resolveHostToken(
         encoding: "utf8",
         maxBuffer: TOKEN_COMMAND_MAX_BUFFER,
         timeout: timeoutMs,
+        signal,
       },
       (error, output) => {
         if (error) {

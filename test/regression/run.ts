@@ -391,8 +391,8 @@ function createClient(instances: Map<string, Instance>): RegressionClient {
   const build = (selected: Instance): RegressionClient => ({
     rest: createInstanceClient(selected),
     instance: (name: string) => build(requireInstance(instances, name)),
-    restart: async (name: string, offlineMs?: number) =>
-      restartInstance(requireInstance(instances, name), offlineMs),
+    restart: async (name: string, whileStopped?: () => Promise<Json>) =>
+      restartInstance(requireInstance(instances, name), whileStopped),
     waitForHost: async (
       instanceName: string,
       hostName: string,
@@ -859,11 +859,11 @@ async function stopInstances(instances: Map<string, Instance>): Promise<void> {
 
 async function restartInstance(
   instance: Instance,
-  offlineMs = 0,
+  whileStopped?: () => Promise<Json>,
 ): Promise<Json> {
   instance.abortSse.abort();
   await stopSpecServer(instance.server);
-  if (offlineMs > 0) await delay(offlineMs);
+  const stopped = whileStopped ? await whileStopped() : null;
   instance.server = await startSpecServer(instance.configPath, {
     nodeArgs: instance.nodeArgs,
     env: instance.env,
@@ -871,13 +871,12 @@ async function restartInstance(
   });
   instance.origin = instance.server.origin;
   instance.port = instance.server.port;
-  instance.abortSse = new AbortController();
   instance.sseError = null;
   instance.busy.clear();
-  await connectSse(instance);
   return {
     name: instance.name,
     restarted: true,
+    ...(stopped === null ? {} : { whileStopped: stopped }),
   };
 }
 

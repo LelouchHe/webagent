@@ -17,7 +17,9 @@ export default scenario<ProvisionedHostToken>({
     {
       name: "restart-owner-and-wait-for-reconnect",
       async action(client) {
-        const restart = await client.restart("owner", 750);
+        const restart = await client.restart("owner", () =>
+          client.waitForHost("hub", "owner", "unreachable"),
+        );
         const status = await client.waitForHost("hub", "owner", "connected");
         return { restart, status };
       },

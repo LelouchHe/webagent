@@ -54,6 +54,17 @@ function authorizeHeaders(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
+function bindAbort(source: AbortSignal, target: AbortController): () => void {
+  const abortTarget = () => {
+    target.abort();
+  };
+  source.addEventListener("abort", abortTarget, { once: true });
+  if (source.aborted) target.abort();
+  return () => {
+    source.removeEventListener("abort", abortTarget);
+  };
+}
+
 export class HostConnection {
   private readonly config: HostConfig;
   private readonly stopSignal: AbortSignal;
@@ -78,35 +89,41 @@ export class HostConnection {
 
   async connect(): Promise<void> {
     this.options.onState?.("connecting");
-    const token = await resolveHostToken(this.config.token);
+    const token = await resolveHostToken(
+      this.config.token,
+      undefined,
+      this.stopSignal,
+    );
     const fingerprint = hostCredentialFingerprint(token);
     const description = await this.describe(token);
     if (description.caller.fingerprint !== fingerprint) {
       throw new HostConnectionFailure("protocol_mismatch");
     }
     const ticket = await this.ticket(token);
+    if (this.stopSignal.aborted) {
+      throw this.stopSignal.reason;
+    }
     const streamAbort = new AbortController();
-    const stopListener = () => {
+    const unbindStop = bindAbort(this.stopSignal, streamAbort);
+    let rejectHandshake: (reason: unknown) => void = () => {};
+    const handshakeTimer = setTimeout(() => {
       streamAbort.abort();
-    };
-    this.stopSignal.addEventListener("abort", stopListener, { once: true });
+      rejectHandshake(new HostConnectionFailure("network"));
+    }, this.requestTimeoutMs);
+    handshakeTimer.unref();
+    const handshakeDeadline = new Promise<never>((_resolve, reject) => {
+      rejectHandshake = reject;
+    });
     try {
-      const response = await this.fetchImpl(
-        `${endpoint(this.config.url, "/api/v1/events/stream")}?ticket=${encodeURIComponent(ticket)}`,
-        { signal: streamAbort.signal },
-      );
-      if (!response.ok) {
-        throw response.status === HTTP_STATUS.UNAUTHORIZED ||
-          response.status === HTTP_STATUS.FORBIDDEN
-          ? new HostConnectionFailure("unauthorized")
-          : new HostConnectionFailure("network");
-      }
-      if (!response.body) {
-        throw new HostConnectionFailure("protocol_mismatch");
-      }
-      await this.consume(response.body, description, streamAbort);
+      await Promise.race([
+        this.openStream(ticket, description, streamAbort, () => {
+          clearTimeout(handshakeTimer);
+        }),
+        handshakeDeadline,
+      ]);
     } finally {
-      this.stopSignal.removeEventListener("abort", stopListener);
+      clearTimeout(handshakeTimer);
+      unbindStop();
       streamAbort.abort();
     }
   }
@@ -115,6 +132,28 @@ export class HostConnection {
     if (error instanceof TokenCommandError) return "token_command_failed";
     if (error instanceof HostConnectionFailure) return error.reason;
     return "network";
+  }
+
+  private async openStream(
+    ticket: string,
+    description: HostDescription,
+    abort: AbortController,
+    onConnected: () => void,
+  ): Promise<void> {
+    const response = await this.fetchImpl(
+      `${endpoint(this.config.url, "/api/v1/events/stream")}?ticket=${encodeURIComponent(ticket)}`,
+      { signal: abort.signal },
+    );
+    if (!response.ok) {
+      throw response.status === HTTP_STATUS.UNAUTHORIZED ||
+        response.status === HTTP_STATUS.FORBIDDEN
+        ? new HostConnectionFailure("unauthorized")
+        : new HostConnectionFailure("network");
+    }
+    if (!response.body) {
+      throw new HostConnectionFailure("protocol_mismatch");
+    }
+    await this.consume(response.body, description, abort, onConnected);
   }
 
   private async describe(token: string): Promise<HostDescription> {
@@ -182,21 +221,14 @@ export class HostConnection {
     body: ReadableStream<Uint8Array>,
     description: HostDescription,
     abort: AbortController,
+    onConnected: () => void,
   ): Promise<void> {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let connected = false;
-    let lastHeartbeatAt = performance.now();
-    const heartbeatTimer = setInterval(
-      () => {
-        if (performance.now() - lastHeartbeatAt >= this.heartbeatTimeoutMs) {
-          abort.abort();
-        }
-      },
-      Math.min(HEARTBEAT_POLL_MS, this.heartbeatTimeoutMs),
-    );
-    heartbeatTimer.unref();
+    let lastHeartbeatAt = 0;
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     try {
       while (!this.stopSignal.aborted) {
         const result = await reader.read();
@@ -228,6 +260,20 @@ export class HostConnection {
             }
             if (parsed.type === "connected") {
               connected = true;
+              onConnected();
+              lastHeartbeatAt = performance.now();
+              heartbeatTimer = setInterval(
+                () => {
+                  if (
+                    performance.now() - lastHeartbeatAt >=
+                    this.heartbeatTimeoutMs
+                  ) {
+                    abort.abort();
+                  }
+                },
+                Math.min(HEARTBEAT_POLL_MS, this.heartbeatTimeoutMs),
+              );
+              heartbeatTimer.unref();
               this.options.onState?.("connected");
               void this.options.onConnected?.(description);
             }
@@ -236,7 +282,7 @@ export class HostConnection {
         }
       }
     } finally {
-      clearInterval(heartbeatTimer);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       reader.releaseLock();
     }
   }

@@ -42,7 +42,7 @@ Entry points
      local adapter [now]       remote adapter [plan]
      src/host/local.ts                 |
              |                       v
-             |              router + transport [plan]
+             |         router + Task transport [plan]
              v
    local TaskManager + Store
 ```
@@ -73,9 +73,11 @@ hub                                      owner
 
 The connection becomes `connected` after the SSE handshake. Each owner heartbeat
 refreshes liveness; three missed 15-second heartbeat intervals disconnect the
-stream. A disconnected host retries independently with capped exponential
-backoff. Every successful connection invokes an empty catch-up hook; later
-delivery work will replace that hook without changing the connection mechanism.
+stream, so heartbeat failure is detected after about 45 seconds plus at most
+one polling interval. A disconnected host retries independently with capped
+exponential backoff. Every successful connection invokes an empty catch-up
+hook; later delivery work will replace that hook without changing the connection
+mechanism.
 Connection state never writes to SQLite and never changes Task facts.
 
 `GET /api/v1/host` is the owner identity endpoint. It reports protocol version,

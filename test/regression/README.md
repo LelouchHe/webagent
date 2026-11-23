@@ -79,10 +79,14 @@ the one-time raw token in a private test directory. The hub token command
 reads that file at connection time, matching the production `!` credential form
 without writing `auth.json` directly. `restart(name)` is a generic step action
 that preserves the instance's data directory and config while restarting the
-process and SSE subscription on the same port. `waitForHost()` waits for an
-explicit state and optional reason before a step completes. `restart(name,
-offlineMs)` can keep a server offline for a deterministic interval when the
-scenario needs to prove that another instance observed the disconnect.
+process on the same port. The runner deliberately does not open a replacement
+test-side SSE subscription to the restarted instance, because the hub may also
+subscribe during restart and their order would consume that process's random
+stream nondeterministically. Subsequent observations of the restarted instance
+use REST, SQL, and its final database snapshot. `restart(name, whileStopped)`
+can wait on a generic callback while the process is down, so a scenario can
+prove another instance observed the disconnect. `waitForHost()` waits for an
+explicit state and optional reason before a step completes.
 
 The server and agent are preloaded with `observer.ts`. It only observes
 `better-sqlite3` statement calls, while fixing the clock, UUID stream, and

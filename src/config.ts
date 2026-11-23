@@ -23,15 +23,48 @@ const AgentConfigSchema = z.strictObject({
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
+const HostUrlSchema = z
+  .string()
+  .trim()
+  .min(1, "host url must be non-empty")
+  .superRefine((value, ctx) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      ctx.addIssue({
+        code: "custom",
+        message: "host url must be a valid HTTP(S) URL",
+      });
+      return;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      ctx.addIssue({
+        code: "custom",
+        message: "host url must use http or https",
+      });
+    }
+    if (parsed.username || parsed.password) {
+      ctx.addIssue({
+        code: "custom",
+        message: "host url must not include userinfo",
+      });
+    }
+    if (
+      parsed.search ||
+      parsed.hash ||
+      value.includes("?") ||
+      value.includes("#")
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "host url must not include query or fragment",
+      });
+    }
+  });
+
 const HostConfigSchema = z.strictObject({
-  url: z
-    .string()
-    .trim()
-    .url()
-    .refine((value) => {
-      const protocol = new URL(value).protocol;
-      return protocol === "http:" || protocol === "https:";
-    }, "host url must use http or https"),
+  url: HostUrlSchema,
   token: z.string().trim().min(1, "token must be non-empty"),
 });
 
@@ -210,7 +243,9 @@ export function loadConfigFromPath(configPath: string | null): Config {
       raw = parseTOML(content);
       console.log(`[config] loaded: ${configPath}`);
     } catch (err) {
-      console.error(`[config] failed to read ${configPath}:`, err);
+      console.error(
+        `[config] failed to read ${configPath}: ${configErrorSummary(err)}`,
+      );
       process.exit(1);
     }
   } else {
@@ -247,4 +282,21 @@ export function loadConfigFromPath(configPath: string | null): Config {
 export function getConfig(): Config {
   if (!_config) throw new Error("Config not loaded. Call loadConfig() first.");
   return _config;
+}
+
+function configErrorSummary(error: unknown): string {
+  if (!error || typeof error !== "object") return "unknown error";
+  const record = error as Record<string, unknown>;
+  const category =
+    typeof record.code === "string"
+      ? record.code
+      : typeof (record.constructor as { name?: unknown } | undefined)?.name ===
+          "string"
+        ? (record.constructor as { name: string }).name
+        : "Error";
+  const location =
+    typeof record.line === "number" && typeof record.column === "number"
+      ? ` at line ${record.line}, column ${record.column}`
+      : "";
+  return `${category}${location}`;
 }
