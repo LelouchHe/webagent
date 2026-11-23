@@ -113,7 +113,10 @@ export type TaskCreateCaller =
   | { kind: "agent"; principal: TaskCaller }
   | { kind: "host"; peerTokenHash: string };
 
-export class TaskAgentNotConfiguredError extends Error {
+abstract class CreateError extends Error {}
+
+export class TaskAgentNotConfiguredError extends CreateError {
+  readonly kind = "agent_not_configured";
   readonly agentId: string;
 
   constructor(agentId: string) {
@@ -123,14 +126,16 @@ export class TaskAgentNotConfiguredError extends Error {
   }
 }
 
-export class TaskAgentIdTypeError extends Error {
+export class TaskAgentIdTypeError extends CreateError {
+  readonly kind = "agent_id_type";
   constructor() {
     super("invalid_agent_id_type");
     this.name = "TaskAgentIdTypeError";
   }
 }
 
-export class TaskAgentStartError extends Error {
+export class TaskAgentStartError extends CreateError {
+  readonly kind = "agent_start";
   readonly agentId: string;
   readonly reason: string;
   readonly unavailable: boolean;
@@ -149,7 +154,8 @@ export class TaskAgentStartError extends Error {
   }
 }
 
-export class TaskCreateConfigError extends Error {
+export class TaskCreateConfigError extends CreateError {
+  readonly kind = "config";
   readonly reason: "unsupported" | "invalid";
   readonly logicalId: "model" | "thinking";
   readonly agentId: string;
@@ -225,7 +231,8 @@ export interface RemoteTaskCreateTransport {
   create(host: string, input: RemoteTaskCreateInput): Promise<TaskCreateResult>;
 }
 
-export class TaskHostNotConfiguredError extends Error {
+export class TaskHostNotConfiguredError extends CreateError {
+  readonly kind = "host_not_configured";
   readonly host: string;
 
   constructor(host: string) {
@@ -235,7 +242,8 @@ export class TaskHostNotConfiguredError extends Error {
   }
 }
 
-export class TaskRemoteCreateRejectedError extends Error {
+export class TaskRemoteCreateRejectedError extends CreateError {
+  readonly kind = "rejected";
   readonly host: string;
   readonly status: number;
   readonly reason: string;
@@ -254,7 +262,8 @@ export class TaskRemoteCreateRejectedError extends Error {
   }
 }
 
-export class TaskRemoteCreateUnknownError extends Error {
+export class TaskRemoteCreateUnknownError extends CreateError {
+  readonly kind = "unknown";
   readonly host: string;
   readonly reason: string;
 
@@ -266,7 +275,8 @@ export class TaskRemoteCreateUnknownError extends Error {
   }
 }
 
-export class TaskRemoteCreateNotSentError extends Error {
+export class TaskRemoteCreateNotSentError extends CreateError {
+  readonly kind = "not_sent";
   readonly host: string;
   readonly reason: string;
 
@@ -278,7 +288,8 @@ export class TaskRemoteCreateNotSentError extends Error {
   }
 }
 
-export class TaskRemoteCreatePartialSuccessError extends Error {
+export class TaskRemoteCreatePartialSuccessError extends CreateError {
+  readonly kind = "partial_success";
   readonly host: string;
   readonly remoteTaskId: string;
 
@@ -290,7 +301,8 @@ export class TaskRemoteCreatePartialSuccessError extends Error {
   }
 }
 
-export class TaskRemoteCreateConfigError extends Error {
+export class TaskRemoteCreateConfigError extends CreateError {
+  readonly kind = "remote_config";
   readonly logicalId: "model" | "thinking";
 
   constructor(logicalId: "model" | "thinking") {
@@ -300,7 +312,8 @@ export class TaskRemoteCreateConfigError extends Error {
   }
 }
 
-export class TaskCreateInputError extends Error {
+export class TaskCreateInputError extends CreateError {
+  readonly kind = "input";
   readonly code: string;
   readonly clientMessage: string;
 
@@ -313,81 +326,20 @@ export class TaskCreateInputError extends Error {
 }
 
 export type TaskCreateError =
-  | { kind: "agent_id_type" }
-  | { kind: "agent_not_configured"; agentId: string }
-  | {
-      kind: "agent_start";
-      agentId: string;
-      reason: string;
-      unavailable: boolean;
-    }
-  | { kind: "config"; error: TaskCreateConfigError }
-  | { kind: "input"; code: string; message: string }
-  | { kind: "host_not_configured"; host: string }
-  | { kind: "remote_config"; logicalId: "model" | "thinking" }
-  | {
-      kind: "rejected";
-      host: string;
-      status: number;
-      reason: string;
-    }
-  | { kind: "not_sent"; host: string; reason: string }
-  | { kind: "unknown"; host: string; reason: string }
-  | {
-      kind: "partial_success";
-      host: string;
-      remoteTaskId: string;
-    };
+  | TaskAgentIdTypeError
+  | TaskAgentNotConfiguredError
+  | TaskAgentStartError
+  | TaskCreateConfigError
+  | TaskCreateInputError
+  | TaskHostNotConfiguredError
+  | TaskRemoteCreateConfigError
+  | TaskRemoteCreateRejectedError
+  | TaskRemoteCreateNotSentError
+  | TaskRemoteCreateUnknownError
+  | TaskRemoteCreatePartialSuccessError;
 
-export function classifyTaskCreateError(
-  error: unknown,
-): TaskCreateError | null {
-  if (error instanceof TaskAgentIdTypeError) return { kind: "agent_id_type" };
-  if (error instanceof TaskAgentNotConfiguredError) {
-    return { kind: "agent_not_configured", agentId: error.agentId };
-  }
-  if (error instanceof TaskAgentStartError) {
-    return {
-      kind: "agent_start",
-      agentId: error.agentId,
-      reason: error.reason,
-      unavailable: error.unavailable,
-    };
-  }
-  if (error instanceof TaskCreateConfigError) {
-    return { kind: "config", error };
-  }
-  if (error instanceof TaskCreateInputError) {
-    return { kind: "input", code: error.code, message: error.clientMessage };
-  }
-  if (error instanceof TaskHostNotConfiguredError) {
-    return { kind: "host_not_configured", host: error.host };
-  }
-  if (error instanceof TaskRemoteCreateConfigError) {
-    return { kind: "remote_config", logicalId: error.logicalId };
-  }
-  if (error instanceof TaskRemoteCreateRejectedError) {
-    return {
-      kind: "rejected",
-      host: error.host,
-      status: error.status,
-      reason: error.reason,
-    };
-  }
-  if (error instanceof TaskRemoteCreateNotSentError) {
-    return { kind: "not_sent", host: error.host, reason: error.reason };
-  }
-  if (error instanceof TaskRemoteCreateUnknownError) {
-    return { kind: "unknown", host: error.host, reason: error.reason };
-  }
-  if (error instanceof TaskRemoteCreatePartialSuccessError) {
-    return {
-      kind: "partial_success",
-      host: error.host,
-      remoteTaskId: error.remoteTaskId,
-    };
-  }
-  return null;
+export function isTaskCreateError(error: unknown): error is TaskCreateError {
+  return error instanceof CreateError;
 }
 
 /**

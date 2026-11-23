@@ -45,7 +45,7 @@ import {
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { validateTaskTitle } from "../shared/task-title.ts";
 import type { TaskOps } from "../api/tasks.ts";
-import { classifyTaskCreateError } from "../api/tasks.ts";
+import { isTaskCreateError } from "../api/tasks.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -3091,8 +3091,8 @@ export function createRequestHandler(
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          const classified = classifyTaskCreateError(err);
-          if (classified) {
+          if (isTaskCreateError(err)) {
+            const classified = err;
             switch (classified.kind) {
               case "agent_id_type":
                 json(res, HTTP_STATUS.BAD_REQUEST, {
@@ -3101,7 +3101,7 @@ export function createRequestHandler(
                 return;
               case "input":
                 json(res, HTTP_STATUS.BAD_REQUEST, {
-                  error: classified.message,
+                  error: classified.clientMessage,
                   code: classified.code,
                 });
                 return;

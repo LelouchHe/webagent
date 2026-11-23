@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
-  classifyTaskCreateError,
+  isTaskCreateError,
   type TaskCaller,
   type TaskOps,
 } from "../api/tasks.ts";
@@ -245,8 +245,8 @@ export function registerMcpTools(
           ).taskId,
         });
       } catch (error) {
-        const classified = classifyTaskCreateError(error);
-        if (classified) {
+        if (isTaskCreateError(error)) {
+          const classified = error;
           switch (classified.kind) {
             case "agent_id_type":
               throw new Error("agentId must be a string", { cause: error });
@@ -260,11 +260,11 @@ export function registerMcpTools(
                 { cause: error },
               );
             case "config":
-              throw new Error(configOverrideError(classified.error), {
+              throw new Error(configOverrideError(classified), {
                 cause: error,
               });
             case "input":
-              throw new Error(classified.message, { cause: error });
+              throw new Error(classified.clientMessage, { cause: error });
             case "host_not_configured":
               throw new Error(`Host ${classified.host} is not configured`, {
                 cause: error,
