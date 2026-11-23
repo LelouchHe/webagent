@@ -146,22 +146,21 @@ adding a table column, reformatting SQL, or shifting deterministic IDs is
 review evidence, but does not by itself prove a user-visible regression.
 
 After every step, the runner alone calls `settle()`. It probes every 25ms and
-declares the run quiet after 250ms with no new observer, ACP, or SSE output. A
-prompt request that returned `202 Accepted` is not settled until the task's SSE
-stream has delivered its first non-null runtime `busy` patch. That is the
-external acknowledgement that the accepted turn crossed onto the stream; the
-rest of the turn is then governed by the normal busy rule. Every busy task must
-correspond to a declared wait on that task's own ACP session; a timeout reports
-the busy task-to-session mapping, active waits, and accepted prompts still
-waiting for SSE acknowledgement. A missing wait or an unexpected SSE EOF,
-including a normal EOF, is an error.
+declares the run quiet after 250ms with no new observer, ACP, or SSE output.
+The server observer also counts every frame written to this runner's SSE
+response, including heartbeats, while the runner counts every complete frame it
+has consumed. A step cannot settle until those counts match, so an HTTP action
+cannot outrun the SSE stream regardless of route semantics. Re-started
+instances are intentionally not re-subscribed by the runner and are excluded
+from this comparison. Every busy task must correspond to a declared wait on that
+task's own ACP session; a timeout reports the busy task-to-session mapping,
+active waits, and written/consumed SSE frame counts. A missing wait or an
+unexpected SSE EOF, including a normal EOF, is an error.
 Scenarios do not wait for named task events or inspect internal state.
 
-The accepted-prompt acknowledgement removes the silent gap between HTTP
-acceptance and the SSE consumer. The fixed quiet window can still miss an
-external asynchronous action that has no corresponding observable start state
-yet; such a path needs its own public acknowledgement barrier, not a longer
-timer or a scenario-specific sleep.
+The frame-count comparison removes the silent gap between a server-side SSE
+write and the test consumer. The remaining quiet window is for unrelated
+observer, ACP, and SSE ordering after the stream has drained.
 
 `--update` still performs the A/A check, then replaces the selected goldens.
 Review those diffs by asking what external behavior changed, whether the SQL

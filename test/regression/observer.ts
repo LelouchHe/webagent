@@ -59,6 +59,62 @@ function record(entry: Record<string, unknown>): void {
   appendFileSync(logPath, `${JSON.stringify(entry)}\n`);
 }
 
+const sseWrites = new WeakMap<
+  import("node:http").ServerResponse,
+  { buffer: string; frames: number; clientId?: string }
+>();
+const http: typeof import("node:http") = require("node:http");
+
+function observeSseWrite(
+  response: import("node:http").ServerResponse,
+  chunk: unknown,
+): void {
+  if (
+    !String(response.getHeader("Content-Type") ?? "").startsWith(
+      "text/event-stream",
+    ) ||
+    (typeof chunk !== "string" && !Buffer.isBuffer(chunk))
+  ) {
+    return;
+  }
+  let state = sseWrites.get(response);
+  if (!state) {
+    state = { buffer: "", frames: 0 };
+    sseWrites.set(response, state);
+  }
+  state.buffer += chunk.toString();
+  let boundary = state.buffer.indexOf("\n\n");
+  while (boundary >= 0) {
+    const frame = state.buffer.slice(0, boundary);
+    state.buffer = state.buffer.slice(boundary + 2);
+    state.frames += 1;
+    state.clientId ??= /"clientId":"([^"]+)"/.exec(frame)?.[1];
+    boundary = state.buffer.indexOf("\n\n");
+  }
+  if (state.clientId) {
+    record({
+      kind: "sse-write",
+      clientId: state.clientId,
+      frames: state.frames,
+    });
+  }
+}
+
+for (const method of ["write", "end"] as const) {
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- Reflect.apply preserves the response receiver
+  const original = http.ServerResponse.prototype[method] as (
+    ...args: unknown[]
+  ) => unknown;
+  http.ServerResponse.prototype[method] = function (
+    this: import("node:http").ServerResponse,
+    ...args: unknown[]
+  ) {
+    const result = Reflect.apply(original, this, args);
+    observeSseWrite(this, args[0]);
+    return result;
+  } as never;
+}
+
 if (process.env.WEBAGENT_REGRESSION_SQL === "1") {
   type TransactionFunction = ((...args: unknown[]) => unknown) & {
     deferred: (...args: unknown[]) => unknown;

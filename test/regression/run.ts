@@ -84,7 +84,9 @@ interface Instance {
     observer: number;
   };
   busy: Set<string>;
-  pendingPromptSse: Set<string>;
+  sseFramesConsumed: number;
+  sseClientId: string | null;
+  compareSseDrain: boolean;
 }
 
 async function main(): Promise<void> {
@@ -304,7 +306,9 @@ async function createInstances(
         sseError: null,
         stepCursor: { sse: 0, mock: 0, observer: 0 },
         busy: new Set(),
-        pendingPromptSse: new Set(),
+        sseFramesConsumed: 0,
+        sseClientId: null,
+        compareSseDrain: true,
       });
     }
     return instances;
@@ -406,7 +410,6 @@ function createInstanceClient(instance: Instance) {
     body?: Json,
     token = TOKEN,
   ): Promise<RestResponse> => {
-    const sseCursor = instance.sse.length;
     const response = await timed(
       `${instance.name}: ${method} ${path}`,
       async () =>
@@ -426,30 +429,6 @@ function createInstanceClient(instance: Instance) {
     );
     let parsed: Json = null;
     if (raw) parsed = JSON.parse(raw) as Json;
-    if (
-      method === "POST" &&
-      response.status === 202 &&
-      /^\/api\/v1\/tasks\/([^/]+)\/prompt(?:\?|$|\/)/.test(path)
-    ) {
-      const match = path.match(/^\/api\/v1\/tasks\/([^/]+)\/prompt(?:\?|$|\/)/);
-      if (match) {
-        const taskId = decodeURIComponent(match[1]);
-        const busyAlreadyObserved = instance.sse
-          .slice(sseCursor)
-          .some((event) => {
-            if (
-              (event as JsonObject).type !== "state_patch" ||
-              (event as JsonObject).taskId !== taskId
-            ) {
-              return false;
-            }
-            const patch = (event as JsonObject).patch as JsonObject | undefined;
-            const runtime = patch?.runtime as JsonObject | undefined;
-            return runtime?.busy != null;
-          });
-        if (!busyAlreadyObserved) instance.pendingPromptSse.add(taskId);
-      }
-    }
     return { status: response.status, body: parsed };
   };
   return rest;
@@ -505,6 +484,7 @@ async function consumeSse(
       buffer += decoder.decode(chunk, { stream: true });
       let boundary = buffer.indexOf("\n\n");
       while (boundary >= 0) {
+        instance.sseFramesConsumed += 1;
         const frame = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
         const data = frame
@@ -516,6 +496,12 @@ async function consumeSse(
           const event = JSON.parse(data) as Json;
           if (typeof event === "object" && event && "type" in event) {
             instance.sse.push(event);
+            if (
+              event.type === "connected" &&
+              typeof event.clientId === "string"
+            ) {
+              instance.sseClientId = event.clientId;
+            }
             trackBusy(instance, event);
           }
         }
@@ -542,10 +528,7 @@ function trackBusy(instance: Instance, event: JsonObject): void {
   const runtime = patch?.runtime as JsonObject | undefined;
   if (!runtime || !("busy" in runtime)) return;
   if (runtime.busy === null) instance.busy.delete(event.taskId);
-  else {
-    instance.busy.add(event.taskId);
-    instance.pendingPromptSse.delete(event.taskId);
-  }
+  else instance.busy.add(event.taskId);
 }
 
 async function settle(
@@ -565,12 +548,13 @@ async function settle(
         quietSince = performance.now();
         return false;
       }
-      const streamsCaughtUp = [...instances.values()].every(
+      const settled = [...instances.values()].every(
         (instance) =>
-          instance.pendingPromptSse.size === 0 &&
+          (!instance.compareSseDrain ||
+            sseWrittenFrames(instance) === instance.sseFramesConsumed) &&
           uncoveredBusyTasks(instance).length === 0,
       );
-      return performance.now() - quietSince >= QUIET_MS && streamsCaughtUp;
+      return performance.now() - quietSince >= QUIET_MS && settled;
     },
     SETTLE_TIMEOUT_MS,
     () =>
@@ -589,6 +573,22 @@ function settleSignature(instances: Map<string, Instance>): string {
       readLines(instance.observerLog).length,
     ]),
   );
+}
+
+function sseWrittenFrames(instance: Instance): number {
+  if (!instance.compareSseDrain || instance.sseClientId === null) return 0;
+  let frames = 0;
+  for (const raw of readLines(instance.observerLog)) {
+    const line = raw as JsonObject;
+    if (
+      line.kind === "sse-write" &&
+      line.clientId === instance.sseClientId &&
+      typeof line.frames === "number"
+    ) {
+      frames = line.frames;
+    }
+  }
+  return frames;
 }
 
 function activeWaits(instance: Instance): JsonObject[] {
@@ -630,7 +630,7 @@ function settleStatus(instance: Instance): string {
     sessionId: wait.sessionId ?? null,
     label: wait.label ?? null,
   }));
-  return `${instance.name}: busy=${JSON.stringify(busy)} waits=${JSON.stringify(waits)} pendingPromptSse=${JSON.stringify([...instance.pendingPromptSse])}`;
+  return `${instance.name}: busy=${JSON.stringify(busy)} waits=${JSON.stringify(waits)} sseConsumed=${instance.sseFramesConsumed} sseWritten=${sseWrittenFrames(instance)}`;
 }
 
 function taskSessions(instance: Instance): Map<string, string> {
@@ -844,7 +844,7 @@ async function restartInstance(
   instance.port = instance.server.port;
   instance.sseError = null;
   instance.busy.clear();
-  instance.pendingPromptSse.clear();
+  instance.compareSseDrain = false;
   return {
     name: instance.name,
     restarted: true,
