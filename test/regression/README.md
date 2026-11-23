@@ -5,6 +5,58 @@ external behavior. It is a golden suite, not a test of internal scheduling.
 
 ## Architecture
 
+```
+npm run test:regression [scenario ...] [--update]
+        |
+        v
+run.ts -- loads scenarios/*.ts; scenarios run in parallel, each one twice (A/A)
+        |
+        |  each run = a fresh instance in a temporary directory, deleted afterwards
+        v
++- instance -----------------------------------------------------------+
+|                                                                      |
+|  run.ts (test side)                                                  |
+|    | (1) REST / MCP requests ------+                                 |
+|    | (2) global SSE subscription <-+                                 |
+|    |                               v                                 |
+|    |   +------- WebAgent server (production code, unchanged) ---+   |
+|    |   |  observer.ts (preloaded)                                |   |
+|    |   |   - fixed time / UUIDs / randomness                     |   |
+|    |   |   - SQL: write text per transaction, read count         |   |
+|    |   |  routes . MCP . TaskManager . Store . bridge            |   |
+|    |   +------------+-----------------------------+--------------+   |
+|    |                | writes                      | ACP (stdio)      |
+|    |                v                             v                  |
+|    |   (3) temporary webagent.db    (4) mock agent (one per task)    |
+|    |       (read-only snapshot)         reacts as the scenario       |
+|    |                                    declared: reply / call MCP / |
+|    |                                    fail / wait; logs its calls  |
+|    v                                                                 |
+|  each step: action -> settle() -> record (1)(2)(4) + SQL             |
+|  scenario end: (3) DB snapshot                                       |
++----------------------------------------------------------------------+
+        |
+        v
+group: SSE by task, ACP/MCP by session, SQL writes by transaction
+normalize: instance root, port, checkout root
+        |
+        v
+both runs identical? --no--> fail: the test is nondeterministic
+        | yes
+        v
+--update? --yes--> write golden/<scenario>.json
+        | no
+        v
+equal to golden? --no--> fail: line diff (behavior changed)
+        | yes
+        v
+      pass
+```
+
+`settle()` waits until every busy task is parked on a wait declared for its own
+session and nothing new has been observed for 250ms; if that never happens the
+step fails with a settle timeout, listing the busy tasks and active waits.
+
 `run.ts` loads each file in `scenarios/` independently. Scenarios run in
 parallel; every scenario runs twice (A/A) before either result is compared with
 `golden/<name>.json`. One scenario's failure does not stop the others from
@@ -111,6 +163,31 @@ Known environment limits:
   be used to launch the mock command;
 - the runner probes an available port before binding the server, so another
   process can still take that port between the two operations.
+
+## What belongs here
+
+Add a regression scenario for behavior that is **externally observable** and
+that a refactor must preserve:
+
+- a public task entrypoint (MCP task tool, REST task route, SSE event) and its
+  response, the events it publishes, what the agent receives, and the state it
+  commits;
+- an outcome caused within one task's own sequence of steps, so it is
+  deterministic once each step settles;
+- a bug fix in such behavior: add the scenario that reproduces it;
+- a path a planned refactor will move that no scenario covers yet: add the
+  scenario first, on the old code, so the golden records the behavior to keep.
+
+Keep these elsewhere:
+
+- internal ordering, fences, timing windows and race interleavings, which need
+  orchestration to observe: unit tests, listed in `COVERAGE.md`;
+- behavior that needs a process restart, real agents, browsers or the UI:
+  unit or E2E tests;
+- pure logic with no server-visible effect: unit tests.
+
+If a scenario needs a new harness mechanism (a control channel, a gate, a hook
+on an internal function), it does not belong here.
 
 ## Adding a scenario
 
