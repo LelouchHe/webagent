@@ -101,12 +101,15 @@ fingerprint. `GET /api/v1/hosts` reports the hub's connection state. See
 ESLint's `no-restricted-imports` guards the direct static dependencies:
 `src/mcp/**` cannot import Store, TaskManager, or a host module other than
 `src/host/task-ops.ts`, and `src/host/task-ops.ts` cannot import Store or
-TaskManager. `src/host/remote/**` cannot import Store, TaskManager, or
-`src/host/local/**`; owner-side local commands will be injected through
-`TaskOps`. `src/host/local/**` cannot import `src/host/remote/**`. Static value
-and type imports and re-exports are covered, and `npm run lint` fails on a
-violation. The rule does not follow the module graph, dynamic `import()`, or
-inline `import("…").Type` references; those indirect paths are left to review.
+TaskManager. Direct files in `src/host/remote/` cannot import Store, TaskManager,
+or `src/host/local/`; owner-side local commands will be injected through
+`TaskOps`. Direct files in `src/host/local/` cannot import `src/host/remote/`.
+Static value and type imports and re-exports are covered, and `npm run lint`
+fails on a violation. The current relative-import restrictions cover these
+direct files; if either directory gains nested subdirectories, extend the lint
+patterns at that point. The rule does not follow the module graph, dynamic
+`import()`, or inline `import("…").Type` references; those indirect paths are
+left to review.
 
 ## `TaskOps` port
 

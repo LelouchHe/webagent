@@ -15,6 +15,7 @@ export interface HostRegistryOptions {
   now?: () => number;
   requestTimeoutMs?: number;
   heartbeatTimeoutMs?: number;
+  handshakeTimeoutMs?: number;
   minimumRetryMs?: number;
   maximumRetryMs?: number;
   onConnected?: (name: string) => void | Promise<void>;
@@ -58,6 +59,7 @@ export class HostRegistry {
         fetch: this.options.fetch,
         requestTimeoutMs: this.options.requestTimeoutMs,
         heartbeatTimeoutMs: this.options.heartbeatTimeoutMs,
+        handshakeTimeoutMs: this.options.handshakeTimeoutMs,
         retryDelay: (failures) =>
           retryDelay(
             failures,

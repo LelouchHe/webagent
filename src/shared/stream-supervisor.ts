@@ -2,7 +2,8 @@ export const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
 export const STREAM_STALL_TIMEOUT_MS = 3 * SSE_HEARTBEAT_INTERVAL_MS;
 export const STREAM_WATCHDOG_INTERVAL_MS = 5_000;
 
-export type StreamFailureKind = "attempt" | "stalled" | "requested";
+export type StreamFailureKind =
+  "attempt" | "handshake" | "stalled" | "requested";
 
 export interface StreamAttempt {
   readonly epoch: number;
@@ -29,8 +30,10 @@ export interface StreamSupervisorOptions {
   run(attempt: StreamAttempt): void | Promise<void>;
   retryDelay: (failures: number, failure: StreamFailure) => number;
   onFailure?: (failure: StreamFailure) => void;
+  handshakeTimeoutMs?: number;
   stallTimeoutMs?: number;
   watchdogIntervalMs?: number;
+  now?: () => number;
   timers?: StreamTimers;
 }
 
@@ -66,9 +69,11 @@ export class StreamSupervisor {
   private readonly run: StreamSupervisorOptions["run"];
   private readonly retryDelay: StreamSupervisorOptions["retryDelay"];
   private readonly onFailure: StreamSupervisorOptions["onFailure"];
+  private readonly handshakeTimeoutMs: number | null;
   private readonly stallTimeoutMs: number;
   private readonly watchdogIntervalMs: number;
   private readonly timers: StreamTimers;
+  private readonly now: () => number;
   private epoch = 0;
   private current: StreamAttempt | null = null;
   private currentAbort: AbortController | null = null;
@@ -77,6 +82,8 @@ export class StreamSupervisor {
   private failures = 0;
   private watchdog: unknown = null;
   private retry: unknown = null;
+  private handshake: unknown = null;
+  private handshakeEpoch: number | null = null;
   private started = false;
 
   constructor(options: StreamSupervisorOptions) {
@@ -88,12 +95,14 @@ export class StreamSupervisor {
           options.onFailure?.(failure);
         }
       : undefined;
+    this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? null;
     this.stallTimeoutMs = options.stallTimeoutMs ?? STREAM_STALL_TIMEOUT_MS;
     this.watchdogIntervalMs = Math.min(
       options.watchdogIntervalMs ?? STREAM_WATCHDOG_INTERVAL_MS,
       this.stallTimeoutMs,
     );
     this.timers = options.timers ?? DEFAULT_TIMERS;
+    this.now = options.now ?? (() => this.timers.now());
   }
 
   start(): StreamAttempt {
@@ -117,13 +126,14 @@ export class StreamSupervisor {
   /** Refresh liveness for any frame, including the initial handshake. */
   noteActivity(attempt: StreamAttempt | null = this.current): void {
     if (!attempt?.isCurrent()) return;
-    this.lastActivity = this.timers.now();
+    this.lastActivity = this.now();
     this.hasActivity = true;
   }
 
   /** Reset exponential backoff after a successful protocol handshake. */
   connected(attempt: StreamAttempt): void {
     if (!attempt.isCurrent()) return;
+    this.clearHandshake(attempt);
     this.failures = 0;
     this.noteActivity(attempt);
   }
@@ -137,7 +147,7 @@ export class StreamSupervisor {
   checkLiveness(): void {
     const attempt = this.current;
     if (!attempt || !this.hasActivity) return;
-    const silentMs = this.timers.now() - this.lastActivity;
+    const silentMs = this.now() - this.lastActivity;
     if (silentMs < this.stallTimeoutMs) return;
     this.fail(attempt, "stalled", undefined, silentMs);
   }
@@ -153,6 +163,7 @@ export class StreamSupervisor {
     this.currentAbort = abort;
     this.current = attempt;
     this.noteActivity(attempt);
+    this.armHandshake(attempt);
     this.armWatchdog();
     try {
       Promise.resolve(this.run(attempt)).catch((error: unknown) => {
@@ -176,7 +187,41 @@ export class StreamSupervisor {
     this.failures += 1;
     const failure = { attempt, kind, error, silentMs };
     this.onFailure?.(failure);
+    // Synchronous start() calls from onFailure or abort callbacks are not
+    // supported; callers report/clean up here and let the retry path launch.
     this.scheduleRetry(delayBase, failure);
+  }
+
+  private armHandshake(attempt: StreamAttempt): void {
+    if (this.handshakeTimeoutMs === null) return;
+    const handshake = this.timers.setTimeout(() => {
+      if (
+        !attempt.isCurrent() ||
+        this.handshakeEpoch !== attempt.epoch ||
+        this.handshake !== handshake
+      ) {
+        return;
+      }
+      this.handshake = null;
+      this.handshakeEpoch = null;
+      this.fail(attempt, "handshake");
+    }, this.handshakeTimeoutMs);
+    this.handshake = handshake;
+    this.handshakeEpoch = attempt.epoch;
+    const unref = (handshake as { unref?: () => void } | null)?.unref;
+    unref?.call(handshake);
+  }
+
+  private clearHandshake(attempt?: StreamAttempt): void {
+    if (
+      this.handshake === null ||
+      (attempt && this.handshakeEpoch !== attempt.epoch)
+    ) {
+      return;
+    }
+    this.timers.clearTimeout(this.handshake);
+    this.handshake = null;
+    this.handshakeEpoch = null;
   }
 
   private scheduleRetry(failures: number, failure: StreamFailure): void {
@@ -208,6 +253,7 @@ export class StreamSupervisor {
   }
 
   private invalidateCurrent(): void {
+    this.clearHandshake();
     this.currentAbort?.abort();
     this.currentAbort = null;
     this.current = null;

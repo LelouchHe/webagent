@@ -132,6 +132,35 @@ describe("StreamSupervisor", () => {
     supervisor.stop();
   });
 
+  it("expires the handshake while heartbeat activity keeps arriving", () => {
+    const timers = new FakeTimers();
+    const failures: string[] = [];
+    let attempts = 0;
+    const supervisor = new StreamSupervisor({
+      run: () => {
+        attempts += 1;
+      },
+      retryDelay: () => 50,
+      onFailure: (failure) => {
+        failures.push(failure.kind);
+      },
+      handshakeTimeoutMs: 20,
+      stallTimeoutMs: 100,
+      watchdogIntervalMs: 5,
+      timers: timers.api,
+    });
+    const first = supervisor.start();
+    for (let step = 0; step < 4; step += 1) {
+      timers.advance(5);
+      supervisor.noteActivity(first);
+    }
+    assert.equal(first.signal.aborted, true);
+    timers.advance(50);
+    assert.equal(attempts, 2);
+    assert.deepEqual(failures, ["handshake"]);
+    supervisor.stop();
+  });
+
   it("clears the watchdog and retry timer on stop", () => {
     const timers = new FakeTimers();
     let attempts = 0;

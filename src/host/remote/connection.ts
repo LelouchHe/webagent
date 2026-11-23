@@ -11,6 +11,7 @@ import {
   StreamSupervisor,
   type StreamAttempt,
   type StreamFailure,
+  STREAM_STALL_TIMEOUT_MS,
 } from "../../shared/stream-supervisor.ts";
 
 const REQUEST_TIMEOUT_MS = 8_000;
@@ -19,7 +20,13 @@ export interface HostConnectionOptions {
   fetch?: typeof globalThis.fetch;
   requestTimeoutMs?: number;
   heartbeatTimeoutMs?: number;
+  handshakeTimeoutMs?: number;
   retryDelay: (failures: number, failure: StreamFailure) => number;
+  resolveToken?: (
+    configured: string,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+  ) => Promise<string>;
   onState?: (
     state: HostConnectionState,
     reason?: HostUnreachableReason,
@@ -63,6 +70,7 @@ export class HostConnection {
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly requestTimeoutMs: number;
   private readonly supervisor: StreamSupervisor;
+  private tokenCommand: Promise<string> | null = null;
 
   constructor(config: HostConfig, options: HostConnectionOptions) {
     this.config = config;
@@ -72,10 +80,12 @@ export class HostConnection {
     this.supervisor = new StreamSupervisor({
       run: (attempt) => this.runAttempt(attempt),
       retryDelay: options.retryDelay,
+      handshakeTimeoutMs: options.handshakeTimeoutMs ?? STREAM_STALL_TIMEOUT_MS,
       stallTimeoutMs: options.heartbeatTimeoutMs,
+      now: () => performance.now(),
       onFailure: (failure) => {
         const reason =
-          failure.kind === "stalled"
+          failure.kind === "stalled" || failure.kind === "handshake"
             ? "network"
             : HostConnection.failureReason(failure.error);
         this.options.onState?.("unreachable", reason);
@@ -93,11 +103,8 @@ export class HostConnection {
 
   private async runAttempt(attempt: StreamAttempt): Promise<void> {
     this.options.onState?.("connecting");
-    const token = await resolveHostToken(
-      this.config.token,
-      undefined,
-      attempt.signal,
-    );
+    const token = await this.resolveToken(attempt);
+    if (!attempt.isCurrent()) return;
     const fingerprint = hostCredentialFingerprint(token);
     const description = await this.describe(token, attempt.signal);
     if (description.caller.fingerprint !== fingerprint) {
@@ -111,6 +118,31 @@ export class HostConnection {
     if (error instanceof TokenCommandError) return "token_command_failed";
     if (error instanceof HostConnectionFailure) return error.reason;
     return "network";
+  }
+
+  private async resolveToken(attempt: StreamAttempt): Promise<string> {
+    while (this.tokenCommand) {
+      const pending = this.tokenCommand;
+      try {
+        await pending;
+      } catch {
+        // The old attempt owns that result. This attempt only waits for the
+        // command to finish before it starts another one.
+      }
+      if (!attempt.isCurrent()) throw new Error("stale host attempt");
+    }
+    if (!attempt.isCurrent()) throw new Error("stale host attempt");
+    const command = (this.options.resolveToken ?? resolveHostToken)(
+      this.config.token,
+      undefined,
+      attempt.signal,
+    );
+    this.tokenCommand = command;
+    try {
+      return await command;
+    } finally {
+      if (this.tokenCommand === command) this.tokenCommand = null;
+    }
   }
 
   private async openStream(
@@ -213,13 +245,18 @@ export class HostConnection {
     try {
       while (attempt.isCurrent()) {
         const result = await reader.read();
+        if (!attempt.isCurrent()) return;
         if (result.done) throw new HostConnectionFailure("network");
         buffer += decoder.decode(result.value, { stream: true });
         let boundary = buffer.indexOf("\n\n");
         while (boundary >= 0) {
           const frame = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
-          this.supervisor.noteActivity(attempt);
+          const event = frame
+            .split(/\r?\n/)
+            .find((line) => line.startsWith("event:"))
+            ?.slice(6)
+            .trim();
           const data = frame
             .split(/\r?\n/)
             .filter((line) => line.startsWith("data:"))
@@ -233,11 +270,18 @@ export class HostConnection {
               throw new HostConnectionFailure("protocol_mismatch");
             }
             if (parsed.type === "connected") {
+              if (!attempt.isCurrent()) return;
               connected = true;
               this.supervisor.connected(attempt);
+              if (!attempt.isCurrent()) return;
               this.options.onState?.("connected");
-              void this.options.onConnected?.(description);
+              if (attempt.isCurrent()) {
+                void this.options.onConnected?.(description);
+              }
             }
+          }
+          if (connected && event === "heartbeat") {
+            this.supervisor.noteActivity(attempt);
           }
           boundary = buffer.indexOf("\n\n");
         }

@@ -136,9 +136,11 @@ time. An entry without a "closing condition" is a wish, not an issue.
   its stdout pipe.** `execFile` receives the stop signal and a five-second
   timeout, but a shell that ignores the signal or a descendant that retains the
   pipe can keep the per-host command wait open beyond that bound. This can delay
-  only that host's next retry; other configured hosts and server shutdown do
-  not share the wait. *Closing:* handle this after a real command demonstrates
-  the behavior, then choose an explicit process-tree termination mechanism.
+  only that host's next retry, and the connection supervisor waits for that
+  command to finish before starting another one for the same host; other
+  configured hosts and server shutdown do not share the wait. *Closing:* handle
+  this after a real command demonstrates the behavior, then choose an explicit
+  process-tree termination mechanism.
 - **`MAX_ACP_MESSAGE_BYTES` is a hardcoded 128 MiB cap.** It is not derived from
   configured limits, so raising `file_upload` above roughly 120 MiB still hits
   it. *Closing:* derive the cap from the configured upload limit (with a
