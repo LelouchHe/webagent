@@ -27,6 +27,7 @@ export interface SpecServer {
 
 export interface SpecServerConfig {
   dataDir: string;
+  defaultCwd?: string;
   /** Omit to allocate a fresh port; a restart passes the previous one so the
    *  already-open page reconnects to the same origin. */
   port?: number;
@@ -42,6 +43,12 @@ export interface SpecServerConfig {
    * single-agent deployment, an agent that cannot start).
    */
   template?: string;
+}
+
+export interface SpecServerSpawnOptions {
+  nodeArgs?: string[];
+  env?: NodeJS.ProcessEnv;
+  quiet?: boolean;
 }
 
 const LISTENING = /\[server\] listening on http:\/\/localhost:(\d+)/;
@@ -60,6 +67,9 @@ export function writeSpecConfig(
     // than inside the server; the bound port is still read from its log.)
     `port = ${config.port ?? pickFreePort()}`,
     `data_dir = ${JSON.stringify(config.dataDir)}`,
+    ...(config.defaultCwd
+      ? [`default_cwd = ${JSON.stringify(config.defaultCwd)}`]
+      : []),
     `public_dir = "dist-dev"`,
     `default_agent = "mock"`,
     `[agents.mock]`,
@@ -129,63 +139,83 @@ export function seedSpecAuth(dataDir: string, token: string): void {
   );
 }
 
-export async function startSpecServer(configPath: string): Promise<SpecServer> {
+export async function startSpecServer(
+  configPath: string,
+  options: SpecServerSpawnOptions = {},
+): Promise<SpecServer> {
   const child = spawn(
     process.execPath,
-    ["--experimental-strip-types", "src/server.ts", "--config", configPath],
+    [
+      "--experimental-strip-types",
+      ...(options.nodeArgs ?? []),
+      "src/server.ts",
+      "--config",
+      configPath,
+    ],
     {
       cwd: REPO_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
       // Process-group leader: stopSpecServer kills -pid, which reaches every
       // agent the server spawned.
       detached: true,
+      env: { ...process.env, ...options.env },
     },
   );
 
   let output = "";
-  const port = await new Promise<number>((resolvePort, reject) => {
-    const timer = setTimeout(() => {
-      reject(
-        new Error(
-          `Timed out waiting for ${configPath} to report its listening port\n${output.slice(-2000)}`,
-        ),
-      );
-    }, 30_000);
-    let settled = false;
-    const finish = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      fn();
-    };
-    child.stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      process.stdout.write(chunk);
-      const match = LISTENING.exec(output);
-      if (match) {
-        finish(() => {
-          resolvePort(Number(match[1]));
-        });
-      }
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      process.stderr.write(chunk);
-    });
-    child.once("exit", (code, signal) => {
-      finish(() => {
+  const partial = { child, port: 0, origin: "" };
+  try {
+    const port = await new Promise<number>((resolvePort, reject) => {
+      const timer = setTimeout(() => {
         reject(
           new Error(
-            `Server exited before listening (code=${code} signal=${signal})\n${output.slice(-2000)}`,
+            `Timed out waiting for ${configPath} to report its listening port\n${output.slice(-2000)}`,
           ),
         );
+      }, 30_000);
+      let settled = false;
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn();
+      };
+      child.stdout.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+        if (!options.quiet) process.stdout.write(chunk);
+        const match = LISTENING.exec(output);
+        if (match) {
+          finish(() => {
+            resolvePort(Number(match[1]));
+          });
+        }
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+        if (!options.quiet) process.stderr.write(chunk);
+      });
+      child.once("exit", (code, signal) => {
+        finish(() => {
+          reject(
+            new Error(
+              `Server exited before listening (code=${code} signal=${signal})\n${output.slice(-2000)}`,
+            ),
+          );
+        });
       });
     });
-  });
 
-  const origin = `http://127.0.0.1:${port}`;
-  await waitForHealthy(origin);
-  return { child, port, origin };
+    const origin = `http://127.0.0.1:${port}`;
+    await waitForHealthy(origin);
+    return { child, port, origin };
+  } catch (error) {
+    try {
+      await stopSpecServer(partial);
+    } catch {
+      // Preserve the startup error; teardown still tried both signal levels.
+    }
+    throw error;
+  }
 }
 
 export async function stopSpecServer(server: SpecServer): Promise<void> {

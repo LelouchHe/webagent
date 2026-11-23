@@ -26,6 +26,8 @@ jobs:
 
       - run: npm run typecheck
 
+      - run: npm run test:regression
+
       - run: npm run build
 
       - run: npm test

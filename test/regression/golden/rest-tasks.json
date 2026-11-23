@@ -1,0 +1,1025 @@
+{
+  "steps": [
+    {
+      "name": "setup",
+      "response": {
+        "rootId": "00000000-0000-4000-8000-000000000001",
+        "childId": "00000000-0000-4000-8000-000000000004"
+      },
+      "sse": [
+        {
+          "taskId": "*",
+          "events": [
+            {
+              "type": "connected",
+              "agent": {
+                "name": "mock-agent",
+                "version": "0.1.0"
+              },
+              "agentId": "mock",
+              "configOptions": [],
+              "cancelTimeout": 10000,
+              "recentPathsLimit": 10
+            }
+          ]
+        },
+        {
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "events": [
+            {
+              "type": "task_created",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "cwd": "/",
+              "cwdDisplay": "/",
+              "title": "root",
+              "parentId": null,
+              "parentAgentId": null,
+              "agentId": "mock",
+              "configOptions": [],
+              "agentCommands": {
+                "epoch": "00000000-0000-4000-8000-000000000003",
+                "revision": 1,
+                "commands": [
+                  {
+                    "name": "context",
+                    "description": "Show context usage"
+                  },
+                  {
+                    "name": "compact",
+                    "description": "Compact conversation",
+                    "input": {
+                      "hint": "focus instructions"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "mock": [
+        {
+          "sessionId": "*",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "initialize"
+            }
+          ]
+        },
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000001",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/new",
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "cwd": "/"
+            }
+          ]
+        }
+      ],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+              "args": [
+                "mock",
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000001",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ?",
+              "args": ["00000000-0000-4000-8000-000000000001"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
+              "args": ["00000000-0000-4000-8000-000000000001"]
+            }
+          ]
+        ],
+        "reads": 27
+      }
+    },
+    {
+      "name": "create-named-child",
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "00000000-0000-4000-8000-000000000004",
+          "cwd": "/",
+          "cwdDisplay": "/",
+          "parentId": "00000000-0000-4000-8000-000000000001",
+          "parentAgentId": "mock",
+          "agentId": "mock",
+          "title": "REST child",
+          "workflowStatus": "idle",
+          "source": "auto",
+          "configOptions": [
+            {
+              "type": "select",
+              "id": "model",
+              "name": "Model",
+              "category": "model",
+              "currentValue": "mock-model",
+              "options": [
+                {
+                  "value": "mock-model",
+                  "name": "Mock Model"
+                },
+                {
+                  "value": "mock-model-2",
+                  "name": "Mock Model 2"
+                }
+              ]
+            },
+            {
+              "type": "select",
+              "id": "mode",
+              "name": "Mode",
+              "category": "mode",
+              "currentValue": "agent",
+              "options": [
+                {
+                  "value": "agent",
+                  "name": "Agent"
+                },
+                {
+                  "value": "chat#plan",
+                  "name": "Plan"
+                },
+                {
+                  "value": "chat#autopilot",
+                  "name": "Autopilot"
+                }
+              ]
+            },
+            {
+              "type": "select",
+              "id": "reasoning_effort",
+              "name": "Reasoning",
+              "category": "thought_level",
+              "currentValue": "medium",
+              "options": [
+                {
+                  "value": "low",
+                  "name": "Low"
+                },
+                {
+                  "value": "medium",
+                  "name": "Medium"
+                },
+                {
+                  "value": "high",
+                  "name": "High"
+                }
+              ]
+            }
+          ],
+          "agentCommands": {
+            "epoch": "00000000-0000-4000-8000-000000000003",
+            "revision": 1,
+            "commands": [
+              {
+                "name": "context",
+                "description": "Show context usage"
+              },
+              {
+                "name": "compact",
+                "description": "Compact conversation",
+                "input": {
+                  "hint": "focus instructions"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "sse": [
+        {
+          "taskId": "00000000-0000-4000-8000-000000000001",
+          "events": [
+            {
+              "type": "system_message",
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "kind": "task_created",
+              "messageId": "00000000-0000-4000-8000-000000000005",
+              "sourceTaskId": "00000000-0000-4000-8000-000000000001",
+              "targetTaskId": "00000000-0000-4000-8000-000000000004",
+              "taskTitle": "REST child",
+              "role": "source",
+              "title": "Created task @\"REST child\"",
+              "body": "Task ID: 00000000-0000-4000-8000-000000000004\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
+            }
+          ]
+        },
+        {
+          "taskId": "00000000-0000-4000-8000-000000000004",
+          "events": [
+            {
+              "type": "available_commands_update",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "commands": [
+                {
+                  "name": "context",
+                  "description": "Show context usage"
+                },
+                {
+                  "name": "compact",
+                  "description": "Compact conversation",
+                  "input": {
+                    "hint": "focus instructions"
+                  }
+                }
+              ],
+              "epoch": "00000000-0000-4000-8000-000000000003",
+              "revision": 1
+            },
+            {
+              "type": "task_created",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "agentId": "mock",
+              "cwd": "/",
+              "cwdDisplay": "/",
+              "title": "REST child",
+              "parentId": "00000000-0000-4000-8000-000000000001",
+              "parentAgentId": "mock",
+              "configOptions": [
+                {
+                  "type": "select",
+                  "id": "model",
+                  "name": "Model",
+                  "category": "model",
+                  "currentValue": "mock-model",
+                  "options": [
+                    {
+                      "value": "mock-model",
+                      "name": "Mock Model"
+                    },
+                    {
+                      "value": "mock-model-2",
+                      "name": "Mock Model 2"
+                    }
+                  ]
+                },
+                {
+                  "type": "select",
+                  "id": "mode",
+                  "name": "Mode",
+                  "category": "mode",
+                  "currentValue": "agent",
+                  "options": [
+                    {
+                      "value": "agent",
+                      "name": "Agent"
+                    },
+                    {
+                      "value": "chat#plan",
+                      "name": "Plan"
+                    },
+                    {
+                      "value": "chat#autopilot",
+                      "name": "Autopilot"
+                    }
+                  ]
+                },
+                {
+                  "type": "select",
+                  "id": "reasoning_effort",
+                  "name": "Reasoning",
+                  "category": "thought_level",
+                  "currentValue": "medium",
+                  "options": [
+                    {
+                      "value": "low",
+                      "name": "Low"
+                    },
+                    {
+                      "value": "medium",
+                      "name": "Medium"
+                    },
+                    {
+                      "value": "high",
+                      "name": "High"
+                    }
+                  ]
+                }
+              ],
+              "agentCommands": {
+                "epoch": "00000000-0000-4000-8000-000000000003",
+                "revision": 1,
+                "commands": [
+                  {
+                    "name": "context",
+                    "description": "Show context usage"
+                  },
+                  {
+                    "name": "compact",
+                    "description": "Compact conversation",
+                    "input": {
+                      "hint": "focus instructions"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "config_option_update",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "configOptions": [
+                {
+                  "type": "select",
+                  "id": "model",
+                  "name": "Model",
+                  "category": "model",
+                  "currentValue": "mock-model",
+                  "options": [
+                    {
+                      "value": "mock-model",
+                      "name": "Mock Model"
+                    },
+                    {
+                      "value": "mock-model-2",
+                      "name": "Mock Model 2"
+                    }
+                  ]
+                },
+                {
+                  "type": "select",
+                  "id": "mode",
+                  "name": "Mode",
+                  "category": "mode",
+                  "currentValue": "agent",
+                  "options": [
+                    {
+                      "value": "agent",
+                      "name": "Agent"
+                    },
+                    {
+                      "value": "chat#plan",
+                      "name": "Plan"
+                    },
+                    {
+                      "value": "chat#autopilot",
+                      "name": "Autopilot"
+                    }
+                  ]
+                },
+                {
+                  "type": "select",
+                  "id": "reasoning_effort",
+                  "name": "Reasoning",
+                  "category": "thought_level",
+                  "currentValue": "medium",
+                  "options": [
+                    {
+                      "value": "low",
+                      "name": "Low"
+                    },
+                    {
+                      "value": "medium",
+                      "name": "Medium"
+                    },
+                    {
+                      "value": "high",
+                      "name": "High"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "mock": [
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000002",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/new",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "cwd": "/"
+            }
+          ]
+        }
+      ],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                1,
+                "system_message",
+                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"REST child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"REST child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "user",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000004",
+                "/",
+                "auto",
+                "00000000-0000-4000-8000-000000000001",
+                "REST child",
+                "idle",
+                1789333200000,
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+              "args": [
+                "mock",
+                "00000000-0000-4000-8000-000000000002",
+                "00000000-0000-4000-8000-000000000004",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+              "args": ["agent", "00000000-0000-4000-8000-000000000004"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+              "args": ["mock-model", "00000000-0000-4000-8000-000000000004"]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+              "args": ["medium", "00000000-0000-4000-8000-000000000004"]
+            }
+          ]
+        ],
+        "reads": 28
+      }
+    },
+    {
+      "name": "prompt-child",
+      "response": {
+        "status": 202,
+        "body": {
+          "status": "accepted"
+        }
+      },
+      "sse": [
+        {
+          "taskId": "00000000-0000-4000-8000-000000000004",
+          "events": [
+            {
+              "type": "user_message",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "text": "wait for cancel",
+              "clientOpId": "00000000-0000-4000-8000-000000000006"
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "seq": 1,
+              "patch": {
+                "runtime": {
+                  "busy": {
+                    "kind": "agent",
+                    "since": "2026-09-13T21:00:00.000Z",
+                    "promptId": "prompt-1",
+                    "cancelStatus": null
+                  }
+                }
+              }
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "seq": 2,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": true,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "message_chunk",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "text": "REGRESSION_WAIT: rest-cancel"
+            }
+          ]
+        }
+      ],
+      "mock": [
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000002",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/prompt",
+              "sessionId": "00000000-0000-4000-8000-000000000002",
+              "text": "wait for cancel"
+            },
+            {
+              "kind": "wait",
+              "label": "rest-cancel",
+              "sessionId": "00000000-0000-4000-8000-000000000002"
+            }
+          ]
+        }
+      ],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000004",
+                1,
+                "user_message",
+                "{\"text\":\"wait for cancel\",\"clientOpId\":\"00000000-0000-4000-8000-000000000006\"}",
+                "user",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+              "args": ["/", 1789333200000]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+              "args": [1789333200000, "00000000-0000-4000-8000-000000000004"]
+            }
+          ]
+        ],
+        "reads": 9
+      }
+    },
+    {
+      "name": "cancel-child",
+      "response": {
+        "status": 202,
+        "body": {
+          "ok": true,
+          "status": "cancelling"
+        }
+      },
+      "sse": [
+        {
+          "taskId": "00000000-0000-4000-8000-000000000004",
+          "events": [
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "seq": 3,
+              "patch": {
+                "runtime": {
+                  "busy": {
+                    "kind": "agent",
+                    "since": "2026-09-13T21:00:00.000Z",
+                    "promptId": "prompt-1",
+                    "cancelStatus": "requested"
+                  }
+                }
+              }
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "seq": 4,
+              "patch": {
+                "runtime": {
+                  "busy": null
+                }
+              }
+            },
+            {
+              "type": "state_patch",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "seq": 5,
+              "patch": {
+                "runtime": {
+                  "streaming": {
+                    "assistant": false,
+                    "thinking": false
+                  }
+                }
+              }
+            },
+            {
+              "type": "prompt_done",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "stopReason": "cancelled",
+              "promptId": "prompt-1"
+            }
+          ]
+        }
+      ],
+      "mock": [
+        {
+          "sessionId": "00000000-0000-4000-8000-000000000002",
+          "calls": [
+            {
+              "kind": "acp",
+              "method": "session/cancel",
+              "sessionId": "00000000-0000-4000-8000-000000000002"
+            },
+            {
+              "kind": "wait-released",
+              "sessionId": "00000000-0000-4000-8000-000000000002"
+            }
+          ]
+        }
+      ],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000004",
+                2,
+                "assistant_message",
+                "{\"text\":\"REGRESSION_WAIT: rest-cancel\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000004",
+                3,
+                "prompt_done",
+                "{\"stopReason\":\"cancelled\",\"promptId\":\"prompt-1\"}",
+                "agent",
+                1789333200000
+              ]
+            }
+          ]
+        ],
+        "reads": 16
+      }
+    },
+    {
+      "name": "list-tasks",
+      "response": {
+        "status": 200,
+        "body": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "cwd": "/",
+            "title": "root",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "model": null,
+            "mode": null,
+            "reasoning_effort": null,
+            "source": "root",
+            "deleted_at": null,
+            "created_at": "2026-09-13T21:00:00.000Z",
+            "last_active_at": "2026-09-13T21:00:00.000Z",
+            "agentId": "mock",
+            "cwdDisplay": "/",
+            "hasUserInput": false,
+            "isRoot": true,
+            "archived": false
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000004",
+            "cwd": "/",
+            "title": "REST child",
+            "workflow_status": "idle",
+            "parent_id": "00000000-0000-4000-8000-000000000001",
+            "model": "mock-model",
+            "mode": "agent",
+            "reasoning_effort": "medium",
+            "source": "auto",
+            "deleted_at": null,
+            "created_at": "2026-09-13T21:00:00.000Z",
+            "last_active_at": "2026-09-13T21:00:00.000Z",
+            "agentId": "mock",
+            "cwdDisplay": "/",
+            "hasUserInput": true,
+            "isRoot": false,
+            "archived": false
+          }
+        ]
+      },
+      "sse": [],
+      "mock": [],
+      "sql": {
+        "writes": [],
+        "reads": 5
+      }
+    },
+    {
+      "name": "archive-child",
+      "response": {
+        "status": 200,
+        "body": {
+          "status": "archived",
+          "taskId": "00000000-0000-4000-8000-000000000004",
+          "parentId": "00000000-0000-4000-8000-000000000001",
+          "parentPath": "@/",
+          "pendingAccount": false
+        }
+      },
+      "sse": [
+        {
+          "taskId": "00000000-0000-4000-8000-000000000004",
+          "events": [
+            {
+              "type": "system_message",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "kind": "task_archive",
+              "title": "Task archived",
+              "body": "original parent: @/ (00000000-0000-4000-8000-000000000001)"
+            }
+          ]
+        }
+      ],
+      "mock": [],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ? AND parent_id = ?",
+              "args": [
+                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000001"
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000004",
+                4,
+                "system_message",
+                "{\"kind\":\"task_archive\",\"title\":\"Task archived\",\"body\":\"original parent: @/ (00000000-0000-4000-8000-000000000001)\",\"originalParentId\":\"00000000-0000-4000-8000-000000000001\",\"originalParentPath\":\"@/\"}",
+                "system",
+                1789333200000
+              ]
+            }
+          ]
+        ],
+        "reads": 6
+      }
+    },
+    {
+      "name": "list-archived",
+      "response": {
+        "status": 200,
+        "body": [
+          {
+            "id": "00000000-0000-4000-8000-000000000004",
+            "cwd": "/",
+            "title": "REST child",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "model": "mock-model",
+            "mode": "agent",
+            "reasoning_effort": "medium",
+            "source": "auto",
+            "deleted_at": null,
+            "created_at": "2026-09-13T21:00:00.000Z",
+            "last_active_at": "2026-09-13T21:00:00.000Z",
+            "agentId": "mock",
+            "cwdDisplay": "/",
+            "hasUserInput": true,
+            "isRoot": false,
+            "archived": true
+          }
+        ]
+      },
+      "sse": [],
+      "mock": [],
+      "sql": {
+        "writes": [],
+        "reads": 4
+      }
+    },
+    {
+      "name": "unarchive-child",
+      "response": {
+        "status": 200,
+        "body": {
+          "status": "unarchived",
+          "taskId": "00000000-0000-4000-8000-000000000004",
+          "parentId": "00000000-0000-4000-8000-000000000001",
+          "parentPath": "@/"
+        }
+      },
+      "sse": [
+        {
+          "taskId": "00000000-0000-4000-8000-000000000004",
+          "events": [
+            {
+              "type": "system_message",
+              "taskId": "00000000-0000-4000-8000-000000000004",
+              "kind": "task_unarchive",
+              "title": "Task unarchived",
+              "body": "parent: @/ (00000000-0000-4000-8000-000000000001)"
+            }
+          ]
+        }
+      ],
+      "mock": [],
+      "sql": {
+        "writes": [
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET parent_id = ? WHERE id = ?",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000004"
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000004",
+                5,
+                "system_message",
+                "{\"kind\":\"task_unarchive\",\"title\":\"Task unarchived\",\"body\":\"parent: @/ (00000000-0000-4000-8000-000000000001)\",\"parentId\":\"00000000-0000-4000-8000-000000000001\",\"parentPath\":\"@/\"}",
+                "system",
+                1789333200000
+              ]
+            }
+          ]
+        ],
+        "reads": 10
+      }
+    }
+  ],
+  "snapshot": {
+    "tasks": [
+      {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "cwd": "/",
+        "title": "root",
+        "workflow_status": "idle",
+        "parent_id": null,
+        "pending_compact_summary": null,
+        "model": null,
+        "mode": null,
+        "reasoning_effort": null,
+        "source": "root",
+        "deleted_at": null,
+        "created_at": 1789333200000,
+        "last_active_at": 1789333200000
+      },
+      {
+        "id": "00000000-0000-4000-8000-000000000004",
+        "cwd": "/",
+        "title": "REST child",
+        "workflow_status": "idle",
+        "parent_id": "00000000-0000-4000-8000-000000000001",
+        "pending_compact_summary": null,
+        "model": "mock-model",
+        "mode": "agent",
+        "reasoning_effort": "medium",
+        "source": "auto",
+        "deleted_at": null,
+        "created_at": 1789333200000,
+        "last_active_at": 1789333200000
+      }
+    ],
+    "agent_sessions": [
+      {
+        "agent_key": "mock",
+        "agent_session_id": "00000000-0000-4000-8000-000000000001",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "created_at": 1789333200000
+      },
+      {
+        "agent_key": "mock",
+        "agent_session_id": "00000000-0000-4000-8000-000000000002",
+        "task_id": "00000000-0000-4000-8000-000000000004",
+        "created_at": 1789333200000
+      }
+    ],
+    "events": [
+      {
+        "id": 1,
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "seq": 1,
+        "type": "system_message",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"REST child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"REST child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+        "created_at": 1789333200000,
+        "from_ref": "user"
+      },
+      {
+        "id": 2,
+        "task_id": "00000000-0000-4000-8000-000000000004",
+        "seq": 1,
+        "type": "user_message",
+        "data": "{\"text\":\"wait for cancel\",\"clientOpId\":\"00000000-0000-4000-8000-000000000006\"}",
+        "created_at": 1789333200000,
+        "from_ref": "user"
+      },
+      {
+        "id": 3,
+        "task_id": "00000000-0000-4000-8000-000000000004",
+        "seq": 2,
+        "type": "assistant_message",
+        "data": "{\"text\":\"REGRESSION_WAIT: rest-cancel\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 4,
+        "task_id": "00000000-0000-4000-8000-000000000004",
+        "seq": 3,
+        "type": "prompt_done",
+        "data": "{\"stopReason\":\"cancelled\",\"promptId\":\"prompt-1\"}",
+        "created_at": 1789333200000,
+        "from_ref": "agent"
+      },
+      {
+        "id": 5,
+        "task_id": "00000000-0000-4000-8000-000000000004",
+        "seq": 4,
+        "type": "system_message",
+        "data": "{\"kind\":\"task_archive\",\"title\":\"Task archived\",\"body\":\"original parent: @/ (00000000-0000-4000-8000-000000000001)\",\"originalParentId\":\"00000000-0000-4000-8000-000000000001\",\"originalParentPath\":\"@/\"}",
+        "created_at": 1789333200000,
+        "from_ref": "system"
+      },
+      {
+        "id": 6,
+        "task_id": "00000000-0000-4000-8000-000000000004",
+        "seq": 5,
+        "type": "system_message",
+        "data": "{\"kind\":\"task_unarchive\",\"title\":\"Task unarchived\",\"body\":\"parent: @/ (00000000-0000-4000-8000-000000000001)\",\"parentId\":\"00000000-0000-4000-8000-000000000001\",\"parentPath\":\"@/\"}",
+        "created_at": 1789333200000,
+        "from_ref": "system"
+      }
+    ],
+    "messages": [],
+    "message_projections": [],
+    "deliveries": [],
+    "client_ops": [],
+    "recent_paths": [
+      {
+        "cwd": "/",
+        "last_used_at": 1789333200000
+      }
+    ]
+  }
+}

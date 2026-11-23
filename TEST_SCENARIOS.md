@@ -10,6 +10,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - Unit / integration tests: `test/*.test.ts`
 - Browser E2E tests: `test/e2e/*.spec.ts`
+- External behavior regression goldens: `test/regression/scenarios/*.ts`
 - Current focus of the suite:
   - task lifecycle and restore behavior
   - cross-client synchronization

@@ -38,6 +38,7 @@
     "start": "node --experimental-strip-types src/server.ts --config config.toml",
     "pretest": "test -f .husky/_/pre-push || npx husky",
     "test": "npm run compile && node --experimental-strip-types --test test/*.test.ts",
+    "test:regression": "node --experimental-strip-types test/regression/run.ts",
     "test:e2e": "node --experimental-strip-types test/e2e/run-suite.ts",
     "test:e2e:heartbeat": "node --experimental-strip-types test/e2e/determinism-check.ts heartbeat",
     "test:e2e:concurrent": "node --experimental-strip-types test/e2e/determinism-check.ts concurrent",
