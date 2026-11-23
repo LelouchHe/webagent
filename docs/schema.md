@@ -23,6 +23,7 @@ or counters rather than instants (`ttl_hours`, `share_snapshot_seq`,
 - [Tables](#tables)
   - [tasks](#tasks)
   - [agent_sessions](#agent_sessions)
+  - [remote_task_links](#remote_task_links)
   - [events](#events)
   - [push_subscriptions](#push_subscriptions)
   - [inbox_messages](#inbox_messages)
@@ -80,7 +81,7 @@ configured default cwd.
 | `reasoning_effort` | TEXT | Last reasoning effort selection |
 | `source` | TEXT NOT NULL DEFAULT `'auto'` | How the task was created (`auto`, `inbox`, …) |
 | `deleted_at` | INTEGER | Unix-millis tombstone marker; `NULL` = live, set = soft-deleted (kept alive only because shares still reference the row) |
-| `parent_id` | TEXT REFERENCES `tasks(id)` | Parent WebAgent Task. Ordinary tasks always have one (omitted/null attaches to the Root); `NULL` is reserved for the Root itself. Only a survivor of a delete survives: a share-tombstoned descendant (re-parented under the global Root, or detached with `NULL` when the Root is missing or a live sibling-title collision exists) and, for the empty-task GC only, the GC'd task's children. Live descendants are deleted, not re-parented. |
+| `parent_id` | TEXT REFERENCES `tasks(id)` | Parent WebAgent Task. Ordinary tasks always have one (omitted/null attaches to the Root). `NULL` also belongs to Root, delete/archive survivors, and a task created for an external parent: that relation lives in `remote_task_links`, never as an invented local parent. |
 | `pending_compact_summary` | TEXT | One-shot agent-generated handoff waiting for the next real prompt; `NULL` when consumed |
 
 ### `agent_sessions`
@@ -127,6 +128,23 @@ strings, so the prefix is not a reserved namespace the agent must respect:
 session id in that shape that is not the task's own slot. A real session can
 never be stored in a form the reader would have to guess about, and a real
 session id that merely looks like a placeholder is restored like any other.
+
+### `remote_task_links`
+
+One instance-local fact describing the other end of a cross-instance parent
+edge. Task rows are never copied between instances.
+
+| Column | Type | Notes |
+|---|---|---|
+| `local_task_id` | TEXT NOT NULL FK | The Task row owned by this instance; cascade-delete removes the edge |
+| `remote_task_id` | TEXT NOT NULL | Opaque Task id on the peer |
+| `remote_role` | TEXT NOT NULL | `parent` on the executor (local Task is the child) or `child` on the initiator |
+| `remote_host` | TEXT | Configured host name; required only for `child`, null otherwise |
+| `peer_token_hash` | TEXT | SHA-256 fingerprint of the authenticated Host credential; required only for `parent`, null otherwise |
+
+CHECK constraints keep the direction-specific fields exclusive. Partial unique
+indexes permit at most one external parent per local Task and one local link per
+remote child id. The table deliberately stores no title, timestamp, or status.
 
 ### `events`
 

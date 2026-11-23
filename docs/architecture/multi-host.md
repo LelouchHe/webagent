@@ -17,7 +17,8 @@ server interface (see [Architecture](README.md)); below it, a host layer selects
 local or remote execution.
 
 This document describes that direction and the parts that exist today: the
-`TaskOps` port and the connection layer. Remote Task resolution, routing,
+`TaskOps` port, the connection layer, and the executor half of remote Task
+creation. Remote Task resolution, routing of established tasks,
 cross-instance idempotency, and delivery are not implemented yet. Instances
 never share storage.
 
@@ -112,6 +113,14 @@ verify endpoint reports the caller's token name, scope, and SHA-256 `hash`.
 regression observation. The browser UI does not consume it yet. See
 [the API reference](../api.md#hosts) for exact response shapes and
 [configuration](../configuration.md#multi-host-connection) for token commands.
+
+Host connections use a token with the explicit `host` scope. That scope reaches
+only the connection probes and `POST /api/v1/tasks`; it cannot act as an
+ordinary browser/API credential. On the executor, a Host-scoped create treats
+`parentId` as an opaque peer Task id, never looking for a same-named local row.
+It validates the target agent and cwd, creates the Task with an empty execution
+slot, and atomically records the external-parent link. ACP starts only when the
+task is later used.
 
 ## Directories and dependencies
 

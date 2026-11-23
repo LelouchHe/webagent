@@ -4,7 +4,7 @@ import lockfile from "proper-lockfile";
 import { generateToken, hashToken, verifyToken } from "./auth.ts";
 import { atomicWriteFile } from "./atomic-write.ts";
 
-export type Scope = "admin" | "api" | "read";
+export type Scope = "admin" | "api" | "host" | "read";
 
 export interface TokenRecord {
   name: string;
@@ -19,7 +19,12 @@ interface AuthFileShape {
 }
 
 const VALID_NAME = /^[A-Za-z0-9_-]{1,64}$/;
-const VALID_SCOPE: ReadonlySet<string> = new Set(["admin", "api", "read"]);
+const VALID_SCOPE: ReadonlySet<string> = new Set([
+  "admin",
+  "api",
+  "host",
+  "read",
+]);
 const FILE_MODE = 0o600;
 const LOCK_OPTS = {
   retries: { retries: 10, factor: 2, minTimeout: 20, maxTimeout: 200 },
@@ -282,7 +287,12 @@ function parseAuthFile(raw: string): AuthFileShape {
     const e = entry as Record<string, unknown>;
     if (typeof e.name !== "string")
       throw new Error(`auth.json tokens[${i}].name missing`);
-    if (e.scope !== "admin" && e.scope !== "api" && e.scope !== "read")
+    if (
+      e.scope !== "admin" &&
+      e.scope !== "api" &&
+      e.scope !== "host" &&
+      e.scope !== "read"
+    )
       throw new Error(`auth.json tokens[${i}].scope invalid`);
     if (typeof e.hash !== "string" || !/^[a-f0-9]{64}$/i.test(e.hash)) {
       throw new Error(`auth.json tokens[${i}].hash invalid`);

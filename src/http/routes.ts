@@ -30,6 +30,7 @@ import { handleShareRoutes } from "../share/routes.ts";
 import { handleFileRoutes } from "../files/routes.ts";
 import {
   authenticate,
+  isHostScopeAllowedPath,
   isReadScopeAllowedPath,
   isWhitelistedPath,
 } from "../auth-middleware.ts";
@@ -788,6 +789,16 @@ export function createRequestHandler(
           res.end(JSON.stringify({ error: "Forbidden", reason: "read_scope" }));
           return;
         }
+        if (
+          result.principal.scope === "host" &&
+          !isHostScopeAllowedPath(method, path)
+        ) {
+          res.writeHead(HTTP_STATUS.FORBIDDEN, {
+            "Content-Type": "application/json",
+          });
+          res.end(JSON.stringify({ error: "Forbidden", reason: "host_scope" }));
+          return;
+        }
       }
     }
 
@@ -1056,9 +1067,9 @@ export function createRequestHandler(
         // deliberately CLI-only so a compromised api/read token cannot
         // escalate through this route.
         const scope = body.scope === undefined ? "api" : body.scope;
-        if (scope !== "api" && scope !== "read") {
+        if (scope !== "api" && scope !== "host" && scope !== "read") {
           json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "scope must be 'api' or 'read'",
+            error: "scope must be 'api', 'host', or 'read'",
           });
           return;
         }
@@ -3043,8 +3054,11 @@ export function createRequestHandler(
           return;
         }
         try {
+          const principal = principalByRequest.get(req);
           const created = await taskOps.create(
-            { kind: "user" },
+            principal?.scope === "host"
+              ? { kind: "host", peerTokenHash: principal.hash }
+              : { kind: "user" },
             {
               cwd: body.cwd,
               inheritFromTaskId: body.inheritFromTaskId,

@@ -741,6 +741,24 @@ export class Store {
         from_ref TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, seq);
+      CREATE TABLE IF NOT EXISTS remote_task_links (
+        local_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        remote_task_id TEXT NOT NULL,
+        remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
+        remote_host TEXT,
+        peer_token_hash TEXT,
+        CHECK (
+          (remote_role = 'child' AND remote_host IS NOT NULL AND peer_token_hash IS NULL)
+          OR
+          (remote_role = 'parent' AND remote_host IS NULL AND peer_token_hash IS NOT NULL)
+        )
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS remote_task_links_one_parent
+        ON remote_task_links(local_task_id)
+        WHERE remote_role = 'parent';
+      CREATE UNIQUE INDEX IF NOT EXISTS remote_task_links_one_child
+        ON remote_task_links(remote_task_id)
+        WHERE remote_role = 'child';
       CREATE TABLE IF NOT EXISTS push_subscriptions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         endpoint TEXT NOT NULL UNIQUE,
@@ -1127,6 +1145,83 @@ export class Store {
         .prepare("SELECT * FROM tasks WHERE id = ?")
         .get(id) as TaskRow;
     });
+  }
+
+  createDeferredRemoteTask(input: {
+    id: string;
+    cwd: string;
+    source: string;
+    agentId: string;
+    externalParentId: string | null;
+    peerTokenHash: string;
+    title?: string;
+    workflowStatus?: WorkflowStatus;
+  }): TaskRow {
+    if (this.isRootTaskId(input.id)) {
+      throw new Error(
+        `Reserved Root id cannot be created as an ordinary task: ${input.id}`,
+      );
+    }
+    return this.writeBindings(() => {
+      if (!this.getTaskIncludingDeleted(this.rootTaskId)) {
+        this.insertRootRow(input.cwd);
+      }
+      const now = Date.now();
+      this.db
+        .prepare(
+          `INSERT INTO tasks
+           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)
+           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.id,
+          canonicalCwd(input.cwd),
+          input.source,
+          input.title ?? input.id,
+          input.workflowStatus ?? "idle",
+          now,
+          now,
+        );
+      this.insertBindingRow(
+        input.id,
+        input.agentId,
+        emptyExecutionSlot(input.id),
+      );
+      this.collectBindingChange(input.id, null);
+      if (input.externalParentId !== null) {
+        this.db
+          .prepare(
+            `INSERT INTO remote_task_links
+             (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)
+             VALUES (?, ?, 'parent', NULL, ?)`,
+          )
+          .run(input.id, input.externalParentId, input.peerTokenHash);
+      }
+      return this.db
+        .prepare("SELECT * FROM tasks WHERE id = ?")
+        .get(input.id) as TaskRow;
+    });
+  }
+
+  getRemoteTaskLinks(localTaskId: string): Array<{
+    local_task_id: string;
+    remote_task_id: string;
+    remote_role: "parent" | "child";
+    remote_host: string | null;
+    peer_token_hash: string | null;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash
+         FROM remote_task_links WHERE local_task_id = ?`,
+      )
+      .all(localTaskId) as Array<{
+      local_task_id: string;
+      remote_task_id: string;
+      remote_role: "parent" | "child";
+      remote_host: string | null;
+      peer_token_hash: string | null;
+    }>;
   }
 
   /**

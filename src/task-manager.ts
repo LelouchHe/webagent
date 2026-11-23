@@ -1566,6 +1566,43 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
+   * Persist a remotely requested task without starting ACP. The normal resume
+   * path materializes its empty owner slot on first use.
+   */
+  async createDeferredRemoteTask(input: {
+    agentId: string;
+    cwd?: string;
+    source: string;
+    externalParentId: string | null;
+    peerTokenHash: string;
+    title?: string;
+    workflowStatus?: WorkflowStatus;
+  }): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+    if (!this.isAgentConfigured(input.agentId)) {
+      throw new Error(`Agent ${input.agentId} is not configured`);
+    }
+    const taskCwd = this.resolveTaskCwd(input.cwd, this.defaultCwd);
+    try {
+      const info = await stat(taskCwd);
+      if (!info.isDirectory()) throw new Error("not a directory");
+    } catch {
+      throw new InvalidTaskDirectoryError(taskCwd);
+    }
+    const taskId = randomUUID();
+    this.store.createDeferredRemoteTask({
+      id: taskId,
+      cwd: taskCwd,
+      source: input.source,
+      agentId: input.agentId,
+      externalParentId: input.externalParentId,
+      peerTokenHash: input.peerTokenHash,
+      title: input.title,
+      workflowStatus: input.workflowStatus,
+    });
+    return { taskId, configOptions: [] };
+  }
+
+  /**
    * Publish a freshly persisted task. The envelope is the activation payload
    * `resumeTask` also returns: cwd, parent link, and binding agent let a client
    * install the task without a read, and the config values are the final ones

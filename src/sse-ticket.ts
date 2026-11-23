@@ -2,7 +2,7 @@ import { generateSseTicket } from "./tokens.ts";
 
 export interface TicketPrincipal {
   tokenName: string;
-  scope: "admin" | "api" | "read";
+  scope: "admin" | "api" | "host" | "read";
 }
 
 interface TicketRecord extends TicketPrincipal {

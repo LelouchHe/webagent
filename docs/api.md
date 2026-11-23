@@ -1179,7 +1179,7 @@ This endpoint **always requires** a valid `Authorization: Bearer <token>` header
 | ------- | ------- | ---------------------------------------------------- |
 | `ok`    | boolean | Always `true` on success                             |
 | `name`  | string  | Token's human-readable name (e.g. `"laptop"`)        |
-| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"read"` (pure reads only: host status, task list, task detail, events, status, permissions, version, auth/verify; events never flushes and no read warms) |
+| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), `"host"` (Host connection probes and remote Task create only), or `"read"` (pure reads only: host status, task list, task detail, events, status, permissions, version, auth/verify; events never flushes and no read warms) |
 | `hash`  | string  | SHA-256 hex digest of the presented token, matching its stored `hash` |
 
 **Response** `401`:
@@ -1264,9 +1264,11 @@ Create a new token. **The raw token is returned exactly once** — the server on
 | Field   | Type   | Description                                                                 |
 | ------- | ------ | --------------------------------------------------------------------------- |
 | `name`  | string | 1–64 chars, `[A-Za-z0-9_-]`. Must be unique.                                |
-| `scope` | string | Optional. `"api"` (default) or `"read"`. `admin` is not accepted here.      |
+| `scope` | string | Optional. `"api"` (default), `"host"`, or `"read"`. `admin` is not accepted here. |
 
-New tokens default to `api` scope (no access to `/tokens/**`). `read` mints the
+New tokens default to `api` scope (no access to `/tokens/**`). `host` mints a
+cross-instance credential limited to connection probes and remote Task create.
+`read` mints the
 narrow pure-read credential used by external history consumers; it is denied by
 default on every route outside the documented read allowlist (see
 [Auth Flow](security.md#auth-flow)). `admin` is CLI-only: use

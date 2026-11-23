@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { AuthStore } from "../src/auth-store.ts";
 import {
   isWhitelistedPath,
+  isHostScopeAllowedPath,
   isReadScopeAllowedPath,
   authenticate,
   requireScope,
@@ -279,6 +280,25 @@ describe("auth-middleware", () => {
         isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/events/stream"),
         false,
       );
+    });
+
+    describe("isHostScopeAllowedPath", () => {
+      it("allows only host connection and create routes", () => {
+        assert.equal(
+          isHostScopeAllowedPath("GET", "/api/v1/auth/verify"),
+          true,
+        );
+        assert.equal(
+          isHostScopeAllowedPath("POST", "/api/v1/sse-ticket"),
+          true,
+        );
+        assert.equal(isHostScopeAllowedPath("POST", "/api/v1/tasks"), true);
+        assert.equal(isHostScopeAllowedPath("GET", "/api/v1/tasks"), false);
+        assert.equal(
+          isHostScopeAllowedPath("POST", "/api/v1/tasks/abc/cancel"),
+          false,
+        );
+      });
     });
   });
 });

@@ -109,7 +109,9 @@ export interface TaskCreateInput {
 }
 
 export type TaskCreateCaller =
-  { kind: "user" } | { kind: "agent"; principal: TaskCaller };
+  | { kind: "user" }
+  | { kind: "agent"; principal: TaskCaller }
+  | { kind: "host"; peerTokenHash: string };
 
 export class TaskAgentNotConfiguredError extends Error {
   readonly agentId: string;

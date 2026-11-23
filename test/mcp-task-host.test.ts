@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Store } from "../src/store.ts";
+import { isEmptyExecutionSlot, Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import {
@@ -88,6 +88,91 @@ describe("MCP Task tool host", () => {
     tasks.dispose();
     store.close();
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("creates a deferred host task and external-parent link without ACP", async () => {
+    let sessionsStarted = 0;
+    tasks.attachExecutionBridge({
+      ...mockBridgeStubs(),
+      newSession: async () => {
+        sessionsStarted += 1;
+        return { sessionId: "unexpected", configOptions: [] };
+      },
+    });
+    const host = createLocalTaskOps({ store, tasks });
+
+    const created = await host.create(
+      { kind: "host", peerTokenHash: "peer-hash" },
+      {
+        agentId: "test-agent",
+        parentId: "external-parent",
+        title: "Remote child",
+        cwd: dir,
+        source: "host",
+      },
+    );
+
+    const task = store.getTask(created.taskId);
+    assert.ok(task);
+    assert.equal(task.parent_id, null);
+    assert.equal(sessionsStarted, 0);
+    const binding = store.getCurrentExecutionBinding(created.taskId);
+    assert.ok(binding);
+    assert.equal(
+      isEmptyExecutionSlot(created.taskId, binding.agent_session_id),
+      true,
+    );
+    assert.deepEqual(store.getRemoteTaskLinks(created.taskId), [
+      {
+        local_task_id: created.taskId,
+        remote_task_id: "external-parent",
+        remote_role: "parent",
+        remote_host: null,
+        peer_token_hash: "peer-hash",
+      },
+    ]);
+  });
+
+  it("does not reinterpret a local-id collision as a remote parent", async () => {
+    store.createTask(
+      "external-parent",
+      dir,
+      "auto",
+      "test-agent",
+      "session-external-parent",
+    );
+    const host = createLocalTaskOps({ store, tasks });
+    const created = await host.create(
+      { kind: "host", peerTokenHash: "peer-hash" },
+      {
+        agentId: "test-agent",
+        parentId: "external-parent",
+        title: "Remote child",
+        cwd: dir,
+      },
+    );
+
+    assert.equal(store.getTask(created.taskId)?.parent_id, null);
+    assert.equal(
+      store.getRemoteTaskLinks(created.taskId)[0]?.remote_task_id,
+      "external-parent",
+    );
+  });
+
+  it("keeps an ordinary caller from using an unknown external parent", async () => {
+    const host = createLocalTaskOps({ store, tasks });
+    await assert.rejects(
+      host.create(
+        { kind: "user" },
+        {
+          agentId: "test-agent",
+          parentId: "external-parent",
+          title: "Rejected child",
+          cwd: dir,
+        },
+      ),
+      /parent_not_found/,
+    );
   });
 
   it("lists an archived tree from one of its tasks", () => {

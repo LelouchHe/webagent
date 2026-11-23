@@ -101,6 +101,7 @@ export class HostConnection {
       identity.hash !== hashToken(token) ||
       (identity.scope !== "read" &&
         identity.scope !== "api" &&
+        identity.scope !== "host" &&
         identity.scope !== "admin")
     ) {
       throw new HostConnectionFailure("protocol_mismatch");
