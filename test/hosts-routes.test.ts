@@ -57,12 +57,9 @@ describe("multi-host routes", () => {
     await authStore.load();
     apiToken = (await authStore.addToken("hub", "api")).token;
     readToken = (await authStore.addToken("reader", "read")).token;
-    const hostRegistry = new HostRegistry(
-      {
-        desk: { url: "http://desk.example", token: "wat_secret" },
-      },
-      { now: () => 1_700_000_000_000 },
-    );
+    const hostRegistry = new HostRegistry({
+      desk: { url: "http://desk.example", token: "wat_secret" },
+    });
     const handler = createRequestHandler({
       store,
       authStore,
@@ -120,13 +117,10 @@ describe("multi-host routes", () => {
   it("allows every authenticated scope to read host status", async () => {
     const response = await request(port, "/api/v1/hosts", readToken);
     assert.equal(response.status, 200);
-    assert.deepEqual(response.body, [
-      {
-        name: "desk",
-        url: "http://desk.example",
-        state: "connecting",
-        since: "2023-11-14T22:13:20.000Z",
-      },
-    ]);
+    const [host] = response.body as Array<Record<string, unknown>>;
+    assert.equal(host.name, "desk");
+    assert.equal(host.url, "http://desk.example");
+    assert.equal(host.state, "connecting");
+    assert.match(String(host.since), /^\d{4}-\d{2}-\d{2}T/);
   });
 });

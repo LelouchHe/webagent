@@ -6,8 +6,10 @@ import {
 } from "../src/host/remote/credentials.ts";
 import { retryDelay } from "../src/host/remote/state.ts";
 import { hashToken } from "../src/auth.ts";
-import { HostRegistry } from "../src/host/remote/registry.ts";
 import { HostConnection } from "../src/host/remote/connection.ts";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -97,22 +99,20 @@ describe("host connection helpers", () => {
         );
       });
     };
-    const registry = new HostRegistry(
-      { owner: { url: "http://owner.example", token: "wat_hub" } },
+    const connection = new HostConnection(
+      { url: "http://owner.example", token: "wat_hub" },
       {
         fetch: fetchImpl,
-        heartbeatTimeoutMs: 20,
         handshakeTimeoutMs: 20,
-        minimumRetryMs: 1,
-        maximumRetryMs: 1,
-        onState: (_name, state, reason) => {
+        retryDelay: () => 1,
+        onState: (state, reason) => {
           if (state === "unreachable" && reason === "network") {
             observedRetryState = true;
           }
         },
       },
     );
-    registry.start();
+    connection.start();
     await Promise.race([
       secondSse.promise,
       new Promise<never>((_resolve, reject) =>
@@ -121,7 +121,7 @@ describe("host connection helpers", () => {
         }, 1_000),
       ),
     ]);
-    registry.stopAll();
+    connection.stop();
     assert.equal(observedRetryState, true);
     assert.ok(
       sseAttempts >= 2,
@@ -129,35 +129,50 @@ describe("host connection helpers", () => {
     );
   });
 
-  it("waits for an aborted token command before starting another", async () => {
-    const first = deferred<string>();
-    let tokenAttempts = 0;
-    let unreachable = false;
+  it("never overlaps real token commands after abort", async () => {
+    const root = mkdtempSync(join(tmpdir(), "webagent-token-command-"));
+    const lock = join(root, "lock");
+    const starts = join(root, "starts");
+    const overlap = join(root, "overlap");
+    const command = [
+      `trap '' TERM`,
+      `if ! mkdir ${JSON.stringify(lock)}; then echo overlap > ${JSON.stringify(overlap)}; fi`,
+      `echo start >> ${JSON.stringify(starts)}`,
+      "sleep 0.25",
+      `rmdir ${JSON.stringify(lock)} 2>/dev/null || true`,
+      "printf wat_hub",
+    ].join("; ");
+    const fetchImpl: typeof globalThis.fetch = async () =>
+      new Response("not found", { status: 404 });
     const connection = new HostConnection(
+      { url: "http://owner.example", token: `!${command}` },
       {
-        url: "http://owner.example",
-        token: "!ignored-test-command",
-      },
-      {
-        handshakeTimeoutMs: 10,
+        fetch: fetchImpl,
         retryDelay: () => 1,
-        resolveToken: () => {
-          tokenAttempts += 1;
-          return tokenAttempts === 1
-            ? first.promise
-            : Promise.reject(new Error("second token command"));
-        },
-        onState: (state) => {
-          if (state === "unreachable") unreachable = true;
-        },
       },
     );
-    connection.start();
-    await until(() => unreachable);
-    assert.equal(tokenAttempts, 1);
-    first.resolve("wat_hub");
-    await until(() => tokenAttempts >= 2);
-    connection.stop();
+    try {
+      connection.start();
+      await until(
+        () =>
+          existsSync(starts) &&
+          readFileSync(starts, "utf8").trim().split("\n").length >= 1,
+      );
+      connection.stop();
+      connection.start();
+      await until(
+        () =>
+          existsSync(starts) &&
+          readFileSync(starts, "utf8").trim().split("\n").length >= 2,
+        1_500,
+      );
+      connection.stop();
+      assert.equal(existsSync(overlap), false, "token commands overlapped");
+    } finally {
+      connection.stop();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("does not publish connected after a pending read is invalidated", async () => {
@@ -227,6 +242,5 @@ describe("host connection helpers", () => {
       [0, 1, 2, 3, 20].map((attempt) => retryDelay(attempt)),
       [500, 1_000, 2_000, 4_000, 30_000],
     );
-    assert.throws(() => retryDelay(-1), RangeError);
   });
 });

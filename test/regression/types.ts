@@ -13,14 +13,17 @@ export interface RegressionClient {
     body?: Json,
     token?: string,
   ): Promise<RestResponse>;
-  instance(name: string): RegressionClient;
+  instance(name: string): RegressionInstanceClient;
   restart(name: string, whileStopped?: () => Promise<Json>): Promise<Json>;
-  waitForHost(
-    instanceName: string,
-    hostName: string,
-    state: "connecting" | "connected" | "unreachable",
-    reason?: string,
-  ): Promise<Json>;
+}
+
+export interface RegressionInstanceClient {
+  rest(
+    method: string,
+    path: string,
+    body?: Json,
+    token?: string,
+  ): Promise<RestResponse>;
 }
 
 export interface RegressionContext extends RegressionClient {
@@ -30,17 +33,8 @@ export interface RegressionContext extends RegressionClient {
 }
 
 export interface RegressionInstanceContext {
-  name: string;
   root: string;
   origin: string;
-  port: number;
-  token: string;
-  rest(
-    method: string,
-    path: string,
-    body?: Json,
-    token?: string,
-  ): Promise<RestResponse>;
 }
 
 export interface RegressionInstanceSpec {

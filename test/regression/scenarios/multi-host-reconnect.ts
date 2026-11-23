@@ -3,6 +3,7 @@ import {
   EMPTY_MOCK,
   hubHostConfig,
   provisionHostToken,
+  waitForHost,
   type ProvisionedHostToken,
 } from "../multi-host.ts";
 
@@ -18,9 +19,9 @@ export default scenario<ProvisionedHostToken>({
       name: "restart-owner-and-wait-for-reconnect",
       async action(client) {
         const restart = await client.restart("owner", () =>
-          client.waitForHost("hub", "owner", "unreachable"),
+          waitForHost(client, "hub", "owner", "unreachable"),
         );
-        const status = await client.waitForHost("hub", "owner", "connected");
+        const status = await waitForHost(client, "hub", "owner", "connected");
         return { restart, status };
       },
     },

@@ -165,6 +165,7 @@ import {
 import { readImageInfo } from "./image-info.ts";
 import { HTTP_STATUS } from "./http-status.ts";
 import type { HostRegistry } from "./host/remote/registry.ts";
+import { HOST_PROTOCOL_VERSION } from "./host/remote/state.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -961,7 +962,7 @@ export function createRequestHandler(
         json(res, HTTP_STATUS.OK, {
           server: deps.serverVersion ?? "unknown",
           agent: tasks?.agentInfoFor(tasks.defaultAgentId) ?? null,
-          hostProtocol: 1,
+          hostProtocol: HOST_PROTOCOL_VERSION,
         });
         return;
       }

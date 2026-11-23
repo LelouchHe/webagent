@@ -67,7 +67,7 @@ class FakeTimers {
 }
 
 describe("StreamSupervisor", () => {
-  it("invalidates old attempts and aborts actions from superseded epochs", () => {
+  it("invalidates old attempt objects and aborts superseded actions", () => {
     const timers = new FakeTimers();
     const attempts: StreamAttempt[] = [];
     const completed: number[] = [];
@@ -76,16 +76,16 @@ describe("StreamSupervisor", () => {
         attempts.push(attempt);
       },
       retryDelay: () => 0,
-      timers: timers.api,
+      clock: timers.api,
     });
     const first = supervisor.start();
     const second = supervisor.start();
     supervisor.noteActivity(first);
-    if (first.isCurrent()) completed.push(first.epoch);
-    if (second.isCurrent()) completed.push(second.epoch);
+    if (first.isCurrent()) completed.push(1);
+    if (second.isCurrent()) completed.push(2);
     assert.equal(first.signal.aborted, true);
     assert.equal(second.signal.aborted, false);
-    assert.deepEqual(completed, [second.epoch]);
+    assert.deepEqual(completed, [2]);
     supervisor.stop();
   });
 
@@ -97,7 +97,7 @@ describe("StreamSupervisor", () => {
         attempts += 1;
       },
       retryDelay: () => 100,
-      timers: timers.api,
+      clock: timers.api,
     });
     const attempt = supervisor.start();
     supervisor.reconnect(attempt);
@@ -120,8 +120,7 @@ describe("StreamSupervisor", () => {
         failures.push(failure.kind);
       },
       stallTimeoutMs: 20,
-      watchdogIntervalMs: 5,
-      timers: timers.api,
+      clock: timers.api,
     });
     const first = supervisor.start();
     timers.advance(20);
@@ -146,10 +145,10 @@ describe("StreamSupervisor", () => {
       },
       handshakeTimeoutMs: 20,
       stallTimeoutMs: 100,
-      watchdogIntervalMs: 5,
-      timers: timers.api,
+      clock: timers.api,
     });
     const first = supervisor.start();
+    supervisor.beginHandshake(first);
     for (let step = 0; step < 4; step += 1) {
       timers.advance(5);
       supervisor.noteActivity(first);
@@ -157,7 +156,7 @@ describe("StreamSupervisor", () => {
     assert.equal(first.signal.aborted, true);
     timers.advance(50);
     assert.equal(attempts, 2);
-    assert.deepEqual(failures, ["handshake"]);
+    assert.deepEqual(failures, ["attempt"]);
     supervisor.stop();
   });
 
@@ -169,7 +168,7 @@ describe("StreamSupervisor", () => {
         attempts += 1;
       },
       retryDelay: () => 100,
-      timers: timers.api,
+      clock: timers.api,
     });
     const first = supervisor.start();
     supervisor.reconnect(first);

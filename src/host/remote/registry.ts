@@ -10,79 +10,42 @@ import {
 
 const hlog = log.scope("hosts");
 
-export interface HostRegistryOptions {
-  fetch?: typeof globalThis.fetch;
-  now?: () => number;
-  requestTimeoutMs?: number;
-  heartbeatTimeoutMs?: number;
-  handshakeTimeoutMs?: number;
-  minimumRetryMs?: number;
-  maximumRetryMs?: number;
-  onConnected?: (name: string) => void | Promise<void>;
-  onState?: (
-    name: string,
-    state: HostConnectionState,
-    reason?: HostUnreachableReason,
-  ) => void;
-}
-
 export class HostRegistry {
-  private readonly configs: Record<string, HostConfig>;
-  private readonly options: HostRegistryOptions;
   private readonly states = new Map<string, HostRuntimeState>();
   private readonly connections = new Map<string, HostConnection>();
   private started = false;
 
   constructor(
     configs: Record<string, HostConfig>,
-    options: HostRegistryOptions = {},
+    onConnected?: (name: string) => void,
   ) {
-    this.configs = configs;
-    this.options = options;
-    const now = options.now ?? Date.now;
     for (const [name, config] of Object.entries(configs)) {
       this.states.set(name, {
         name,
         url: config.url,
         state: "connecting",
         reason: null,
-        since: now(),
+        since: Date.now(),
       });
+      this.connections.set(
+        name,
+        new HostConnection(config, {
+          retryDelay: (attempt) => retryDelay(attempt),
+          onState: (state, reason) => {
+            this.transition(name, state, reason);
+          },
+          onConnected: () => {
+            onConnected?.(name);
+          },
+        }),
+      );
     }
   }
 
   start(): void {
     if (this.started) return;
     this.started = true;
-    for (const [name, config] of Object.entries(this.configs)) {
-      const connection = new HostConnection(config, {
-        fetch: this.options.fetch,
-        requestTimeoutMs: this.options.requestTimeoutMs,
-        heartbeatTimeoutMs: this.options.heartbeatTimeoutMs,
-        handshakeTimeoutMs: this.options.handshakeTimeoutMs,
-        retryDelay: (failures) =>
-          retryDelay(
-            failures,
-            this.options.minimumRetryMs,
-            this.options.maximumRetryMs,
-          ),
-        onState: (state, reason) => {
-          this.transition(name, state, reason);
-        },
-        onConnected: async () => {
-          try {
-            await this.options.onConnected?.(name);
-          } catch (error) {
-            hlog.warn("catch-up hook failed", {
-              host: name,
-              error: String(error),
-            });
-          }
-        },
-      });
-      this.connections.set(name, connection);
-      connection.start();
-    }
+    for (const connection of this.connections.values()) connection.start();
   }
 
   stopAll(): void {
@@ -102,18 +65,16 @@ export class HostRegistry {
     if (!current) return;
     const nextReason = state === "unreachable" ? (reason ?? "network") : null;
     if (current.state === state && current.reason === nextReason) return;
-    const now = this.options.now ?? Date.now;
     this.states.set(name, {
       ...current,
       state,
       reason: nextReason,
-      since: now(),
+      since: Date.now(),
     });
     hlog.info("state changed", {
       host: name,
       state,
       ...(nextReason ? { reason: nextReason } : {}),
     });
-    this.options.onState?.(name, state, nextReason ?? undefined);
   }
 }

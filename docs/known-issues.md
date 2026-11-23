@@ -133,14 +133,13 @@ time. An entry without a "closing condition" is a wish, not an issue.
 ## Protocol and agent compatibility
 
 - **A host token command can ignore cancellation or leave descendants holding
-  its stdout pipe.** `execFile` receives the stop signal and a five-second
-  timeout, but a shell that ignores the signal or a descendant that retains the
-  pipe can keep the per-host command wait open beyond that bound. This can delay
-  only that host's next retry, and the connection supervisor waits for that
-  command to finish before starting another one for the same host; other
-  configured hosts and server shutdown do not share the wait. *Closing:* handle
-  this after a real command demonstrates the behavior, then choose an explicit
-  process-tree termination mechanism.
+  its stdout pipe.** The command receives SIGTERM on stop/timeout, and the
+  connection waits for the child `close` event, so a replacement command is not
+  started early. A shell that ignores SIGTERM or a descendant that retains the
+  pipe can therefore delay that host's next retry beyond the five-second
+  command timeout; other configured hosts do not share the wait. *Closing:*
+  handle this after a real command demonstrates the behavior, then choose an
+  explicit process-tree termination mechanism.
 - **`MAX_ACP_MESSAGE_BYTES` is a hardcoded 128 MiB cap.** It is not derived from
   configured limits, so raising `file_upload` above roughly 120 MiB still hits
   it. *Closing:* derive the cap from the configured upload limit (with a

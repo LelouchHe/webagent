@@ -1,5 +1,7 @@
 export type HostConnectionState = "connecting" | "connected" | "unreachable";
 
+export const HOST_PROTOCOL_VERSION = 1;
+
 export type HostUnreachableReason =
   | "token_command_failed"
   | "unauthorized"
@@ -15,13 +17,6 @@ export interface HostRuntimeState {
   since: number;
 }
 
-export function retryDelay(
-  attempt: number,
-  minimumMs = 500,
-  maximumMs = 30_000,
-): number {
-  if (!Number.isInteger(attempt) || attempt < 0) {
-    throw new RangeError("attempt must be a non-negative integer");
-  }
-  return Math.min(minimumMs * 2 ** Math.min(attempt, 30), maximumMs);
+export function retryDelay(attempt: number): number {
+  return Math.min(500 * 2 ** Math.min(attempt, 30), 30_000);
 }

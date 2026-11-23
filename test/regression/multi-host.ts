@@ -2,7 +2,9 @@ import { join } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
 import type {
   JsonObject,
+  Json,
   MockBehavior,
+  RegressionClient,
   RegressionContext,
   RegressionInstanceContext,
 } from "./types.ts";
@@ -16,6 +18,13 @@ export interface ProvisionedHostToken {
     name: string;
     scope: string;
   };
+}
+
+export interface ProvisionHostTokenOptions {
+  transform?: (token: string) => string;
+  write?: boolean;
+  waitFor?: "connected" | null;
+  scope?: "api" | "read";
 }
 
 export function hostTokenPath(
@@ -36,16 +45,13 @@ export function hubHostConfig(
 
 export async function provisionHostToken(
   context: RegressionContext,
-  tokenTransform: (token: string) => string = (token) => token,
-  writeToken = true,
-  waitForConnected = true,
-  scope: "api" | "read" = "api",
+  options: ProvisionHostTokenOptions = {},
 ): Promise<ProvisionedHostToken> {
   const response = await context
     .instance("owner")
     .rest("POST", "/api/v1/tokens", {
       name: "hub-connection",
-      scope,
+      scope: options.scope ?? "api",
     });
   const body = response.body as JsonObject;
   if (
@@ -57,9 +63,11 @@ export async function provisionHostToken(
     throw new Error(`token creation failed: ${JSON.stringify(response)}`);
   }
   const tokenPath = hostTokenPath(context.instances);
-  if (writeToken) writeFileSync(tokenPath, tokenTransform(body.token));
-  if (waitForConnected) {
-    await context.waitForHost("hub", "owner", "connected");
+  if (options.write !== false) {
+    writeFileSync(tokenPath, options.transform?.(body.token) ?? body.token);
+  }
+  if (options.waitFor !== null) {
+    await waitForHost(context, "hub", "owner", "connected");
   }
   return {
     tokenPath,
@@ -69,6 +77,39 @@ export async function provisionHostToken(
       scope: body.scope,
     },
   };
+}
+
+export async function waitForHost(
+  context: RegressionClient,
+  instanceName: string,
+  hostName: string,
+  state: "connecting" | "connected" | "unreachable",
+  reason?: string,
+): Promise<Json> {
+  const deadline = performance.now() + 10_000;
+  while (performance.now() < deadline) {
+    const latest = (
+      await context.instance(instanceName).rest("GET", "/api/v1/hosts")
+    ).body;
+    if (Array.isArray(latest)) {
+      const host = latest.find(
+        (entry) =>
+          entry !== null &&
+          typeof entry === "object" &&
+          (entry as JsonObject).name === hostName,
+      ) as JsonObject | undefined;
+      if (
+        host?.state === state &&
+        (reason === undefined || host.reason === reason)
+      ) {
+        return latest;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(
+    `${instanceName}: ${hostName} did not become ${state}${reason ? ` (${reason})` : ""}`,
+  );
 }
 
 export function readHostToken(state: ProvisionedHostToken): string {

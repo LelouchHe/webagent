@@ -39,8 +39,8 @@ cmd = "copilot --acp"
 # cmd = "opencode acp"
 
 # Other WebAgent instances this one connects to (optional; none by default).
-# The table key is the host name used in `agent@host`: lowercase letters,
-# digits, and dashes. `token` is a literal token issued by that host, or a
+# The table key is the host name (used for `agent@host` in a later release):
+# lowercase letters, digits, and dashes. `token` is a literal token issued by that host, or a
 # `!command` whose trimmed output is the token, run on each connection.
 # The other host needs no matching entry.
 # [hosts.workstation]

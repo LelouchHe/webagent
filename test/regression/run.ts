@@ -258,14 +258,8 @@ async function createInstances(
     plans.map((plan) => [
       plan.name,
       {
-        name: plan.name,
         root: plan.root,
         origin: `http://127.0.0.1:${plan.port}`,
-        port: plan.port,
-        token: TOKEN,
-        rest: () => {
-          throw new Error("instance config cannot make REST requests");
-        },
       } satisfies RegressionInstanceContext,
     ]),
   );
@@ -375,12 +369,8 @@ function createContext(
     [...instances.entries()].map(([name, instance]) => [
       name,
       {
-        name,
         root: instance.root,
         origin: instance.origin,
-        port: instance.port,
-        token: TOKEN,
-        rest: createInstanceClient(instance),
       },
     ]),
   );
@@ -388,25 +378,14 @@ function createContext(
 
 function createClient(instances: Map<string, Instance>): RegressionClient {
   const primary = [...instances.values()][0];
-  const build = (selected: Instance): RegressionClient => ({
-    rest: createInstanceClient(selected),
-    instance: (name: string) => build(requireInstance(instances, name)),
+  return {
+    rest: createInstanceClient(primary),
+    instance: (name: string) => ({
+      rest: createInstanceClient(requireInstance(instances, name)),
+    }),
     restart: async (name: string, whileStopped?: () => Promise<Json>) =>
       restartInstance(requireInstance(instances, name), whileStopped),
-    waitForHost: async (
-      instanceName: string,
-      hostName: string,
-      state: "connecting" | "connected" | "unreachable",
-      reason?: string,
-    ) =>
-      waitForHost(
-        requireInstance(instances, instanceName),
-        hostName,
-        state,
-        reason,
-      ),
-  });
-  return build(primary);
+  };
 }
 
 function requireInstance(
@@ -543,15 +522,14 @@ async function settle(
   instances: Map<string, Instance>,
   step: string,
 ): Promise<void> {
-  let last = await settleSignature(instances);
+  let last = settleSignature(instances);
   let quietSince = performance.now();
   await waitUntil(
     async () => {
       for (const instance of instances.values()) {
         if (instance.sseError) throw instance.sseError;
       }
-      const hostStates = await readHostStates(instances);
-      const current = await settleSignature(instances, hostStates);
+      const current = settleSignature(instances);
       if (current !== last) {
         last = current;
         quietSince = performance.now();
@@ -560,12 +538,7 @@ async function settle(
       const busyCovered = [...instances.values()].every(
         (instance) => uncoveredBusyTasks(instance).length === 0,
       );
-      const connecting = hostStates.some((entry) =>
-        entry.hosts.some((host) => host.state === "connecting"),
-      );
-      return (
-        performance.now() - quietSince >= QUIET_MS && busyCovered && !connecting
-      );
+      return performance.now() - quietSince >= QUIET_MS && busyCovered;
     },
     SETTLE_TIMEOUT_MS,
     () =>
@@ -575,37 +548,14 @@ async function settle(
   );
 }
 
-async function settleSignature(
-  instances: Map<string, Instance>,
-  suppliedHostStates?: Array<{ instance: string; hosts: HostState[] }>,
-): Promise<string> {
-  const hostStates = suppliedHostStates ?? (await readHostStates(instances));
-  return JSON.stringify({
-    instances: [...instances.values()].map((instance) => [
+function settleSignature(instances: Map<string, Instance>): string {
+  return JSON.stringify(
+    [...instances.values()].map((instance) => [
       instance.name,
       instance.sse.length,
       readLines(instance.mockLog).length,
       readLines(instance.observerLog).length,
     ]),
-    hostStates,
-  });
-}
-
-interface HostState {
-  state: string;
-  name: string;
-}
-
-async function readHostStates(
-  instances: Map<string, Instance>,
-): Promise<Array<{ instance: string; hosts: HostState[] }>> {
-  return Promise.all(
-    [...instances.values()].map(async (instance) => ({
-      instance: instance.name,
-      hosts: (await createInstanceClient(instance)("GET", "/api/v1/hosts").then(
-        (response) => response.body,
-      )) as unknown as HostState[],
-    })),
   );
 }
 
@@ -733,24 +683,13 @@ function observeSteps(
   if (instances.size === 1) {
     return observeStep([...instances.values()][0], name, response);
   }
-  const observed = [...instances.values()].map((instance) => {
-    const step = observeStep(instance, name, null);
-    return {
-      instance: instance.name,
-      sse: step.sse,
-      mock: step.mock,
-      sql: step.sql,
-    };
-  });
   return {
     name,
     response,
-    instances: observed.map(({ instance, sse, mock, sql }) => ({
-      name: instance,
-      sse,
-      mock,
-      sql,
-    })),
+    instances: [...instances.values()].map((instance) => {
+      const { sse, mock, sql } = observeStep(instance, name, null);
+      return { name: instance.name, sse, mock, sql };
+    }),
   };
 }
 
@@ -878,38 +817,6 @@ async function restartInstance(
     restarted: true,
     ...(stopped === null ? {} : { whileStopped: stopped }),
   };
-}
-
-async function waitForHost(
-  instance: Instance,
-  hostName: string,
-  state: "connecting" | "connected" | "unreachable",
-  reason?: string,
-): Promise<Json> {
-  let latest: Json = null;
-  await waitUntil(
-    async () => {
-      const response = await createInstanceClient(instance)(
-        "GET",
-        "/api/v1/hosts",
-      );
-      latest = response.body;
-      if (!Array.isArray(latest)) return false;
-      const host = latest.find(
-        (entry) =>
-          entry !== null &&
-          typeof entry === "object" &&
-          (entry as JsonObject).name === hostName,
-      ) as JsonObject | undefined;
-      return (
-        host?.state === state &&
-        (reason === undefined || host.reason === reason)
-      );
-    },
-    SETTLE_TIMEOUT_MS,
-    `${instance.name}: ${hostName} did not become ${state}${reason ? ` (${reason})` : ""}`,
-  );
-  return latest;
 }
 
 async function waitUntil(

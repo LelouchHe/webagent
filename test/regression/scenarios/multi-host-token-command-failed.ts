@@ -3,6 +3,7 @@ import {
   EMPTY_MOCK,
   hubHostConfig,
   provisionHostToken,
+  waitForHost,
   type ProvisionedHostToken,
 } from "../multi-host.ts";
 
@@ -13,12 +14,13 @@ export default scenario<ProvisionedHostToken>({
     hub: { mock: EMPTY_MOCK, extraConfig: hubHostConfig },
   },
   setup: (context) =>
-    provisionHostToken(context, (token) => token, false, false),
+    provisionHostToken(context, { write: false, waitFor: null }),
   steps: () => [
     {
       name: "read-token-command-failed-status",
       action: (client) =>
-        client.waitForHost(
+        waitForHost(
+          client,
           "hub",
           "owner",
           "unreachable",
