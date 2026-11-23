@@ -39,18 +39,19 @@ Entry points
              +-----------+-----------+
              |                       |
              v                       v
-     local adapter [now]       remote adapter [plan]
-     src/host/local.ts                 |
-             |                       v
-             |         router + Task transport [plan]
-             v
-   local TaskManager + Store
+     local/ adapter.ts [now]    remote/ connection [now]
+             |                       |
+             v                       +-- remote/ adapter.ts [plan]
+   local TaskManager + Store             |
+                                         v
+                                  Task transport [plan]
 ```
 
 Today MCP calls the local adapter directly through `TaskOps`; there is no
 `resolve(id)` step yet, and browser REST routes still call the local domain code
-directly. `src/host/task-ops.ts` and `src/host/local.ts` exist now. The
-resolver, remote Task adapter, and Task router are planned.
+directly. `src/host/task-ops.ts` and `src/host/local/adapter.ts` exist now.
+`src/host/remote/` currently contains the cross-instance connection only; the
+resolver, remote Task adapter, Task router, and delivery transport are planned.
 
 ## Connections
 
@@ -92,19 +93,20 @@ fingerprint. `GET /api/v1/hosts` reports the hub's connection state. See
 | --- | --- |
 | `src/mcp/` | MCP protocol handling, tool registration, capabilities, tool descriptions, and adaptation of protocol input/output |
 | `src/host/task-ops.ts` | The neutral `TaskOps` interface, command DTOs, and caller |
-| `src/host/local.ts` | The local `TaskOps` implementation over this instance's TaskManager and Store |
-| `src/host/hosts/` | Hub host configuration use, credential hashing, connection loops, retry/backoff, and in-memory status |
-| `src/host/` support modules | Projection and error helpers used only by the local implementation |
+| `src/host/local/adapter.ts` | The local `TaskOps` implementation over this instance's TaskManager and Store |
+| `src/host/local/` | Local projection and error helpers; cannot depend on remote implementations |
+| `src/host/remote/` | Current hub connection, credential hashing, retry/backoff, and in-memory status; the remote `adapter.ts` and Task delivery transport are planned |
 | `src/server.ts` | The only assembly point; it creates the local `TaskOps` and injects it into MCP |
 
 ESLint's `no-restricted-imports` guards the direct static dependencies:
 `src/mcp/**` cannot import Store, TaskManager, or a host module other than
 `src/host/task-ops.ts`, and `src/host/task-ops.ts` cannot import Store or
-TaskManager. `src/host/hosts/**` cannot import Store or TaskManager either.
-Static value and type imports and re-exports are covered, and `npm run lint`
-fails on a violation. The rule does not follow the module graph, dynamic
-`import()`, or inline `import("…").Type` references; those indirect paths are
-left to review.
+TaskManager. `src/host/remote/**` cannot import Store, TaskManager, or
+`src/host/local/**`; owner-side local commands will be injected through
+`TaskOps`. `src/host/local/**` cannot import `src/host/remote/**`. Static value
+and type imports and re-exports are covered, and `npm run lint` fails on a
+violation. The rule does not follow the module graph, dynamic `import()`, or
+inline `import("…").Type` references; those indirect paths are left to review.
 
 ## `TaskOps` port
 
@@ -123,7 +125,7 @@ All methods retain their current parameters and result shapes.
 Authorization is split between the two sides of the port today. The MCP entry
 (`src/mcp/server.ts`) authenticates the capability, checks that the task is
 active, and freezes the caller principal; it does not decide what that caller
-may do to a target. Each `TaskOps` command in `src/host/local.ts` then checks
+may do to a target. Each `TaskOps` command in `src/host/local/adapter.ts` then checks
 the principal's current execution generation and its relation to the target
 before any side effect, and re-checks at the write fences after each await. An
 authenticated principal is therefore not yet an authorized action. For planned cross-instance

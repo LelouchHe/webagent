@@ -9,7 +9,7 @@ import { createTaskManager } from "../src/task-manager.ts";
 import {
   createLocalTaskOps,
   type TaskCancelNotice,
-} from "../src/host/local.ts";
+} from "../src/host/local/adapter.ts";
 import type { StoredEvent } from "../src/types.ts";
 
 /* eslint-disable @typescript-eslint/no-unsafe-function-type -- Promise resolver pattern uses generic Function type */

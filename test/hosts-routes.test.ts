@@ -8,7 +8,7 @@ import { Store } from "../src/store.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { createRequestHandler } from "../src/routes.ts";
 import { hashToken } from "../src/auth.ts";
-import { HostRegistry } from "../src/host/hosts/registry.ts";
+import { HostRegistry } from "../src/host/remote/registry.ts";
 
 interface Response {
   status: number;

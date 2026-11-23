@@ -12,7 +12,7 @@ import { AgentRegistry } from "./agent-registry.ts";
 import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
-import { createLocalTaskOps } from "./host/local.ts";
+import { createLocalTaskOps } from "./host/local/adapter.ts";
 import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
 import {
   buildCollaborationBroadcast,
@@ -43,7 +43,7 @@ import {
   type InterceptorCounters,
 } from "./attachment-interceptor.ts";
 import type { AgentEvent } from "./types.ts";
-import { HostRegistry } from "./host/hosts/registry.ts";
+import { HostRegistry } from "./host/remote/registry.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
 for (const method of ["log", "error", "warn"] as const) {

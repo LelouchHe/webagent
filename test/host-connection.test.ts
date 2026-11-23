@@ -4,11 +4,11 @@ import {
   hostCredentialFingerprint,
   resolveHostToken,
   TokenCommandError,
-} from "../src/host/hosts/credentials.ts";
-import { parseHostDescription } from "../src/host/hosts/protocol.ts";
-import { retryDelay } from "../src/host/hosts/state.ts";
+} from "../src/host/remote/credentials.ts";
+import { parseHostDescription } from "../src/host/remote/protocol.ts";
+import { retryDelay } from "../src/host/remote/state.ts";
 import { hashToken } from "../src/auth.ts";
-import { HostRegistry } from "../src/host/hosts/registry.ts";
+import { HostRegistry } from "../src/host/remote/registry.ts";
 
 describe("host connection helpers", () => {
   it("keeps literal credentials and hashes them with the auth primitive", async () => {

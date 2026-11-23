@@ -145,7 +145,12 @@ export default tseslint.config(
                 "MCP code must use TaskOps from host/task-ops.ts instead of importing local domain services.",
             },
             {
-              group: ["**/host/*", "!**/host/task-ops.ts"],
+              group: [
+                "**/host/*",
+                "**/host/local/**",
+                "**/host/remote/**",
+                "!**/host/task-ops.ts",
+              ],
               message:
                 "MCP code may import only the neutral host/task-ops.ts boundary.",
             },
@@ -174,16 +179,39 @@ export default tseslint.config(
   },
 
   {
-    files: ["src/host/hosts/**/*.ts"],
+    files: ["src/host/remote/**/*.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
         {
           patterns: [
             {
-              group: ["**/store.ts", "**/task-manager.ts"],
+              group: [
+                "**/store.ts",
+                "**/task-manager.ts",
+                "**/host/local/**",
+                "../local/**",
+              ],
               message:
-                "Host connection code cannot depend on local task persistence or runtime services.",
+                "Remote host code cannot depend on local task persistence, runtime services, or local adapters.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    files: ["src/host/local/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/host/remote/**", "../remote/**"],
+              message:
+                "Local host code cannot depend on remote host implementations.",
             },
           ],
         },

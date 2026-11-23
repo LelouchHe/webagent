@@ -164,8 +164,8 @@ import {
 } from "./attachments.ts";
 import { readImageInfo } from "./image-info.ts";
 import { HTTP_STATUS } from "./http-status.ts";
-import type { HostRegistry } from "./host/hosts/registry.ts";
-import { HOST_PROTOCOL_VERSION } from "./host/hosts/protocol.ts";
+import type { HostRegistry } from "./host/remote/registry.ts";
+import { HOST_PROTOCOL_VERSION } from "./host/remote/protocol.ts";
 
 const IS_WIN = process.platform === "win32";
 
