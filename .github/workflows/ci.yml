@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, multi-hosts]
     tags-ignore: ["**"]
   pull_request:
-    branches: [main]
+    branches: [main, multi-hosts]
   workflow_call:
 
 jobs:
