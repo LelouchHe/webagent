@@ -863,8 +863,11 @@ export class TaskManager implements ObligationHost {
   ): void {
     const target = this.store.getTaskIncludingDeleted(recipientTaskId);
     if (!target) return;
+    const externalParentTaskId = this.store
+      .getRemoteTaskLinks(recipientTaskId)
+      .find((link) => link.remote_role === "parent")?.remote_task_id;
     for (const message of messages) {
-      if (!shouldArm(message, target)) continue;
+      if (!shouldArm(message, target, externalParentTaskId)) continue;
       this.obligations.arm(message.source_task_id, recipientTaskId);
     }
   }
@@ -3962,6 +3965,7 @@ export class TaskManager implements ObligationHost {
   ): {
     collaborationMessageId: string | null;
     accountTargetTaskId: string | null;
+    event: ReturnType<Store["recordAgentWorkflowUpdate"]>["event"];
     /**
      * For `waiting` with nothing visible to wake the task while it owes an
      * account: the silence window after which the requester is notified.
@@ -3969,7 +3973,7 @@ export class TaskManager implements ObligationHost {
     silenceWatchMs?: number;
   } {
     if (status === "waiting") {
-      this.store.recordAgentWorkflowUpdate(
+      const { event } = this.store.recordAgentWorkflowUpdate(
         targetTaskId,
         status,
         body,
@@ -3983,30 +3987,44 @@ export class TaskManager implements ObligationHost {
       const wakeSourceVisible =
         this.obligations.hasOpenAsSource(targetTaskId) ||
         this.store.countQueuedDeliveries(targetTaskId) > 0 ||
-        this.store.hasQueuedDispatchToChild(targetTaskId);
+        this.store.hasQueuedDispatchToChild(targetTaskId) ||
+        this.store.hasRemoteTaskChild(targetTaskId);
       const watched =
         !wakeSourceVisible &&
         this.obligations.noteUnwatchedWaiting(targetTaskId);
       return {
         collaborationMessageId: null,
         accountTargetTaskId: null,
+        event,
         ...(watched ? { silenceWatchMs: this.obligations.silenceMs } : {}),
       };
     }
     const accountSource = this.obligations.peekSource(targetTaskId);
+    const localParentTaskId =
+      this.store.getTask(targetTaskId)?.parent_id ?? null;
+    const externalParentTaskId =
+      this.store
+        .getRemoteTaskLinks(targetTaskId)
+        .find((link) => link.remote_role === "parent")?.remote_task_id ?? null;
     const accountTargetTaskId =
-      accountSource ?? this.store.getTask(targetTaskId)?.parent_id ?? null;
-    const { collaborationMessageId } = this.store.recordAgentWorkflowUpdate(
-      targetTaskId,
-      status,
-      body,
-      accountTargetTaskId,
-      accountSource === undefined ? "fallback" : "settled",
-    );
+      accountSource ?? localParentTaskId ?? externalParentTaskId;
+    const externalAccountTarget =
+      localParentTaskId === null &&
+      externalParentTaskId !== null &&
+      accountTargetTaskId === externalParentTaskId;
+    const { collaborationMessageId, event } =
+      this.store.recordAgentWorkflowUpdate(
+        targetTaskId,
+        status,
+        body,
+        accountTargetTaskId,
+        accountSource === undefined ? "fallback" : "settled",
+        externalAccountTarget,
+      );
     // A failed transaction above leaves both the account and the marker alone.
     this.obligations.noteUpdate(targetTaskId);
     if (accountSource !== undefined) this.obligations.close(targetTaskId);
-    return { collaborationMessageId, accountTargetTaskId };
+    return { collaborationMessageId, accountTargetTaskId, event };
   }
 
   /**

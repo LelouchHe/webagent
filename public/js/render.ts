@@ -46,7 +46,7 @@ export function addMessage(role: string, text: string): HTMLDivElement {
 }
 
 export interface DeliveryState {
-  status: "queued" | "delivered" | "failed";
+  status: "queued" | "delivered" | "failed" | "accepted";
   deliveredAt?: string;
   failureReason?: string;
 }
@@ -157,6 +157,7 @@ const DELIVERY_SYMBOL: Record<DeliveryState["status"], string> = {
   queued: "⋯",
   delivered: "✓",
   failed: "✗",
+  accepted: "✓",
 };
 
 function deliveryTooltip(delivery: DeliveryState): string {
@@ -173,11 +174,14 @@ function deliveryTooltip(delivery: DeliveryState): string {
       return delivery.failureReason
         ? `Delivery failed: ${delivery.failureReason}`
         : "Delivery failed";
+    case "accepted":
+      return "Accepted by owner";
   }
 }
 
 function deliveryClass(delivery: DeliveryState): string {
-  if (delivery.status === "delivered") return "delivered";
+  if (delivery.status === "delivered" || delivery.status === "accepted")
+    return "delivered";
   if (delivery.status === "failed") return "failed";
   return "queued";
 }

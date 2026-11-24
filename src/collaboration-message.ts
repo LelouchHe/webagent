@@ -128,7 +128,7 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
   taskId: string;
   role: CollaborationRole;
   runtimeMessage?: RuntimeMessageKind;
-  deliveryStatus?: CollaborationDeliveryStatus;
+  deliveryStatus?: CollaborationDeliveryStatus | "accepted";
   deliveredAt?: string;
   deliveryFailureReason?: string;
 }
