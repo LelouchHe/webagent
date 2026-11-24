@@ -993,7 +993,7 @@ describe("MCP Task tool host", () => {
     const data = JSON.parse(rows[0].data) as Record<string, unknown>;
     assert.equal(data.agentId, "owner-agent");
     assert.equal(data.host, "owner");
-    assert.match(String(data.body), /agent: owner-agent@owner/);
+    assert.match(String(data.body), /agent: owner-agent\nhost: owner/);
     assert.equal(data.taskTitle, "Effective remote child");
     assert.equal(data.cwd, "/remote");
     const read = await local.read(principal(), {
@@ -1002,7 +1002,10 @@ describe("MCP Task tool host", () => {
     });
     assert.equal((read.rows[0].data as Record<string, unknown>).host, "owner");
     assert.equal(broadcasts.length, 1);
-    assert.equal(broadcasts[0].body.includes("owner-agent@owner"), true);
+    assert.equal(
+      broadcasts[0].body.includes("agent: owner-agent\nhost: owner"),
+      true,
+    );
   });
 
   it("does not retry unknown remote outcomes", async () => {

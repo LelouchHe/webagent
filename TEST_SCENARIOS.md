@@ -58,7 +58,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - remote create facts control the effective row, and a failed second write
     rolls back the hub link while retaining the partial-success child id
   - remote `task_created` facts persist bare `agentId` plus `host`; rendering
-    joins them as `agentId@host`
+    shows separate `agent:` and `host:` lines
   - remote child labels resolve from the live mirror at projection time;
     process-local labels exist only for an external parent's dispatch and are
     cleared after projection or failure

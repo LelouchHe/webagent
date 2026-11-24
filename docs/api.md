@@ -275,8 +275,8 @@ beside the local parent.
 The Host-scoped owner's `201` includes the effective `model` and `thinking`
 facts in addition to the activation fields, so the caller's Core can record the
 same row for local and remote creates. After a successful create, Core writes
-the initiator's `task_created` row and link. Stored facts keep `agentId` and
-`host` separate; rendered prose joins them as `agent@host`.
+the initiator's `task_created` row and link. Stored facts and rendered prose
+keep `agent` and `host` as separate fields.
 
 Remote creation does not retry. A 4xx rejection is returned as `502` with its
 `remoteStatus`; a lost or incomplete response reports `outcome: "unknown"`; and

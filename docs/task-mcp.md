@@ -362,7 +362,8 @@ quotes a partial id:
 **Result and record.** The result contains the new Task ID. The parent's
 transcript gets exactly one `task_created` row with fields — `Task ID`,
 `agent`, `cwd`, `model`, `thinking`, plus separate machine fields `agentId` and,
-for remote targets, `host`. Display joins those as `agent@host`. `model` and `thinking` show the values that
+for remote targets, `host`; readable output shows a separate `host:` line.
+`model` and `thinking` show the values that
 took effect: the explicit value, the value inherited from a same-agent source,
 or the target session's own current value. `inherited` appears only when a value
 genuinely cannot be determined, so a cross-agent child shows the target's

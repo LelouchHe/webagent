@@ -106,8 +106,7 @@ The owner accepts a Host create only with a non-empty opaque external
 `parentId`, creates a deferred Task with an empty execution slot, and commits the
 `parent` link in the same transaction. It does not start ACP. After a peer `201`, Core records its `child` link through a caller-generation
 fence and writes the same `Created task` row it writes for a local create. The
-stored facts keep `agentId` and `host` separate; display joins them as
-`agent@host`. A live row proves the id to
+stored facts and display keep `agentId` and `host` separate. A live row proves the id to
 the browser's reference marks; replay does not create that existence fact.
 
 ## Read

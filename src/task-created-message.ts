@@ -41,10 +41,10 @@ export function buildTaskCreatedSystemMessage(
   input: TaskCreatedMessageInput,
 ): TaskCreatedSystemMessage {
   const title = `Created task ${formatTaskReference(input.taskTitle)}`;
-  const agent = input.host ? `${input.agentId}@${input.host}` : input.agentId;
   const body = formatFieldBlock([
     { label: "Task ID", value: input.taskId },
-    { label: "agent", value: agent },
+    { label: "agent", value: input.agentId },
+    ...(input.host ? [{ label: "host", value: input.host }] : []),
     { label: "cwd", value: input.cwd },
     { label: "model", value: input.model ?? "", fallback: "inherited" },
     { label: "thinking", value: input.thinking ?? "", fallback: "inherited" },
