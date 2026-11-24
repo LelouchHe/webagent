@@ -108,8 +108,10 @@ link failure is partial success.
 ## Read
 
 `TaskOps.list/query/read` are asynchronous. `task_list` includes the hub's local
-family plus remote-child entries marked by `kind: "remote"` and `host`. The
-mirror is display-only:
+family plus remote-child entries marked by `kind: "remote"` and `host`. REST
+`GET /api/v1/tasks` appends the same remote children after their listed local
+parents; the browser uses them only so a reference to a remote child is not
+shown as removed. The mirror is display-only:
 
 - the first connect subscribes to SSE, takes one cold snapshot through the
   owner's existing task read routes, then applies incremental events;

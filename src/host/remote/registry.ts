@@ -191,6 +191,24 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     });
   }
 
+  /** Remote children of the given local parents, for list egress. */
+  listRemoteChildrenOf(
+    parentTaskIds: ReadonlySet<string>,
+  ): Array<RemoteTaskListItem & { parentTaskId: string }> {
+    if (this.connections.size === 0) return [];
+    const parents = new Set(
+      (this.options?.listLinks() ?? [])
+        .map((link) => link.localTaskId)
+        .filter((id) => parentTaskIds.has(id)),
+    );
+    return [...parents].flatMap((parentTaskId) =>
+      this.listRemoteChildren(parentTaskId).map((item) => ({
+        ...item,
+        parentTaskId,
+      })),
+    );
+  }
+
   hasRemoteChild(localParentTaskId: string): boolean {
     if (this.connections.size === 0) return false;
     return this.linksForParent(localParentTaskId).length > 0;

@@ -43,7 +43,7 @@ import {
 } from "../collaboration-message.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { validateTaskTitle } from "../shared/task-title.ts";
-import type { TaskOps } from "../api/tasks.ts";
+import type { RemoteTaskListItem, TaskOps } from "../api/tasks.ts";
 import {
   HostExternalParentError,
   type HostCollaborationCommand,
@@ -247,6 +247,9 @@ interface HostStatusRegistry {
     reason?: string | null;
     since: number;
   }>;
+  listRemoteChildrenOf(
+    parentTaskIds: ReadonlySet<string>,
+  ): Array<RemoteTaskListItem & { parentTaskId: string }>;
 }
 
 export interface RequestHandlerDeps {
@@ -935,7 +938,25 @@ export function createRequestHandler(
               archived: archivedIds.has(task.id),
             };
           });
-        res.end(JSON.stringify(publicTasks));
+        // Remote children follow their local parent into the same read, so
+        // a client sees the tree MCP `task_list` sees. Display-only mirror
+        // values; an unknown title is null.
+        const remoteTasks = (
+          deps.hostRegistry?.listRemoteChildrenOf(
+            new Set(publicTasks.map((task) => task.id)),
+          ) ?? []
+        ).map((item) => ({
+          kind: "remote" as const,
+          id: item.id,
+          host: item.host,
+          parent_id: item.parentTaskId,
+          title: item.title ?? null,
+          ...(item.workflowStatus !== undefined
+            ? { workflow_status: item.workflowStatus }
+            : {}),
+          ...(item.unreachable ? { unreachable: true } : {}),
+        }));
+        res.end(JSON.stringify([...publicTasks, ...remoteTasks]));
         return;
       }
 

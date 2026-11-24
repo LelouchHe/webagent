@@ -174,6 +174,15 @@ that archived list for `@` path resolution. `created_at` and
 [Timestamps](#timestamps)). The Root id itself is reported only by
 `GET /api/v1/config`.
 
+When hosts are configured, each listed task's linked remote children follow it
+into the same response, after the local entries, so a client sees the tree that
+MCP `task_list` sees. A remote entry is
+`{kind: "remote", id, host, parent_id, title, workflow_status?, unreachable?}`:
+`parent_id` is the local parent, the other values come from the hub's
+best-effort mirror, and `title` is `null` until the owner has been read. The
+browser uses remote entries only to know that a referenced task exists; it does
+not open them yet.
+
 ```json
 [
   {

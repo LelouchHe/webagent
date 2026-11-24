@@ -326,6 +326,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
     reference exited clears that mark again (driven through `handleEvent`,
     the path every creation initiator now feeds)
   - rows rendered before the boot list read are re-evaluated when it arrives
+  - a remote child in the list read counts as existing for references (live
+    with a mirrored title, unknown without one) but never enters the local
+    task list (`test/hosts-routes.test.ts` covers the REST list appending a
+    listed parent's remote children)
   - `task_title_updated` refreshes a row that names a Task the client is not
     viewing, and applies to a row rendered after it; the current Task's header
     is untouched by another Task's rename

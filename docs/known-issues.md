@@ -32,6 +32,13 @@ time. An entry without a "closing condition" is a wish, not an issue.
   rename, archive, and delete do not yet cross hosts, and the browser does not
   address remote Task entries. *Closing:* implement the later host lifecycle
   slices with matching authorization and restart semantics.
+- **An owner-side delete does not reach the hub.** The owner's `parent` link
+  cascades with the deleted Task before `task_deleted` is broadcast, so the
+  host filter drops the event; the hub learns only on reconnect, when the
+  child's history read returns 404 and the entry is marked unreachable. Until
+  then the hub still lists the child, and a reference to it reads as existing.
+  *Closing:* the remote archive/delete rules step decides what each side does
+  with its link and forwards the deletion.
 - **The remote-child mirror retains stale addresses until process restart.**
   Deleted-parent entries and failed-create write-back orphans are display-cache
   facts, so they are not decisions. *Closing:* evict on link deletion when the

@@ -133,6 +133,49 @@ describe("task-reference marks", () => {
       assertLive(refSpan(row), "@child");
     });
 
+    it("treats a listed remote child as existing, but not as a local task", async () => {
+      const previous = globalThis.fetch;
+      globalThis.fetch = async () =>
+        new Response(
+          JSON.stringify([
+            { id: "root", title: null, parent_id: null },
+            {
+              kind: "remote",
+              id: "remote-known",
+              host: "owner",
+              parent_id: "root",
+              title: "remote-child",
+            },
+            {
+              kind: "remote",
+              id: "remote-untitled",
+              host: "owner",
+              parent_id: "root",
+              title: null,
+              unreachable: true,
+            },
+          ]),
+        );
+      try {
+        const tasks = await topology.loadTaskList();
+        assert.deepEqual(
+          tasks.map((task) => task.id),
+          ["root"],
+        );
+      } finally {
+        globalThis.fetch = previous;
+      }
+      assertLive(
+        refSpan(renderCreatedRow("remote-known", "remote-child")),
+        "@remote-child",
+      );
+      // No mirrored title yet: unknown, never struck.
+      assert.equal(
+        view(refSpan(renderCreatedRow("remote-untitled", "other"))).state,
+        null,
+      );
+    });
+
     it("leaves a live reference completely unmarked", () => {
       snapshot({ root: null, child: "child" });
       const row = renderCreatedRow("child");

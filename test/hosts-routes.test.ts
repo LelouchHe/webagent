@@ -111,3 +111,80 @@ describe("multi-host routes", () => {
     assert.match(String(host.since), /^\d{4}-\d{2}-\d{2}T/);
   });
 });
+
+describe("task list egress with remote children", () => {
+  let root: string;
+  let store: Store;
+  let authStore: AuthStore;
+  let server: http.Server;
+  let port: number;
+  let apiToken: string;
+  let asked: ReadonlySet<string> | null = null;
+
+  before(async () => {
+    root = mkdtempSync(join(tmpdir(), "webagent-host-list-"));
+    mkdirSync(join(root, "public"));
+    store = new Store(root);
+    store.ensureRootTask(root);
+    authStore = new AuthStore(join(root, "auth.json"));
+    await authStore.load();
+    apiToken = (await authStore.addToken("hub", "api")).token;
+    const handler = createRequestHandler({
+      store,
+      authStore,
+      hostRegistry: {
+        list: () => [],
+        listRemoteChildrenOf(parentTaskIds) {
+          asked = parentTaskIds;
+          return [
+            {
+              kind: "remote",
+              id: "remote-child",
+              relation: "child",
+              host: "owner",
+              title: "Remote child",
+              workflowStatus: "done",
+              parentTaskId: store.rootTaskId,
+            },
+          ];
+        },
+      },
+      publicDir: join(root, "public"),
+      dataDir: root,
+      limits: { bash_output: 1024, image_upload: 1024 },
+      sseManager: { broadcast: () => {} } as never,
+      serverVersion: "1.2.3",
+    });
+    server = http.createServer(handler);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    port = (server.address() as { port: number }).port;
+  });
+
+  after(async () => {
+    await authStore.close();
+    store.close();
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve();
+      });
+    });
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("appends the remote children of the listed parents", async () => {
+    const response = await request(port, "/api/v1/tasks", apiToken);
+    assert.equal(response.status, 200);
+    const entries = response.body as Array<Record<string, unknown>>;
+    assert.deepEqual(asked && [...asked], [store.rootTaskId]);
+    assert.deepEqual(entries.at(-1), {
+      kind: "remote",
+      id: "remote-child",
+      host: "owner",
+      parent_id: store.rootTaskId,
+      title: "Remote child",
+      workflow_status: "done",
+    });
+  });
+});

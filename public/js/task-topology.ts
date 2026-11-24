@@ -405,7 +405,7 @@ function startTaskListRequest(): {
 } {
   const requestGeneration = generation;
   const seq = ++listRequestSeq;
-  const promise = api.listTasks().then((tasks) => {
+  const promise = api.listTaskTree().then(({ tasks, remote }) => {
     // The shown list is under its own guard: it is fed by every read
     // (including one whose generation has already been replaced), and only a
     // read issued later may replace it.
@@ -422,7 +422,9 @@ function startTaskListRequest(): {
     ) {
       listAppliedSeq = seq;
       listLoaded = true;
-      applyTaskListSnapshot(tasks);
+      // Remote children exist for references, but are not part of the
+      // browsable topology until the browser can open them.
+      applyTaskListSnapshot([...tasks, ...remote]);
       notifyChange();
     }
     // Display watchers last, so a repaint can never stand between a read and

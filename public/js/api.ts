@@ -289,9 +289,40 @@ export function sendCollaborationMessage(
   );
 }
 
-/** Active tree by default; `archived` selects archived trees only. */
-export function listTasks(archived = false): Promise<TaskSummary[]> {
-  return request(archived ? "/api/v1/tasks?archived=true" : "/api/v1/tasks");
+/** A remote child in a list read; it follows its local parent. */
+export interface RemoteTaskSummary {
+  kind: "remote";
+  id: string;
+  host: string;
+  parent_id: string;
+  title: string | null;
+  workflow_status?: string;
+  unreachable?: true;
+}
+
+/** Local tasks plus the remote children of the listed parents. */
+export async function listTaskTree(archived = false): Promise<{
+  tasks: TaskSummary[];
+  remote: RemoteTaskSummary[];
+}> {
+  const entries = await request<Array<TaskSummary | RemoteTaskSummary>>(
+    archived ? "/api/v1/tasks?archived=true" : "/api/v1/tasks",
+  );
+  const tasks: TaskSummary[] = [];
+  const remote: RemoteTaskSummary[] = [];
+  for (const entry of entries) {
+    if ("kind" in entry) remote.push(entry);
+    else tasks.push(entry);
+  }
+  return { tasks, remote };
+}
+
+/**
+ * Active tree by default; `archived` selects archived trees only. Local tasks
+ * only: the browser cannot open a remote child yet.
+ */
+export async function listTasks(archived = false): Promise<TaskSummary[]> {
+  return (await listTaskTree(archived)).tasks;
 }
 
 export function getConfig(): Promise<{
