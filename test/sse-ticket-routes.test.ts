@@ -195,7 +195,9 @@ describe("SSE ticket flow", () => {
     assert.equal(connected.pendingCount, 0);
   });
 
-  it("lets host tickets connect and heartbeat without receiving business events", async () => {
+  it("limits host tickets to heartbeat and peer-owned task events", async () => {
+    const ownedTask = "business-task";
+    sseManager.setHostEventFilter((taskId) => taskId === ownedTask);
     const ticketResp = await req(port, "POST", "/api/v1/sse-ticket", {
       Authorization: `Bearer ${hostToken}`,
       "Content-Length": "0",
@@ -226,7 +228,12 @@ describe("SSE ticket flow", () => {
 
     sseManager.broadcast({
       type: "task_created",
-      taskId: "business-task",
+      taskId: ownedTask,
+      configOptions: [],
+    } as never);
+    sseManager.broadcast({
+      type: "task_created",
+      taskId: "another-peer-task",
       configOptions: [],
     } as never);
     sseManager.broadcastGlobal({
@@ -235,18 +242,21 @@ describe("SSE ticket flow", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    assert.match(received, /event: heartbeat/);
-    assert.match(received, /"type":"connected"/);
-    assert.doesNotMatch(received, /business-task/);
-    assert.doesNotMatch(received, /inbox_count_changed/);
-    assert.doesNotMatch(received, /pendingCount/);
-    assert.doesNotMatch(received, /debugLevel/);
-
     const hostClient = [...sseManager.clients.values()].find(
       (client) => client.tokenName === "hub",
     );
     assert.ok(hostClient);
-    hostClient.res.destroy();
+    try {
+      assert.match(received, /event: heartbeat/);
+      assert.match(received, /"type":"connected"/);
+      assert.match(received, /business-task/);
+      assert.doesNotMatch(received, /another-peer-task/);
+      assert.doesNotMatch(received, /inbox_count_changed/);
+      assert.doesNotMatch(received, /pendingCount/);
+      assert.doesNotMatch(received, /debugLevel/);
+    } finally {
+      hostClient.res.destroy();
+    }
   });
 
   it("rejects host tickets for per-task streams", async () => {

@@ -996,6 +996,7 @@ export function createRequestHandler(
         const ticket = deps.ticketStore.mint({
           tokenName: principal.name,
           scope: principal.scope,
+          hash: principal.hash,
         });
         json(res, HTTP_STATUS.OK, { ticket, expiresIn: 60 });
         return;
@@ -1410,7 +1411,8 @@ export function createRequestHandler(
       if (collaborationMessageMatch && req.method === "POST") {
         const sourceTaskId = decodeURIComponent(collaborationMessageMatch[1]);
         const sourceTask = store.getTask(sourceTaskId);
-        if (!sourceTask) {
+        const requestPrincipal = principalByRequest.get(req);
+        if (!sourceTask && requestPrincipal?.scope !== "host") {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Source task not found" });
           return;
         }
@@ -1418,6 +1420,78 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task manager not available",
           });
+          return;
+        }
+        if (requestPrincipal?.scope === "host") {
+          let body: { targetTaskId?: unknown; body?: unknown };
+          try {
+            body = JSON.parse(await readBody(req)) as typeof body;
+          } catch {
+            json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+            return;
+          }
+          if (
+            typeof body.targetTaskId !== "string" ||
+            typeof body.body !== "string" ||
+            !body.body.trim()
+          ) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "targetTaskId and non-empty body are required",
+            });
+            return;
+          }
+          const target = store.getTask(body.targetTaskId);
+          if (
+            !target ||
+            !store
+              .getRemoteTaskLinks(target.id)
+              .some(
+                (link) =>
+                  link.remote_role === "parent" &&
+                  link.remote_task_id === sourceTaskId &&
+                  link.peer_token_hash === requestPrincipal.hash,
+              )
+          ) {
+            json(res, HTTP_STATUS.FORBIDDEN, {
+              error: "Host is not the target's external parent",
+            });
+            return;
+          }
+          const { opId, replayed } = tryReplayClientOp(
+            req,
+            res,
+            store,
+            sourceTaskId,
+          );
+          if (replayed) return;
+          const messageId = randomUUID();
+          const deliveryId = randomUUID();
+          store.createExternalSourceCollaborationMessage({
+            id: messageId,
+            deliveryId,
+            sourceTaskId,
+            directTargetTaskId: target.id,
+            body: body.body,
+          });
+          const result = {
+            messageId,
+            deliveryId,
+            status: "queued",
+            clientOpId: opId ?? undefined,
+          };
+          saveClientOpResult(
+            store,
+            opId,
+            sourceTaskId,
+            HTTP_STATUS.ACCEPTED,
+            result,
+          );
+          json(res, HTTP_STATUS.ACCEPTED, result, req);
+          void tasks.drainCollaborationDeliveries(target.id);
+          return;
+        }
+        if (!sourceTask) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Source task not found" });
           return;
         }
         const { opId, replayed } = tryReplayClientOp(
@@ -3298,7 +3372,9 @@ export function createRequestHandler(
         // When authStore is configured, every SSE connection MUST present a
         // valid single-use ticket from POST /api/v1/sse-ticket.
         let tokenName: string | undefined;
-        let receiveBusinessEvents = true;
+        let hostTokenHash: string | undefined;
+        let hostScope = false;
+        const receiveBusinessEvents = true;
         if (deps.authStore) {
           const ticket =
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
@@ -3310,7 +3386,8 @@ export function createRequestHandler(
             return;
           }
           tokenName = principal.tokenName;
-          receiveBusinessEvents = principal.scope !== "host";
+          hostScope = principal.scope === "host";
+          hostTokenHash = hostScope ? principal.hash : undefined;
         }
 
         const clientId = sseManager.generateClientId();
@@ -3326,6 +3403,7 @@ export function createRequestHandler(
           res,
           tokenName,
           receiveBusinessEvents,
+          ...(hostTokenHash === undefined ? {} : { hostTokenHash }),
         };
         sseManager.add(client);
 
@@ -3334,7 +3412,7 @@ export function createRequestHandler(
         sseManager.sendEvent(client, {
           type: "connected",
           clientId,
-          ...(receiveBusinessEvents
+          ...(!hostScope
             ? {
                 debugLevel: deps.debugLevel ?? "off",
                 pendingCount,

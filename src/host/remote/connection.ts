@@ -73,6 +73,11 @@ export type HostTaskCreateAttempt =
   | { kind: "unknown"; reason: string }
   | { kind: "not_sent"; reason: string };
 
+export type HostTaskSendAttempt =
+  | { kind: "accepted"; messageId?: string }
+  | { kind: "rejected"; status: number; reason: string }
+  | { kind: "unknown"; reason: string };
+
 export interface HostConnectionOptions {
   fetch?: typeof globalThis.fetch;
   handshakeTimeoutMs?: number;
@@ -81,14 +86,20 @@ export interface HostConnectionOptions {
     state: HostConnectionState,
     reason?: HostUnreachableReason,
   ) => void;
-  onConnected?: () => void;
+  onConnected?: () => Promise<void> | void;
+  onEvent?: (event: HostStreamEvent) => void | Promise<void>;
+}
+
+export interface HostStreamEvent {
+  seq?: number;
+  data: Record<string, unknown>;
 }
 
 class HostConnectionFailure extends Error {
   readonly reason: HostUnreachableReason;
 
-  constructor(reason: HostUnreachableReason) {
-    super(reason);
+  constructor(reason: HostUnreachableReason, options?: ErrorOptions) {
+    super(reason, options);
     this.name = "HostConnectionFailure";
     this.reason = reason;
   }
@@ -205,6 +216,82 @@ export class HostConnection {
         activation,
       },
     };
+  }
+
+  async getJson(path: string): Promise<unknown> {
+    const token = await this.resolveToken();
+    const response = await this.fetchResponse(path, {
+      token,
+      redirect: "error",
+    });
+    if (!response.ok) {
+      throw new HostRequestError(path, response.status);
+    }
+    try {
+      return (await response.json()) as unknown;
+    } catch (error) {
+      throw new HostConnectionFailure("protocol_mismatch", { cause: error });
+    }
+  }
+
+  async sendTaskMessage(input: {
+    sourceTaskId: string;
+    targetTaskId: string;
+    body: string;
+    clientOpId: string;
+  }): Promise<HostTaskSendAttempt> {
+    let token: string;
+    try {
+      token = await this.resolveToken();
+    } catch (error) {
+      return { kind: "unknown", reason: errorMessage(error) };
+    }
+    let response: Response;
+    try {
+      response = await this.fetchResponse(
+        `/api/v1/tasks/${encodeURIComponent(input.sourceTaskId)}/messages`,
+        {
+          token,
+          method: "POST",
+          body: {
+            targetTaskId: input.targetTaskId,
+            body: input.body,
+          },
+          headers: { "X-Client-Op-Id": input.clientOpId },
+          redirect: "error",
+        },
+      );
+    } catch (error) {
+      return { kind: "unknown", reason: errorMessage(error) };
+    }
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    if (response.status === HTTP_STATUS.ACCEPTED) {
+      const messageId =
+        body &&
+        typeof body === "object" &&
+        typeof (body as { messageId?: unknown }).messageId === "string"
+          ? (body as { messageId: string }).messageId
+          : undefined;
+      return {
+        kind: "accepted",
+        ...(messageId === undefined ? {} : { messageId }),
+      };
+    }
+    const reason =
+      body &&
+      typeof body === "object" &&
+      typeof (body as { error?: unknown }).error === "string"
+        ? (body as { error: string }).error
+        : `HTTP ${response.status}`;
+    return response.status >= HTTP_STATUS.BAD_REQUEST &&
+      response.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
+      ? { kind: "rejected", status: response.status, reason }
+      : { kind: "unknown", reason };
   }
 
   private async runAttempt(attempt: StreamAttempt): Promise<void> {
@@ -351,6 +438,7 @@ export class HostConnection {
     );
   }
 
+  // eslint-disable-next-line complexity -- one framed-stream parser owns handshake, heartbeat, and event delivery.
   private async consume(
     body: ReadableStream<Uint8Array>,
     attempt: StreamAttempt,
@@ -391,18 +479,56 @@ export class HostConnection {
               connected = true;
               this.supervisor.connected(attempt);
               if (!attempt.isCurrent()) return;
-              this.options.onState?.("connected");
-              if (attempt.isCurrent()) void this.options.onConnected?.();
+              if (attempt.isCurrent()) await this.options.onConnected?.();
+              if (attempt.isCurrent()) this.options.onState?.("connected");
+              continue;
+            }
+          }
+          if (connected && event !== "heartbeat" && data) {
+            let payload: unknown;
+            try {
+              payload = JSON.parse(data) as unknown;
+            } catch {
+              throw new HostConnectionFailure("protocol_mismatch");
+            }
+            if (
+              payload &&
+              typeof payload === "object" &&
+              !Array.isArray(payload)
+            ) {
+              const id = frame
+                .split(/\r?\n/)
+                .find((line) => line.startsWith("id:"))
+                ?.slice(3)
+                .trim();
+              const seq = id === undefined ? NaN : Number(id);
+              await this.options.onEvent?.({
+                ...(Number.isInteger(seq) ? { seq } : {}),
+                data: payload as Record<string, unknown>,
+              });
             }
           }
           if (connected && event === "heartbeat") {
             this.supervisor.noteActivity(attempt);
           }
+
           boundary = buffer.indexOf("\n\n");
         }
       }
     } finally {
       reader.releaseLock();
     }
+  }
+}
+
+export class HostRequestError extends Error {
+  readonly path: string;
+  readonly status: number;
+
+  constructor(path: string, status: number) {
+    super(`Remote request failed with HTTP ${status}`);
+    this.name = "HostRequestError";
+    this.path = path;
+    this.status = status;
   }
 }

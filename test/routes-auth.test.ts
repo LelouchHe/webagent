@@ -119,16 +119,16 @@ describe("routes auth gate", () => {
     });
 
     it("limits host tokens to host routes", async () => {
-      const denied = await req(port, "GET", "/api/v1/tasks", {
+      const denied = await req(port, "GET", "/api/v1/config", {
         Authorization: `Bearer ${hostToken}`,
       });
       assert.equal(denied.status, 403);
       assert.match(denied.body, /host_scope/);
 
-      const allowed = await req(port, "POST", "/api/v1/tasks", {
+      const allowed = await req(port, "GET", "/api/v1/tasks", {
         Authorization: `Bearer ${hostToken}`,
       });
-      assert.equal(allowed.status, 503);
+      assert.equal(allowed.status, 200);
     });
 
     it("401 on /api/beta/prompt without auth", async () => {

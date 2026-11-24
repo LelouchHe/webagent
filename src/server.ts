@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +13,7 @@ import { AgentRegistry } from "./agent-registry.ts";
 import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
-import { createLocalTaskOps } from "./host/local/adapter.ts";
+import { assertTaskCaller, createLocalTaskOps } from "./host/local/adapter.ts";
 import { createTaskHost } from "./host/tasks.ts";
 import { createTaskOpsCore } from "./task-ops.ts";
 import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
@@ -182,7 +183,30 @@ sseManager.startHeartbeat();
 
 const authStore = new AuthStore(pathJoin(config.data_dir, "auth.json"));
 const ticketStore = new TicketStore();
-const hostRegistry = new HostRegistry(config.hosts);
+const hostRegistry = new HostRegistry(config.hosts, {
+  listLinks: () => store.listRemoteTaskLinks(),
+  onRemoteEvent: (host, childId, event) => {
+    if (
+      event.seq === undefined ||
+      event.data.type !== "task_update" ||
+      (event.data.status !== "done" && event.data.status !== "blocked") ||
+      typeof event.data.body !== "string"
+    ) {
+      return;
+    }
+    const link = store.getRemoteChildLink(host, childId);
+    if (!link || event.data.targetTaskId !== link.local_task_id) return;
+    const report = store.createRemoteReport({
+      id: randomUUID(),
+      deliveryId: randomUUID(),
+      idempotencyKey: `remote-report:${host}:${childId}:${event.seq}`,
+      sourceTaskId: childId,
+      targetTaskId: link.local_task_id,
+      body: `Task status: ${event.data.status}\n${event.data.body}`,
+    });
+    if (report) void tasks.drainCollaborationDeliveries(link.local_task_id);
+  },
+});
 // In-memory image signing secret; regenerated on every restart so previously
 // leaked URLs become invalid the moment the server is bounced.
 const attachmentSecret = randomBytes(32);
@@ -193,6 +217,9 @@ sseManager.setRevocationCheck(
 );
 sseManager.setAttachmentSecret(attachmentSecret);
 sseManager.setLabelMapProvider((taskId) => tasks.getLabelMap(taskId));
+sseManager.setHostEventFilter((taskId, peerTokenHash) =>
+  store.isRemoteTaskOwnedByPeer(taskId, peerTokenHash),
+);
 
 // Broadcast runtime state patches to all SSE clients interested in the task.
 tasks.state.onPatch((event) => {
@@ -232,6 +259,15 @@ const localTaskOps = createLocalTaskOps({
     // rides the generic system-message path.
     sseManager.broadcast(event);
   },
+  broadcastTaskUpdate: ({ taskId, seq, data }) => {
+    sseManager.broadcastHost(
+      { type: "task_update", taskId, ...data } as Extract<
+        AgentEvent,
+        { type: "task_update" }
+      >,
+      seq,
+    );
+  },
 });
 const taskOps = createTaskOpsCore({
   host: createTaskHost({
@@ -241,7 +277,70 @@ const taskOps = createTaskOpsCore({
   store,
   tasks,
 });
-const routedTaskOps: TaskOps = { ...localTaskOps, ...taskOps };
+const routedTaskOps: TaskOps = {
+  ...localTaskOps,
+  ...taskOps,
+  async list(principal) {
+    assertTaskCaller(tasks, principal);
+    const order = { self: 0, parent: 1, child: 2 } as const;
+    return [
+      ...(await localTaskOps.list(principal)),
+      ...hostRegistry.listRemoteChildren(principal.taskId),
+    ].sort(
+      (left, right) =>
+        order[left.relation] - order[right.relation] ||
+        left.id.localeCompare(right.id),
+    );
+  },
+  async query(principal, input) {
+    assertTaskCaller(tasks, principal);
+    const targetId = input.taskId ?? principal.taskId;
+    const remote = hostRegistry.resolveRemoteChild(principal.taskId, targetId);
+    return remote
+      ? hostRegistry.queryRemote(remote, input)
+      : localTaskOps.query(principal, input);
+  },
+  async read(principal, input) {
+    assertTaskCaller(tasks, principal);
+    const targetId = input.taskId ?? principal.taskId;
+    const remote = hostRegistry.resolveRemoteChild(principal.taskId, targetId);
+    return remote
+      ? hostRegistry.readRemote(remote, input)
+      : localTaskOps.read(principal, input);
+  },
+  async send(principal, targetTaskId, body) {
+    assertTaskCaller(tasks, principal);
+    const remote = hostRegistry.resolveRemoteChild(
+      principal.taskId,
+      targetTaskId,
+    );
+    if (!remote) return localTaskOps.send(principal, targetTaskId, body);
+    await hostRegistry.sendRemote(remote, body);
+    assertTaskCaller(tasks, principal);
+    const source = store.getTask(principal.taskId);
+    if (!source) throw new Error("execution_replaced");
+    const targetLabel =
+      hostRegistry.remoteTitle(remote) ?? remote.taskId.slice(0, 8);
+    const message = store.recordAcceptedRemoteMessage({
+      id: randomUUID(),
+      sourceTaskId: source.id,
+      directTargetTaskId: remote.taskId,
+      targetLabel,
+      body,
+    });
+    broadcastCollaboration({
+      messageId: message.id,
+      sourceTaskId: source.id,
+      targetTaskId: remote.taskId,
+      sourceLabel: source.title ?? source.id.slice(0, 8),
+      targetLabel,
+      body,
+      taskId: source.id,
+      role: "source",
+      deliveryStatus: "accepted",
+    });
+  },
+};
 const messageCleanup: CleanupHandle = startMessageCleanup(
   store,
   config.messages.unprocessed_ttl_days,
