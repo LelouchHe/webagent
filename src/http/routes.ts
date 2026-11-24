@@ -749,9 +749,11 @@ export function createRequestHandler(
   // eslint-disable-next-line complexity -- TODO: refactor main route handler into smaller handlers
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
-    const requestUrl = new URL(url, "http://localhost");
-    const path = requestUrl.pathname;
-    const requestParams = requestUrl.searchParams;
+    const queryStart = url.indexOf("?");
+    const path = queryStart === -1 ? url : url.slice(0, queryStart);
+    const requestParams = new URLSearchParams(
+      queryStart === -1 ? "" : url.slice(queryStart + 1),
+    );
 
     // --- MCP server: claims /mcp before the auth gate (the endpoint
     // is outside /api/** and authenticates by per-task capability).
