@@ -27,7 +27,9 @@ local parent exists. Links are durable decisions. Host connection state and the
 hub's remote-child display mirror are in memory and never become Task facts.
 
 Connections use an owner-issued `host`-scoped token. The hub verifies version
-and scope before opening global SSE. Per-Task host SSE is refused.
+and scope before opening global SSE. The ticket request carries the hub's
+subscribed local parent ids; the owner returns a connection id and keeps the
+set only for that live connection. Per-Task host SSE is refused.
 
 ## The loop at a glance
 
@@ -41,7 +43,8 @@ keeps one `remote_tasks` row; nothing else is shared.
    |                          |                               |                          |
  1 create                     |                               |                          |
    |-- task_create(mock, owner)>                               |                          |
-    |                          |-- POST /tasks (host token) -->| LocalHost creates R1     |
+    |                          |-- POST /tasks (host token,    | LocalHost creates R1     |
+    |                          |   connection id) ----------->| + subscribe P            |
     |                          |                               | + parent link, no ACP    |
     |                          |<----- 201 + create facts -----|                          |
     |                          | Core: write child link,       |                          |
@@ -49,9 +52,9 @@ keeps one `remote_tasks` row; nothing else is shared.
    |<----------------- R1 id -|                               |                          |
    |                          |                               |                          |
  2 discover (every connect)   |                               |                          |
+   |                          |-- SSE ticket parentIds ------>| remember set, return id  |
    |                          |-- subscribe global SSE ------>| forwards only Tasks whose|
-   |                          |-- snapshot detail/status/ --->| parent link has this     |
-   |                          |   events per child link       | token hash               |
+   |                          |-- snapshot detail/status/ --->| external parent is in set|
    |                          |<== live events: title, =======|                          |
    |                          |    state, activity            |                          |
    |-- task_list ------------>| local family + mirrored       |                          |
@@ -199,6 +202,7 @@ remote-child link count as having a visible possible wake source.
 | Remote `task_send` | Yes, synchronous owner acceptance |
 | Remote `done` / `blocked` report | Yes, event catch-up and local drain |
 | Unreachable discovery and dispatch | Yes |
+| Per-connection parent subscriptions | Yes, rebuilt on reconnect |
 | Remote cancel/rename/archive/delete | No |
 | Browser task routing | No |
 | Owner external-source non-update/no-activity/removal notices | No |

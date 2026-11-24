@@ -564,7 +564,8 @@ describe("host connection helpers", () => {
     let streamReady = false;
     const events: Array<{ seq?: number; data: Record<string, unknown> }> = [];
     const refresh = deferred<void>();
-    const fetchImpl: typeof globalThis.fetch = async (input) => {
+    let createConnectionId: string | null = null;
+    const fetchImpl: typeof globalThis.fetch = async (input, init) => {
       const url =
         typeof input === "string"
           ? input
@@ -583,7 +584,17 @@ describe("host connection helpers", () => {
         });
       }
       if (url.endsWith("/api/v1/sse-ticket")) {
+        if (typeof init?.body !== "string") throw new Error("missing body");
+        assert.deepEqual(JSON.parse(init.body), {
+          parentIds: ["hub-parent"],
+        });
         return Response.json({ ticket: "ticket" });
+      }
+      if (url.endsWith("/api/v1/tasks")) {
+        createConnectionId = new Headers(init?.headers).get(
+          "x-host-connection-id",
+        );
+        return Response.json({ error: "test rejection" }, { status: 400 });
       }
       return new Response(
         new ReadableStream<Uint8Array>({
@@ -592,6 +603,7 @@ describe("host connection helpers", () => {
             streamReady = true;
           },
         }),
+        { headers: { "X-Host-Connection-Id": "host-connection-1" } },
       );
     };
     const connection = new HostConnection(
@@ -600,6 +612,7 @@ describe("host connection helpers", () => {
         fetch: fetchImpl,
         retryDelay: () => 1_000,
         handshakeTimeoutMs: 1_000,
+        subscriptionParentIds: () => ["hub-parent"],
         onConnected: () => refresh.promise,
         onEvent: (event) => {
           events.push(event);
@@ -608,6 +621,12 @@ describe("host connection helpers", () => {
     );
     connection.start();
     await until(() => streamReady);
+    await connection.createTask({
+      agentId: "mock",
+      parentId: "hub-parent",
+      source: "agent",
+    });
+    assert.equal(createConnectionId, "host-connection-1");
     const encode = new TextEncoder();
     stream.enqueue(
       encode.encode(
@@ -918,6 +937,28 @@ describe("host connection helpers", () => {
       lastAgentActivityAt:
         internals.mirrors.get("owner\0child")?.lastAgentActivityAt,
     });
+  });
+
+  it("ignores owner events for a child it does not link", () => {
+    const received: string[] = [];
+    const registry = new HostRegistry(
+      {},
+      {
+        listLinks: () => [],
+        onRemoteEvent: (_host, childId) => received.push(childId),
+      },
+    );
+    const internals = registry as unknown as {
+      applyEvent(name: string, event: { data: Record<string, unknown> }): void;
+    };
+    internals.applyEvent("owner", {
+      data: {
+        type: "task_update",
+        taskId: "unlinked-child",
+        status: "done",
+      },
+    });
+    assert.deepEqual(received, []);
   });
 
   it("takes cold workflow status from the owner detail", async () => {

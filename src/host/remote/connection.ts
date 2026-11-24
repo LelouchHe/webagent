@@ -151,6 +151,7 @@ export interface HostConnectionOptions {
   ) => void;
   onConnected?: (isCurrent: () => boolean) => Promise<void> | void;
   onEvent?: (event: HostStreamEvent) => void | Promise<void>;
+  subscriptionParentIds?: () => string[];
 }
 
 export interface HostStreamEvent {
@@ -188,6 +189,7 @@ export class HostConnection {
   private readonly options: HostConnectionOptions;
   private readonly supervisor: StreamSupervisor;
   private tokenCommand: Promise<string> | null = null;
+  private connectionId: string | null = null;
 
   constructor(config: HostConfig, options: HostConnectionOptions) {
     this.config = config;
@@ -231,6 +233,9 @@ export class HostConnection {
         token,
         method: "POST",
         body: input,
+        headers: this.connectionId
+          ? { "X-Host-Connection-Id": this.connectionId }
+          : undefined,
         redirect: "error",
       });
     } catch (error) {
@@ -436,12 +441,19 @@ export class HostConnection {
     if (identity.hash !== hashToken(token) || !isScope(identity.scope)) {
       throw new HostConnectionFailure("protocol_mismatch");
     }
-    const ticketBody = await this.request(
-      attempt.signal,
-      "/api/v1/sse-ticket",
+    const ticketResponse = await this.fetchResponse("/api/v1/sse-ticket", {
+      signal: attempt.signal,
       token,
-      "POST",
-    );
+      method: "POST",
+      body: { parentIds: this.options.subscriptionParentIds?.() ?? [] },
+    });
+    if (!ticketResponse.ok) throw this.httpFailure(ticketResponse.status);
+    let ticketBody: unknown;
+    try {
+      ticketBody = await ticketResponse.json();
+    } catch {
+      throw new HostConnectionFailure("protocol_mismatch");
+    }
     const ticket =
       ticketBody && typeof ticketBody === "object"
         ? (ticketBody as { ticket?: unknown }).ticket
@@ -455,7 +467,12 @@ export class HostConnection {
     );
     if (!response.ok) throw this.httpFailure(response.status);
     if (!response.body) throw new HostConnectionFailure("protocol_mismatch");
-    await this.consume(response.body, attempt);
+    this.connectionId = response.headers.get("X-Host-Connection-Id");
+    try {
+      await this.consume(response.body, attempt);
+    } finally {
+      this.connectionId = null;
+    }
   }
 
   static failureReason(error: unknown): HostUnreachableReason {

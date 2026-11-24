@@ -83,6 +83,10 @@ export class HostRegistry implements RemoteTaskCreateTransport {
         new HostConnection(config, {
           fetch: options?.fetch,
           retryDelay: (attempt) => retryDelay(attempt),
+          subscriptionParentIds: () =>
+            (this.options?.listLinks() ?? [])
+              .filter((link) => link.host === name)
+              .map((link) => link.localTaskId),
           onState: (state, reason) => {
             this.transition(name, state, reason);
           },

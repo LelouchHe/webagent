@@ -5,6 +5,7 @@ export interface TicketPrincipal {
   tokenName: string;
   scope: Scope;
   hash?: string;
+  parentIds?: string[];
 }
 
 interface TicketRecord extends TicketPrincipal {
@@ -39,6 +40,9 @@ export class TicketStore {
       tokenName: principal.tokenName,
       scope: principal.scope,
       ...(principal.hash === undefined ? {} : { hash: principal.hash }),
+      ...(principal.parentIds === undefined
+        ? {}
+        : { parentIds: [...principal.parentIds] }),
       expiresAt: this.now() + this.ttlMs,
     });
     return ticket;
@@ -53,6 +57,7 @@ export class TicketStore {
       tokenName: rec.tokenName,
       scope: rec.scope,
       ...(rec.hash === undefined ? {} : { hash: rec.hash }),
+      ...(rec.parentIds === undefined ? {} : { parentIds: [...rec.parentIds] }),
     };
   }
 

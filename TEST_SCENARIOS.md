@@ -50,6 +50,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
     duplicate queued report remains eligible for one drain
   - only the target's linked external parent opens an external account; a
     remote child's report into its hub parent opens none
+  - host SSE reconnects with the hub's parent ids, creates add a new parent to
+    the open connection, unknown/unlinked parents leak nothing, and each of two
+    hubs sees only its own parent-linked children
   - local send and update records commit with their Host write; injected
     failure leaves no delivery/report or closed account
   - local create keeps the baseline post-persistence config/cleanup flow; the

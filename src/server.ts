@@ -224,7 +224,7 @@ sseManager.setRevocationCheck(
 );
 sseManager.setAttachmentSecret(attachmentSecret);
 sseManager.setLabelMapProvider((taskId) => tasks.getLabelMap(taskId));
-sseManager.setHostEventFilter((taskId) => store.hasExternalParent(taskId));
+sseManager.setHostEventParent((taskId) => store.getExternalParentId(taskId));
 
 // Broadcast runtime state patches to all SSE clients interested in the task.
 tasks.state.onPatch((event) => {

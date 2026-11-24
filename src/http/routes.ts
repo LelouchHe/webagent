@@ -1066,10 +1066,38 @@ export function createRequestHandler(
           });
           return;
         }
+        let parentIds: string[] | undefined;
+        if (principal.scope === "host") {
+          const raw = await readBody(req);
+          if (raw.length > 0) {
+            let body: unknown;
+            try {
+              body = JSON.parse(raw) as unknown;
+            } catch {
+              json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+              return;
+            }
+            if (
+              !body ||
+              typeof body !== "object" ||
+              !Array.isArray((body as { parentIds?: unknown }).parentIds) ||
+              !(body as { parentIds: unknown[] }).parentIds.every(
+                (id) => typeof id === "string",
+              )
+            ) {
+              json(res, HTTP_STATUS.BAD_REQUEST, {
+                error: "parentIds must be an array of strings",
+              });
+              return;
+            }
+            parentIds = (body as { parentIds: string[] }).parentIds;
+          }
+        }
         const ticket = deps.ticketStore.mint({
           tokenName: principal.name,
           scope: principal.scope,
           hash: principal.hash,
+          ...(parentIds === undefined ? {} : { parentIds }),
         });
         json(res, HTTP_STATUS.OK, { ticket, expiresIn: 60 });
         return;
@@ -3168,6 +3196,12 @@ export function createRequestHandler(
               clientOpId: clientOpId ?? undefined,
             },
           );
+          if (requestPrincipal?.scope === "host" && body.parentId) {
+            const connectionId = req.headers["x-host-connection-id"];
+            if (typeof connectionId === "string") {
+              sseManager.subscribeHost(connectionId, body.parentId);
+            }
+          }
           const activation = created.activation;
           if (!activation) throw new Error("missing_create_activation");
           json(res, HTTP_STATUS.CREATED, {
@@ -3422,6 +3456,7 @@ export function createRequestHandler(
         // valid single-use ticket from POST /api/v1/sse-ticket.
         let tokenName: string | undefined;
         let hostScope = false;
+        let hostParentIds: string[] = [];
         const receiveBusinessEvents = true;
         if (deps.authStore) {
           const ticket =
@@ -3435,6 +3470,7 @@ export function createRequestHandler(
           }
           tokenName = principal.tokenName;
           hostScope = principal.scope === "host";
+          hostParentIds = principal.parentIds ?? [];
         }
 
         const clientId = sseManager.generateClientId();
@@ -3443,6 +3479,7 @@ export function createRequestHandler(
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
+          "X-Host-Connection-Id": clientId,
         });
 
         const client: import("../sse-manager.ts").SseClient = {
@@ -3450,7 +3487,12 @@ export function createRequestHandler(
           res,
           tokenName,
           receiveBusinessEvents,
-          ...(hostScope ? { hostScoped: true } : {}),
+          ...(hostScope
+            ? {
+                hostScoped: true,
+                hostParentIds: new Set(hostParentIds),
+              }
+            : {}),
         };
         sseManager.add(client);
 
@@ -3510,6 +3552,7 @@ export function createRequestHandler(
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
+          "X-Host-Connection-Id": clientId,
         });
 
         const client: import("../sse-manager.ts").SseClient = {

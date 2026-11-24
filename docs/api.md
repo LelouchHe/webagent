@@ -1274,6 +1274,12 @@ Tickets:
 - are **single-use** (consumed when the SSE handshake reads them)
 - are kept only in server memory (not persisted)
 
+For a `host`-scope ticket, the request body is
+`{ "parentIds": [...] }`: the local parent ids for which this hub owns remote
+children on the owner. The owner stores that set only on the resulting
+connection. The SSE response header `X-Host-Connection-Id` returns the
+connection id for a subsequent create request.
+
 Requires a valid `Authorization: Bearer <token>` header. Returns `401` otherwise.
 
 **Response** `200`:
@@ -1294,9 +1300,14 @@ The SSE stream re-checks the bound token on every heartbeat (≤15 s). If the to
 
 A `host`-scoped ticket is limited to the global Host connection channel. It
 receives `connected`, heartbeat frames, and business events only for Tasks whose
-external-parent link is owned by the token hash. Its `connected` payload omits
+external-parent id is in that connection's `parentIds`. Its `connected` payload omits
 the normal `debugLevel` and pending-inbox count. A Host ticket is rejected on a
 per-task stream.
+
+`POST /api/v1/tasks` from a host may carry
+`X-Host-Connection-Id`. After creation, the owner adds that parent id to the
+still-open connection's set; the next reconnect's `parentIds` rebuilds it and
+covers creates made while disconnected.
 
 ---
 

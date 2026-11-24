@@ -26,6 +26,7 @@ export interface SseClient {
   tokenName?: string; // bound at connect via SSE ticket; used for revoke detection
   receiveBusinessEvents?: boolean;
   hostScoped?: boolean;
+  hostParentIds?: Set<string>;
 }
 
 /**
@@ -40,7 +41,7 @@ export class SseManager {
   private isTokenRevoked: ((tokenName: string) => boolean) | null = null;
   private attachmentSecret: Buffer | null = null;
   private getLabelMap: ((taskId: string) => LabelMap) | null = null;
-  private hostEventAllowed: ((taskId: string) => boolean) | null = null;
+  private externalParentId: ((taskId: string) => string | null) | null = null;
 
   constructor(heartbeatMs = SSE_HEARTBEAT_INTERVAL_MS) {
     this.heartbeatInterval = heartbeatMs;
@@ -70,8 +71,12 @@ export class SseManager {
     this.getLabelMap = fn;
   }
 
-  setHostEventFilter(fn: (taskId: string) => boolean): void {
-    this.hostEventAllowed = fn;
+  setHostEventParent(fn: (taskId: string) => string | null): void {
+    this.externalParentId = fn;
+  }
+
+  subscribeHost(connectionId: string, parentId: string): void {
+    this.clients.get(connectionId)?.hostParentIds?.add(parentId);
   }
 
   /** Install a revocation check called on every heartbeat. If it returns
@@ -195,7 +200,11 @@ export class SseManager {
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
       if (client.receiveBusinessEvents === false) continue;
-      if (client.hostScoped && (!taskId || !this.hostEventAllowed?.(taskId))) {
+      if (
+        client.hostScoped &&
+        (!taskId ||
+          !client.hostParentIds?.has(this.externalParentId?.(taskId) ?? ""))
+      ) {
         continue;
       }
       if (client.taskId && client.taskId !== taskId) continue;
@@ -227,7 +236,7 @@ export class SseManager {
         client.res.writableEnded ||
         !client.hostScoped ||
         !taskId ||
-        !this.hostEventAllowed?.(taskId)
+        !client.hostParentIds?.has(this.externalParentId?.(taskId) ?? "")
       ) {
         continue;
       }

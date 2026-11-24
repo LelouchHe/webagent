@@ -89,10 +89,48 @@ describe("SSE ticket flow", () => {
 
     ticketStore = new TicketStore({ ttlMs: 60_000 });
     sseManager = new SseManager(60_000); // long heartbeat (won't fire in test)
-    sseManager.setHostEventFilter((taskId) => store.hasExternalParent(taskId));
+    sseManager.setHostEventParent((taskId) =>
+      store.getExternalParentId(taskId),
+    );
 
     const handler = createRequestHandler({
       store,
+      tasks: {} as never,
+      taskOps: {
+        async create(_caller: { kind: string }, input: { parentId?: string }) {
+          store.createDeferredRemoteTask({
+            id: "new-subscription-child",
+            cwd: tmpDir,
+            source: "host",
+            agentId: "mock",
+            externalParentId: input.parentId!,
+            title: "New subscription child",
+            creationAnchor: {},
+          });
+          return {
+            taskId: "new-subscription-child",
+            facts: {
+              title: "New subscription child",
+              agentId: "mock",
+              cwd: tmpDir,
+              model: null,
+              thinking: null,
+            },
+            activation: {
+              cwd: tmpDir,
+              cwdDisplay: tmpDir,
+              title: "New subscription child",
+              parentId: null,
+              parentAgentId: null,
+              agentId: "mock",
+              workflowStatus: "idle" as const,
+              source: "host",
+              configOptions: [],
+              agentCommands: { epoch: "test", revision: 0, commands: [] },
+            },
+          };
+        },
+      } as never,
       authStore,
       ticketStore,
       sseManager,
@@ -216,14 +254,26 @@ describe("SSE ticket flow", () => {
     assert.equal(connected.pendingCount, 0);
   });
 
-  it("broadcasts every external-parent task event to every host client", async () => {
-    const connectHost = async (rawToken: string) => {
-      const ticketResp = await req(port, "POST", "/api/v1/sse-ticket", {
-        Authorization: `Bearer ${rawToken}`,
-        "Content-Length": "0",
-      });
+  it("routes external-parent events by subscribed parent", async () => {
+    const connectHost = async (
+      rawToken: string,
+      parentIds = rawToken === hostToken
+        ? ["hub-parent"]
+        : ["other-hub-parent"],
+    ) => {
+      const ticketResp = await req(
+        port,
+        "POST",
+        "/api/v1/sse-ticket",
+        {
+          Authorization: `Bearer ${rawToken}`,
+          "Content-Type": "application/json",
+        },
+        JSON.stringify({ parentIds }),
+      );
       const ticket = JSON.parse(ticketResp.body).ticket as string;
       let received = "";
+      let connectionId = "";
       const ready = new Promise<void>((resolve, reject) => {
         const request = http.request(
           {
@@ -234,6 +284,7 @@ describe("SSE ticket flow", () => {
           },
           (response) => {
             assert.equal(response.statusCode, 200);
+            connectionId = String(response.headers["x-host-connection-id"]);
             response.on("data", (chunk: Buffer) => {
               received += chunk.toString();
               if (received.includes("event: heartbeat")) resolve();
@@ -245,7 +296,7 @@ describe("SSE ticket flow", () => {
         request.end();
       });
       await ready;
-      return () => received;
+      return { received: () => received, connectionId: () => connectionId };
     };
     const first = await connectHost(hostToken);
     const second = await connectHost(otherHostToken);
@@ -271,19 +322,67 @@ describe("SSE ticket flow", () => {
     );
     assert.equal(hostClients.length, 2);
     try {
-      assert.match(first(), /event: heartbeat/);
-      assert.match(first(), /"type":"connected"/);
-      assert.match(first(), /owned-by-hub/);
-      assert.match(first(), /owned-by-other-hub/);
-      assert.match(second(), /owned-by-other-hub/);
-      assert.match(second(), /owned-by-hub(?=[^:])/);
-      for (const received of [first(), second()]) {
+      assert.match(first.received(), /event: heartbeat/);
+      assert.match(first.received(), /"type":"connected"/);
+      assert.match(first.received(), /owned-by-hub/);
+      assert.doesNotMatch(first.received(), /owned-by-other-hub/);
+      assert.match(second.received(), /owned-by-other-hub/);
+      assert.doesNotMatch(second.received(), /owned-by-hub(?=[^:])/);
+      const create = await req(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        {
+          Authorization: `Bearer ${hostToken}`,
+          "Content-Type": "application/json",
+          "X-Host-Connection-Id": first.connectionId(),
+        },
+        JSON.stringify({
+          agentId: "mock",
+          parentId: "new-hub-parent",
+          title: "New subscription child",
+        }),
+      );
+      assert.equal(create.status, 201);
+      sseManager.broadcast({
+        type: "task_created",
+        taskId: "new-subscription-child",
+        configOptions: [],
+      } as never);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.match(first.received(), /new-subscription-child/);
+      assert.doesNotMatch(second.received(), /new-subscription-child/);
+      hostClients.find((client) => client.tokenName === "hub")?.res.destroy();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const reconnected = await connectHost(hostToken, [
+        "hub-parent",
+        "new-hub-parent",
+      ]);
+      sseManager.broadcast({
+        type: "task_updated",
+        taskId: "new-subscription-child",
+      } as never);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.match(reconnected.received(), /new-subscription-child/);
+      const unknown = await connectHost(hostToken, ["unknown-parent"]);
+      sseManager.broadcast({
+        type: "task_created",
+        taskId: "owned-by-hub",
+        configOptions: [],
+      } as never);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.doesNotMatch(unknown.received(), /owned-by-hub/);
+      for (const received of [first.received(), second.received()]) {
         assert.doesNotMatch(received, /inbox_count_changed/);
         assert.doesNotMatch(received, /pendingCount/);
         assert.doesNotMatch(received, /debugLevel/);
       }
     } finally {
-      for (const client of hostClients) client.res.destroy();
+      for (const client of sseManager.clients.values()) {
+        if (client.tokenName === "hub" || client.tokenName === "other-hub") {
+          client.res.destroy();
+        }
+      }
     }
   });
 

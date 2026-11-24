@@ -1274,15 +1274,18 @@ export class Store {
   }
 
   hasExternalParent(taskId: string): boolean {
-    return (
-      this.db
-        .prepare(
-          `SELECT 1 FROM remote_tasks
-             WHERE local_task_id = ? AND remote_role = 'parent'
-             LIMIT 1`,
-        )
-        .get(taskId) !== undefined
-    );
+    return this.getExternalParentId(taskId) !== null;
+  }
+
+  getExternalParentId(taskId: string): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT remote_task_id FROM remote_tasks
+         WHERE local_task_id = ? AND remote_role = 'parent'
+         LIMIT 1`,
+      )
+      .get(taskId) as { remote_task_id: string } | undefined;
+    return row?.remote_task_id ?? null;
   }
 
   recordRemoteChild(
