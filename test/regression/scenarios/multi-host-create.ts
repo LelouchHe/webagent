@@ -6,6 +6,7 @@ import {
   hubHostConfig,
   provisionHostToken,
   readHostToken,
+  waitForHost,
   type ProvisionedHostToken,
 } from "../multi-host.ts";
 
@@ -172,8 +173,14 @@ export default scenario<State>({
       {
         name: "links-survive-restarts",
         action: async (client) => {
-          await client.restart("owner");
+          // Wait for each reconnect so both owner-side SSE accepts land inside
+          // this step instead of racing the snapshot.
+          await client.restart("owner", () =>
+            waitForHost(client, "hub", "owner", "unreachable"),
+          );
+          await waitForHost(client, "hub", "owner", "connected");
           await client.restart("hub");
+          await waitForHost(client, "hub", "owner", "connected");
           return {
             ownerTasks: readRows(
               state.ownerDb,
