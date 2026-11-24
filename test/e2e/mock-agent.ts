@@ -981,6 +981,9 @@ class MockAgent {
       };
       this.sessions.set(params.sessionId, session);
     }
+    if (params.mcpServers.length > 0) {
+      this.mcpServersBySession.set(params.sessionId, params.mcpServers);
+    }
     if (WARM_ONLY_EXTRA) {
       // Only a restore reports these, so the test can prove the client learned
       // them from the completed warm-up rather than from earlier state.
@@ -1019,6 +1022,9 @@ class MockAgent {
         configOptions: createConfigOptions(),
       };
       this.sessions.set(params.sessionId, session);
+    }
+    if (params.mcpServers && params.mcpServers.length > 0) {
+      this.mcpServersBySession.set(params.sessionId, params.mcpServers);
     }
     await this.advertiseCommands(params.sessionId);
     return {
