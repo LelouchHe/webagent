@@ -4163,7 +4163,7 @@ describe("events", () => {
   });
 
   describe("loadOlderEvents", () => {
-    it("explicitly requests a buffer flush for pagination", async () => {
+    it("does not request a buffer flush for an older-only page", async () => {
       state.taskId = "s1";
       state.hasMoreHistory = true;
       state.oldestLoadedSeq = 100;
@@ -4183,7 +4183,7 @@ describe("events", () => {
       assert.equal(await events.loadOlderEvents("s1"), true);
       assert.equal(
         requestedUrl,
-        "/api/v1/tasks/s1/events?flush=1&limit=200&before=100",
+        "/api/v1/tasks/s1/events?limit=200&before=100",
       );
     });
 

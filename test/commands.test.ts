@@ -322,6 +322,10 @@ describe("commands", () => {
       );
       assert.equal(state.awaitingNewTask, false);
       assert.equal(state.pendingNewTaskOpId, null);
+      assert.ok(
+        fetchCalls.some((call) => call.url === "/api/v1/tasks/A"),
+        "source-existence metadata read must not warm the task",
+      );
       assert.equal(
         fetchCalls.some(
           (c) =>

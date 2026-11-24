@@ -24,7 +24,7 @@ export interface ProvisionHostTokenOptions {
   transform?: (token: string) => string;
   write?: boolean;
   waitFor?: "connected" | null;
-  scope?: "api" | "host" | "read";
+  scope?: "api" | "host";
 }
 
 export function hostTokenPath(

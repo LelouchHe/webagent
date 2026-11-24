@@ -765,7 +765,7 @@ with that flag, a task that is not live starts a warm-up in the background.
 When it finishes, the restored schema and commands are published to the task's
 subscribers as `task_runtime_warmed` (see [Live Events](#live-events)). A
 missing, dead, or no longer configured agent simply means no such event
-arrives. `/snapshot` is not in the `read`-scope allowlist.
+arrives.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -859,10 +859,10 @@ Send a user prompt to the agent. Returns immediately; the agent's response strea
 Retrieve events for a task (history). This is the primary history endpoint
 used during page load, and the read contract for external consumers: it never
 touches execution, so it works for archived, unbound, and never-materialized
-tasks alike. A `read`-scope token may call it. By default every scope gets
-**persisted rows only**: no thinking/assistant buffer is flushed, `seq` does
-not advance, and `streaming` is `false`. The browser explicitly requests
-`flush=1` to preserve its streaming-replay behavior.
+tasks alike. By default every scope gets **persisted rows only**: no
+thinking/assistant buffer is flushed, `seq` does not advance, and `streaming`
+is `false`. The browser explicitly requests `flush=1` where it consumes that
+streaming state.
 
 | Parameter  | In    | Type           | Description                                                                                                      |
 | ---------- | ----- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -898,7 +898,7 @@ not advance, and `streaming` is `false`. The browser explicitly requests
 | Field       | Present               | Description                                                    |
 | ----------- | --------------------- | -------------------------------------------------------------- |
 | `events`    | always                | Array of stored events, ordered by `seq` ASC                   |
-| `streaming` | always                | Whether a requested flush found thinking/assistant buffers      |
+| `streaming` | always                | Whether a tail was flushed or the runtime is actively streaming |
 | `total`     | when `limit` provided | Total event count for the task (respects `thinking` filter) |
 | `hasMore`   | when `limit` provided | Whether there are older events before the returned page        |
 
@@ -947,10 +947,11 @@ A failed delivery carries `failureReason` instead of `deliveredAt`. The event is
 best effort; a reload reads the delivery row.
 
 
-The `streaming` flags indicate whether an explicit `flush=1` found unflushed
-buffers. If `true`, the corresponding buffer was flushed into the event list
-and the frontend should keep the last element open for continued live streaming
-(to avoid duplicate thinking/assistant blocks on reconnect).
+The `streaming` flags indicate either that an explicit `flush=1` found an
+unflushed buffer or that the runtime is actively streaming. A `true` flag can
+therefore accompany no new event rows. If a tail was flushed, the frontend
+should keep the last element open for continued live streaming (to avoid
+duplicate thinking/assistant blocks on reconnect).
 
 > **Note:** The `data` field is a JSON string that must be parsed by the client. The shape of the parsed object depends on the `type`. See [SSE Event Reference](#sse-event-reference).
 
@@ -1158,12 +1159,11 @@ Get server and agent version information.
 
 #### `GET /api/v1/hosts`
 
-Read the hub's in-memory owner-connection states. Every authenticated scope,
-including `read`, may call this endpoint. An owner with no `[hosts.<name>]`
-configuration returns an empty array. This endpoint is for operational
-diagnostics and regression tests that need to observe connection state from
-outside the process. The browser UI does not consume it
-yet.
+Read the hub's in-memory owner-connection states. `api` and `admin` callers
+may use this endpoint. An owner with no `[hosts.<name>]` configuration returns
+an empty array. This endpoint is for operational diagnostics and regression
+tests that need to observe connection state from outside the process. The
+browser UI does not consume it yet.
 
 **Response** `200`:
 
@@ -1187,8 +1187,7 @@ yet.
 
 `state` is `connecting`, `connected`, or `unreachable`. Unreachable entries
 include a stable machine-readable `reason`, currently
-`token_command_failed`, `unauthorized`, `insufficient_scope`, `network`, or
-`protocol_mismatch`.
+`token_command_failed`, `unauthorized`, `network`, or `protocol_mismatch`.
 `since` is the start of the current state in ISO-8601 UTC form. The response
 never contains credentials or token command output.
 
@@ -1217,7 +1216,7 @@ This endpoint **always requires** a valid `Authorization: Bearer <token>` header
 | ------- | ------- | ---------------------------------------------------- |
 | `ok`    | boolean | Always `true` on success                             |
 | `name`  | string  | Token's human-readable name (e.g. `"laptop"`)        |
-| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), `"host"` (Host connection probes and remote Task create only), or `"read"` (allowlisted reads only: host status, task list, task detail, events, status, permissions, version, auth/verify; explicit `warm=1` and `flush=1` actions are forbidden) |
+| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"host"` (Host connection probes and remote Task create only) |
 | `hash`  | string  | SHA-256 hex digest of the presented token, matching its stored `hash` |
 
 **Response** `401`:
@@ -1268,7 +1267,7 @@ rejected on a per-task stream.
 
 ### Tokens
 
-Manage Bearer tokens stored in `data/auth.json`. All endpoints require an admin-scope token; api-, host-, and read-scope tokens get `403`.
+Manage Bearer tokens stored in `data/auth.json`. All endpoints require an admin-scope token; api- and host-scope tokens get `403`.
 
 #### `GET /api/v1/tokens`
 
@@ -1302,30 +1301,26 @@ Create a new token. **The raw token is returned exactly once** — the server on
 **Request body:**
 
 ```json
-{ "name": "history-reader", "scope": "read" }
+{ "name": "automation", "scope": "api" }
 ```
 
 | Field   | Type   | Description                                                                 |
 | ------- | ------ | --------------------------------------------------------------------------- |
 | `name`  | string | 1–64 chars, `[A-Za-z0-9_-]`. Must be unique.                                |
-| `scope` | string | Optional. `"api"` (default), `"host"`, or `"read"`. `admin` is not accepted here. |
+| `scope` | string | Optional. `"api"` (default) or `"host"`. `admin` is not accepted here. |
 
 New tokens default to `api` scope (no access to `/tokens/**`). `host` mints a
 cross-instance credential limited to connection probes and remote Task create.
-`read` mints the
-narrow pure-read credential used by external history consumers; it is denied by
-default on every route outside the documented read allowlist (see
-[Auth Flow](security.md#auth-flow)). `admin` is CLI-only: use
-`webagent --create-token <name>` so an api/read token cannot escalate through
-this route.
+`admin` is CLI-only: use `webagent --create-token <name>` so an API token
+cannot escalate through this route.
 
 **Response** `201`:
 
 ```json
 {
   "token": "wat_…",
-  "name": "history-reader",
-  "scope": "read"
+  "name": "automation",
+  "scope": "api"
 }
 ```
 

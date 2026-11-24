@@ -233,9 +233,6 @@ export class HostConnection {
     if (identity.hash !== hashToken(token) || !isScope(identity.scope)) {
       throw new HostConnectionFailure("protocol_mismatch");
     }
-    if (identity.scope === "read") {
-      throw new HostConnectionFailure("insufficient_scope");
-    }
     const ticketBody = await this.request(
       attempt.signal,
       "/api/v1/sse-ticket",

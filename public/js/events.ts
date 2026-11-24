@@ -305,7 +305,7 @@ async function resolveFallbackTask(
 ): Promise<{ id: string; task?: TaskDetail } | null> {
   if (preferredTaskId) {
     try {
-      const task = await api.getTask(preferredTaskId);
+      const task = await api.getTask(preferredTaskId, { warm: true });
       return { id: preferredTaskId, task };
     } catch (err) {
       if (!(
@@ -350,7 +350,7 @@ async function fallbackToNextTaskImpl(
         loaded = await loadHistory(next.id);
       } else {
         [task, loaded] = await Promise.all([
-          api.getTask(next.id),
+          api.getTask(next.id, { warm: true }),
           loadHistory(next.id),
         ]);
       }
@@ -1280,7 +1280,7 @@ async function fetchOlderEventsPage(
 } | null> {
   const body = await api.withTimeout(async (signal) => {
     const res = await fetch(
-      `/api/v1/tasks/${taskId}/events?flush=1&limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
+      `/api/v1/tasks/${taskId}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
       signal ? { signal } : undefined,
     );
     if (!res.ok) return null;

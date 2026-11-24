@@ -4,7 +4,7 @@ import lockfile from "proper-lockfile";
 import { generateToken, hashToken, verifyToken } from "./auth.ts";
 import { atomicWriteFile } from "./atomic-write.ts";
 
-export const AUTH_SCOPES = ["admin", "api", "host", "read"] as const;
+export const AUTH_SCOPES = ["admin", "api", "host"] as const;
 export type Scope = (typeof AUTH_SCOPES)[number];
 const VALID_SCOPE: ReadonlySet<string> = new Set(AUTH_SCOPES);
 

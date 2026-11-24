@@ -8,7 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed
 
-- **REST task reads no longer infer warm or flush side effects.** `GET /api/v1/tasks/:id` and `/snapshot` warm only with `warm=1`; `GET /api/v1/tasks/:id/events` flushes only with `flush=1`. Default reads are side-effect free for every token scope, while a `read` token receives `403` if it explicitly requests either action. Update external integrations that relied on implicit warming, buffer persistence, event-sequence advances, or detail-read model canonicalization. The browser sends the flags itself, so its visible behavior is unchanged.
+- **REST task reads no longer infer warm or flush side effects.** `GET /api/v1/tasks/:id` and `/snapshot` warm only with `warm=1`; `GET /api/v1/tasks/:id/events` flushes only with `flush=1`. Update external integrations that relied on implicit warming, buffer persistence, event-sequence advances, or detail-read model canonicalization. The browser sends the flags itself where they are consumed, so its visible behavior is unchanged.
+- **Remove the `read` token scope.** Delete any `read`-scope tokens from `auth.json` before upgrading; the supported scopes are now `admin`, `api`, and `host`, and unknown stored scopes are rejected during startup.
 
 ## [0.13.1] - 2026-11-17
 

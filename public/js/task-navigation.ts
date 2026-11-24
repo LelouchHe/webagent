@@ -45,7 +45,7 @@ export async function switchToTask(taskId: string): Promise<NavigationResult> {
 
   try {
     const [task, loaded] = await Promise.all([
-      getTask(taskId),
+      getTask(taskId, { warm: true }),
       loadHistory(taskId),
     ]);
     if (!isCurrentNavigation()) return "ignored";

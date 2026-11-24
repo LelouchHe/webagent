@@ -304,8 +304,11 @@ export function getConfig(): Promise<{
   return request("/api/v1/config");
 }
 
-export function getTask(id: string): Promise<TaskDetail> {
-  return request("/api/v1/tasks/" + id + "?warm=1");
+export function getTask(
+  id: string,
+  opts: { warm?: boolean } = {},
+): Promise<TaskDetail> {
+  return request("/api/v1/tasks/" + id + (opts.warm ? "?warm=1" : ""));
 }
 
 // --- File viewer ---

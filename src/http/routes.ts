@@ -31,7 +31,6 @@ import { handleFileRoutes } from "../files/routes.ts";
 import {
   authenticate,
   isHostScopeAllowedPath,
-  isReadScopeAllowedPath,
   isWhitelistedPath,
 } from "../auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "../attachment-labels.ts";
@@ -421,36 +420,6 @@ export function getPrincipal(req: IncomingMessage): TokenRecord | undefined {
   return principalByRequest.get(req);
 }
 
-function parseExplicitOneQueryParameter(
-  params: URLSearchParams,
-  name: string,
-  res: ServerResponse,
-): boolean | null {
-  const values = params.getAll(name);
-  if (values.length === 0) return false;
-  if (values.length === 1 && values[0] === "1") return true;
-  json(res, HTTP_STATUS.BAD_REQUEST, {
-    error: `${name} must be '1' when present`,
-  });
-  return null;
-}
-
-function rejectUnsupportedQueryParameters(
-  params: URLSearchParams,
-  allowed: readonly string[],
-  route: string,
-  res: ServerResponse,
-): boolean {
-  for (const name of params.keys()) {
-    if (allowed.includes(name)) continue;
-    json(res, HTTP_STATUS.BAD_REQUEST, {
-      error: `${name} is not supported on ${route}`,
-    });
-    return true;
-  }
-  return false;
-}
-
 /**
  * Multipart upload handler. Streams the `file` field straight to disk under
  * <data_dir>/tasks/<sid>/attachments/<uuid>.<ext>.tmp, atomic-renames on
@@ -780,14 +749,16 @@ export function createRequestHandler(
   // eslint-disable-next-line complexity -- TODO: refactor main route handler into smaller handlers
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
+    const requestUrl = new URL(url, "http://localhost");
+    const path = requestUrl.pathname;
+    const requestParams = requestUrl.searchParams;
 
     // --- MCP server: claims /mcp before the auth gate (the endpoint
     // is outside /api/** and authenticates by per-task capability).
     if (deps.mcpEndpoint && (await deps.mcpEndpoint(req, res))) return;
 
     // --- Auth gate: any /api/** outside whitelist requires Bearer ---
-    if (deps.authStore && url.startsWith("/api/")) {
-      const path = url.split("?")[0] ?? url;
+    if (deps.authStore && path.startsWith("/api/")) {
       const method = req.method ?? "GET";
       if (!isWhitelistedPath(method, path)) {
         const result = authenticate(req.headers, deps.authStore);
@@ -802,31 +773,6 @@ export function createRequestHandler(
           return;
         }
         principalByRequest.set(req, result.principal);
-        // A read token is a pure-read credential. The allowlist is checked
-        // here, before any route can touch execution or storage, so a new
-        // endpoint is denied by default until it is deliberately opened.
-        if (
-          result.principal.scope === "read" &&
-          !isReadScopeAllowedPath(method, path)
-        ) {
-          res.writeHead(HTTP_STATUS.FORBIDDEN, {
-            "Content-Type": "application/json",
-          });
-          res.end(JSON.stringify({ error: "Forbidden", reason: "read_scope" }));
-          return;
-        }
-        const actionParams = new URLSearchParams(url.split("?")[1] ?? "");
-        if (
-          result.principal.scope === "read" &&
-          (actionParams.getAll("warm").includes("1") ||
-            actionParams.getAll("flush").includes("1"))
-        ) {
-          res.writeHead(HTTP_STATUS.FORBIDDEN, {
-            "Content-Type": "application/json",
-          });
-          res.end(JSON.stringify({ error: "Forbidden", reason: "read_scope" }));
-          return;
-        }
         if (
           result.principal.scope === "host" &&
           !isHostScopeAllowedPath(method, path)
@@ -1101,13 +1047,12 @@ export function createRequestHandler(
           return;
         }
         const name = typeof body.name === "string" ? body.name : "";
-        // REST can mint `api` (default) or the narrower `read`. `admin` is
-        // deliberately CLI-only so a compromised api/read token cannot
-        // escalate through this route.
+        // REST can mint `api` (default) or the host connection scope. `admin`
+        // is deliberately CLI-only so a compromised token cannot escalate.
         const scope = body.scope === undefined ? "api" : body.scope;
-        if (scope !== "api" && scope !== "host" && scope !== "read") {
+        if (scope !== "api" && scope !== "host") {
           json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "scope must be 'api', 'host', or 'read'",
+            error: "scope must be 'api' or 'host'",
           });
           return;
         }
@@ -1405,25 +1350,12 @@ export function createRequestHandler(
       // this task in right now". Frontend calls this on connect / reconnect
       // / after long backgrounding, then applies incremental `state_patch`
       // SSE events.
-      const snapshotMatch = url.match(
-        /^\/api\/v1\/tasks\/([^/]+)\/snapshot\/?(\?.*)?$/,
+      const snapshotMatch = path.match(
+        /^\/api\/v1\/tasks\/([^/]+)\/snapshot\/?$/,
       );
       if (snapshotMatch && req.method === "GET") {
         const taskId = decodeURIComponent(snapshotMatch[1]);
-        const params = new URLSearchParams(
-          snapshotMatch[2] ? snapshotMatch[2].slice(1) : "",
-        );
-        if (
-          rejectUnsupportedQueryParameters(
-            params,
-            ["warm"],
-            "task snapshot",
-            res,
-          )
-        )
-          return;
-        const warm = parseExplicitOneQueryParameter(params, "warm", res);
-        if (warm === null) return;
+        const warm = requestParams.get("warm") === "1";
         const task = store.getTask(taskId);
         if (!task) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
@@ -1440,6 +1372,8 @@ export function createRequestHandler(
         if (warm && !tasks.liveTasks.has(taskId)) {
           tasks.warmTaskInBackground(taskId);
         }
+        tasks.syncBusy(taskId);
+        tasks.syncPendingPermissions(taskId);
         const runtimeState = tasks.state.getState(taskId);
         const lastEventSeq = store.getLastEventSeq(taskId);
         json(
@@ -2893,7 +2827,7 @@ export function createRequestHandler(
       }
 
       // --- Task CRUD: /api/v1/tasks/:id ---
-      const taskIdMatch = url.match(/^\/api\/v1\/tasks\/([^/?]+)\/?(\?.*)?$/);
+      const taskIdMatch = path.match(/^\/api\/v1\/tasks\/([^/]+)\/?$/);
       if (taskIdMatch) {
         const taskId = decodeURIComponent(taskIdMatch[1]);
 
@@ -2902,20 +2836,7 @@ export function createRequestHandler(
 
         // GET /api/v1/tasks/:id
         if (req.method === "GET") {
-          const params = new URLSearchParams(
-            taskIdMatch[2] ? taskIdMatch[2].slice(1) : "",
-          );
-          if (
-            rejectUnsupportedQueryParameters(
-              params,
-              ["warm"],
-              "task detail",
-              res,
-            )
-          )
-            return;
-          const warm = parseExplicitOneQueryParameter(params, "warm", res);
-          if (warm === null) return;
+          const warm = requestParams.get("warm") === "1";
           const task = store.getTask(taskId);
           if (!task) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
@@ -3246,30 +3167,16 @@ export function createRequestHandler(
       }
 
       // GET /api/v1/tasks/:id/events?thinking=0|1&limit=N&before=SEQ&after=SEQ
-      const eventsMatch = url.match(
-        /^\/api\/v1\/tasks\/([^/]+)\/events(\?.*)?$/,
-      );
+      const eventsMatch = path.match(/^\/api\/v1\/tasks\/([^/]+)\/events$/);
       if (eventsMatch && req.method === "GET") {
         const taskId = decodeURIComponent(eventsMatch[1]);
-        const queryPart = eventsMatch[2];
-        const params = new URLSearchParams(queryPart ? queryPart.slice(1) : "");
-        if (
-          rejectUnsupportedQueryParameters(
-            params,
-            ["thinking", "after", "before", "limit", "flush"],
-            "task events",
-            res,
-          )
-        )
-          return;
-        const flush = parseExplicitOneQueryParameter(params, "flush", res);
-        if (flush === null) return;
-        const excludeThinking = params.get("thinking") === "0";
-        const afterRaw = params.get("after");
+        const flush = requestParams.get("flush") === "1";
+        const excludeThinking = requestParams.get("thinking") === "0";
+        const afterRaw = requestParams.get("after");
         const afterSeq = afterRaw != null ? Number(afterRaw) : undefined;
-        const beforeRaw = params.get("before");
+        const beforeRaw = requestParams.get("before");
         const beforeSeq = beforeRaw != null ? Number(beforeRaw) : undefined;
-        const limitRaw = params.get("limit");
+        const limitRaw = requestParams.get("limit");
         const limit =
           limitRaw != null
             ? Math.max(1, Math.min(10000, Number(limitRaw)))

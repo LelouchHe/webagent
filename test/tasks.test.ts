@@ -1269,6 +1269,19 @@ describe("Task REST API", () => {
       assert.ok(Array.isArray(body.configOptions));
     });
 
+    it("does not warm or write config on a default detail read", async () => {
+      store.createTask("stored-only", tmpDir, "auto", "test-agent");
+      store["db"]
+        .prepare("UPDATE tasks SET model = ? WHERE id = ?")
+        .run('["provider","model"]', "stored-only");
+
+      const res = await makeRequest(port, "GET", "/api/v1/tasks/stored-only");
+
+      assert.equal(res.status, 200);
+      assert.equal(tasks.liveTasks.has("stored-only"), false);
+      assert.equal(store.getTask("stored-only")?.model, '["provider","model"]');
+    });
+
     it("resolves the Root by its id and 404s unknown/legacy ids", async () => {
       const rootId = store.ensureRootTask(tmpDir).id;
       store.attachAgentSession(rootId, "test-agent", "agent-root");
@@ -2060,6 +2073,30 @@ describe("Task REST API", () => {
   });
 
   describe("streaming buffer flush on events endpoint", () => {
+    it("leaves pending buffers and seq untouched by default", async () => {
+      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
+      const taskId = JSON.parse(createRes.body).id;
+      tasks.appendAssistant(taskId, "partial reply");
+      const beforeEvents = store.getEvents(taskId).length;
+      const beforeSeq = store.getLastEventSeq(taskId);
+
+      const res = await makeRequest(
+        port,
+        "GET",
+        `/api/v1/tasks/${taskId}/events`,
+      );
+      const body = JSON.parse(res.body);
+
+      assert.equal(res.status, 200);
+      assert.equal(store.getEvents(taskId).length, beforeEvents);
+      assert.equal(store.getLastEventSeq(taskId), beforeSeq);
+      assert.equal(tasks.assistantBuffers.get(taskId), "partial reply");
+      assert.deepEqual(body.streaming, {
+        thinking: false,
+        assistant: false,
+      });
+    });
+
     it("flushes pending thinking buffer and signals streaming", async () => {
       const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const taskId = JSON.parse(createRes.body).id;

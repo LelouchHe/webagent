@@ -133,17 +133,15 @@ describe("GET /api/v1/tasks/:id/snapshot", () => {
     assert.ok(body.seq >= 1);
   });
 
-  it("does not recompute or advance runtime state during a read", async () => {
+  it("reports a held prompt reservation as busy", async () => {
     store.createTask("s1", "/tmp/cwd", "auto", "test-agent");
-    tasks.activePrompts.add("s1");
+    assert.notEqual(tasks.reservePromptSubmission("s1"), null);
 
-    const before = tasks.state.getState("s1").seq;
     const res = await req(port, "GET", "/api/v1/tasks/s1/snapshot");
     const body = JSON.parse(res.body);
 
-    assert.equal(body.seq, before);
-    assert.equal(body.runtime.busy, null);
-    assert.equal(tasks.state.getState("s1").seq, before);
+    assert.equal(body.runtime.busy.kind, "agent");
+    assert.equal(body.runtime.busy.promptId !== null, true);
   });
 
   it("includes task.lastEventSeq from stored events", async () => {

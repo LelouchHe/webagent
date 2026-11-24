@@ -150,7 +150,6 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/e2e/runtime-warm.spec.ts` (slow restore, 3s load delay)
   - the snapshot answers in well under the restore time, and the detail read returns no schema
-  - the browser's task detail/snapshot call sites explicitly send `warm=1`, and history loads explicitly send `flush=1`
   - while that restore is in flight the UI stays idle (`↵`, `runtime.busy` null): a background restore is never rendered as busy
   - without a refresh, the restored model and command appear from `task_runtime_warmed`
 
@@ -158,7 +157,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - three genuinely different unavailable shapes, each produced its own way: a real spawn of a missing binary, a configured agent whose transport was shut down, and a binding whose agent left the configuration
   - reads cover task detail, snapshot, events, the list, attachment bytes, the owner share list, and deletion, in every state, without moving the binding
   - the snapshot returns while a restore is still hanging (it does not wait at all)
-  - a default snapshot does not recompute busy state or advance runtime `seq`
+
+- `test/snapshot-route.test.ts`
+  - a snapshot reconciles a held prompt reservation into `busy`
+
+- `test/api-module.test.ts`, `test/events.test.ts`, `test/task-topology.test.ts`,
+  and `test/e2e/attachment-cache-switch.spec.ts` (browser action selectors)
+  - task-opening call sites request `warm=1`, while metadata-only source and
+    parent-link detail lookups do not
+  - initial history and reconnect/catch-up request `flush=1`, while older-only
+    pagination does not
+  - `attachment-cache-switch.spec.ts` observes incremental `flush=1` over HTTP
 
 - `test/multi-agent-clear.test.ts` (HTTP)
   - `/clear { agentId }` moves a task off a removed agent, records `explicit_clear`, preserves history, and creates exactly one session on the configured agent
@@ -906,17 +915,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a queued delivery across the cut edge is not drained
   - a handed-over delivery stays `delivered` across archive
 
-- `test/read-scope.test.ts`
-  - a `read` token reaches the task list, stored history, detail, status, and
-    permissions (including trailing-slash forms the routes support), but is
-    denied every write and undeclared read, including `/snapshot`
-  - default detail, snapshot, and `/events` reads are pure for every scope: no
-    warm, buffer flush, event or seq advance, or stored-config write-back
-  - `warm=1` and `flush=1` retain the previous effects for `api` callers;
-    `read` callers receive 403 for either explicit action
-  - the task list never warms anything for any scope
-  - frontend API tests guard the browser's explicit warm flags, and event
-    loading guards its explicit flush flags
+- `test/tasks.test.ts`
+  - default task detail does not warm or write config; `warm=1` retains the
+    existing background restore and canonicalization behavior
+  - default `/events` leaves buffers and event `seq` untouched; `flush=1`
+    retains the existing persistence and streaming response
 
 ### Frontend state and UI event flow
 

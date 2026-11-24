@@ -164,8 +164,8 @@ describe("parent reference", () => {
       setCurrentTask("child");
       await tick();
       assert.deepEqual(fetchStub.urls, [
-        "/api/v1/tasks/child?warm=1",
-        "/api/v1/tasks/parent?warm=1",
+        "/api/v1/tasks/child",
+        "/api/v1/tasks/parent",
       ]);
       assert.deepEqual(parentOf("child"), {
         parentId: "parent",
@@ -185,7 +185,7 @@ describe("parent reference", () => {
     try {
       setCurrentTask("child");
       await tick();
-      assert.deepEqual(fetchStub.urls, ["/api/v1/tasks/child?warm=1"]);
+      assert.deepEqual(fetchStub.urls, ["/api/v1/tasks/child"]);
       assert.equal(isParentResolved("child"), true);
       assert.equal(parentOf("child"), null);
     } finally {
