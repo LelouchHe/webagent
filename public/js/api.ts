@@ -165,13 +165,24 @@ export function createTask(
      * "inherit".
      */
     agentId?: string | null;
+    host?: string | null;
   },
   clientOpId?: string,
 ): Promise<Record<string, unknown>> {
   // An empty `agentId` throws before the request is built.
+  let agent = opts?.agentId;
+  let host = opts?.host;
+  if (agent?.includes("@")) {
+    const coordinate = agent.split("@");
+    if (coordinate.length !== 2 || !coordinate[0] || !coordinate[1]) {
+      throw new InvalidRequestError("createTask: invalid agent@host");
+    }
+    [agent, host] = coordinate;
+  }
   const body: Record<string, unknown> = {
-    ...agentIdField(opts?.agentId, "createTask"),
+    ...agentIdField(agent, "createTask"),
   };
+  if (host) body.host = host;
   if (opts?.cwd) body.cwd = opts.cwd;
   if (opts?.inheritFromTaskId) body.inheritFromTaskId = opts.inheritFromTaskId;
   if (opts?.parentId) body.parentId = opts.parentId;

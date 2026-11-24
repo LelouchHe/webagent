@@ -113,7 +113,8 @@ export default scenario<State>({
                     tool: "task_create",
                     arguments: {
                       title: "Remote loop child",
-                      agent: "mock@owner",
+                      agent: "mock",
+                      host: "owner",
                     },
                   },
                 ],

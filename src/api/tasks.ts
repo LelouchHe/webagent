@@ -132,6 +132,7 @@ export interface TaskCreateInput {
   title?: string;
   cwd?: string;
   agentId?: unknown;
+  host?: unknown;
   model?: string;
   thinking?: string;
   parentId?: string;

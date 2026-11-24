@@ -15,6 +15,7 @@ import {
   TaskRemoteCreateConfigError,
   TaskRemoteCreatePartialSuccessError,
   TaskRemoteCreateUnknownError,
+  TaskHostNotConfiguredError,
   type RemoteTaskCreateTransport,
   type TaskCreateHost,
 } from "../src/api/tasks.ts";
@@ -139,7 +140,8 @@ describe("MCP Task tool host", () => {
     await create.create(
       { kind: "agent", principal: principal() },
       {
-        agentId: "copilot@mini",
+        agentId: "copilot",
+        host: "mini",
         parentId: "alpha",
         inheritFromTaskId: "alpha",
         title: "Remote",
@@ -197,15 +199,40 @@ describe("MCP Task tool host", () => {
       routed.create(
         { kind: "host", peerTokenHash: "peer-hash" },
         {
-          agentId: "test-agent@another-host",
+          agentId: "test-agent",
+          host: "another-host",
           parentId: "external-parent",
           title: "Must not relay",
           cwd: dir,
         },
       ),
-      /invalid_remote_agent/,
+      /invalid_remote_host/,
     );
     assert.equal(remoteCalls, 0);
+  });
+
+  it("rejects a combined agent coordinate", async () => {
+    const create = createTaskOpsCore({
+      host: {
+        async create() {
+          assert.fail("invalid coordinate must not reach the Host");
+        },
+      },
+      store,
+      tasks,
+    });
+    await assert.rejects(
+      create.create(
+        { kind: "agent", principal: principal() },
+        {
+          agentId: "pi@mini",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Invalid coordinate",
+        },
+      ),
+      /invalid_agent/,
+    );
   });
 
   it("creates a deferred host task and external-parent link without ACP", async () => {
@@ -609,7 +636,8 @@ describe("MCP Task tool host", () => {
       routed.create(
         { kind: "agent", principal: oldPrincipal },
         {
-          agentId: "test-agent@mini",
+          agentId: "test-agent",
+          host: "mini",
           parentId: "alpha",
           inheritFromTaskId: "alpha",
           title: "Stale remote child",
@@ -646,13 +674,13 @@ describe("MCP Task tool host", () => {
     await assert.rejects(
       host.create(
         { kind: "user" },
-        { agentId: "test-agent@mini", parentId: "" },
+        { agentId: "test-agent", host: "mini", parentId: "" },
       ),
       { message: "parent_not_found" },
     );
   });
 
-  it("dispatches agent@host once without leaking local inheritance data", async () => {
+  it("dispatches separate agent and host once without leaking inheritance data", async () => {
     const calls: unknown[] = [];
     const host = createRoutedTaskOps({
       async create(remoteHost, input) {
@@ -689,7 +717,8 @@ describe("MCP Task tool host", () => {
     const created = await host.create(
       { kind: "agent", principal: principal() },
       {
-        agentId: "test-agent@mini",
+        agentId: "test-agent",
+        host: "mini",
         parentId: "alpha",
         inheritFromTaskId: "alpha",
         title: "Remote child",
@@ -721,6 +750,27 @@ describe("MCP Task tool host", () => {
       },
     ]);
     assert.equal(store.getTask("remote-child"), undefined);
+  });
+
+  it("reports an unknown separate host as not configured", async () => {
+    const host = createRoutedTaskOps({
+      async create(remoteHost) {
+        throw new TaskHostNotConfiguredError(remoteHost);
+      },
+    });
+    await assert.rejects(
+      host.create(
+        { kind: "agent", principal: principal() },
+        {
+          agentId: "test-agent",
+          host: "missing",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Remote child",
+        },
+      ),
+      TaskHostNotConfiguredError,
+    );
   });
 
   it("reports remote creation as partial when the generation changes", async () => {
@@ -766,7 +816,8 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "agent", principal: principal() },
         {
-          agentId: "test-agent@mini",
+          agentId: "test-agent",
+          host: "mini",
           parentId: "alpha",
           inheritFromTaskId: "alpha",
           title: "Remote child",
@@ -839,7 +890,8 @@ describe("MCP Task tool host", () => {
           { kind: "agent", principal: principal() },
           {
             title: "Partial child",
-            agentId: "test-agent@owner",
+            agentId: "test-agent",
+            host: "owner",
             parentId: "alpha",
             inheritFromTaskId: "alpha",
           },
@@ -924,7 +976,8 @@ describe("MCP Task tool host", () => {
       { kind: "agent", principal: principal() },
       {
         title: "Remote child",
-        agentId: "owner-agent@owner",
+        agentId: "owner-agent",
+        host: "owner",
         parentId: "alpha",
         inheritFromTaskId: "alpha",
       },
@@ -938,10 +991,18 @@ describe("MCP Task tool host", () => {
       );
     assert.equal(rows.length, 1);
     const data = JSON.parse(rows[0].data) as Record<string, unknown>;
-    assert.equal(data.agentId, "owner-agent@owner");
+    assert.equal(data.agentId, "owner-agent");
+    assert.equal(data.host, "owner");
+    assert.match(String(data.body), /agent: owner-agent@owner/);
     assert.equal(data.taskTitle, "Effective remote child");
     assert.equal(data.cwd, "/remote");
+    const read = await local.read(principal(), {
+      taskId: "alpha",
+      seqs: [rows[0].seq],
+    });
+    assert.equal((read.rows[0].data as Record<string, unknown>).host, "owner");
     assert.equal(broadcasts.length, 1);
+    assert.equal(broadcasts[0].body.includes("owner-agent@owner"), true);
   });
 
   it("does not retry unknown remote outcomes", async () => {
@@ -956,7 +1017,8 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "agent", principal: principal() },
         {
-          agentId: "test-agent@mini",
+          agentId: "test-agent",
+          host: "mini",
           parentId: "alpha",
           inheritFromTaskId: "alpha",
           title: "Remote child",
@@ -979,7 +1041,8 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "agent", principal: principal() },
         {
-          agentId: "test-agent@mini",
+          agentId: "test-agent",
+          host: "mini",
           parentId: "alpha",
           inheritFromTaskId: "alpha",
           title: "Remote child",

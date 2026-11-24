@@ -81,4 +81,17 @@ describe("formatFieldBlock", () => {
     assert.equal(inherited.data.model, "");
     assert.equal(inherited.data.thinking, null);
   });
+
+  it("renders host-qualified task-created agents without combining stored facts", () => {
+    const created = buildTaskCreatedSystemMessage({
+      taskId: "t1",
+      taskTitle: "Child",
+      agentId: "pi",
+      host: "webagent2",
+      cwd: "/tmp/child",
+    });
+    assert.equal(created.data.agentId, "pi");
+    assert.equal(created.data.host, "webagent2");
+    assert.match(created.body, /agent: pi@webagent2/);
+  });
 });

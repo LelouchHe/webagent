@@ -332,7 +332,8 @@
                   "tool": "task_create",
                   "arguments": {
                     "title": "Remote loop child",
-                    "agent": "mock@owner"
+                    "agent": "mock",
+                    "host": "owner"
                   },
                   "status": 200,
                   "result": {
@@ -425,7 +426,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     2,
                     "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"Remote loop child\",\"agentId\":\"mock@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Remote loop child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: mock@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"Remote loop child\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Remote loop child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: mock@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
                     "agent",
                     1789333200000
                   ]
@@ -2754,7 +2755,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 2,
             "type": "system_message",
-            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"Remote loop child\",\"agentId\":\"mock@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Remote loop child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: mock@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"Remote loop child\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Remote loop child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: mock@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },

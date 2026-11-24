@@ -49,6 +49,7 @@ type RegisteredTool = {
   inputSchema: {
     properties?: Record<string, unknown>;
     required?: string[];
+    def?: { shape?: Record<string, { description?: string }> };
   };
 };
 
@@ -56,7 +57,9 @@ type RegisteredServer = {
   _registeredTools: Record<string, RegisteredTool>;
 };
 
-function registeredTools(): Record<string, RegisteredTool> {
+function registeredTools(
+  configuredHostIds: readonly string[] = [],
+): Record<string, RegisteredTool> {
   const server = new McpServer({ name: "doc-coverage", version: "0.0.0" });
   const host = {
     list: async () => [],
@@ -99,9 +102,23 @@ function registeredTools(): Record<string, RegisteredTool> {
       initializing: false,
     },
     host,
+    { configuredHostIds },
   );
   return (server as unknown as RegisteredServer)._registeredTools;
 }
+
+describe("task_create host schema", () => {
+  it("omits host without configured hosts and exposes it with descriptions", () => {
+    assert.equal(
+      registeredTools()["task_create"].inputSchema.def?.shape?.host,
+      undefined,
+    );
+    const withHosts = registeredTools(["owner", "mini"])["task_create"]
+      .inputSchema.def?.shape?.host;
+    assert.ok(withHosts);
+    assert.match(withHosts.description ?? "", /owner, mini/);
+  });
+});
 
 function documentedToolNames(): string[] {
   const toolsStart = MCP_DOC.indexOf("\n## Tools");

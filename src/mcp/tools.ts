@@ -5,7 +5,10 @@ import {
   type TaskCaller,
   type TaskOps,
 } from "../api/tasks.ts";
-import { buildTaskCreateDescription } from "./task-create-description.ts";
+import {
+  buildTaskCreateDescription,
+  buildTaskCreateHostDescription,
+} from "./task-create-description.ts";
 import {
   agentStartError,
   configOverrideError,
@@ -172,11 +175,8 @@ export function registerMcpTools(
   server.registerTool(
     "task_create",
     {
-      description: buildTaskCreateDescription(
-        options.configuredAgentIds ?? [],
-        options.configuredHostIds ?? [],
-      ),
-      inputSchema: {
+      description: buildTaskCreateDescription(options.configuredAgentIds ?? []),
+      inputSchema: z.strictObject({
         title: z
           .string()
           .trim()
@@ -198,11 +198,27 @@ export function registerMcpTools(
           .string()
           .trim()
           .min(1)
+          .refine((value) => !value.includes("@"), "agent must be a bare id")
           .nullable()
           .optional()
           .describe(
             "Execution agent; null or omission inherits the current Task's agent",
           ),
+        ...((options.configuredHostIds?.length ?? 0) > 0
+          ? {
+              host: z
+                .string()
+                .trim()
+                .min(1)
+                .nullable()
+                .optional()
+                .describe(
+                  buildTaskCreateHostDescription(
+                    options.configuredHostIds ?? [],
+                  ),
+                ),
+            }
+          : {}),
         model: z
           .string()
           .trim()
@@ -223,9 +239,9 @@ export function registerMcpTools(
           .describe(
             "Thinking level override; null or omission inherits the current Task",
           ),
-      },
+      }),
     },
-    async ({ title, cwd, agent, model, thinking }) => {
+    async ({ title, cwd, agent, host: remoteHost, model, thinking }) => {
       guard();
       try {
         return jsonContent({
@@ -236,6 +252,9 @@ export function registerMcpTools(
                 title,
                 cwd: cwd ?? undefined,
                 agentId: agent ?? undefined,
+                ...(remoteHost === undefined || remoteHost === null
+                  ? {}
+                  : { host: remoteHost }),
                 model: model ?? undefined,
                 thinking: thinking ?? undefined,
                 parentId: principal.taskId,

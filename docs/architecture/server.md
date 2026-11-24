@@ -74,7 +74,7 @@ The entrypoint contracts live in [Client Architecture](client.md) and
 
 MCP task commands, the general REST task-create entry, and REST task cancellation
 reach the domain core through the same `TaskOps` port instance. Creation's
-shared Core command parses `agent@host` into `{ agentId, host? }`, authorizes the
+shared Core command receives `{ agentId, host? }`, authorizes the
 caller, then calls one injected Host create port exactly once. The Host
 implementation alone selects LocalHost or RemoteHost; neither HTTP nor MCP nor
 Core chooses a concrete adapter. The MCP list/history/send router also resolves
@@ -254,7 +254,8 @@ LocalHost → LocalHost chooses the target agent, resolves its transport, and ca
 `TaskManager.createTask()` → the task row, binding, and creation record are
 persisted → `task_created` is broadcast.
 
-**A browser or agent creates a remote task** (`agent@host`): both entrypoints
+**A browser or agent creates a remote task** (`agent@host` in UI, split fields
+on the wire): both entrypoints
 call the same `TaskOps.create()` → the Core command validates the initiating
 caller/parent, produces `{agentId, host}`, and calls the one Host create port →
 Host selects RemoteHost → RemoteHost re-checks through the Core-supplied fence,

@@ -20,28 +20,30 @@ import {
 import { randomUUID } from "node:crypto";
 import type { AgentEvent } from "./types.ts";
 
-function parseTarget(
-  caller: TaskCreateCaller,
-  agentId: string | undefined,
-): TaskCreateTarget {
-  if (!agentId?.includes("@")) return { agentId };
-  const at = agentId.indexOf("@");
-  if (at <= 0 || at !== agentId.lastIndexOf("@") || at === agentId.length - 1) {
+function buildTarget(caller: TaskCreateCaller, input: TaskCreateInput) {
+  if (input.agentId !== undefined && typeof input.agentId !== "string") {
+    throw new TaskAgentIdTypeError();
+  }
+  if (input.agentId?.includes("@")) {
     throw new TaskCreateInputError(
-      "invalid_remote_agent",
-      "Invalid agent@host target",
+      "invalid_agent",
+      "agentId must be a bare agent id",
     );
   }
-  if (caller.kind === "host") {
-    throw new TaskCreateInputError(
-      "invalid_remote_agent",
-      "Host credentials cannot relay an agent@host target",
-    );
+  if (input.host !== undefined && typeof input.host !== "string") {
+    throw new TaskCreateInputError("invalid_host", "host must be a string");
   }
-  return {
-    agentId: agentId.slice(0, at),
-    host: agentId.slice(at + 1),
+  const target: TaskCreateTarget = {
+    agentId: input.agentId,
+    ...(input.host === undefined ? {} : { host: input.host }),
   };
+  if (target.host !== undefined && caller.kind === "host") {
+    throw new TaskCreateInputError(
+      "invalid_remote_host",
+      "Host credentials cannot relay a remote target",
+    );
+  }
+  return target;
 }
 
 export function createTaskOpsCore(deps: {
@@ -76,11 +78,6 @@ export function createTaskOpsCore(deps: {
       caller: TaskCreateCaller,
       input: TaskCreateInput,
     ): Promise<TaskCreateResult> {
-      const requestedAgent = input.agentId;
-      if (requestedAgent !== undefined && typeof requestedAgent !== "string") {
-        throw new TaskAgentIdTypeError();
-      }
-
       if (
         caller.kind === "host" &&
         (typeof input.parentId !== "string" || input.parentId.trim() === "")
@@ -108,7 +105,7 @@ export function createTaskOpsCore(deps: {
         }
       };
       assertCaller();
-      const target = parseTarget(caller, requestedAgent);
+      const target = buildTarget(caller, input);
       const isRemote = target.host !== undefined;
       const result = await host.create({
         caller,
@@ -138,9 +135,8 @@ export function createTaskOpsCore(deps: {
         taskCreated = buildTaskCreatedSystemMessage({
           taskId: result.taskId,
           taskTitle,
-          agentId: result.facts.agentId
-            ? `${result.facts.agentId}${isRemote ? `@${target.host}` : ""}`
-            : "",
+          agentId: result.facts.agentId ?? "",
+          host: isRemote ? target.host : undefined,
           cwd: result.facts.cwd,
           model: result.facts.model,
           thinking: result.facts.thinking,

@@ -34,6 +34,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - executor bindings remain empty (`no-execution:`) and no remote ACP process starts
 - `test/mcp-task-host.test.ts` and `test/host-connection.test.ts`
   - Core emits one structured `{agentId, host?}` target through one injected `TaskCreateHost` call
+  - MCP and REST carry bare `agent`/`agentId` plus separate `host`; combined
+    `agent@host` is rejected below the UI boundary
+  - MCP exposes `host` only when hosts are configured and lists their dynamic
+    names separately from configured agents
   - Host selector alone chooses LocalHost or RemoteHost; an owner Host request cannot redispatch on `@host`
   - one dispatch/no automatic retry, exact short-agent/parent payload, generation re-check, unknown outcome, local partial-success, and pre-dispatch config rejection
   - Host external parents are required as non-empty strings; owner relay and malformed coordinates are input errors, not transport outcomes
@@ -53,6 +57,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     before `config_option_update`
   - remote create facts control the effective row, and a failed second write
     rolls back the hub link while retaining the partial-success child id
+  - remote `task_created` facts persist bare `agentId` plus `host`; rendering
+    joins them as `agentId@host`
   - remote child labels resolve from the live mirror at projection time;
     process-local labels exist only for an external parent's dispatch and are
     cleared after projection or failure

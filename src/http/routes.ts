@@ -3131,6 +3131,7 @@ export function createRequestHandler(
           parentId?: string;
           title?: string;
           agentId?: unknown;
+          host?: unknown;
         };
         try {
           body = JSON.parse(await readBody(req)) as typeof body;
@@ -3168,6 +3169,7 @@ export function createRequestHandler(
               title: title ?? undefined,
               workflowStatus: title ? "idle" : undefined,
               agentId: body.agentId,
+              host: body.host,
               clientOpId: clientOpId ?? undefined,
             },
           );

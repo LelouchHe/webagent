@@ -397,6 +397,7 @@ describe("createMcpEndpoint", () => {
     assert.equal(res.status, 401);
   });
 
+  // eslint-disable-next-line complexity -- one protocol matrix verifies all tool contracts together.
   it("serves the Task control-plane tools", async () => {
     const token = caps.mint("web-1", "agent-a", 1);
     live.add("web-1");
@@ -500,6 +501,7 @@ describe("createMcpEndpoint", () => {
       false,
       "MCP callers cannot choose task ids",
     );
+    assert.equal(toolHasProperty(tools, "task_create", "host"), false);
     assert.match(toolDescription(tools, "task_query"), /flat event index/);
     // Parameter meaning lives in the parameter description, not the tool text.
     assert.match(
@@ -627,6 +629,44 @@ describe("createMcpEndpoint", () => {
       auth(token),
     );
     assert.equal(create.status, 200);
+
+    const combined = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 61,
+        method: "tools/call",
+        params: {
+          name: "task_create",
+          arguments: { title: "invalid", agent: "pi@owner" },
+        },
+      },
+      auth(token),
+    );
+    const combinedBody = (await combined.json()) as {
+      result?: { isError?: boolean };
+      error?: unknown;
+    };
+    assert.ok(combinedBody.result?.isError ?? combinedBody.error);
+
+    const noHosts = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 62,
+        method: "tools/call",
+        params: {
+          name: "task_create",
+          arguments: { title: "invalid-host", agent: "pi", host: "owner" },
+        },
+      },
+      auth(token),
+    );
+    const noHostsBody = (await noHosts.json()) as {
+      result?: { isError?: boolean };
+      error?: unknown;
+    };
+    assert.ok(noHostsBody.result?.isError ?? noHostsBody.error);
 
     const cancel = await mcpPost(
       "/mcp",

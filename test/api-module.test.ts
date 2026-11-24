@@ -138,6 +138,20 @@ describe("api module", () => {
     assert.equal(fetchCalls.length, 0, "no request may leave the client");
   });
 
+  it("createTask splits an agent@host UI coordinate at the HTTP boundary", async () => {
+    fetchResponse = {
+      status: 201,
+      ok: true,
+      json: () => Promise.resolve({ id: "s1" }),
+      text: () => Promise.resolve('{"id":"s1"}'),
+    };
+    await api.createTask({ agentId: "pi@owner" });
+    assert.deepEqual(JSON.parse(fetchCalls[0].init!.body as string), {
+      agentId: "pi",
+      host: "owner",
+    });
+  });
+
   it("clearTask sends a named agent, omits an inherited one, and refuses an empty one", async () => {
     fetchResponse = {
       status: 200,

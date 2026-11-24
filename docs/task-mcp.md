@@ -312,7 +312,7 @@ How a cancelled turn affects an open account is defined in
 ### `task_create`
 
 Create a direct child Task immediately. The request includes a required `title`
-plus optional `agent`, `cwd`, `model`, and `thinking`.
+plus optional `agent`, `host`, `cwd`, `model`, and `thinking`.
 
 `agent` names the execution agent for the child. It is a free string, validated
 against the configured `[agents.*]` ids when the call runs: adding an agent is a
@@ -325,9 +325,12 @@ behaviour: the child inherits the current Task's agent. A deployment with a
 single configured agent advertises no list, because there is nothing to choose
 between.
 
-`agent@host` selects the short agent id on one of the configured Host names.
-The target remains `parentId`-authorized on the local instance, while cwd and
-agent selection are evaluated by the peer. Explicit `model` or `thinking`
+`agent` is always a bare id; a value containing `@` is invalid. When the
+deployment has configured hosts, the schema adds a separate `host` field whose
+description lists those host names. Omit `host` or pass null to create locally.
+With no configured hosts, the field is absent from the schema. The target
+remains `parentId`-authorized on the local instance, while cwd and agent
+selection are evaluated by the peer. Explicit `model` or `thinking`
 overrides are refused for this first remote slice; local inheritance ids and
 saved execution configuration are not sent to the peer. Omitted cwd uses the
 peer's own default.
@@ -357,8 +360,9 @@ quotes a partial id:
 | caller's own execution replaced | the existing authority refusal (`execution_replaced`), independent of `agent`. |
 
 **Result and record.** The result contains the new Task ID. The parent's
-transcript gets exactly one `task_created` row with five fields — `Task ID`,
-`agent`, `cwd`, `model`, `thinking`. `model` and `thinking` show the values that
+transcript gets exactly one `task_created` row with fields — `Task ID`,
+`agent`, `cwd`, `model`, `thinking`, plus separate machine fields `agentId` and,
+for remote targets, `host`. Display joins those as `agent@host`. `model` and `thinking` show the values that
 took effect: the explicit value, the value inherited from a same-agent source,
 or the target session's own current value. `inherited` appears only when a value
 genuinely cannot be determined, so a cross-agent child shows the target's

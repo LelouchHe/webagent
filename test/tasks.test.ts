@@ -521,6 +521,21 @@ describe("Task REST API", () => {
       assert.equal(body.parentId, rootId);
     });
 
+    it("rejects an agent@host string at the REST create boundary", async () => {
+      const rootId = store.ensureRootTask(tmpDir).id;
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        JSON.stringify({
+          parentId: rootId,
+          agentId: "test-agent@owner",
+        }),
+      );
+      assert.equal(res.status, 400);
+      assert.match(res.body, /bare agent id/);
+    });
+
     it("rejects an unknown parent task with 400", async () => {
       const res = await makeRequest(
         port,

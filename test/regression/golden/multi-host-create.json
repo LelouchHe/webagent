@@ -191,8 +191,8 @@
         {
           "status": 400,
           "body": {
-            "error": "Host credentials cannot relay an agent@host target",
-            "code": "invalid_remote_agent"
+            "error": "Host credentials cannot relay a remote target",
+            "code": "invalid_remote_host"
           }
         }
       ],
@@ -223,22 +223,22 @@
         {
           "status": 400,
           "body": {
-            "error": "Invalid agent@host target",
-            "code": "invalid_remote_agent"
+            "error": "agentId must be a bare agent id",
+            "code": "invalid_agent"
           }
         },
         {
           "status": 400,
           "body": {
-            "error": "Invalid agent@host target",
-            "code": "invalid_remote_agent"
+            "error": "agentId must be a bare agent id",
+            "code": "invalid_agent"
           }
         },
         {
           "status": 400,
           "body": {
-            "error": "Invalid agent@host target",
-            "code": "invalid_remote_agent"
+            "error": "agentId must be a bare agent id",
+            "code": "invalid_agent"
           }
         }
       ],
@@ -389,7 +389,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     1,
                     "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
                     "user",
                     1789333200000
                   ]
@@ -605,7 +605,8 @@
                   "tool": "task_create",
                   "arguments": {
                     "title": "MCP remote child",
-                    "agent": "owner-only@owner"
+                    "agent": "owner-only",
+                    "host": "owner"
                   },
                   "status": 200,
                   "result": {
@@ -698,7 +699,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     3,
                     "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
                     "agent",
                     1789333200000
                   ]
@@ -999,7 +1000,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 1,
             "type": "system_message",
-            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
             "created_at": 1789333200000,
             "from_ref": "user"
           },
@@ -1017,7 +1018,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 3,
             "type": "system_message",
-            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },

@@ -7,7 +7,8 @@ copying execution state.
 
 ## Addresses and relation facts
 
-`agent@host` is a create-time address. The hub resolves `host` from its
+`agent@host` is browser UI syntax, parsed at the UI boundary. Protocol requests
+carry separate `agentId` and `host` fields. The hub resolves `host` from its
 `[hosts.<name>]` configuration, sends the short agent id to that owner, and then
 continues to address the created Task by its stable Task id.
 
@@ -41,7 +42,7 @@ keeps one `remote_task_links` row; nothing else is shared.
                          mirror: in memory              peer token hash
    |                          |                               |                          |
  1 create                     |                               |                          |
-   |-- task_create mock@owner>|                               |                          |
+   |-- task_create(mock, owner)>                               |                          |
     |                          |-- POST /tasks (host token) -->| LocalHost creates R1     |
     |                          |                               | + parent link, no ACP    |
     |                          |<----- 201 + create facts -----|                          |
@@ -95,9 +96,9 @@ not visible to the hub.
 
 ## Create
 
-MCP `task_create` and REST `POST /api/v1/tasks` use the same Core command. Core
-authorizes the caller and converts `agent@host` to a structured target. The host
-selector calls either LocalHost or one RemoteHost transport. A Host returns the
+MCP `task_create` and REST `POST /api/v1/tasks` use the same Core command with
+separate `agentId` and `host` fields. Core authorizes the caller and builds the
+target directly. The host selector calls either LocalHost or one RemoteHost transport. A Host returns the
 created Task's stable id, title, effective agent, cwd, model, and thinking; it
 does not record the caller-side transcript row.
 
@@ -105,7 +106,8 @@ The owner accepts a Host create only with a non-empty opaque external
 `parentId`, creates a deferred Task with an empty execution slot, and commits the
 `parent` link in the same transaction. It does not start ACP. After a peer `201`, Core records its `child` link through a caller-generation
 fence and writes the same `Created task` row it writes for a local create. The
-agent value is the remote coordinate (`agent@host`). A live row proves the id to
+stored facts keep `agentId` and `host` separate; display joins them as
+`agent@host`. A live row proves the id to
 the browser's reference marks; replay does not create that existence fact.
 
 ## Read
@@ -194,7 +196,7 @@ remote-child link count as having a visible possible wake source.
 
 | Flow | Implemented |
 | --- | --- |
-| `agent@host` create | Yes |
+| UI `agent@host` create address | Yes |
 | Remote discovery and `task_list` mirror | Yes, best-effort and in-memory |
 | Remote `task_query` / `task_read` | Yes, cold owner history |
 | Remote `task_send` | Yes, synchronous owner acceptance |
