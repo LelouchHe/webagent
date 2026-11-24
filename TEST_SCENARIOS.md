@@ -44,6 +44,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     fields and events
   - an owner-local unarchive does not misclassify an external account, and a
     duplicate queued report remains eligible for one drain
+  - only the target's linked external parent opens an external account; a
+    remote child's report into its hub parent opens none
 - `test/regression/scenarios/multi-host-loop.ts`
   - a remote child appears in `task_list` with mirrored fields; cold
     `task_query` / `task_read` project owner history without starting ACP

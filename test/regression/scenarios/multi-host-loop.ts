@@ -185,24 +185,6 @@ export default scenario<State>({
             actions: [{ type: "reply", text: "Remote report received." }],
           },
           {
-            match: "Task Handoff Required",
-            actions: [
-              {
-                type: "mcp",
-                calls: [
-                  {
-                    tool: "task_update",
-                    arguments: {
-                      status: "done",
-                      body: "Interrupted busy turn closed.",
-                    },
-                  },
-                ],
-              },
-              { type: "reply", text: "Interrupted turn closed." },
-            ],
-          },
-          {
             match: "probe unreachable remote",
             actions: [
               {

@@ -864,15 +864,35 @@ export class TaskManager implements ObligationHost {
   ): void {
     const target = this.store.getTaskIncludingDeleted(recipientTaskId);
     if (!target) return;
+    // The external parent comes from the target's own `parent` link, never
+    // from the message: a remote child's report reaches its hub parent with
+    // the same agent/no-source-projection shape as an external dispatch.
+    let externalParentTaskId: string | undefined | null = null;
     for (const message of messages) {
-      const sourceKind =
-        message.source_actor === "agent" && !message.has_source_projection
-          ? "external"
-          : "local";
-      const externalParentTaskId =
-        sourceKind === "external" ? message.source_task_id : undefined;
-      if (!shouldArm(message, target, externalParentTaskId)) continue;
-      this.obligations.arm(message.source_task_id, recipientTaskId, sourceKind);
+      if (
+        externalParentTaskId === null &&
+        message.source_actor === "agent" &&
+        !message.has_source_projection
+      ) {
+        externalParentTaskId = this.store
+          .getRemoteTaskLinks(recipientTaskId)
+          .find((link) => link.remote_role === "parent")?.remote_task_id;
+      }
+      const external = externalParentTaskId === message.source_task_id;
+      if (
+        !shouldArm(
+          message,
+          target,
+          external ? message.source_task_id : undefined,
+        )
+      ) {
+        continue;
+      }
+      this.obligations.arm(
+        message.source_task_id,
+        recipientTaskId,
+        external ? "external" : "local",
+      );
     }
   }
 

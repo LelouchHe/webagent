@@ -428,6 +428,54 @@ describe("MCP Task tool host", () => {
     assert.equal(store.createRemoteReport(input), false);
   });
 
+  it("opens an account for an external parent's dispatch but not for a remote child's report", () => {
+    const armDelivered = (taskId: string, messageId: string): void => {
+      const message = store.getCollaborationMessage(messageId);
+      assert.ok(message);
+      (
+        tasks as unknown as {
+          armDelivered(taskId: string, messages: unknown[]): void;
+        }
+      ).armDelivered(taskId, [message]);
+    };
+
+    // Hub side: a remote child's report arrives in the local parent.
+    store.createRemoteReport({
+      id: "hub-report",
+      deliveryId: "hub-report-delivery",
+      idempotencyKey: "remote-report:owner:remote-child:3",
+      sourceTaskId: "remote-child",
+      targetTaskId: "alpha",
+      body: "Task status: done\ncomplete",
+    });
+    armDelivered("alpha", "hub-report");
+    assert.equal(tasks.hasOpenObligation("remote-child", "alpha"), false);
+
+    // Owner side: the linked external parent dispatches to its child.
+    store.createDeferredRemoteTask({
+      id: "owned-remote-child",
+      cwd: dir,
+      source: "host",
+      agentId: "test-agent",
+      externalParentId: "external-parent",
+      peerTokenHash: "peer",
+      title: "Owned remote child",
+      creationAnchor: { kind: "task_created" },
+    });
+    store.createExternalSourceCollaborationMessage({
+      id: "owner-dispatch",
+      deliveryId: "owner-dispatch-delivery",
+      sourceTaskId: "external-parent",
+      directTargetTaskId: "owned-remote-child",
+      body: "do the work",
+    });
+    armDelivered("owned-remote-child", "owner-dispatch");
+    assert.equal(
+      tasks.hasOpenObligation("external-parent", "owned-remote-child"),
+      true,
+    );
+  });
+
   it("checks a stale agent caller before resolving Host configuration", async () => {
     let calls = 0;
     const local = createLocalTaskOps({ store, tasks });

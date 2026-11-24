@@ -1266,7 +1266,7 @@
                 }
               ]
             ],
-            "reads": 83
+            "reads": 84
           }
         },
         {
@@ -2063,68 +2063,8 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
                     17,
-                    "handoff_reminder",
-                    "{\"messageId\":\"00000000-0000-4000-8001-00000000000d\",\"reason\":\"closing_reminder\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"body\":\"## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\"}",
-                    "system",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000001",
-                    18,
                     "error",
                     "{\"message\":\"ACP connection closed\",\"promptId\":\"prompt-5\"}",
-                    "agent",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000001",
-                    19,
-                    "system_message",
-                    "{\"kind\":\"handoff_reminder\",\"messageId\":\"00000000-0000-4000-8001-00000000000d\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff required\",\"body\":\"## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\"}",
-                    "msg:00000000-0000-4000-8001-00000000000d",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000001",
-                    20,
-                    "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8001-00000000000d\"],\"text\":\"Runtime message:\\n---8<---\\n## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\\n---8<---\",\"truncated\":false,\"rawSize\":718}",
-                    "system",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000001",
-                    21,
-                    "error",
-                    "{\"message\":\"ACP connection closed\",\"promptId\":\"prompt-6\"}",
                     "agent",
                     1789333200000
                   ]
@@ -2170,57 +2110,10 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'system', ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-00000000000d",
-                    "00000000-0000-4000-8000-000000000002",
-                    "00000000-0000-4000-8001-000000000001",
-                    "## Task Handoff Required\n\nThis is a runtime-injected closing turn: report what this turn established\nand end it.\n\nDo not begin new work as part of this closing turn.\n\nReport what this turn established, then call exactly one of:\n- `task_update(done, ...)` with the completion report.\n- `task_update(blocked, ...)` and explain what is missing.\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\n  background work will wake you; waiting on a person or an external event\n  is `blocked`.\n\nIf the user cancelled this turn, say so plainly in that report instead of\nresuming the cancelled work. Do not start new work, and do not end this turn\nwith a prose answer only.",
-                    1789333200000
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-00000000000d",
-                    "00000000-0000-4000-8001-000000000001",
-                    1789333200000
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-00000000000e",
-                    "00000000-0000-4000-8001-00000000000d",
-                    "00000000-0000-4000-8001-000000000001",
-                    "00000000-0000-4000-8001-00000000000d:00000000-0000-4000-8001-000000000001",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
                   "sql": "UPDATE deliveries\n         SET status = 'delivered', delivered_at = ?\n         WHERE id = ? AND status = 'queued'",
                   "args": [
                     1789333200000,
                     "00000000-0000-4000-8001-00000000000b"
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "UPDATE deliveries\n         SET status = 'delivered', delivered_at = ?\n         WHERE id = ? AND status = 'queued'",
-                  "args": [
-                    1789333200000,
-                    "00000000-0000-4000-8001-00000000000e"
                   ]
                 }
               ],
@@ -2251,27 +2144,11 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["idle", "00000000-0000-4000-8001-000000000001"]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["running", "00000000-0000-4000-8001-000000000001"]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
                   "args": ["running", "00000000-0000-4000-8001-000000000001"]
                 }
               ]
             ],
-            "reads": 114
+            "reads": 87
           }
         }
       ]
@@ -2526,7 +2403,7 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    22,
+                    18,
                     "user_message",
                     "{\"text\":\"probe unreachable remote\",\"clientOpId\":\"00000000-0000-4000-8001-000000000005\"}",
                     "user",
@@ -2541,7 +2418,7 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    23,
+                    19,
                     "assistant_message",
                     "{\"text\":\"Unreachable outcome observed.\"}",
                     "agent",
@@ -2556,7 +2433,7 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    24,
+                    20,
                     "prompt_done",
                     "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
                     "agent",
@@ -2986,69 +2863,33 @@
             "id": 17,
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 17,
-            "type": "handoff_reminder",
-            "data": "{\"messageId\":\"00000000-0000-4000-8001-00000000000d\",\"reason\":\"closing_reminder\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"body\":\"## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\"}",
-            "created_at": 1789333200000,
-            "from_ref": "system"
-          },
-          {
-            "id": 18,
-            "task_id": "00000000-0000-4000-8001-000000000001",
-            "seq": 18,
             "type": "error",
             "data": "{\"message\":\"ACP connection closed\",\"promptId\":\"prompt-5\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
           {
-            "id": 19,
+            "id": 18,
             "task_id": "00000000-0000-4000-8001-000000000001",
-            "seq": 19,
-            "type": "system_message",
-            "data": "{\"kind\":\"handoff_reminder\",\"messageId\":\"00000000-0000-4000-8001-00000000000d\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff required\",\"body\":\"## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\"}",
-            "created_at": 1789333200000,
-            "from_ref": "msg:00000000-0000-4000-8001-00000000000d"
-          },
-          {
-            "id": 20,
-            "task_id": "00000000-0000-4000-8001-000000000001",
-            "seq": 20,
-            "type": "collaboration_prompt",
-            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-00000000000d\"],\"text\":\"Runtime message:\\n---8<---\\n## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\\n---8<---\",\"truncated\":false,\"rawSize\":718}",
-            "created_at": 1789333200000,
-            "from_ref": "system"
-          },
-          {
-            "id": 21,
-            "task_id": "00000000-0000-4000-8001-000000000001",
-            "seq": 21,
-            "type": "error",
-            "data": "{\"message\":\"ACP connection closed\",\"promptId\":\"prompt-6\"}",
-            "created_at": 1789333200000,
-            "from_ref": "agent"
-          },
-          {
-            "id": 22,
-            "task_id": "00000000-0000-4000-8001-000000000001",
-            "seq": 22,
+            "seq": 18,
             "type": "user_message",
             "data": "{\"text\":\"probe unreachable remote\",\"clientOpId\":\"00000000-0000-4000-8001-000000000005\"}",
             "created_at": 1789333200000,
             "from_ref": "user"
           },
           {
-            "id": 23,
+            "id": 19,
             "task_id": "00000000-0000-4000-8001-000000000001",
-            "seq": 23,
+            "seq": 19,
             "type": "assistant_message",
             "data": "{\"text\":\"Unreachable outcome observed.\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
           {
-            "id": 24,
+            "id": 20,
             "task_id": "00000000-0000-4000-8001-000000000001",
-            "seq": 24,
+            "seq": 20,
             "type": "prompt_done",
             "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
             "created_at": 1789333200000,
@@ -3071,14 +2912,6 @@
             "source_actor": "agent",
             "body": "Task status: done\nRemote work completed after restart.",
             "created_at": 1789333200000
-          },
-          {
-            "id": "00000000-0000-4000-8001-00000000000d",
-            "source_task_id": "00000000-0000-4000-8000-000000000002",
-            "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
-            "source_actor": "system",
-            "body": "## Task Handoff Required\n\nThis is a runtime-injected closing turn: report what this turn established\nand end it.\n\nDo not begin new work as part of this closing turn.\n\nReport what this turn established, then call exactly one of:\n- `task_update(done, ...)` with the completion report.\n- `task_update(blocked, ...)` and explain what is missing.\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\n  background work will wake you; waiting on a person or an external event\n  is `blocked`.\n\nIf the user cancelled this turn, say so plainly in that report instead of\nresuming the cancelled work. Do not start new work, and do not end this turn\nwith a prose answer only.",
-            "created_at": 1789333200000
           }
         ],
         "message_projections": [
@@ -3093,12 +2926,6 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "role": "target",
             "created_at": 1789333200000
-          },
-          {
-            "message_id": "00000000-0000-4000-8001-00000000000d",
-            "task_id": "00000000-0000-4000-8001-000000000001",
-            "role": "target",
-            "created_at": 1789333200000
           }
         ],
         "deliveries": [
@@ -3107,17 +2934,6 @@
             "message_id": "00000000-0000-4000-8001-00000000000a",
             "recipient_task_id": "00000000-0000-4000-8001-000000000001",
             "idempotency_key": "remote-report:owner:00000000-0000-4000-8000-000000000002:12",
-            "status": "delivered",
-            "queued_at": 1789333200000,
-            "delivered_at": 1789333200000,
-            "failed_at": null,
-            "failure_reason": null
-          },
-          {
-            "id": "00000000-0000-4000-8001-00000000000e",
-            "message_id": "00000000-0000-4000-8001-00000000000d",
-            "recipient_task_id": "00000000-0000-4000-8001-000000000001",
-            "idempotency_key": "00000000-0000-4000-8001-00000000000d:00000000-0000-4000-8001-000000000001",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
