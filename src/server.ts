@@ -210,9 +210,11 @@ const hostRegistry = new HostRegistry(config.hosts, {
 hostRegistry.setRemoteEventHandler(
   createRemoteReportHandler({
     store,
-    sourceLabel: (host, childId) => hostRegistry.remoteTitleFor(host, childId),
     enqueueReport: createRemoteReportEnqueuer({ store, tasks }),
   }),
+);
+tasks.setRemoteCollaborationTitle((taskId) =>
+  hostRegistry.remoteTitleForTaskId(taskId),
 );
 // In-memory image signing secret; regenerated on every restart so previously
 // leaked URLs become invalid the moment the server is bounced.
@@ -254,9 +256,6 @@ const localTaskOps = createLocalTaskOps({
   store,
   tasks,
   cancelTimeoutMs: config.limits.cancel_timeout,
-  broadcastConfigUpdate: (event) => {
-    sseManager.broadcast(event);
-  },
   broadcastTaskCancelNotice: (event) => {
     // One record, one frame: the transcript row is the whole cancellation and
     // rides the generic system-message path.
@@ -281,6 +280,9 @@ const taskOps = createTaskOpsCore({
   tasks,
   broadcastTaskCreated: (event) => {
     sseManager.broadcast(buildTaskCreatedBroadcast(event));
+  },
+  broadcastConfigUpdate: (event) => {
+    sseManager.broadcast(event);
   },
 });
 const routedTaskOps: TaskOps = {

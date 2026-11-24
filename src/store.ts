@@ -531,6 +531,11 @@ export class Store {
     for (const observer of this.bindingObservers) observer(batch);
   }
 
+  /** Join an enclosing Store write; otherwise own the transaction boundary. */
+  private inWrite<T>(fn: () => T): T {
+    return this.db.inTransaction ? fn() : this.db.transaction(fn)();
+  }
+
   private canonicalizeStoredModelValues(): void {
     const rows = this.db
       .prepare("SELECT id, model FROM tasks WHERE model IS NOT NULL")
@@ -1107,6 +1112,8 @@ export class Store {
     opts: {
       title?: string;
       workflowStatus?: WorkflowStatus;
+      configValues?: ReadonlyArray<{ id: string; value: string }>;
+      onCreated?: (task: TaskRow) => void;
     } = {},
   ): TaskRow {
     if (this.isRootTaskId(id)) {
@@ -1144,9 +1151,14 @@ export class Store {
         );
       this.insertBindingRow(id, agentId, agentSessionId);
       this.collectBindingChange(id, null);
-      return this.db
+      for (const entry of opts.configValues ?? []) {
+        this.updateTaskConfig(id, entry.id, entry.value);
+      }
+      const task = this.db
         .prepare("SELECT * FROM tasks WHERE id = ?")
         .get(id) as TaskRow;
+      opts.onCreated?.(task);
+      return task;
     });
   }
 
@@ -1303,6 +1315,28 @@ export class Store {
          VALUES (?, ?, 'child', ?, NULL)`,
       )
       .run(localParentTaskId, remoteTaskId, remoteHost);
+  }
+
+  recordRemoteTaskCreation(input: {
+    localParentTaskId: string;
+    remoteTaskId: string;
+    remoteHost: string;
+    data: Record<string, unknown>;
+    fromRef: string;
+  }): EventRow {
+    return this.inWrite(() => {
+      this.recordRemoteTaskChild(
+        input.localParentTaskId,
+        input.remoteTaskId,
+        input.remoteHost,
+      );
+      return this.saveEvent(
+        input.localParentTaskId,
+        "system_message",
+        input.data,
+        { from_ref: input.fromRef },
+      );
+    });
   }
 
   /**
@@ -2413,7 +2447,7 @@ export class Store {
     data: Record<string, unknown> = {},
     opts?: { from_ref?: string },
   ): EventRow {
-    return this.db.transaction(() => {
+    return this.inWrite(() => {
       const seq = (
         this.db
           .prepare(
@@ -2442,7 +2476,7 @@ export class Store {
       return this.db
         .prepare("SELECT * FROM events WHERE task_id = ? AND seq = ?")
         .get(taskId, seq) as EventRow;
-    })();
+    });
   }
 
   getEvent(taskId: string, seq: number): EventRow | undefined {
@@ -2871,29 +2905,34 @@ export class Store {
     })();
   }
 
-  enqueueTargetCollaboration(input: {
-    sourceTaskId: string;
-    targetTaskId: string;
-    body: string;
-    id?: string;
-    deliveryId?: string;
-  }): { messageId: string; deliveryId: string } {
+  enqueueTargetCollaboration(
+    input: {
+      sourceTaskId: string;
+      targetTaskId: string;
+      body: string;
+      id?: string;
+      deliveryId?: string;
+    },
+    record?: (result: { messageId: string; deliveryId: string }) => void,
+  ): { messageId: string; deliveryId: string } {
     const messageId = input.id ?? randomUUID();
     const deliveryId = input.deliveryId ?? randomUUID();
     const createdAt = Date.now();
-    this.db.transaction(() => {
-      this.requireLiveTask(input.targetTaskId);
-      this.createTargetOnlyDelivery({
-        id: messageId,
-        deliveryId,
-        sourceTaskId: input.sourceTaskId,
-        directTargetTaskId: input.targetTaskId,
-        actor: "agent",
-        body: input.body,
-        idempotencyKey: `${messageId}:${input.targetTaskId}`,
-        createdAt,
-      });
-    })();
+    this.inWrite(() => {
+      this.createCollaborationMessageInTransaction(
+        {
+          id: messageId,
+          deliveryId,
+          sourceTaskId: input.sourceTaskId,
+          directTargetTaskId: input.targetTaskId,
+          sourceActor: "agent",
+          body: input.body,
+          createdAt,
+        },
+        false,
+      );
+      record?.({ messageId, deliveryId });
+    });
     return { messageId, deliveryId };
   }
 
@@ -2904,27 +2943,42 @@ export class Store {
     sourceTaskId: string;
     targetTaskId: string;
     body: string;
+    recordSource?: boolean;
   }): boolean {
-    return this.db.transaction(() => {
+    return this.inWrite(() => {
       const duplicate = this.db
         .prepare(
           "SELECT status FROM deliveries WHERE idempotency_key = ? LIMIT 1",
         )
         .get(input.idempotencyKey) as { status: string } | undefined;
       if (duplicate) return duplicate.status === "queued";
-      this.requireLiveTask(input.targetTaskId);
-      this.createTargetOnlyDelivery({
-        id: input.id,
-        deliveryId: input.deliveryId,
-        sourceTaskId: input.sourceTaskId,
-        directTargetTaskId: input.targetTaskId,
-        actor: "agent",
-        body: input.body,
-        idempotencyKey: input.idempotencyKey,
-        createdAt: Date.now(),
-      });
+      if (input.recordSource) {
+        this.createCollaborationMessageInTransaction(
+          {
+            id: input.id,
+            deliveryId: input.deliveryId,
+            sourceTaskId: input.sourceTaskId,
+            directTargetTaskId: input.targetTaskId,
+            sourceActor: "agent",
+            body: input.body,
+          },
+          false,
+        );
+      } else {
+        this.requireLiveTask(input.targetTaskId);
+        this.createTargetOnlyDelivery({
+          id: input.id,
+          deliveryId: input.deliveryId,
+          sourceTaskId: input.sourceTaskId,
+          directTargetTaskId: input.targetTaskId,
+          actor: "agent",
+          body: input.body,
+          idempotencyKey: input.idempotencyKey,
+          createdAt: Date.now(),
+        });
+      }
       return true;
-    })();
+    });
   }
 
   recordCallerSend(input: {
@@ -2937,10 +2991,10 @@ export class Store {
     body: string;
     targetIsLocal: boolean;
     readLocalLabels?: boolean;
-  }): CollaborationMessageRow {
+  }): void {
     const createdAt = Date.now();
-    return this.db.transaction(() => {
-      this.requireLiveTask(input.sourceTaskId);
+    this.inWrite(() => {
+      if (!input.targetIsLocal) this.requireLiveTask(input.sourceTaskId);
       const sourceLabel =
         input.targetIsLocal && input.readLocalLabels !== false
           ? (this.getTask(input.sourceTaskId)?.title ??
@@ -2966,13 +3020,15 @@ export class Store {
             createdAt,
           );
       }
-      this.db
-        .prepare(
-          `INSERT INTO message_projections
-           (message_id, task_id, role, created_at)
-           VALUES (?, ?, 'source', ?)`,
-        )
-        .run(input.id, input.sourceTaskId, createdAt);
+      if (!input.targetIsLocal) {
+        this.db
+          .prepare(
+            `INSERT INTO message_projections
+             (message_id, task_id, role, created_at)
+             VALUES (?, ?, 'source', ?)`,
+          )
+          .run(input.id, input.sourceTaskId, createdAt);
+      }
       this.saveEvent(
         input.sourceTaskId,
         "system_message",
@@ -2990,11 +3046,7 @@ export class Store {
         },
         { from_ref: `msg:${input.id}` },
       );
-      if (input.targetIsLocal && input.deliveryId) {
-        this.getCollaborationDelivery(input.deliveryId);
-      }
-      return this.getCollaborationMessage(input.id)!;
-    })();
+    });
   }
 
   /**
@@ -3087,6 +3139,7 @@ export class Store {
 
   private createCollaborationMessageInTransaction(
     input: CollaborationMessageInput,
+    recordSourceRow = true,
   ): {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
@@ -3123,28 +3176,31 @@ export class Store {
       "target",
       createdAt,
     );
-    const sourceLabel =
-      this.getTask(input.sourceTaskId)?.title ?? input.sourceTaskId.slice(0, 8);
-    const targetLabel =
-      this.getTask(input.directTargetTaskId)?.title ??
-      input.directTargetTaskId.slice(0, 8);
-    // The sender's row is written and shown now. The receiver's row is written
-    // when the delivery is actually handed to its agent, so the event log
-    // matches that turn's input order instead of an earlier turn.
-    this.saveEvent(
-      input.sourceTaskId,
-      "system_message",
-      buildCollaborationSystemMessage({
-        messageId: input.id,
-        sourceTaskId: input.sourceTaskId,
-        sourceLabel,
-        targetTaskId: input.directTargetTaskId,
-        targetLabel,
-        role: "source",
-        body: input.body,
-      }),
-      { from_ref: `msg:${input.id}` },
-    );
+    if (recordSourceRow) {
+      const sourceLabel =
+        this.getTask(input.sourceTaskId)?.title ??
+        input.sourceTaskId.slice(0, 8);
+      const targetLabel =
+        this.getTask(input.directTargetTaskId)?.title ??
+        input.directTargetTaskId.slice(0, 8);
+      // The sender's row is written and shown now. The receiver's row is written
+      // when the delivery is actually handed to its agent, so the event log
+      // matches that turn's input order instead of an earlier turn.
+      this.saveEvent(
+        input.sourceTaskId,
+        "system_message",
+        buildCollaborationSystemMessage({
+          messageId: input.id,
+          sourceTaskId: input.sourceTaskId,
+          sourceLabel,
+          targetTaskId: input.directTargetTaskId,
+          targetLabel,
+          role: "source",
+          body: input.body,
+        }),
+        { from_ref: `msg:${input.id}` },
+      );
+    }
     this.db
       .prepare(
         `INSERT INTO deliveries
@@ -3228,11 +3284,11 @@ export class Store {
     body: string,
     accountTargetTaskId: string | null,
     reason: "settled" | "fallback" | "waiting",
+    record?: () => void,
   ): {
-    collaborationMessageId: string | null;
     event: EventRow;
   } {
-    const result = this.db.transaction(() => {
+    return this.inWrite(() => {
       this.requireLiveTask(taskId);
       this.db
         .prepare("UPDATE tasks SET workflow_status = ? WHERE id = ?")
@@ -3249,9 +3305,9 @@ export class Store {
         },
         { from_ref: "agent" },
       );
-      return { collaborationMessageId: null, event };
-    })();
-    return result;
+      record?.();
+      return { event };
+    });
   }
 
   getCollaborationMessage(id: string): CollaborationMessageRow | undefined {

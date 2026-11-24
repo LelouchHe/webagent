@@ -4,7 +4,6 @@ import type { EnqueueRemoteReport } from "./tasks.ts";
 
 export function createRemoteReportHandler(deps: {
   store: Store;
-  sourceLabel: (host: string, childId: string) => string | undefined;
   enqueueReport: EnqueueRemoteReport;
 }) {
   return (host: string, childId: string, event: HostStreamEvent): void => {
@@ -26,7 +25,6 @@ export function createRemoteReportHandler(deps: {
       targetTaskId: link.local_task_id,
       status: event.data.status,
       body: event.data.body,
-      sourceLabel: deps.sourceLabel(host, childId),
     });
   };
 }

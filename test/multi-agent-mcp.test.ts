@@ -487,10 +487,9 @@ describe("mcp authority over the production host", () => {
     tasks.activePrompts.delete(child.taskId);
   });
 
-  it("re-checks the caller before writing the source after a child create", async () => {
+  it("re-checks the caller before committing a child or its source row", async () => {
     const source = await tasks.createTask(bridge, dir, undefined, "agent");
-    // A stored model makes the child inherit configuration from the source,
-    // which is an await *after* the child has been persisted.
+    // A stored model makes the child inherit configuration from the source.
     store.updateTaskConfig(source.taskId, "model", "chosen-model");
     const lease = authority.leaseFor(source.taskId);
     assert.ok(lease);
@@ -544,13 +543,9 @@ describe("mcp authority over the production host", () => {
     release();
 
     await assert.rejects(() => pending, /execution_replaced/);
-    // The child was committed before the rotation and stays: the missing step
-    // is only the source-side commit.
+    // Neither side of the create commits over a caller that rotated.
     const children = store.getDescendantTaskIds(source.taskId);
-    assert.equal(children.length, 1, "the child task is kept");
-    assert.ok(store.getTask(children[0]));
-    // No source transcript row and no broadcast for a request that lost its
-    // authority before that write.
+    assert.equal(children.length, 0, "the child task was not committed");
     assert.equal(
       store
         .getEvents(source.taskId)

@@ -375,21 +375,6 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    2,
-                    "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"Remote loop child\",\"agentId\":\"mock@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Remote loop child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: mock@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
-                    "agent",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000001",
                     3,
                     "assistant_message",
                     "{\"text\":\"Remote task created.\"}",
@@ -430,6 +415,19 @@
                     "00000000-0000-4000-8001-000000000001",
                     "00000000-0000-4000-8000-000000000002",
                     "owner"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    2,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"Remote loop child\",\"agentId\":\"mock@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Remote loop child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: mock@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "agent",
+                    1789333200000
                   ]
                 }
               ],
@@ -1515,7 +1513,7 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
+                  "sql": "INSERT INTO message_projections\n             (message_id, task_id, role, created_at)\n             VALUES (?, ?, 'source', ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000009",
                     "00000000-0000-4000-8001-000000000001",
@@ -1556,7 +1554,7 @@
                 }
               ]
             ],
-            "reads": 28
+            "reads": 27
           }
         }
       ]
@@ -2175,7 +2173,7 @@
                 }
               ]
             ],
-            "reads": 85
+            "reads": 87
           }
         }
       ]

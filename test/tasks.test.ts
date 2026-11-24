@@ -15,6 +15,8 @@ import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createTaskHost } from "../src/host/tasks.ts";
+import { createTaskOpsCore } from "../src/task-ops.ts";
 import { buildTaskCreatedBroadcast } from "../src/task-created-message.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
@@ -143,11 +145,18 @@ describe("Task REST API", () => {
     bodyReadStarted = new Promise<string>((resolve) => {
       markBodyReadStarted = resolve;
     });
-
-    const handler = createRequestHandler({
-      store,
-      tasks,
-      taskOps: createLocalTaskOps({
+    const localTaskOps = createLocalTaskOps({ store, tasks });
+    const taskOps = {
+      ...localTaskOps,
+      ...createTaskOpsCore({
+        host: createTaskHost({
+          local: localTaskOps,
+          remote: {
+            async create() {
+              throw new Error("unexpected remote create");
+            },
+          },
+        }),
         store,
         tasks,
         broadcastTaskCreated: (event) => {
@@ -157,6 +166,12 @@ describe("Task REST API", () => {
           broadcastEvents.push(event);
         },
       }),
+    };
+
+    const handler = createRequestHandler({
+      store,
+      tasks,
+      taskOps,
       onRequestBodyReadStart: (url) => {
         markBodyReadStarted(url);
       },

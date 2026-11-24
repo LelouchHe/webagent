@@ -46,6 +46,16 @@ spot gaps, and decide what still needs to be added without reading every spec.
     duplicate queued report remains eligible for one drain
   - only the target's linked external parent opens an external account; a
     remote child's report into its hub parent opens none
+  - local create, send, and update records commit with their Host write;
+    injected failure of the second write leaves no task, delivery, report, or
+    closed account, while post-commit broadcast and drain still run normally
+  - remote create facts control the effective row, and a failed second write
+    rolls back the hub link while retaining the partial-success child id
+  - remote child labels resolve from the live mirror at projection time;
+    process-local labels exist only for an external parent's dispatch and are
+    cleared after projection or failure
+  - replayed `task_created` transcript rows display the reference without
+    teaching the client that the remote task currently exists
 - `test/regression/scenarios/multi-host-loop.ts`
   - a remote child appears in `task_list` with mirrored fields; cold
     `task_query` / `task_read` project owner history without starting ACP
@@ -90,7 +100,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/multi-agent-mcp.test.ts` (production host + endpoint + real store/ledger; business calls go through real HTTP `tools/call`)
   - a caller that rotates while a `task_create` waits for the tree lock is refused before the task row is written
   - a caller that rotates while a `task_cancel` awaits the transport gets a refused tool result and no cancellation row
-  - a caller that rotates during a child's config inheritance is refused before the source transcript row is written; the already-committed child stays
+  - a caller that rotates during a child's config inheritance is refused
+    before either the child row or its source transcript row is committed
   - an `initializing` capability completes the MCP handshake but every business tool returns `initializing`; after promotion the same token works
   - a request authenticated before a real rotation cannot write after it (the task-persist boundary re-checks after `newSession`), while a fresh token against the current generation succeeds; the rotated-away token is revoked
   - a token whose task moved to another agent is refused; a Root exit revokes the old Root's token

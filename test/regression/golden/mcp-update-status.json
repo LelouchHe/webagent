@@ -300,21 +300,6 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000001",
-                1,
-                "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"Fallback child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Fallback child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
-                "user",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
               "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000004",
@@ -337,22 +322,37 @@
                 "00000000-0000-4000-8000-000000000004",
                 1789333200000
               ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000004"]
-            }
-          ],
-          [
+            },
             {
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET model = ? WHERE id = ?",
               "args": ["mock-model", "00000000-0000-4000-8000-000000000004"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+              "args": ["agent", "00000000-0000-4000-8000-000000000004"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+              "args": ["medium", "00000000-0000-4000-8000-000000000004"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                1,
+                "system_message",
+                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"Fallback child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Fallback child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "user",
+                1789333200000
+              ]
             }
           ],
           [
@@ -368,17 +368,9 @@
               "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
               "args": ["00000000-0000-4000-8000-000000000001"]
             }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000004"]
-            }
           ]
         ],
-        "reads": 55
+        "reads": 52
       }
     },
     {
@@ -752,67 +744,6 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000007",
-                "00000000-0000-4000-8000-000000000004",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000004",
-                3,
-                "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000004\",\"sourceLabel\":\"Fallback child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Fallback child\\\" sent @root\",\"body\":\"Task status: done\\nNo account completion.\"}",
-                "msg:00000000-0000-4000-8000-000000000007",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000007",
-                "00000000-0000-4000-8000-000000000004",
-                "00000000-0000-4000-8000-000000000001",
-                "Task status: done\nNo account completion.",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000007",
-                "00000000-0000-4000-8000-000000000001",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000008",
-                "00000000-0000-4000-8000-000000000007",
-                "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-000000000007:00000000-0000-4000-8000-000000000001",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
               "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
               "args": ["/", 1789333200000]
             }
@@ -852,6 +783,66 @@
                 "agent",
                 1789333200000
               ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000007",
+                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000001",
+                "agent",
+                "Task status: done\nNo account completion.",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000007",
+                "00000000-0000-4000-8000-000000000004",
+                "source",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000007",
+                "00000000-0000-4000-8000-000000000001",
+                "target",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000008",
+                "00000000-0000-4000-8000-000000000007",
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000007:00000000-0000-4000-8000-000000000001",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000004",
+                3,
+                "system_message",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000004\",\"sourceLabel\":\"Fallback child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Fallback child\\\" sent @root\",\"body\":\"Task status: done\\nNo account completion.\"}",
+                "msg:00000000-0000-4000-8000-000000000007",
+                1789333200000
+              ]
             }
           ],
           [
@@ -871,7 +862,7 @@
             }
           ]
         ],
-        "reads": 62
+        "reads": 64
       }
     },
     {
@@ -1534,21 +1525,6 @@
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000001",
-                7,
-                "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-00000000000a\",\"taskTitle\":\"Blocked child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Blocked child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-00000000000a\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
-                "agent",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000001",
                 9,
                 "assistant_message",
                 "{\"text\":\"Blocked task delegated.\"}",
@@ -1621,10 +1597,47 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
+              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000c",
                 "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-00000000000a",
+                "agent",
+                "report blocked",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000c",
+                "00000000-0000-4000-8000-000000000001",
+                "source",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000c",
+                "00000000-0000-4000-8000-00000000000a",
+                "target",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000d",
+                "00000000-0000-4000-8000-00000000000c",
+                "00000000-0000-4000-8000-00000000000a",
+                "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8000-00000000000a",
                 1789333200000
               ]
             },
@@ -1638,103 +1651,6 @@
                 "system_message",
                 "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"targetLabel\":\"Blocked child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Blocked child\\\"\",\"body\":\"report blocked\"}",
                 "msg:00000000-0000-4000-8000-00000000000c",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000e",
-                "00000000-0000-4000-8000-00000000000a",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000a",
-                4,
-                "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceLabel\":\"Blocked child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Blocked child\\\" sent @root\",\"body\":\"Task status: blocked\\nNeed parent input.\"}",
-                "msg:00000000-0000-4000-8000-00000000000e",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000c",
-                "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-00000000000a",
-                "report blocked",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000c",
-                "00000000-0000-4000-8000-00000000000a",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000d",
-                "00000000-0000-4000-8000-00000000000c",
-                "00000000-0000-4000-8000-00000000000a",
-                "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8000-00000000000a",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000e",
-                "00000000-0000-4000-8000-00000000000a",
-                "00000000-0000-4000-8000-000000000001",
-                "Task status: blocked\nNeed parent input.",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000e",
-                "00000000-0000-4000-8000-000000000001",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000f",
-                "00000000-0000-4000-8000-00000000000e",
-                "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-00000000000e:00000000-0000-4000-8000-000000000001",
                 1789333200000
               ]
             }
@@ -1773,6 +1689,37 @@
                 "00000000-0000-4000-8000-00000000000a",
                 1789333200000
               ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+              "args": ["mock-model", "00000000-0000-4000-8000-00000000000a"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+              "args": ["agent", "00000000-0000-4000-8000-00000000000a"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+              "args": ["medium", "00000000-0000-4000-8000-00000000000a"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                7,
+                "system_message",
+                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-00000000000a\",\"taskTitle\":\"Blocked child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Blocked child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-00000000000a\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "agent",
+                1789333200000
+              ]
             }
           ],
           [
@@ -1803,30 +1750,6 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-00000000000a"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-00000000000a"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-00000000000a"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
               "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
               "args": ["blocked", "00000000-0000-4000-8000-00000000000a"]
             },
@@ -1840,6 +1763,66 @@
                 "task_update",
                 "{\"status\":\"blocked\",\"body\":\"Need parent input.\",\"reason\":\"settled\",\"sourceTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
                 "agent",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000e",
+                "00000000-0000-4000-8000-00000000000a",
+                "00000000-0000-4000-8000-000000000001",
+                "agent",
+                "Task status: blocked\nNeed parent input.",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000e",
+                "00000000-0000-4000-8000-00000000000a",
+                "source",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000e",
+                "00000000-0000-4000-8000-000000000001",
+                "target",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000f",
+                "00000000-0000-4000-8000-00000000000e",
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-00000000000e:00000000-0000-4000-8000-000000000001",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000a",
+                4,
+                "system_message",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceLabel\":\"Blocked child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Blocked child\\\" sent @root\",\"body\":\"Task status: blocked\\nNeed parent input.\"}",
+                "msg:00000000-0000-4000-8000-00000000000e",
                 1789333200000
               ]
             }
@@ -1869,7 +1852,7 @@
             }
           ]
         ],
-        "reads": 128
+        "reads": 129
       }
     },
     {
@@ -2512,21 +2495,6 @@
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000001",
-                16,
-                "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000011\",\"taskTitle\":\"Waiting child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Waiting child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000011\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
-                "agent",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000001",
                 18,
                 "assistant_message",
                 "{\"text\":\"Waiting task delegated.\"}",
@@ -2587,21 +2555,6 @@
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000011",
-                3,
-                "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000015\",\"taskTitle\":\"Wake target\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Wake target\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000015\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
-                "agent",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000011",
                 5,
                 "assistant_message",
                 "{\"text\":\"Wake target created.\"}",
@@ -2629,10 +2582,47 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
+              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000013",
                 "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000011",
+                "agent",
+                "build wake target",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000013",
+                "00000000-0000-4000-8000-000000000001",
+                "source",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000013",
+                "00000000-0000-4000-8000-000000000011",
+                "target",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000014",
+                "00000000-0000-4000-8000-000000000013",
+                "00000000-0000-4000-8000-000000000011",
+                "00000000-0000-4000-8000-000000000013:00000000-0000-4000-8000-000000000011",
                 1789333200000
               ]
             },
@@ -2646,42 +2636,6 @@
                 "system_message",
                 "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000011\",\"targetLabel\":\"Waiting child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Waiting child\\\"\",\"body\":\"build wake target\"}",
                 "msg:00000000-0000-4000-8000-000000000013",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000013",
-                "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-000000000011",
-                "build wake target",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000013",
-                "00000000-0000-4000-8000-000000000011",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000014",
-                "00000000-0000-4000-8000-000000000013",
-                "00000000-0000-4000-8000-000000000011",
-                "00000000-0000-4000-8000-000000000013:00000000-0000-4000-8000-000000000011",
                 1789333200000
               ]
             }
@@ -2720,6 +2674,37 @@
                 "00000000-0000-4000-8000-000000000011",
                 1789333200000
               ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+              "args": ["mock-model", "00000000-0000-4000-8000-000000000011"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+              "args": ["agent", "00000000-0000-4000-8000-000000000011"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+              "args": ["medium", "00000000-0000-4000-8000-000000000011"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000001",
+                16,
+                "system_message",
+                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000011\",\"taskTitle\":\"Waiting child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Waiting child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000011\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "agent",
+                1789333200000
+              ]
             }
           ],
           [
@@ -2748,6 +2733,73 @@
                 "00000000-0000-4000-8000-000000000015",
                 1789333200000
               ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+              "args": ["mock-model", "00000000-0000-4000-8000-000000000015"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+              "args": ["agent", "00000000-0000-4000-8000-000000000015"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+              "args": ["medium", "00000000-0000-4000-8000-000000000015"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+              "args": ["mock-model", "00000000-0000-4000-8000-000000000015"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+              "args": ["agent", "00000000-0000-4000-8000-000000000015"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+              "args": ["medium", "00000000-0000-4000-8000-000000000015"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+              "args": ["mock-model", "00000000-0000-4000-8000-000000000015"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+              "args": ["agent", "00000000-0000-4000-8000-000000000015"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+              "args": ["medium", "00000000-0000-4000-8000-000000000015"]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000011",
+                3,
+                "system_message",
+                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000015\",\"taskTitle\":\"Wake target\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Wake target\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000015\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "agent",
+                1789333200000
+              ]
             }
           ],
           [
@@ -2764,102 +2816,6 @@
               "method": "run",
               "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
               "args": [1789333200000, "00000000-0000-4000-8000-000000000001"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000011"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000015"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000015"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000015"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-000000000011"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-000000000015"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-000000000015"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-000000000015"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000011"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000015"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000015"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000015"]
             }
           ],
           [
@@ -2892,7 +2848,7 @@
             }
           ]
         ],
-        "reads": 128
+        "reads": 122
       }
     },
     {
@@ -3348,10 +3304,47 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
+              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000019",
                 "00000000-0000-4000-8000-000000000011",
+                "00000000-0000-4000-8000-000000000015",
+                "agent",
+                "wake later",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000019",
+                "00000000-0000-4000-8000-000000000011",
+                "source",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000019",
+                "00000000-0000-4000-8000-000000000015",
+                "target",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000001a",
+                "00000000-0000-4000-8000-000000000019",
+                "00000000-0000-4000-8000-000000000015",
+                "00000000-0000-4000-8000-000000000019:00000000-0000-4000-8000-000000000015",
                 1789333200000
               ]
             },
@@ -3365,42 +3358,6 @@
                 "system_message",
                 "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000019\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000011\",\"sourceLabel\":\"Waiting child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000015\",\"targetLabel\":\"Wake target\",\"role\":\"source\",\"title\":\"@\\\"Waiting child\\\" sent @\\\"Wake target\\\"\",\"body\":\"wake later\"}",
                 "msg:00000000-0000-4000-8000-000000000019",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000019",
-                "00000000-0000-4000-8000-000000000011",
-                "00000000-0000-4000-8000-000000000015",
-                "wake later",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000019",
-                "00000000-0000-4000-8000-000000000015",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000001a",
-                "00000000-0000-4000-8000-000000000019",
-                "00000000-0000-4000-8000-000000000015",
-                "00000000-0000-4000-8000-000000000019:00000000-0000-4000-8000-000000000015",
                 1789333200000
               ]
             }
@@ -3982,19 +3939,13 @@
     "message_projections": [
       {
         "message_id": "00000000-0000-4000-8000-000000000007",
-        "task_id": "00000000-0000-4000-8000-000000000001",
-        "role": "target",
-        "created_at": 1789333200000
-      },
-      {
-        "message_id": "00000000-0000-4000-8000-000000000007",
         "task_id": "00000000-0000-4000-8000-000000000004",
         "role": "source",
         "created_at": 1789333200000
       },
       {
-        "message_id": "00000000-0000-4000-8000-00000000000c",
-        "task_id": "00000000-0000-4000-8000-00000000000a",
+        "message_id": "00000000-0000-4000-8000-000000000007",
+        "task_id": "00000000-0000-4000-8000-000000000001",
         "role": "target",
         "created_at": 1789333200000
       },
@@ -4005,14 +3956,26 @@
         "created_at": 1789333200000
       },
       {
-        "message_id": "00000000-0000-4000-8000-00000000000e",
-        "task_id": "00000000-0000-4000-8000-000000000001",
+        "message_id": "00000000-0000-4000-8000-00000000000c",
+        "task_id": "00000000-0000-4000-8000-00000000000a",
         "role": "target",
         "created_at": 1789333200000
       },
       {
         "message_id": "00000000-0000-4000-8000-00000000000e",
         "task_id": "00000000-0000-4000-8000-00000000000a",
+        "role": "source",
+        "created_at": 1789333200000
+      },
+      {
+        "message_id": "00000000-0000-4000-8000-00000000000e",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "role": "target",
+        "created_at": 1789333200000
+      },
+      {
+        "message_id": "00000000-0000-4000-8000-000000000013",
+        "task_id": "00000000-0000-4000-8000-000000000001",
         "role": "source",
         "created_at": 1789333200000
       },
@@ -4023,8 +3986,8 @@
         "created_at": 1789333200000
       },
       {
-        "message_id": "00000000-0000-4000-8000-000000000013",
-        "task_id": "00000000-0000-4000-8000-000000000001",
+        "message_id": "00000000-0000-4000-8000-000000000019",
+        "task_id": "00000000-0000-4000-8000-000000000011",
         "role": "source",
         "created_at": 1789333200000
       },
@@ -4032,12 +3995,6 @@
         "message_id": "00000000-0000-4000-8000-000000000019",
         "task_id": "00000000-0000-4000-8000-000000000015",
         "role": "target",
-        "created_at": 1789333200000
-      },
-      {
-        "message_id": "00000000-0000-4000-8000-000000000019",
-        "task_id": "00000000-0000-4000-8000-000000000011",
-        "role": "source",
         "created_at": 1789333200000
       }
     ],

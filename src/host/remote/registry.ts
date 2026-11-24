@@ -289,8 +289,11 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     return this.mirrors.get(nameKey(target.host, target.taskId))?.title;
   }
 
-  remoteTitleFor(host: string, taskId: string): string | undefined {
-    return this.mirrors.get(nameKey(host, taskId))?.title;
+  remoteTitleForTaskId(taskId: string): string | undefined {
+    for (const mirror of this.mirrors.values()) {
+      if (mirror.id === taskId) return mirror.title;
+    }
+    return undefined;
   }
 
   private async refresh(

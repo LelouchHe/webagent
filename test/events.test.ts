@@ -6927,6 +6927,35 @@ describe("events", () => {
       assert.equal(state.taskId, "s1");
     });
 
+    it("does not learn remote existence from a replayed created row", async () => {
+      const marks = await import("../public/js/task-ref-marks.ts");
+      marks.resetTaskRefMarks();
+      marks.applyTaskListSnapshot([{ id: "s1", title: null }]);
+      events.replayEvent(
+        "system_message",
+        {
+          kind: "task_created",
+          targetTaskId: "replayed-child",
+          taskTitle: "Replayed child",
+          title: 'Created task @"Replayed child"',
+        },
+        [{ task_id: "s1" } as never],
+        0,
+      );
+      const row = render.addSystemMessage({
+        title: 'Created task @"Replayed child"',
+        taskRef: {
+          kind: "task_created",
+          taskId: "replayed-child",
+          taskTitle: "Replayed child",
+        },
+      });
+      assert.equal(
+        row.querySelector(".task-ref")?.getAttribute("data-ref-state"),
+        "exited",
+      );
+    });
+
     it("drops a history read that started before the connection generation ended", async () => {
       let resolveFetch!: Function;
       globalThis.fetch = (() =>

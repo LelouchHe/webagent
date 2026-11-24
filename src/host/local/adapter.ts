@@ -7,7 +7,6 @@ import {
 } from "../../task-collaboration.ts";
 import {
   TaskConfigOverrideError,
-  reportedExecutionConfig,
   type DeliveryBridge,
   type TaskManager,
 } from "../../task-manager.ts";
@@ -18,6 +17,7 @@ import { formatTaskReference } from "../../shared/task-reference.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../../shared/time.ts";
 import { formatSilence } from "../../obligation-controller.ts";
 import { abbreviateHomePath } from "../../home-path.ts";
+import type { TaskCreatedBroadcastInput } from "../../task-created-message.ts";
 import type {
   TaskCaller,
   TaskCreateCaller,
@@ -58,15 +58,7 @@ export interface TaskCollaborationEvent {
   deliveryFailureReason?: string;
 }
 
-export interface TaskCreatedEvent {
-  messageId: string;
-  sourceTaskId: string;
-  targetTaskId: string;
-  /** Raw title of the created task; the row's reference is rebuilt from it. */
-  taskTitle: string;
-  title: string;
-  body: string;
-}
+export type TaskCreatedEvent = TaskCreatedBroadcastInput;
 
 export function assertTaskCaller(
   tasks: Pick<TaskManager, "authority">,
@@ -118,10 +110,6 @@ export function createLocalTaskOps(deps: {
   store: Store;
   tasks: TaskManager;
   cancelTimeoutMs?: number;
-  broadcastTaskCreated?: (event: TaskCreatedEvent) => void;
-  broadcastConfigUpdate?: (
-    event: Extract<AgentEvent, { type: "config_option_update" }>,
-  ) => void;
   broadcastTaskCancelNotice?: (event: TaskCancelNotice) => void;
   broadcastTaskUpdate?: (event: {
     taskId: string;
@@ -129,13 +117,7 @@ export function createLocalTaskOps(deps: {
     data: Record<string, unknown>;
   }) => void;
 }): TaskOps {
-  const {
-    store,
-    tasks,
-    broadcastConfigUpdate,
-    broadcastTaskCancelNotice,
-    broadcastTaskUpdate,
-  } = deps;
+  const { store, tasks, broadcastTaskCancelNotice, broadcastTaskUpdate } = deps;
 
   /**
    * The single authority check for one MCP operation. It lives here because
@@ -286,6 +268,7 @@ export function createLocalTaskOps(deps: {
     async create(
       caller: TaskCreateCaller,
       input: TaskCreateInput,
+      recordLocal?: (result: TaskCreateResult) => void,
     ): Promise<TaskCreateResult> {
       if (caller.kind === "host") {
         const requestedAgent = input.agentId;
@@ -451,6 +434,22 @@ export function createLocalTaskOps(deps: {
             ...(input.clientOpId === undefined
               ? {}
               : { clientOpId: input.clientOpId }),
+            ...(recordLocal
+              ? {
+                  onPersisted: (facts) => {
+                    recordLocal({
+                      taskId: facts.taskId,
+                      facts: {
+                        title: facts.title,
+                        agentId: facts.agentId,
+                        cwd: agentCaller ? cwd! : facts.cwd,
+                        model: facts.model,
+                        thinking: facts.thinking,
+                      },
+                    });
+                  },
+                }
+              : {}),
           },
         );
       } catch (error) {
@@ -466,29 +465,18 @@ export function createLocalTaskOps(deps: {
         throw error;
       }
       if (agentCaller) authorize(agentCaller);
-      const reported = reportedExecutionConfig(created.configOptions);
       const taskFacts = created.facts;
-      const createdTask = agentCaller ? null : store.getTask(created.taskId);
-      const createdAgentId = agentCaller
-        ? targetAgentId
-        : (store.getBindingAgent(created.taskId) ?? targetAgentId);
-      if (!agentCaller && created.configOptions.length) {
-        broadcastConfigUpdate?.({
-          type: "config_option_update",
-          taskId: created.taskId,
-          configOptions: created.configOptions,
-        });
-      }
+      const createdAgentId = taskFacts.agentId;
       return {
         taskId: created.taskId,
         facts: {
-          title: createdTask?.title ?? taskFacts?.title ?? input.title ?? null,
-          agentId: store.getBindingAgent(created.taskId) ?? createdAgentId,
-          cwd: createdTask?.cwd ?? taskFacts?.cwd ?? cwd!,
-          model: input.model ?? reported.model ?? null,
-          thinking: input.thinking ?? reported.reasoning_effort ?? null,
+          title: taskFacts.title,
+          agentId: taskFacts.agentId,
+          cwd: agentCaller ? cwd! : taskFacts.cwd,
+          model: taskFacts.model,
+          thinking: taskFacts.thinking,
         },
-        ...(taskFacts && !agentCaller
+        ...(!agentCaller
           ? {
               activation: {
                 cwd: taskFacts.cwd,
@@ -592,57 +580,76 @@ export function createLocalTaskOps(deps: {
       return { accepted: true, taskId: target.id, status: result.status };
     },
 
-    async send(principal, targetTaskId, body) {
+    async send(principal, targetTaskId, body, record) {
       authorize(principal);
       const sourceTaskId = principal.taskId;
       const { source, target } = requireLocalTarget(sourceTaskId, targetTaskId);
-      const created = store.enqueueTargetCollaboration({
-        sourceTaskId,
-        targetTaskId: target.id,
-        body,
-      });
       const targetLabel = target.title ?? target.id.slice(0, 8);
-      return {
-        messageId: created.messageId,
-        deliveryId: created.deliveryId,
+      const result = {
+        messageId: "",
+        deliveryId: "",
         targetTaskId: target.id,
         targetLabel,
         sourceLabel: source.title ?? source.id.slice(0, 8),
-        targetIsLocal: true,
+        targetIsLocal: true as const,
       };
+      const created = store.enqueueTargetCollaboration(
+        {
+          sourceTaskId,
+          targetTaskId: target.id,
+          body,
+        },
+        ({ messageId, deliveryId }) => {
+          result.messageId = messageId;
+          result.deliveryId = deliveryId;
+          record?.(result);
+        },
+      );
+      result.messageId = created.messageId;
+      result.deliveryId = created.deliveryId;
+      return result;
     },
 
-    async update(principal, status, body) {
+    async update(principal, status, body, recordReport) {
       authorize(principal);
       const sourceTaskId = principal.taskId;
+      let localReport:
+        | {
+            sourceTaskId: string;
+            targetTaskId: string;
+            status: "blocked" | "done";
+            body: string;
+            sourceLabel: string;
+            targetLabel: string;
+          }
+        | undefined;
       // `waiting` only records the status. `done` and `blocked` settle the
       // target's open account and are delivered to its source, or fall back to
       // the current parent when no account is open.
-      const {
-        accountTargetTaskId,
-        silenceWatchMs,
-        event,
-        accountTargetTaskIsLocal,
-      } = tasks.settleAgentUpdate(sourceTaskId, status, body);
+      const { silenceWatchMs, event } = tasks.settleAgentUpdate(
+        sourceTaskId,
+        status,
+        body,
+        ({ targetTaskId, targetIsLocal }) => {
+          if (!targetIsLocal || status === "waiting") return;
+          localReport = {
+            sourceTaskId,
+            targetTaskId,
+            status,
+            body,
+            sourceLabel:
+              store.getTask(sourceTaskId)?.title ?? sourceTaskId.slice(0, 8),
+            targetLabel:
+              store.getTask(targetTaskId)?.title ?? targetTaskId.slice(0, 8),
+          };
+          recordReport?.(localReport);
+        },
+      );
       broadcastTaskUpdate?.({
         taskId: sourceTaskId,
         seq: event.seq,
         data: JSON.parse(event.data) as Record<string, unknown>,
       });
-      const localReport =
-        status !== "waiting" && accountTargetTaskId && accountTargetTaskIsLocal
-          ? {
-              sourceTaskId,
-              targetTaskId: accountTargetTaskId,
-              status,
-              body,
-              sourceLabel:
-                store.getTask(sourceTaskId)?.title ?? sourceTaskId.slice(0, 8),
-              targetLabel:
-                store.getTask(accountTargetTaskId)?.title ??
-                accountTargetTaskId.slice(0, 8),
-            }
-          : undefined;
       if (silenceWatchMs === undefined)
         return {
           ...(localReport ? { report: localReport } : {}),

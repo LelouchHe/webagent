@@ -211,7 +211,7 @@ export class TaskCreateConfigError extends CreateError {
 
 export interface TaskCreateResult {
   taskId: string;
-  facts?: {
+  facts: {
     title: string | null;
     agentId: string | null;
     cwd: string;
@@ -251,6 +251,7 @@ export interface TaskCreateHostCommand {
   target: TaskCreateTarget;
   parentId?: string;
   assertRemoteCaller: () => void;
+  recordLocal: (result: TaskCreateResult) => void;
 }
 
 export interface TaskCreateHost {
@@ -407,16 +408,26 @@ export interface TaskOps {
   create(
     caller: TaskCreateCaller,
     input: TaskCreateInput,
+    recordLocal?: (result: TaskCreateResult) => void,
   ): Promise<TaskCreateResult>;
   send(
     principal: TaskCaller,
     targetTaskId: string,
     body: string,
+    record?: (result: TaskSendResult) => void,
   ): Promise<TaskSendResult>;
   update(
     principal: TaskCaller,
     status: "waiting" | "blocked" | "done",
     body: string,
+    recordReport?: (report: {
+      sourceTaskId: string;
+      targetTaskId: string;
+      status: "blocked" | "done";
+      body: string;
+      sourceLabel: string;
+      targetLabel: string;
+    }) => void,
   ): Promise<{
     note?: string;
     report?: {

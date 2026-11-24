@@ -255,7 +255,16 @@ describe("createMcpEndpoint", () => {
     },
     create: async (...args: unknown[]) => {
       calls.push({ kind: "create", args });
-      return { taskId: "task-3" };
+      return {
+        taskId: "task-3",
+        facts: {
+          title: "task-3",
+          agentId: "agent-a",
+          cwd: "/tmp",
+          model: null,
+          thinking: null,
+        },
+      };
     },
     send: async (...args: unknown[]) => {
       calls.push({ kind: "send", args });

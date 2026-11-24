@@ -374,6 +374,16 @@
                 {
                   "kind": "write",
                   "method": "run",
+                  "sql": "INSERT INTO remote_task_links\n         (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n         VALUES (?, ?, 'child', ?, NULL)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-000000000002",
+                    "owner"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
@@ -382,18 +392,6 @@
                     "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
                     "user",
                     1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO remote_task_links\n         (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n         VALUES (?, ?, 'child', ?, NULL)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000001",
-                    "00000000-0000-4000-8000-000000000002",
-                    "owner"
                   ]
                 }
               ]
@@ -650,21 +648,6 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    3,
-                    "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
-                    "agent",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000001",
                     4,
                     "assistant_message",
                     "{\"text\":\"Remote MCP child created.\"}",
@@ -705,6 +688,19 @@
                     "00000000-0000-4000-8001-000000000001",
                     "00000000-0000-4000-8000-000000000003",
                     "owner"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    3,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "agent",
+                    1789333200000
                   ]
                 }
               ],

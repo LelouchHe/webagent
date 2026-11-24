@@ -45,6 +45,7 @@ import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { validateTaskTitle } from "../shared/task-title.ts";
 import type { RemoteTaskListItem, TaskOps } from "../api/tasks.ts";
 import {
+  assertCollaborationSourceLabel,
   HostExternalParentError,
   type HostCollaborationCommand,
 } from "../api/collaboration.ts";
@@ -342,6 +343,9 @@ function parseCollaborationBody(body: string): {
     !value.body.trim()
   ) {
     throw new Error("invalid_collaboration_body");
+  }
+  if (typeof value.sourceLabel === "string") {
+    assertCollaborationSourceLabel(value.sourceLabel);
   }
   return {
     targetTaskId: value.targetTaskId,
@@ -3179,8 +3183,8 @@ export function createRequestHandler(
             title: activation.title,
             ...(requestPrincipal?.scope === "host"
               ? {
-                  model: created.facts?.model ?? null,
-                  thinking: created.facts?.thinking ?? null,
+                  model: created.facts.model,
+                  thinking: created.facts.thinking,
                 }
               : {}),
             workflowStatus: activation.workflowStatus,

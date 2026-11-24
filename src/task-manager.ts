@@ -147,7 +147,10 @@ type SessionBridge = Pick<
   Partial<
     Pick<
       AgentBridge,
-      "sessionMapped" | "discardUnboundSession" | "retireExecution"
+      | "sessionMapped"
+      | "discardUnboundSession"
+      | "retireExecution"
+      | "setAgentConfigOption"
     >
   > & {
     /** Install the authority that gates execution-scoped events. */
@@ -682,6 +685,8 @@ export class TaskManager implements ObligationHost {
   /** One microtask recovery per task while an unfinished-work retry is active. */
   private readonly pendingWorkRecoveries = new Set<string>();
   private readonly collaborationSourceLabels = new Map<string, string>();
+  private remoteCollaborationTitle:
+    ((taskId: string) => string | undefined) | undefined;
   /** Latest qualifying agent-runtime activity per task, epoch ms. */
   private readonly lastAgentActivityAt = new Map<string, number>();
   /**
@@ -1536,6 +1541,17 @@ export class TaskManager implements ObligationHost {
        * announces; it has no meaning for a creation no client requested.
        */
       clientOpId?: string;
+      onPersisted?: (facts: {
+        taskId: string;
+        title: string | null;
+        agentId: string;
+        cwd: string;
+        parentId: string | null;
+        workflowStatus: WorkflowStatus;
+        source: string;
+        model: string | null;
+        thinking: string | null;
+      }) => void;
       /**
        * Whether this creation is announced as a new task. Only a creation a
        * caller asked for is: an internal task — the message-consume carrier —
@@ -1549,13 +1565,15 @@ export class TaskManager implements ObligationHost {
   ): Promise<{
     taskId: string;
     configOptions: ConfigOption[];
-    facts?: {
+    facts: {
       title: string | null;
       agentId: string;
       cwd: string;
       parentId: string | null;
       workflowStatus: WorkflowStatus;
       source: string;
+      model: string | null;
+      thinking: string | null;
     };
   }> {
     const agentId = this.attachExecutionBridge(bridge);
@@ -1693,6 +1711,8 @@ export class TaskManager implements ObligationHost {
       title?: string;
       workflowStatus?: WorkflowStatus;
       assertCaller?: () => void;
+      configValues?: ReadonlyArray<{ id: string; value: string }>;
+      onCreated?: (task: TaskRow) => void;
     },
   ): Promise<void> {
     const release = parentId
@@ -1726,6 +1746,8 @@ export class TaskManager implements ObligationHost {
     taskId: string,
     configOptions: ConfigOption[],
     sourceTask: Pick<TaskRow, "model" | "reasoning_effort">,
+    agentSessionId?: string,
+    record?: (entries: ReadonlyArray<{ id: string; value: string }>) => void,
   ): Promise<ConfigOption[]> {
     const inherited: Array<{
       configId: string | undefined;
@@ -1744,10 +1766,21 @@ export class TaskManager implements ObligationHost {
     for (const { configId, value } of inherited) {
       if (!configId || !value) continue;
       try {
-        const next = await bridge.setConfigOption(taskId, configId, value);
+        const next =
+          agentSessionId && bridge.setAgentConfigOption
+            ? await bridge.setAgentConfigOption(agentSessionId, configId, value)
+            : await bridge.setConfigOption(taskId, configId, value);
         if (next.length > 0) {
           updatedConfigOptions = next;
-          this.recordConfigOptions(taskId, next);
+          record?.(
+            next.flatMap((entry) =>
+              typeof entry.currentValue === "string"
+                ? [{ id: entry.id, value: entry.currentValue }]
+                : [],
+            ),
+          );
+        } else if (agentSessionId) {
+          record?.([{ id: configId, value }]);
         } else {
           this.store.updateTaskConfig(taskId, configId, value);
         }
@@ -1772,8 +1805,32 @@ export class TaskManager implements ObligationHost {
       workflowStatus?: WorkflowStatus;
       agentId?: string;
       assertCaller?: () => void;
+      onPersisted?: (facts: {
+        taskId: string;
+        title: string | null;
+        agentId: string;
+        cwd: string;
+        parentId: string | null;
+        workflowStatus: WorkflowStatus;
+        source: string;
+        model: string | null;
+        thinking: string | null;
+      }) => void;
     },
-  ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+  ): Promise<{
+    taskId: string;
+    configOptions: ConfigOption[];
+    facts: {
+      title: string | null;
+      agentId: string;
+      cwd: string;
+      parentId: string | null;
+      workflowStatus: WorkflowStatus;
+      source: string;
+      model: string | null;
+      thinking: string | null;
+    };
+  }> {
     const taskCwd = this.resolveTaskCwd(cwd, this.defaultCwd);
     const agentId = this.bridgeAgentId(bridge);
     try {
@@ -1815,11 +1872,51 @@ export class TaskManager implements ObligationHost {
         this.buildNewTaskOptions(mcpServers),
       );
     let configOptions = createdConfigOptions;
+    const configValues = createdConfigOptions.flatMap((option) =>
+      typeof option.currentValue === "string"
+        ? [{ id: option.id, value: option.currentValue }]
+        : [],
+    );
+    const recordConfigValues = (
+      entries: ReadonlyArray<{ id: string; value: string }>,
+    ): void => {
+      configValues.push(...entries);
+    };
     const parentId = opts?.parentId ?? null;
     try {
-      // The caller's authority is re-checked after the ACP await: a rotation
-      // that landed meanwhile must not produce a persisted task.
+      if (sourceTask && inheritConfig) {
+        configOptions = await this.inheritTaskConfig(
+          bridge,
+          taskId,
+          configOptions,
+          sourceTask,
+          agentSessionId,
+          recordConfigValues,
+        );
+      }
+      if (opts?.model || opts?.thinking) {
+        configOptions = await this.applyTaskConfigOverrides(
+          bridge,
+          taskId,
+          configOptions,
+          opts.model,
+          opts.thinking,
+          agentSessionId,
+          recordConfigValues,
+        );
+      }
       opts?.assertCaller?.();
+      const reported = reportedExecutionConfig(configOptions);
+      const effectiveModel =
+        opts?.model ??
+        (sourceTask && inheritConfig ? sourceTask.model : null) ??
+        reported.model ??
+        null;
+      const effectiveThinking =
+        opts?.thinking ??
+        (sourceTask && inheritConfig ? sourceTask.reasoning_effort : null) ??
+        reported.reasoning_effort ??
+        null;
       await this.persistCreatedTask(
         taskId,
         taskCwd,
@@ -1831,6 +1928,19 @@ export class TaskManager implements ObligationHost {
           title: opts?.title,
           workflowStatus: opts?.workflowStatus,
           assertCaller: opts?.assertCaller,
+          configValues,
+          onCreated: (task) =>
+            opts?.onPersisted?.({
+              taskId,
+              title: task.title,
+              agentId,
+              cwd: task.cwd,
+              parentId: task.parent_id,
+              workflowStatus: task.workflow_status,
+              source: task.source,
+              model: effectiveModel,
+              thinking: effectiveThinking,
+            }),
         },
       );
     } catch (err) {
@@ -1846,68 +1956,30 @@ export class TaskManager implements ObligationHost {
     try {
       this.liveTasks.add(taskId);
       const lease = this.currentLease(taskId);
-      this.recordConfigOptions(taskId, createdConfigOptions, lease);
+      this.recordConfigOptions(taskId, configOptions, lease, false);
       bridge.sessionMapped?.(agentSessionId, taskId);
       // The binding committed, so the token this session was created with may
       // now reach business tools.
       this.promoteCapability(execution?.token, taskId);
 
-      // Inherit config options from source task (same execution environment
-      // only; see `inheritConfig`).
-      if (sourceTask && inheritConfig) {
-        configOptions = await this.inheritTaskConfig(
-          bridge,
-          taskId,
-          configOptions,
-          sourceTask,
-        );
-      }
-      if (opts?.model || opts?.thinking) {
-        try {
-          configOptions = await this.applyTaskConfigOverrides(
-            bridge,
-            taskId,
-            configOptions,
-            opts.model,
-            opts.thinking,
-          );
-        } catch (error) {
-          // The task is live but still carries the creation barrier, and the
-          // delete has to happen while that barrier is still standing: the
-          // release projects busy→idle, which schedules the unfinished-work
-          // recovery, and a recovery that claims this task's prompt slot in the
-          // gap makes the delete refuse as busy — leaving a task whose creation
-          // failed alive and running. Deleting first also makes the release a
-          // no-op projection, because the task is gone by then.
-          await this.deleteTask(bridge, taskId, {
-            ownCreationClaim: true,
-          }).catch((cleanupError) => {
-            slog.warn("failed to clean up task after config override failure", {
-              taskId,
-              error: cleanupError,
-            });
-          });
-          this.endCreatingClaim(taskId);
-          throw error;
-        }
-      }
-
       const task = this.store.getTask(taskId);
+      if (!task) throw new Error("task persistence returned no task");
+      const finalConfig = this.applyStoredConfig(configOptions, task);
       return {
         taskId: taskId,
-        configOptions: task ? this.applyStoredConfig(configOptions, task) : [],
-        ...(task
-          ? {
-              facts: {
-                title: task.title,
-                agentId,
-                cwd: task.cwd,
-                parentId: task.parent_id,
-                workflowStatus: task.workflow_status,
-                source: task.source,
-              },
-            }
-          : {}),
+        configOptions: finalConfig,
+        facts: {
+          title: task.title,
+          agentId,
+          cwd: task.cwd,
+          parentId: task.parent_id,
+          workflowStatus: task.workflow_status,
+          source: task.source,
+          model: reportedExecutionConfig(finalConfig).model ?? task.model,
+          thinking:
+            reportedExecutionConfig(finalConfig).reasoning_effort ??
+            task.reasoning_effort,
+        },
       };
     } finally {
       this.endCreatingClaim(taskId);
@@ -1920,6 +1992,8 @@ export class TaskManager implements ObligationHost {
     configOptions: ConfigOption[],
     model?: string,
     thinking?: string,
+    agentSessionId?: string,
+    record?: (entries: ReadonlyArray<{ id: string; value: string }>) => void,
   ): Promise<ConfigOption[]> {
     const requested: Array<{
       logicalId: "model" | "thinking";
@@ -1965,10 +2039,21 @@ export class TaskManager implements ObligationHost {
           currentValue,
         });
       }
-      const next = await bridge.setConfigOption(taskId, configId, value);
+      const next =
+        agentSessionId && bridge.setAgentConfigOption
+          ? await bridge.setAgentConfigOption(agentSessionId, configId, value)
+          : await bridge.setConfigOption(taskId, configId, value);
       if (next.length > 0) {
         updated = next;
-        this.recordConfigOptions(taskId, next);
+        record?.(
+          next.flatMap((entry) =>
+            typeof entry.currentValue === "string"
+              ? [{ id: entry.id, value: entry.currentValue }]
+              : [],
+          ),
+        );
+      } else if (agentSessionId) {
+        record?.([{ id: configId, value }]);
       } else {
         this.store.updateTaskConfig(taskId, configId, value);
       }
@@ -2585,6 +2670,7 @@ export class TaskManager implements ObligationHost {
     taskId: string,
     configOptions: ConfigOption[],
     lease?: ExecutionLease | null,
+    persist = true,
   ): void {
     if (lease !== undefined && !this.leaseCurrent(lease)) return;
     if (configOptions.length === 0) return;
@@ -2592,9 +2678,11 @@ export class TaskManager implements ObligationHost {
     if (agentId) {
       this.agents.adapterFor(agentId).cachedConfigOptions = configOptions;
     }
-    for (const option of configOptions) {
-      if (typeof option.currentValue === "string") {
-        this.store.updateTaskConfig(taskId, option.id, option.currentValue);
+    if (persist) {
+      for (const option of configOptions) {
+        if (typeof option.currentValue === "string") {
+          this.store.updateTaskConfig(taskId, option.id, option.currentValue);
+        }
       }
     }
   }
@@ -3961,6 +4049,12 @@ export class TaskManager implements ObligationHost {
     this.collaborationSourceLabels.set(messageId, label);
   }
 
+  setRemoteCollaborationTitle(
+    resolve: (taskId: string) => string | undefined,
+  ): void {
+    this.remoteCollaborationTitle = resolve;
+  }
+
   /**
    * Install the SSE broadcast hook for a newly created task. Every creation
    * entry point (HTTP create, quick prompt, agent `task_create`) announces
@@ -4019,8 +4113,11 @@ export class TaskManager implements ObligationHost {
     targetTaskId: string,
     status: "waiting" | "blocked" | "done",
     body: string,
+    recordReport?: (report: {
+      targetTaskId: string;
+      targetIsLocal: boolean;
+    }) => void,
   ): {
-    collaborationMessageId: string | null;
     accountTargetTaskId: string | null;
     event: ReturnType<Store["recordAgentWorkflowUpdate"]>["event"];
     accountTargetTaskIsLocal: boolean;
@@ -4051,7 +4148,6 @@ export class TaskManager implements ObligationHost {
         !wakeSourceVisible &&
         this.obligations.noteUnwatchedWaiting(targetTaskId);
       return {
-        collaborationMessageId: null,
         accountTargetTaskId: null,
         event,
         accountTargetTaskIsLocal: false,
@@ -4071,19 +4167,26 @@ export class TaskManager implements ObligationHost {
           : null;
     const accountTargetTaskId =
       accountSource ?? localParentTaskId ?? externalParentTaskId;
-    const { collaborationMessageId, event } =
-      this.store.recordAgentWorkflowUpdate(
-        targetTaskId,
-        status,
-        body,
-        accountTargetTaskId,
-        accountSource === undefined ? "fallback" : "settled",
-      );
+    const { event } = this.store.recordAgentWorkflowUpdate(
+      targetTaskId,
+      status,
+      body,
+      accountTargetTaskId,
+      accountSource === undefined ? "fallback" : "settled",
+      () => {
+        if (!accountTargetTaskId) return;
+        recordReport?.({
+          targetTaskId: accountTargetTaskId,
+          targetIsLocal:
+            account?.sourceKind === "local" ||
+            (account === undefined && localParentTaskId !== null),
+        });
+      },
+    );
     // A failed transaction above leaves both the account and the marker alone.
     this.obligations.noteUpdate(targetTaskId);
     if (accountSource !== undefined) this.obligations.close(targetTaskId);
     return {
-      collaborationMessageId,
       accountTargetTaskId,
       accountTargetTaskIsLocal:
         account?.sourceKind === "local" ||
@@ -4098,6 +4201,7 @@ export class TaskManager implements ObligationHost {
    * closes with the report. User and runtime messages report nothing.
    */
   private onDeliveryFailed(change: CollaborationDeliveryStatusChange): void {
+    this.collaborationSourceLabels.delete(change.messageId);
     const message = this.store.getCollaborationMessage(change.messageId);
     if (message?.source_actor !== "agent") return;
     const text = `A message to the target was not delivered (${change.failureReason ?? "unknown"}).`;
@@ -4205,11 +4309,17 @@ export class TaskManager implements ObligationHost {
     // id stays the only thing presented as a precise handle. The body is
     // fenced verbatim between scissor lines so the agent never reads metadata
     // as instruction and the forwarding layer never rewrites the content.
-    const sourceName =
+    const sourceName = this.collaborationSourceLabel(message);
+    return `From ${JSON.stringify(sourceName)} (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
+  }
+
+  private collaborationSourceLabel(message: CollaborationMessageRow): string {
+    return (
       this.collaborationSourceLabels.get(message.id) ??
       this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
-      message.source_task_id.slice(0, 8);
-    return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
+      this.remoteCollaborationTitle?.(message.source_task_id) ??
+      message.source_task_id.slice(0, 8)
+    );
   }
 
   /** Write the recipient's one visible row for a just-drained message. */
@@ -4239,10 +4349,7 @@ export class TaskManager implements ObligationHost {
       }
       runtimeMessage = recorded;
     }
-    const sourceLabel =
-      this.collaborationSourceLabels.get(message.id) ??
-      this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
-      message.source_task_id.slice(0, 8);
+    const sourceLabel = this.collaborationSourceLabel(message);
     this.store.saveEvent(
       taskId,
       "system_message",

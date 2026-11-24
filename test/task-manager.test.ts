@@ -181,7 +181,6 @@ describe("TaskManager", () => {
       // (none) instead of being delivered to the parent the task left.
       const result = sm.settleAgentUpdate("child", "done", "finished");
       assert.equal(result.accountTargetTaskId, null);
-      assert.equal(result.collaborationMessageId, null);
     });
 
     it("keeps a handed-over delivery delivered across archive", async () => {
@@ -771,13 +770,7 @@ describe("TaskManager", () => {
   });
 
   describe("createTask", () => {
-    it("deletes the failed task before releasing its creation claim", async () => {
-      // A model override that the agent refuses must roll the task back. The
-      // rollback runs while the creation claim is still standing, because
-      // releasing it first projects busy→idle, which schedules the
-      // unfinished-work recovery: a recovery that claims this task's prompt
-      // slot in that gap makes the delete refuse as busy, so the failed task
-      // survives with a prompt already submitted into it.
+    it("keeps a task uncommitted while an override is still in flight", async () => {
       store.ensureRootTask(tmpDir);
       sm.cachedConfigOptions = [
         {
@@ -809,12 +802,10 @@ describe("TaskManager", () => {
           };
         },
         async setConfigOption() {
-          // The task row already exists by now, which is exactly the window a
-          // client can read and a peer task can queue work into.
           createdTaskId =
             store.listTasks().find((task) => task.id !== store.rootTaskId)
               ?.id ?? null;
-          assert.ok(createdTaskId, "the task is persisted before the override");
+          assert.equal(createdTaskId, null);
           enteredOverride();
           await overrideGate;
           throw new Error("model refused");
@@ -837,28 +828,16 @@ describe("TaskManager", () => {
         .catch((error: unknown) => error);
 
       await inOverride;
-      assert.ok(createdTaskId);
-      // A read lands here and projects the creation claim; a peer task queues
-      // work for the task. Releasing the claim is then a busy→idle edge that
-      // retries that work.
-      sm.syncBusy(createdTaskId);
-      store.createCollaborationMessage({
-        id: "collab-1",
-        deliveryId: "delivery-1",
-        sourceTaskId: store.rootTaskId,
-        directTargetTaskId: createdTaskId,
-        sourceActor: "agent",
-        body: "queued for a task that is about to fail",
-      });
+      assert.equal(createdTaskId, null);
       releaseOverride();
 
       const outcome = await created;
       assert.ok(outcome instanceof Error, "the create was refused");
-      assert.equal(store.getTask(createdTaskId), undefined);
-      assert.equal(store.getAgentSessionId(createdTaskId), undefined);
-      assert.equal(sm.liveTasks.has(createdTaskId), false);
+      assert.equal(
+        store.listTasks().filter((task) => task.id !== store.rootTaskId).length,
+        0,
+      );
       assert.deepEqual(prompts, [], "nothing was submitted into the rollback");
-      assert.equal(sm.getTurn(createdTaskId), null);
     });
 
     it("inherits config from the source task", async () => {
@@ -1039,7 +1018,7 @@ describe("TaskManager", () => {
       );
       assert.deepEqual(
         store.listTasks().map((task) => task.id),
-        [store.rootTaskId],
+        [],
       );
       assert.equal(sm.liveTasks.size, 0);
     });
@@ -2022,7 +2001,7 @@ describe("TaskManager", () => {
       assert.equal(store.getTask(secondTask.taskId)?.parent_id, "b");
     });
 
-    it("rejects a Root exit while a just-created descendant is still initializing", async () => {
+    it("lets Root exit win while an uncommitted descendant configures", async () => {
       store.ensureRootTask(tmpDir);
       const rootId = store.rootTaskId;
       store.attachAgentSession(rootId, "test-agent", "agent-root");
@@ -2069,12 +2048,10 @@ describe("TaskManager", () => {
         parentId: "a",
       });
       await inheritanceStartedPromise;
-      const exit = sm.exitRoot(bridge);
-      await assert.rejects(exit, { name: TaskBusyError.name });
-      assert.ok(store.getTaskIncludingDeleted("a"));
+      await sm.exitRoot(bridge);
+      assert.equal(store.getTaskIncludingDeleted("a"), undefined);
       releaseInheritance();
-      const created = await create;
-      assert.equal(store.getTask(created.taskId)?.parent_id, "a");
+      await assert.rejects(create, /Task not found: a/);
     });
 
     it("rechecks work that starts while a Root exit waits for its lock", async () => {

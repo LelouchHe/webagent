@@ -18,6 +18,7 @@ import {
   buildTaskCreatedSystemMessage,
 } from "../src/task-created-message.ts";
 import { mockBridgeStubs, waitFor } from "./fixtures.ts";
+import type { ConfigOption } from "../src/types.ts";
 
 function request(
   port: number,
@@ -80,7 +81,10 @@ describe("S3 collaboration write routes", () => {
   let tmpDir: string;
   let port: number;
   let bridge: ReturnType<typeof mockBridgeStubs> & {
-    newSession(): Promise<{ sessionId: string; configOptions: never[] }>;
+    newSession(): Promise<{
+      sessionId: string;
+      configOptions: ConfigOption[];
+    }>;
     prompt(taskId: string, text: string): Promise<void>;
   };
   const broadcasts: Array<Record<string, unknown>> = [];
@@ -116,9 +120,6 @@ describe("S3 collaboration write routes", () => {
     const localTaskOps = createLocalTaskOps({
       store,
       tasks,
-      broadcastConfigUpdate: (event) => {
-        broadcasts.push(event);
-      },
     });
     const taskOps = {
       ...localTaskOps,
@@ -135,6 +136,9 @@ describe("S3 collaboration write routes", () => {
         tasks,
         broadcastTaskCreated: (event) => {
           broadcasts.push(buildTaskCreatedBroadcast(event));
+        },
+        broadcastConfigUpdate: (event) => {
+          broadcasts.push(event);
         },
       }),
     };
@@ -218,6 +222,20 @@ describe("S3 collaboration write routes", () => {
   });
 
   it("records the created child on the source task the same way the agent tool does", async () => {
+    let configuredSession = 0;
+    bridge.newSession = async () => ({
+      sessionId: `configured-session-${++configuredSession}`,
+      configOptions: [
+        {
+          type: "select" as const,
+          id: "model",
+          name: "Model",
+          category: "model",
+          currentValue: "inherited",
+          options: [{ value: "inherited", name: "inherited" }],
+        },
+      ],
+    });
     const response = await request(port, "/api/v1/tasks", {
       parentId: "parent",
       cwd: tmpDir,
@@ -244,6 +262,19 @@ describe("S3 collaboration write routes", () => {
       1,
       "the created row must be announced live, not only stored",
     );
+    const createdRowIndex = broadcasts.findIndex(
+      (event) =>
+        event.type === "system_message" && event.kind === "task_created",
+    );
+    const configIndex = broadcasts.findIndex(
+      (event) =>
+        event.type === "config_option_update" && event.taskId === userTaskId,
+    );
+    assert.ok(
+      configIndex > createdRowIndex,
+      "the row broadcasts before config",
+    );
+    assert.equal(userData.cwd, tmpDir);
 
     // The agent path writes into the same stream through the same builder, so
     // both initiators produce one identical row shape.
@@ -254,7 +285,18 @@ describe("S3 collaboration write routes", () => {
     const host = createTaskOpsCore({
       host: createTaskHost({
         local: localHost,
-        remote: { create: async () => ({ taskId: "unexpected" }) },
+        remote: {
+          create: async () => ({
+            taskId: "unexpected",
+            facts: {
+              title: null,
+              agentId: null,
+              cwd: tmpDir,
+              model: null,
+              thinking: null,
+            },
+          }),
+        },
       }),
       store,
       tasks,
@@ -291,6 +333,7 @@ describe("S3 collaboration write routes", () => {
         taskTitle: "agent-child",
         agentId: "test-agent",
         cwd: tmpDir,
+        model: "inherited",
       }).data,
       "the agent row must be exactly what the shared builder produces",
     );
@@ -301,6 +344,7 @@ describe("S3 collaboration write routes", () => {
         taskTitle: "usr-child",
         agentId: "test-agent",
         cwd: tmpDir,
+        model: "inherited",
       }).data,
       "the user row must be exactly what the shared builder produces",
     );

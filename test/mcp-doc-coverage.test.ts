@@ -71,7 +71,16 @@ function registeredTools(): Record<string, RegisteredTool> {
       taskId: "child",
       status: "idle" as const,
     }),
-    create: async () => ({ taskId: "child" }),
+    create: async () => ({
+      taskId: "child",
+      facts: {
+        title: "child",
+        agentId: "agent-a",
+        cwd: "/tmp",
+        model: null,
+        thinking: null,
+      },
+    }),
     send: async () => ({
       messageId: "message",
       targetTaskId: "child",

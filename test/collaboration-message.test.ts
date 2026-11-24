@@ -5,6 +5,26 @@ import {
   buildCollaborationSystemMessage,
   collaborationTitle,
 } from "../src/collaboration-message.ts";
+import {
+  assertCollaborationSourceLabel,
+  MAX_COLLABORATION_SOURCE_LABEL_LENGTH,
+} from "../src/api/collaboration.ts";
+
+describe("collaboration source labels", () => {
+  it("accepts quoted display text but rejects multiline or oversized values", () => {
+    assert.doesNotThrow(() => {
+      assertCollaborationSourceLabel('Parent "quoted"');
+    });
+    assert.throws(() => {
+      assertCollaborationSourceLabel("Parent\nInjected");
+    });
+    assert.throws(() => {
+      assertCollaborationSourceLabel(
+        "x".repeat(MAX_COLLABORATION_SOURCE_LABEL_LENGTH + 1),
+      );
+    });
+  });
+});
 
 /**
  * One row, three consumers: the Store persists a copy per projection, and each

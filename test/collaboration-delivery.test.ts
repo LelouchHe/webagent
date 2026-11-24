@@ -108,6 +108,67 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(store.getTask("target")?.workflow_status, "running");
   });
 
+  it("resolves a remote child's live mirror title when its report is drained", async () => {
+    store.enqueueReportDelivery({
+      id: "remote-report",
+      deliveryId: "remote-report-delivery",
+      idempotencyKey: "remote-report:owner:remote-child:1",
+      sourceTaskId: "remote-child",
+      targetTaskId: "target",
+      body: "Task status: done\ncomplete",
+    });
+    tasks.setRemoteCollaborationTitle((taskId) =>
+      taskId === "remote-child" ? 'Child "quoted"' : undefined,
+    );
+    const prompts: string[] = [];
+    await tasks.drainCollaborationDeliveries("target", {
+      ...mockBridgeStubs(),
+      async prompt(_taskId, text) {
+        prompts.push(text);
+      },
+    });
+    await waitFor(() =>
+      store
+        .getEvents("target")
+        .some((event) => JSON.parse(event.data).messageId === "remote-report"),
+    );
+    assert.match(
+      prompts[0],
+      /From "Child \\"quoted\\"" \(task id remote-child\):/,
+    );
+    const data = JSON.parse(
+      store
+        .getEvents("target")
+        .find((event) => JSON.parse(event.data).messageId === "remote-report")!
+        .data,
+    ) as Record<string, unknown>;
+    assert.equal(data.sourceLabel, 'Child "quoted"');
+  });
+
+  it("drops an external parent's cached label after projection", async () => {
+    store.createExternalSourceCollaborationMessage({
+      id: "external-dispatch",
+      deliveryId: "external-delivery",
+      sourceTaskId: "external-parent",
+      directTargetTaskId: "target",
+      body: "work",
+    });
+    tasks.rememberCollaborationSourceLabel(
+      "external-dispatch",
+      'External "parent"',
+    );
+    await tasks.drainCollaborationDeliveries("target", {
+      ...mockBridgeStubs(),
+      async prompt() {},
+    });
+    const labels = (
+      tasks as unknown as {
+        collaborationSourceLabels: Map<string, string>;
+      }
+    ).collaborationSourceLabels;
+    assert.equal(labels.has("external-dispatch"), false);
+  });
+
   it("writes the receiver's row at drain, not at creation", async () => {
     store.createCollaborationMessage({
       id: "m-drain",
@@ -278,6 +339,7 @@ describe("TaskManager collaboration delivery drain", () => {
       body: "这次投递会失败",
       createdAt: 3,
     });
+    tasks.rememberCollaborationSourceLabel("reject-message", "external-parent");
     const bridge = {
       ...mockBridgeStubs(),
       async prompt() {
@@ -301,6 +363,14 @@ describe("TaskManager collaboration delivery drain", () => {
       store.getTask("target")?.workflow_status,
       "idle",
       "a failed delivery prompt must not strand the target in running",
+    );
+    assert.equal(
+      (
+        tasks as unknown as {
+          collaborationSourceLabels: Map<string, string>;
+        }
+      ).collaborationSourceLabels.has("reject-message"),
+      false,
     );
   });
 
