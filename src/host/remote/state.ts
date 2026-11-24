@@ -3,11 +3,7 @@ export type HostConnectionState = "connecting" | "connected" | "unreachable";
 export const HOST_PROTOCOL_VERSION = 1;
 
 export type HostUnreachableReason =
-  | "token_command_failed"
-  | "unauthorized"
-  | "insufficient_scope"
-  | "network"
-  | "protocol_mismatch";
+  "token_command_failed" | "unauthorized" | "network" | "protocol_mismatch";
 
 export interface HostRuntimeState {
   name: string;

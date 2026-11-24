@@ -101,7 +101,9 @@ async function recoverVisible(
     : page.waitForResponse(
         (response) =>
           response.request().method() === "GET" &&
-          /\/api\/v1\/tasks\/[^/]+\/events\?after=/.test(response.url()),
+          /\/api\/v1\/tasks\/[^/]+\/events\?flush=1&after=/.test(
+            response.url(),
+          ),
         { timeout: 10_000 },
       );
   await page.evaluate(() => {
@@ -123,7 +125,9 @@ async function recoverVisible(
     const response = await responses;
     expect(response.ok()).toBe(true);
     recoveryUrl = response.url();
-    expect(recoveryUrl).toMatch(/\/api\/v1\/tasks\/[^/]+\/events\?after=\d+/);
+    expect(recoveryUrl).toMatch(
+      /\/api\/v1\/tasks\/[^/]+\/events\?flush=1&after=\d+/,
+    );
   } else {
     await page.waitForFunction(
       () =>
@@ -156,7 +160,7 @@ async function refreshNextEventLoad(
           : input instanceof URL
             ? input.href
             : input.url;
-      if (!/\/api\/v1\/tasks\/[^/]+\/events\?after=/.test(requestUrl)) {
+      if (!/\/api\/v1\/tasks\/[^/]+\/events\?flush=1&after=/.test(requestUrl)) {
         return original(input, init);
       }
       window.fetch = original;

@@ -305,7 +305,7 @@ async function resolveFallbackTask(
 ): Promise<{ id: string; task?: TaskDetail } | null> {
   if (preferredTaskId) {
     try {
-      const task = await api.getTask(preferredTaskId);
+      const task = await api.getTask(preferredTaskId, { warm: true });
       return { id: preferredTaskId, task };
     } catch (err) {
       if (!(
@@ -350,7 +350,7 @@ async function fallbackToNextTaskImpl(
         loaded = await loadHistory(next.id);
       } else {
         [task, loaded] = await Promise.all([
-          api.getTask(next.id),
+          api.getTask(next.id, { warm: true }),
           loadHistory(next.id),
         ]);
       }
@@ -553,7 +553,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
   try {
     const body = await api.withTimeout(async (signal) => {
       const res = await fetch(
-        `/api/v1/tasks/${sid}/events?limit=${HISTORY_PAGE_SIZE}`,
+        `/api/v1/tasks/${sid}/events?flush=1&limit=${HISTORY_PAGE_SIZE}`,
         signal ? { signal } : undefined,
       );
       if (!res.ok) return null;
@@ -809,7 +809,7 @@ async function _loadNewEventsImpl(
   // reconstruct this tail, so cancelling the rAF without flushing loses it.
   flushStreamingRender();
   try {
-    const url = `/api/v1/tasks/${sid}/events?after=${state.lastEventSeq}`;
+    const url = `/api/v1/tasks/${sid}/events?flush=1&after=${state.lastEventSeq}`;
     const body = await api.withTimeout(async (signal) => {
       const res = await fetch(url, signal ? { signal } : undefined);
       if (!res.ok) return null;

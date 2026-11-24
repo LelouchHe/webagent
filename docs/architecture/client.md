@@ -212,19 +212,19 @@ For **full loads** (new task or first visit):
 
 ```
 Promise.all([
-  api.getTask(taskId),    // auto-resumes in ACP if needed
-  loadHistory(taskId),        // GET /api/v1/tasks/:id/events
+  api.getTask(taskId),     // GET detail?warm=1
+  loadHistory(taskId),     // GET /events?flush=1&limit=N
 ])
-→ hydrateTaskRuntime(taskId)  // GET /snapshot, after replay drains queued patches
+→ hydrateTaskRuntime(taskId)  // GET /snapshot?warm=1, after replay drains patches
 → handleEvent({ type: 'task_created', ... })
 ```
 
 For **incremental reconnects** (same task, SSE dropped):
 
 ```
-api.getTask(taskId)        // get config/title/busy state
+api.getTask(taskId)        // GET detail?warm=1 for config/title
 → handleEvent({ type: 'task_created', ... })
-→ loadNewEvents(taskId)       // GET /events?after=N
+→ loadNewEvents(taskId)       // GET /events?flush=1&after=N
 ```
 
 On a full load, history renders as soon as its events arrive, without waiting

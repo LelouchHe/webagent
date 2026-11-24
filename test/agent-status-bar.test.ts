@@ -173,7 +173,7 @@ describe("status bar agent coordinate", () => {
     // and then reads that parent's binding.
     const original = globalThis.fetch;
     globalThis.fetch = (async (url: string) => {
-      if (url === "/api/v1/tasks/child") {
+      if (url.split("?")[0] === "/api/v1/tasks/child") {
         return new Response(
           JSON.stringify({
             id: "child",
@@ -182,7 +182,7 @@ describe("status bar agent coordinate", () => {
           }),
         );
       }
-      if (url === "/api/v1/tasks/parent") {
+      if (url.split("?")[0] === "/api/v1/tasks/parent") {
         return new Response(
           JSON.stringify({ id: "parent", parentId: null, agentId: "pi" }),
         );

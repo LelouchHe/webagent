@@ -83,7 +83,7 @@ describe("tokens CRUD", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("POST /tokens with scope=read mints a usable read token", async () => {
+  it("POST /tokens rejects the removed read scope", async () => {
     const name = `reader-${Date.now().toString(36)}`;
     const created = await req(
       port,
@@ -95,20 +95,8 @@ describe("tokens CRUD", () => {
       },
       JSON.stringify({ name, scope: "read" }),
     );
-    assert.equal(created.status, 201);
-    const body = JSON.parse(created.body) as { token: string; scope: string };
-    assert.equal(body.scope, "read");
-
-    const verify = await req(port, "GET", "/api/v1/auth/verify", {
-      Authorization: `Bearer ${body.token}`,
-    });
-    assert.equal(verify.status, 200);
-    assert.equal((JSON.parse(verify.body) as { scope: string }).scope, "read");
-    // It cannot reach an admin-only route.
-    const tokens = await req(port, "GET", "/api/v1/tokens", {
-      Authorization: `Bearer ${body.token}`,
-    });
-    assert.equal(tokens.status, 403);
+    assert.equal(created.status, 400);
+    assert.match(JSON.parse(created.body).error, /'api' or 'host'/);
   });
 
   it("POST /tokens rejects admin scope", async () => {

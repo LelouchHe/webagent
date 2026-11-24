@@ -142,7 +142,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a configuration request parked in `readBody` while the task is cleared onto another agent is refused with `409`, and no configuration request reaches the new execution
 
 - `test/runtime-warm.test.ts` (background warm-up)
-  - a read-started materialization of an unmaterialized task projects its creation claim and then re-projects busy to idle when it finishes, so a client that read mid-flight is not left with a spinner no local event can end
+  - an explicitly requested materialization of an unmaterialized task projects its creation claim and then re-projects busy to idle when it finishes, so a client that read mid-flight is not left with a spinner no local event can end
   - a completed warm-up publishes the restored schema and commands once per task and generation
   - concurrent reads share one restore; a failed warm-up publishes nothing
   - a warm-up that outlived a rotation publishes nothing (the guard is exercised directly: a stale generation and a moved binding are both refused)
@@ -157,6 +157,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - three genuinely different unavailable shapes, each produced its own way: a real spawn of a missing binary, a configured agent whose transport was shut down, and a binding whose agent left the configuration
   - reads cover task detail, snapshot, events, the list, attachment bytes, the owner share list, and deletion, in every state, without moving the binding
   - the snapshot returns while a restore is still hanging (it does not wait at all)
+
+- `test/snapshot-route.test.ts`
+  - a snapshot reconciles a held prompt reservation into `busy`
+
+- `test/api-module.test.ts`, `test/events.test.ts`, `test/task-topology.test.ts`,
+  and `test/e2e/attachment-cache-switch.spec.ts` (browser action selectors)
+  - task-opening call sites request `warm=1`, while metadata-only source and
+    parent-link detail lookups do not
+  - initial history and reconnect/catch-up request `flush=1`, while older-only
+    pagination does not
+  - `attachment-cache-switch.spec.ts` observes incremental `flush=1` over HTTP
 
 - `test/multi-agent-clear.test.ts` (HTTP)
   - `/clear { agentId }` moves a task off a removed agent, records `explicit_clear`, preserves history, and creates exactly one session on the configured agent
@@ -904,17 +915,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a queued delivery across the cut edge is not drained
   - a handed-over delivery stays `delivered` across archive
 
-- `test/read-scope.test.ts`
-  - a `read` token reaches the task list, stored history, detail, status, and
-    permissions (including trailing-slash forms the routes support), but is
-    denied every write and undeclared read, including `/snapshot`
-  - a read-token `/events` returns persisted rows only: no buffer flush, no seq
-    advance, `streaming: false`; an api-token control still flushes
-  - read-scope detail never warms an execution; an api-scope read still warms
-    (control)
-  - the task list never warms anything for any scope
-  - a read-token detail does not persist legacy model canonicalization; an api
-    read keeps the write-back (control)
+- `test/tasks.test.ts`
+  - default task detail does not warm or write config; `warm=1` retains the
+    existing background restore and canonicalization behavior
+  - default `/events` leaves buffers and event `seq` untouched; `flush=1`
+    retains the existing persistence and streaming response
 
 ### Frontend state and UI event flow
 

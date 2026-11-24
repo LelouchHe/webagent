@@ -7,7 +7,6 @@ import { AuthStore } from "../src/auth-store.ts";
 import {
   isWhitelistedPath,
   isHostScopeAllowedPath,
-  isReadScopeAllowedPath,
   authenticate,
   requireScope,
   type AuthResult,
@@ -176,19 +175,6 @@ describe("auth-middleware", () => {
         },
       };
     }
-    function read(): AuthResult {
-      return {
-        ok: true,
-        principal: {
-          name: "r",
-          scope: "read",
-          lastUsedAt: null,
-          createdAt: 0,
-          hash: "x",
-        },
-      };
-    }
-
     it("admin scope passes admin requirement", () => {
       assert.equal(requireScope(admin(), "admin"), true);
     });
@@ -209,96 +195,19 @@ describe("auth-middleware", () => {
       const r: AuthResult = { ok: false, reason: "missing" };
       assert.equal(requireScope(r, "api"), false);
       assert.equal(requireScope(r, "admin"), false);
-      assert.equal(requireScope(r, "read"), false);
-    });
-
-    it("read scope passes read but not api or admin", () => {
-      assert.equal(requireScope(read(), "read"), true);
-      assert.equal(requireScope(read(), "api"), false);
-      assert.equal(requireScope(read(), "admin"), false);
-    });
-
-    it("api and admin scopes satisfy read", () => {
-      assert.equal(requireScope(api(), "read"), true);
-      assert.equal(requireScope(admin(), "read"), true);
     });
   });
 
-  describe("isReadScopeAllowedPath", () => {
-    it("allows the task list and stored history", () => {
-      assert.equal(isReadScopeAllowedPath("GET", "/api/v1/tasks"), true);
+  describe("isHostScopeAllowedPath", () => {
+    it("allows only host connection and create routes", () => {
+      assert.equal(isHostScopeAllowedPath("GET", "/api/v1/auth/verify"), true);
+      assert.equal(isHostScopeAllowedPath("POST", "/api/v1/sse-ticket"), true);
+      assert.equal(isHostScopeAllowedPath("POST", "/api/v1/tasks"), true);
+      assert.equal(isHostScopeAllowedPath("GET", "/api/v1/tasks"), false);
       assert.equal(
-        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/events"),
-        true,
-      );
-      // The events route does not accept a trailing slash, so neither does the
-      // read allowlist.
-      assert.equal(
-        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/events/"),
+        isHostScopeAllowedPath("POST", "/api/v1/tasks/abc/cancel"),
         false,
       );
-    });
-
-    it("allows task detail and the in-memory runtime reads", () => {
-      assert.equal(isReadScopeAllowedPath("GET", "/api/v1/tasks/abc"), true);
-      // Trailing-slash forms are accepted exactly where the route accepts them.
-      assert.equal(isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/"), true);
-      assert.equal(
-        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/status"),
-        true,
-      );
-      assert.equal(
-        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/status/"),
-        true,
-      );
-      assert.equal(
-        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/permissions"),
-        true,
-      );
-    });
-
-    it("denies snapshot: the UI path may warm", () => {
-      assert.equal(
-        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/snapshot"),
-        false,
-      );
-      assert.equal(
-        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/snapshot/"),
-        false,
-      );
-    });
-
-    it("denies writes and reads outside the contract", () => {
-      assert.equal(
-        isReadScopeAllowedPath("POST", "/api/v1/tasks/abc/archive"),
-        false,
-      );
-      assert.equal(isReadScopeAllowedPath("GET", "/api/v1/config"), false);
-      assert.equal(isReadScopeAllowedPath("GET", "/api/v1/tokens"), false);
-      assert.equal(isReadScopeAllowedPath("GET", "/api/v1/files/info"), false);
-      assert.equal(
-        isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/events/stream"),
-        false,
-      );
-    });
-
-    describe("isHostScopeAllowedPath", () => {
-      it("allows only host connection and create routes", () => {
-        assert.equal(
-          isHostScopeAllowedPath("GET", "/api/v1/auth/verify"),
-          true,
-        );
-        assert.equal(
-          isHostScopeAllowedPath("POST", "/api/v1/sse-ticket"),
-          true,
-        );
-        assert.equal(isHostScopeAllowedPath("POST", "/api/v1/tasks"), true);
-        assert.equal(isHostScopeAllowedPath("GET", "/api/v1/tasks"), false);
-        assert.equal(
-          isHostScopeAllowedPath("POST", "/api/v1/tasks/abc/cancel"),
-          false,
-        );
-      });
     });
   });
 });

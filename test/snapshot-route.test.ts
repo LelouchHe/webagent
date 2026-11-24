@@ -125,11 +125,23 @@ describe("GET /api/v1/tasks/:id/snapshot", () => {
   it("reflects agent busy when a prompt is active", async () => {
     store.createTask("s1", "/tmp/cwd", "auto", "test-agent");
     tasks.activePrompts.add("s1");
+    tasks.syncBusy("s1");
     const res = await req(port, "GET", "/api/v1/tasks/s1/snapshot");
     const body = JSON.parse(res.body);
     assert.ok(body.runtime.busy);
     assert.equal(body.runtime.busy.kind, "agent");
     assert.ok(body.seq >= 1);
+  });
+
+  it("reports a held prompt reservation as busy", async () => {
+    store.createTask("s1", "/tmp/cwd", "auto", "test-agent");
+    assert.notEqual(tasks.reservePromptSubmission("s1"), null);
+
+    const res = await req(port, "GET", "/api/v1/tasks/s1/snapshot");
+    const body = JSON.parse(res.body);
+
+    assert.equal(body.runtime.busy.kind, "agent");
+    assert.equal(body.runtime.busy.promptId !== null, true);
   });
 
   it("includes task.lastEventSeq from stored events", async () => {

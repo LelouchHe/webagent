@@ -31,7 +31,6 @@ import { handleFileRoutes } from "../files/routes.ts";
 import {
   authenticate,
   isHostScopeAllowedPath,
-  isReadScopeAllowedPath,
   isWhitelistedPath,
 } from "../auth-middleware.ts";
 import { enrichStoredEventsForDisplay } from "../attachment-labels.ts";
@@ -750,14 +749,18 @@ export function createRequestHandler(
   // eslint-disable-next-line complexity -- TODO: refactor main route handler into smaller handlers
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = req.url ?? "/";
+    const queryStart = url.indexOf("?");
+    const path = queryStart === -1 ? url : url.slice(0, queryStart);
+    const requestParams = new URLSearchParams(
+      queryStart === -1 ? "" : url.slice(queryStart + 1),
+    );
 
     // --- MCP server: claims /mcp before the auth gate (the endpoint
     // is outside /api/** and authenticates by per-task capability).
     if (deps.mcpEndpoint && (await deps.mcpEndpoint(req, res))) return;
 
     // --- Auth gate: any /api/** outside whitelist requires Bearer ---
-    if (deps.authStore && url.startsWith("/api/")) {
-      const path = url.split("?")[0] ?? url;
+    if (deps.authStore && path.startsWith("/api/")) {
       const method = req.method ?? "GET";
       if (!isWhitelistedPath(method, path)) {
         const result = authenticate(req.headers, deps.authStore);
@@ -772,19 +775,6 @@ export function createRequestHandler(
           return;
         }
         principalByRequest.set(req, result.principal);
-        // A read token is a pure-read credential. The allowlist is checked
-        // here, before any route can touch execution or storage, so a new
-        // endpoint is denied by default until it is deliberately opened.
-        if (
-          result.principal.scope === "read" &&
-          !isReadScopeAllowedPath(method, path)
-        ) {
-          res.writeHead(HTTP_STATUS.FORBIDDEN, {
-            "Content-Type": "application/json",
-          });
-          res.end(JSON.stringify({ error: "Forbidden", reason: "read_scope" }));
-          return;
-        }
         if (
           result.principal.scope === "host" &&
           !isHostScopeAllowedPath(method, path)
@@ -1059,13 +1049,12 @@ export function createRequestHandler(
           return;
         }
         const name = typeof body.name === "string" ? body.name : "";
-        // REST can mint `api` (default) or the narrower `read`. `admin` is
-        // deliberately CLI-only so a compromised api/read token cannot
-        // escalate through this route.
+        // REST can mint `api` (default) or the host connection scope. `admin`
+        // is deliberately CLI-only so a compromised token cannot escalate.
         const scope = body.scope === undefined ? "api" : body.scope;
-        if (scope !== "api" && scope !== "host" && scope !== "read") {
+        if (scope !== "api" && scope !== "host") {
           json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "scope must be 'api', 'host', or 'read'",
+            error: "scope must be 'api' or 'host'",
           });
           return;
         }
@@ -1363,11 +1352,12 @@ export function createRequestHandler(
       // this task in right now". Frontend calls this on connect / reconnect
       // / after long backgrounding, then applies incremental `state_patch`
       // SSE events.
-      const snapshotMatch = url.match(
+      const snapshotMatch = path.match(
         /^\/api\/v1\/tasks\/([^/]+)\/snapshot\/?$/,
       );
       if (snapshotMatch && req.method === "GET") {
         const taskId = decodeURIComponent(snapshotMatch[1]);
+        const warm = requestParams.get("warm") === "1";
         const task = store.getTask(taskId);
         if (!task) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
@@ -1379,17 +1369,11 @@ export function createRequestHandler(
           });
           return;
         }
-        // A read returns what is known now. Warming the execution happens in
-        // the background and reports back through `task_runtime_warmed`; no
-        // fixed wait can be right, because a real restore replays history.
-        if (
-          !tasks.liveTasks.has(taskId) &&
-          getPrincipal(req)?.scope !== "read"
-        ) {
+        // An explicit warm restores in the background and reports back through
+        // `task_runtime_warmed`; a plain snapshot never starts an execution.
+        if (warm && !tasks.liveTasks.has(taskId)) {
           tasks.warmTaskInBackground(taskId);
         }
-        // Make sure runtime reflects the current activePrompts/bash state even
-        // if no patch has been emitted yet for this task.
         tasks.syncBusy(taskId);
         tasks.syncPendingPermissions(taskId);
         const runtimeState = tasks.state.getState(taskId);
@@ -2845,7 +2829,7 @@ export function createRequestHandler(
       }
 
       // --- Task CRUD: /api/v1/tasks/:id ---
-      const taskIdMatch = url.match(/^\/api\/v1\/tasks\/([^/?]+)\/?(\?.*)?$/);
+      const taskIdMatch = path.match(/^\/api\/v1\/tasks\/([^/]+)\/?$/);
       if (taskIdMatch) {
         const taskId = decodeURIComponent(taskIdMatch[1]);
 
@@ -2854,28 +2838,22 @@ export function createRequestHandler(
 
         // GET /api/v1/tasks/:id
         if (req.method === "GET") {
+          const warm = requestParams.get("warm") === "1";
           const task = store.getTask(taskId);
           if (!task) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
             return;
           }
-          // A read answers with the task's metadata and whatever the process
-          // already knows. Warming a non-live task runs in the background and
-          // publishes `task_runtime_warmed`; the client never waits for ACP
-          // restore, and no fixed timeout is involved.
+          // A plain detail read returns only currently known metadata. A
+          // requested warm retains the browser's previous behavior.
           const wasLive = tasks?.liveTasks.has(taskId) ?? true;
-          // A `read` token never materializes an execution: external consumers
-          // walk history and must not start one agent process per task.
-          const readOnly = principalByRequest.get(req)?.scope === "read";
-          if (tasks && !wasLive && !readOnly)
-            tasks.warmTaskInBackground(taskId);
+          if (tasks && warm && !wasLive) tasks.warmTaskInBackground(taskId);
           const freshTask = store.getTask(taskId) ?? task;
           const configOptions = tasks
             ? tasks.applyStoredConfig(
                 tasks.configOptionsForTask(freshTask.id),
                 freshTask,
-                // A read token must not write the legacy model identity back.
-                { persist: !readOnly },
+                { persist: warm },
               )
             : [];
           json(
@@ -3191,19 +3169,16 @@ export function createRequestHandler(
       }
 
       // GET /api/v1/tasks/:id/events?thinking=0|1&limit=N&before=SEQ&after=SEQ
-      const eventsMatch = url.match(
-        /^\/api\/v1\/tasks\/([^/]+)\/events(\?.*)?$/,
-      );
+      const eventsMatch = path.match(/^\/api\/v1\/tasks\/([^/]+)\/events$/);
       if (eventsMatch && req.method === "GET") {
         const taskId = decodeURIComponent(eventsMatch[1]);
-        const queryPart = eventsMatch[2];
-        const params = new URLSearchParams(queryPart ? queryPart.slice(1) : "");
-        const excludeThinking = params.get("thinking") === "0";
-        const afterRaw = params.get("after");
+        const flush = requestParams.get("flush") === "1";
+        const excludeThinking = requestParams.get("thinking") === "0";
+        const afterRaw = requestParams.get("after");
         const afterSeq = afterRaw != null ? Number(afterRaw) : undefined;
-        const beforeRaw = params.get("before");
+        const beforeRaw = requestParams.get("before");
         const beforeSeq = beforeRaw != null ? Number(beforeRaw) : undefined;
-        const limitRaw = params.get("limit");
+        const limitRaw = requestParams.get("limit");
         const limit =
           limitRaw != null
             ? Math.max(1, Math.min(10000, Number(limitRaw)))
@@ -3213,15 +3188,12 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
-        // Flush pending buffers so their content becomes part of the event list.
-        // Track whether each buffer was non-empty so the frontend can keep the
-        // last thinking/assistant element "open" for continued live streaming.
-        // A `read` token gets persisted rows only: flushing writes events and
-        // advances seq, which is not a pure read.
+        // Flushing is explicit because it writes events and advances seq. Track
+        // whether each buffer was non-empty so the browser can keep the last
+        // thinking/assistant element open for continued live streaming.
         let streamingThinking = false;
         let streamingAssistant = false;
-        const readOnly = principalByRequest.get(req)?.scope === "read";
-        if (tasks && !readOnly) {
+        if (tasks && flush) {
           const runtimeStreaming = tasks.state.peekStreaming(taskId);
           streamingThinking =
             runtimeStreaming.thinking ||

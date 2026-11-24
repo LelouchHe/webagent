@@ -818,7 +818,7 @@ describe("state", () => {
         snap(11, { kind: "bash", since: "", promptId: null }),
       );
       globalThis.fetch = (async (url: string) => {
-        assert.ok(url.endsWith("/snapshot"));
+        assert.ok(url.endsWith("/snapshot?warm=1"));
         return {
           ok: true,
           status: 200,
@@ -1033,14 +1033,14 @@ describe("state", () => {
       for (
         let i = 0;
         i < 10 &&
-        (!snapshots.has("/api/v1/tasks/A/snapshot") ||
-          !snapshots.has("/api/v1/tasks/B/snapshot"));
+        (!snapshots.has("/api/v1/tasks/A/snapshot?warm=1") ||
+          !snapshots.has("/api/v1/tasks/B/snapshot?warm=1"));
         i++
       ) {
         await new Promise((resolve) => setImmediate(resolve));
       }
-      const resolveA = snapshots.get("/api/v1/tasks/A/snapshot");
-      const resolveB = snapshots.get("/api/v1/tasks/B/snapshot");
+      const resolveA = snapshots.get("/api/v1/tasks/A/snapshot?warm=1");
+      const resolveB = snapshots.get("/api/v1/tasks/B/snapshot?warm=1");
       assert.ok(resolveA);
       assert.ok(resolveB);
       mod.state.taskSwitchGen++;

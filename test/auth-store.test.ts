@@ -14,8 +14,9 @@ import { generateToken, hashToken } from "../src/auth.ts";
 
 describe("AuthStore", () => {
   it("defines the complete scope vocabulary in one place", () => {
-    assert.deepEqual(AUTH_SCOPES, ["admin", "api", "host", "read"]);
+    assert.deepEqual(AUTH_SCOPES, ["admin", "api", "host"]);
     assert.equal(isScope("host"), true);
+    assert.equal(isScope("read"), false);
     assert.equal(isScope("write"), false);
     assert.equal(isScope(undefined), false);
   });
@@ -61,6 +62,25 @@ describe("AuthStore", () => {
       assert.equal(list[0].scope, "admin");
     });
 
+    it("rejects a persisted read-scope token as an unknown scope", async () => {
+      writeFileSync(
+        authPath,
+        JSON.stringify({
+          tokens: [
+            {
+              name: "reader",
+              scope: "read",
+              hash: hashToken(generateToken()),
+              createdAt: 1000,
+              lastUsedAt: null,
+            },
+          ],
+        }),
+        { mode: 0o600 },
+      );
+      await assert.rejects(() => store.load(), /scope/i);
+    });
+
     it("rejects malformed JSON gracefully", async () => {
       writeFileSync(authPath, "not json", { mode: 0o600 });
       await assert.rejects(() => store.load());
@@ -83,14 +103,11 @@ describe("AuthStore", () => {
       assert.equal(parsed.tokens[0].hash, hashToken(token));
     });
 
-    it("creates a read-scope token that survives reload", async () => {
+    it("refuses a removed read scope on token creation", async () => {
       await store.load();
-      const { record } = await store.addToken("reader", "read");
-      assert.equal(record.scope, "read");
-      await store.reload();
-      assert.equal(
-        store.list().find((token) => token.name === "reader")?.scope,
-        "read",
+      await assert.rejects(
+        () => store.addToken("reader", "read" as never),
+        /Invalid scope/,
       );
     });
 

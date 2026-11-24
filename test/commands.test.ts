@@ -280,7 +280,7 @@ describe("commands", () => {
         releaseInfo = resolve;
       });
       setFetch(async (url) => {
-        if (url === "/api/v1/tasks/A") {
+        if (url.split("?")[0] === "/api/v1/tasks/A") {
           // The launching task was deleted while the probe was pending.
           return { ok: false, status: 404, text: async () => "{}" };
         }
@@ -322,6 +322,10 @@ describe("commands", () => {
       );
       assert.equal(state.awaitingNewTask, false);
       assert.equal(state.pendingNewTaskOpId, null);
+      assert.ok(
+        fetchCalls.some((call) => call.url === "/api/v1/tasks/A"),
+        "source-existence metadata read must not warm the task",
+      );
       assert.equal(
         fetchCalls.some(
           (c) =>
@@ -543,15 +547,19 @@ describe("commands", () => {
           (!init?.method || init.method === "GET")
         )
           return body(taskList);
-        if (url === "/api/v1/tasks/current" && init?.method === "DELETE") {
+        if (
+          url.split("?")[0] === "/api/v1/tasks/current" &&
+          init?.method === "DELETE"
+        ) {
           // The request row must already be visible while the delete is in
           // flight: landing on the next task clears #messages.
           transcriptDuringDelete = dom.messages.textContent ?? "";
           return body({});
         }
-        if (url === "/api/v1/tasks/mru-456") return body(mruDetail);
+        if (url.split("?")[0] === "/api/v1/tasks/mru-456")
+          return body(mruDetail);
         if (url.includes("/api/v1/tasks/mru-456/events")) return body([]);
-        if (url === "/api/v1/tasks/mru-456/snapshot") {
+        if (url.split("?")[0] === "/api/v1/tasks/mru-456/snapshot") {
           return body({
             version: 1,
             seq: 0,
@@ -566,7 +574,9 @@ describe("commands", () => {
 
       assert.equal(handled, true);
       const deleteCall = fetchCalls.find(
-        (c) => c.url === "/api/v1/tasks/current" && c.init?.method === "DELETE",
+        (c) =>
+          c.url.split("?")[0] === "/api/v1/tasks/current" &&
+          c.init?.method === "DELETE",
       );
       assert.ok(deleteCall, "expected DELETE for current task");
       assert.match(transcriptDuringDelete, /notify: exiting the task tree/);
@@ -613,15 +623,19 @@ describe("commands", () => {
           (!init?.method || init.method === "GET")
         )
           return body(taskList);
-        if (url === "/api/v1/tasks/current" && init?.method === "DELETE")
+        if (
+          url.split("?")[0] === "/api/v1/tasks/current" &&
+          init?.method === "DELETE"
+        )
           return body({
             taskId: "current",
             parentId: "parent-123",
             reset: false,
           });
-        if (url === "/api/v1/tasks/parent-123") return body(parentDetail);
+        if (url.split("?")[0] === "/api/v1/tasks/parent-123")
+          return body(parentDetail);
         if (url.includes("/api/v1/tasks/parent-123/events")) return body([]);
-        if (url === "/api/v1/tasks/parent-123/snapshot") {
+        if (url.split("?")[0] === "/api/v1/tasks/parent-123/snapshot") {
           return body({
             version: 1,
             seq: 0,
@@ -678,10 +692,13 @@ describe("commands", () => {
           (!init?.method || init.method === "GET")
         )
           return body(taskList);
-        if (url === "/api/v1/tasks/current" && init?.method === "DELETE")
+        if (
+          url.split("?")[0] === "/api/v1/tasks/current" &&
+          init?.method === "DELETE"
+        )
           return body({});
         if (
-          url === "/api/v1/tasks/mru-456" &&
+          url.split("?")[0] === "/api/v1/tasks/mru-456" &&
           (!init?.method || init.method === "GET")
         ) {
           // Capture the hash at the point where the async load happens.
@@ -690,7 +707,7 @@ describe("commands", () => {
           return body(mruDetail);
         }
         if (url.includes("/api/v1/tasks/mru-456/events")) return body([]);
-        if (url === "/api/v1/tasks/mru-456/snapshot") {
+        if (url.split("?")[0] === "/api/v1/tasks/mru-456/snapshot") {
           return body({
             version: 1,
             seq: 0,
@@ -742,16 +759,20 @@ describe("commands", () => {
             { id: "recent-other", title: "other", isRoot: false },
             { id: NEW_ROOT_ID, title: "root", isRoot: true },
           ]);
-        if (url === `/api/v1/tasks/${ROOT_ID}` && init?.method === "DELETE")
+        if (
+          url.split("?")[0] === `/api/v1/tasks/${ROOT_ID}` &&
+          init?.method === "DELETE"
+        )
           return body({
             taskId: ROOT_ID,
             parentId: null,
             replacedBy: NEW_ROOT_ID,
           });
-        if (url === `/api/v1/tasks/${NEW_ROOT_ID}`) return body(newRootDetail);
+        if (url.split("?")[0] === `/api/v1/tasks/${NEW_ROOT_ID}`)
+          return body(newRootDetail);
         if (url.includes(`/api/v1/tasks/${NEW_ROOT_ID}/events`))
           return body([]);
-        if (url === `/api/v1/tasks/${NEW_ROOT_ID}/snapshot`) {
+        if (url.split("?")[0] === `/api/v1/tasks/${NEW_ROOT_ID}/snapshot`) {
           return body({
             version: 1,
             seq: 0,
@@ -788,7 +809,10 @@ describe("commands", () => {
         ) {
           return body([{ id: "only-one", title: "Only Task" }]);
         }
-        if (url === "/api/v1/tasks/only-one" && init?.method === "DELETE")
+        if (
+          url.split("?")[0] === "/api/v1/tasks/only-one" &&
+          init?.method === "DELETE"
+        )
           return body({});
         if (url.split("?")[0] === "/api/v1/tasks" && init?.method === "POST")
           return body({ id: "new-1" });
@@ -800,7 +824,8 @@ describe("commands", () => {
       assert.equal(handled, true);
       const deleteCall = fetchCalls.find(
         (c) =>
-          c.url === "/api/v1/tasks/only-one" && c.init?.method === "DELETE",
+          c.url.split("?")[0] === "/api/v1/tasks/only-one" &&
+          c.init?.method === "DELETE",
       );
       assert.ok(deleteCall, "expected DELETE for the only task");
       assert.equal(state.awaitingNewTask, true);
@@ -820,7 +845,10 @@ describe("commands", () => {
             text: async () => json,
           };
         };
-        if (url === "/api/v1/tasks/old-1/clear" && init?.method === "POST")
+        if (
+          url.split("?")[0] === "/api/v1/tasks/old-1/clear" &&
+          init?.method === "POST"
+        )
           return body({ id: "old-1", cwd: "/home/project", configOptions: [] });
         if (url.includes("/snapshot"))
           return body({
@@ -844,7 +872,8 @@ describe("commands", () => {
       assert.equal(handled, true);
       const clearCall = fetchCalls.find(
         (c) =>
-          c.url === "/api/v1/tasks/old-1/clear" && c.init?.method === "POST",
+          c.url.split("?")[0] === "/api/v1/tasks/old-1/clear" &&
+          c.init?.method === "POST",
       );
       assert.ok(clearCall, "expected POST /api/v1/tasks/old-1/clear");
       assert.deepEqual(JSON.parse(clearCall.init.body), {
@@ -852,7 +881,9 @@ describe("commands", () => {
       });
       assert.equal(
         fetchCalls.some(
-          (c) => c.url === "/api/v1/tasks/old-1" && c.init?.method === "DELETE",
+          (c) =>
+            c.url.split("?")[0] === "/api/v1/tasks/old-1" &&
+            c.init?.method === "DELETE",
         ),
         false,
       );
@@ -863,7 +894,9 @@ describe("commands", () => {
       );
       assert.equal(
         fetchCalls.some(
-          (c) => c.url === "/api/v1/tasks/old-1" && c.init?.method === "GET",
+          (c) =>
+            c.url.split("?")[0] === "/api/v1/tasks/old-1" &&
+            c.init?.method === "GET",
         ),
         false,
       );
@@ -877,7 +910,10 @@ describe("commands", () => {
       state.taskId = "old-1";
       state.taskCwd = "/home/project";
       setFetch(async (url: string, init?: RequestInit) => {
-        if (url === "/api/v1/tasks/old-1/clear" && init?.method === "POST") {
+        if (
+          url.split("?")[0] === "/api/v1/tasks/old-1/clear" &&
+          init?.method === "POST"
+        ) {
           throw new Error("response interrupted");
         }
         throw new Error(`Unexpected fetch: ${url}`);
@@ -911,7 +947,10 @@ describe("commands", () => {
             text: async () => json,
           };
         };
-        if (url === "/api/v1/tasks/old-1/clear" && init?.method === "POST")
+        if (
+          url.split("?")[0] === "/api/v1/tasks/old-1/clear" &&
+          init?.method === "POST"
+        )
           return body({ id: "old-1", cwd: "/tmp/other", configOptions: [] });
         if (url.includes("/snapshot"))
           return body({
@@ -935,7 +974,8 @@ describe("commands", () => {
       assert.equal(handled, true);
       const clearCall = fetchCalls.find(
         (c) =>
-          c.url === "/api/v1/tasks/old-1/clear" && c.init?.method === "POST",
+          c.url.split("?")[0] === "/api/v1/tasks/old-1/clear" &&
+          c.init?.method === "POST",
       );
       assert.ok(clearCall, "expected POST /api/v1/tasks/old-1/clear");
       const clearBody = JSON.parse(clearCall.init.body);
@@ -962,7 +1002,10 @@ describe("commands", () => {
             text: async () => json,
           };
         };
-        if (url === "/api/v1/tasks/old/clear" && init?.method === "POST") {
+        if (
+          url.split("?")[0] === "/api/v1/tasks/old/clear" &&
+          init?.method === "POST"
+        ) {
           return new Promise((resolve) => {
             resolveClear = resolve;
           });
@@ -991,7 +1034,7 @@ describe("commands", () => {
       assert.ok(
         fetchCalls.some(
           (call) =>
-            call.url === "/api/v1/tasks/old/clear" &&
+            call.url.split("?")[0] === "/api/v1/tasks/old/clear" &&
             call.init?.method === "POST",
         ),
       );
@@ -1012,7 +1055,9 @@ describe("commands", () => {
       );
       assert.equal(
         fetchCalls.some(
-          (c) => c.url === "/api/v1/tasks/old" && c.init?.method === "GET",
+          (c) =>
+            c.url.split("?")[0] === "/api/v1/tasks/old" &&
+            c.init?.method === "GET",
         ),
         false,
       );
@@ -1067,7 +1112,7 @@ describe("commands", () => {
             ],
           };
         }
-        if (url === "/api/v1/tasks/target-1") {
+        if (url.split("?")[0] === "/api/v1/tasks/target-1") {
           const data = {
             id: "target-1",
             cwd: "/home/user",
@@ -1081,7 +1126,7 @@ describe("commands", () => {
             text: async () => JSON.stringify(data),
           };
         }
-        if (url === "/api/v1/tasks/target-1/snapshot") {
+        if (url.split("?")[0] === "/api/v1/tasks/target-1/snapshot") {
           const data = {
             version: 1,
             seq: 0,
@@ -1113,7 +1158,7 @@ describe("commands", () => {
       assert.ok(
         fetchCalls.some(
           (c) =>
-            c.url === "/api/v1/tasks/target-1" &&
+            c.url.split("?")[0] === "/api/v1/tasks/target-1" &&
             (!c.init?.method || c.init.method === "GET"),
         ),
         "should GET task to trigger auto-resume",
@@ -1145,7 +1190,7 @@ describe("commands", () => {
           return { ok: true, text: async () => JSON.stringify(tasks) };
         }
         if (
-          url === "/api/v1/tasks/old-area/unarchive" &&
+          url.split("?")[0] === "/api/v1/tasks/old-area/unarchive" &&
           init?.method === "POST"
         ) {
           return {
@@ -1169,7 +1214,7 @@ describe("commands", () => {
       assert.ok(
         fetchCalls.some(
           (call) =>
-            call.url === "/api/v1/tasks/old-area/unarchive" &&
+            call.url.split("?")[0] === "/api/v1/tasks/old-area/unarchive" &&
             call.init?.method === "POST",
         ),
         "expected the unarchive request",
@@ -1211,7 +1256,7 @@ describe("commands", () => {
         if (url === "/api/v1/tasks" && !init?.method) {
           return { ok: true, text: async () => "[]" };
         }
-        if (url === "/api/v1/tasks/A") {
+        if (url.split("?")[0] === "/api/v1/tasks/A") {
           return { ok: true, text: async () => '{"id":"A"}' };
         }
         if (url.startsWith("/api/v1/files/info?")) {
@@ -1346,7 +1391,9 @@ describe("commands", () => {
 
       assert.equal(handled, true);
       const putCall = fetchCalls.find(
-        (c) => c.url === "/api/v1/tasks/s1/model" && c.init?.method === "PUT",
+        (c) =>
+          c.url.split("?")[0] === "/api/v1/tasks/s1/model" &&
+          c.init?.method === "PUT",
       );
       assert.ok(putCall, "expected a PUT call");
       const body = JSON.parse(putCall.init.body);

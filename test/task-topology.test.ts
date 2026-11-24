@@ -154,9 +154,9 @@ describe("parent reference", () => {
 
   it("reads the task's link and then the parent's binding without a hint", async () => {
     const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/child")
+      if (url.split("?")[0] === "/api/v1/tasks/child")
         return detailBody("child", "parent", "copilot");
-      if (url === "/api/v1/tasks/parent")
+      if (url.split("?")[0] === "/api/v1/tasks/parent")
         return detailBody("parent", null, "pi");
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -178,7 +178,7 @@ describe("parent reference", () => {
 
   it("settles 'no parent' from the task read without a parent read", async () => {
     const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/child")
+      if (url.split("?")[0] === "/api/v1/tasks/child")
         return detailBody("child", null, "copilot");
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -196,7 +196,7 @@ describe("parent reference", () => {
   it("does not let a late read describe a task the client has left", async () => {
     let releaseChild!: (response: Response) => void;
     const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/child") {
+      if (url.split("?")[0] === "/api/v1/tasks/child") {
         return new Promise<Response>((resolve) => {
           releaseChild = resolve;
         });

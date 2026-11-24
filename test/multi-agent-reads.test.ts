@@ -309,7 +309,7 @@ describe("snapshot warm-up is bounded", () => {
       const snapshot = await request(
         port,
         "GET",
-        "/api/v1/tasks/slow/snapshot",
+        "/api/v1/tasks/slow/snapshot?warm=1",
       );
       const elapsed = Date.now() - startedAt;
       assert.equal(snapshot.status, 200);

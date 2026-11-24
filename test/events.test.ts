@@ -1743,7 +1743,7 @@ describe("events", () => {
         state.lastStateSeq = 0;
         let snapshotFetched = false;
         (globalThis as any).fetch = async (url: string) => {
-          if (url.endsWith("/snapshot")) {
+          if (url.split("?")[0].endsWith("/snapshot")) {
             snapshotFetched = true;
             const body = JSON.stringify({
               version: 1,
@@ -1789,7 +1789,7 @@ describe("events", () => {
           releaseSnapshot = resolve;
         });
         (globalThis as any).fetch = async (url: string) => {
-          if (url.endsWith("/snapshot")) {
+          if (url.split("?")[0].endsWith("/snapshot")) {
             await snapshotReady;
             const body = JSON.stringify({
               version: 1,
@@ -1876,11 +1876,11 @@ describe("events", () => {
               ok: true,
               text: async () => JSON.stringify([{ id: "s2" }]),
             };
-          if (url === "/api/v1/tasks/s2")
+          if (url.split("?")[0] === "/api/v1/tasks/s2")
             return { ok: true, text: async () => JSON.stringify(nextTask) };
           if (url.startsWith("/api/v1/tasks/s2/events"))
             return { ok: true, text: async () => "[]" };
-          if (url === "/api/v1/tasks/s2/snapshot")
+          if (url.split("?")[0] === "/api/v1/tasks/s2/snapshot")
             return {
               ok: true,
               text: async () =>
@@ -1941,11 +1941,11 @@ describe("events", () => {
               text: async () => JSON.stringify([{ id: "parent-dedupe" }]),
             };
           }
-          if (url === "/api/v1/tasks/parent-dedupe")
+          if (url.split("?")[0] === "/api/v1/tasks/parent-dedupe")
             return { ok: true, text: async () => JSON.stringify(parentTask) };
           if (url.startsWith("/api/v1/tasks/parent-dedupe/events"))
             return { ok: true, text: async () => "[]" };
-          if (url === "/api/v1/tasks/parent-dedupe/snapshot")
+          if (url.split("?")[0] === "/api/v1/tasks/parent-dedupe/snapshot")
             return {
               ok: true,
               text: async () =>
@@ -2001,13 +2001,13 @@ describe("events", () => {
               text: async () =>
                 JSON.stringify([{ id: "mru" }, { id: "parent" }]),
             };
-          if (url === "/api/v1/tasks/parent") {
+          if (url.split("?")[0] === "/api/v1/tasks/parent") {
             parentReads += 1;
             return { ok: true, text: async () => JSON.stringify(parentTask) };
           }
           if (url.startsWith("/api/v1/tasks/parent/events"))
             return { ok: true, text: async () => "[]" };
-          if (url === "/api/v1/tasks/parent/snapshot")
+          if (url.split("?")[0] === "/api/v1/tasks/parent/snapshot")
             return {
               ok: true,
               text: async () =>
@@ -2061,14 +2061,14 @@ describe("events", () => {
                   { id: "archived-parent", archived: true },
                 ]),
             };
-          if (url === "/api/v1/tasks/archived-parent")
+          if (url.split("?")[0] === "/api/v1/tasks/archived-parent")
             return {
               ok: true,
               text: async () => JSON.stringify(archivedParent),
             };
           if (url.startsWith("/api/v1/tasks/archived-parent/events"))
             return { ok: true, text: async () => "[]" };
-          if (url === "/api/v1/tasks/archived-parent/snapshot")
+          if (url.split("?")[0] === "/api/v1/tasks/archived-parent/snapshot")
             return {
               ok: true,
               text: async () =>
@@ -2119,11 +2119,11 @@ describe("events", () => {
                   { id: NEW_ROOT_ID, isRoot: true },
                 ]),
             };
-          if (url === `/api/v1/tasks/${NEW_ROOT_ID}`)
+          if (url.split("?")[0] === `/api/v1/tasks/${NEW_ROOT_ID}`)
             return { ok: true, text: async () => JSON.stringify(newRoot) };
           if (url.startsWith(`/api/v1/tasks/${NEW_ROOT_ID}/events`))
             return { ok: true, text: async () => "[]" };
-          if (url === `/api/v1/tasks/${NEW_ROOT_ID}/snapshot`)
+          if (url.split("?")[0] === `/api/v1/tasks/${NEW_ROOT_ID}/snapshot`)
             return {
               ok: true,
               text: async () =>
@@ -2160,7 +2160,10 @@ describe("events", () => {
             (!init?.method || init.method === "GET")
           )
             return { ok: true, text: async () => "[]" };
-          if (url === "/api/v1/tasks/bootstrap" && init?.method === "POST")
+          if (
+            url.split("?")[0] === "/api/v1/tasks/bootstrap" &&
+            init?.method === "POST"
+          )
             return {
               ok: true,
               text: async () =>
@@ -2203,11 +2206,11 @@ describe("events", () => {
               ok: true,
               text: async () => JSON.stringify([{ id: "s2" }]),
             };
-          if (url === "/api/v1/tasks/s2")
+          if (url.split("?")[0] === "/api/v1/tasks/s2")
             return { ok: true, text: async () => JSON.stringify(nextTask) };
           if (url.startsWith("/api/v1/tasks/s2/events"))
             return { ok: true, text: async () => "[]" };
-          if (url === "/api/v1/tasks/s2/snapshot") {
+          if (url.split("?")[0] === "/api/v1/tasks/s2/snapshot") {
             snapshotCalls++;
             await snapshotReady;
             return {
@@ -3831,6 +3834,20 @@ describe("events", () => {
   });
 
   describe("loadHistory", () => {
+    it("explicitly requests a buffer flush", async () => {
+      let requestedUrl = "";
+      globalThis.fetch = (async (url: string) => {
+        requestedUrl = url;
+        return {
+          ok: true,
+          json: async () => ({ events: [], streaming: {} }),
+        };
+      }) as typeof fetch;
+
+      assert.equal(await events.loadHistory("s1"), true);
+      assert.equal(requestedUrl, "/api/v1/tasks/s1/events?flush=1&limit=200");
+    });
+
     it("does not commit after the task UI is reset", async () => {
       let resolveResponse!: (value: Response) => void;
       globalThis.fetch = () =>
@@ -4146,6 +4163,30 @@ describe("events", () => {
   });
 
   describe("loadOlderEvents", () => {
+    it("does not request a buffer flush for an older-only page", async () => {
+      state.taskId = "s1";
+      state.hasMoreHistory = true;
+      state.oldestLoadedSeq = 100;
+      let requestedUrl = "";
+      globalThis.fetch = (async (url: string) => {
+        requestedUrl = url;
+        return {
+          ok: true,
+          json: async () => ({
+            events: [],
+            hasMore: false,
+            imageReferences: [],
+          }),
+        };
+      }) as typeof fetch;
+
+      assert.equal(await events.loadOlderEvents("s1"), true);
+      assert.equal(
+        requestedUrl,
+        "/api/v1/tasks/s1/events?limit=200&before=100",
+      );
+    });
+
     it("releases a stuck older-page load when the connection generation ends", async () => {
       state.taskId = "s1";
       state.hasMoreHistory = true;
@@ -5131,7 +5172,8 @@ describe("events", () => {
             : input instanceof URL
               ? input.href
               : input.url;
-        if (url.includes("/old/events?after=")) return incrementalResponse;
+        if (url.includes("/old/events?flush=1&after="))
+          return incrementalResponse;
         return {
           ok: true,
           async json() {
@@ -5185,7 +5227,7 @@ describe("events", () => {
         },
       ];
       globalThis.fetch = ((url: string) => {
-        assert.ok(url.includes("after=1"));
+        assert.equal(url, "/api/v1/tasks/s1/events?flush=1&after=1");
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve(newEvents),
@@ -7627,7 +7669,7 @@ describe("events", () => {
           text: async () => JSON.stringify(body),
           json: async () => body,
         });
-        if (url === `/api/v1/tasks/${taskId}`) {
+        if (url.split("?")[0] === `/api/v1/tasks/${taskId}`) {
           return response({
             id: taskId,
             rootTaskId: ROOT_ID,
@@ -7640,7 +7682,7 @@ describe("events", () => {
         if (url.startsWith(`/api/v1/tasks/${taskId}/events`)) {
           return response({ events: [], streaming: {} });
         }
-        if (url === `/api/v1/tasks/${taskId}/snapshot`) {
+        if (url.split("?")[0] === `/api/v1/tasks/${taskId}/snapshot`) {
           return response({
             version: 1,
             seq: 0,
@@ -7736,7 +7778,7 @@ describe("events", () => {
         if (url.split("?")[0] === "/api/v1/tasks") {
           return response([{ id: "t-next", agentId: "agent-b" }]);
         }
-        if (url === "/api/v1/tasks/t-next") {
+        if (url.split("?")[0] === "/api/v1/tasks/t-next") {
           return response({
             id: "t-next",
             rootTaskId: ROOT_ID,
@@ -7746,7 +7788,7 @@ describe("events", () => {
             configOptions: [],
           });
         }
-        if (url === "/api/v1/tasks/t-next/snapshot") {
+        if (url.split("?")[0] === "/api/v1/tasks/t-next/snapshot") {
           return response({
             version: 1,
             seq: 0,

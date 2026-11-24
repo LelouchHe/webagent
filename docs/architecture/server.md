@@ -81,9 +81,8 @@ present REST data while calling that port once.
 1. **MCP** — `/mcp` is claimed first; that endpoint authenticates with its own
    per-session capability, not with a Bearer token.
 2. **Auth gate** — any `/api/**` path outside the public whitelist in
-   `src/auth-middleware.ts` requires a Bearer token. A `read`-scope token is
-   further limited to an allowlist checked before any route runs, so a new
-   endpoint is denied to `read` until it is deliberately opened.
+   `src/auth-middleware.ts` requires a Bearer token. A `host`-scope token is
+   further limited to its explicit connection/create allowlist.
 3. **Share routes** (`src/share/routes.ts`) — public viewer paths and owner
    share endpoints, claimed before the generic API branch.
 4. **File routes** (`src/files/routes.ts`) — task-less, read-only access to

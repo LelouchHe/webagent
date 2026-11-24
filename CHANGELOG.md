@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **REST task reads no longer infer warm or flush side effects.** `GET /api/v1/tasks/:id` and `/snapshot` warm only with `warm=1`; `GET /api/v1/tasks/:id/events` flushes only with `flush=1`. Update external integrations that relied on implicit warming, buffer persistence, event-sequence advances, or detail-read model canonicalization. The browser sends the flags itself where they are consumed, so its visible behavior is unchanged.
+- **Remove the `read` token scope.** Delete any `read`-scope tokens from `auth.json` before upgrading; the supported scopes are now `admin`, `api`, and `host`, and unknown stored scopes are rejected during startup.
+
 ## [0.13.1] - 2026-11-17
 
 ### Added

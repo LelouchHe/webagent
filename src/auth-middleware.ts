@@ -93,50 +93,11 @@ export function isWhitelistedPath(method: string, path: string): boolean {
   return false;
 }
 
-/**
- * The pure-read surface a `read`-scope token may use. It is deliberately
- * narrow: task metadata, stored history, and runtime state that is already in
- * memory. Listing it here is the whole authorization decision — a new read
- * endpoint that external consumers need must be added explicitly.
- *
- * `/tasks/:id/events` and the task list are the contract with external history
- * consumers. `/status` and `/permissions` report only in-memory runtime facts.
- * `/snapshot` is deliberately excluded: the UI snapshot path may warm a task,
- * and `read` must not. `/version` and `/auth/verify` let a consumer discover
- * itself without starting any agent.
- */
-const READ_SCOPE_PATHS: readonly WhitelistEntry[] = [
-  { method: "GET", test: (p) => p === "/api/v1/version" },
-  { method: "GET", test: (p) => p === "/api/v1/auth/verify" },
-  { method: "GET", test: (p) => p === "/api/v1/hosts" },
-  { method: "GET", test: (p) => p === "/api/v1/tasks" },
-  { method: "GET", test: (p) => /^\/api\/v1\/tasks\/[^/]+\/?$/.test(p) },
-  {
-    method: "GET",
-    test: (p) => /^\/api\/v1\/tasks\/[^/]+\/events$/.test(p),
-  },
-  {
-    method: "GET",
-    test: (p) => /^\/api\/v1\/tasks\/[^/]+\/(status|permissions)\/?$/.test(p),
-  },
-];
-
 const HOST_SCOPE_PATHS: readonly WhitelistEntry[] = [
   { method: "GET", test: (p) => p === "/api/v1/auth/verify" },
   { method: "POST", test: (p) => p === "/api/v1/sse-ticket" },
   { method: "POST", test: (p) => p === "/api/v1/tasks" },
 ];
-
-/**
- * True if a `read`-scope token may call this path. Path must already be
- * normalized by the caller (the route gate splits off the query string).
- */
-export function isReadScopeAllowedPath(method: string, path: string): boolean {
-  const m = method.toUpperCase();
-  return READ_SCOPE_PATHS.some(
-    (entry) => entry.method === m && entry.test(path),
-  );
-}
 
 export function isHostScopeAllowedPath(method: string, path: string): boolean {
   const m = method.toUpperCase();
@@ -178,12 +139,11 @@ export function authenticate(
 
 /**
  * Returns true if the auth result has at least the required scope.
- * admin > api > read (each is a superset of the one after it).
+ * admin > api; host is a separate capability scope.
  */
 export function requireScope(result: AuthResult, required: Scope): boolean {
   if (!result.ok) return false;
   const rank: Record<Scope, number> = {
-    read: 0,
     host: -1,
     api: 1,
     admin: 2,

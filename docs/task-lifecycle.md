@@ -83,7 +83,8 @@ falls under the same definition and is therefore reachable from `/archive`.
   works as before. A human send over REST may cross trees.
 - **List visibility is a read filter.** `GET /api/v1/tasks` excludes archived
   trees by default and can select them with `archived=true`.
-  No read depends on execution, and a `read`-scope token never warms one.
+  No read depends on execution. Task detail and snapshot warm only when the
+  caller explicitly sends `warm=1`; event buffers flush only with `flush=1`.
 
 ## Three operations that look alike
 

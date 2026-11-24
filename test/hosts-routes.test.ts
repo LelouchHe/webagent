@@ -47,7 +47,6 @@ describe("multi-host routes", () => {
   let server: http.Server;
   let port: number;
   let apiToken: string;
-  let readToken: string;
 
   before(async () => {
     root = mkdtempSync(join(tmpdir(), "webagent-host-routes-"));
@@ -56,7 +55,6 @@ describe("multi-host routes", () => {
     authStore = new AuthStore(join(root, "auth.json"));
     await authStore.load();
     apiToken = (await authStore.addToken("hub", "api")).token;
-    readToken = (await authStore.addToken("reader", "read")).token;
     const hostRegistry = new HostRegistry({
       desk: { url: "http://desk.example", token: "wat_secret" },
     });
@@ -103,19 +101,8 @@ describe("multi-host routes", () => {
     assert.equal(JSON.stringify(verified.body).includes(apiToken), false);
   });
 
-  it("allows read callers to verify their own token hash", async () => {
-    const response = await request(port, "/api/v1/auth/verify", readToken);
-    assert.equal(response.status, 200);
-    assert.deepEqual(response.body, {
-      ok: true,
-      name: "reader",
-      scope: "read",
-      hash: hashToken(readToken),
-    });
-  });
-
-  it("allows every authenticated scope to read host status", async () => {
-    const response = await request(port, "/api/v1/hosts", readToken);
+  it("allows api callers to read host status", async () => {
+    const response = await request(port, "/api/v1/hosts", apiToken);
     assert.equal(response.status, 200);
     const [host] = response.body as Array<Record<string, unknown>>;
     assert.equal(host.name, "desk");

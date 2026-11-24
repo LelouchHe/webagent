@@ -728,7 +728,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     state.taskCwdDisplay = "~/a";
     globalThis.fetch = (async (url: string, init?: any) => {
       fetchCalls.push({ url, init });
-      if (url === "/api/v1/tasks/A") {
+      if (url.split("?")[0] === "/api/v1/tasks/A") {
         // The launching task was deleted while the probe was pending.
         return new Response("{}", { status: 404 });
       }
@@ -1208,7 +1208,9 @@ describe("slash menu — Tab vs Click behavior", () => {
 
     // Should have sent a config change via REST PUT
     const putCall = fetchCalls.find(
-      (c) => c.url === "/api/v1/tasks/s1/model" && c.init?.method === "PUT",
+      (c) =>
+        c.url.split("?")[0] === "/api/v1/tasks/s1/model" &&
+        c.init?.method === "PUT",
     );
     assert.ok(putCall, "click should execute config change via REST");
     const body = JSON.parse(putCall.init.body);
@@ -1226,7 +1228,10 @@ describe("slash menu — Tab vs Click behavior", () => {
     try {
       globalThis.fetch = ((url: string, init?: any) => {
         fetchCalls.push({ url, init });
-        if (url === "/api/v1/tasks/s1" && init?.method === "DELETE") {
+        if (
+          url.split("?")[0] === "/api/v1/tasks/s1" &&
+          init?.method === "DELETE"
+        ) {
           return Promise.reject(new Error("delete failed"));
         }
         const respond = (obj: any) =>
@@ -1356,7 +1361,7 @@ describe("inbox consume — switches task via switchToTask", () => {
       if (url.includes("/messages/") && url.endsWith("/consume")) {
         return respond({ taskId: "new-task", alreadyConsumed: false });
       }
-      if (url === "/api/v1/tasks/new-task") {
+      if (url.split("?")[0] === "/api/v1/tasks/new-task") {
         return respond({
           id: "new-task",
           cwd: "/x",
@@ -1365,7 +1370,7 @@ describe("inbox consume — switches task via switchToTask", () => {
           busyKind: null,
         });
       }
-      if (url === "/api/v1/tasks/new-task/snapshot") {
+      if (url.split("?")[0] === "/api/v1/tasks/new-task/snapshot") {
         return respond({
           version: 1,
           seq: 0,
@@ -1397,7 +1402,9 @@ describe("inbox consume — switches task via switchToTask", () => {
     assert.deepEqual(JSON.parse(consumeCall.init.body as string), {
       inheritFromTaskId: "old-task",
     });
-    const taskCall = fetchCalls.find((c) => c.url === "/api/v1/tasks/new-task");
+    const taskCall = fetchCalls.find(
+      (c) => c.url.split("?")[0] === "/api/v1/tasks/new-task",
+    );
     assert.ok(
       taskCall,
       "should fetch new task metadata (proves switchToTask ran)",

@@ -377,7 +377,7 @@ async function resumeAndLoad(
   if (incremental) {
     // Incremental: need task details first (for config), then catch-up events
     try {
-      const task = await api.getTask(taskId);
+      const task = await api.getTask(taskId, { warm: true });
       if (!isCurrent()) return;
       installTaskFromDetail(task);
     } catch {
@@ -416,7 +416,7 @@ async function resumeAndLoad(
     const historyPromise = loadHistory(taskId);
     try {
       const [s, loaded] = await Promise.all([
-        api.getTask(taskId),
+        api.getTask(taskId, { warm: true }),
         historyPromise,
       ]);
       // History replay drains queued live patches while taskId is null.
