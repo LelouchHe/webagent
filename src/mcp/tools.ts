@@ -69,6 +69,7 @@ export function registerMcpTools(
     {
       description:
         "List the current Task, its parent, and its direct children. " +
+        "Remote children are marked with kind=remote, host, and optional unreachable. " +
         "workflowStatus is the last typed update or the runtime turn status " +
         "(`running`, `idle`); it is not a lifecycle terminal. executionState is " +
         "the live runtime (`agent`, `bash`, or `idle`). lastEventAt is the " +
@@ -79,7 +80,7 @@ export function registerMcpTools(
     },
     async () => {
       guard();
-      return jsonContent({ tasks: host!.list(principal) });
+      return jsonContent({ tasks: await host!.list(principal) });
     },
   );
 
@@ -132,7 +133,7 @@ export function registerMcpTools(
     async ({ task_id, text, range }) => {
       guard();
       return jsonContent(
-        host!.query(principal, {
+        await host!.query(principal, {
           taskId: task_id ?? undefined,
           text: text ?? undefined,
           range: range ?? undefined,
@@ -163,7 +164,7 @@ export function registerMcpTools(
     async ({ task_id, seqs }) => {
       guard();
       return jsonContent(
-        host!.read(principal, { taskId: task_id ?? undefined, seqs }),
+        await host!.read(principal, { taskId: task_id ?? undefined, seqs }),
       );
     },
   );
@@ -328,7 +329,7 @@ export function registerMcpTools(
     "task_send",
     {
       description:
-        "Queue a durable message to a visible Task. " +
+        "Queue a durable message to a visible Task, or hand it synchronously to a linked remote owner. " +
         "It is delivered at the recipient's next turn boundary and wakes it. " +
         "An agent's message to its direct child opens or keeps open the account for that edge once it is delivered.",
       inputSchema: {

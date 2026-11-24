@@ -4,6 +4,7 @@ import type { Scope } from "./auth-store.ts";
 export interface TicketPrincipal {
   tokenName: string;
   scope: Scope;
+  hash?: string;
 }
 
 interface TicketRecord extends TicketPrincipal {
@@ -37,6 +38,7 @@ export class TicketStore {
     this.tickets.set(ticket, {
       tokenName: principal.tokenName,
       scope: principal.scope,
+      ...(principal.hash === undefined ? {} : { hash: principal.hash }),
       expiresAt: this.now() + this.ttlMs,
     });
     return ticket;
@@ -47,7 +49,11 @@ export class TicketStore {
     if (!rec) return null;
     this.tickets.delete(ticket);
     if (rec.expiresAt <= this.now()) return null;
-    return { tokenName: rec.tokenName, scope: rec.scope };
+    return {
+      tokenName: rec.tokenName,
+      scope: rec.scope,
+      ...(rec.hash === undefined ? {} : { hash: rec.hash }),
+    };
   }
 
   gc(): void {

@@ -19,7 +19,7 @@ import {
 } from "../src/api/tasks.ts";
 import { createTaskOpsCore } from "../src/task-ops.ts";
 import { createTaskHost } from "../src/host/tasks.ts";
-import { projectTaskHistoryRow } from "../src/host/local/task-history.ts";
+import { projectTaskHistoryRow } from "../src/task-history.ts";
 import type { AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
 
@@ -580,10 +580,10 @@ describe("MCP Task tool host", () => {
     assert.equal(calls, 0);
   });
 
-  it("lists an archived tree from one of its tasks", () => {
+  it("lists an archived tree from one of its tasks", async () => {
     store.archiveTask("alpha");
     const host = createLocalTaskOps({ store, tasks });
-    const listed = host.list(principal("alpha"));
+    const listed = await host.list(principal("alpha"));
     // Self must survive: a task inside an archived tree still needs its own
     // row, and its local child remains reachable. Root and beta are outside
     // the tree and must not appear.
@@ -596,7 +596,7 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("lists the family with relation and status", () => {
+  it("lists the family with relation and status", async () => {
     store.updateTaskWorkflowStatus(store.rootTaskId, "done");
     store.updateTaskWorkflowStatus("alpha", "running");
     store.updateTaskWorkflowStatus("alpha-child", "blocked");
@@ -613,7 +613,7 @@ describe("MCP Task tool host", () => {
         .run(stamp, id);
     }
     const host = createLocalTaskOps({ store, tasks });
-    const listed = host.list(principal());
+    const listed = await host.list(principal());
     assert.deepEqual(
       listed.map(({ id, relation }) => ({ id, relation })),
       [
@@ -635,7 +635,7 @@ describe("MCP Task tool host", () => {
     // the live runtime source while a turn is active.
     tasks.activePrompts.add("alpha-child");
     assert.equal(
-      host.list(principal()).find((item) => item.id === "alpha-child")
+      (await host.list(principal())).find((item) => item.id === "alpha-child")
         ?.executionState,
       "agent",
     );
@@ -652,7 +652,7 @@ describe("MCP Task tool host", () => {
       /Z$/,
     );
     tasks.noteAgentActivity("alpha");
-    const afterActivity = host.list(principal());
+    const afterActivity = await host.list(principal());
     assert.match(
       afterActivity.find((item) => item.id === "alpha")?.lastAgentActivityAt ??
         "",
@@ -660,7 +660,7 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("indexes every event including thinking and exposes search context", () => {
+  it("indexes every event including thinking and exposes search context", async () => {
     store.saveEvent(
       "alpha",
       "thinking",
@@ -699,7 +699,7 @@ describe("MCP Task tool host", () => {
       { from_ref: "agent" },
     );
     const host = createLocalTaskOps({ store, tasks });
-    const all = host.query(principal(), {});
+    const all = await host.query(principal(), {});
     assert.deepEqual(
       all.rows.map((row) => row.seq),
       [1, 2, 3, 4],
@@ -707,13 +707,13 @@ describe("MCP Task tool host", () => {
     assert.equal(all.rows[0].type, "thinking");
     assert.equal(all.rows[1].group, "tool-1");
     assert.equal(all.rows[3].group, "tool-1");
-    const found = host.query(principal(), { text: "needle" });
+    const found = await host.query(principal(), { text: "needle" });
     assert.equal(found.rows.length, 1);
     assert.equal(found.rows[0].field, "rawInput.path");
     assert.match(found.rows[0].text ?? "", /needle/i);
   });
 
-  it("normalizes negative ranges, reverse ranges, and clamps endpoints", () => {
+  it("normalizes negative ranges, reverse ranges, and clamps endpoints", async () => {
     for (let i = 0; i < 30; i++) {
       store.saveEvent(
         "alpha",
@@ -724,20 +724,24 @@ describe("MCP Task tool host", () => {
     }
     const host = createLocalTaskOps({ store, tasks });
     assert.deepEqual(
-      host.query(principal(), { range: [-20, -1] }).rows.map((r) => r.seq),
+      (await host.query(principal(), { range: [-20, -1] })).rows.map(
+        (r) => r.seq,
+      ),
       Array.from({ length: 20 }, (_, i) => i + 11),
     );
     assert.deepEqual(
-      host.query(principal(), { range: [20, 10] }).rows.map((r) => r.seq),
+      (await host.query(principal(), { range: [20, 10] })).rows.map(
+        (r) => r.seq,
+      ),
       Array.from({ length: 11 }, (_, i) => i + 10),
     );
     assert.deepEqual(
-      host.query(principal(), { range: [1, 0] }).rows.map((r) => r.seq),
+      (await host.query(principal(), { range: [1, 0] })).rows.map((r) => r.seq),
       [1],
     );
   });
 
-  it("pushes a bounded range down to Store.getEvents", () => {
+  it("pushes a bounded range down to Store.getEvents", async () => {
     for (let i = 0; i < 30; i++) {
       store.saveEvent(
         "alpha",
@@ -761,9 +765,9 @@ describe("MCP Task tool host", () => {
         tasks,
       });
       assert.deepEqual(
-        host
-          .query(principal(), { range: [-20, -1] })
-          .rows.map((row) => row.seq),
+        (await host.query(principal(), { range: [-20, -1] })).rows.map(
+          (row) => row.seq,
+        ),
         Array.from({ length: 20 }, (_, i) => i + 11),
       );
       assert.deepEqual(observed, { afterSeq: 10, beforeSeq: 31 });
@@ -772,7 +776,7 @@ describe("MCP Task tool host", () => {
     }
   });
 
-  it("truncates projections and keeps centered search windows visible", () => {
+  it("truncates projections and keeps centered search windows visible", async () => {
     const long = "a".repeat(150) + "Needle" + "b".repeat(150);
     const maxNeedle = "N".repeat(128);
     store.saveEvent(
@@ -800,18 +804,19 @@ describe("MCP Task tool host", () => {
       { from_ref: "agent" },
     );
     const host = createLocalTaskOps({ store, tasks });
-    const rows = host.query(principal(), {}).rows;
+    const rows = (await host.query(principal(), {})).rows;
     assert.equal(Array.from(rows[0].text ?? "").length, 200);
     assert.match(rows[0].text ?? "", /…$/);
     assert.equal((rows[2].text ?? "").includes("…"), false);
-    const found = host.query(principal(), { text: "needle" }).rows;
+    const found = (await host.query(principal(), { text: "needle" })).rows;
     assert.equal(found.length, 2);
     const projected = found.find((row) => row.type === "assistant_message")!;
     assert.match(projected.text ?? "", /Needle/);
     assert.match(projected.text ?? "", /^…/);
     assert.match(projected.text ?? "", /…$/);
     assert.ok(Array.from(projected.text ?? "").length <= 200);
-    const maxFound = host.query(principal(), { text: maxNeedle }).rows[0];
+    const maxFound = (await host.query(principal(), { text: maxNeedle }))
+      .rows[0];
     assert.match(maxFound.text ?? "", new RegExp(maxNeedle));
     assert.ok(Array.from(maxFound.text ?? "").length <= 200);
     const unprojected = found.find((row) => row.type === "plan")!;
@@ -820,13 +825,13 @@ describe("MCP Task tool host", () => {
     assert.match(unprojected.text ?? "", /Needle/);
   });
 
-  it("reads original structured data in one batch, including thinking", () => {
+  it("reads original structured data in one batch, including thinking", async () => {
     const original = { text: "hello", nested: ["x", { value: 2 }] };
     const event = store.saveEvent("alpha", "thinking", original, {
       from_ref: "agent",
     });
     const host = createLocalTaskOps({ store, tasks });
-    const result = host.read(principal(), {
+    const result = await host.read(principal(), {
       taskId: "alpha",
       seqs: [event.seq, event.seq],
     });
@@ -841,7 +846,7 @@ describe("MCP Task tool host", () => {
     ]);
   });
 
-  it("reads own history when the target is omitted", () => {
+  it("reads own history when the target is omitted", async () => {
     const event = store.saveEvent(
       "alpha",
       "assistant_message",
@@ -851,27 +856,30 @@ describe("MCP Task tool host", () => {
       },
     );
     const host = createLocalTaskOps({ store, tasks });
-    const explicit = host.read(principal(), {
+    const explicit = await host.read(principal(), {
       taskId: "alpha",
       seqs: [event.seq],
     });
     // A waking Task does not know its own id, so reading its own history must
     // not require one: omitting the target is the same call as naming self.
-    assert.deepEqual(host.read(principal(), { seqs: [event.seq] }), explicit);
+    assert.deepEqual(
+      await host.read(principal(), { seqs: [event.seq] }),
+      explicit,
+    );
   });
 
-  it("rejects unknown and out-of-family targets identically", () => {
+  it("rejects unknown and out-of-family targets identically", async () => {
     const host = createLocalTaskOps({ store, tasks });
-    assert.throws(
-      () => host.query(principal(), { taskId: "missing" }),
+    await assert.rejects(
+      host.query(principal(), { taskId: "missing" }),
       /target_not_allowed/,
     );
-    assert.throws(
-      () => host.read(principal(), { taskId: "missing", seqs: [1] }),
+    await assert.rejects(
+      host.read(principal(), { taskId: "missing", seqs: [1] }),
       /target_not_allowed/,
     );
-    assert.throws(
-      () => host.query(principal(), { taskId: "unrelated" }),
+    await assert.rejects(
+      host.query(principal(), { taskId: "unrelated" }),
       /target_not_allowed/,
     );
     store.createTask(
@@ -890,13 +898,13 @@ describe("MCP Task tool host", () => {
       "other-parent",
       { title: "Unrelated" },
     );
-    assert.throws(
-      () => host.query(principal(), { taskId: "unrelated" }),
+    await assert.rejects(
+      host.query(principal(), { taskId: "unrelated" }),
       /target_not_allowed/,
     );
   });
 
-  it("rejects missing seqs without partial rows", () => {
+  it("rejects missing seqs without partial rows", async () => {
     store.saveEvent(
       "alpha",
       "user_message",
@@ -904,19 +912,19 @@ describe("MCP Task tool host", () => {
       { from_ref: "user" },
     );
     const host = createLocalTaskOps({ store, tasks });
-    assert.throws(
-      () => host.read(principal(), { taskId: "alpha", seqs: [1, 99] }),
+    await assert.rejects(
+      host.read(principal(), { taskId: "alpha", seqs: [1, 99] }),
       /unknown_seq/,
     );
   });
 
-  it("reads a large single payload under the single-row response limit", () => {
+  it("reads a large single payload under the single-row response limit", async () => {
     const payload = { text: "payload-" + "x".repeat(258_000) };
     const event = store.saveEvent("alpha", "assistant_message", payload, {
       from_ref: "agent",
     });
     const host = createLocalTaskOps({ store, tasks });
-    const result = host.read(principal(), {
+    const result = await host.read(principal(), {
       taskId: "alpha",
       seqs: [event.seq],
     });
@@ -927,7 +935,7 @@ describe("MCP Task tool host", () => {
     assert.ok(bytes < 1024 * 1024);
   });
 
-  it("keeps one legitimate event readable while refusing that row in a batch", () => {
+  it("keeps one legitimate event readable while refusing that row in a batch", async () => {
     const payload = { text: "x".repeat(258_000) };
     const big = store.saveEvent("alpha", "assistant_message", payload, {
       from_ref: "agent",
@@ -940,12 +948,15 @@ describe("MCP Task tool host", () => {
     );
     const host = createLocalTaskOps({ store, tasks });
     assert.deepEqual(
-      host.read(principal(), { taskId: "alpha", seqs: [big.seq] }).rows[0].data,
+      (await host.read(principal(), { taskId: "alpha", seqs: [big.seq] }))
+        .rows[0].data,
       payload,
     );
-    assert.throws(
-      () =>
-        host.read(principal(), { taskId: "alpha", seqs: [big.seq, small.seq] }),
+    await assert.rejects(
+      host.read(principal(), {
+        taskId: "alpha",
+        seqs: [big.seq, small.seq],
+      }),
       (error: unknown) => {
         const parsed = JSON.parse(String((error as Error).message)) as {
           error: string;
@@ -960,7 +971,7 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("never refuses the recommended tail window on a dense task", () => {
+  it("never refuses the recommended tail window on a dense task", async () => {
     for (let i = 0; i < 400; i++) {
       store.saveEvent(
         "alpha",
@@ -970,21 +981,21 @@ describe("MCP Task tool host", () => {
       );
     }
     const host = createLocalTaskOps({ store, tasks });
-    const page = host.query(principal(), { range: [-50, -1] });
+    const page = await host.query(principal(), { range: [-50, -1] });
     assert.equal(page.rows.length, 50);
     const bytes = Buffer.byteLength(JSON.stringify(page), "utf8");
     // The documented opening window must fit even with maximal row text.
     assert.ok(bytes < 24 * 1024, `recommended window is ${bytes} bytes`);
   });
 
-  it("rejects an over-limit response with exact required_bytes and no partial rows", () => {
+  it("rejects an over-limit response with exact required_bytes and no partial rows", async () => {
     const data = { text: "x".repeat(2 * 1024 * 1024) };
     const event = store.saveEvent("alpha", "assistant_message", data, {
       from_ref: "agent",
     });
     const host = createLocalTaskOps({ store, tasks });
-    assert.throws(
-      () => host.read(principal(), { taskId: "alpha", seqs: [event.seq] }),
+    await assert.rejects(
+      host.read(principal(), { taskId: "alpha", seqs: [event.seq] }),
       (error: unknown) => {
         const parsed = JSON.parse(String((error as Error).message)) as Record<
           string,
@@ -1016,42 +1027,39 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("rejects an over-limit query without returning a partial page", () => {
+  it("rejects an over-limit query without returning a partial page", async () => {
     for (let i = 0; i < 6_000; i++) {
       store.saveEvent("alpha", "future_event", {}, { from_ref: "system" });
     }
     const host = createLocalTaskOps({ store, tasks });
-    assert.throws(
-      () => host.query(principal(), {}),
-      (error: unknown) => {
-        const parsed = JSON.parse(String((error as Error).message)) as {
-          error: string;
-          required_bytes: number;
-          limit_bytes: number;
-          max_seq: number;
-          hint: { range: [number, number] };
-        };
-        assert.equal(parsed.error, "response_too_large");
-        assert.equal(parsed.limit_bytes, 24 * 1024);
-        assert.equal(parsed.max_seq, 6_000);
-        assert.deepEqual(parsed.hint.range, [-50, -1]);
-        // Exact, not estimated: rebuild the refused response and compare.
-        assert.equal(
-          parsed.required_bytes,
-          Buffer.byteLength(
-            JSON.stringify({
-              task_id: "alpha",
-              max_seq: 6_000,
-              rows: store
-                .getEvents("alpha")
-                .map((event) => projectTaskHistoryRow(event)),
-            }),
-            "utf8",
-          ),
-        );
-        return true;
-      },
-    );
+    await assert.rejects(host.query(principal(), {}), (error: unknown) => {
+      const parsed = JSON.parse(String((error as Error).message)) as {
+        error: string;
+        required_bytes: number;
+        limit_bytes: number;
+        max_seq: number;
+        hint: { range: [number, number] };
+      };
+      assert.equal(parsed.error, "response_too_large");
+      assert.equal(parsed.limit_bytes, 24 * 1024);
+      assert.equal(parsed.max_seq, 6_000);
+      assert.deepEqual(parsed.hint.range, [-50, -1]);
+      // Exact, not estimated: rebuild the refused response and compare.
+      assert.equal(
+        parsed.required_bytes,
+        Buffer.byteLength(
+          JSON.stringify({
+            task_id: "alpha",
+            max_seq: 6_000,
+            rows: store
+              .getEvents("alpha")
+              .map((event) => projectTaskHistoryRow(event)),
+          }),
+          "utf8",
+        ),
+      );
+      return true;
+    });
   });
 
   it("cancels only a direct child and records the reason", async () => {
@@ -1343,12 +1351,12 @@ describe("MCP Task tool host", () => {
       () => host.send(principal(), "beta", "hello sibling"),
       /target_not_allowed/,
     );
-    assert.throws(
-      () => host.query(principal(), { taskId: "beta" }),
+    await assert.rejects(
+      host.query(principal(), { taskId: "beta" }),
       /target_not_allowed/,
     );
-    assert.throws(
-      () => host.read(principal(), { taskId: "beta", seqs: [1] }),
+    await assert.rejects(
+      host.read(principal(), { taskId: "beta", seqs: [1] }),
       /target_not_allowed/,
     );
   });

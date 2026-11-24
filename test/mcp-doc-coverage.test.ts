@@ -59,13 +59,13 @@ type RegisteredServer = {
 function registeredTools(): Record<string, RegisteredTool> {
   const server = new McpServer({ name: "doc-coverage", version: "0.0.0" });
   const host = {
-    list: () => [],
-    query: () => ({
+    list: async () => [],
+    query: async () => ({
       task_id: "current",
       max_seq: 0,
       rows: [],
     }),
-    read: () => ({ task_id: "current", rows: [] }),
+    read: async () => ({ task_id: "current", rows: [] }),
     cancel: async () => ({
       accepted: true as const,
       taskId: "child",

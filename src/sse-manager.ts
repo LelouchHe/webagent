@@ -25,6 +25,7 @@ export interface SseClient {
   taskId?: string; // undefined = global stream
   tokenName?: string; // bound at connect via SSE ticket; used for revoke detection
   receiveBusinessEvents?: boolean;
+  hostTokenHash?: string;
 }
 
 /**
@@ -39,6 +40,8 @@ export class SseManager {
   private isTokenRevoked: ((tokenName: string) => boolean) | null = null;
   private attachmentSecret: Buffer | null = null;
   private getLabelMap: ((taskId: string) => LabelMap) | null = null;
+  private hostEventAllowed:
+    ((taskId: string, peerTokenHash: string) => boolean) | null = null;
 
   constructor(heartbeatMs = SSE_HEARTBEAT_INTERVAL_MS) {
     this.heartbeatInterval = heartbeatMs;
@@ -66,6 +69,12 @@ export class SseManager {
    */
   setLabelMapProvider(fn: (taskId: string) => LabelMap): void {
     this.getLabelMap = fn;
+  }
+
+  setHostEventFilter(
+    fn: (taskId: string, peerTokenHash: string) => boolean,
+  ): void {
+    this.hostEventAllowed = fn;
   }
 
   /** Install a revocation check called on every heartbeat. If it returns
@@ -182,15 +191,25 @@ export class SseManager {
    * Broadcast an event to all connected SSE clients.
    * Global clients get all events. Per-task clients only get events for their task.
    */
-  broadcast(event: AgentEvent): void {
+  broadcast(event: AgentEvent, persistedSeq?: number): void {
     const taskId = (event as Record<string, unknown>).taskId as
       string | undefined;
     const snapshot = [...this.clients.values()];
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
       if (client.receiveBusinessEvents === false) continue;
+      if (
+        client.hostTokenHash &&
+        (!taskId || !this.hostEventAllowed?.(taskId, client.hostTokenHash))
+      ) {
+        continue;
+      }
       if (client.taskId && client.taskId !== taskId) continue;
-      this.sendEvent(client, event);
+      this.sendEvent(
+        client,
+        event,
+        client.hostTokenHash ? persistedSeq : undefined,
+      );
     }
   }
 
@@ -200,7 +219,25 @@ export class SseManager {
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
       if (client.receiveBusinessEvents === false) continue;
+      if (client.hostTokenHash) continue;
       this.sendEvent(client, event);
+    }
+  }
+
+  broadcastHost(event: AgentEvent, persistedSeq: number): void {
+    const taskId = (event as Record<string, unknown>).taskId as
+      string | undefined;
+    const snapshot = [...this.clients.values()];
+    for (const client of snapshot) {
+      if (
+        client.res.writableEnded ||
+        !client.hostTokenHash ||
+        !taskId ||
+        !this.hostEventAllowed?.(taskId, client.hostTokenHash)
+      ) {
+        continue;
+      }
+      this.sendEvent(client, event, persistedSeq);
     }
   }
 

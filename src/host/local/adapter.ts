@@ -24,7 +24,7 @@ import type {
   TaskCaller,
   TaskCreateCaller,
   TaskQueryResult,
-  TaskListItem,
+  LocalTaskListItem,
   TaskOps,
   TaskReadResult,
   TaskCreateInput,
@@ -41,7 +41,7 @@ import {
   parseTaskHistoryData,
   projectTaskHistoryRow,
   TASK_HISTORY_LIMITS,
-} from "./task-history.ts";
+} from "../../task-history.ts";
 
 const {
   queryBytes: QUERY_LIMIT_BYTES,
@@ -61,7 +61,7 @@ export interface TaskCollaborationEvent {
   /** The task this projection renders into. */
   taskId: string;
   role: "source" | "target";
-  deliveryStatus?: "queued" | "delivered" | "failed";
+  deliveryStatus?: "queued" | "delivered" | "failed" | "accepted";
   deliveredAt?: string;
   deliveryFailureReason?: string;
 }
@@ -74,6 +74,21 @@ export interface TaskCreatedEvent {
   taskTitle: string;
   title: string;
   body: string;
+}
+
+export function assertTaskCaller(
+  tasks: Pick<TaskManager, "authority">,
+  principal: TaskCaller,
+): void {
+  if (principal.generation === null) throw new Error("execution_replaced");
+  if (
+    !tasks.authority.accepts({
+      taskId: principal.taskId,
+      generation: principal.generation,
+    })
+  ) {
+    throw new Error("execution_replaced");
+  }
 }
 
 /**
@@ -89,7 +104,7 @@ export interface TaskCreatedEvent {
  */
 export type TaskCancelNotice = Extract<AgentEvent, { type: "system_message" }>;
 
-function relationOrder(relation: TaskListItem["relation"]): number {
+function relationOrder(relation: LocalTaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2 }[relation];
 }
 
@@ -103,6 +118,11 @@ export function createLocalTaskOps(deps: {
     event: Extract<AgentEvent, { type: "config_option_update" }>,
   ) => void;
   broadcastTaskCancelNotice?: (event: TaskCancelNotice) => void;
+  broadcastTaskUpdate?: (event: {
+    taskId: string;
+    seq: number;
+    data: Record<string, unknown>;
+  }) => void;
 }): TaskOps {
   const {
     store,
@@ -111,6 +131,7 @@ export function createLocalTaskOps(deps: {
     broadcastTaskCreated,
     broadcastConfigUpdate,
     broadcastTaskCancelNotice,
+    broadcastTaskUpdate,
   } = deps;
 
   /**
@@ -128,15 +149,7 @@ export function createLocalTaskOps(deps: {
    * no longer current, is refused.
    */
   function authorize(principal: TaskCaller): void {
-    if (principal.generation === null) throw new Error("execution_replaced");
-    if (
-      !tasks.authority.accepts({
-        taskId: principal.taskId,
-        generation: principal.generation,
-      })
-    ) {
-      throw new Error("execution_replaced");
-    }
+    assertTaskCaller(tasks, principal);
   }
 
   function requireTask(taskId: string) {
@@ -237,7 +250,7 @@ export function createLocalTaskOps(deps: {
   }
 
   return {
-    list(principal) {
+    async list(principal) {
       authorize(principal);
       const source = requireTask(principal.taskId);
       // A task in an archived tree still needs its own row (relation: self)
@@ -254,7 +267,7 @@ export function createLocalTaskOps(deps: {
             entry,
           ): entry is {
             task: TaskRow;
-            relation: TaskListItem["relation"];
+            relation: LocalTaskListItem["relation"];
           } => entry.relation !== null,
         )
         .sort(
@@ -265,7 +278,7 @@ export function createLocalTaskOps(deps: {
       const lastEventTimes = store.getLatestEventTimes(
         entries.map((entry) => entry.task.id),
       );
-      return entries.map(({ task, relation }): TaskListItem => ({
+      return entries.map(({ task, relation }): LocalTaskListItem => ({
         id: task.id,
         title: task.title ?? task.id,
         relation,
@@ -276,7 +289,7 @@ export function createLocalTaskOps(deps: {
       }));
     },
 
-    query(principal, input): TaskQueryResult {
+    async query(principal, input): Promise<TaskQueryResult> {
       authorize(principal);
       const sourceTaskId = principal.taskId;
       const targetId = input.taskId ?? sourceTaskId;
@@ -308,7 +321,7 @@ export function createLocalTaskOps(deps: {
       return result;
     },
 
-    read(principal, input): TaskReadResult {
+    async read(principal, input): Promise<TaskReadResult> {
       authorize(principal);
       const sourceTaskId = principal.taskId;
       const target = requireHistoryTarget(
@@ -702,8 +715,17 @@ export function createLocalTaskOps(deps: {
       // `waiting` only records the status. `done` and `blocked` settle the
       // target's open account and are delivered to its source, or fall back to
       // the current parent when no account is open.
-      const { collaborationMessageId, accountTargetTaskId, silenceWatchMs } =
-        tasks.settleAgentUpdate(sourceTaskId, status, body);
+      const {
+        collaborationMessageId,
+        accountTargetTaskId,
+        silenceWatchMs,
+        event,
+      } = tasks.settleAgentUpdate(sourceTaskId, status, body);
+      broadcastTaskUpdate?.({
+        taskId: sourceTaskId,
+        seq: event.seq,
+        data: JSON.parse(event.data) as Record<string, unknown>,
+      });
       if (collaborationMessageId && accountTargetTaskId) {
         const source = requireTask(sourceTaskId);
         const target = requireTask(accountTargetTaskId);

@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.ts";
-import { projectTaskHistoryRow } from "../src/host/local/task-history.ts";
+import { projectTaskHistoryRow } from "../src/task-history.ts";
 import { extractToolCallContent } from "../public/js/event-interpreter.ts";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 import type { ToolContentItem } from "../src/types.ts";

@@ -222,7 +222,7 @@ describe("createMcpEndpoint", () => {
   const caps = new CapabilityStore();
   const calls: Array<unknown> = [];
   const taskTools = {
-    list: (principal: { taskId: string }) => [
+    list: async (principal: { taskId: string }) => [
       {
         id: principal.taskId,
         title: "Current",
@@ -233,7 +233,7 @@ describe("createMcpEndpoint", () => {
         lastEventAt: "2026-01-01T00:00:00.000Z",
       },
     ],
-    query: (_principal: { taskId: string }, input: unknown) => {
+    query: async (_principal: { taskId: string }, input: unknown) => {
       calls.push({ kind: "query", input });
       return {
         task_id: "web-1",
@@ -241,7 +241,7 @@ describe("createMcpEndpoint", () => {
         rows: [],
       };
     },
-    read: (_principal: { taskId: string }, input: unknown) => {
+    read: async (_principal: { taskId: string }, input: unknown) => {
       calls.push({ kind: "read", input });
       return { task_id: "web-1", rows: [] };
     },

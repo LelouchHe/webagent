@@ -15,7 +15,7 @@ export interface TaskHistoryRow {
   unprojected?: true;
 }
 
-export interface TaskListItem {
+export interface LocalTaskListItem {
   id: string;
   title: string;
   relation: "self" | "parent" | "child";
@@ -46,6 +46,21 @@ export interface TaskListItem {
    */
   lastEventAt: string | null;
 }
+
+export interface RemoteTaskListItem {
+  kind: "remote";
+  id: string;
+  relation: "child";
+  host: string;
+  unreachable?: true;
+  title?: string;
+  workflowStatus?: TaskWorkflowStatus;
+  executionState?: "idle" | "agent" | "bash";
+  lastAgentActivityAt?: string | null;
+  lastEventAt?: string | null;
+}
+
+export type TaskListItem = LocalTaskListItem | RemoteTaskListItem;
 
 export interface TaskQueryInput {
   taskId?: string;
@@ -370,9 +385,9 @@ export interface TaskCaller {
  * rotation that lands while a request is in flight cannot be written through.
  */
 export interface TaskOps {
-  list(principal: TaskCaller): TaskListItem[];
-  query(principal: TaskCaller, input: TaskQueryInput): TaskQueryResult;
-  read(principal: TaskCaller, input: TaskReadInput): TaskReadResult;
+  list(principal: TaskCaller): Promise<TaskListItem[]>;
+  query(principal: TaskCaller, input: TaskQueryInput): Promise<TaskQueryResult>;
+  read(principal: TaskCaller, input: TaskReadInput): Promise<TaskReadResult>;
   cancel(command: TaskCancelCommand): Promise<TaskCancelOutcome>;
   create(
     caller: TaskCreateCaller,
