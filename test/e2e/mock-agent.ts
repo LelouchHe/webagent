@@ -326,6 +326,19 @@ class MockAgent {
           action.calls,
           action.capability === "missing",
         );
+      } else if (action.type === "permission") {
+        const permission = await this.runPermissionStep(
+          params.sessionId,
+          action.title,
+          action.command,
+        );
+        recordRegression({
+          kind: "permission",
+          sessionId: params.sessionId,
+          title: action.title,
+          command: action.command,
+          outcome: permission.outcome,
+        });
       } else if (action.type === "fail") {
         throw new Error(action.message);
       } else {

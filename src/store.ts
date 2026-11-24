@@ -219,6 +219,7 @@ export interface CollaborationMessageRow {
   source_actor: CollaborationActor;
   body: string;
   created_at: number;
+  external_source_account?: number;
 }
 
 export interface CollaborationProjectionRow {
@@ -2909,16 +2910,15 @@ export class Store {
     sourceTaskId: string;
     targetTaskId: string;
     body: string;
-  }): {
-    message: CollaborationMessageRow;
-    delivery: CollaborationDeliveryRow;
-  } | null {
+  }): boolean {
     const createdAt = Date.now();
     return this.db.transaction(() => {
       const duplicate = this.db
-        .prepare("SELECT 1 FROM deliveries WHERE idempotency_key = ? LIMIT 1")
-        .get(input.idempotencyKey);
-      if (duplicate) return null;
+        .prepare(
+          "SELECT status FROM deliveries WHERE idempotency_key = ? LIMIT 1",
+        )
+        .get(input.idempotencyKey) as { status: string } | undefined;
+      if (duplicate) return duplicate.status === "queued";
       this.requireLiveTask(input.targetTaskId);
       this.db
         .prepare(
@@ -2953,10 +2953,7 @@ export class Store {
           input.idempotencyKey,
           createdAt,
         );
-      return {
-        message: this.getCollaborationMessage(input.id)!,
-        delivery: this.getCollaborationDelivery(input.deliveryId)!,
-      };
+      return true;
     })();
   }
 
@@ -3258,8 +3255,18 @@ export class Store {
   }
 
   getCollaborationMessage(id: string): CollaborationMessageRow | undefined {
-    return this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as
-      CollaborationMessageRow | undefined;
+    return this.db
+      .prepare(
+        `SELECT m.*,
+                EXISTS (
+                  SELECT 1 FROM remote_task_links r
+                  WHERE r.local_task_id = m.direct_target_task_id
+                    AND r.remote_role = 'parent'
+                    AND r.remote_task_id = m.source_task_id
+                ) AS external_source_account
+         FROM messages m WHERE m.id = ?`,
+      )
+      .get(id) as CollaborationMessageRow | undefined;
   }
 
   listCollaborationProjections(

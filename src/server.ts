@@ -196,7 +196,7 @@ const hostRegistry = new HostRegistry(config.hosts, {
     }
     const link = store.getRemoteChildLink(host, childId);
     if (!link || event.data.targetTaskId !== link.local_task_id) return;
-    const report = store.createRemoteReport({
+    const shouldDrain = store.createRemoteReport({
       id: randomUUID(),
       deliveryId: randomUUID(),
       idempotencyKey: `remote-report:${host}:${childId}:${event.seq}`,
@@ -204,7 +204,8 @@ const hostRegistry = new HostRegistry(config.hosts, {
       targetTaskId: link.local_task_id,
       body: `Task status: ${event.data.status}\n${event.data.body}`,
     });
-    if (report) void tasks.drainCollaborationDeliveries(link.local_task_id);
+    if (shouldDrain)
+      void tasks.drainCollaborationDeliveries(link.local_task_id);
   },
 });
 // In-memory image signing secret; regenerated on every restart so previously
@@ -341,6 +342,7 @@ const routedTaskOps: TaskOps = {
     });
   },
 };
+tasks.setRemoteChildWakeSource((taskId) => hostRegistry.hasRemoteChild(taskId));
 const messageCleanup: CleanupHandle = startMessageCleanup(
   store,
   config.messages.unprocessed_ttl_days,

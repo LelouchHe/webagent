@@ -38,16 +38,26 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - one dispatch/no automatic retry, exact short-agent/parent payload, generation re-check, unknown outcome, local partial-success, and pre-dispatch config rejection
   - Host external parents are required as non-empty strings; owner relay and malformed coordinates are input errors, not transport outcomes
   - deferred owner creation has a same-transaction, non-broadcast creation anchor; aged tasks survive normal empty-task GC while ordinary empty tasks are still removed
+  - coalesced/split SSE frames, stale attempts, catch-up row validation, and
+    report replay that is independent of failed or stalled display reads
+  - mirror workflow/title/execution fields come only from their owning owner
+    fields and events
+  - an owner-local unarchive does not misclassify an external account, and a
+    duplicate queued report remains eligible for one drain
 - `test/regression/scenarios/multi-host-loop.ts`
   - a remote child appears in `task_list` with mirrored fields; cold
     `task_query` / `task_read` project owner history without starting ACP
   - `task_send` reaches the owner, records one-sided accepted/queued facts on
-    the hub and owner, and opens the owner-side account
+    the hub and owner, and opens the owner-side account; a permission request
+    in that delegated turn is auto-answered and leaves no pending permission
   - owner restart drops the in-memory account but `task_update(done)` falls
     back to the external parent; the report wakes the hub parent exactly once
   - hub restart catch-up replays the same report event without duplicating its
-    delivery; host disconnect marks the mirror unreachable and send fails
-    visibly; a wrong peer token cannot dispatch
+    delivery, while the duplicate row remains drainable if still queued; host
+    disconnect marks the mirror unreachable and send fails visibly; a wrong
+    peer token cannot dispatch
+- `test/sse-ticket-routes.test.ts`
+  - two real host-token/link pairs receive only events for their own Tasks
 
 ## Unit / Integration Scenarios
 

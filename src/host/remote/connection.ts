@@ -86,7 +86,7 @@ export interface HostConnectionOptions {
     state: HostConnectionState,
     reason?: HostUnreachableReason,
   ) => void;
-  onConnected?: () => Promise<void> | void;
+  onConnected?: (isCurrent: () => boolean) => Promise<void> | void;
   onEvent?: (event: HostStreamEvent) => void | Promise<void>;
 }
 
@@ -479,8 +479,28 @@ export class HostConnection {
               connected = true;
               this.supervisor.connected(attempt);
               if (!attempt.isCurrent()) return;
-              if (attempt.isCurrent()) await this.options.onConnected?.();
-              if (attempt.isCurrent()) this.options.onState?.("connected");
+              const refreshed = this.options.onConnected?.(() =>
+                attempt.isCurrent(),
+              );
+              if (refreshed instanceof Promise) {
+                void refreshed.then(
+                  () => {
+                    if (attempt.isCurrent())
+                      this.options.onState?.("connected");
+                  },
+                  (error: unknown) => {
+                    if (attempt.isCurrent()) {
+                      this.options.onState?.(
+                        "unreachable",
+                        HostConnection.failureReason(error),
+                      );
+                    }
+                  },
+                );
+              } else if (attempt.isCurrent()) {
+                this.options.onState?.("connected");
+              }
+              boundary = buffer.indexOf("\n\n");
               continue;
             }
           }

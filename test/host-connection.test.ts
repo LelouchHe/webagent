@@ -7,6 +7,10 @@ import {
 import { retryDelay } from "../src/host/remote/state.ts";
 import { hashToken } from "../src/auth.ts";
 import { HostConnection } from "../src/host/remote/connection.ts";
+import {
+  HostRegistry,
+  remoteCatchupEvent,
+} from "../src/host/remote/registry.ts";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -381,6 +385,333 @@ describe("host connection helpers", () => {
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(states.includes("connected"), false);
     assert.equal(hookCalls, 0);
+  });
+
+  it("parses coalesced and split SSE frames after the handshake", async () => {
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    let streamReady = false;
+    const events: Array<{ seq?: number; data: Record<string, unknown> }> = [];
+    const refresh = deferred<void>();
+    const fetchImpl: typeof globalThis.fetch = async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (url.endsWith("/api/v1/version")) {
+        return Response.json({ hostProtocol: 1 });
+      }
+      if (url.endsWith("/api/v1/auth/verify")) {
+        return Response.json({
+          ok: true,
+          name: "hub",
+          scope: "api",
+          hash: hashToken("wat_hub"),
+        });
+      }
+      if (url.endsWith("/api/v1/sse-ticket")) {
+        return Response.json({ ticket: "ticket" });
+      }
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            stream = controller;
+            streamReady = true;
+          },
+        }),
+      );
+    };
+    const connection = new HostConnection(
+      { url: "http://owner.example", token: "wat_hub" },
+      {
+        fetch: fetchImpl,
+        retryDelay: () => 1_000,
+        handshakeTimeoutMs: 1_000,
+        onConnected: () => refresh.promise,
+        onEvent: (event) => {
+          events.push(event);
+        },
+      },
+    );
+    connection.start();
+    await until(() => streamReady);
+    const encode = new TextEncoder();
+    stream.enqueue(
+      encode.encode(
+        'data: {"type":"connected"}\n\nid: 1\ndata: {"type":"task_update","taskId":"child"}\n\nevent: heartbeat\ndata: {}\n\n',
+      ),
+    );
+    stream.enqueue(
+      encode.encode('id: 2\ndata: {"type":"task_update","taskId":"chi'),
+    );
+    stream.enqueue(encode.encode('ld","status":"done"}\n\n'));
+    await until(() => events.length === 2);
+    refresh.resolve();
+    connection.stop();
+    assert.deepEqual(
+      events.map((event) => [event.seq, event.data.taskId, event.data.status]),
+      [
+        [1, "child", undefined],
+        [2, "child", "done"],
+      ],
+    );
+  });
+
+  it("validates catch-up rows and keeps the outer event type authoritative", () => {
+    const row = {
+      task_id: "child",
+      seq: 3,
+      type: "task_update",
+      created_at: "2026-01-01T00:00:00.000Z",
+      from_ref: "agent",
+      data: JSON.stringify({
+        type: "tool_call",
+        task_id: "other",
+        status: "done",
+      }),
+    };
+    assert.deepEqual(remoteCatchupEvent(row, "child"), {
+      seq: 3,
+      data: {
+        type: "task_update",
+        task_id: "other",
+        taskId: "child",
+        status: "done",
+      },
+    });
+    assert.equal(remoteCatchupEvent(row, "different"), null);
+  });
+
+  it("catches up a disconnected report before stalled display reads fail", async () => {
+    const reports: Array<Record<string, unknown>> = [];
+    const display = deferred<unknown>();
+    const registry = new HostRegistry(
+      {},
+      {
+        listLinks: () => [
+          {
+            local_task_id: "parent",
+            remote_task_id: "child",
+            remote_role: "child",
+            remote_host: "owner",
+          },
+        ],
+        onRemoteEvent: (_host, _child, event) => {
+          reports.push(event.data);
+        },
+      },
+    );
+    const connection = {
+      getJson: async (path: string) => {
+        if (path.endsWith("/events")) {
+          return {
+            events: [
+              {
+                task_id: "child",
+                seq: 2,
+                type: "task_update",
+                created_at: "2026-01-01T00:00:00.000Z",
+                from_ref: "agent",
+                data: JSON.stringify({
+                  status: "done",
+                  body: "finished",
+                  targetTaskId: "parent",
+                }),
+              },
+            ],
+          };
+        }
+        return display.promise;
+      },
+    };
+    const internals = registry as unknown as {
+      connections: Map<string, typeof connection>;
+      refresh: (name: string, isCurrent?: () => boolean) => Promise<void>;
+    };
+    internals.connections.set("owner", connection);
+    const refresh = internals.refresh("owner");
+    await until(() => reports.length === 1);
+    display.reject(new Error("display read failed"));
+    await refresh;
+    assert.deepEqual(reports, [
+      {
+        status: "done",
+        body: "finished",
+        targetTaskId: "parent",
+        taskId: "child",
+        type: "task_update",
+      },
+    ]);
+  });
+
+  it("stops a stale refresh before issuing child reads", async () => {
+    let listReads = 0;
+    let childReads = 0;
+    const registry = new HostRegistry(
+      {},
+      {
+        listLinks: () => [
+          {
+            local_task_id: "parent",
+            remote_task_id: "child",
+            remote_role: "child",
+            remote_host: "owner",
+          },
+          {
+            local_task_id: "parent",
+            remote_task_id: "second-child",
+            remote_role: "child",
+            remote_host: "owner",
+          },
+        ],
+        onRemoteEvent: () => {},
+      },
+    );
+    let current = true;
+    const connection = {
+      getJson: async (path: string) => {
+        if (path.startsWith("/api/v1/tasks?") || path === "/api/v1/tasks") {
+          listReads += 1;
+          return [];
+        }
+        childReads += 1;
+        if (childReads === 2) current = false;
+        return { events: [] };
+      },
+    };
+    const internals = registry as unknown as {
+      connections: Map<string, typeof connection>;
+      refresh: (name: string, isCurrent: () => boolean) => Promise<void>;
+    };
+    internals.connections.set("owner", connection);
+    await internals.refresh("owner", () => current);
+    assert.equal(listReads, 2);
+    assert.equal(childReads, 2);
+  });
+
+  it("updates mirror fields only from their owning events", async () => {
+    const registry = new HostRegistry(
+      {},
+      {
+        listLinks: () => [
+          {
+            local_task_id: "parent",
+            remote_task_id: "child",
+            remote_role: "child",
+            remote_host: "owner",
+          },
+        ],
+        onRemoteEvent: () => {},
+      },
+    );
+    const internals = registry as unknown as {
+      mirrors: Map<
+        string,
+        {
+          kind: "remote";
+          id: string;
+          relation: "child";
+          host: string;
+          title: string;
+          workflowStatus: "idle";
+          executionState: "idle";
+          lastEventAt?: string | null;
+          lastAgentActivityAt?: string | null;
+        }
+      >;
+      applyEvent: (
+        name: string,
+        event: { data: Record<string, unknown> },
+      ) => void;
+    };
+    internals.mirrors.set("owner\0child", {
+      kind: "remote",
+      id: "child",
+      relation: "child",
+      host: "owner",
+      title: "Remote child",
+      workflowStatus: "idle",
+      executionState: "idle",
+    });
+    internals.applyEvent("owner", {
+      data: {
+        type: "tool_call",
+        taskId: "child",
+        title: "Not the task title",
+      },
+    });
+    internals.applyEvent("owner", {
+      data: {
+        type: "state_patch",
+        taskId: "child",
+        patch: { runtime: { busy: { kind: "bash" } } },
+      },
+    });
+    internals.applyEvent("owner", {
+      data: {
+        type: "task_update",
+        taskId: "child",
+        status: "done",
+      },
+    });
+    assert.deepEqual(internals.mirrors.get("owner\0child"), {
+      kind: "remote",
+      id: "child",
+      relation: "child",
+      host: "owner",
+      title: "Remote child",
+      workflowStatus: "done",
+      executionState: "bash",
+      lastEventAt: internals.mirrors.get("owner\0child")?.lastEventAt,
+      lastAgentActivityAt:
+        internals.mirrors.get("owner\0child")?.lastAgentActivityAt,
+    });
+  });
+
+  it("takes cold workflow status from the owner list", async () => {
+    const registry = new HostRegistry(
+      {},
+      {
+        listLinks: () => [
+          {
+            local_task_id: "parent",
+            remote_task_id: "child",
+            remote_role: "child",
+            remote_host: "owner",
+          },
+        ],
+        onRemoteEvent: () => {},
+      },
+    );
+    const connection = {
+      getJson: async (path: string) => {
+        if (path === "/api/v1/tasks") {
+          return [
+            {
+              id: "child",
+              title: "Remote child",
+              workflow_status: "blocked",
+            },
+          ];
+        }
+        if (path === "/api/v1/tasks?archived=true") return [];
+        if (path.endsWith("/status")) {
+          return { busy: false, busyKind: null };
+        }
+        return { events: [] };
+      },
+    };
+    const internals = registry as unknown as {
+      connections: Map<string, typeof connection>;
+      refresh: (name: string) => Promise<void>;
+    };
+    internals.connections.set("owner", connection);
+    await internals.refresh("owner");
+    assert.equal(
+      registry.listRemoteChildren("parent")[0]?.workflowStatus,
+      "blocked",
+    );
   });
 
   it("computes capped exponential reconnect delays", () => {

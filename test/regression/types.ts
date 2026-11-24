@@ -54,6 +54,7 @@ export interface PromptBehavior {
   actions: Array<
     | { type: "reply"; text: string }
     | { type: "wait"; label: string }
+    | { type: "permission"; title: string; command: string }
     | {
         type: "mcp";
         calls: McpAction[];

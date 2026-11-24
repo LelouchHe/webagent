@@ -32,6 +32,10 @@ time. An entry without a "closing condition" is a wish, not an issue.
   rename, archive, and delete do not yet cross hosts, and the browser does not
   address remote Task entries. *Closing:* implement the later host lifecycle
   slices with matching authorization and restart semantics.
+- **The remote-child mirror retains stale addresses until process restart.**
+  Deleted-parent entries and failed-create write-back orphans are display-cache
+  facts, so they are not decisions. *Closing:* evict on link deletion when the
+  remote lifecycle step lands.
 
 ## Permission and turn lifecycle
 

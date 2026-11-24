@@ -577,7 +577,7 @@
                       "content": [
                         {
                           "type": "text",
-                          "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"kind\":\"remote\",\"id\":\"00000000-0000-4000-8000-000000000002\",\"relation\":\"child\",\"host\":\"owner\",\"title\":\"Remote loop child\",\"executionState\":\"idle\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\",\"lastAgentActivityAt\":null}]}"
+                          "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"kind\":\"remote\",\"id\":\"00000000-0000-4000-8000-000000000002\",\"relation\":\"child\",\"host\":\"owner\",\"title\":\"Remote loop child\",\"workflowStatus\":\"idle\",\"executionState\":\"idle\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\",\"lastAgentActivityAt\":null}]}"
                         }
                       ]
                     },
@@ -698,7 +698,7 @@
                 }
               ]
             ],
-            "reads": 31
+            "reads": 29
           }
         }
       ]
@@ -706,9 +706,19 @@
     {
       "name": "dispatch-and-handoff-before-owner-restart",
       "response": {
-        "status": 202,
-        "body": {
-          "status": "accepted"
+        "prompt": {
+          "status": 202,
+          "body": {
+            "status": "accepted"
+          }
+        },
+        "ownerStatus": {
+          "status": 200,
+          "body": {
+            "busy": false,
+            "busyKind": null,
+            "pendingPermissions": []
+          }
         }
       },
       "instances": [
@@ -775,9 +785,91 @@
                   "body": "dispatch remote wait"
                 },
                 {
+                  "type": "tool_call",
+                  "taskId": "00000000-0000-4000-8000-000000000002",
+                  "id": "tool-1",
+                  "title": "Run delegated remote work",
+                  "kind": "execute",
+                  "rawInput": {
+                    "command": "echo delegated-remote-work"
+                  }
+                },
+                {
                   "type": "state_patch",
                   "taskId": "00000000-0000-4000-8000-000000000002",
                   "seq": 2,
+                  "patch": {
+                    "runtime": {
+                      "pendingPermissions": [
+                        {
+                          "requestId": "00000000-0000-4000-8000-000000000007",
+                          "toolName": "",
+                          "title": "Run delegated remote work",
+                          "options": [
+                            {
+                              "optionId": "allow",
+                              "label": "Allow"
+                            },
+                            {
+                              "optionId": "deny",
+                              "label": "Deny"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8000-000000000002",
+                  "seq": 3,
+                  "patch": {
+                    "runtime": {
+                      "pendingPermissions": []
+                    }
+                  }
+                },
+                {
+                  "type": "permission_request",
+                  "requestId": "00000000-0000-4000-8000-000000000007",
+                  "taskId": "00000000-0000-4000-8000-000000000002",
+                  "title": "Run delegated remote work",
+                  "toolCallId": "tool-1",
+                  "options": [
+                    {
+                      "optionId": "allow",
+                      "name": "Allow",
+                      "kind": "allow_once"
+                    },
+                    {
+                      "optionId": "deny",
+                      "name": "Deny",
+                      "kind": "reject_once"
+                    }
+                  ],
+                  "toolKind": "execute",
+                  "rawInput": {
+                    "command": "echo delegated-remote-work"
+                  }
+                },
+                {
+                  "type": "permission_response",
+                  "taskId": "00000000-0000-4000-8000-000000000002",
+                  "requestId": "00000000-0000-4000-8000-000000000007",
+                  "optionName": "allow",
+                  "denied": false
+                },
+                {
+                  "type": "tool_call_update",
+                  "taskId": "00000000-0000-4000-8000-000000000002",
+                  "id": "tool-1",
+                  "status": "completed"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8000-000000000002",
+                  "seq": 4,
                   "patch": {
                     "runtime": {
                       "streaming": {
@@ -795,7 +887,7 @@
                 {
                   "type": "state_patch",
                   "taskId": "00000000-0000-4000-8000-000000000002",
-                  "seq": 3,
+                  "seq": 5,
                   "patch": {
                     "runtime": {
                       "busy": null
@@ -805,7 +897,7 @@
                 {
                   "type": "state_patch",
                   "taskId": "00000000-0000-4000-8000-000000000002",
-                  "seq": 4,
+                  "seq": 6,
                   "patch": {
                     "runtime": {
                       "streaming": {
@@ -848,6 +940,16 @@
                   "method": "session/prompt",
                   "sessionId": "00000000-0000-4000-8000-000000000001",
                   "text": "From \"root\" (task id 00000000-0000-4000-8000-000000000001):\n---8<---\ndispatch remote wait\n---8<---"
+                },
+                {
+                  "kind": "permission",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "title": "Run delegated remote work",
+                  "command": "echo delegated-remote-work",
+                  "outcome": {
+                    "outcome": "selected",
+                    "optionId": "allow"
+                  }
                 },
                 {
                   "kind": "mcp",
@@ -913,6 +1015,21 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000002",
+                    10,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
                     2,
                     "system_message",
                     "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000003\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"dispatch remote wait\"}",
@@ -943,9 +1060,24 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000002",
+                    4,
+                    "tool_call",
+                    "{\"id\":\"tool-1\",\"title\":\"Run delegated remote work\",\"kind\":\"execute\",\"rawInput\":{\"command\":\"echo delegated-remote-work\"}}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
                     5,
-                    "assistant_message",
-                    "{\"text\":\"Owner handoff is parked.\"}",
+                    "permission_request",
+                    "{\"requestId\":\"00000000-0000-4000-8000-000000000007\",\"title\":\"Run delegated remote work\",\"toolCallId\":\"tool-1\",\"options\":[{\"optionId\":\"allow\",\"name\":\"Allow\",\"kind\":\"allow_once\"},{\"optionId\":\"deny\",\"name\":\"Deny\",\"kind\":\"reject_once\"}]}",
                     "agent",
                     1789333200000
                   ]
@@ -959,8 +1091,38 @@
                   "args": [
                     "00000000-0000-4000-8000-000000000002",
                     6,
-                    "prompt_done",
-                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+                    "permission_response",
+                    "{\"requestId\":\"00000000-0000-4000-8000-000000000007\",\"optionName\":\"allow\",\"denied\":false}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
+                    7,
+                    "tool_call_update",
+                    "{\"id\":\"tool-1\",\"status\":\"completed\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
+                    9,
+                    "assistant_message",
+                    "{\"text\":\"Owner handoff is parked.\"}",
                     "agent",
                     1789333200000
                   ]
@@ -1096,7 +1258,7 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000002",
-                    4,
+                    8,
                     "task_update",
                     "{\"status\":\"waiting\",\"body\":\"Waiting for owner restart.\",\"reason\":\"waiting\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":null}",
                     "agent",
@@ -1105,7 +1267,7 @@
                 }
               ]
             ],
-            "reads": 71
+            "reads": 87
           }
         },
         {
@@ -1368,7 +1530,7 @@
                 }
               ]
             ],
-            "reads": 29
+            "reads": 28
           }
         }
       ]
@@ -1499,22 +1661,7 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000002",
-                    10,
-                    "prompt_done",
-                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
-                    "agent",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8000-000000000002",
-                    7,
+                    11,
                     "user_message",
                     "{\"text\":\"finish after owner restart\",\"clientOpId\":\"00000000-0000-4000-8000-000000000003\"}",
                     "user",
@@ -1529,9 +1676,24 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000002",
-                    9,
+                    13,
                     "assistant_message",
                     "{\"text\":\"Completion recorded.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
+                    14,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
                     "agent",
                     1789333200000
                   ]
@@ -1583,7 +1745,7 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000002",
-                    8,
+                    12,
                     "task_update",
                     "{\"status\":\"done\",\"body\":\"Remote work completed after restart.\",\"reason\":\"fallback\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
                     "agent",
@@ -1592,7 +1754,7 @@
                 }
               ]
             ],
-            "reads": 102
+            "reads": 105
           }
         },
         {
@@ -1797,7 +1959,7 @@
                     "00000000-0000-4000-8000-00000000000a",
                     "00000000-0000-4000-8000-000000000009",
                     "00000000-0000-4000-8000-000000000001",
-                    "remote-report:owner:00000000-0000-4000-8000-000000000002:8",
+                    "remote-report:owner:00000000-0000-4000-8000-000000000002:12",
                     1789333200000
                   ]
                 }
@@ -1830,7 +1992,7 @@
                 }
               ]
             ],
-            "reads": 37
+            "reads": 34
           }
         }
       ]
@@ -1842,7 +2004,7 @@
           {
             "source_task_id": "00000000-0000-4000-8000-000000000002",
             "direct_target_task_id": "00000000-0000-4000-8000-000000000001",
-            "idempotency_key": "remote-report:owner:00000000-0000-4000-8000-000000000002:8"
+            "idempotency_key": "remote-report:owner:00000000-0000-4000-8000-000000000002:12"
           }
         ],
         "links": [
@@ -1861,7 +2023,7 @@
           "mock": [],
           "sql": {
             "writes": [],
-            "reads": 10
+            "reads": 13
           }
         },
         {
@@ -1893,7 +2055,7 @@
                 }
               ]
             ],
-            "reads": 51
+            "reads": 52
           }
         }
       ]
@@ -1976,7 +2138,7 @@
                 }
               ]
             ],
-            "reads": 59
+            "reads": 62
           }
         },
         {
@@ -2042,7 +2204,7 @@
                       "content": [
                         {
                           "type": "text",
-                          "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":null,\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"kind\":\"remote\",\"id\":\"00000000-0000-4000-8000-000000000002\",\"relation\":\"child\",\"host\":\"owner\",\"title\":\"Remote loop child\",\"executionState\":\"idle\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"unreachable\":true}]}"
+                          "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":null,\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"kind\":\"remote\",\"id\":\"00000000-0000-4000-8000-000000000002\",\"relation\":\"child\",\"host\":\"owner\",\"title\":\"Remote loop child\",\"workflowStatus\":\"done\",\"executionState\":\"idle\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"unreachable\":true}]}"
                         }
                       ]
                     },
@@ -2143,7 +2305,7 @@
                 }
               ]
             ],
-            "reads": 40
+            "reads": 39
           }
         }
       ]
@@ -2225,8 +2387,8 @@
             "id": 4,
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 4,
-            "type": "task_update",
-            "data": "{\"status\":\"waiting\",\"body\":\"Waiting for owner restart.\",\"reason\":\"waiting\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":null}",
+            "type": "tool_call",
+            "data": "{\"id\":\"tool-1\",\"title\":\"Run delegated remote work\",\"kind\":\"execute\",\"rawInput\":{\"command\":\"echo delegated-remote-work\"}}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
@@ -2234,8 +2396,8 @@
             "id": 5,
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 5,
-            "type": "assistant_message",
-            "data": "{\"text\":\"Owner handoff is parked.\"}",
+            "type": "permission_request",
+            "data": "{\"requestId\":\"00000000-0000-4000-8000-000000000007\",\"title\":\"Run delegated remote work\",\"toolCallId\":\"tool-1\",\"options\":[{\"optionId\":\"allow\",\"name\":\"Allow\",\"kind\":\"allow_once\"},{\"optionId\":\"deny\",\"name\":\"Deny\",\"kind\":\"reject_once\"}]}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
@@ -2243,26 +2405,26 @@
             "id": 6,
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 6,
-            "type": "prompt_done",
-            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+            "type": "permission_response",
+            "data": "{\"requestId\":\"00000000-0000-4000-8000-000000000007\",\"optionName\":\"allow\",\"denied\":false}",
             "created_at": 1789333200000,
-            "from_ref": "agent"
+            "from_ref": "system"
           },
           {
             "id": 7,
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 7,
-            "type": "user_message",
-            "data": "{\"text\":\"finish after owner restart\",\"clientOpId\":\"00000000-0000-4000-8000-000000000003\"}",
+            "type": "tool_call_update",
+            "data": "{\"id\":\"tool-1\",\"status\":\"completed\"}",
             "created_at": 1789333200000,
-            "from_ref": "user"
+            "from_ref": "agent"
           },
           {
             "id": 8,
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 8,
             "type": "task_update",
-            "data": "{\"status\":\"done\",\"body\":\"Remote work completed after restart.\",\"reason\":\"fallback\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
+            "data": "{\"status\":\"waiting\",\"body\":\"Waiting for owner restart.\",\"reason\":\"waiting\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":null}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
@@ -2271,7 +2433,7 @@
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 9,
             "type": "assistant_message",
-            "data": "{\"text\":\"Completion recorded.\"}",
+            "data": "{\"text\":\"Owner handoff is parked.\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
@@ -2279,6 +2441,42 @@
             "id": 10,
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 10,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 11,
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "seq": 11,
+            "type": "user_message",
+            "data": "{\"text\":\"finish after owner restart\",\"clientOpId\":\"00000000-0000-4000-8000-000000000003\"}",
+            "created_at": 1789333200000,
+            "from_ref": "user"
+          },
+          {
+            "id": 12,
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "seq": 12,
+            "type": "task_update",
+            "data": "{\"status\":\"done\",\"body\":\"Remote work completed after restart.\",\"reason\":\"fallback\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 13,
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "seq": 13,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Completion recorded.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 14,
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "seq": 14,
             "type": "prompt_done",
             "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
             "created_at": 1789333200000,
@@ -2552,7 +2750,7 @@
             "id": "00000000-0000-4000-8000-00000000000a",
             "message_id": "00000000-0000-4000-8000-000000000009",
             "recipient_task_id": "00000000-0000-4000-8000-000000000001",
-            "idempotency_key": "remote-report:owner:00000000-0000-4000-8000-000000000002:8",
+            "idempotency_key": "remote-report:owner:00000000-0000-4000-8000-000000000002:12",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,

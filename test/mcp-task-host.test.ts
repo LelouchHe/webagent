@@ -350,6 +350,64 @@ describe("MCP Task tool host", () => {
     );
   });
 
+  it("settles an external account after owner-local unarchive", () => {
+    store.createDeferredRemoteTask({
+      id: "attached-remote-child",
+      cwd: dir,
+      source: "host",
+      agentId: "test-agent",
+      externalParentId: "external-parent",
+      peerTokenHash: "peer",
+      title: "Attached remote child",
+      creationAnchor: { kind: "task_created" },
+    });
+    assert.equal(
+      store.unarchiveTask("attached-remote-child").status,
+      "unarchived",
+    );
+    const obligations = (
+      tasks as unknown as {
+        obligations: {
+          arm: (
+            sourceTaskId: string,
+            targetTaskId: string,
+            externalSource: boolean,
+          ) => void;
+        };
+      }
+    ).obligations;
+    obligations.arm("external-parent", "attached-remote-child", true);
+
+    const settled = tasks.settleAgentUpdate(
+      "attached-remote-child",
+      "done",
+      "complete",
+    );
+    assert.equal(settled.accountTargetTaskId, "external-parent");
+    assert.equal(settled.collaborationMessageId, null);
+    assert.equal(
+      JSON.parse(settled.event.data).targetTaskId,
+      "external-parent",
+    );
+  });
+
+  it("re-signals an existing queued remote report for replay drain", () => {
+    const input = {
+      id: "remote-report-message",
+      deliveryId: "remote-report-delivery",
+      idempotencyKey: "remote-report:owner:child:7",
+      sourceTaskId: "remote-child",
+      targetTaskId: "alpha",
+      body: "Task status: done\ncomplete",
+    };
+    assert.equal(store.createRemoteReport(input), true);
+    assert.equal(store.createRemoteReport(input), true);
+    assert.equal(store.countQueuedDeliveries("alpha"), 1);
+    assert.equal(store.claimQueuedDeliveries("alpha").length, 1);
+    assert.equal(store.claimQueuedDeliveries("alpha").length, 0);
+    assert.equal(store.createRemoteReport(input), false);
+  });
+
   it("checks a stale agent caller before resolving Host configuration", async () => {
     let calls = 0;
     const local = createLocalTaskOps({ store, tasks });

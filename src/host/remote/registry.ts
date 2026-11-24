@@ -23,11 +23,7 @@ import {
   TaskRemoteCreateUnknownError,
 } from "../../api/tasks.ts";
 import { log } from "../../log.ts";
-import {
-  HostConnection,
-  HostRequestError,
-  type HostStreamEvent,
-} from "./connection.ts";
+import { HostConnection, type HostStreamEvent } from "./connection.ts";
 import {
   retryDelay,
   type HostRuntimeState,
@@ -47,6 +43,7 @@ export interface RemoteTaskLink {
 export interface RemoteTaskSnapshot {
   item: RemoteTaskListItem;
   events: Array<{
+    task_id: string;
     seq: number;
     type: string;
     created_at: string;
@@ -73,6 +70,13 @@ export class HostRegistry implements RemoteTaskCreateTransport {
   private readonly states = new Map<string, HostRuntimeState>();
   private readonly connections = new Map<string, HostConnection>();
   private readonly mirrors = new Map<string, RemoteTaskListItem>();
+  private readonly remoteParents = new Set<string>();
+  private readonly remoteLinks = new Map<
+    string,
+    { parentTaskId: string; host: string }
+  >();
+  private readonly refreshing = new Set<string>();
+  private readonly bufferedEvents = new Map<string, HostStreamEvent[]>();
   private started = false;
   private readonly options?: HostRegistryOptions;
 
@@ -81,6 +85,9 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     options?: HostRegistryOptions,
   ) {
     this.options = options;
+    if (Object.keys(configs).length > 0) {
+      for (const link of options?.listLinks() ?? []) this.rememberLink(link);
+    }
     for (const [name, config] of Object.entries(configs)) {
       this.states.set(name, {
         name,
@@ -96,8 +103,8 @@ export class HostRegistry implements RemoteTaskCreateTransport {
           onState: (state, reason) => {
             this.transition(name, state, reason);
           },
-          onConnected: () => {
-            return this.refresh(name);
+          onConnected: (isCurrent) => {
+            return this.refresh(name, isCurrent);
           },
           onEvent: (event) => {
             this.acceptEvent(name, event);
@@ -130,6 +137,11 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     const attempt = await connection.createTask(input);
     switch (attempt.kind) {
       case "success": {
+        this.remoteParents.add(input.parentId);
+        this.remoteLinks.set(nameKey(input.parentId, attempt.result.taskId), {
+          parentTaskId: input.parentId,
+          host,
+        });
         const activation = attempt.result.activation;
         if (activation) {
           this.mirror(nameKey(host, attempt.result.taskId), {
@@ -147,7 +159,14 @@ export class HostRegistry implements RemoteTaskCreateTransport {
             host,
             attempt.result.taskId,
           );
-          this.mirror(nameKey(host, attempt.result.taskId), snapshot.item);
+          const key = nameKey(host, attempt.result.taskId);
+          this.mirror(key, {
+            ...(this.mirrors.get(key) ?? {}),
+            ...snapshot.item,
+            workflowStatus:
+              snapshot.item.workflowStatus ??
+              this.mirrors.get(key)?.workflowStatus,
+          });
         } catch (error) {
           hlog.warn("remote create snapshot failed", {
             host,
@@ -197,6 +216,10 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     });
   }
 
+  hasRemoteChild(localParentTaskId: string): boolean {
+    return this.remoteParents.has(localParentTaskId);
+  }
+
   async refreshAll(): Promise<void> {
     await Promise.all(
       [...this.connections.keys()].map((name) => this.refresh(name)),
@@ -207,18 +230,12 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     localParentTaskId: string,
     remoteTaskId: string,
   ): RemoteTaskTarget | undefined {
-    const link = (this.options?.listLinks() ?? []).find(
-      (candidate) =>
-        candidate.remote_role === "child" &&
-        candidate.local_task_id === localParentTaskId &&
-        candidate.remote_task_id === remoteTaskId &&
-        candidate.remote_host !== null,
-    );
-    if (!link?.remote_host) return undefined;
-    const connection = this.connections.get(link.remote_host);
+    const link = this.remoteLinks.get(nameKey(localParentTaskId, remoteTaskId));
+    if (!link) return undefined;
+    const connection = this.connections.get(link.host);
     if (!connection) return undefined;
     return {
-      host: link.remote_host,
+      host: link.host,
       taskId: remoteTaskId,
       parentTaskId: localParentTaskId,
       connection,
@@ -326,63 +343,150 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     if (!Array.isArray(envelope.events)) {
       throw new Error("Remote returned incomplete task events");
     }
-    return envelope.events.filter(isRemoteEventRow);
+    return envelope.events.filter(
+      (event): event is RemoteTaskSnapshot["events"][number] =>
+        isRemoteEventRow(event) && event.task_id === target.taskId,
+    );
   }
 
-  private async refresh(name: string): Promise<void> {
+  // eslint-disable-next-line complexity -- one refresh owns display/catch-up ordering and stale-attempt fences.
+  private async refresh(
+    name: string,
+    isCurrent: () => boolean = () => true,
+  ): Promise<void> {
     const connection = this.connections.get(name);
-    if (!connection) return;
-    const links = (this.options?.listLinks() ?? []).filter(
-      (link) => link.remote_role === "child" && link.remote_host === name,
-    );
-    await Promise.all(
-      links.map(async (link) => {
-        try {
-          const snapshot = await this.readSnapshot(
-            connection,
-            name,
-            link.remote_task_id,
-          );
-          this.mirror(nameKey(name, link.remote_task_id), snapshot.item);
-          for (const event of snapshot.events) {
-            let data: unknown;
-            try {
-              data = JSON.parse(event.data) as unknown;
-            } catch {
-              continue;
-            }
-            if (data && typeof data === "object" && !Array.isArray(data)) {
-              this.options?.onRemoteEvent(name, link.remote_task_id, {
-                seq: event.seq,
-                data: {
-                  type: event.type,
-                  taskId: link.remote_task_id,
-                  ...data,
-                },
+    if (!connection || !isCurrent()) return;
+    this.refreshing.add(name);
+    this.bufferedEvents.set(name, []);
+    try {
+      const links = (this.options?.listLinks() ?? []).filter(
+        (link) => link.remote_role === "child" && link.remote_host === name,
+      );
+      if (links.length === 0) return;
+      for (const link of links) this.rememberLink(link);
+      const listsPromise = Promise.all(
+        ["/api/v1/tasks", "/api/v1/tasks?archived=true"].map((path) =>
+          connection
+            .getJson(path)
+            .then((value): unknown[] =>
+              Array.isArray(value) ? (value as unknown[]) : [],
+            )
+            .catch((error: unknown) => {
+              hlog.warn("remote list snapshot failed", {
+                host: name,
+                path,
+                error: String(error),
               });
-            }
-          }
-        } catch (error) {
-          const previous = this.mirrors.get(nameKey(name, link.remote_task_id));
-          this.mirror(nameKey(name, link.remote_task_id), {
-            ...(previous ?? {
-              kind: "remote",
-              id: link.remote_task_id,
-              relation: "child",
-              host: name,
+              return [];
             }),
-            unreachable: true,
-          });
-          if (!(error instanceof HostRequestError)) {
-            hlog.warn("remote snapshot failed", {
-              host: name,
-              taskId: link.remote_task_id,
-              error: String(error),
-            });
-          }
-        }
-      }),
-    );
+        ),
+      );
+      for (const link of links) {
+        if (!isCurrent()) return;
+        await this.refreshChild(
+          connection,
+          name,
+          link.remote_task_id,
+          isCurrent,
+        );
+      }
+      if (!isCurrent()) return;
+      const lists = await listsPromise;
+      if (!isCurrent()) return;
+      const rows = new Map(
+        lists
+          .flat()
+          .filter(isRemoteTaskListRow)
+          .map((row) => [row.id, row] as const),
+      );
+      for (const link of links) {
+        const row = rows.get(link.remote_task_id);
+        const key = nameKey(name, link.remote_task_id);
+        const current = this.mirrors.get(key);
+        if (!row || !current) continue;
+        this.mirror(key, {
+          kind: "remote",
+          id: link.remote_task_id,
+          relation: "child",
+          host: name,
+          title: row.title ?? link.remote_task_id,
+          workflowStatus: isWorkflowStatus(row.workflow_status)
+            ? row.workflow_status
+            : undefined,
+          ...(current.executionState === undefined
+            ? {}
+            : { executionState: current.executionState }),
+          ...(current.lastEventAt === undefined
+            ? {}
+            : { lastEventAt: current.lastEventAt }),
+          ...(current.lastAgentActivityAt === undefined
+            ? {}
+            : { lastAgentActivityAt: current.lastAgentActivityAt }),
+          ...(current.unreachable === undefined
+            ? {}
+            : { unreachable: current.unreachable }),
+        });
+      }
+    } finally {
+      this.refreshing.delete(name);
+      const buffered = this.bufferedEvents.get(name) ?? [];
+      this.bufferedEvents.delete(name);
+      if (isCurrent()) {
+        for (const event of buffered) this.applyEvent(name, event);
+      }
+    }
+  }
+
+  private async refreshChild(
+    connection: HostConnection,
+    host: string,
+    childId: string,
+    isCurrent: () => boolean,
+  ): Promise<void> {
+    const statusPromise = connection
+      .getJson(`/api/v1/tasks/${encodeURIComponent(childId)}/status`)
+      .then((value) => value as RemoteStatusRow)
+      .catch(() => null);
+    const eventsPromise = this.readEvents({
+      host,
+      taskId: childId,
+      parentTaskId: "",
+      connection,
+    });
+    const events = await eventsPromise.catch(() => null);
+    if (!isCurrent()) return;
+    const previous = this.mirrors.get(nameKey(host, childId));
+    if (events || previous) {
+      this.mirror(nameKey(host, childId), {
+        kind: "remote",
+        id: childId,
+        relation: "child",
+        host,
+        ...(previous ?? {}),
+        ...(events
+          ? {
+              lastEventAt: latestEventAt(events),
+              lastAgentActivityAt: latestAgentActivityAt(events),
+            }
+          : {}),
+      });
+    }
+    if (events) {
+      for (const event of events) {
+        if (!isCurrent()) return;
+        const projected = remoteCatchupEvent(event, childId);
+        if (projected) this.options?.onRemoteEvent(host, childId, projected);
+      }
+    }
+    const status = await statusPromise;
+    if (!isCurrent() || !status) return;
+    const current = this.mirrors.get(nameKey(host, childId));
+    if (current) {
+      this.mirror(nameKey(host, childId), {
+        ...current,
+        executionState: executionStateFromStatus(status),
+      });
+    }
   }
 
   private async readSnapshot(
@@ -390,10 +494,16 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     host: string,
     childId: string,
   ): Promise<RemoteTaskSnapshot> {
-    const [detailRaw, statusRaw, eventsRaw] = await Promise.all([
+    const target: RemoteTaskTarget = {
+      host,
+      taskId: childId,
+      parentTaskId: "",
+      connection,
+    };
+    const [detailRaw, statusRaw, events] = await Promise.all([
       connection.getJson(`/api/v1/tasks/${encodeURIComponent(childId)}`),
       connection.getJson(`/api/v1/tasks/${encodeURIComponent(childId)}/status`),
-      connection.getJson(`/api/v1/tasks/${encodeURIComponent(childId)}/events`),
+      this.readEvents(target),
     ]);
     const detail = detailRaw as {
       id?: unknown;
@@ -401,21 +511,12 @@ export class HostRegistry implements RemoteTaskCreateTransport {
       workflowStatus?: unknown;
     };
     const status = statusRaw as { busy?: unknown; busyKind?: unknown };
-    const envelope = eventsRaw as {
-      events?: unknown;
-    };
-    const events = Array.isArray(envelope.events)
-      ? envelope.events.filter(isRemoteEventRow)
-      : [];
     const item: RemoteTaskListItem = {
       kind: "remote",
       id: childId,
       relation: "child",
       host,
       title: typeof detail.title === "string" ? detail.title : undefined,
-      workflowStatus: isWorkflowStatus(detail.workflowStatus)
-        ? detail.workflowStatus
-        : undefined,
       executionState:
         status.busy === true && status.busyKind === "bash"
           ? "bash"
@@ -429,6 +530,14 @@ export class HostRegistry implements RemoteTaskCreateTransport {
   }
 
   private acceptEvent(name: string, event: HostStreamEvent): void {
+    if (this.refreshing.has(name)) {
+      this.bufferedEvents.get(name)?.push(event);
+      return;
+    }
+    this.applyEvent(name, event);
+  }
+
+  private applyEvent(name: string, event: HostStreamEvent): void {
     const childId =
       typeof event.data.taskId === "string" ? event.data.taskId : null;
     if (!childId) return;
@@ -439,7 +548,12 @@ export class HostRegistry implements RemoteTaskCreateTransport {
       ...current,
       lastEventAt: new Date().toISOString(),
     };
-    if (typeof event.data.title === "string") next.title = event.data.title;
+    if (
+      event.data.type === "task_title_updated" &&
+      typeof event.data.title === "string"
+    ) {
+      next.title = event.data.title;
+    }
     if (
       event.data.type === "task_update" &&
       isWorkflowStatus(event.data.status)
@@ -449,6 +563,8 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     if (isAgentActivityEvent(event.data.type)) {
       next.lastAgentActivityAt = new Date().toISOString();
     }
+    const executionState = executionStateFromPatch(event.data.patch);
+    if (executionState) next.executionState = executionState;
     delete next.unreachable;
     this.mirror(key, next);
     this.options?.onRemoteEvent(name, childId, event);
@@ -456,6 +572,15 @@ export class HostRegistry implements RemoteTaskCreateTransport {
 
   private mirror(key: string, item: RemoteTaskListItem): void {
     this.mirrors.set(key, item);
+  }
+
+  private rememberLink(link: RemoteTaskLink): void {
+    if (link.remote_role !== "child" || link.remote_host === null) return;
+    this.remoteParents.add(link.local_task_id);
+    this.remoteLinks.set(nameKey(link.local_task_id, link.remote_task_id), {
+      parentTaskId: link.local_task_id,
+      host: link.remote_host,
+    });
   }
 
   private transition(
@@ -497,12 +622,81 @@ function isRemoteEventRow(
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
   return (
+    typeof row.task_id === "string" &&
     Number.isInteger(row.seq) &&
     typeof row.type === "string" &&
     typeof row.created_at === "string" &&
     typeof row.from_ref === "string" &&
     typeof row.data === "string"
   );
+}
+
+export function remoteCatchupEvent(
+  value: unknown,
+  expectedTaskId: string,
+): { seq: number; data: Record<string, unknown> } | null {
+  if (!isRemoteEventRow(value) || value.task_id !== expectedTaskId) return null;
+  const data = parseObject(value.data);
+  return data
+    ? {
+        seq: value.seq,
+        data: { ...data, taskId: expectedTaskId, type: value.type },
+      }
+    : null;
+}
+
+interface RemoteTaskListRow {
+  id: string;
+  title: string | null;
+  workflow_status: unknown;
+}
+
+function isRemoteTaskListRow(value: unknown): value is RemoteTaskListRow {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return (
+    typeof row.id === "string" &&
+    (row.title === null || typeof row.title === "string")
+  );
+}
+
+interface RemoteStatusRow {
+  busy?: unknown;
+  busyKind?: unknown;
+}
+
+function executionStateFromStatus(
+  status: RemoteStatusRow,
+): RemoteTaskListItem["executionState"] {
+  if (status.busy !== true) return "idle";
+  return status.busyKind === "bash" ? "bash" : "agent";
+}
+
+function executionStateFromPatch(
+  patch: unknown,
+): RemoteTaskListItem["executionState"] | undefined {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch))
+    return undefined;
+  const runtime = (patch as { runtime?: unknown }).runtime;
+  if (!runtime || typeof runtime !== "object" || Array.isArray(runtime))
+    return undefined;
+  const busy = (runtime as { busy?: unknown }).busy;
+  if (busy === null) return "idle";
+  if (!busy || typeof busy !== "object" || Array.isArray(busy))
+    return undefined;
+  const kind = (busy as { kind?: unknown }).kind;
+  return kind === "bash" ? "bash" : kind === "agent" ? "agent" : undefined;
+}
+
+function parseObject(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function isAgentActivityEvent(type: unknown): boolean {

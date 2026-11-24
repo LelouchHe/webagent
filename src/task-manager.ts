@@ -705,6 +705,7 @@ export class TaskManager implements ObligationHost {
   private deliveryStatusBroadcast:
     | ((event: Extract<AgentEvent, { type: "collaboration_delivery" }>) => void)
     | null = null;
+  private remoteChildWakeSource: ((taskId: string) => boolean) | null = null;
   /**
    * SSE broadcast hook for a task that just became live. Every creation that
    * goes through `createTask` (HTTP, quick prompt, message consume, agent
@@ -863,12 +864,16 @@ export class TaskManager implements ObligationHost {
   ): void {
     const target = this.store.getTaskIncludingDeleted(recipientTaskId);
     if (!target) return;
-    const externalParentTaskId = this.store
-      .getRemoteTaskLinks(recipientTaskId)
-      .find((link) => link.remote_role === "parent")?.remote_task_id;
     for (const message of messages) {
+      const externalParentTaskId = message.external_source_account
+        ? message.source_task_id
+        : undefined;
       if (!shouldArm(message, target, externalParentTaskId)) continue;
-      this.obligations.arm(message.source_task_id, recipientTaskId);
+      this.obligations.arm(
+        message.source_task_id,
+        recipientTaskId,
+        Boolean(message.external_source_account),
+      );
     }
   }
 
@@ -3905,6 +3910,10 @@ export class TaskManager implements ObligationHost {
     this.deliveryStatusBroadcast = broadcast;
   }
 
+  setRemoteChildWakeSource(check: (taskId: string) => boolean): void {
+    this.remoteChildWakeSource = check;
+  }
+
   /**
    * Install the SSE broadcast hook for a newly created task. Every creation
    * entry point (HTTP create, quick prompt, agent `task_create`) announces
@@ -3958,6 +3967,7 @@ export class TaskManager implements ObligationHost {
    * back to the current parent when none is open) and are delivered there.
    * The account closes only after the update transaction commits.
    */
+  // eslint-disable-next-line complexity -- one settlement selects local/account/external report ownership.
   settleAgentUpdate(
     targetTaskId: string,
     status: "waiting" | "blocked" | "done",
@@ -3988,7 +3998,7 @@ export class TaskManager implements ObligationHost {
         this.obligations.hasOpenAsSource(targetTaskId) ||
         this.store.countQueuedDeliveries(targetTaskId) > 0 ||
         this.store.hasQueuedDispatchToChild(targetTaskId) ||
-        this.store.hasRemoteTaskChild(targetTaskId);
+        this.remoteChildWakeSource?.(targetTaskId) === true;
       const watched =
         !wakeSourceVisible &&
         this.obligations.noteUnwatchedWaiting(targetTaskId);
@@ -4000,18 +4010,31 @@ export class TaskManager implements ObligationHost {
       };
     }
     const accountSource = this.obligations.peekSource(targetTaskId);
+    const accountSourceIsExternal =
+      this.obligations.sourceIsExternal(targetTaskId);
     const localParentTaskId =
-      this.store.getTask(targetTaskId)?.parent_id ?? null;
-    const externalParentTaskId =
-      this.store
-        .getRemoteTaskLinks(targetTaskId)
-        .find((link) => link.remote_role === "parent")?.remote_task_id ?? null;
+      accountSource === undefined
+        ? (this.store.getTask(targetTaskId)?.parent_id ?? null)
+        : null;
+    const needsExternalLink =
+      accountSourceIsExternal ||
+      (accountSource === undefined &&
+        localParentTaskId === null &&
+        !this.store.isRootTaskId(targetTaskId));
+    const externalParentTaskId = needsExternalLink
+      ? (this.store
+          .getRemoteTaskLinks(targetTaskId)
+          .find((link) => link.remote_role === "parent")?.remote_task_id ??
+        null)
+      : null;
     const accountTargetTaskId =
       accountSource ?? localParentTaskId ?? externalParentTaskId;
     const externalAccountTarget =
-      localParentTaskId === null &&
       externalParentTaskId !== null &&
-      accountTargetTaskId === externalParentTaskId;
+      (accountSourceIsExternal
+        ? accountSource === externalParentTaskId
+        : localParentTaskId === null &&
+          accountTargetTaskId === externalParentTaskId);
     const { collaborationMessageId, event } =
       this.store.recordAgentWorkflowUpdate(
         targetTaskId,

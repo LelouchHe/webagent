@@ -50,6 +50,11 @@ export default scenario<State>({
             match: "dispatch remote wait",
             actions: [
               {
+                type: "permission",
+                title: "Run delegated remote work",
+                command: "echo delegated-remote-work",
+              },
+              {
                 type: "mcp",
                 calls: [
                   {
@@ -231,12 +236,23 @@ export default scenario<State>({
       },
       {
         name: "dispatch-and-handoff-before-owner-restart",
-        action: (client) =>
-          client
+        action: async (client) => {
+          const prompt = await client
             .instance("hub")
             .rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
               text: "dispatch remote wait",
-            }),
+            });
+          const ownerStatus = await client
+            .instance("owner")
+            .rest("GET", `/api/v1/tasks/${readRemoteId(state)}/status`);
+          return {
+            prompt: { status: prompt.status, body: prompt.body },
+            ownerStatus: {
+              status: ownerStatus.status,
+              body: ownerStatus.body,
+            },
+          };
+        },
       },
       {
         name: "owner-restart-report-uses-external-parent-fallback",

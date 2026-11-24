@@ -9,6 +9,7 @@ import { createRequestHandler } from "../src/http/routes.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { TicketStore } from "../src/sse-ticket.ts";
 import { SseManager } from "../src/sse-manager.ts";
+import { hashToken } from "../src/auth.ts";
 
 interface Resp {
   status: number;
@@ -54,6 +55,7 @@ describe("SSE ticket flow", () => {
   let port: number;
   let token: string;
   let hostToken: string;
+  let otherHostToken: string;
 
   before(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-sse-ticket-"));
@@ -66,9 +68,33 @@ describe("SSE ticket flow", () => {
     await authStore.load();
     token = (await authStore.addToken("ui", "api")).token;
     hostToken = (await authStore.addToken("hub", "host")).token;
+    otherHostToken = (await authStore.addToken("other-hub", "host")).token;
+    store.createDeferredRemoteTask({
+      id: "owned-by-hub",
+      cwd: tmpDir,
+      source: "host",
+      agentId: "mock",
+      externalParentId: "hub-parent",
+      peerTokenHash: hashToken(hostToken),
+      title: "Hub child",
+      creationAnchor: {},
+    });
+    store.createDeferredRemoteTask({
+      id: "owned-by-other-hub",
+      cwd: tmpDir,
+      source: "host",
+      agentId: "mock",
+      externalParentId: "other-hub-parent",
+      peerTokenHash: hashToken(otherHostToken),
+      title: "Other hub child",
+      creationAnchor: {},
+    });
 
     ticketStore = new TicketStore({ ttlMs: 60_000 });
     sseManager = new SseManager(60_000); // long heartbeat (won't fire in test)
+    sseManager.setHostEventFilter((taskId, peerTokenHash) =>
+      store.isRemoteTaskOwnedByPeer(taskId, peerTokenHash),
+    );
 
     const handler = createRequestHandler({
       store,
@@ -196,44 +222,47 @@ describe("SSE ticket flow", () => {
   });
 
   it("limits host tickets to heartbeat and peer-owned task events", async () => {
-    const ownedTask = "business-task";
-    sseManager.setHostEventFilter((taskId) => taskId === ownedTask);
-    const ticketResp = await req(port, "POST", "/api/v1/sse-ticket", {
-      Authorization: `Bearer ${hostToken}`,
-      "Content-Length": "0",
-    });
-    const ticket = JSON.parse(ticketResp.body).ticket;
-    let received = "";
-    const ready = new Promise<void>((resolve, reject) => {
-      const request = http.request(
-        {
-          hostname: "127.0.0.1",
-          port,
-          path: `/api/v1/events/stream?ticket=${ticket}`,
-          method: "GET",
-        },
-        (response) => {
-          assert.equal(response.statusCode, 200);
-          response.on("data", (chunk: Buffer) => {
-            received += chunk.toString();
-            if (received.includes("event: heartbeat")) resolve();
-          });
-          response.on("error", reject);
-        },
-      );
-      request.on("error", reject);
-      request.end();
-    });
-    await ready;
+    const connectHost = async (rawToken: string) => {
+      const ticketResp = await req(port, "POST", "/api/v1/sse-ticket", {
+        Authorization: `Bearer ${rawToken}`,
+        "Content-Length": "0",
+      });
+      const ticket = JSON.parse(ticketResp.body).ticket as string;
+      let received = "";
+      const ready = new Promise<void>((resolve, reject) => {
+        const request = http.request(
+          {
+            hostname: "127.0.0.1",
+            port,
+            path: `/api/v1/events/stream?ticket=${ticket}`,
+            method: "GET",
+          },
+          (response) => {
+            assert.equal(response.statusCode, 200);
+            response.on("data", (chunk: Buffer) => {
+              received += chunk.toString();
+              if (received.includes("event: heartbeat")) resolve();
+            });
+            response.on("error", reject);
+          },
+        );
+        request.on("error", reject);
+        request.end();
+      });
+      await ready;
+      return () => received;
+    };
+    const first = await connectHost(hostToken);
+    const second = await connectHost(otherHostToken);
 
     sseManager.broadcast({
       type: "task_created",
-      taskId: ownedTask,
+      taskId: "owned-by-hub",
       configOptions: [],
     } as never);
     sseManager.broadcast({
       type: "task_created",
-      taskId: "another-peer-task",
+      taskId: "owned-by-other-hub",
       configOptions: [],
     } as never);
     sseManager.broadcastGlobal({
@@ -242,20 +271,24 @@ describe("SSE ticket flow", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    const hostClient = [...sseManager.clients.values()].find(
-      (client) => client.tokenName === "hub",
+    const hostClients = [...sseManager.clients.values()].filter((client) =>
+      ["hub", "other-hub"].includes(client.tokenName ?? ""),
     );
-    assert.ok(hostClient);
+    assert.equal(hostClients.length, 2);
     try {
-      assert.match(received, /event: heartbeat/);
-      assert.match(received, /"type":"connected"/);
-      assert.match(received, /business-task/);
-      assert.doesNotMatch(received, /another-peer-task/);
-      assert.doesNotMatch(received, /inbox_count_changed/);
-      assert.doesNotMatch(received, /pendingCount/);
-      assert.doesNotMatch(received, /debugLevel/);
+      assert.match(first(), /event: heartbeat/);
+      assert.match(first(), /"type":"connected"/);
+      assert.match(first(), /owned-by-hub/);
+      assert.doesNotMatch(first(), /owned-by-other-hub/);
+      assert.match(second(), /owned-by-other-hub/);
+      assert.doesNotMatch(second(), /owned-by-hub(?=[^:])/);
+      for (const received of [first(), second()]) {
+        assert.doesNotMatch(received, /inbox_count_changed/);
+        assert.doesNotMatch(received, /pendingCount/);
+        assert.doesNotMatch(received, /debugLevel/);
+      }
     } finally {
-      hostClient.res.destroy();
+      for (const client of hostClients) client.res.destroy();
     }
   });
 
