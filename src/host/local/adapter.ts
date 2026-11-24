@@ -268,7 +268,6 @@ export function createLocalTaskOps(deps: {
     async create(
       caller: TaskCreateCaller,
       input: TaskCreateInput,
-      recordLocal?: (result: TaskCreateResult) => void,
     ): Promise<TaskCreateResult> {
       if (caller.kind === "host") {
         const requestedAgent = input.agentId;
@@ -434,22 +433,6 @@ export function createLocalTaskOps(deps: {
             ...(input.clientOpId === undefined
               ? {}
               : { clientOpId: input.clientOpId }),
-            ...(recordLocal
-              ? {
-                  onPersisted: (facts) => {
-                    recordLocal({
-                      taskId: facts.taskId,
-                      facts: {
-                        title: facts.title,
-                        agentId: facts.agentId,
-                        cwd: agentCaller ? cwd! : facts.cwd,
-                        model: facts.model,
-                        thinking: facts.thinking,
-                      },
-                    });
-                  },
-                }
-              : {}),
           },
         );
       } catch (error) {
@@ -472,7 +455,7 @@ export function createLocalTaskOps(deps: {
         facts: {
           title: taskFacts.title,
           agentId: taskFacts.agentId,
-          cwd: agentCaller ? cwd! : taskFacts.cwd,
+          cwd: agentCaller ? (cwd ?? taskFacts.cwd) : taskFacts.cwd,
           model: taskFacts.model,
           thinking: taskFacts.thinking,
         },
@@ -613,16 +596,6 @@ export function createLocalTaskOps(deps: {
     async update(principal, status, body, recordReport) {
       authorize(principal);
       const sourceTaskId = principal.taskId;
-      let localReport:
-        | {
-            sourceTaskId: string;
-            targetTaskId: string;
-            status: "blocked" | "done";
-            body: string;
-            sourceLabel: string;
-            targetLabel: string;
-          }
-        | undefined;
       // `waiting` only records the status. `done` and `blocked` settle the
       // target's open account and are delivered to its source, or fall back to
       // the current parent when no account is open.
@@ -632,7 +605,7 @@ export function createLocalTaskOps(deps: {
         body,
         ({ targetTaskId, targetIsLocal }) => {
           if (!targetIsLocal || status === "waiting") return;
-          localReport = {
+          recordReport?.({
             sourceTaskId,
             targetTaskId,
             status,
@@ -641,8 +614,7 @@ export function createLocalTaskOps(deps: {
               store.getTask(sourceTaskId)?.title ?? sourceTaskId.slice(0, 8),
             targetLabel:
               store.getTask(targetTaskId)?.title ?? targetTaskId.slice(0, 8),
-          };
-          recordReport?.(localReport);
+          });
         },
       );
       broadcastTaskUpdate?.({
@@ -650,13 +622,9 @@ export function createLocalTaskOps(deps: {
         seq: event.seq,
         data: JSON.parse(event.data) as Record<string, unknown>,
       });
-      if (silenceWatchMs === undefined)
-        return {
-          ...(localReport ? { report: localReport } : {}),
-        };
+      if (silenceWatchMs === undefined) return {};
       return {
         note: `No visible wake source; the requester is notified after ${formatSilence(silenceWatchMs)} without agent activity.`,
-        ...(localReport ? { report: localReport } : {}),
       };
     },
   };

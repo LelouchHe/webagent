@@ -64,7 +64,6 @@ export class HostRegistry implements RemoteTaskCreateTransport {
   private readonly mirrors = new Map<string, RemoteTaskListItem>();
   private started = false;
   private readonly options?: HostRegistryOptions;
-  private remoteEventHandler?: HostRegistryOptions["onRemoteEvent"];
 
   constructor(
     configs: Record<string, HostConfig>,
@@ -106,10 +105,6 @@ export class HostRegistry implements RemoteTaskCreateTransport {
 
   stopAll(): void {
     for (const connection of this.connections.values()) connection.stop();
-  }
-
-  setRemoteEventHandler(handler: HostRegistryOptions["onRemoteEvent"]): void {
-    this.remoteEventHandler = handler;
   }
 
   list(): HostRuntimeState[] {
@@ -352,11 +347,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     if (!isCurrent()) return;
     for (const event of events) {
       if (!isCurrent()) return;
-      (this.remoteEventHandler ?? this.options?.onRemoteEvent)?.(
-        host,
-        childId,
-        remoteCatchupEvent(event),
-      );
+      this.options?.onRemoteEvent(host, childId, remoteCatchupEvent(event));
     }
     const [detail, status] = await Promise.all([detailPromise, statusPromise]);
     if (!isCurrent() || !status) return;
@@ -426,11 +417,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     }
     delete next.unreachable;
     this.mirror(key, next);
-    (this.remoteEventHandler ?? this.options?.onRemoteEvent)?.(
-      name,
-      childId,
-      event,
-    );
+    this.options?.onRemoteEvent(name, childId, event);
   }
 
   private mirror(key: string, item: RemoteTaskListItem): void {

@@ -410,7 +410,7 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO remote_task_links\n         (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n         VALUES (?, ?, 'child', ?, NULL)",
+                  "sql": "INSERT INTO remote_task_links\n           (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n           VALUES (?, ?, 'child', ?, NULL)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
                     "00000000-0000-4000-8000-000000000002",
@@ -1513,7 +1513,7 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO message_projections\n             (message_id, task_id, role, created_at)\n             VALUES (?, ?, 'source', ?)",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000009",
                     "00000000-0000-4000-8001-000000000001",

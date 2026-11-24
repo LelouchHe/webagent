@@ -34,14 +34,10 @@ export function createTaskHost(deps: {
   return {
     async create(command: TaskCreateHostCommand): Promise<TaskCreateResult> {
       if (command.target.host === undefined) {
-        return deps.local.create(
-          command.caller,
-          {
-            ...command.input,
-            agentId: command.target.agentId,
-          },
-          command.recordLocal,
-        );
+        return deps.local.create(command.caller, {
+          ...command.input,
+          agentId: command.target.agentId,
+        });
       }
       if (command.input.model) throw new TaskRemoteCreateConfigError("model");
       if (command.input.thinking) {
@@ -79,11 +75,6 @@ export function createRoutedTaskOps(deps: {
   const authorize = (principal: TaskCaller) => {
     assertTaskCaller(tasks, principal);
   };
-  const enqueueReport = createReportEnqueuer({
-    store,
-    tasks,
-    broadcastCollaboration,
-  });
   return {
     async list(principal) {
       authorize(principal);
@@ -128,7 +119,6 @@ export function createRoutedTaskOps(deps: {
         authorize(principal);
         store.recordCallerSend({
           id: performed.messageId,
-          deliveryId: performed.deliveryId,
           sourceTaskId: principal.taskId,
           directTargetTaskId: performed.targetTaskId,
           sourceLabel: performed.sourceLabel,
@@ -166,14 +156,47 @@ export function createRoutedTaskOps(deps: {
       let afterCommit: (() => void) | undefined;
       const result = await local.update(principal, status, body, (report) => {
         authorize(principal);
-        afterCommit = enqueueReport({
-          ...report,
-          recordSource: true,
-        }).afterCommit;
+        const messageId = randomUUID();
+        const deliveryId = randomUUID();
+        const text = formatTaskReport(status, body);
+        if (
+          !store.enqueueReportDelivery({
+            id: messageId,
+            deliveryId,
+            idempotencyKey: `${messageId}:${report.targetTaskId}`,
+            sourceTaskId: report.sourceTaskId,
+            targetTaskId: report.targetTaskId,
+            body: text,
+          })
+        ) {
+          return;
+        }
+        store.recordCallerSend({
+          id: messageId,
+          sourceTaskId: report.sourceTaskId,
+          directTargetTaskId: report.targetTaskId,
+          sourceLabel: report.sourceLabel,
+          targetLabel: report.targetLabel,
+          body: text,
+          targetIsLocal: true,
+        });
+        afterCommit = () => {
+          broadcastCollaboration({
+            messageId,
+            sourceTaskId: report.sourceTaskId,
+            targetTaskId: report.targetTaskId,
+            sourceLabel: report.sourceLabel,
+            targetLabel: report.targetLabel,
+            body: text,
+            taskId: report.sourceTaskId,
+            role: "source",
+            deliveryStatus: "queued",
+          });
+          void tasks.drainCollaborationDeliveries(report.targetTaskId);
+        };
       });
       afterCommit?.();
-      const { report: _report, ...publicResult } = result;
-      return publicResult;
+      return result;
     },
   };
 }
@@ -192,81 +215,18 @@ export function createRemoteReportEnqueuer(deps: {
   store: Store;
   tasks: TaskManager;
 }): EnqueueRemoteReport {
-  const enqueue = createReportEnqueuer(deps);
   return (input) => {
-    const result = enqueue({
-      sourceTaskId: input.sourceTaskId,
-      targetTaskId: input.targetTaskId,
-      status: input.status,
-      body: input.body,
-      idempotencyKey: `remote-report:${input.host}:${input.childId}:${input.seq}`,
-    });
-    result.afterCommit();
-    return result.accepted;
-  };
-}
-
-function createReportEnqueuer(deps: {
-  store: Store;
-  tasks: TaskManager;
-  broadcastCollaboration?: (event: TaskCollaborationEvent) => void;
-}) {
-  return (input: {
-    sourceTaskId: string;
-    targetTaskId: string;
-    status: "blocked" | "done";
-    body: string;
-    sourceLabel?: string;
-    targetLabel?: string;
-    recordSource?: boolean;
-    idempotencyKey?: string;
-  }): { accepted: boolean; afterCommit: () => void } => {
     const messageId = randomUUID();
-    const deliveryId = randomUUID();
-    const shouldDrain = deps.store.enqueueReportDelivery({
+    const accepted = deps.store.enqueueReportDelivery({
       id: messageId,
-      deliveryId,
-      idempotencyKey:
-        input.idempotencyKey ?? `${messageId}:${input.targetTaskId}`,
+      deliveryId: randomUUID(),
+      idempotencyKey: `remote-report:${input.host}:${input.childId}:${input.seq}`,
       sourceTaskId: input.sourceTaskId,
       targetTaskId: input.targetTaskId,
       body: formatTaskReport(input.status, input.body),
-      recordSource: input.recordSource,
     });
-    let broadcast: TaskCollaborationEvent | undefined;
-    if (shouldDrain && input.recordSource) {
-      if (input.sourceLabel && input.targetLabel) {
-        deps.store.recordCallerSend({
-          id: messageId,
-          deliveryId,
-          sourceTaskId: input.sourceTaskId,
-          directTargetTaskId: input.targetTaskId,
-          sourceLabel: input.sourceLabel,
-          targetLabel: input.targetLabel,
-          body: formatTaskReport(input.status, input.body),
-          targetIsLocal: true,
-          readLocalLabels: false,
-        });
-        broadcast = {
-          messageId,
-          sourceTaskId: input.sourceTaskId,
-          targetTaskId: input.targetTaskId,
-          sourceLabel: input.sourceLabel,
-          targetLabel: input.targetLabel,
-          body: formatTaskReport(input.status, input.body),
-          taskId: input.sourceTaskId,
-          role: "source",
-          deliveryStatus: "queued",
-        };
-      }
-    }
-    return {
-      accepted: shouldDrain,
-      afterCommit: () => {
-        if (!shouldDrain) return;
-        if (broadcast) deps.broadcastCollaboration?.(broadcast);
-        void deps.tasks.drainCollaborationDeliveries(input.targetTaskId);
-      },
-    };
+    if (accepted)
+      void deps.tasks.drainCollaborationDeliveries(input.targetTaskId);
+    return accepted;
   };
 }

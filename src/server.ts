@@ -188,6 +188,10 @@ sseManager.startHeartbeat();
 
 const authStore = new AuthStore(pathJoin(config.data_dir, "auth.json"));
 const ticketStore = new TicketStore();
+const receiveRemoteReport = createRemoteReportHandler({
+  store,
+  enqueueReport: createRemoteReportEnqueuer({ store, tasks }),
+});
 const hostRegistry = new HostRegistry(config.hosts, {
   listLinks: () =>
     store
@@ -205,14 +209,8 @@ const hostRegistry = new HostRegistry(config.hosts, {
         remoteTaskId: link.remote_task_id,
         host: link.remote_host,
       })),
-  onRemoteEvent: () => {},
+  onRemoteEvent: receiveRemoteReport,
 });
-hostRegistry.setRemoteEventHandler(
-  createRemoteReportHandler({
-    store,
-    enqueueReport: createRemoteReportEnqueuer({ store, tasks }),
-  }),
-);
 tasks.setRemoteCollaborationTitle((taskId) =>
   hostRegistry.remoteTitleForTaskId(taskId),
 );

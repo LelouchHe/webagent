@@ -147,10 +147,7 @@ type SessionBridge = Pick<
   Partial<
     Pick<
       AgentBridge,
-      | "sessionMapped"
-      | "discardUnboundSession"
-      | "retireExecution"
-      | "setAgentConfigOption"
+      "sessionMapped" | "discardUnboundSession" | "retireExecution"
     >
   > & {
     /** Install the authority that gates execution-scoped events. */
@@ -1541,17 +1538,6 @@ export class TaskManager implements ObligationHost {
        * announces; it has no meaning for a creation no client requested.
        */
       clientOpId?: string;
-      onPersisted?: (facts: {
-        taskId: string;
-        title: string | null;
-        agentId: string;
-        cwd: string;
-        parentId: string | null;
-        workflowStatus: WorkflowStatus;
-        source: string;
-        model: string | null;
-        thinking: string | null;
-      }) => void;
       /**
        * Whether this creation is announced as a new task. Only a creation a
        * caller asked for is: an internal task — the message-consume carrier —
@@ -1562,20 +1548,7 @@ export class TaskManager implements ObligationHost {
        */
       announce?: boolean;
     },
-  ): Promise<{
-    taskId: string;
-    configOptions: ConfigOption[];
-    facts: {
-      title: string | null;
-      agentId: string;
-      cwd: string;
-      parentId: string | null;
-      workflowStatus: WorkflowStatus;
-      source: string;
-      model: string | null;
-      thinking: string | null;
-    };
-  }> {
+  ) {
     const agentId = this.attachExecutionBridge(bridge);
     if (opts?.agentId !== undefined && opts.agentId !== agentId) {
       // The declared target and the resolved transport must be the same agent,
@@ -1711,8 +1684,6 @@ export class TaskManager implements ObligationHost {
       title?: string;
       workflowStatus?: WorkflowStatus;
       assertCaller?: () => void;
-      configValues?: ReadonlyArray<{ id: string; value: string }>;
-      onCreated?: (task: TaskRow) => void;
     },
   ): Promise<void> {
     const release = parentId
@@ -1746,8 +1717,6 @@ export class TaskManager implements ObligationHost {
     taskId: string,
     configOptions: ConfigOption[],
     sourceTask: Pick<TaskRow, "model" | "reasoning_effort">,
-    agentSessionId?: string,
-    record?: (entries: ReadonlyArray<{ id: string; value: string }>) => void,
   ): Promise<ConfigOption[]> {
     const inherited: Array<{
       configId: string | undefined;
@@ -1766,21 +1735,10 @@ export class TaskManager implements ObligationHost {
     for (const { configId, value } of inherited) {
       if (!configId || !value) continue;
       try {
-        const next =
-          agentSessionId && bridge.setAgentConfigOption
-            ? await bridge.setAgentConfigOption(agentSessionId, configId, value)
-            : await bridge.setConfigOption(taskId, configId, value);
+        const next = await bridge.setConfigOption(taskId, configId, value);
         if (next.length > 0) {
           updatedConfigOptions = next;
-          record?.(
-            next.flatMap((entry) =>
-              typeof entry.currentValue === "string"
-                ? [{ id: entry.id, value: entry.currentValue }]
-                : [],
-            ),
-          );
-        } else if (agentSessionId) {
-          record?.([{ id: configId, value }]);
+          this.recordConfigOptions(taskId, next);
         } else {
           this.store.updateTaskConfig(taskId, configId, value);
         }
@@ -1805,32 +1763,8 @@ export class TaskManager implements ObligationHost {
       workflowStatus?: WorkflowStatus;
       agentId?: string;
       assertCaller?: () => void;
-      onPersisted?: (facts: {
-        taskId: string;
-        title: string | null;
-        agentId: string;
-        cwd: string;
-        parentId: string | null;
-        workflowStatus: WorkflowStatus;
-        source: string;
-        model: string | null;
-        thinking: string | null;
-      }) => void;
     },
-  ): Promise<{
-    taskId: string;
-    configOptions: ConfigOption[];
-    facts: {
-      title: string | null;
-      agentId: string;
-      cwd: string;
-      parentId: string | null;
-      workflowStatus: WorkflowStatus;
-      source: string;
-      model: string | null;
-      thinking: string | null;
-    };
-  }> {
+  ) {
     const taskCwd = this.resolveTaskCwd(cwd, this.defaultCwd);
     const agentId = this.bridgeAgentId(bridge);
     try {
@@ -1872,51 +1806,11 @@ export class TaskManager implements ObligationHost {
         this.buildNewTaskOptions(mcpServers),
       );
     let configOptions = createdConfigOptions;
-    const configValues = createdConfigOptions.flatMap((option) =>
-      typeof option.currentValue === "string"
-        ? [{ id: option.id, value: option.currentValue }]
-        : [],
-    );
-    const recordConfigValues = (
-      entries: ReadonlyArray<{ id: string; value: string }>,
-    ): void => {
-      configValues.push(...entries);
-    };
     const parentId = opts?.parentId ?? null;
     try {
-      if (sourceTask && inheritConfig) {
-        configOptions = await this.inheritTaskConfig(
-          bridge,
-          taskId,
-          configOptions,
-          sourceTask,
-          agentSessionId,
-          recordConfigValues,
-        );
-      }
-      if (opts?.model || opts?.thinking) {
-        configOptions = await this.applyTaskConfigOverrides(
-          bridge,
-          taskId,
-          configOptions,
-          opts.model,
-          opts.thinking,
-          agentSessionId,
-          recordConfigValues,
-        );
-      }
+      // The caller's authority is re-checked after the ACP await: a rotation
+      // that landed meanwhile must not produce a persisted task.
       opts?.assertCaller?.();
-      const reported = reportedExecutionConfig(configOptions);
-      const effectiveModel =
-        opts?.model ??
-        (sourceTask && inheritConfig ? sourceTask.model : null) ??
-        reported.model ??
-        null;
-      const effectiveThinking =
-        opts?.thinking ??
-        (sourceTask && inheritConfig ? sourceTask.reasoning_effort : null) ??
-        reported.reasoning_effort ??
-        null;
       await this.persistCreatedTask(
         taskId,
         taskCwd,
@@ -1928,19 +1822,6 @@ export class TaskManager implements ObligationHost {
           title: opts?.title,
           workflowStatus: opts?.workflowStatus,
           assertCaller: opts?.assertCaller,
-          configValues,
-          onCreated: (task) =>
-            opts?.onPersisted?.({
-              taskId,
-              title: task.title,
-              agentId,
-              cwd: task.cwd,
-              parentId: task.parent_id,
-              workflowStatus: task.workflow_status,
-              source: task.source,
-              model: effectiveModel,
-              thinking: effectiveThinking,
-            }),
         },
       );
     } catch (err) {
@@ -1956,11 +1837,51 @@ export class TaskManager implements ObligationHost {
     try {
       this.liveTasks.add(taskId);
       const lease = this.currentLease(taskId);
-      this.recordConfigOptions(taskId, configOptions, lease, false);
+      this.recordConfigOptions(taskId, createdConfigOptions, lease);
       bridge.sessionMapped?.(agentSessionId, taskId);
       // The binding committed, so the token this session was created with may
       // now reach business tools.
       this.promoteCapability(execution?.token, taskId);
+
+      // Inherit config options from source task (same execution environment
+      // only; see `inheritConfig`).
+      if (sourceTask && inheritConfig) {
+        configOptions = await this.inheritTaskConfig(
+          bridge,
+          taskId,
+          configOptions,
+          sourceTask,
+        );
+      }
+      if (opts?.model || opts?.thinking) {
+        try {
+          configOptions = await this.applyTaskConfigOverrides(
+            bridge,
+            taskId,
+            configOptions,
+            opts.model,
+            opts.thinking,
+          );
+        } catch (error) {
+          // The task is live but still carries the creation barrier, and the
+          // delete has to happen while that barrier is still standing: the
+          // release projects busy→idle, which schedules the unfinished-work
+          // recovery, and a recovery that claims this task's prompt slot in the
+          // gap makes the delete refuse as busy — leaving a task whose creation
+          // failed alive and running. Deleting first also makes the release a
+          // no-op projection, because the task is gone by then.
+          await this.deleteTask(bridge, taskId, {
+            ownCreationClaim: true,
+          }).catch((cleanupError) => {
+            slog.warn("failed to clean up task after config override failure", {
+              taskId,
+              error: cleanupError,
+            });
+          });
+          this.endCreatingClaim(taskId);
+          throw error;
+        }
+      }
 
       const task = this.store.getTask(taskId);
       if (!task) throw new Error("task persistence returned no task");
@@ -1992,8 +1913,6 @@ export class TaskManager implements ObligationHost {
     configOptions: ConfigOption[],
     model?: string,
     thinking?: string,
-    agentSessionId?: string,
-    record?: (entries: ReadonlyArray<{ id: string; value: string }>) => void,
   ): Promise<ConfigOption[]> {
     const requested: Array<{
       logicalId: "model" | "thinking";
@@ -2039,21 +1958,10 @@ export class TaskManager implements ObligationHost {
           currentValue,
         });
       }
-      const next =
-        agentSessionId && bridge.setAgentConfigOption
-          ? await bridge.setAgentConfigOption(agentSessionId, configId, value)
-          : await bridge.setConfigOption(taskId, configId, value);
+      const next = await bridge.setConfigOption(taskId, configId, value);
       if (next.length > 0) {
         updated = next;
-        record?.(
-          next.flatMap((entry) =>
-            typeof entry.currentValue === "string"
-              ? [{ id: entry.id, value: entry.currentValue }]
-              : [],
-          ),
-        );
-      } else if (agentSessionId) {
-        record?.([{ id: configId, value }]);
+        this.recordConfigOptions(taskId, next);
       } else {
         this.store.updateTaskConfig(taskId, configId, value);
       }
@@ -2670,7 +2578,6 @@ export class TaskManager implements ObligationHost {
     taskId: string,
     configOptions: ConfigOption[],
     lease?: ExecutionLease | null,
-    persist = true,
   ): void {
     if (lease !== undefined && !this.leaseCurrent(lease)) return;
     if (configOptions.length === 0) return;
@@ -2678,11 +2585,9 @@ export class TaskManager implements ObligationHost {
     if (agentId) {
       this.agents.adapterFor(agentId).cachedConfigOptions = configOptions;
     }
-    if (persist) {
-      for (const option of configOptions) {
-        if (typeof option.currentValue === "string") {
-          this.store.updateTaskConfig(taskId, option.id, option.currentValue);
-        }
+    for (const option of configOptions) {
+      if (typeof option.currentValue === "string") {
+        this.store.updateTaskConfig(taskId, option.id, option.currentValue);
       }
     }
   }
@@ -4120,7 +4025,6 @@ export class TaskManager implements ObligationHost {
   ): {
     accountTargetTaskId: string | null;
     event: ReturnType<Store["recordAgentWorkflowUpdate"]>["event"];
-    accountTargetTaskIsLocal: boolean;
     /**
      * For `waiting` with nothing visible to wake the task while it owes an
      * account: the silence window after which the requester is notified.
@@ -4150,7 +4054,6 @@ export class TaskManager implements ObligationHost {
       return {
         accountTargetTaskId: null,
         event,
-        accountTargetTaskIsLocal: false,
         ...(watched ? { silenceWatchMs: this.obligations.silenceMs } : {}),
       };
     }
@@ -4188,9 +4091,6 @@ export class TaskManager implements ObligationHost {
     if (accountSource !== undefined) this.obligations.close(targetTaskId);
     return {
       accountTargetTaskId,
-      accountTargetTaskIsLocal:
-        account?.sourceKind === "local" ||
-        (account === undefined && localParentTaskId !== null),
       event,
     };
   }

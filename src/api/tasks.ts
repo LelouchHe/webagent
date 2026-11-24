@@ -107,6 +107,15 @@ export interface TaskSendResult {
   targetIsLocal: boolean;
 }
 
+export interface TaskReport {
+  sourceTaskId: string;
+  targetTaskId: string;
+  status: "blocked" | "done";
+  body: string;
+  sourceLabel: string;
+  targetLabel: string;
+}
+
 export type TaskCancelCommand =
   | {
       kind: "user";
@@ -251,7 +260,6 @@ export interface TaskCreateHostCommand {
   target: TaskCreateTarget;
   parentId?: string;
   assertRemoteCaller: () => void;
-  recordLocal: (result: TaskCreateResult) => void;
 }
 
 export interface TaskCreateHost {
@@ -408,7 +416,6 @@ export interface TaskOps {
   create(
     caller: TaskCreateCaller,
     input: TaskCreateInput,
-    recordLocal?: (result: TaskCreateResult) => void,
   ): Promise<TaskCreateResult>;
   send(
     principal: TaskCaller,
@@ -420,23 +427,6 @@ export interface TaskOps {
     principal: TaskCaller,
     status: "waiting" | "blocked" | "done",
     body: string,
-    recordReport?: (report: {
-      sourceTaskId: string;
-      targetTaskId: string;
-      status: "blocked" | "done";
-      body: string;
-      sourceLabel: string;
-      targetLabel: string;
-    }) => void,
-  ): Promise<{
-    note?: string;
-    report?: {
-      sourceTaskId: string;
-      targetTaskId: string;
-      status: "blocked" | "done";
-      body: string;
-      sourceLabel: string;
-      targetLabel: string;
-    };
-  }>;
+    recordReport?: (report: TaskReport) => void,
+  ): Promise<{ note?: string }>;
 }

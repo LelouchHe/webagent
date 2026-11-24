@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import type { Store } from "../../store.ts";
 import type { TaskManager } from "../../task-manager.ts";
 import {
-  assertCollaborationSourceLabel,
   HostExternalParentError,
   type HostCollaborationCommand,
 } from "../../api/collaboration.ts";
@@ -13,9 +12,6 @@ export function createHostCollaborationCommand(deps: {
 }): HostCollaborationCommand {
   return {
     receive(input) {
-      if (input.sourceLabel !== undefined) {
-        assertCollaborationSourceLabel(input.sourceLabel);
-      }
       const target = deps.store.getTask(input.targetTaskId);
       if (
         !target ||

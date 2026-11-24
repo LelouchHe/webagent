@@ -46,9 +46,11 @@ spot gaps, and decide what still needs to be added without reading every spec.
     duplicate queued report remains eligible for one drain
   - only the target's linked external parent opens an external account; a
     remote child's report into its hub parent opens none
-  - local create, send, and update records commit with their Host write;
-    injected failure of the second write leaves no task, delivery, report, or
-    closed account, while post-commit broadcast and drain still run normally
+  - local send and update records commit with their Host write; injected
+    failure leaves no delivery/report or closed account
+  - local create keeps the baseline post-persistence config/cleanup flow; the
+    caller-side created row is recorded after the Host returns and broadcast
+    before `config_option_update`
   - remote create facts control the effective row, and a failed second write
     rolls back the hub link while retaining the partial-success child id
   - remote child labels resolve from the live mirror at projection time;
@@ -101,7 +103,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a caller that rotates while a `task_create` waits for the tree lock is refused before the task row is written
   - a caller that rotates while a `task_cancel` awaits the transport gets a refused tool result and no cancellation row
   - a caller that rotates during a child's config inheritance is refused
-    before either the child row or its source transcript row is committed
+    before the source transcript row is written; the committed child stays
   - an `initializing` capability completes the MCP handshake but every business tool returns `initializing`; after promotion the same token works
   - a request authenticated before a real rotation cannot write after it (the task-persist boundary re-checks after `newSession`), while a fresh token against the current generation succeeds; the rotated-away token is revoked
   - a token whose task moved to another agent is refused; a Root exit revokes the old Root's token

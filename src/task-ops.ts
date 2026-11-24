@@ -110,47 +110,6 @@ export function createTaskOpsCore(deps: {
       assertCaller();
       const target = parseTarget(caller, requestedAgent);
       const isRemote = target.host !== undefined;
-      let createdRow: TaskCreatedBroadcastInput | undefined;
-      let localRecorded = caller.kind === "host";
-      const recordCreated = (result: TaskCreateResult) => {
-        assertCaller();
-        localRecorded = true;
-        if (
-          caller.kind === "host" ||
-          localParentId === undefined ||
-          !input.title
-        ) {
-          return;
-        }
-        const taskTitle = result.facts.title;
-        if (taskTitle === null) throw new Error("task_create_facts_incomplete");
-        const taskCreated = buildTaskCreatedSystemMessage({
-          taskId: result.taskId,
-          taskTitle,
-          agentId: result.facts.agentId
-            ? `${result.facts.agentId}${isRemote ? `@${target.host}` : ""}`
-            : "",
-          cwd: result.facts.cwd,
-          model: result.facts.model,
-          thinking: result.facts.thinking,
-        });
-        if (!isRemote) {
-          store.saveEvent(localParentId, "system_message", taskCreated.data, {
-            from_ref: caller.kind === "agent" ? "agent" : "user",
-          });
-        }
-        createdRow = {
-          messageId: randomUUID(),
-          sourceTaskId: localParentId,
-          targetTaskId: result.taskId,
-          taskTitle,
-          title: taskCreated.title,
-          body: taskCreated.body,
-        };
-      };
-      // Location selection belongs below this port. Core calls it once with a
-      // structured coordinate; completion callbacks are the narrow write-back
-      // path for accepted work whose owner is another instance.
       const result = await host.create({
         caller,
         input,
@@ -166,54 +125,79 @@ export function createTaskOpsCore(deps: {
             throw new Error("parent_not_found");
           }
         },
-        recordLocal: recordCreated,
       });
-      if (isRemote) {
-        const remoteParentId = localParentId;
-        if (remoteParentId === undefined) throw new Error("parent_not_found");
+      let taskTitle: string | undefined;
+      let taskCreated:
+        ReturnType<typeof buildTaskCreatedSystemMessage> | undefined;
+      const prepareRecord = () => {
+        if (caller.kind === "host" || !localParentId || !input.title) return;
+        if (result.facts.title === null) {
+          throw new Error("task_create_facts_incomplete");
+        }
+        taskTitle = result.facts.title;
+        taskCreated = buildTaskCreatedSystemMessage({
+          taskId: result.taskId,
+          taskTitle,
+          agentId: result.facts.agentId
+            ? `${result.facts.agentId}${isRemote ? `@${target.host}` : ""}`
+            : "",
+          cwd: result.facts.cwd,
+          model: result.facts.model,
+          thinking: result.facts.thinking,
+        });
+        if (target.host === undefined) {
+          store.saveEvent(localParentId, "system_message", taskCreated.data, {
+            from_ref: caller.kind === "agent" ? "agent" : "user",
+          });
+        }
+      };
+      if (target.host !== undefined) {
+        const remoteHost = target.host;
+        if (localParentId === undefined) throw new Error("parent_not_found");
         try {
-          authorize(caller);
-          if (caller.kind === "user" && !store.getParentTask(remoteParentId)) {
+          assertCaller();
+          if (caller.kind === "user" && !store.getParentTask(localParentId)) {
             throw new Error("parent_not_found");
           }
-          if (input.title) {
-            recordCreated(result);
-            if (!createdRow) throw new Error("task_create_facts_incomplete");
-            store.recordRemoteTaskCreation({
-              localParentTaskId: remoteParentId,
-              remoteTaskId: result.taskId,
-              remoteHost: target.host!,
-              data: buildTaskCreatedSystemMessage({
-                taskId: result.taskId,
-                taskTitle: result.facts.title!,
-                agentId: result.facts.agentId
-                  ? `${result.facts.agentId}@${target.host}`
-                  : "",
-                cwd: result.facts.cwd,
-                model: result.facts.model,
-                thinking: result.facts.thinking,
-              }).data,
-              fromRef: caller.kind === "agent" ? "agent" : "user",
-            });
+          prepareRecord();
+          if (taskCreated) {
+            store.recordRemoteTaskChild(
+              localParentId,
+              result.taskId,
+              remoteHost,
+              {
+                data: taskCreated.data,
+                fromRef: caller.kind === "agent" ? "agent" : "user",
+              },
+            );
           } else {
             store.recordRemoteTaskChild(
-              remoteParentId,
+              localParentId,
               result.taskId,
-              target.host!,
+              remoteHost,
             );
           }
         } catch (error) {
           throw new TaskRemoteCreatePartialSuccessError(
-            target.host!,
+            remoteHost,
             result.taskId,
             { cause: error },
           );
         }
+      } else {
+        assertCaller();
+        prepareRecord();
       }
-      if (!isRemote && caller.kind !== "host" && !localRecorded) {
-        throw new Error("task_create_record_missing");
+      if (taskCreated && taskTitle && localParentId) {
+        deps.broadcastTaskCreated?.({
+          messageId: randomUUID(),
+          sourceTaskId: localParentId,
+          targetTaskId: result.taskId,
+          taskTitle,
+          title: taskCreated.title,
+          body: taskCreated.body,
+        });
       }
-      if (createdRow) deps.broadcastTaskCreated?.(createdRow);
       if (
         !isRemote &&
         caller.kind !== "agent" &&
@@ -227,12 +211,13 @@ export function createTaskOpsCore(deps: {
       }
       if (caller.kind === "agent") return { ...result, activation: undefined };
       if (isRemote && result.activation) {
+        if (localParentId === undefined) throw new Error("parent_not_found");
         return {
           ...result,
           activation: {
             ...result.activation,
-            parentId: localParentId!,
-            parentAgentId: store.getBindingAgent(localParentId!) ?? null,
+            parentId: localParentId,
+            parentAgentId: store.getBindingAgent(localParentId) ?? null,
           },
         };
       }

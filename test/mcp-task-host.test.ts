@@ -131,7 +131,6 @@ describe("MCP Task tool host", () => {
             thinking: null,
           },
         };
-        if (command.target.host === undefined) command.recordLocal(result);
         return result;
       },
     };
@@ -250,63 +249,6 @@ describe("MCP Task tool host", () => {
         peer_token_hash: "peer-hash",
       },
     ]);
-  });
-
-  it("rolls back local task creation when Core cannot record the row", async () => {
-    tasks.attachExecutionBridge({
-      ...mockBridgeStubs(),
-      async newSession() {
-        return { sessionId: "atomic-session", configOptions: [] };
-      },
-    });
-    const local = createLocalTaskOps({ store, tasks });
-    const core = createTaskOpsCore({
-      host: createTaskHost({
-        local,
-        remote: {
-          async create() {
-            throw new Error("unexpected remote");
-          },
-        },
-      }),
-      store,
-      tasks,
-    });
-    const original = store.saveEvent.bind(store);
-    store.saveEvent = (taskId, type, data, options) => {
-      if (taskId === "alpha" && type === "system_message") {
-        throw new Error("created row failed");
-      }
-      return original(taskId, type, data, options);
-    };
-    const taskCount = store.listTasks().length;
-    try {
-      await assert.rejects(
-        core.create(
-          { kind: "agent", principal: principal() },
-          {
-            title: "Atomic child",
-            cwd: dir,
-            parentId: "alpha",
-            inheritFromTaskId: "alpha",
-          },
-        ),
-        /created row failed/,
-      );
-    } finally {
-      store.saveEvent = original;
-    }
-    assert.equal(store.listTasks().length, taskCount);
-    assert.equal(
-      store.listTasks().some((task) => task.title === "Atomic child"),
-      false,
-    );
-    assert.equal(
-      store
-        .getEvents("alpha")
-        .some((event) => JSON.parse(event.data).taskTitle === "Atomic child"),
-      false,
-    );
   });
 
   it("does not reinterpret a local-id collision as a remote parent", async () => {
@@ -1728,9 +1670,6 @@ describe("MCP Task tool host", () => {
           model: options.model as string,
           thinking: options.thinking as string,
         };
-        (options.onPersisted as ((value: typeof facts) => void) | undefined)?.(
-          facts,
-        );
         return {
           taskId: facts.taskId,
           configOptions: [],
@@ -1781,12 +1720,10 @@ describe("MCP Task tool host", () => {
     assert.ok(createCall);
     // The persist boundary re-validates the same caller; it is a function, not
     // part of the option values, so it is checked and then set aside.
-    const { assertCaller, onPersisted, ...options } = createCall.options as {
+    const { assertCaller, ...options } = createCall.options as {
       assertCaller?: unknown;
-      onPersisted?: unknown;
     } & Record<string, unknown>;
     assert.equal(typeof assertCaller, "function");
-    assert.equal(typeof onPersisted, "function");
     assert.deepEqual(
       { ...createCall, options },
       {
