@@ -4,6 +4,7 @@ export interface HostCollaborationCommand {
     targetTaskId: string;
     peerTokenHash: string;
     body: string;
+    sourceLabel?: string;
   }): {
     messageId: string;
     deliveryId: string;

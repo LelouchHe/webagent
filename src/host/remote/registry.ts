@@ -8,6 +8,7 @@ import type {
   TaskQueryResult,
   TaskReadInput,
   TaskReadResult,
+  TaskSendResult,
   TaskWorkflowStatus,
 } from "../../api/tasks.ts";
 import {
@@ -63,6 +64,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
   private readonly mirrors = new Map<string, RemoteTaskListItem>();
   private started = false;
   private readonly options?: HostRegistryOptions;
+  private remoteEventHandler?: HostRegistryOptions["onRemoteEvent"];
 
   constructor(
     configs: Record<string, HostConfig>,
@@ -104,6 +106,10 @@ export class HostRegistry implements RemoteTaskCreateTransport {
 
   stopAll(): void {
     for (const connection of this.connections.values()) connection.stop();
+  }
+
+  setRemoteEventHandler(handler: HostRegistryOptions["onRemoteEvent"]): void {
+    this.remoteEventHandler = handler;
   }
 
   list(): HostRuntimeState[] {
@@ -255,20 +261,36 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     return target.connection.readTaskHistory(target.taskId, input);
   }
 
-  async sendRemote(target: RemoteTaskTarget, body: string): Promise<void> {
+  async sendRemote(
+    target: RemoteTaskTarget,
+    body: string,
+    sourceLabel: string,
+  ): Promise<TaskSendResult> {
     const result = await target.connection.sendTaskMessage({
       sourceTaskId: target.parentTaskId,
       targetTaskId: target.taskId,
       body,
+      sourceLabel,
       clientOpId: randomUUID(),
     });
     if (result.kind !== "accepted") {
       throw new Error(`Remote task send failed: ${result.reason}`);
     }
+    return {
+      messageId: randomUUID(),
+      targetTaskId: target.taskId,
+      targetLabel: this.remoteTitle(target) ?? target.taskId.slice(0, 8),
+      sourceLabel,
+      targetIsLocal: false,
+    };
   }
 
   remoteTitle(target: RemoteTaskTarget): string | undefined {
     return this.mirrors.get(nameKey(target.host, target.taskId))?.title;
+  }
+
+  remoteTitleFor(host: string, taskId: string): string | undefined {
+    return this.mirrors.get(nameKey(host, taskId))?.title;
   }
 
   private async refresh(
@@ -327,7 +349,11 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     if (!isCurrent()) return;
     for (const event of events) {
       if (!isCurrent()) return;
-      this.options?.onRemoteEvent(host, childId, remoteCatchupEvent(event));
+      (this.remoteEventHandler ?? this.options?.onRemoteEvent)?.(
+        host,
+        childId,
+        remoteCatchupEvent(event),
+      );
     }
     const [detail, status] = await Promise.all([detailPromise, statusPromise]);
     if (!isCurrent() || !status) return;
@@ -397,7 +423,11 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     }
     delete next.unreachable;
     this.mirror(key, next);
-    this.options?.onRemoteEvent(name, childId, event);
+    (this.remoteEventHandler ?? this.options?.onRemoteEvent)?.(
+      name,
+      childId,
+      event,
+    );
   }
 
   private mirror(key: string, item: RemoteTaskListItem): void {

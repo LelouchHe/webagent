@@ -10,6 +10,8 @@ import { SseManager } from "../src/sse-manager.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createTaskOpsCore } from "../src/task-ops.ts";
+import { createTaskHost } from "../src/host/tasks.ts";
 import { buildCollaborationBroadcast } from "../src/collaboration-message.ts";
 import {
   buildTaskCreatedBroadcast,
@@ -111,6 +113,31 @@ describe("S3 collaboration write routes", () => {
       },
     };
     tasks.attachExecutionBridge(bridge);
+    const localTaskOps = createLocalTaskOps({
+      store,
+      tasks,
+      broadcastConfigUpdate: (event) => {
+        broadcasts.push(event);
+      },
+    });
+    const taskOps = {
+      ...localTaskOps,
+      ...createTaskOpsCore({
+        host: createTaskHost({
+          local: localTaskOps,
+          remote: {
+            create: async () => {
+              throw new Error("unexpected remote create");
+            },
+          },
+        }),
+        store,
+        tasks,
+        broadcastTaskCreated: (event) => {
+          broadcasts.push(buildTaskCreatedBroadcast(event));
+        },
+      }),
+    };
     const handler = createRequestHandler({
       sseManager: Object.assign(new SseManager(), {
         broadcast(event: { type: string; taskId?: string }) {
@@ -119,16 +146,7 @@ describe("S3 collaboration write routes", () => {
       }),
       store,
       tasks,
-      taskOps: createLocalTaskOps({
-        store,
-        tasks,
-        broadcastTaskCreated: (event) => {
-          broadcasts.push(buildTaskCreatedBroadcast(event));
-        },
-        broadcastConfigUpdate: (event) => {
-          broadcasts.push(event);
-        },
-      }),
+      taskOps,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
@@ -229,7 +247,15 @@ describe("S3 collaboration write routes", () => {
 
     // The agent path writes into the same stream through the same builder, so
     // both initiators produce one identical row shape.
-    const host = createLocalTaskOps({
+    const localHost = createLocalTaskOps({
+      store,
+      tasks,
+    });
+    const host = createTaskOpsCore({
+      host: createTaskHost({
+        local: localHost,
+        remote: { create: async () => ({ taskId: "unexpected" }) },
+      }),
       store,
       tasks,
       broadcastTaskCreated: (event) =>

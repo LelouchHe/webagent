@@ -150,8 +150,41 @@ describe("host connection helpers", () => {
       parentId: "parent",
       source: "auto",
     });
+
     assert.equal(unknown.kind, "unknown");
     assert.equal(calls, 1);
+  });
+
+  it("carries the caller title on remote dispatch", async () => {
+    let requestBody: Record<string, unknown> | null = null;
+    const connection = new HostConnection(
+      { url: "http://owner.example", token: "wat_host" },
+      {
+        retryDelay: () => 0,
+        fetch: async (_input, init) => {
+          if (typeof init?.body !== "string") throw new Error("missing body");
+          requestBody = JSON.parse(init.body) as Record<string, unknown>;
+          return Response.json({ status: "queued" }, { status: 202 });
+        },
+      },
+    );
+    assert.equal(
+      (
+        await connection.sendTaskMessage({
+          sourceTaskId: "parent",
+          targetTaskId: "child",
+          body: "work",
+          sourceLabel: "Parent title",
+          clientOpId: "op",
+        })
+      ).kind,
+      "accepted",
+    );
+    assert.deepEqual(requestBody, {
+      targetTaskId: "child",
+      body: "work",
+      sourceLabel: "Parent title",
+    });
   });
 
   it("keeps literal credentials unchanged", async () => {

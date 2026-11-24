@@ -9,7 +9,6 @@ import {
   buildCollaborationSystemMessage,
   collaborationTitle,
 } from "./collaboration-message.ts";
-import { formatTaskReport } from "./task-report.ts";
 import { migrateTimestampsToMillis } from "./timestamp-migration.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { assertNotLegacyDatabase } from "./legacy-database.ts";
@@ -1339,6 +1338,11 @@ export class Store {
     const rows = this.db
       .prepare(
         `SELECT s.*,
+           (SELECT r.remote_task_id
+            FROM remote_task_links r
+            WHERE r.local_task_id = s.id
+              AND r.remote_role = 'parent'
+            LIMIT 1) AS remote_parent_id,
            EXISTS (
              SELECT 1 FROM events e
              WHERE e.task_id = s.id AND e.type = 'user_message'
@@ -2867,7 +2871,33 @@ export class Store {
     })();
   }
 
-  createRemoteReport(input: {
+  enqueueTargetCollaboration(input: {
+    sourceTaskId: string;
+    targetTaskId: string;
+    body: string;
+    id?: string;
+    deliveryId?: string;
+  }): { messageId: string; deliveryId: string } {
+    const messageId = input.id ?? randomUUID();
+    const deliveryId = input.deliveryId ?? randomUUID();
+    const createdAt = Date.now();
+    this.db.transaction(() => {
+      this.requireLiveTask(input.targetTaskId);
+      this.createTargetOnlyDelivery({
+        id: messageId,
+        deliveryId,
+        sourceTaskId: input.sourceTaskId,
+        directTargetTaskId: input.targetTaskId,
+        actor: "agent",
+        body: input.body,
+        idempotencyKey: `${messageId}:${input.targetTaskId}`,
+        createdAt,
+      });
+    })();
+    return { messageId, deliveryId };
+  }
+
+  enqueueReportDelivery(input: {
     id: string;
     deliveryId: string;
     idempotencyKey: string;
@@ -2897,29 +2927,45 @@ export class Store {
     })();
   }
 
-  recordAcceptedRemoteMessage(input: {
+  recordCallerSend(input: {
     id: string;
+    deliveryId?: string;
     sourceTaskId: string;
     directTargetTaskId: string;
+    sourceLabel: string;
     targetLabel: string;
     body: string;
+    targetIsLocal: boolean;
+    readLocalLabels?: boolean;
   }): CollaborationMessageRow {
     const createdAt = Date.now();
     return this.db.transaction(() => {
       this.requireLiveTask(input.sourceTaskId);
-      this.db
-        .prepare(
-          `INSERT INTO messages
-           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
-           VALUES (?, ?, ?, 'agent', ?, ?)`,
-        )
-        .run(
-          input.id,
-          input.sourceTaskId,
-          input.directTargetTaskId,
-          input.body,
-          createdAt,
-        );
+      const sourceLabel =
+        input.targetIsLocal && input.readLocalLabels !== false
+          ? (this.getTask(input.sourceTaskId)?.title ??
+            input.sourceTaskId.slice(0, 8))
+          : input.sourceLabel;
+      const targetLabel =
+        input.targetIsLocal && input.readLocalLabels !== false
+          ? (this.getTask(input.directTargetTaskId)?.title ??
+            input.directTargetTaskId.slice(0, 8))
+          : input.targetLabel;
+      if (!input.targetIsLocal) {
+        this.db
+          .prepare(
+            `INSERT INTO messages
+             (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+             VALUES (?, ?, ?, 'agent', ?, ?)`,
+          )
+          .run(
+            input.id,
+            input.sourceTaskId,
+            input.directTargetTaskId,
+            input.body,
+            createdAt,
+          );
+      }
       this.db
         .prepare(
           `INSERT INTO message_projections
@@ -2927,9 +2973,6 @@ export class Store {
            VALUES (?, ?, 'source', ?)`,
         )
         .run(input.id, input.sourceTaskId, createdAt);
-      const sourceLabel =
-        this.getTask(input.sourceTaskId)?.title ??
-        input.sourceTaskId.slice(0, 8);
       this.saveEvent(
         input.sourceTaskId,
         "system_message",
@@ -2939,14 +2982,17 @@ export class Store {
             sourceTaskId: input.sourceTaskId,
             sourceLabel,
             targetTaskId: input.directTargetTaskId,
-            targetLabel: input.targetLabel,
+            targetLabel,
             role: "source",
             body: input.body,
           }),
-          deliveryStatus: "accepted",
+          ...(input.targetIsLocal ? {} : { deliveryStatus: "accepted" }),
         },
         { from_ref: `msg:${input.id}` },
       );
+      if (input.targetIsLocal && input.deliveryId) {
+        this.getCollaborationDelivery(input.deliveryId);
+      }
       return this.getCollaborationMessage(input.id)!;
     })();
   }
@@ -3182,13 +3228,12 @@ export class Store {
     body: string,
     accountTargetTaskId: string | null,
     reason: "settled" | "fallback" | "waiting",
-    externalAccountTarget = false,
   ): {
     collaborationMessageId: string | null;
     event: EventRow;
   } {
     const result = this.db.transaction(() => {
-      const task = this.requireLiveTask(taskId);
+      this.requireLiveTask(taskId);
       this.db
         .prepare("UPDATE tasks SET workflow_status = ? WHERE id = ?")
         .run(status, taskId);
@@ -3204,22 +3249,7 @@ export class Store {
         },
         { from_ref: "agent" },
       );
-      if (!accountTargetTaskId || accountTargetTaskId === task.id) {
-        return { collaborationMessageId: null, event };
-      }
-      if (externalAccountTarget) {
-        return { collaborationMessageId: null, event };
-      }
-      const collaborationMessageId = randomUUID();
-      this.createCollaborationMessageInTransaction({
-        id: collaborationMessageId,
-        deliveryId: randomUUID(),
-        sourceTaskId: taskId,
-        directTargetTaskId: accountTargetTaskId,
-        sourceActor: "agent",
-        body: formatTaskReport(status, body),
-      });
-      return { collaborationMessageId, event };
+      return { collaborationMessageId: null, event };
     })();
     return result;
   }

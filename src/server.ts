@@ -13,7 +13,11 @@ import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
 import { createLocalTaskOps } from "./host/local/adapter.ts";
-import { createRoutedTaskOps, createTaskHost } from "./host/tasks.ts";
+import {
+  createRemoteReportEnqueuer,
+  createRoutedTaskOps,
+  createTaskHost,
+} from "./host/tasks.ts";
 import { createRemoteReportHandler } from "./host/collaboration.ts";
 import { createHostCollaborationCommand } from "./host/local/collaboration.ts";
 import { createTaskOpsCore } from "./task-ops.ts";
@@ -184,7 +188,6 @@ sseManager.startHeartbeat();
 
 const authStore = new AuthStore(pathJoin(config.data_dir, "auth.json"));
 const ticketStore = new TicketStore();
-const receiveRemoteReport = createRemoteReportHandler({ store, tasks });
 const hostRegistry = new HostRegistry(config.hosts, {
   listLinks: () =>
     store
@@ -202,8 +205,15 @@ const hostRegistry = new HostRegistry(config.hosts, {
         remoteTaskId: link.remote_task_id,
         host: link.remote_host,
       })),
-  onRemoteEvent: receiveRemoteReport,
+  onRemoteEvent: () => {},
 });
+hostRegistry.setRemoteEventHandler(
+  createRemoteReportHandler({
+    store,
+    sourceLabel: (host, childId) => hostRegistry.remoteTitleFor(host, childId),
+    enqueueReport: createRemoteReportEnqueuer({ store, tasks }),
+  }),
+);
 // In-memory image signing secret; regenerated on every restart so previously
 // leaked URLs become invalid the moment the server is bounced.
 const attachmentSecret = randomBytes(32);
@@ -244,10 +254,6 @@ const localTaskOps = createLocalTaskOps({
   store,
   tasks,
   cancelTimeoutMs: config.limits.cancel_timeout,
-  broadcastCollaboration,
-  broadcastTaskCreated: (event) => {
-    sseManager.broadcast(buildTaskCreatedBroadcast(event));
-  },
   broadcastConfigUpdate: (event) => {
     sseManager.broadcast(event);
   },
@@ -273,6 +279,9 @@ const taskOps = createTaskOpsCore({
   }),
   store,
   tasks,
+  broadcastTaskCreated: (event) => {
+    sseManager.broadcast(buildTaskCreatedBroadcast(event));
+  },
 });
 const routedTaskOps: TaskOps = {
   ...localTaskOps,

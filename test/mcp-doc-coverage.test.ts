@@ -72,7 +72,13 @@ function registeredTools(): Record<string, RegisteredTool> {
       status: "idle" as const,
     }),
     create: async () => ({ taskId: "child" }),
-    send: async () => {},
+    send: async () => ({
+      messageId: "message",
+      targetTaskId: "child",
+      targetLabel: "child",
+      sourceLabel: "current",
+      targetIsLocal: true,
+    }),
     update: async () => ({}),
   };
   registerMcpTools(

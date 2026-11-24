@@ -8,7 +8,13 @@ import type {
   TaskCreateTarget,
   TaskOps,
 } from "./api/tasks.ts";
-import { TaskAgentIdTypeError, TaskCreateInputError } from "./api/tasks.ts";
+import {
+  TaskAgentIdTypeError,
+  TaskCreateInputError,
+  TaskRemoteCreatePartialSuccessError,
+} from "./api/tasks.ts";
+import { buildTaskCreatedSystemMessage } from "./task-created-message.ts";
+import { randomUUID } from "node:crypto";
 
 function parseTarget(
   caller: TaskCreateCaller,
@@ -38,6 +44,14 @@ export function createTaskOpsCore(deps: {
   host: TaskCreateHost;
   store: Store;
   tasks: TaskManager;
+  broadcastTaskCreated?: (event: {
+    messageId: string;
+    sourceTaskId: string;
+    targetTaskId: string;
+    taskTitle: string;
+    title: string;
+    body: string;
+  }) => void;
 }): Pick<TaskOps, "create"> {
   const { host, store, tasks } = deps;
 
@@ -57,6 +71,7 @@ export function createTaskOpsCore(deps: {
   }
 
   return {
+    // eslint-disable-next-line complexity -- one command authorizes, creates, links, and records one operation.
     async create(
       caller: TaskCreateCaller,
       input: TaskCreateInput,
@@ -97,7 +112,7 @@ export function createTaskOpsCore(deps: {
       // Location selection belongs below this port. Core calls it once with a
       // structured coordinate; completion callbacks are the narrow write-back
       // path for accepted work whose owner is another instance.
-      return host.create({
+      const result = await host.create({
         caller,
         input,
         target,
@@ -112,11 +127,12 @@ export function createTaskOpsCore(deps: {
             throw new Error("parent_not_found");
           }
         },
-        completeRemote: (result, remoteHost) => {
-          const remoteParentId = localParentId;
-          if (remoteParentId === undefined) {
-            throw new Error("parent_not_found");
-          }
+      });
+      const isRemote = target.host !== undefined;
+      if (isRemote) {
+        const remoteParentId = localParentId;
+        if (remoteParentId === undefined) throw new Error("parent_not_found");
+        try {
           authorize(caller);
           if (caller.kind === "user" && !store.getParentTask(remoteParentId)) {
             throw new Error("parent_not_found");
@@ -124,22 +140,57 @@ export function createTaskOpsCore(deps: {
           store.recordRemoteTaskChild(
             remoteParentId,
             result.taskId,
-            remoteHost,
+            target.host!,
           );
-          if (caller.kind === "agent") return { taskId: result.taskId };
-          if (!result.activation) {
-            throw new Error("missing_remote_create_activation");
-          }
-          return {
-            taskId: result.taskId,
-            activation: {
-              ...result.activation,
-              parentId: remoteParentId,
-              parentAgentId: store.getBindingAgent(remoteParentId) ?? null,
-            },
-          };
-        },
-      });
+        } catch (error) {
+          throw new TaskRemoteCreatePartialSuccessError(
+            target.host!,
+            result.taskId,
+            { cause: error },
+          );
+        }
+      }
+      if (
+        caller.kind !== "host" &&
+        localParentId !== undefined &&
+        input.title &&
+        result.facts
+      ) {
+        authorize(caller);
+        const taskCreated = buildTaskCreatedSystemMessage({
+          taskId: result.taskId,
+          taskTitle: input.title,
+          agentId: result.facts.agentId
+            ? `${result.facts.agentId}${isRemote ? `@${target.host}` : ""}`
+            : "",
+          cwd: result.facts.cwd,
+          model: result.facts.model,
+          thinking: result.facts.thinking,
+        });
+        store.saveEvent(localParentId, "system_message", taskCreated.data, {
+          from_ref: caller.kind === "agent" ? "agent" : "user",
+        });
+        deps.broadcastTaskCreated?.({
+          messageId: randomUUID(),
+          sourceTaskId: localParentId,
+          targetTaskId: result.taskId,
+          taskTitle: input.title,
+          title: taskCreated.title,
+          body: taskCreated.body,
+        });
+      }
+      if (caller.kind === "agent") return { ...result, activation: undefined };
+      if (isRemote && result.activation) {
+        return {
+          ...result,
+          activation: {
+            ...result.activation,
+            parentId: localParentId!,
+            parentAgentId: store.getBindingAgent(localParentId!) ?? null,
+          },
+        };
+      }
+      return result;
     },
   };
 }

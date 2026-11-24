@@ -58,6 +58,8 @@ const TaskCreateResponseSchema = z.object({
   parentAgentId: z.string().nullable(),
   agentId: z.string().nullable(),
   title: z.string().nullable(),
+  model: z.string().nullable().optional(),
+  thinking: z.string().nullable().optional(),
   workflowStatus: z.enum(["running", "idle", "waiting", "blocked", "done"]),
   source: z.string(),
   configOptions: z.array(ConfigOptionSchema),
@@ -274,6 +276,13 @@ export class HostConnection {
       kind: "success",
       result: {
         taskId: activation.id,
+        facts: {
+          title: activation.title,
+          agentId: activation.agentId,
+          cwd: activation.cwd,
+          model: activation.model ?? null,
+          thinking: activation.thinking ?? null,
+        },
         activation,
       },
     };
@@ -343,6 +352,7 @@ export class HostConnection {
     targetTaskId: string;
     body: string;
     clientOpId: string;
+    sourceLabel: string;
   }): Promise<HostTaskSendAttempt> {
     let token: string;
     try {
@@ -360,6 +370,7 @@ export class HostConnection {
           body: {
             targetTaskId: input.targetTaskId,
             body: input.body,
+            sourceLabel: input.sourceLabel,
           },
           headers: { "X-Client-Op-Id": input.clientOpId },
           redirect: "error",

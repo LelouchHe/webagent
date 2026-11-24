@@ -35,6 +35,12 @@ export function createHostCollaborationCommand(deps: {
         directTargetTaskId: target.id,
         body: input.body,
       });
+      if (input.sourceLabel) {
+        deps.tasks.rememberCollaborationSourceLabel(
+          messageId,
+          input.sourceLabel,
+        );
+      }
       void deps.tasks.drainCollaborationDeliveries(target.id);
       return { messageId, deliveryId };
     },

@@ -42,10 +42,11 @@ keeps one `remote_task_links` row; nothing else is shared.
    |                          |                               |                          |
  1 create                     |                               |                          |
    |-- task_create mock@owner>|                               |                          |
-   |                          |-- POST /tasks (host token) -->| create R1 (archived top, |
-   |                          |                               | no ACP) + parent link    |
-   |                          |<------------------ 201 R1 ----|                          |
-   |                          | write child link              |                          |
+    |                          |-- POST /tasks (host token) -->| LocalHost creates R1     |
+    |                          |                               | + parent link, no ACP    |
+    |                          |<----- 201 + create facts -----|                          |
+    |                          | Core: write child link,       |                          |
+    |                          | sender-side Created task row  |                          |
    |<----------------- R1 id -|                               |                          |
    |                          |                               |                          |
  2 discover (every connect)   |                               |                          |
@@ -69,10 +70,10 @@ keeps one `remote_task_links` row; nothing else is shared.
  4 dispatch                   |                               |                          |
    |-- task_send R1 --------->| check child link              |                          |
    |                          |-- POST /tasks/P/messages ---->| P is R1's parent link    |
-   |                          |   X-Client-Op-Id              | and token hash matches   |
+   |                          |   X-Client-Op-Id, sourceLabel | and token hash matches   |
    |                          |                               | -> agent dispatch queued |
    |                          |<---------------------- 202 ---|-- drain --------------->| account opens
-   |                          | message on P's side only      |                          | (source: external P)
+   |                          | Core records P's sender row   |                          | (source: external P)
    |<----- accepted by owner -| (no deliveries row)           |                          |
    |                          |                               |                          | ... works ...
  5 report                     |                               |<---- task_update(done) --|
@@ -96,14 +97,16 @@ not visible to the hub.
 
 MCP `task_create` and REST `POST /api/v1/tasks` use the same Core command. Core
 authorizes the caller and converts `agent@host` to a structured target. The host
-selector calls either LocalHost or one RemoteHost transport.
+selector calls either LocalHost or one RemoteHost transport. A Host returns the
+created Task's stable id, title, effective agent, cwd, model, and thinking; it
+does not record the caller-side transcript row.
 
 The owner accepts a Host create only with a non-empty opaque external
 `parentId`, creates a deferred Task with an empty execution slot, and commits the
-`parent` link in the same transaction. It does not start ACP. After a peer `201`,
-the hub records its `child` link through a caller-generation fence. A `4xx` is a
-rejection; transport ambiguity is unknown, and owner success followed by local
-link failure is partial success.
+`parent` link in the same transaction. It does not start ACP. After a peer `201`, Core records its `child` link through a caller-generation
+fence and writes the same `Created task` row it writes for a local create. The
+agent value is the remote coordinate (`agent@host`). A live row proves the id to
+the browser's reference marks; replay does not create that existence fact.
 
 ## Read
 
@@ -112,6 +115,11 @@ family plus remote-child entries marked by `kind: "remote"` and `host`. REST
 `GET /api/v1/tasks` appends the same remote children after their listed local
 parents; the browser uses them only so a reference to a remote child is not
 shown as removed. The mirror is display-only:
+
+The owner applies the reverse relation to the same list read: for each listed
+local Task with a `parent` link, it appends that external parent as
+`{kind: "remote", id, parent_id: null, title: null}`. This is a reference
+existence fact, not a browsable local topology.
 
 - the first connect subscribes to SSE, takes one cold snapshot through the
   owner's existing task read routes, then applies incremental events;
@@ -140,14 +148,15 @@ outcome is never retried automatically.
 
 On the owner, host scope may use an external `sourceTaskId` only when it exactly
 names the target's linked parent and the connection's token hash owns that
-link. The owner creates an agent-authored target-side delivery, so the normal
-drain opens the collaboration account at handoff exactly as a local dispatch.
-There is no source projection on that instance.
+link. The request carries P's `sourceLabel`. The owner keeps it in memory for
+this message, creates an agent-authored target-side delivery, and uses the label
+for both R's receiver row and its `From "…"` prompt. The normal drain opens the
+collaboration account at handoff exactly as a local dispatch. There is no source
+projection on that instance.
 
-After `202`, the hub persists the message, a source projection, and an event on
-the local parent with the display state `accepted`. It intentionally has no
-`deliveries` row: there is no local recipient, and a queued local delivery
-would be consumed by the wrong instance's drain.
+For local and remote dispatch, Host only enqueues. Core then writes the caller's
+sender row. Locally its delivery starts `queued`; remotely it is `accepted`
+after `202` and has no local `deliveries` row.
 
 ## Report
 
@@ -158,8 +167,9 @@ parent remains the fallback when present.
 
 The host stream forwards persisted `done` and `blocked` reports with Task-local
 sequence ids. On every connect the hub also cold-reads each linked child's
-events. For a report addressed to the corresponding local parent, it creates a
-normal local collaboration message and queued delivery on the parent. The
+events. Local `task_update` and a remote forwarded event both enter one Core
+report operation: enqueue into P, then let the existing drain wake P. The
+remote entry uses a normal local message and queued delivery on the parent. The
 delivery idempotency key is
 `remote-report:<host>:<childId>:<seq>`, so online forwarding and reconnect
 catch-up collapse to one wake. No cursor, ACK, receipt, or outbound-state table

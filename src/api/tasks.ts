@@ -98,6 +98,15 @@ export interface TaskCancelOutcome {
   status: "idle" | "cancelling" | "cancelled" | "superseded";
 }
 
+export interface TaskSendResult {
+  messageId: string;
+  deliveryId?: string;
+  targetTaskId: string;
+  targetLabel: string;
+  sourceLabel: string;
+  targetIsLocal: boolean;
+}
+
 export type TaskCancelCommand =
   | {
       kind: "user";
@@ -202,6 +211,13 @@ export class TaskCreateConfigError extends CreateError {
 
 export interface TaskCreateResult {
   taskId: string;
+  facts?: {
+    title: string | null;
+    agentId: string | null;
+    cwd: string;
+    model: string | null;
+    thinking: string | null;
+  };
   activation?: {
     cwd: string;
     cwdDisplay: string;
@@ -235,7 +251,6 @@ export interface TaskCreateHostCommand {
   target: TaskCreateTarget;
   parentId?: string;
   assertRemoteCaller: () => void;
-  completeRemote: (result: TaskCreateResult, host: string) => TaskCreateResult;
 }
 
 export interface TaskCreateHost {
@@ -397,10 +412,20 @@ export interface TaskOps {
     principal: TaskCaller,
     targetTaskId: string,
     body: string,
-  ): Promise<void>;
+  ): Promise<TaskSendResult>;
   update(
     principal: TaskCaller,
     status: "waiting" | "blocked" | "done",
     body: string,
-  ): Promise<{ note?: string }>;
+  ): Promise<{
+    note?: string;
+    report?: {
+      sourceTaskId: string;
+      targetTaskId: string;
+      status: "blocked" | "done";
+      body: string;
+      sourceLabel: string;
+      targetLabel: string;
+    };
+  }>;
 }

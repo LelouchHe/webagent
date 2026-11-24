@@ -6869,6 +6869,7 @@ describe("events", () => {
         title: "ghost",
         configOptions: [],
       });
+
       assert.equal(state.replayQueue.length, 1);
 
       // The stream dies before the replay settles: a new connection
@@ -6896,6 +6897,34 @@ describe("events", () => {
         row.querySelector(".task-ref")?.getAttribute("data-ref-state"),
         "exited",
       );
+    });
+
+    it("learns remote existence from a live created row without switching", async () => {
+      const marks = await import("../public/js/task-ref-marks.ts");
+      marks.resetTaskRefMarks();
+      marks.applyTaskListSnapshot([{ id: "s1", title: null }]);
+      state.taskId = "s1";
+      events.handleEvent({
+        type: "system_message",
+        taskId: "s1",
+        kind: "task_created",
+        targetTaskId: "remote-child",
+        taskTitle: "Remote child",
+        title: 'Created task @"Remote child"',
+      });
+      const row = render.addSystemMessage({
+        title: 'Created task @"Remote child"',
+        taskRef: {
+          kind: "task_created",
+          taskId: "remote-child",
+          taskTitle: "Remote child",
+        },
+      });
+      assert.equal(
+        row.querySelector(".task-ref")?.getAttribute("data-ref-state"),
+        null,
+      );
+      assert.equal(state.taskId, "s1");
     });
 
     it("drops a history read that started before the connection generation ended", async () => {

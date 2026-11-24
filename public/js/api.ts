@@ -293,8 +293,8 @@ export function sendCollaborationMessage(
 export interface RemoteTaskSummary {
   kind: "remote";
   id: string;
-  host: string;
-  parent_id: string;
+  host?: string;
+  parent_id: string | null;
   title: string | null;
   workflow_status?: string;
   unreachable?: true;

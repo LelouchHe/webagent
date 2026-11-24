@@ -126,6 +126,17 @@ describe("task list egress with remote children", () => {
     mkdirSync(join(root, "public"));
     store = new Store(root);
     store.ensureRootTask(root);
+    store.createDeferredRemoteTask({
+      id: "remote-owned",
+      cwd: root,
+      source: "host",
+      agentId: "mock",
+      externalParentId: "external-parent",
+      peerTokenHash: "peer",
+      title: "Remote owned",
+      creationAnchor: { kind: "task_created" },
+    });
+    store.unarchiveTask("remote-owned");
     authStore = new AuthStore(join(root, "auth.json"));
     await authStore.load();
     apiToken = (await authStore.addToken("hub", "api")).token;
@@ -177,14 +188,29 @@ describe("task list egress with remote children", () => {
     const response = await request(port, "/api/v1/tasks", apiToken);
     assert.equal(response.status, 200);
     const entries = response.body as Array<Record<string, unknown>>;
-    assert.deepEqual(asked && [...asked], [store.rootTaskId]);
-    assert.deepEqual(entries.at(-1), {
-      kind: "remote",
-      id: "remote-child",
-      host: "owner",
-      parent_id: store.rootTaskId,
-      title: "Remote child",
-      workflow_status: "done",
-    });
+    assert.deepEqual(
+      new Set(asked ?? []),
+      new Set([store.rootTaskId, "remote-owned"]),
+    );
+    assert.deepEqual(
+      entries.find((entry) => entry.id === "remote-child"),
+      {
+        kind: "remote",
+        id: "remote-child",
+        host: "owner",
+        parent_id: store.rootTaskId,
+        title: "Remote child",
+        workflow_status: "done",
+      },
+    );
+    assert.deepEqual(
+      entries.find((entry) => entry.id === "external-parent"),
+      {
+        kind: "remote",
+        id: "external-parent",
+        parent_id: null,
+        title: null,
+      },
+    );
   });
 });

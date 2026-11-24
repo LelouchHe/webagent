@@ -325,12 +325,17 @@ function readBodyRaw(req: IncomingMessage): Promise<string> {
 function parseCollaborationBody(body: string): {
   targetTaskId: string;
   body: string;
+  sourceLabel?: string;
 } {
   const raw = JSON.parse(body) as unknown;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("invalid_collaboration_body");
   }
-  const value = raw as { targetTaskId?: unknown; body?: unknown };
+  const value = raw as {
+    targetTaskId?: unknown;
+    body?: unknown;
+    sourceLabel?: unknown;
+  };
   if (
     typeof value.targetTaskId !== "string" ||
     typeof value.body !== "string" ||
@@ -338,7 +343,13 @@ function parseCollaborationBody(body: string): {
   ) {
     throw new Error("invalid_collaboration_body");
   }
-  return { targetTaskId: value.targetTaskId, body: value.body };
+  return {
+    targetTaskId: value.targetTaskId,
+    body: value.body,
+    ...(typeof value.sourceLabel === "string"
+      ? { sourceLabel: value.sourceLabel }
+      : {}),
+  };
 }
 
 /**
@@ -909,38 +920,50 @@ export function createRequestHandler(
           }
         }
         const archivedIds = store.listArchivedTaskIds();
-        const publicTasks = store
-          .listTasks({
-            ...(source ? { source } : {}),
-            ...(agentFilter !== undefined ? { agentId: agentFilter } : {}),
-            archived: archivedFilter,
-          })
-          .map((task) => {
-            const {
-              pending_compact_summary: _pendingCompactSummary,
-              has_user_input: hasUserInput,
-              ...publicTask
-            } = task;
-            // Home-abbreviated display form for menus and lists; the raw cwd
-            // stays the canonical round-trip value. Every timestamp field is
-            // rendered ISO-8601 at egress (DB rows hold integer millis).
-            return {
-              ...publicTask,
-              agentId: store.getBindingAgent(task.id) ?? null,
-              created_at: isoFromMillis(task.created_at),
-              last_active_at: isoFromMillis(task.last_active_at),
-              deleted_at: isoFromMillisOrNull(task.deleted_at),
-              cwdDisplay: abbreviateHomePath(task.cwd),
-              hasUserInput: Boolean(hasUserInput),
-              isRoot: store.isRootTaskId(task.id),
-              // Egress fact, not a column: clients keep the full topology and
-              // decide which reads (`/switch`, path roots) exclude these.
-              archived: archivedIds.has(task.id),
-            };
-          });
+        const listedTasks = store.listTasks({
+          ...(source ? { source } : {}),
+          ...(agentFilter !== undefined ? { agentId: agentFilter } : {}),
+          archived: archivedFilter,
+        });
+        const publicTasks = listedTasks.map((task) => {
+          const {
+            pending_compact_summary: _pendingCompactSummary,
+            has_user_input: hasUserInput,
+            remote_parent_id: remoteParentId,
+            ...publicTask
+          } = task;
+          // Home-abbreviated display form for menus and lists; the raw cwd
+          // stays the canonical round-trip value. Every timestamp field is
+          // rendered ISO-8601 at egress (DB rows hold integer millis).
+          return {
+            ...publicTask,
+            agentId: store.getBindingAgent(task.id) ?? null,
+            created_at: isoFromMillis(task.created_at),
+            last_active_at: isoFromMillis(task.last_active_at),
+            deleted_at: isoFromMillisOrNull(task.deleted_at),
+            cwdDisplay: abbreviateHomePath(task.cwd),
+            hasUserInput: Boolean(hasUserInput),
+            isRoot: store.isRootTaskId(task.id),
+            // Egress fact, not a column: clients keep the full topology and
+            // decide which reads (`/switch`, path roots) exclude these.
+            archived: archivedIds.has(task.id),
+          };
+        });
         // Remote children follow their local parent into the same read, so
         // a client sees the tree MCP `task_list` sees. Display-only mirror
         // values; an unknown title is null.
+        const externalParents = [
+          ...new Set(
+            listedTasks
+              .filter((task) => task.remote_parent_id)
+              .map((task) => task.remote_parent_id) as string[],
+          ),
+        ].map((id) => ({
+          kind: "remote" as const,
+          id,
+          parent_id: null,
+          title: null,
+        }));
         const remoteTasks = (
           deps.hostRegistry?.listRemoteChildrenOf(
             new Set(publicTasks.map((task) => task.id)),
@@ -956,7 +979,9 @@ export function createRequestHandler(
             : {}),
           ...(item.unreachable ? { unreachable: true } : {}),
         }));
-        res.end(JSON.stringify([...publicTasks, ...remoteTasks]));
+        res.end(
+          JSON.stringify([...publicTasks, ...remoteTasks, ...externalParents]),
+        );
         return;
       }
 
@@ -1462,7 +1487,11 @@ export function createRequestHandler(
           });
           return;
         }
-        let body: { targetTaskId: string; body: string };
+        let body: {
+          targetTaskId: string;
+          body: string;
+          sourceLabel?: string;
+        };
         try {
           body = parseCollaborationBody(await readBody(req));
         } catch {
@@ -1492,6 +1521,9 @@ export function createRequestHandler(
               targetTaskId: body.targetTaskId,
               peerTokenHash: requestPrincipal.hash,
               body: body.body,
+              ...(body.sourceLabel === undefined
+                ? {}
+                : { sourceLabel: body.sourceLabel }),
             });
           } catch (error) {
             if (!(error instanceof HostExternalParentError)) throw error;
@@ -3145,6 +3177,12 @@ export function createRequestHandler(
             parentAgentId: activation.parentAgentId,
             agentId: activation.agentId,
             title: activation.title,
+            ...(requestPrincipal?.scope === "host"
+              ? {
+                  model: created.facts?.model ?? null,
+                  thinking: created.facts?.thinking ?? null,
+                }
+              : {}),
             workflowStatus: activation.workflowStatus,
             source: activation.source,
             configOptions: activation.configOptions,

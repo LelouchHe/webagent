@@ -269,6 +269,12 @@ empty execution binding, and external-parent link commit together without
 starting ACP. The initiator then records the returned task id and Host name
 beside the local parent.
 
+The Host-scoped owner's `201` includes the effective `model` and `thinking`
+facts in addition to the activation fields, so the caller's Core can record the
+same row for local and remote creates. After a successful create, Core writes
+the initiator's `task_created` row and link; for a remote target the displayed
+agent is `agent@host`.
+
 Remote creation does not retry. A 4xx rejection is returned as `502` with its
 `remoteStatus`; a lost or incomplete response reports `outcome: "unknown"`; and
 a peer success followed by a local link failure reports
@@ -300,9 +306,10 @@ was not sent; the body carries `error` plus `agentId` for a local agent)
   and the `model` / `thinking` values that took effect (an inherited, explicit,
   or target-reported value; `inherited` only when none can be determined)
 - Local creation cleans up empty tasks older than 60 seconds
-- Remote creation stores only `remote_task_links` on the initiator. Neither side
-  copies a Task row; the executor's empty binding materializes when the Task is
-  first dispatched to.
+- Remote creation stores its `remote_task_links` child row plus the same
+  caller-side `task_created` transcript event used by a local create on the
+  initiator. Neither side copies a Task row; the executor's empty binding
+  materializes when the Task is first dispatched to.
 
 ---
 
@@ -319,6 +326,7 @@ text and ignores client-supplied routing metadata.
 |---|---|---|---|
 | `targetTaskId` | string | Yes | Stable target task ID selected by the client |
 | `body` | string | Yes | Non-empty collaboration message body |
+| `sourceLabel` | string | Host caller only | Current label of the external parent Task; kept in owner memory until handoff |
 
 The server verifies only that the target task exists, is live, and differs from
 the source; it does not check a relationship, so a cross-branch or
@@ -332,6 +340,15 @@ The owner accepts it only when the local target's `parent` link names that id
 and the credential hash owns the link. The message is agent-authored and has
 only the target projection plus its delivery; no source projection is created.
 This is the synchronous peer dispatch used by remote `task_send`.
+
+The hub always supplies `sourceLabel` for a remote dispatch. The owner uses it
+for the receiver-side row and `From "…"` envelope during that delivery; if it
+is absent, the owner falls back to the external id prefix. The label is not
+persisted and is not a table or task fact.
+
+`GET /api/v1/tasks` also appends remote external-parent entries for listed
+owner Tasks. These entries have `kind: "remote"`, the external id, `parent_id:
+null`, and `title: null`; they feed reference existence only.
 
 **Response** `202`:
 

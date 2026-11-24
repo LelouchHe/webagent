@@ -61,6 +61,15 @@ spot gaps, and decide what still needs to be added without reading every spec.
     delivery, while the duplicate row remains drainable if still queued; host
     disconnect marks the mirror unreachable and send fails visibly; a wrong
     peer token cannot dispatch
+  - Core records a remote `Created task` row with an `agent@host` label; the
+    live row marks the child id present without browser navigation
+  - dispatch and report rows share the mirrored remote-child title; the owner
+    receiver row and prompt use the hub parent's carried title
+- `test/hosts-routes.test.ts` and `test/events.test.ts`
+  - an owner task list includes its external parent as an unknown remote entry
+    without a host/title, without an added SQL read
+  - a live `system_message(kind=task_created)` proves remote id existence to
+    reference marks without switching the viewed task
 - `test/sse-ticket-routes.test.ts`
   - two real host-token/link pairs receive only events for their own Tasks
 

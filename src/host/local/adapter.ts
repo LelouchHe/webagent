@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { AgentUnavailableError } from "../../agent-registry.ts";
 import type { Store, TaskRow } from "../../store.ts";
@@ -17,10 +16,8 @@ import { errorMessage, type AgentEvent } from "../../types.ts";
 import { formatFieldBlock } from "../../shared/field-block.ts";
 import { formatTaskReference } from "../../shared/task-reference.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../../shared/time.ts";
-import { buildTaskCreatedSystemMessage } from "../../task-created-message.ts";
 import { formatSilence } from "../../obligation-controller.ts";
 import { abbreviateHomePath } from "../../home-path.ts";
-import { formatTaskReport } from "../../task-report.ts";
 import type {
   TaskCaller,
   TaskCreateCaller,
@@ -121,7 +118,6 @@ export function createLocalTaskOps(deps: {
   store: Store;
   tasks: TaskManager;
   cancelTimeoutMs?: number;
-  broadcastCollaboration?: (event: TaskCollaborationEvent) => void;
   broadcastTaskCreated?: (event: TaskCreatedEvent) => void;
   broadcastConfigUpdate?: (
     event: Extract<AgentEvent, { type: "config_option_update" }>,
@@ -136,8 +132,6 @@ export function createLocalTaskOps(deps: {
   const {
     store,
     tasks,
-    broadcastCollaboration,
-    broadcastTaskCreated,
     broadcastConfigUpdate,
     broadcastTaskCancelNotice,
     broadcastTaskUpdate,
@@ -187,30 +181,6 @@ export function createLocalTaskOps(deps: {
       throw new Error("target_not_allowed");
     }
     return target;
-  }
-
-  function recordTaskCreated(input: {
-    taskId: string;
-    taskTitle: string;
-    sourceTaskId: string;
-    agentId: string;
-    cwd: string;
-    model: string | null;
-    thinking: string | null;
-    fromRef: "agent" | "user";
-  }): void {
-    const taskCreated = buildTaskCreatedSystemMessage(input);
-    store.saveEvent(input.sourceTaskId, "system_message", taskCreated.data, {
-      from_ref: input.fromRef,
-    });
-    broadcastTaskCreated?.({
-      messageId: randomUUID(),
-      sourceTaskId: input.sourceTaskId,
-      targetTaskId: input.taskId,
-      taskTitle: input.taskTitle,
-      title: taskCreated.title,
-      body: taskCreated.body,
-    });
   }
 
   function requireChildTarget(sourceTaskId: string, targetTaskId: string) {
@@ -351,7 +321,14 @@ export function createLocalTaskOps(deps: {
         });
         const task = requireTask(created.taskId);
         return {
-          taskId: task.id,
+          taskId: created.taskId,
+          facts: {
+            title: task.title,
+            agentId: store.getBindingAgent(task.id) ?? null,
+            cwd: task.cwd,
+            model: task.model,
+            thinking: task.reasoning_effort,
+          },
           activation: {
             cwd: task.cwd,
             cwdDisplay: abbreviateHomePath(task.cwd),
@@ -362,7 +339,7 @@ export function createLocalTaskOps(deps: {
             workflowStatus: task.workflow_status,
             source: task.source,
             configOptions: [],
-            agentCommands: tasks.getAgentCommands(task.id),
+            agentCommands: tasks.getAgentCommands(created.taskId),
           },
         };
       }
@@ -488,48 +465,14 @@ export function createLocalTaskOps(deps: {
         }
         throw error;
       }
-      // The child is committed and stays: it was created while the caller
-      // still owned its execution. This last step writes into the *source*
-      // transcript and broadcasts, and `createTask` may have awaited source
-      // config inheritance since the persist boundary — so the caller is
-      // validated again immediately before the source-side commit, with no
-      // await in between.
       if (agentCaller) authorize(agentCaller);
       const reported = reportedExecutionConfig(created.configOptions);
-      if (agentCaller) {
-        if (input.title) {
-          recordTaskCreated({
-            taskId: created.taskId,
-            taskTitle: input.title,
-            agentId: store.getBindingAgent(created.taskId) ?? targetAgentId,
-            cwd: cwd!,
-            model: input.model ?? reported.model ?? null,
-            thinking: input.thinking ?? reported.reasoning_effort ?? null,
-            sourceTaskId: agentCaller.taskId,
-            fromRef: "agent",
-          });
-        }
-        return { taskId: created.taskId };
-      }
-
-      const task = requireTask(created.taskId);
-      const auditParentId = task.parent_id;
-      if (input.title && auditParentId) {
-        recordTaskCreated({
-          taskId: created.taskId,
-          taskTitle: input.title,
-          agentId: store.getBindingAgent(created.taskId) ?? targetAgentId,
-          cwd: task.cwd,
-          // What took effect, not what was asked: an explicit value that the
-          // target accepted, the value inherited from a same-agent source, or
-          // the target session's own current value.
-          model: input.model ?? reported.model ?? null,
-          thinking: input.thinking ?? reported.reasoning_effort ?? null,
-          sourceTaskId: auditParentId,
-          fromRef: "user",
-        });
-      }
-      if (created.configOptions.length) {
+      const taskFacts = created.facts;
+      const createdTask = agentCaller ? null : store.getTask(created.taskId);
+      const createdAgentId = agentCaller
+        ? targetAgentId
+        : (store.getBindingAgent(created.taskId) ?? targetAgentId);
+      if (!agentCaller && created.configOptions.length) {
         broadcastConfigUpdate?.({
           type: "config_option_update",
           taskId: created.taskId,
@@ -537,22 +480,33 @@ export function createLocalTaskOps(deps: {
         });
       }
       return {
-        taskId: task.id,
-        activation: {
-          cwd: task.cwd,
-          cwdDisplay: abbreviateHomePath(task.cwd),
-          title: task.title,
-          parentId: task.parent_id,
-          parentAgentId:
-            task.parent_id !== null
-              ? (store.getBindingAgent(task.parent_id) ?? null)
-              : null,
-          agentId: store.getBindingAgent(task.id) ?? null,
-          workflowStatus: task.workflow_status,
-          source: task.source,
-          configOptions: created.configOptions,
-          agentCommands: tasks.getAgentCommands(task.id),
+        taskId: created.taskId,
+        facts: {
+          title: createdTask?.title ?? taskFacts?.title ?? input.title ?? null,
+          agentId: store.getBindingAgent(created.taskId) ?? createdAgentId,
+          cwd: createdTask?.cwd ?? taskFacts?.cwd ?? cwd!,
+          model: input.model ?? reported.model ?? null,
+          thinking: input.thinking ?? reported.reasoning_effort ?? null,
         },
+        ...(taskFacts && !agentCaller
+          ? {
+              activation: {
+                cwd: taskFacts.cwd,
+                cwdDisplay: abbreviateHomePath(taskFacts.cwd),
+                title: taskFacts.title,
+                parentId: taskFacts.parentId,
+                parentAgentId:
+                  taskFacts.parentId !== null
+                    ? (store.getBindingAgent(taskFacts.parentId) ?? null)
+                    : null,
+                agentId: createdAgentId,
+                workflowStatus: taskFacts.workflowStatus,
+                source: taskFacts.source,
+                configOptions: created.configOptions,
+                agentCommands: tasks.getAgentCommands(created.taskId),
+              },
+            }
+          : {}),
       };
     },
 
@@ -642,28 +596,20 @@ export function createLocalTaskOps(deps: {
       authorize(principal);
       const sourceTaskId = principal.taskId;
       const { source, target } = requireLocalTarget(sourceTaskId, targetTaskId);
-      const created = store.createCollaborationMessage({
-        id: randomUUID(),
-        deliveryId: randomUUID(),
-        sourceTaskId,
-        directTargetTaskId: target.id,
-        sourceActor: "agent",
-        body,
-      });
-      const sourceLabel = source.title ?? source.id.slice(0, 8);
-      const targetLabel = target.title ?? target.id.slice(0, 8);
-      broadcastCollaboration?.({
-        messageId: created.message.id,
+      const created = store.enqueueTargetCollaboration({
         sourceTaskId,
         targetTaskId: target.id,
-        sourceLabel,
-        targetLabel,
-        body: created.message.body,
-        taskId: sourceTaskId,
-        role: "source",
-        deliveryStatus: "queued",
+        body,
       });
-      void tasks.drainCollaborationDeliveries(target.id);
+      const targetLabel = target.title ?? target.id.slice(0, 8);
+      return {
+        messageId: created.messageId,
+        deliveryId: created.deliveryId,
+        targetTaskId: target.id,
+        targetLabel,
+        sourceLabel: source.title ?? source.id.slice(0, 8),
+        targetIsLocal: true,
+      };
     },
 
     async update(principal, status, body) {
@@ -673,35 +619,37 @@ export function createLocalTaskOps(deps: {
       // target's open account and are delivered to its source, or fall back to
       // the current parent when no account is open.
       const {
-        collaborationMessageId,
         accountTargetTaskId,
         silenceWatchMs,
         event,
+        accountTargetTaskIsLocal,
       } = tasks.settleAgentUpdate(sourceTaskId, status, body);
       broadcastTaskUpdate?.({
         taskId: sourceTaskId,
         seq: event.seq,
         data: JSON.parse(event.data) as Record<string, unknown>,
       });
-      if (collaborationMessageId && accountTargetTaskId) {
-        const source = requireTask(sourceTaskId);
-        const target = requireTask(accountTargetTaskId);
-        broadcastCollaboration?.({
-          messageId: collaborationMessageId,
-          sourceTaskId,
-          targetTaskId: accountTargetTaskId,
-          sourceLabel: source.title ?? source.id.slice(0, 8),
-          targetLabel: target.title ?? target.id.slice(0, 8),
-          body: formatTaskReport(status, body),
-          taskId: sourceTaskId,
-          role: "source",
-          deliveryStatus: "queued",
-        });
-        void tasks.drainCollaborationDeliveries(accountTargetTaskId);
-      }
-      if (silenceWatchMs === undefined) return {};
+      const localReport =
+        status !== "waiting" && accountTargetTaskId && accountTargetTaskIsLocal
+          ? {
+              sourceTaskId,
+              targetTaskId: accountTargetTaskId,
+              status,
+              body,
+              sourceLabel:
+                store.getTask(sourceTaskId)?.title ?? sourceTaskId.slice(0, 8),
+              targetLabel:
+                store.getTask(accountTargetTaskId)?.title ??
+                accountTargetTaskId.slice(0, 8),
+            }
+          : undefined;
+      if (silenceWatchMs === undefined)
+        return {
+          ...(localReport ? { report: localReport } : {}),
+        };
       return {
         note: `No visible wake source; the requester is notified after ${formatSilence(silenceWatchMs)} without agent activity.`,
+        ...(localReport ? { report: localReport } : {}),
       };
     },
   };

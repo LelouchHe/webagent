@@ -343,15 +343,48 @@
                 }
               ]
             ],
-            "reads": 18
+            "reads": 19
           }
         },
         {
           "name": "hub",
-          "sse": [],
+          "sse": [
+            {
+              "taskId": "00000000-0000-4000-8001-000000000001",
+              "events": [
+                {
+                  "type": "system_message",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "kind": "task_created",
+                  "messageId": "00000000-0000-4000-8001-000000000004",
+                  "sourceTaskId": "00000000-0000-4000-8001-000000000001",
+                  "targetTaskId": "00000000-0000-4000-8000-000000000002",
+                  "taskTitle": "REST remote child",
+                  "role": "source",
+                  "title": "Created task @\"REST remote child\"",
+                  "body": "Task ID: 00000000-0000-4000-8000-000000000002\nagent: owner-only@owner\ncwd: /\nmodel: inherited\nthinking: inherited"
+                }
+              ]
+            }
+          ],
           "mock": [],
           "sql": {
             "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    1,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "user",
+                    1789333200000
+                  ]
+                }
+              ],
               [
                 {
                   "kind": "write",
@@ -365,7 +398,7 @@
                 }
               ]
             ],
-            "reads": 3
+            "reads": 5
           }
         }
       ]
@@ -436,7 +469,7 @@
                 }
               ]
             ],
-            "reads": 18
+            "reads": 19
           }
         },
         {
@@ -449,7 +482,7 @@
                   "type": "user_message",
                   "taskId": "00000000-0000-4000-8001-000000000001",
                   "text": "create remote mcp",
-                  "clientOpId": "00000000-0000-4000-8001-000000000004"
+                  "clientOpId": "00000000-0000-4000-8001-000000000005"
                 },
                 {
                   "type": "state_patch",
@@ -465,6 +498,18 @@
                       }
                     }
                   }
+                },
+                {
+                  "type": "system_message",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "kind": "task_created",
+                  "messageId": "00000000-0000-4000-8001-000000000006",
+                  "sourceTaskId": "00000000-0000-4000-8001-000000000001",
+                  "targetTaskId": "00000000-0000-4000-8000-000000000003",
+                  "taskTitle": "MCP remote child",
+                  "role": "source",
+                  "title": "Created task @\"MCP remote child\"",
+                  "body": "Task ID: 00000000-0000-4000-8000-000000000003\nagent: owner-only@owner\ncwd: /\nmodel: inherited\nthinking: inherited"
                 },
                 {
                   "type": "state_patch",
@@ -590,9 +635,9 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    1,
+                    2,
                     "user_message",
-                    "{\"text\":\"create remote mcp\",\"clientOpId\":\"00000000-0000-4000-8001-000000000004\"}",
+                    "{\"text\":\"create remote mcp\",\"clientOpId\":\"00000000-0000-4000-8001-000000000005\"}",
                     "user",
                     1789333200000
                   ]
@@ -605,7 +650,22 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    2,
+                    3,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    4,
                     "assistant_message",
                     "{\"text\":\"Remote MCP child created.\"}",
                     "agent",
@@ -620,7 +680,7 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    3,
+                    5,
                     "prompt_done",
                     "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
                     "agent",
@@ -660,7 +720,7 @@
                 }
               ]
             ],
-            "reads": 22
+            "reads": 24
           }
         }
       ]
@@ -942,8 +1002,8 @@
             "id": 1,
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 1,
-            "type": "user_message",
-            "data": "{\"text\":\"create remote mcp\",\"clientOpId\":\"00000000-0000-4000-8001-000000000004\"}",
+            "type": "system_message",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
             "created_at": 1789333200000,
             "from_ref": "user"
           },
@@ -951,15 +1011,33 @@
             "id": 2,
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 2,
+            "type": "user_message",
+            "data": "{\"text\":\"create remote mcp\",\"clientOpId\":\"00000000-0000-4000-8001-000000000005\"}",
+            "created_at": 1789333200000,
+            "from_ref": "user"
+          },
+          {
+            "id": 3,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 3,
+            "type": "system_message",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only@owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only@owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 4,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 4,
             "type": "assistant_message",
             "data": "{\"text\":\"Remote MCP child created.\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
           {
-            "id": 3,
+            "id": 5,
             "task_id": "00000000-0000-4000-8001-000000000001",
-            "seq": 3,
+            "seq": 5,
             "type": "prompt_done",
             "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
             "created_at": 1789333200000,

@@ -1,12 +1,11 @@
-import { randomUUID } from "node:crypto";
 import type { Store } from "../store.ts";
-import type { TaskManager } from "../task-manager.ts";
-import { formatTaskReport } from "../task-report.ts";
 import type { HostStreamEvent } from "./remote/connection.ts";
+import type { EnqueueRemoteReport } from "./tasks.ts";
 
 export function createRemoteReportHandler(deps: {
   store: Store;
-  tasks: TaskManager;
+  sourceLabel: (host: string, childId: string) => string | undefined;
+  enqueueReport: EnqueueRemoteReport;
 }) {
   return (host: string, childId: string, event: HostStreamEvent): void => {
     if (
@@ -19,16 +18,15 @@ export function createRemoteReportHandler(deps: {
     }
     const link = deps.store.getRemoteChildLink(host, childId);
     if (!link || event.data.targetTaskId !== link.local_task_id) return;
-    const shouldDrain = deps.store.createRemoteReport({
-      id: randomUUID(),
-      deliveryId: randomUUID(),
-      idempotencyKey: `remote-report:${host}:${childId}:${event.seq}`,
+    deps.enqueueReport({
+      host,
+      childId,
+      seq: event.seq,
       sourceTaskId: childId,
       targetTaskId: link.local_task_id,
-      body: formatTaskReport(event.data.status, event.data.body),
+      status: event.data.status,
+      body: event.data.body,
+      sourceLabel: deps.sourceLabel(host, childId),
     });
-    if (shouldDrain) {
-      void deps.tasks.drainCollaborationDeliveries(link.local_task_id);
-    }
   };
 }

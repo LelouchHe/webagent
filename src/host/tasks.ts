@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { formatTaskReport } from "../task-report.ts";
 import type {
   RemoteTaskCreateTransport,
   TaskCaller,
@@ -8,10 +9,7 @@ import type {
   TaskOps,
   TaskListItem,
 } from "../api/tasks.ts";
-import {
-  TaskRemoteCreateConfigError,
-  TaskRemoteCreatePartialSuccessError,
-} from "../api/tasks.ts";
+import { TaskRemoteCreateConfigError } from "../api/tasks.ts";
 import type { Store } from "../store.ts";
 import type { TaskManager } from "../task-manager.ts";
 import {
@@ -61,13 +59,7 @@ export function createTaskHost(deps: {
           command.input.source ??
           (command.caller.kind === "agent" ? "agent" : "auto"),
       });
-      try {
-        return command.completeRemote(remote, host);
-      } catch (error) {
-        throw new TaskRemoteCreatePartialSuccessError(host, remote.taskId, {
-          cause: error,
-        });
-      }
+      return remote;
     },
   };
 }
@@ -78,11 +70,16 @@ export function createRoutedTaskOps(deps: {
   store: Store;
   tasks: TaskManager;
   broadcastCollaboration: (event: TaskCollaborationEvent) => void;
-}): Pick<TaskOps, "list" | "query" | "read" | "send"> {
+}): Pick<TaskOps, "list" | "query" | "read" | "send" | "update"> {
   const { local, remote, store, tasks, broadcastCollaboration } = deps;
   const authorize = (principal: TaskCaller) => {
     assertTaskCaller(tasks, principal);
   };
+  const enqueueReport = createReportEnqueuer({
+    store,
+    tasks,
+    broadcastCollaboration,
+  });
   return {
     async list(principal) {
       authorize(principal);
@@ -119,31 +116,139 @@ export function createRoutedTaskOps(deps: {
     async send(principal, targetTaskId, body) {
       authorize(principal);
       const target = remote.resolveRemoteChild(principal.taskId, targetTaskId);
-      if (!target) return local.send(principal, targetTaskId, body);
-      await remote.sendRemote(target, body);
+      const source = target ? store.getTask(principal.taskId) : null;
+      const sourceLabel = target
+        ? (source?.title ?? principal.taskId.slice(0, 8))
+        : "";
+      const performed = target
+        ? await remote.sendRemote(target, body, sourceLabel)
+        : await local.send(principal, targetTaskId, body);
       authorize(principal);
-      const source = store.getTask(principal.taskId);
-      if (!source) throw new Error("execution_replaced");
-      const targetLabel =
-        remote.remoteTitle(target) ?? target.taskId.slice(0, 8);
-      const message = store.recordAcceptedRemoteMessage({
-        id: randomUUID(),
-        sourceTaskId: source.id,
-        directTargetTaskId: target.taskId,
-        targetLabel,
+      if (target && !source) throw new Error("execution_replaced");
+      const effectiveSourceLabel = performed.sourceLabel;
+      const message = store.recordCallerSend({
+        id: performed.messageId,
+        deliveryId: performed.deliveryId,
+        sourceTaskId: principal.taskId,
+        directTargetTaskId: performed.targetTaskId,
+        sourceLabel: effectiveSourceLabel,
+        targetLabel: performed.targetLabel,
         body,
+        targetIsLocal: performed.targetIsLocal,
       });
       broadcastCollaboration({
         messageId: message.id,
-        sourceTaskId: source.id,
-        targetTaskId: target.taskId,
-        sourceLabel: source.title ?? source.id.slice(0, 8),
-        targetLabel,
+        sourceTaskId: principal.taskId,
+        targetTaskId: performed.targetTaskId,
+        sourceLabel: effectiveSourceLabel,
+        targetLabel: performed.targetLabel,
         body,
-        taskId: source.id,
+        taskId: principal.taskId,
         role: "source",
-        deliveryStatus: "accepted",
+        deliveryStatus: performed.targetIsLocal ? "queued" : "accepted",
       });
+      if (performed.targetIsLocal) {
+        void tasks.drainCollaborationDeliveries(performed.targetTaskId);
+      }
+      return performed;
     },
+    async update(principal, status, body) {
+      const result = await local.update(principal, status, body);
+      if (result.report) {
+        enqueueReport({ ...result.report, recordSource: true });
+      }
+      const { report: _report, ...publicResult } = result;
+      return publicResult;
+    },
+  };
+}
+
+export type EnqueueRemoteReport = (input: {
+  host: string;
+  childId: string;
+  seq: number;
+  sourceTaskId: string;
+  targetTaskId: string;
+  status: "blocked" | "done";
+  body: string;
+  sourceLabel?: string;
+}) => boolean;
+
+export function createRemoteReportEnqueuer(deps: {
+  store: Store;
+  tasks: TaskManager;
+}): EnqueueRemoteReport {
+  const enqueue = createReportEnqueuer(deps);
+  return (input) => {
+    return enqueue({
+      sourceTaskId: input.sourceTaskId,
+      targetTaskId: input.targetTaskId,
+      status: input.status,
+      body: input.body,
+      sourceLabel: input.sourceLabel,
+      idempotencyKey: `remote-report:${input.host}:${input.childId}:${input.seq}`,
+    });
+  };
+}
+
+function createReportEnqueuer(deps: {
+  store: Store;
+  tasks: TaskManager;
+  broadcastCollaboration?: (event: TaskCollaborationEvent) => void;
+}) {
+  return (input: {
+    sourceTaskId: string;
+    targetTaskId: string;
+    status: "blocked" | "done";
+    body: string;
+    sourceLabel?: string;
+    targetLabel?: string;
+    recordSource?: boolean;
+    idempotencyKey?: string;
+  }): boolean => {
+    const messageId = randomUUID();
+    const deliveryId = randomUUID();
+    const shouldDrain = deps.store.enqueueReportDelivery({
+      id: messageId,
+      deliveryId,
+      idempotencyKey:
+        input.idempotencyKey ?? `${messageId}:${input.targetTaskId}`,
+      sourceTaskId: input.sourceTaskId,
+      targetTaskId: input.targetTaskId,
+      body: formatTaskReport(input.status, input.body),
+    });
+    if (shouldDrain && input.recordSource) {
+      if (input.sourceLabel && input.targetLabel) {
+        deps.store.recordCallerSend({
+          id: messageId,
+          deliveryId,
+          sourceTaskId: input.sourceTaskId,
+          directTargetTaskId: input.targetTaskId,
+          sourceLabel: input.sourceLabel,
+          targetLabel: input.targetLabel,
+          body: formatTaskReport(input.status, input.body),
+          targetIsLocal: true,
+          readLocalLabels: false,
+        });
+        deps.broadcastCollaboration?.({
+          messageId,
+          sourceTaskId: input.sourceTaskId,
+          targetTaskId: input.targetTaskId,
+          sourceLabel: input.sourceLabel,
+          targetLabel: input.targetLabel,
+          body: formatTaskReport(input.status, input.body),
+          taskId: input.sourceTaskId,
+          role: "source",
+          deliveryStatus: "queued",
+        });
+      }
+    }
+    if (shouldDrain && input.sourceLabel) {
+      deps.tasks.rememberCollaborationSourceLabel(messageId, input.sourceLabel);
+    }
+    if (shouldDrain) {
+      void deps.tasks.drainCollaborationDeliveries(input.targetTaskId);
+    }
+    return shouldDrain;
   };
 }

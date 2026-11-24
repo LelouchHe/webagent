@@ -8,6 +8,9 @@ import { tmpdir } from "node:os";
 import { CapabilityStore } from "../../src/mcp/capability.ts";
 import { createMcpEndpoint } from "../../src/mcp/server.ts";
 import { createLocalTaskOps } from "../../src/host/local/adapter.ts";
+import { createTaskOpsCore } from "../../src/task-ops.ts";
+import { createRoutedTaskOps, createTaskHost } from "../../src/host/tasks.ts";
+import { HostRegistry } from "../../src/host/remote/registry.ts";
 import type { TaskOps } from "../../src/api/tasks.ts";
 import { TaskManager, type DeliveryBridge } from "../../src/task-manager.ts";
 import { TaskStateManager } from "../../src/task-state.ts";
@@ -196,11 +199,28 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
 
   const createCalls: Array<"user" | "agent" | "host"> = [];
   const localTaskOps = createLocalTaskOps({ store, tasks });
+  const emptyRemote = new HostRegistry(
+    {},
+    { listLinks: () => [], onRemoteEvent: () => {} },
+  );
+  const core = createTaskOpsCore({
+    host: createTaskHost({ local: localTaskOps, remote: emptyRemote }),
+    store,
+    tasks,
+  });
   const host: TaskOps = {
     ...localTaskOps,
+    ...core,
+    ...createRoutedTaskOps({
+      local: localTaskOps,
+      remote: emptyRemote,
+      store,
+      tasks,
+      broadcastCollaboration: () => {},
+    }),
     async create(caller, input) {
       createCalls.push(caller.kind);
-      return localTaskOps.create(caller, input);
+      return core.create(caller, input);
     },
   };
   const endpoint = createMcpEndpoint({

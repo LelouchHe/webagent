@@ -591,35 +591,10 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000007",
                 "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-000000000005",
-                "agent",
-                "park before deletion",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000007",
-                "00000000-0000-4000-8000-000000000001",
-                "source",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000007",
-                "00000000-0000-4000-8000-000000000005",
-                "target",
                 1789333200000
               ]
             },
@@ -635,11 +610,35 @@
                 "msg:00000000-0000-4000-8000-000000000007",
                 1789333200000
               ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000007",
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000005",
+                "park before deletion",
+                1789333200000
+              ]
             },
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000007",
+                "00000000-0000-4000-8000-000000000005",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000008",
                 "00000000-0000-4000-8000-000000000007",

@@ -2114,6 +2114,12 @@ export function handleEvent(msg: AgentEvent) {
   if (msg.type === "task_created") {
     observeTaskCreated(msg.taskId, msg.agentId ?? null);
     noteTaskCreated(msg.taskId, msg.title ?? null);
+  } else if (
+    msg.type === "system_message" &&
+    msg.kind === "task_created" &&
+    msg.targetTaskId
+  ) {
+    noteTaskCreated(msg.targetTaskId, msg.taskTitle ?? null);
   } else if (msg.type === "task_deleted") {
     observeTaskDeleted(msg.taskId);
     // Before the "is this the current task" branch below: a deleted task is

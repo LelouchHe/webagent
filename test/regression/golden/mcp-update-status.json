@@ -752,6 +752,67 @@
             {
               "kind": "write",
               "method": "run",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000007",
+                "00000000-0000-4000-8000-000000000004",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000004",
+                3,
+                "system_message",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000004\",\"sourceLabel\":\"Fallback child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Fallback child\\\" sent @root\",\"body\":\"Task status: done\\nNo account completion.\"}",
+                "msg:00000000-0000-4000-8000-000000000007",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000007",
+                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000001",
+                "Task status: done\nNo account completion.",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000007",
+                "00000000-0000-4000-8000-000000000001",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000008",
+                "00000000-0000-4000-8000-000000000007",
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000007:00000000-0000-4000-8000-000000000001",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
               "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
               "args": ["/", 1789333200000]
             }
@@ -791,66 +852,6 @@
                 "agent",
                 1789333200000
               ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000007",
-                "00000000-0000-4000-8000-000000000004",
-                "00000000-0000-4000-8000-000000000001",
-                "agent",
-                "Task status: done\nNo account completion.",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000007",
-                "00000000-0000-4000-8000-000000000004",
-                "source",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000007",
-                "00000000-0000-4000-8000-000000000001",
-                "target",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000004",
-                3,
-                "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000004\",\"sourceLabel\":\"Fallback child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Fallback child\\\" sent @root\",\"body\":\"Task status: done\\nNo account completion.\"}",
-                "msg:00000000-0000-4000-8000-000000000007",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000008",
-                "00000000-0000-4000-8000-000000000007",
-                "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-000000000007:00000000-0000-4000-8000-000000000001",
-                1789333200000
-              ]
             }
           ],
           [
@@ -870,7 +871,7 @@
             }
           ]
         ],
-        "reads": 65
+        "reads": 62
       }
     },
     {
@@ -1620,35 +1621,10 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000c",
                 "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-00000000000a",
-                "agent",
-                "report blocked",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000c",
-                "00000000-0000-4000-8000-000000000001",
-                "source",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000c",
-                "00000000-0000-4000-8000-00000000000a",
-                "target",
                 1789333200000
               ]
             },
@@ -1664,16 +1640,101 @@
                 "msg:00000000-0000-4000-8000-00000000000c",
                 1789333200000
               ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000e",
+                "00000000-0000-4000-8000-00000000000a",
+                1789333200000
+              ]
             },
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
+              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000a",
+                4,
+                "system_message",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceLabel\":\"Blocked child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Blocked child\\\" sent @root\",\"body\":\"Task status: blocked\\nNeed parent input.\"}",
+                "msg:00000000-0000-4000-8000-00000000000e",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000c",
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-00000000000a",
+                "report blocked",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000c",
+                "00000000-0000-4000-8000-00000000000a",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000d",
                 "00000000-0000-4000-8000-00000000000c",
                 "00000000-0000-4000-8000-00000000000a",
                 "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8000-00000000000a",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000e",
+                "00000000-0000-4000-8000-00000000000a",
+                "00000000-0000-4000-8000-000000000001",
+                "Task status: blocked\nNeed parent input.",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000e",
+                "00000000-0000-4000-8000-000000000001",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
+              "args": [
+                "00000000-0000-4000-8000-00000000000f",
+                "00000000-0000-4000-8000-00000000000e",
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-00000000000e:00000000-0000-4000-8000-000000000001",
                 1789333200000
               ]
             }
@@ -1781,66 +1842,6 @@
                 "agent",
                 1789333200000
               ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000e",
-                "00000000-0000-4000-8000-00000000000a",
-                "00000000-0000-4000-8000-000000000001",
-                "agent",
-                "Task status: blocked\nNeed parent input.",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000e",
-                "00000000-0000-4000-8000-00000000000a",
-                "source",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000e",
-                "00000000-0000-4000-8000-000000000001",
-                "target",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000a",
-                4,
-                "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceLabel\":\"Blocked child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Blocked child\\\" sent @root\",\"body\":\"Task status: blocked\\nNeed parent input.\"}",
-                "msg:00000000-0000-4000-8000-00000000000e",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
-              "args": [
-                "00000000-0000-4000-8000-00000000000f",
-                "00000000-0000-4000-8000-00000000000e",
-                "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-00000000000e:00000000-0000-4000-8000-000000000001",
-                1789333200000
-              ]
             }
           ],
           [
@@ -1868,7 +1869,7 @@
             }
           ]
         ],
-        "reads": 131
+        "reads": 128
       }
     },
     {
@@ -2628,35 +2629,10 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000013",
                 "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-000000000011",
-                "agent",
-                "build wake target",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000013",
-                "00000000-0000-4000-8000-000000000001",
-                "source",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000013",
-                "00000000-0000-4000-8000-000000000011",
-                "target",
                 1789333200000
               ]
             },
@@ -2672,11 +2648,35 @@
                 "msg:00000000-0000-4000-8000-000000000013",
                 1789333200000
               ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000013",
+                "00000000-0000-4000-8000-000000000001",
+                "00000000-0000-4000-8000-000000000011",
+                "build wake target",
+                1789333200000
+              ]
             },
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000013",
+                "00000000-0000-4000-8000-000000000011",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000014",
                 "00000000-0000-4000-8000-000000000013",
@@ -3348,35 +3348,10 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000019",
                 "00000000-0000-4000-8000-000000000011",
-                "00000000-0000-4000-8000-000000000015",
-                "agent",
-                "wake later",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000019",
-                "00000000-0000-4000-8000-000000000011",
-                "source",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000019",
-                "00000000-0000-4000-8000-000000000015",
-                "target",
                 1789333200000
               ]
             },
@@ -3392,11 +3367,35 @@
                 "msg:00000000-0000-4000-8000-000000000019",
                 1789333200000
               ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000019",
+                "00000000-0000-4000-8000-000000000011",
+                "00000000-0000-4000-8000-000000000015",
+                "wake later",
+                1789333200000
+              ]
             },
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000019",
+                "00000000-0000-4000-8000-000000000015",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000001a",
                 "00000000-0000-4000-8000-000000000019",
@@ -3983,13 +3982,19 @@
     "message_projections": [
       {
         "message_id": "00000000-0000-4000-8000-000000000007",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "role": "target",
+        "created_at": 1789333200000
+      },
+      {
+        "message_id": "00000000-0000-4000-8000-000000000007",
         "task_id": "00000000-0000-4000-8000-000000000004",
         "role": "source",
         "created_at": 1789333200000
       },
       {
-        "message_id": "00000000-0000-4000-8000-000000000007",
-        "task_id": "00000000-0000-4000-8000-000000000001",
+        "message_id": "00000000-0000-4000-8000-00000000000c",
+        "task_id": "00000000-0000-4000-8000-00000000000a",
         "role": "target",
         "created_at": 1789333200000
       },
@@ -4000,8 +4005,8 @@
         "created_at": 1789333200000
       },
       {
-        "message_id": "00000000-0000-4000-8000-00000000000c",
-        "task_id": "00000000-0000-4000-8000-00000000000a",
+        "message_id": "00000000-0000-4000-8000-00000000000e",
+        "task_id": "00000000-0000-4000-8000-000000000001",
         "role": "target",
         "created_at": 1789333200000
       },
@@ -4012,26 +4017,14 @@
         "created_at": 1789333200000
       },
       {
-        "message_id": "00000000-0000-4000-8000-00000000000e",
-        "task_id": "00000000-0000-4000-8000-000000000001",
-        "role": "target",
-        "created_at": 1789333200000
-      },
-      {
-        "message_id": "00000000-0000-4000-8000-000000000013",
-        "task_id": "00000000-0000-4000-8000-000000000001",
-        "role": "source",
-        "created_at": 1789333200000
-      },
-      {
         "message_id": "00000000-0000-4000-8000-000000000013",
         "task_id": "00000000-0000-4000-8000-000000000011",
         "role": "target",
         "created_at": 1789333200000
       },
       {
-        "message_id": "00000000-0000-4000-8000-000000000019",
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "message_id": "00000000-0000-4000-8000-000000000013",
+        "task_id": "00000000-0000-4000-8000-000000000001",
         "role": "source",
         "created_at": 1789333200000
       },
@@ -4039,6 +4032,12 @@
         "message_id": "00000000-0000-4000-8000-000000000019",
         "task_id": "00000000-0000-4000-8000-000000000015",
         "role": "target",
+        "created_at": 1789333200000
+      },
+      {
+        "message_id": "00000000-0000-4000-8000-000000000019",
+        "task_id": "00000000-0000-4000-8000-000000000011",
+        "role": "source",
         "created_at": 1789333200000
       }
     ],

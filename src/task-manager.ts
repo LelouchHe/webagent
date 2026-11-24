@@ -681,6 +681,7 @@ export class TaskManager implements ObligationHost {
   readonly activePrompts: Set<string> = new TurnSlotSet(this.openTurns);
   /** One microtask recovery per task while an unfinished-work retry is active. */
   private readonly pendingWorkRecoveries = new Set<string>();
+  private readonly collaborationSourceLabels = new Map<string, string>();
   /** Latest qualifying agent-runtime activity per task, epoch ms. */
   private readonly lastAgentActivityAt = new Map<string, number>();
   /**
@@ -1545,7 +1546,18 @@ export class TaskManager implements ObligationHost {
        */
       announce?: boolean;
     },
-  ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+  ): Promise<{
+    taskId: string;
+    configOptions: ConfigOption[];
+    facts?: {
+      title: string | null;
+      agentId: string;
+      cwd: string;
+      parentId: string | null;
+      workflowStatus: WorkflowStatus;
+      source: string;
+    };
+  }> {
     const agentId = this.attachExecutionBridge(bridge);
     if (opts?.agentId !== undefined && opts.agentId !== agentId) {
       // The declared target and the resolved transport must be the same agent,
@@ -1884,6 +1896,18 @@ export class TaskManager implements ObligationHost {
       return {
         taskId: taskId,
         configOptions: task ? this.applyStoredConfig(configOptions, task) : [],
+        ...(task
+          ? {
+              facts: {
+                title: task.title,
+                agentId,
+                cwd: task.cwd,
+                parentId: task.parent_id,
+                workflowStatus: task.workflow_status,
+                source: task.source,
+              },
+            }
+          : {}),
       };
     } finally {
       this.endCreatingClaim(taskId);
@@ -3933,6 +3957,10 @@ export class TaskManager implements ObligationHost {
     this.remoteChildWakeSource = check;
   }
 
+  rememberCollaborationSourceLabel(messageId: string, label: string): void {
+    this.collaborationSourceLabels.set(messageId, label);
+  }
+
   /**
    * Install the SSE broadcast hook for a newly created task. Every creation
    * entry point (HTTP create, quick prompt, agent `task_create`) announces
@@ -3995,6 +4023,7 @@ export class TaskManager implements ObligationHost {
     collaborationMessageId: string | null;
     accountTargetTaskId: string | null;
     event: ReturnType<Store["recordAgentWorkflowUpdate"]>["event"];
+    accountTargetTaskIsLocal: boolean;
     /**
      * For `waiting` with nothing visible to wake the task while it owes an
      * account: the silence window after which the requester is notified.
@@ -4025,6 +4054,7 @@ export class TaskManager implements ObligationHost {
         collaborationMessageId: null,
         accountTargetTaskId: null,
         event,
+        accountTargetTaskIsLocal: false,
         ...(watched ? { silenceWatchMs: this.obligations.silenceMs } : {}),
       };
     }
@@ -4041,9 +4071,6 @@ export class TaskManager implements ObligationHost {
           : null;
     const accountTargetTaskId =
       accountSource ?? localParentTaskId ?? externalParentTaskId;
-    const externalAccountTarget =
-      externalParentTaskId !== null &&
-      accountTargetTaskId === externalParentTaskId;
     const { collaborationMessageId, event } =
       this.store.recordAgentWorkflowUpdate(
         targetTaskId,
@@ -4051,12 +4078,18 @@ export class TaskManager implements ObligationHost {
         body,
         accountTargetTaskId,
         accountSource === undefined ? "fallback" : "settled",
-        externalAccountTarget,
       );
     // A failed transaction above leaves both the account and the marker alone.
     this.obligations.noteUpdate(targetTaskId);
     if (accountSource !== undefined) this.obligations.close(targetTaskId);
-    return { collaborationMessageId, accountTargetTaskId, event };
+    return {
+      collaborationMessageId,
+      accountTargetTaskId,
+      accountTargetTaskIsLocal:
+        account?.sourceKind === "local" ||
+        (account === undefined && localParentTaskId !== null),
+      event,
+    };
   }
 
   /**
@@ -4173,6 +4206,7 @@ export class TaskManager implements ObligationHost {
     // fenced verbatim between scissor lines so the agent never reads metadata
     // as instruction and the forwarding layer never rewrites the content.
     const sourceName =
+      this.collaborationSourceLabels.get(message.id) ??
       this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
       message.source_task_id.slice(0, 8);
     return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
@@ -4206,6 +4240,7 @@ export class TaskManager implements ObligationHost {
       runtimeMessage = recorded;
     }
     const sourceLabel =
+      this.collaborationSourceLabels.get(message.id) ??
       this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
       message.source_task_id.slice(0, 8);
     this.store.saveEvent(
@@ -4396,6 +4431,7 @@ export class TaskManager implements ObligationHost {
         this.store.getTaskIncludingDeleted(taskId)?.title ?? taskId.slice(0, 8);
       for (const { message } of claimed) {
         this.projectDeliveredMessage(taskId, message, targetLabel);
+        this.collaborationSourceLabels.delete(message.id);
       }
       this.persistCollaborationPromptAudit(
         taskId,

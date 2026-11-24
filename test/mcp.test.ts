@@ -259,6 +259,13 @@ describe("createMcpEndpoint", () => {
     },
     send: async (...args: unknown[]) => {
       calls.push({ kind: "send", args });
+      return {
+        messageId: "message",
+        targetTaskId: "child",
+        targetLabel: "child",
+        sourceLabel: "current",
+        targetIsLocal: true,
+      };
     },
     update: async (...args: unknown[]) => {
       calls.push({ kind: "update", args });
