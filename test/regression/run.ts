@@ -254,8 +254,8 @@ async function createInstances(
     definition.instances ?? {
       default: { mock: definition.mock },
     };
-  const plans = Object.entries(specs).map(([instanceName, spec]) =>
-    createInstancePlan(name, instanceName, spec),
+  const plans = Object.entries(specs).map(([instanceName, spec], index) =>
+    createInstancePlan(name, instanceName, spec, index),
   );
   const contexts = Object.fromEntries(
     plans.map((plan) => [
@@ -324,6 +324,7 @@ function createInstancePlan(
   scenarioName: string,
   instanceName: string,
   spec: RegressionInstanceSpec,
+  index: number,
 ): InstancePlan {
   const root = join(
     tmpdir(),
@@ -359,6 +360,8 @@ function createInstancePlan(
       HOME: home,
       WEBAGENT_STARTUP_CHECKED: "1",
       WEBAGENT_REGRESSION_OBSERVER: observerLog,
+      // Instances share no ids in production; keep their fixed UUIDs apart.
+      WEBAGENT_REGRESSION_UUID_SPACE: String(index),
       WEBAGENT_REGRESSION_SQL: "1",
       WEBAGENT_REGRESSION_BEHAVIOR_PATH: behaviorPath,
       WEBAGENT_REGRESSION_CALLS_PATH: mockLog,

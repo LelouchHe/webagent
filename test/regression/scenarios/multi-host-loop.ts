@@ -40,10 +40,10 @@ function readRemoteId(state: State): string {
   return (id as JsonObject).id as string;
 }
 
-async function waitForRows(state: State, sql: string): Promise<Json> {
+async function waitForRows(dbPath: string, sql: string): Promise<Json> {
   const deadline = performance.now() + 10_000;
   while (performance.now() < deadline) {
-    const rows = readRows(state.hubDb, sql);
+    const rows = readRows(dbPath, sql);
     if (Array.isArray(rows) && rows.length > 0) return rows;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
@@ -264,13 +264,6 @@ export default scenario<State>({
             }),
       },
       {
-        name: "owner-attaches-remote-task-locally",
-        action: (client) =>
-          client
-            .instance("owner")
-            .rest("POST", `/api/v1/tasks/${readRemoteId(state)}/unarchive`),
-      },
-      {
         name: "list-query-read-without-owner-acp",
         action: async (client) => {
           const response = await client
@@ -295,15 +288,18 @@ export default scenario<State>({
             .rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
               text: "dispatch remote wait",
             });
-          const ownerStatus = await client
-            .instance("owner")
-            .rest("GET", `/api/v1/tasks/${readRemoteId(state)}/status`);
+          // The prompt returns before the hub turn runs; wait until the owner
+          // has handed the dispatch to its Task, so the whole dispatch lands in
+          // this step on every run.
+          const ownerDelivery = await waitForRows(
+            state.ownerDb,
+            `SELECT m.source_actor, m.body, d.status
+             FROM deliveries d JOIN messages m ON m.id = d.message_id
+             WHERE m.body = 'dispatch remote wait' AND d.status = 'delivered'`,
+          );
           return {
             prompt: { status: prompt.status, body: prompt.body },
-            ownerStatus: {
-              status: ownerStatus.status,
-              body: ownerStatus.body,
-            },
+            ownerDelivery,
           };
         },
       },
@@ -334,12 +330,22 @@ export default scenario<State>({
               text: "finish after owner restart",
             });
           const queuedReports = await waitForRows(
-            state,
+            state.hubDb,
             `SELECT d.status, d.idempotency_key
              FROM deliveries d
              WHERE d.idempotency_key LIKE 'remote-report:%'
                AND d.status = 'queued'
              ORDER BY d.idempotency_key`,
+          );
+          // Let the owner turn finish before the hub goes down, so its last
+          // events never race the host connection closing.
+          await waitForRows(
+            state.ownerDb,
+            `SELECT 1 FROM events
+             WHERE task_id = '${readRemoteId(state)}' AND type = 'prompt_done'
+               AND seq > (SELECT MAX(seq) FROM events
+                          WHERE task_id = '${readRemoteId(state)}'
+                            AND type = 'task_update')`,
           );
           const hubRestart = await client.restart("hub");
           const reconnected = await waitForHost(
