@@ -97,7 +97,7 @@ The CLI prints the raw token to stdout exactly once. If you lose it, revoke and 
 
 - **`hash`**: SHA-256 of the raw token. The raw value never persists server-side.
 - **`name`**: free-form label, unique per file. Used by the CLI and `/tokens` API to address a token.
-- **`scope`**: `admin` (full access, including token CRUD), `api` (everything except `/tokens/**`), or `read` (pure reads only). `webagent --create-token` always creates `admin`. `POST /api/v1/tokens` creates `api` by default and accepts `read`.
+- **`scope`**: `admin` (full access, including token CRUD), `api` (everything except `/tokens/**`), `host` (connection probes and remote Task create), or `read` (pure reads only). `webagent --create-token` always creates `admin`. `POST /api/v1/tokens` creates `api` by default and accepts `host` or `read`.
 - **`lastUsedAt`**: updated on every successful auth, but buffered in memory and flushed every 60s (and on `SIGTERM`) to avoid hot-write churn. Reads from disk return the last-flushed value.
 - **File locking**: `proper-lockfile` guards every read-modify-write so the CLI (which mutates `auth.json` while the daemon is running) and the daemon's flush timer cannot interleave and lose updates.
 

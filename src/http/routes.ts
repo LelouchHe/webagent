@@ -30,6 +30,7 @@ import { handleShareRoutes } from "../share/routes.ts";
 import { handleFileRoutes } from "../files/routes.ts";
 import {
   authenticate,
+  isHostScopeAllowedPath,
   isReadScopeAllowedPath,
   isWhitelistedPath,
 } from "../auth-middleware.ts";
@@ -44,11 +45,7 @@ import {
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { validateTaskTitle } from "../shared/task-title.ts";
 import type { TaskOps } from "../api/tasks.ts";
-import {
-  TaskAgentIdTypeError,
-  TaskAgentNotConfiguredError,
-  TaskAgentStartError,
-} from "../api/tasks.ts";
+import { isTaskCreateError } from "../api/tasks.ts";
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -148,7 +145,7 @@ function compactPreviousSeq(
   }
 }
 
-import type { AuthStore, TokenRecord } from "../auth-store.ts";
+import type { AuthStore, Scope, TokenRecord } from "../auth-store.ts";
 import type { TicketStore } from "../sse-ticket.ts";
 import {
   signAttachmentUrl,
@@ -788,6 +785,16 @@ export function createRequestHandler(
           res.end(JSON.stringify({ error: "Forbidden", reason: "read_scope" }));
           return;
         }
+        if (
+          result.principal.scope === "host" &&
+          !isHostScopeAllowedPath(method, path)
+        ) {
+          res.writeHead(HTTP_STATUS.FORBIDDEN, {
+            "Content-Type": "application/json",
+          });
+          res.end(JSON.stringify({ error: "Forbidden", reason: "host_scope" }));
+          return;
+        }
       }
     }
 
@@ -1030,7 +1037,7 @@ export function createRequestHandler(
         return;
       }
 
-      // POST /api/v1/tokens — create new api-scope token, return raw value once
+      // POST /api/v1/tokens — create a non-admin token, return raw value once
       if (url === "/api/v1/tokens" && req.method === "POST") {
         const principal = principalByRequest.get(req);
         if (!deps.authStore || !principal) {
@@ -1056,9 +1063,9 @@ export function createRequestHandler(
         // deliberately CLI-only so a compromised api/read token cannot
         // escalate through this route.
         const scope = body.scope === undefined ? "api" : body.scope;
-        if (scope !== "api" && scope !== "read") {
+        if (scope !== "api" && scope !== "host" && scope !== "read") {
           json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "scope must be 'api' or 'read'",
+            error: "scope must be 'api', 'host', or 'read'",
           });
           return;
         }
@@ -3033,10 +3040,15 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
         }
+        const requestPrincipal = principalByRequest.get(req);
         const source = body.source ?? "auto";
         const title =
           body.title !== undefined ? validateTaskTitle(body.title) : undefined;
-        if (title !== undefined && (title === null || !body.parentId)) {
+        if (
+          title !== undefined &&
+          (title === null ||
+            (!body.parentId && requestPrincipal?.scope !== "host"))
+        ) {
           json(res, HTTP_STATUS.BAD_REQUEST, {
             error: "a named child needs a non-empty title and a parent",
           });
@@ -3044,7 +3056,12 @@ export function createRequestHandler(
         }
         try {
           const created = await taskOps.create(
-            { kind: "user" },
+            requestPrincipal?.scope === "host"
+              ? {
+                  kind: "host",
+                  peerTokenHash: requestPrincipal.hash,
+                }
+              : { kind: "user" },
             {
               cwd: body.cwd,
               inheritFromTaskId: body.inheritFromTaskId,
@@ -3074,22 +3091,80 @@ export function createRequestHandler(
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          if (err instanceof TaskAgentIdTypeError) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "agentId must be a string",
-            });
-          } else if (err instanceof TaskAgentNotConfiguredError) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: `Agent ${err.agentId} is not configured`,
-            });
-          } else if (err instanceof TaskAgentStartError) {
-            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-              error: err.unavailable
-                ? `Agent ${err.agentId} is not available: ${err.reason}`
-                : err.reason,
-              agentId: err.agentId,
-            });
-          } else if (msg === "parent_not_found") {
+          if (isTaskCreateError(err)) {
+            const classified = err;
+            switch (classified.kind) {
+              case "agent_id_type":
+                json(res, HTTP_STATUS.BAD_REQUEST, {
+                  error: "agentId must be a string",
+                });
+                return;
+              case "input":
+                json(res, HTTP_STATUS.BAD_REQUEST, {
+                  error: classified.clientMessage,
+                  code: classified.code,
+                });
+                return;
+              case "agent_not_configured":
+                json(res, HTTP_STATUS.BAD_REQUEST, {
+                  error: `Agent ${classified.agentId} is not configured`,
+                });
+                return;
+              case "agent_start":
+                json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+                  error: classified.unavailable
+                    ? `Agent ${classified.agentId} is not available: ${classified.reason}`
+                    : classified.reason,
+                  agentId: classified.agentId,
+                });
+                return;
+              case "host_not_configured":
+                json(res, HTTP_STATUS.BAD_REQUEST, {
+                  error: `Host ${classified.host} is not configured`,
+                });
+                return;
+              case "remote_config":
+                json(res, HTTP_STATUS.BAD_REQUEST, {
+                  error: `Remote task creation does not support ${classified.logicalId} overrides`,
+                });
+                return;
+              case "rejected":
+                json(res, HTTP_STATUS.BAD_GATEWAY, {
+                  error: classified.reason,
+                  host: classified.host,
+                  remoteStatus: classified.status,
+                  outcome: "rejected",
+                });
+                return;
+              case "not_sent":
+                json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+                  error: `Remote task request was not sent: ${classified.reason}`,
+                  host: classified.host,
+                  outcome: "not_sent",
+                });
+                return;
+              case "unknown":
+                json(res, HTTP_STATUS.BAD_GATEWAY, {
+                  error: "Remote task creation result is unknown",
+                  reason: classified.reason,
+                  host: classified.host,
+                  outcome: "unknown",
+                });
+                return;
+              case "partial_success":
+                json(res, HTTP_STATUS.BAD_GATEWAY, {
+                  error:
+                    "Remote task was created, but the local link could not be registered",
+                  host: classified.host,
+                  remoteTaskId: classified.remoteTaskId,
+                  outcome: "partial_success",
+                });
+                return;
+              case "config":
+                break;
+            }
+          }
+          if (msg === "parent_not_found") {
             json(res, HTTP_STATUS.BAD_REQUEST, {
               error: "Parent task not found",
             });
@@ -3251,6 +3326,7 @@ export function createRequestHandler(
         // When authStore is configured, every SSE connection MUST present a
         // valid single-use ticket from POST /api/v1/sse-ticket.
         let tokenName: string | undefined;
+        let receiveBusinessEvents = true;
         if (deps.authStore) {
           const ticket =
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
@@ -3262,6 +3338,7 @@ export function createRequestHandler(
             return;
           }
           tokenName = principal.tokenName;
+          receiveBusinessEvents = principal.scope !== "host";
         }
 
         const clientId = sseManager.generateClientId();
@@ -3276,15 +3353,21 @@ export function createRequestHandler(
           id: clientId,
           res,
           tokenName,
+          receiveBusinessEvents,
         };
         sseManager.add(client);
 
         // Send connected event
+        const pendingCount = store.countUnprocessed();
         sseManager.sendEvent(client, {
           type: "connected",
           clientId,
-          debugLevel: deps.debugLevel ?? "off",
-          pendingCount: store.countUnprocessed(),
+          ...(receiveBusinessEvents
+            ? {
+                debugLevel: deps.debugLevel ?? "off",
+                pendingCount,
+              }
+            : {}),
         } as unknown as AgentEvent);
         sseManager.writeHeartbeat(client);
         return;
@@ -3298,6 +3381,7 @@ export function createRequestHandler(
         const taskId = decodeURIComponent(sseTaskMatch[1]);
 
         let tokenName: string | undefined;
+        let scope: Scope | undefined;
         if (deps.authStore) {
           const ticket =
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
@@ -3309,6 +3393,13 @@ export function createRequestHandler(
             return;
           }
           tokenName = principal.tokenName;
+          scope = principal.scope;
+          if (scope === "host") {
+            json(res, HTTP_STATUS.FORBIDDEN, {
+              error: "Host tickets cannot subscribe to task events",
+            });
+            return;
+          }
         }
 
         const task = store.getTask(taskId);

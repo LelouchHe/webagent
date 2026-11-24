@@ -46,6 +46,7 @@ describe("routes auth gate", () => {
   let server: http.Server;
   let port: number;
   let token: string;
+  let hostToken: string;
 
   before(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-auth-routes-"));
@@ -62,6 +63,7 @@ describe("routes auth gate", () => {
     await authStore.load();
     const created = await authStore.addToken("test", "admin");
     token = created.token;
+    hostToken = (await authStore.addToken("peer", "host")).token;
 
     const handler = createRequestHandler({
       store,
@@ -114,6 +116,19 @@ describe("routes auth gate", () => {
         Authorization: `Bearer ${token}`,
       });
       assert.equal(r.status, 200);
+    });
+
+    it("limits host tokens to host routes", async () => {
+      const denied = await req(port, "GET", "/api/v1/tasks", {
+        Authorization: `Bearer ${hostToken}`,
+      });
+      assert.equal(denied.status, 403);
+      assert.match(denied.body, /host_scope/);
+
+      const allowed = await req(port, "POST", "/api/v1/tasks", {
+        Authorization: `Bearer ${hostToken}`,
+      });
+      assert.equal(allowed.status, 503);
     });
 
     it("401 on /api/beta/prompt without auth", async () => {

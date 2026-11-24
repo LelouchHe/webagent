@@ -13,7 +13,7 @@ routing seam for that caller.
 | `GET /api/v1/version`, `GET /api/v1/auth/verify` | Remote host handshake protocol and caller hash/scope validation | `multi-host-connect`, `multi-host-insufficient-scope`, `multi-host-unauthorized` |
 | `task_query` | `TaskOps.query` -> bounded history index | `mcp-list`, `mcp-lifecycle`, `mcp-authorization-tree`, `mcp-cold-family`; shape/range limits remain in `test/mcp-task-host.test.ts` |
 | `task_read` | `TaskOps.read` -> selected persisted rows | `mcp-list`, `mcp-authorization-tree`, `mcp-cold-family`; byte limits and structured rows remain in `test/mcp-task-host.test.ts` |
-| `task_create` | `TaskOps.create` -> manager creation, source event and broadcast | `mcp-lifecycle`, `mcp-collaboration`, `mcp-create-errors` |
+| `task_create` | `TaskOps.create` -> local manager creation or one-shot `agent@host` transport | `mcp-lifecycle`, `mcp-collaboration`, `mcp-create-errors`, `multi-host-create` |
 | `task_cancel` | `TaskOps.cancel` -> execution cancellation and audits | `mcp-lifecycle` |
 | `task_send` | `TaskOps.send` -> Store message/delivery creation and kick | `mcp-lifecycle`, `mcp-collaboration`, `mcp-authorization-tree` |
 | `task_update` | `TaskOps.update` -> settle typed update and side effects | `mcp-collaboration`, `mcp-update-status` |
@@ -26,7 +26,7 @@ routing seam for that caller.
 |---|---|---|
 | `POST /api/v1/tasks/bootstrap` | `ensureRootLive` / root activation | setup and `mcp-authorization` |
 | `GET /api/v1/tasks` | Store task list projection | `rest-tasks`, `mcp-authorization` |
-| `POST /api/v1/tasks` | `TaskManager.createTask` | `rest-tasks` |
+| `POST /api/v1/tasks` | local `TaskManager.createTask` or Host dispatch/deferred peer creation | `rest-tasks`, `multi-host-create` |
 | `GET /api/v1/tasks/:id`, status, snapshot, events | read-only Store/state surfaces | transcript reads in `mcp-list`; status/snapshot shapes remain covered by `test/routes.test.ts` and state tests |
 | `POST /api/v1/tasks/:id/prompt` | `TaskManager` / real ACP turn | every scenario that uses a prompt |
 | `POST /api/v1/tasks/:id/cancel` | `TaskManager.cancelTaskExecution` | `rest-tasks`; MCP adds its own audit in `mcp-lifecycle` |

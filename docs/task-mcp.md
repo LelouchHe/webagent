@@ -304,6 +304,13 @@ behaviour: the child inherits the current Task's agent. A deployment with a
 single configured agent advertises no list, because there is nothing to choose
 between.
 
+`agent@host` selects the short agent id on one of the configured Host names.
+The target remains `parentId`-authorized on the local instance, while cwd and
+agent selection are evaluated by the peer. Explicit `model` or `thinking`
+overrides are refused for this first remote slice; local inheritance ids and
+saved execution configuration are not sent to the peer. Omitted cwd uses the
+peer's own default.
+
 The target agent is started on demand. Creating a child on another agent is a
 declared divergence, not a write through the wrong process: the caller's own
 binding is untouched, and a relative `cwd` still resolves against the current
@@ -335,6 +342,12 @@ took effect: the explicit value, the value inherited from a same-agent source,
 or the target session's own current value. `inherited` appears only when a value
 genuinely cannot be determined, so a cross-agent child shows the target's
 defaults instead of claiming an inheritance that did not happen.
+
+For a remote target, the result still contains only the new Task id. A local
+`remote_task_links` row records it after the peer's `201`. Rejections are
+definite tool errors; an ambiguous transport result is reported as
+`result is unknown`, and a remote success followed by a local link failure is
+reported as partial success. These calls are not retried.
 
 
 ### `task_send`

@@ -58,6 +58,7 @@ import {
   type ExecutionLease,
 } from "./execution-authority.ts";
 import { abbreviateHomePath } from "./home-path.ts";
+import { buildTaskCreatedSystemMessage } from "./task-created-message.ts";
 import { canonicalCwd } from "./cwd-path.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { log } from "./log.ts";
@@ -1563,6 +1564,55 @@ export class TaskManager implements ObligationHost {
     // If another branch is active, skip this pass and let a later create retry.
     this.tryCleanupEmptyTasks();
     return result;
+  }
+
+  /**
+   * Persist a remotely requested task without starting ACP. The normal resume
+   * path materializes its empty owner slot on first use.
+   */
+  async createDeferredRemoteTask(input: {
+    agentId: string;
+    cwd?: string;
+    source: string;
+    externalParentId: string;
+    peerTokenHash: string;
+    title?: string;
+    workflowStatus?: WorkflowStatus;
+  }): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+    if (!input.externalParentId.trim()) {
+      throw new Error("external_parent_required");
+    }
+    if (!this.isAgentConfigured(input.agentId)) {
+      throw new Error(`Agent ${input.agentId} is not configured`);
+    }
+    const taskCwd = this.resolveTaskCwd(input.cwd, this.defaultCwd);
+    try {
+      const info = await stat(taskCwd);
+      if (!info.isDirectory()) throw new Error("not a directory");
+    } catch {
+      throw new InvalidTaskDirectoryError(taskCwd);
+    }
+    const taskId = randomUUID();
+    const creationAnchor = buildTaskCreatedSystemMessage({
+      taskId,
+      taskTitle: input.title ?? taskId,
+      agentId: input.agentId,
+      cwd: taskCwd,
+      model: null,
+      thinking: null,
+    }).data;
+    this.store.createDeferredRemoteTask({
+      id: taskId,
+      cwd: taskCwd,
+      source: input.source,
+      agentId: input.agentId,
+      externalParentId: input.externalParentId,
+      peerTokenHash: input.peerTokenHash,
+      title: input.title,
+      workflowStatus: input.workflowStatus,
+      creationAnchor,
+    });
+    return { taskId, configOptions: [] };
   }
 
   /**

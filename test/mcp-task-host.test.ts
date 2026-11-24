@@ -3,13 +3,22 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Store } from "../src/store.ts";
+import { isEmptyExecutionSlot, Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import {
   createLocalTaskOps,
   type TaskCancelNotice,
 } from "../src/host/local/adapter.ts";
+import {
+  TaskRemoteCreateConfigError,
+  TaskRemoteCreatePartialSuccessError,
+  TaskRemoteCreateUnknownError,
+  type RemoteTaskCreateTransport,
+  type TaskCreateHost,
+} from "../src/api/tasks.ts";
+import { createTaskOpsCore } from "../src/task-ops.ts";
+import { createTaskHost } from "../src/host/tasks.ts";
 import { projectTaskHistoryRow } from "../src/host/local/task-history.ts";
 import type { AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
@@ -88,6 +97,487 @@ describe("MCP Task tool host", () => {
     tasks.dispose();
     store.close();
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  function createRoutedTaskOps(remote: RemoteTaskCreateTransport) {
+    const local = createLocalTaskOps({ store, tasks });
+    return {
+      ...local,
+      ...createTaskOpsCore({
+        host: createTaskHost({ local, remote }),
+        store,
+        tasks,
+      }),
+    };
+  }
+
+  it("lets Core call one Host create port with a structured target", async () => {
+    const targets: unknown[] = [];
+    const host: TaskCreateHost = {
+      async create(command) {
+        targets.push(command.target);
+        return { taskId: "created-on-selected-host" };
+      },
+    };
+    const create = createTaskOpsCore({ host, store, tasks });
+
+    await create.create(
+      { kind: "agent", principal: principal() },
+      {
+        agentId: "copilot@mini",
+        parentId: "alpha",
+        inheritFromTaskId: "alpha",
+        title: "Remote",
+      },
+    );
+    await create.create(
+      { kind: "agent", principal: principal() },
+      {
+        agentId: "copilot",
+        parentId: "alpha",
+        inheritFromTaskId: "alpha",
+        title: "Local",
+      },
+    );
+
+    assert.deepEqual(targets, [
+      { agentId: "copilot", host: "mini" },
+      { agentId: "copilot" },
+    ]);
+  });
+
+  it("does not redispatch a Host-authenticated owner request", async () => {
+    const local = createLocalTaskOps({ store, tasks });
+    let remoteCalls = 0;
+    const routed = {
+      ...local,
+      ...createTaskOpsCore({
+        host: createTaskHost({
+          local,
+          remote: {
+            async create() {
+              remoteCalls += 1;
+              throw new Error("owner request redispatched");
+            },
+          },
+        }),
+        store,
+        tasks,
+      }),
+    };
+
+    const created = await routed.create(
+      { kind: "host", peerTokenHash: "peer-hash" },
+      {
+        agentId: "test-agent",
+        parentId: "external-parent",
+        title: "Owner child",
+        cwd: dir,
+      },
+    );
+    assert.ok(store.getTask(created.taskId));
+    assert.equal(remoteCalls, 0);
+
+    await assert.rejects(
+      routed.create(
+        { kind: "host", peerTokenHash: "peer-hash" },
+        {
+          agentId: "test-agent@another-host",
+          parentId: "external-parent",
+          title: "Must not relay",
+          cwd: dir,
+        },
+      ),
+      /invalid_remote_agent/,
+    );
+    assert.equal(remoteCalls, 0);
+  });
+
+  it("creates a deferred host task and external-parent link without ACP", async () => {
+    let sessionsStarted = 0;
+    tasks.attachExecutionBridge({
+      ...mockBridgeStubs(),
+      newSession: async () => {
+        sessionsStarted += 1;
+        return { sessionId: "unexpected", configOptions: [] };
+      },
+    });
+    const host = createLocalTaskOps({ store, tasks });
+
+    const created = await host.create(
+      { kind: "host", peerTokenHash: "peer-hash" },
+      {
+        agentId: "test-agent",
+        parentId: "external-parent",
+        title: "Remote child",
+        cwd: dir,
+        source: "host",
+      },
+    );
+
+    const task = store.getTask(created.taskId);
+    assert.ok(task);
+    assert.equal(task.parent_id, null);
+    assert.equal(sessionsStarted, 0);
+    const binding = store.getCurrentExecutionBinding(created.taskId);
+    assert.ok(binding);
+    assert.equal(
+      isEmptyExecutionSlot(created.taskId, binding.agent_session_id),
+      true,
+    );
+    assert.deepEqual(store.getRemoteTaskLinks(created.taskId), [
+      {
+        local_task_id: created.taskId,
+        remote_task_id: "external-parent",
+        remote_role: "parent",
+        remote_host: null,
+        peer_token_hash: "peer-hash",
+      },
+    ]);
+  });
+
+  it("does not reinterpret a local-id collision as a remote parent", async () => {
+    store.createTask(
+      "external-parent",
+      dir,
+      "auto",
+      "test-agent",
+      "session-external-parent",
+    );
+    const host = createLocalTaskOps({ store, tasks });
+    const created = await host.create(
+      { kind: "host", peerTokenHash: "peer-hash" },
+      {
+        agentId: "test-agent",
+        parentId: "external-parent",
+        title: "Remote child",
+        cwd: dir,
+      },
+    );
+
+    assert.equal(store.getTask(created.taskId)?.parent_id, null);
+    assert.equal(
+      store.getRemoteTaskLinks(created.taskId)[0]?.remote_task_id,
+      "external-parent",
+    );
+  });
+
+  it("validates the executor agent and cwd before committing", async () => {
+    const host = createLocalTaskOps({ store, tasks });
+    await assert.rejects(
+      host.create(
+        { kind: "host", peerTokenHash: "peer-hash" },
+        {
+          agentId: "missing",
+          parentId: "external-parent",
+          title: "Remote child",
+          cwd: dir,
+        },
+      ),
+      (error) =>
+        error instanceof Error && error.message === "agent_not_configured",
+    );
+    await assert.rejects(
+      host.create(
+        { kind: "host", peerTokenHash: "peer-hash" },
+        {
+          agentId: "test-agent",
+          parentId: "external-parent",
+          title: "Remote child",
+          cwd: join(dir, "missing"),
+        },
+      ),
+      /invalid.*director|directory/i,
+    );
+    assert.deepEqual(
+      store
+        .listTasks()
+        .map((task) => task.title)
+        .sort(),
+      ["Alpha", "Alpha child", "Beta", "root"],
+    );
+  });
+
+  it("requires a non-empty Host external parent before any side effect", async () => {
+    const host = createLocalTaskOps({ store, tasks });
+    const before = store.listTasks().length;
+    for (const parentId of [undefined, "", "   ", 42]) {
+      await assert.rejects(
+        host.create(
+          { kind: "host", peerTokenHash: "peer-hash" },
+          {
+            agentId: "test-agent",
+            parentId: parentId as string | undefined,
+            title: "Rejected remote child",
+            cwd: dir,
+          },
+        ),
+        /external_parent_required/,
+      );
+    }
+    assert.equal(store.listTasks().length, before);
+    assert.deepEqual(store.getRemoteTaskLinks("alpha"), []);
+  });
+
+  it("keeps deferred remote tasks after empty-task cleanup", async () => {
+    const host = createLocalTaskOps({ store, tasks });
+    const remote = await host.create(
+      { kind: "host", peerTokenHash: "peer-hash" },
+      {
+        agentId: "test-agent",
+        parentId: "external-parent",
+        title: "Anchored remote child",
+        cwd: dir,
+      },
+    );
+    store["db"]
+      .prepare("UPDATE tasks SET created_at = 0 WHERE id = ?")
+      .run(remote.taskId);
+    assert.deepEqual(store.deleteEmptyTasks(60), []);
+    assert.ok(store.getTask(remote.taskId));
+    const anchors = store.getEvents(remote.taskId);
+    assert.equal(anchors.length, 1);
+    assert.equal(anchors[0]?.type, "system_message");
+    assert.equal(JSON.parse(anchors[0]?.data ?? "{}").kind, "task_created");
+
+    store.createTask("ordinary-empty", dir, "auto", "test-agent");
+    store["db"]
+      .prepare("UPDATE tasks SET created_at = 0 WHERE id = ?")
+      .run("ordinary-empty");
+    assert.equal(
+      store.deleteEmptyTasks(60).some((entry) => entry.id === "ordinary-empty"),
+      true,
+    );
+  });
+
+  it("checks a stale agent caller before resolving Host configuration", async () => {
+    let calls = 0;
+    const local = createLocalTaskOps({ store, tasks });
+    const routed = {
+      ...local,
+      ...createTaskOpsCore({
+        host: createTaskHost({
+          local,
+          remote: {
+            async create() {
+              calls += 1;
+              throw new Error("host configuration should not be reached");
+            },
+          },
+        }),
+        store,
+        tasks,
+      }),
+    };
+    const oldPrincipal = principal();
+    store.replaceAgentSession("alpha", "test-agent", "replacement");
+
+    await assert.rejects(
+      routed.create(
+        { kind: "agent", principal: oldPrincipal },
+        {
+          agentId: "test-agent@mini",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Stale remote child",
+          model: "unsupported-but-unreachable",
+        },
+      ),
+      /execution_replaced/,
+    );
+    assert.equal(calls, 0);
+  });
+
+  it("keeps an ordinary caller from using an unknown external parent", async () => {
+    const host = createLocalTaskOps({ store, tasks });
+    await assert.rejects(
+      host.create(
+        { kind: "user" },
+        {
+          agentId: "test-agent",
+          parentId: "external-parent",
+          title: "Rejected child",
+          cwd: dir,
+        },
+      ),
+      /parent_not_found/,
+    );
+  });
+
+  it("rejects an empty parent before dispatching a user's remote create", async () => {
+    const host = createRoutedTaskOps({
+      async create() {
+        assert.fail("invalid parent must not reach the remote host");
+      },
+    });
+    await assert.rejects(
+      host.create(
+        { kind: "user" },
+        { agentId: "test-agent@mini", parentId: "" },
+      ),
+      { message: "parent_not_found" },
+    );
+  });
+
+  it("dispatches agent@host once without leaking local inheritance data", async () => {
+    const calls: unknown[] = [];
+    const host = createRoutedTaskOps({
+      async create(remoteHost, input) {
+        calls.push({ remoteHost, input });
+        return {
+          taskId: "remote-child",
+          activation: {
+            cwd: dir,
+            cwdDisplay: dir,
+            title: "Remote child",
+            parentId: null,
+            parentAgentId: null,
+            agentId: "test-agent",
+            workflowStatus: "idle",
+            source: "agent",
+            configOptions: [],
+            agentCommands: {
+              epoch: "remote",
+              revision: 0,
+              commands: [],
+            },
+          },
+        };
+      },
+    });
+
+    const created = await host.create(
+      { kind: "agent", principal: principal() },
+      {
+        agentId: "test-agent@mini",
+        parentId: "alpha",
+        inheritFromTaskId: "alpha",
+        title: "Remote child",
+        cwd: "./remote-relative",
+        source: "agent",
+      },
+    );
+
+    assert.equal(created.taskId, "remote-child");
+    assert.deepEqual(calls, [
+      {
+        remoteHost: "mini",
+        input: {
+          agentId: "test-agent",
+          parentId: "alpha",
+          title: "Remote child",
+          cwd: "./remote-relative",
+          source: "agent",
+        },
+      },
+    ]);
+    assert.deepEqual(store.getRemoteTaskLinks("alpha"), [
+      {
+        local_task_id: "alpha",
+        remote_task_id: "remote-child",
+        remote_role: "child",
+        remote_host: "mini",
+        peer_token_hash: null,
+      },
+    ]);
+    assert.equal(store.getTask("remote-child"), undefined);
+  });
+
+  it("reports remote creation as partial when the generation changes", async () => {
+    let calls = 0;
+    const host = createRoutedTaskOps({
+      async create() {
+        calls += 1;
+        store.replaceAgentSession(
+          "alpha",
+          "test-agent",
+          "session-alpha-replaced",
+        );
+        return {
+          taskId: "remote-child",
+          activation: {
+            cwd: dir,
+            cwdDisplay: dir,
+            title: null,
+            parentId: null,
+            parentAgentId: null,
+            agentId: "test-agent",
+            workflowStatus: "idle",
+            source: "agent",
+            configOptions: [],
+            agentCommands: {
+              epoch: "remote",
+              revision: 0,
+              commands: [],
+            },
+          },
+        };
+      },
+    });
+
+    await assert.rejects(
+      host.create(
+        { kind: "agent", principal: principal() },
+        {
+          agentId: "test-agent@mini",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Remote child",
+        },
+      ),
+      (error) =>
+        error instanceof TaskRemoteCreatePartialSuccessError &&
+        error.remoteTaskId === "remote-child",
+    );
+    assert.equal(calls, 1);
+    assert.deepEqual(store.getRemoteTaskLinks("alpha"), []);
+  });
+
+  it("does not retry unknown remote outcomes", async () => {
+    let calls = 0;
+    const host = createRoutedTaskOps({
+      async create(remoteHost) {
+        calls += 1;
+        throw new TaskRemoteCreateUnknownError(remoteHost, "connection closed");
+      },
+    });
+    await assert.rejects(
+      host.create(
+        { kind: "agent", principal: principal() },
+        {
+          agentId: "test-agent@mini",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Remote child",
+        },
+      ),
+      TaskRemoteCreateUnknownError,
+    );
+    assert.equal(calls, 1);
+  });
+
+  it("refuses config overrides before dispatching remotely", async () => {
+    let calls = 0;
+    const host = createRoutedTaskOps({
+      async create() {
+        calls += 1;
+        throw new Error("unreachable");
+      },
+    });
+    await assert.rejects(
+      host.create(
+        { kind: "agent", principal: principal() },
+        {
+          agentId: "test-agent@mini",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Remote child",
+          model: "gpt-5",
+        },
+      ),
+      TaskRemoteCreateConfigError,
+    );
+    assert.equal(calls, 0);
   });
 
   it("lists an archived tree from one of its tasks", () => {

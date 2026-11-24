@@ -17,7 +17,8 @@ server interface (see [Architecture](README.md)); below it, a host layer selects
 local or remote execution.
 
 This document describes that direction and the parts that exist today: the
-`TaskOps` port and the connection layer. Remote Task resolution, routing,
+`TaskOps` port, the connection layer, and the first remote Task create slice.
+Remote Task resolution, routing of established tasks,
 cross-instance idempotency, and delivery are not implemented yet. Instances
 never share storage.
 
@@ -34,28 +35,45 @@ Entry points
               (neutral types; 7 commands)
                          |
                          v
-           Host layer: resolve(id) [plan]
-                 synchronous, read-only,
-             persistent facts only; no network
+             Core Task create command [now]
+       parse `agent@host` -> { agentId, host? }
+       authorize once; call one Host create port
                          |
-             +-----------+-----------+
-             |                       |
-             v                       v
-     local/ adapter.ts [now]    remote/ connection [now]
-             |                       |
-             v                       +-- remote/ adapter.ts [plan]
-   local TaskManager + Store             |
+                          v
+                TaskCreateHost port [now]
+                          |
+                          v
+                Host selector [src/host/tasks.ts]
+                         / \
+                        v   v
+              LocalHost     RemoteHost
+                  |              |
+                  v              v
+        TaskManager + Store   peer POST /api/v1/tasks
                                          v
                                   Task transport [plan]
 ```
 
-Today MCP and the general REST task-create route call the local adapter through
-the same `TaskOps.create()` command, and REST task cancellation and MCP
-`task_cancel` share `TaskOps.cancel()`. There is no `resolve(id)` step yet, and
-the other REST routes still call the local domain code directly.
-`src/api/tasks.ts` and `src/host/local/adapter.ts` exist now.
-`src/host/remote/` currently contains the cross-instance connection only; the
-resolver, remote Task adapter, Task router, and delivery transport are planned.
+Today MCP and the general REST task-create route call the Core create command
+through the same `TaskOps.create()` entry, and REST task cancellation and MCP
+`task_cancel` share `TaskOps.cancel()`. Core parses `agent@host` into an
+abstract `{ agentId, host? }` target and calls one injected `TaskCreateHost`
+port. It does not hold LocalHost or RemoteHost and does not branch on location.
+`src/host/tasks.ts` makes that single Host-side selection and invokes one
+executor directly. The RemoteHost path includes the send-before, response-after,
+and partial-success rules; LocalHost has no RemoteHost transport and no raw
+coordinate parser. There is no `resolve(id)` step yet, and the other REST routes
+still call the local domain code directly.
+`src/api/tasks.ts`, `src/task-ops.ts`, and `src/host/local/adapter.ts`
+exist now.
+`src/host/remote/` contains the cross-instance connection and one-shot create
+transport; the established-Task resolver, router, and delivery transport are
+planned.
+
+Create error classes are classified once by `classifyTaskCreateError()` in
+`src/api/tasks.ts`. REST and MCP consume that discriminant only for their own
+status/body or tool-text presentation; they do not maintain separate
+error-class chains.
 
 ## Scope of the host layer (planned)
 
@@ -105,6 +123,11 @@ exponential backoff. Every successful connection invokes an empty catch-up
 hook; later delivery work will replace that hook without changing the connection
 mechanism.
 Connection state never writes to SQLite and never changes Task facts.
+Connections authenticated with the `host` scope receive only the minimal
+`connected` handshake and heartbeat frames: task and global business broadcasts
+are filtered before they reach the socket. Host tickets are refused on per-task
+streams. Older `api`/`admin` connection credentials keep their existing
+connection behavior.
 
 The public version endpoint advertises `hostProtocol`; the authenticated
 verify endpoint reports the caller's token name, scope, and SHA-256 `hash`.
@@ -113,17 +136,27 @@ regression observation. The browser UI does not consume it yet. See
 [the API reference](../api.md#hosts) for exact response shapes and
 [configuration](../configuration.md#multi-host-connection) for token commands.
 
+Host connections use a token with the explicit `host` scope. That scope reaches
+only the connection probes and `POST /api/v1/tasks`; it cannot act as an
+ordinary browser/API credential. On the executor, a Host-scoped create treats
+`parentId` as an opaque peer Task id, never looking for a same-named local row.
+It validates the target agent and cwd, creates the Task with an empty execution
+slot, and atomically records the external-parent link. ACP starts only when the
+task is later used.
+
 ## Directories and dependencies
 
 | Location | Responsibility |
 | --- | --- |
 | `src/mcp/` | MCP protocol handling, tool registration, capabilities, tool descriptions, and adaptation of protocol input/output |
 | `src/http/` | HTTP entrypoint, including the main request/auth/router order, REST/SSE presentation, and the migrated REST task create and cancel calls to `TaskOps` |
-| `src/api/tasks.ts` | The neutral `TaskOps` interface, command DTOs, and caller |
-| `src/host/local/adapter.ts` | The local `TaskOps` implementation over this instance's TaskManager and Store |
+| `src/api/tasks.ts` | The neutral `TaskOps` interface, command DTOs, caller, and minimal `TaskCreateHost` port |
+| `src/task-ops.ts` | Create command: caller/parent authorization, raw coordinate parsing, one Host call, and narrow accepted-result completion callback |
+| `src/host/tasks.ts` | `createTaskHost`: direct LocalHost vs RemoteHost choice from `{agentId, host?}` |
+| `src/host/local/adapter.ts` | LocalHost `TaskOps` implementation over this instance's TaskManager and Store; no remote transport or raw coordinate parsing |
 | `src/host/local/` | Local projection and error helpers; cannot depend on remote implementations |
-| `src/host/remote/` | Current hub connection, token hash verification, retry/backoff, and in-memory status; the remote `adapter.ts` and Task delivery transport are planned |
-| `src/server.ts` | The only assembly point; it creates the local `TaskOps` and injects the same instance into the HTTP router and MCP |
+| `src/host/remote/` | RemoteHost connection, token hash verification, retry/backoff, in-memory status, and one-shot remote create transport; `HostConnection` owns the URL, bearer header, timeout, and raw fetch seam |
+| `src/server.ts` | The only assembly point; it injects LocalHost and RemoteHost into the Host selector, then injects the same routed `TaskOps` into HTTP and MCP |
 
 ESLint's `no-restricted-imports` guards direct static dependencies:
 `src/http/**` and `src/mcp/**` cannot import each other or a Host module and
@@ -178,6 +211,26 @@ source. An agent caller maps to its own parent and cwd context and is
 generation-fenced; a user caller carries the authenticated REST route's
 independent `parentId` and `inheritFromTaskId`. The user result carries complete activation facts, which REST exposes directly;
 the MCP projection remains the existing `{ taskId }` result.
+
+For `agent@host`, the Core create command keeps ownership of caller/parent
+authorization and converts the raw coordinate to `{agentId, host}`. It calls
+the one `TaskCreateHost` port once. Host selects RemoteHost, which resolves the
+configured host, checks the Core fence, and sends one peer request with the
+short agent id and external parent id. A `201` is passed through Core's narrow
+completion callback, which re-checks the caller and commits the `child` link.
+No retry or idempotency layer is present: a 4xx is a rejection, transport
+uncertainty is unknown, and local persistence failure is partial success. A
+short/local target goes from the same Host port directly to LocalHost. LocalHost
+does not receive raw coordinates or a remote transport. The initiator never
+copies the peer Task.
+
+The owner creates this Task as a parentless archived top: its local
+`tasks.parent_id` is `NULL`, while `remote_task_links` records the logical
+external parent. Local parent structure remains authoritative; the external
+relation is used only when there is no local parent. A same-transaction,
+non-broadcast `system_message` with kind `task_created` is the normal creation
+fact that keeps this deferred Task out of empty-task GC. This slice does not
+change local archive/unarchive or add remote lifecycle behavior.
 
 Cancellation keeps the two caller policies separate. An agent command requires
 a direct-child relation, carries a generation-fenced principal and reason, and

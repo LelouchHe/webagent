@@ -1,9 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
-  TaskAgentNotConfiguredError,
-  TaskAgentStartError,
-  TaskCreateConfigError,
+  isTaskCreateError,
   type TaskCaller,
   type TaskOps,
 } from "../api/tasks.ts";
@@ -46,6 +44,7 @@ export interface McpToolRegistrationOptions {
    * deployment that is actually running instead of a static schema.
    */
   configuredAgentIds?: readonly string[];
+  configuredHostIds?: readonly string[];
 }
 
 /** Register the Agent-facing Task control-plane tools. */
@@ -172,7 +171,10 @@ export function registerMcpTools(
   server.registerTool(
     "task_create",
     {
-      description: buildTaskCreateDescription(options.configuredAgentIds ?? []),
+      description: buildTaskCreateDescription(
+        options.configuredAgentIds ?? [],
+        options.configuredHostIds ?? [],
+      ),
       inputSchema: {
         title: z
           .string()
@@ -243,18 +245,56 @@ export function registerMcpTools(
           ).taskId,
         });
       } catch (error) {
-        if (error instanceof TaskAgentNotConfiguredError) {
-          throw new Error(unconfiguredAgentError(error.agentId), {
-            cause: error,
-          });
-        }
-        if (error instanceof TaskAgentStartError) {
-          throw new Error(agentStartError(error.agentId, error.reason), {
-            cause: error,
-          });
-        }
-        if (error instanceof TaskCreateConfigError) {
-          throw new Error(configOverrideError(error), { cause: error });
+        if (isTaskCreateError(error)) {
+          const classified = error;
+          switch (classified.kind) {
+            case "agent_id_type":
+              throw new Error("agentId must be a string", { cause: error });
+            case "agent_not_configured":
+              throw new Error(unconfiguredAgentError(classified.agentId), {
+                cause: error,
+              });
+            case "agent_start":
+              throw new Error(
+                agentStartError(classified.agentId, classified.reason),
+                { cause: error },
+              );
+            case "config":
+              throw new Error(configOverrideError(classified), {
+                cause: error,
+              });
+            case "input":
+              throw new Error(classified.clientMessage, { cause: error });
+            case "host_not_configured":
+              throw new Error(`Host ${classified.host} is not configured`, {
+                cause: error,
+              });
+            case "remote_config":
+              throw new Error(
+                `Remote task creation does not support ${classified.logicalId} overrides`,
+                { cause: error },
+              );
+            case "rejected":
+              throw new Error(
+                `Remote task creation rejected by ${classified.host}: ${classified.reason}`,
+                { cause: error },
+              );
+            case "not_sent":
+              throw new Error(
+                `Remote task request was not sent to ${classified.host}: ${classified.reason}`,
+                { cause: error },
+              );
+            case "unknown":
+              throw new Error(
+                `Remote task creation result is unknown for ${classified.host}: ${classified.reason}`,
+                { cause: error },
+              );
+            case "partial_success":
+              throw new Error(
+                `Remote task ${classified.remoteTaskId} was created on ${classified.host}, but the local link could not be registered`,
+                { cause: error },
+              );
+          }
         }
         throw error;
       }

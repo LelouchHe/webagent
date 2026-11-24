@@ -24,6 +24,7 @@ export interface SseClient {
   res: ServerResponse;
   taskId?: string; // undefined = global stream
   tokenName?: string; // bound at connect via SSE ticket; used for revoke detection
+  receiveBusinessEvents?: boolean;
 }
 
 /**
@@ -187,6 +188,7 @@ export class SseManager {
     const snapshot = [...this.clients.values()];
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
+      if (client.receiveBusinessEvents === false) continue;
       if (client.taskId && client.taskId !== taskId) continue;
       this.sendEvent(client, event);
     }
@@ -197,6 +199,7 @@ export class SseManager {
     const snapshot = [...this.clients.values()];
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
+      if (client.receiveBusinessEvents === false) continue;
       this.sendEvent(client, event);
     }
   }

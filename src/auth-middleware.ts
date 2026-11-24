@@ -121,6 +121,12 @@ const READ_SCOPE_PATHS: readonly WhitelistEntry[] = [
   },
 ];
 
+const HOST_SCOPE_PATHS: readonly WhitelistEntry[] = [
+  { method: "GET", test: (p) => p === "/api/v1/auth/verify" },
+  { method: "POST", test: (p) => p === "/api/v1/sse-ticket" },
+  { method: "POST", test: (p) => p === "/api/v1/tasks" },
+];
+
 /**
  * True if a `read`-scope token may call this path. Path must already be
  * normalized by the caller (the route gate splits off the query string).
@@ -128,6 +134,13 @@ const READ_SCOPE_PATHS: readonly WhitelistEntry[] = [
 export function isReadScopeAllowedPath(method: string, path: string): boolean {
   const m = method.toUpperCase();
   return READ_SCOPE_PATHS.some(
+    (entry) => entry.method === m && entry.test(path),
+  );
+}
+
+export function isHostScopeAllowedPath(method: string, path: string): boolean {
+  const m = method.toUpperCase();
+  return HOST_SCOPE_PATHS.some(
     (entry) => entry.method === m && entry.test(path),
   );
 }
@@ -169,6 +182,11 @@ export function authenticate(
  */
 export function requireScope(result: AuthResult, required: Scope): boolean {
   if (!result.ok) return false;
-  const rank: Record<Scope, number> = { read: 0, api: 1, admin: 2 };
+  const rank: Record<Scope, number> = {
+    read: 0,
+    host: -1,
+    api: 1,
+    admin: 2,
+  };
   return rank[result.principal.scope] >= rank[required];
 }

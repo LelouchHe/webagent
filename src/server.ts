@@ -13,6 +13,8 @@ import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
 import { createLocalTaskOps } from "./host/local/adapter.ts";
+import { createTaskHost } from "./host/tasks.ts";
+import { createTaskOpsCore } from "./task-ops.ts";
 import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
 import {
   buildCollaborationBroadcast,
@@ -44,6 +46,7 @@ import {
 } from "./attachment-interceptor.ts";
 import type { AgentEvent } from "./types.ts";
 import { HostRegistry } from "./host/remote/registry.ts";
+import type { TaskOps } from "./api/tasks.ts";
 
 // Prefix all console output with ISO-ish timestamps (YYYY-MM-DD HH:MM:SS)
 for (const method of ["log", "error", "warn"] as const) {
@@ -213,7 +216,7 @@ tasks.setRuntimeWarmBroadcast((event) => {
 tasks.setTaskCreatedBroadcast((event) => {
   sseManager.broadcast(event);
 });
-const taskOps = createLocalTaskOps({
+const localTaskOps = createLocalTaskOps({
   store,
   tasks,
   cancelTimeoutMs: config.limits.cancel_timeout,
@@ -230,6 +233,15 @@ const taskOps = createLocalTaskOps({
     sseManager.broadcast(event);
   },
 });
+const taskOps = createTaskOpsCore({
+  host: createTaskHost({
+    local: localTaskOps,
+    remote: hostRegistry,
+  }),
+  store,
+  tasks,
+});
+const routedTaskOps: TaskOps = { ...localTaskOps, ...taskOps };
 const messageCleanup: CleanupHandle = startMessageCleanup(
   store,
   config.messages.unprocessed_ttl_days,
@@ -244,7 +256,7 @@ let sharePreviewCleanup: SharePreviewCleanupHandle | null = null;
 const requestHandler = createRequestHandler({
   store,
   tasks,
-  taskOps,
+  taskOps: routedTaskOps,
   sseManager,
   clientRegistry,
   publicDir: PUBLIC_DIR,
@@ -262,11 +274,12 @@ const requestHandler = createRequestHandler({
   mcpEndpoint: createMcpEndpoint({
     capabilities,
     isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
-    taskTools: taskOps,
+    taskTools: routedTaskOps,
     // Discovery for `task_create(agent: …)` comes from the running
     // configuration, not from a static schema that would have to be rebuilt by
     // hand whenever an agent is added.
     configuredAgentIds: Object.keys(config.agents),
+    configuredHostIds: Object.keys(config.hosts),
   }),
 });
 

@@ -1,4 +1,6 @@
 import { hashToken } from "../../auth.ts";
+import { isScope } from "../../auth-store.ts";
+import { z } from "zod";
 import { HTTP_STATUS } from "../../http-status.ts";
 import {
   StreamSupervisor,
@@ -7,14 +9,69 @@ import {
   type StreamFailure,
 } from "../../shared/stream-supervisor.ts";
 import type { HostConfig } from "../../config.ts";
+import { errorMessage } from "../../types.ts";
 import { resolveHostToken, TokenCommandError } from "./credentials.ts";
 import {
   HOST_PROTOCOL_VERSION,
   type HostConnectionState,
   type HostUnreachableReason,
 } from "./state.ts";
+import type {
+  RemoteTaskCreateInput,
+  TaskCreateResult,
+} from "../../api/tasks.ts";
 
 const REQUEST_TIMEOUT_MS = 8_000;
+
+const ConfigOptionSchema = z.union([
+  z.object({
+    type: z.literal("select").optional(),
+    id: z.string(),
+    name: z.string(),
+    category: z.string().nullable().optional(),
+    currentValue: z.string(),
+    options: z.array(
+      z.object({ value: z.string(), name: z.string() }).passthrough(),
+    ),
+  }),
+  z.object({
+    type: z.literal("boolean"),
+    id: z.string(),
+    name: z.string(),
+    category: z.string().nullable().optional(),
+    currentValue: z.boolean(),
+  }),
+]);
+
+const TaskCreateResponseSchema = z.object({
+  id: z.string().min(1),
+  cwd: z.string(),
+  cwdDisplay: z.string(),
+  parentId: z.string().nullable(),
+  parentAgentId: z.string().nullable(),
+  agentId: z.string().nullable(),
+  title: z.string().nullable(),
+  workflowStatus: z.enum(["running", "idle", "waiting", "blocked", "done"]),
+  source: z.string(),
+  configOptions: z.array(ConfigOptionSchema),
+  agentCommands: z.object({
+    epoch: z.string(),
+    revision: z.number().int().nonnegative(),
+    commands: z.array(
+      z.object({
+        name: z.string(),
+        description: z.string(),
+        input: z.object({ hint: z.string() }).optional(),
+      }),
+    ),
+  }),
+});
+
+export type HostTaskCreateAttempt =
+  | { kind: "success"; result: TaskCreateResult }
+  | { kind: "rejected"; status: number; reason: string }
+  | { kind: "unknown"; reason: string }
+  | { kind: "not_sent"; reason: string };
 
 export interface HostConnectionOptions {
   fetch?: typeof globalThis.fetch;
@@ -39,6 +96,16 @@ class HostConnectionFailure extends Error {
 
 function endpoint(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${path}`;
+}
+
+interface HostFetchOptions {
+  signal?: AbortSignal;
+  token?: string;
+  method?: string;
+  body?: unknown;
+  headers?: HeadersInit;
+  redirect?: RequestRedirect;
+  timeoutMs?: number | null;
 }
 
 export class HostConnection {
@@ -74,6 +141,72 @@ export class HostConnection {
     this.supervisor.stop();
   }
 
+  async createTask(
+    input: RemoteTaskCreateInput,
+  ): Promise<HostTaskCreateAttempt> {
+    let token: string;
+    try {
+      token = await this.resolveToken();
+    } catch {
+      return { kind: "not_sent", reason: "Host credential is unavailable" };
+    }
+
+    let response: Response;
+    try {
+      response = await this.fetchResponse("/api/v1/tasks", {
+        token,
+        method: "POST",
+        body: input,
+        redirect: "error",
+      });
+    } catch (error) {
+      return {
+        kind: "unknown",
+        reason: errorMessage(error),
+      };
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    if (!response.ok) {
+      const reason =
+        body &&
+        typeof body === "object" &&
+        typeof (body as { error?: unknown }).error === "string"
+          ? (body as { error: string }).error
+          : `HTTP ${response.status}`;
+      return response.status >= HTTP_STATUS.BAD_REQUEST &&
+        response.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
+        ? { kind: "rejected", status: response.status, reason }
+        : { kind: "unknown", reason };
+    }
+    if (response.status !== HTTP_STATUS.CREATED) {
+      return {
+        kind: "unknown",
+        reason: `Unexpected HTTP ${response.status}`,
+      };
+    }
+    const parsed = TaskCreateResponseSchema.safeParse(body);
+    if (!parsed.success) {
+      return {
+        kind: "unknown",
+        reason: "Remote returned an incomplete task-create response",
+      };
+    }
+    const activation = parsed.data;
+    return {
+      kind: "success",
+      result: {
+        taskId: activation.id,
+        activation,
+      },
+    };
+  }
+
   private async runAttempt(attempt: StreamAttempt): Promise<void> {
     this.options.onState?.("connecting");
     const token = await this.resolveToken(attempt);
@@ -97,12 +230,7 @@ export class HostConnection {
       throw new HostConnectionFailure("protocol_mismatch");
     }
     const identity = caller as { hash?: unknown; scope?: unknown };
-    if (
-      identity.hash !== hashToken(token) ||
-      (identity.scope !== "read" &&
-        identity.scope !== "api" &&
-        identity.scope !== "admin")
-    ) {
+    if (identity.hash !== hashToken(token) || !isScope(identity.scope)) {
       throw new HostConnectionFailure("protocol_mismatch");
     }
     if (identity.scope === "read") {
@@ -121,9 +249,9 @@ export class HostConnection {
     if (typeof ticket !== "string" || !ticket) {
       throw new HostConnectionFailure("protocol_mismatch");
     }
-    const response = await this.fetchImpl(
-      `${endpoint(this.config.url, "/api/v1/events/stream")}?ticket=${encodeURIComponent(ticket)}`,
-      { signal: attempt.signal },
+    const response = await this.fetchResponse(
+      `/api/v1/events/stream?ticket=${encodeURIComponent(ticket)}`,
+      { signal: attempt.signal, timeoutMs: null },
     );
     if (!response.ok) throw this.httpFailure(response.status);
     if (!response.body) throw new HostConnectionFailure("protocol_mismatch");
@@ -136,20 +264,24 @@ export class HostConnection {
     return "network";
   }
 
-  private async resolveToken(attempt: StreamAttempt): Promise<string> {
+  private async resolveToken(attempt?: StreamAttempt): Promise<string> {
     while (this.tokenCommand) {
       try {
         await this.tokenCommand;
       } catch {
         // The prior attempt reports its own outcome.
       }
-      if (!attempt.isCurrent()) throw new Error("stale host attempt");
+      if (attempt && !attempt.isCurrent()) {
+        throw new Error("stale host attempt");
+      }
     }
-    if (!attempt.isCurrent()) throw new Error("stale host attempt");
+    if (attempt && !attempt.isCurrent()) {
+      throw new Error("stale host attempt");
+    }
     const command = resolveHostToken(
       this.config.token,
       undefined,
-      attempt.signal,
+      attempt?.signal,
     );
     this.tokenCommand = command;
     try {
@@ -167,13 +299,10 @@ export class HostConnection {
   ): Promise<unknown> {
     let response: Response;
     try {
-      response = await this.fetchImpl(endpoint(this.config.url, path), {
+      response = await this.fetchResponse(path, {
+        signal,
+        token,
         method,
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        signal: AbortSignal.any([
-          signal,
-          AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        ]),
       });
     } catch (error) {
       if (signal.aborted) throw error;
@@ -185,6 +314,36 @@ export class HostConnection {
     } catch {
       throw new HostConnectionFailure("protocol_mismatch");
     }
+  }
+
+  private fetchResponse(
+    path: string,
+    options: HostFetchOptions = {},
+  ): Promise<Response> {
+    const headers = new Headers(options.headers);
+    if (options.token) {
+      headers.set("Authorization", `Bearer ${options.token}`);
+    }
+    const body =
+      options.body === undefined ? undefined : JSON.stringify(options.body);
+    if (body !== undefined && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+    const timeoutSignal =
+      options.timeoutMs === null
+        ? null
+        : AbortSignal.timeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS);
+    const signal =
+      options.signal && timeoutSignal
+        ? AbortSignal.any([options.signal, timeoutSignal])
+        : (options.signal ?? timeoutSignal ?? undefined);
+    return this.fetchImpl(endpoint(this.config.url, path), {
+      method: options.method ?? "GET",
+      headers,
+      body,
+      ...(options.redirect ? { redirect: options.redirect } : {}),
+      signal,
+    });
   }
 
   private httpFailure(status: number): HostConnectionFailure {

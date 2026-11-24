@@ -1,0 +1,982 @@
+{
+  "steps": [
+    {
+      "name": "setup",
+      "response": {
+        "provisioned": {
+          "tokenPath": "<INSTANCE:hub>/owner-token",
+          "created": {
+            "status": 201,
+            "name": "hub-connection",
+            "scope": "host"
+          }
+        },
+        "hubParentId": "00000000-0000-4000-8000-000000000001",
+        "ownerDb": "<INSTANCE:owner>/data/webagent.db",
+        "hubDb": "<INSTANCE:hub>/data/webagent.db"
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 1
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [
+            {
+              "taskId": "*",
+              "events": [
+                {
+                  "type": "connected",
+                  "agent": {
+                    "name": "mock-agent",
+                    "version": "0.1.0"
+                  },
+                  "agentId": "mock",
+                  "configOptions": [],
+                  "cancelTimeout": 10000,
+                  "recentPathsLimit": 10
+                }
+              ]
+            },
+            {
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "events": [
+                {
+                  "type": "task_created",
+                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "cwd": "/",
+                  "cwdDisplay": "/",
+                  "title": "root",
+                  "parentId": null,
+                  "parentAgentId": null,
+                  "agentId": "mock",
+                  "configOptions": [],
+                  "agentCommands": {
+                    "epoch": "00000000-0000-4000-8000-000000000003",
+                    "revision": 1,
+                    "commands": [
+                      {
+                        "name": "context",
+                        "description": "Show context usage"
+                      },
+                      {
+                        "name": "compact",
+                        "description": "Compact conversation",
+                        "input": {
+                          "hint": "focus instructions"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "mock": [
+            {
+              "sessionId": "*",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "initialize"
+                }
+              ]
+            },
+            {
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "session/new",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "cwd": "/"
+                }
+              ]
+            }
+          ],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "mock",
+                    "00000000-0000-4000-8000-000000000001",
+                    "00000000-0000-4000-8000-000000000001",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ?",
+                  "args": ["00000000-0000-4000-8000-000000000001"]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
+                  "args": ["00000000-0000-4000-8000-000000000001"]
+                }
+              ]
+            ],
+            "reads": 27
+          }
+        }
+      ]
+    },
+    {
+      "name": "ordinary-token-rejects-external-parent",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Parent task not found"
+        }
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 1
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "host-token-requires-an-external-parent-and-cannot-relay",
+      "response": [
+        {
+          "status": 400,
+          "body": {
+            "error": "Host task creation requires a non-empty parentId",
+            "code": "external_parent_required"
+          }
+        },
+        {
+          "status": 400,
+          "body": {
+            "error": "Host task creation requires a non-empty parentId",
+            "code": "external_parent_required"
+          }
+        },
+        {
+          "status": 400,
+          "body": {
+            "error": "Host task creation requires a non-empty parentId",
+            "code": "external_parent_required"
+          }
+        },
+        {
+          "status": 400,
+          "body": {
+            "error": "Host credentials cannot relay an agent@host target",
+            "code": "invalid_remote_agent"
+          }
+        }
+      ],
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "initiator-rejects-malformed-targets-before-dispatch",
+      "response": [
+        {
+          "status": 400,
+          "body": {
+            "error": "Invalid agent@host target",
+            "code": "invalid_remote_agent"
+          }
+        },
+        {
+          "status": 400,
+          "body": {
+            "error": "Invalid agent@host target",
+            "code": "invalid_remote_agent"
+          }
+        },
+        {
+          "status": 400,
+          "body": {
+            "error": "Invalid agent@host target",
+            "code": "invalid_remote_agent"
+          }
+        }
+      ],
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "rest-creates-remote-task",
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "00000000-0000-4000-8000-000000000002",
+          "cwd": "/",
+          "cwdDisplay": "/",
+          "parentId": "00000000-0000-4000-8000-000000000001",
+          "parentAgentId": "mock",
+          "agentId": "owner-only",
+          "title": "REST remote child",
+          "workflowStatus": "idle",
+          "source": "auto",
+          "configOptions": [],
+          "agentCommands": {
+            "epoch": "",
+            "revision": 0,
+            "commands": []
+          }
+        }
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
+                    "/",
+                    "auto",
+                    "REST remote child",
+                    "idle",
+                    1789333200000,
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "owner-only",
+                    "no-execution:00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8000-000000000002",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO remote_task_links\n             (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n             VALUES (?, ?, 'parent', NULL, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8000-000000000001",
+                    "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
+                    1,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ]
+            ],
+            "reads": 8
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO remote_task_links\n         (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n         VALUES (?, ?, 'child', ?, NULL)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000001",
+                    "00000000-0000-4000-8000-000000000002",
+                    "owner"
+                  ]
+                }
+              ]
+            ],
+            "reads": 3
+          }
+        }
+      ]
+    },
+    {
+      "name": "mcp-creates-remote-task",
+      "response": {
+        "status": 202,
+        "body": {
+          "status": "accepted"
+        }
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000003",
+                    "/",
+                    "agent",
+                    "MCP remote child",
+                    "idle",
+                    1789333200000,
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "owner-only",
+                    "no-execution:00000000-0000-4000-8000-000000000003",
+                    "00000000-0000-4000-8000-000000000003",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO remote_task_links\n             (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n             VALUES (?, ?, 'parent', NULL, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000003",
+                    "00000000-0000-4000-8000-000000000001",
+                    "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000003",
+                    1,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ]
+            ],
+            "reads": 8
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [
+            {
+              "taskId": "00000000-0000-4000-8000-000000000001",
+              "events": [
+                {
+                  "type": "user_message",
+                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "text": "create remote mcp",
+                  "clientOpId": "00000000-0000-4000-8000-000000000004"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "seq": 1,
+                  "patch": {
+                    "runtime": {
+                      "busy": {
+                        "kind": "agent",
+                        "since": "2026-09-13T21:00:00.000Z",
+                        "promptId": "prompt-1",
+                        "cancelStatus": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "seq": 2,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": true,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "message_chunk",
+                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "text": "Remote MCP child created."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "seq": 3,
+                  "patch": {
+                    "runtime": {
+                      "busy": null
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "seq": 4,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": false,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "prompt_done",
+                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "stopReason": "end_turn",
+                  "promptId": "prompt-1"
+                }
+              ]
+            }
+          ],
+          "mock": [
+            {
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "text": "create remote mcp"
+                },
+                {
+                  "kind": "mcp",
+                  "method": "initialize",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "protocolVersion": "2025-06-18",
+                      "capabilities": {
+                        "tools": {
+                          "listChanged": true
+                        }
+                      },
+                      "serverInfo": {
+                        "name": "lelouchhe_webagent",
+                        "version": "0.1.0"
+                      },
+                      "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 1
+                  }
+                },
+                {
+                  "kind": "mcp",
+                  "method": "notifications/initialized",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "status": 202,
+                  "result": null
+                },
+                {
+                  "kind": "mcp",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "tool": "task_create",
+                  "arguments": {
+                    "title": "MCP remote child",
+                    "agent": "owner-only@owner"
+                  },
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "{\"taskId\":\"00000000-0000-4000-8000-000000000003\"}"
+                        }
+                      ]
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 2
+                  }
+                }
+              ]
+            }
+          ],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000001",
+                    1,
+                    "user_message",
+                    "{\"text\":\"create remote mcp\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+                    "user",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000001",
+                    2,
+                    "assistant_message",
+                    "{\"text\":\"Remote MCP child created.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000001",
+                    3,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+                  "args": ["/", 1789333200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO remote_task_links\n         (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n         VALUES (?, ?, 'child', ?, NULL)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000001",
+                    "00000000-0000-4000-8000-000000000003",
+                    "owner"
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8000-000000000001"
+                  ]
+                }
+              ]
+            ],
+            "reads": 22
+          }
+        }
+      ]
+    },
+    {
+      "name": "links-survive-restarts",
+      "response": {
+        "ownerTasks": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "parent_id": null,
+            "source": "root"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "parent_id": null,
+            "source": "auto"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000003",
+            "parent_id": null,
+            "source": "agent"
+          }
+        ],
+        "hubTasks": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "parent_id": null,
+            "source": "root"
+          }
+        ],
+        "ownerLinks": [
+          {
+            "local_task_id": "00000000-0000-4000-8000-000000000002",
+            "remote_task_id": "00000000-0000-4000-8000-000000000001",
+            "remote_role": "parent",
+            "remote_host": null,
+            "peer_token_hash": "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+          },
+          {
+            "local_task_id": "00000000-0000-4000-8000-000000000003",
+            "remote_task_id": "00000000-0000-4000-8000-000000000001",
+            "remote_role": "parent",
+            "remote_host": null,
+            "peer_token_hash": "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+          }
+        ],
+        "hubLinks": [
+          {
+            "local_task_id": "00000000-0000-4000-8000-000000000001",
+            "remote_task_id": "00000000-0000-4000-8000-000000000002",
+            "remote_role": "child",
+            "remote_host": "owner",
+            "peer_token_hash": null
+          },
+          {
+            "local_task_id": "00000000-0000-4000-8000-000000000001",
+            "remote_task_id": "00000000-0000-4000-8000-000000000003",
+            "remote_role": "child",
+            "remote_host": "owner",
+            "peer_token_hash": null
+          }
+        ],
+        "ownerBindings": [
+          {
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "agent_key": "owner-only",
+            "agent_session_id": "no-execution:00000000-0000-4000-8000-000000000002"
+          },
+          {
+            "task_id": "00000000-0000-4000-8000-000000000003",
+            "agent_key": "owner-only",
+            "agent_session_id": "no-execution:00000000-0000-4000-8000-000000000003"
+          }
+        ],
+        "ownerAnchors": [
+          {
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "type": "system_message",
+            "kind": "task_created"
+          },
+          {
+            "task_id": "00000000-0000-4000-8000-000000000003",
+            "type": "system_message",
+            "kind": "task_created"
+          }
+        ]
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "DELETE FROM inbox_messages WHERE created_at < ?",
+                  "args": [1786741200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ?",
+                  "args": ["00000000-0000-4000-8000-000000000001"]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
+                  "args": ["00000000-0000-4000-8000-000000000001"]
+                }
+              ]
+            ],
+            "reads": 45
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "DELETE FROM inbox_messages WHERE created_at < ?",
+                  "args": [1786741200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ?",
+                  "args": ["00000000-0000-4000-8000-000000000001"]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
+                  "args": ["00000000-0000-4000-8000-000000000001"]
+                }
+              ]
+            ],
+            "reads": 48
+          }
+        }
+      ]
+    }
+  ],
+  "snapshot": [
+    {
+      "name": "owner",
+      "snapshot": {
+        "tasks": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "cwd": "/",
+            "title": "root",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "pending_compact_summary": null,
+            "model": null,
+            "mode": null,
+            "reasoning_effort": null,
+            "source": "root",
+            "deleted_at": null,
+            "created_at": 1789333200000,
+            "last_active_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000002",
+            "cwd": "/",
+            "title": "REST remote child",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "pending_compact_summary": null,
+            "model": null,
+            "mode": null,
+            "reasoning_effort": null,
+            "source": "auto",
+            "deleted_at": null,
+            "created_at": 1789333200000,
+            "last_active_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000003",
+            "cwd": "/",
+            "title": "MCP remote child",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "pending_compact_summary": null,
+            "model": null,
+            "mode": null,
+            "reasoning_effort": null,
+            "source": "agent",
+            "deleted_at": null,
+            "created_at": 1789333200000,
+            "last_active_at": 1789333200000
+          }
+        ],
+        "agent_sessions": [
+          {
+            "agent_key": "owner-only",
+            "agent_session_id": "no-execution:00000000-0000-4000-8000-000000000002",
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "created_at": 1789333200000
+          },
+          {
+            "agent_key": "owner-only",
+            "agent_session_id": "no-execution:00000000-0000-4000-8000-000000000003",
+            "task_id": "00000000-0000-4000-8000-000000000003",
+            "created_at": 1789333200000
+          }
+        ],
+        "events": [
+          {
+            "id": 1,
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "seq": 1,
+            "type": "system_message",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 2,
+            "task_id": "00000000-0000-4000-8000-000000000003",
+            "seq": 1,
+            "type": "system_message",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          }
+        ],
+        "messages": [],
+        "message_projections": [],
+        "deliveries": [],
+        "client_ops": [],
+        "recent_paths": []
+      }
+    },
+    {
+      "name": "hub",
+      "snapshot": {
+        "tasks": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "cwd": "/",
+            "title": "root",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "pending_compact_summary": null,
+            "model": null,
+            "mode": null,
+            "reasoning_effort": null,
+            "source": "root",
+            "deleted_at": null,
+            "created_at": 1789333200000,
+            "last_active_at": 1789333200000
+          }
+        ],
+        "agent_sessions": [
+          {
+            "agent_key": "mock",
+            "agent_session_id": "00000000-0000-4000-8000-000000000001",
+            "task_id": "00000000-0000-4000-8000-000000000001",
+            "created_at": 1789333200000
+          }
+        ],
+        "events": [
+          {
+            "id": 1,
+            "task_id": "00000000-0000-4000-8000-000000000001",
+            "seq": 1,
+            "type": "user_message",
+            "data": "{\"text\":\"create remote mcp\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+            "created_at": 1789333200000,
+            "from_ref": "user"
+          },
+          {
+            "id": 2,
+            "task_id": "00000000-0000-4000-8000-000000000001",
+            "seq": 2,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Remote MCP child created.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 3,
+            "task_id": "00000000-0000-4000-8000-000000000001",
+            "seq": 3,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          }
+        ],
+        "messages": [],
+        "message_projections": [],
+        "deliveries": [],
+        "client_ops": [],
+        "recent_paths": [
+          {
+            "cwd": "/",
+            "last_used_at": 1789333200000
+          }
+        ]
+      }
+    }
+  ]
+}

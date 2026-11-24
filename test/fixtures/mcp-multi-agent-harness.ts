@@ -101,7 +101,7 @@ export interface Harness {
   agents: Record<string, HarnessAgent>;
   /** Tokens minted for tasks, in order. */
   minted: Array<{ taskId: string; token: string }>;
-  createCalls: Array<"user" | "agent">;
+  createCalls: Array<"user" | "agent" | "host">;
   baseUrl(): string;
   request(
     method: string,
@@ -194,7 +194,7 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
     return token;
   };
 
-  const createCalls: Array<"user" | "agent"> = [];
+  const createCalls: Array<"user" | "agent" | "host"> = [];
   const localTaskOps = createLocalTaskOps({ store, tasks });
   const host: TaskOps = {
     ...localTaskOps,

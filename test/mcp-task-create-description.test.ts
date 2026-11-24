@@ -47,6 +47,13 @@ describe("task_create description", () => {
     assert.ok(description.length <= TASK_CREATE_DESCRIPTION_BUDGET);
   });
 
+  it("advertises configured remote hosts without changing the input schema", () => {
+    const description = buildTaskCreateDescription(["mock"], ["owner"]);
+    assert.match(description, /agent@host/);
+    assert.match(description, /owner/);
+    assert.ok(description.length <= TASK_CREATE_DESCRIPTION_BUDGET);
+  });
+
   it("never advertises the same agent twice", () => {
     const description = buildTaskCreateDescription(["pi", "pi", "copilot"]);
     assert.deepEqual(advertisedIds(description), ["pi", "copilot"]);

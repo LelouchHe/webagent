@@ -48,6 +48,14 @@ time. An entry without a "closing condition" is a wish, not an issue.
 
 ## Task lifecycle and storage
 
+- **Task creation repeats input-shape validation.** `src/task-ops.ts` and
+  `src/host/local/adapter.ts` both check basic fields such as `agentId` and
+  the external `parentId`. *Closing:* revisit after the create path is
+  refactored. If the duplication remains, validate input shape once with Zod
+  at the Core API boundary and pass typed input downstream. Keep authorization
+  and state-dependent checks in their owning layers, and preserve the existing
+  REST and MCP error behavior.
+
 - **A Root replacement is announced only when the fallback lands normally.**
   `/exit` prints its request row and the landing prints a `notify: Root replaced`
   row, both from client memory. If the fallback's own reads fail

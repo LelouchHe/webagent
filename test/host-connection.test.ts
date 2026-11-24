@@ -38,6 +38,114 @@ async function until(condition: () => boolean, timeoutMs = 1_000) {
 }
 
 describe("host connection helpers", () => {
+  it("sends one remote create request with the existing Host credential", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const connection = new HostConnection(
+      { url: "http://owner.example", token: "wat_host" },
+      {
+        retryDelay: () => 0,
+        fetch: async (input, init) => {
+          requests.push({
+            url:
+              typeof input === "string"
+                ? input
+                : input instanceof URL
+                  ? input.toString()
+                  : input.url,
+            init,
+          });
+          return new Response(
+            JSON.stringify({
+              id: "remote-child",
+              cwd: "/work",
+              cwdDisplay: "~/work",
+              parentId: null,
+              parentAgentId: null,
+              agentId: "copilot",
+              title: "Child",
+              workflowStatus: "idle",
+              source: "agent",
+              configOptions: [],
+              agentCommands: { epoch: "remote", revision: 0, commands: [] },
+            }),
+            { status: 201, headers: { "Content-Type": "application/json" } },
+          );
+        },
+      },
+    );
+
+    const outcome = await connection.createTask({
+      agentId: "copilot",
+      parentId: "local-parent",
+      title: "Child",
+      source: "agent",
+    });
+
+    assert.equal(outcome.kind, "success");
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]?.url, "http://owner.example/api/v1/tasks");
+    assert.equal(
+      new Headers(requests[0]?.init?.headers).get("authorization"),
+      "Bearer wat_host",
+    );
+    assert.equal(requests[0]?.init?.redirect, "error");
+    assert.ok(requests[0]?.init?.signal);
+    assert.equal(
+      new Headers(requests[0]?.init?.headers).get("content-type"),
+      "application/json",
+    );
+    const requestBody = requests[0]?.init?.body;
+    if (typeof requestBody !== "string") {
+      throw new Error("expected a JSON request body");
+    }
+    assert.deepEqual(JSON.parse(requestBody), {
+      agentId: "copilot",
+      parentId: "local-parent",
+      title: "Child",
+      source: "agent",
+    });
+  });
+
+  it("classifies failed and ambiguous create outcomes without retry", async () => {
+    const rejectConnection = new HostConnection(
+      { url: "http://owner.example", token: "wat_host" },
+      {
+        retryDelay: () => 0,
+        fetch: async () =>
+          new Response(JSON.stringify({ error: "Agent missing" }), {
+            status: 400,
+          }),
+      },
+    );
+    assert.deepEqual(
+      await rejectConnection.createTask({
+        agentId: "missing",
+        parentId: "parent",
+        source: "auto",
+      }),
+      { kind: "rejected", status: 400, reason: "Agent missing" },
+    );
+
+    let calls = 0;
+    const unknownConnection = new HostConnection(
+      { url: "http://owner.example", token: "wat_host" },
+      {
+        retryDelay: () => 0,
+        fetch: async () => {
+          calls += 1;
+          throw new TypeError("connection closed");
+        },
+      },
+    );
+    const unknown = await unknownConnection.createTask({
+      agentId: "copilot",
+      parentId: "parent",
+      source: "auto",
+    });
+    assert.equal(unknown.kind, "unknown");
+    assert.equal(calls, 1);
+  });
+
   it("keeps literal credentials unchanged", async () => {
     assert.equal(await resolveHostToken("wat_literal"), "wat_literal");
   });
@@ -104,6 +212,11 @@ describe("host connection helpers", () => {
         return Response.json({ hostProtocol: 1 });
       }
       if (url.endsWith("/api/v1/auth/verify")) {
+        assert.equal(
+          new Headers(init?.headers).get("authorization"),
+          "Bearer wat_hub",
+        );
+        assert.ok(init?.signal);
         const token = "wat_hub";
         return Response.json({
           ok: true,
@@ -113,6 +226,11 @@ describe("host connection helpers", () => {
         });
       }
       if (url.endsWith("/api/v1/sse-ticket")) {
+        assert.equal(
+          new Headers(init?.headers).get("authorization"),
+          "Bearer wat_hub",
+        );
+        assert.ok(init?.signal);
         return Response.json({ ticket: "ticket" });
       }
       sseAttempts += 1;

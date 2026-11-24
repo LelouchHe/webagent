@@ -250,13 +250,32 @@ Execution config does not cross agents: a new task created for a different agent
 than `inheritFromTaskId`'s does not inherit that task's `model` or
 `reasoning_effort`. A same-agent creation keeps inheriting them.
 
+An `agentId` of `agent@host` creates the Task on a configured Host. The shared
+`TaskOps.create` command validates the local parent and caller first, sends one
+`POST /api/v1/tasks` with the short agent id and local parent id, and never
+sends the local inheritance id or a locally resolved cwd. An omitted cwd uses
+the peer's `default_cwd`; an explicit cwd is interpreted by the peer. The peer
+must recognize its configured agent and a Host-scoped credential. Its task row,
+empty execution binding, and external-parent link commit together without
+starting ACP. The initiator then records the returned task id and Host name
+beside the local parent.
+
+Remote creation does not retry. A 4xx rejection is returned as `502` with its
+`remoteStatus`; a lost or incomplete response reports `outcome: "unknown"`; and
+a peer success followed by a local link failure reports
+`outcome: "partial_success"` with the remote task id. Explicit model/thinking
+overrides are rejected before dispatch because this create slice does not copy
+execution configuration between hosts. Local inheritance defaults are not
+forwarded; the remote task starts with the peer agent's own environment.
+
 **Errors:** `400` (directory doesn't exist, `agentId` not configured or not a
-string), `503` (the target agent could not be started; the body carries `error`
-plus `agentId`, the agent really attempted)
+string; Host config error), `502` (remote rejection, unknown result, or partial
+success), `503` (the target agent could not be started, or the remote request
+was not sent; the body carries `error` plus `agentId` for a local agent)
 
 **Side effects:**
 
-- Broadcasts `task_created` to all SSE clients. The event is emitted by task
+- A local creation broadcasts `task_created` to all SSE clients. The event is emitted by task
   creation itself, so the quick prompt and the Agent's `task_create` tool
   announce the same event; a request's `X-Client-Op-Id` rides it as
   `clientOpId`, which is how a client whose create response was lost matches
@@ -264,14 +283,17 @@ plus `agentId`, the agent really attempted)
   the caller did not ask for — the message-consume carrier — is not announced:
   its own route answers with the id and the client switches there, so an
   announcement would install it first and make that switch a no-op
-- Broadcasts `config_option_update` if config was inherited
-- Records and broadcasts a `system_message` (`kind: task_created`) on the parent
+- A local creation broadcasts `config_option_update` if config was inherited
+- A local creation records and broadcasts a `system_message` (`kind: task_created`) on the parent
   task — the same row the Agent's `task_create` tool writes, with `from_ref`
   `user` instead of `agent` — so user- and agent-created tasks look identical in
   the task flow and survive a reload. The row names the agent the task landed on
   and the `model` / `thinking` values that took effect (an inherited, explicit,
   or target-reported value; `inherited` only when none can be determined)
-- Cleans up empty tasks older than 60 seconds
+- Local creation cleans up empty tasks older than 60 seconds
+- Remote creation stores only `remote_task_links` on the initiator. Neither side
+  copies a Task row or forwards SSE/ACP; the executor's empty binding materializes
+  on its first later use.
 
 ---
 
@@ -1179,7 +1201,7 @@ This endpoint **always requires** a valid `Authorization: Bearer <token>` header
 | ------- | ------- | ---------------------------------------------------- |
 | `ok`    | boolean | Always `true` on success                             |
 | `name`  | string  | Token's human-readable name (e.g. `"laptop"`)        |
-| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"read"` (pure reads only: host status, task list, task detail, events, status, permissions, version, auth/verify; events never flushes and no read warms) |
+| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), `"host"` (Host connection probes and remote Task create only), or `"read"` (pure reads only: host status, task list, task detail, events, status, permissions, version, auth/verify; events never flushes and no read warms) |
 | `hash`  | string  | SHA-256 hex digest of the presented token, matching its stored `hash` |
 
 **Response** `401`:
@@ -1220,11 +1242,17 @@ Requires a valid `Authorization: Bearer <token>` header. Returns `401` otherwise
 
 The SSE stream re-checks the bound token on every heartbeat (≤15 s). If the token is revoked mid-stream, the connection is closed within one heartbeat interval; the client must mint a fresh ticket and reconnect.
 
+A `host`-scoped ticket is limited to the global Host connection channel: it
+receives `connected` plus heartbeat frames so B1 connection health can be
+observed, but no task or application-state broadcasts. Its `connected` payload
+also omits the normal `debugLevel` and pending-inbox count. A Host ticket is
+rejected on a per-task stream.
+
 ---
 
 ### Tokens
 
-Manage Bearer tokens stored in `data/auth.json`. All endpoints require an admin-scope token; api- and read-scope tokens get `403`.
+Manage Bearer tokens stored in `data/auth.json`. All endpoints require an admin-scope token; api-, host-, and read-scope tokens get `403`.
 
 #### `GET /api/v1/tokens`
 
@@ -1264,9 +1292,11 @@ Create a new token. **The raw token is returned exactly once** — the server on
 | Field   | Type   | Description                                                                 |
 | ------- | ------ | --------------------------------------------------------------------------- |
 | `name`  | string | 1–64 chars, `[A-Za-z0-9_-]`. Must be unique.                                |
-| `scope` | string | Optional. `"api"` (default) or `"read"`. `admin` is not accepted here.      |
+| `scope` | string | Optional. `"api"` (default), `"host"`, or `"read"`. `admin` is not accepted here. |
 
-New tokens default to `api` scope (no access to `/tokens/**`). `read` mints the
+New tokens default to `api` scope (no access to `/tokens/**`). `host` mints a
+cross-instance credential limited to connection probes and remote Task create.
+`read` mints the
 narrow pure-read credential used by external history consumers; it is denied by
 default on every route outside the documented read allowlist (see
 [Auth Flow](security.md#auth-flow)). `admin` is CLI-only: use
@@ -1692,7 +1722,10 @@ Retrieve a previously uploaded attachment. Responses are immutably cached
 
 #### `GET /api/v1/events/stream`
 
-**Global SSE stream.** Receives all events from all tasks. This is the primary stream used by the WebAgent frontend.
+**Global SSE stream.** Receives all events from all tasks for ordinary user
+tickets. This is the primary stream used by the WebAgent frontend. Host
+tickets connect only for connection/heartbeat transport and receive no business
+broadcasts.
 
 **Response:** `text/event-stream`
 
@@ -1715,6 +1748,7 @@ data: {"type":"message_chunk","taskId":"abc-123","text":"Hello"}
 #### `GET /api/v1/tasks/:id/events/stream`
 
 **Per-task SSE stream.** Only receives events for the specified task. Supports `Last-Event-ID` header for reconnection replay.
+Host tickets are not accepted on this endpoint.
 
 **Response:** `text/event-stream`
 
