@@ -1,277 +1,122 @@
-# Multi-host task operations
+# Multi-host task collaboration
 
-WebAgent's multi-host model is planned to let a Task live on another WebAgent
-instance while callers continue to use its Task id. A Task id is an address, not an
-authorization grant: every entrypoint must establish the caller's authority
-before it performs a command. Each instance owns its own SQLite database;
-instances do not share database files or treat another instance's database as a
-local store.
+A Task id is an address, not an authorization grant. Each WebAgent instance owns
+its SQLite database and any ACP process that executes its local Tasks. A host
+connection carries requests between those owners without sharing storage or
+copying execution state.
 
-## Goals and non-goals
+## Addresses and relation facts
 
-The goal is that clients and agents do not care where a Task runs. The HTTP
-API (for the browser and other clients) and the MCP tools (for agents) keep
-their shapes; with hosts configured, a remote Task is addressed and operated
-exactly like a local one. Inside the server, every entrypoint converges on one
-server interface (see [Architecture](README.md)); below it, a host layer selects
-local or remote execution.
+`agent@host` is a create-time address. The hub resolves `host` from its
+`[hosts.<name>]` configuration, sends the short agent id to that owner, and then
+continues to address the created Task by its stable Task id.
 
-This document describes that direction and the parts that exist today: the
-`TaskOps` port, the connection layer, and the first remote Task create slice.
-Remote Task resolution, routing of established tasks,
-cross-instance idempotency, and delivery are not implemented yet. Instances
-never share storage.
+`remote_task_links` records the cross-instance relation on both sides:
 
-## Architecture
-
-```text
-Entry points
-  MCP [now]: capability authenticates the caller; principal frozen
-  Browser REST create/cancel [now]: bearer-authenticated HTTP adapters
-  Other browser REST commands [plan]
-                         |
-                         v
-                TaskOps port [now]
-              (neutral types; 7 commands)
-                         |
-                         v
-             Core Task create command [now]
-       parse `agent@host` -> { agentId, host? }
-       authorize once; call one Host create port
-                         |
-                          v
-                TaskCreateHost port [now]
-                          |
-                          v
-                Host selector [src/host/tasks.ts]
-                         / \
-                        v   v
-              LocalHost     RemoteHost
-                  |              |
-                  v              v
-        TaskManager + Store   peer POST /api/v1/tasks
-                                         v
-                                  Task transport [plan]
-```
-
-Today MCP and the general REST task-create route call the Core create command
-through the same `TaskOps.create()` entry, and REST task cancellation and MCP
-`task_cancel` share `TaskOps.cancel()`. Core parses `agent@host` into an
-abstract `{ agentId, host? }` target and calls one injected `TaskCreateHost`
-port. It does not hold LocalHost or RemoteHost and does not branch on location.
-`src/host/tasks.ts` makes that single Host-side selection and invokes one
-executor directly. The RemoteHost path includes the send-before, response-after,
-and partial-success rules; LocalHost has no RemoteHost transport and no raw
-coordinate parser. There is no `resolve(id)` step yet, and the other REST routes
-still call the local domain code directly.
-`src/api/tasks.ts`, `src/task-ops.ts`, and `src/host/local/adapter.ts`
-exist now.
-`src/host/remote/` contains the cross-instance connection and one-shot create
-transport; the established-Task resolver, router, and delivery transport are
-planned.
-
-Create error classes are classified once by `classifyTaskCreateError()` in
-`src/api/tasks.ts`. REST and MCP consume that discriminant only for their own
-status/body or tool-text presentation; they do not maintain separate
-error-class chains.
-
-## Scope of the host layer (planned)
-
-The host layer is an execution library: it hides where execution happens. A
-capability belongs to it when its result depends on which instance executes
-it and it is extended to remote instances:
-
-| Capability | Why it depends on location |
-| --- | --- |
-| Task operations: create, list, history, cancel, messages and updates, prompt, configuration, bash, attachments, permissions, events | They run where the Task lives |
-| Agent catalog: configured agents, models, commands | Each instance configures its own agents |
-| Recent paths and file browsing | They describe that instance's file system |
-
-Capabilities that do not depend on location stay in the server: tokens, SSE
-tickets, push and client visibility, the inbox, shares, host status. A
-cross-instance call is an ordinary operation whose other side is on another
-instance: it enters the peer through the peer's existing entrypoints with a
-host credential, and the peer runs it as an ordinary local operation. There is
-no separate host protocol.
-
-## Connections
-
-A hub keeps one independent, in-memory connection per configured
-`[hosts.<name>]` entry. The owner does not need matching configuration. Each hub
-host connection uses an owner-issued Bearer token and exposes no raw token or
-token-command output through the API or logs.
-
-```text
-hub                                      owner
- |-- GET /api/v1/version ------------------->| host protocol
- |<------------------------------------------|
- |-- GET /api/v1/auth/verify --------------->| token hash + scope
- |<------------------------------------------|
- |-- POST /api/v1/sse-ticket --------------->| short-lived stream ticket
- |<------------------------------------------|
- |-- GET /api/v1/events/stream?ticket=… ---->| persistent global SSE
- |<============ connected + heartbeat =======|
- |                                           |
- |           reconnect with capped backoff after EOF, timeout, or failure
-```
-
-The connection becomes `connected` after the SSE handshake. Each owner heartbeat
-refreshes liveness; three missed 15-second heartbeat intervals disconnect the
-stream, so heartbeat failure is detected after about 45 seconds plus at most
-one polling interval. A disconnected host retries independently with capped
-exponential backoff. Every successful connection invokes an empty catch-up
-hook; later delivery work will replace that hook without changing the connection
-mechanism.
-Connection state never writes to SQLite and never changes Task facts.
-Connections authenticated with the `host` scope receive only the minimal
-`connected` handshake and heartbeat frames: task and global business broadcasts
-are filtered before they reach the socket. Host tickets are refused on per-task
-streams. Older `api`/`admin` connection credentials keep their existing
-connection behavior.
-
-The public version endpoint advertises `hostProtocol`; the authenticated
-verify endpoint reports the caller's token name, scope, and SHA-256 `hash`.
-`GET /api/v1/hosts` reports the hub's connection state for diagnostics and
-regression observation. The browser UI does not consume it yet. See
-[the API reference](../api.md#hosts) for exact response shapes and
-[configuration](../configuration.md#multi-host-connection) for token commands.
-
-Host connections use a token with the explicit `host` scope. That scope reaches
-only the connection probes and `POST /api/v1/tasks`; it cannot act as an
-ordinary browser/API credential. On the executor, a Host-scoped create treats
-`parentId` as an opaque peer Task id, never looking for a same-named local row.
-It validates the target agent and cwd, creates the Task with an empty execution
-slot, and atomically records the external-parent link. ACP starts only when the
-task is later used.
-
-## Directories and dependencies
-
-| Location | Responsibility |
-| --- | --- |
-| `src/mcp/` | MCP protocol handling, tool registration, capabilities, tool descriptions, and adaptation of protocol input/output |
-| `src/http/` | HTTP entrypoint, including the main request/auth/router order, REST/SSE presentation, and the migrated REST task create and cancel calls to `TaskOps` |
-| `src/api/tasks.ts` | The neutral `TaskOps` interface, command DTOs, caller, and minimal `TaskCreateHost` port |
-| `src/task-ops.ts` | Create command: caller/parent authorization, raw coordinate parsing, one Host call, and narrow accepted-result completion callback |
-| `src/host/tasks.ts` | `createTaskHost`: direct LocalHost vs RemoteHost choice from `{agentId, host?}` |
-| `src/host/local/adapter.ts` | LocalHost `TaskOps` implementation over this instance's TaskManager and Store; no remote transport or raw coordinate parsing |
-| `src/host/local/` | Local projection and error helpers; cannot depend on remote implementations |
-| `src/host/remote/` | RemoteHost connection, token hash verification, retry/backoff, in-memory status, and one-shot remote create transport; `HostConnection` owns the URL, bearer header, timeout, and raw fetch seam |
-| `src/server.ts` | The only assembly point; it injects LocalHost and RemoteHost into the Host selector, then injects the same routed `TaskOps` into HTTP and MCP |
-
-ESLint's `no-restricted-imports` guards direct static dependencies:
-`src/http/**` and `src/mcp/**` cannot import each other or a Host module and
-use `src/api/tasks.ts` for the task command contract; MCP also cannot import
-Store or TaskManager.
-Core and host modules cannot import HTTP or MCP entrypoints. `src/server.ts` is
-the assembly exception, and `src/task-manager.ts` retains only its two named
-legacy MCP imports (`buildMcpServerEntry` and the `CapabilityStore` type).
-`src/api/tasks.ts` cannot import entrypoints, Host modules, Store, or
-TaskManager. `src/host/remote/`
-cannot import Store, TaskManager, or `src/host/local/`; owner-side local commands
-are injected through `TaskOps`. `src/host/local/` cannot import
-`src/host/remote/`. Static value and type imports and re-exports at any nested
-depth are covered, and `npm run lint` fails on a violation. The rules do not
-follow the module graph, dynamic `import()`, or inline `import("…").Type`
-references; those indirect paths are left to review.
-The moved main router has one line-level exception for the legacy host
-protocol version import. It remains until that protocol fact lives in a
-neutral host contract; the route's registry dependency is structural rather
-than a direct `HostRegistry` implementation import.
-
-## `TaskOps` port
-
-The existing MCP-only methods retain their parameters and result shapes. Create
-has been neutralized for its first REST caller.
-
-| Method | Current caller | Result |
+| Fact | Hub row | Owner row |
 | --- | --- | --- |
-| `list(principal)` | MCP `task_list` | Synchronous `TaskListItem[]` |
-| `query(principal, input)` | MCP `task_query` | Synchronous `TaskQueryResult` |
-| `read(principal, input)` | MCP `task_read` | Synchronous `TaskReadResult` |
-| `cancel(command)` | MCP `task_cancel`, REST `POST /api/v1/tasks/:id/cancel` | `Promise<TaskCancelOutcome>` |
-| `create(caller, input)` | MCP `task_create`, REST `POST /api/v1/tasks` | `Promise<TaskCreateResult>` |
-| `send(principal, targetTaskId, body)` | MCP `task_send` | `Promise<void>` |
-| `update(principal, status, body)` | MCP `task_update` | `Promise<{ note?: string }>` |
+| Local Task | parent id | remote-created Task id |
+| Remote Task | child id | external parent id |
+| Role | `child` | `parent` |
+| Credential | configured host name | owner-side peer token hash |
 
-Authorization is split between the two sides of the port today. The MCP entry
-(`src/mcp/server.ts`) authenticates the capability, checks that the task is
-active, and freezes the caller principal; it does not decide what that caller
-may do to a target. REST cancellation authenticates with the existing HTTP
-bearer gate, checks task existence, and applies client-op replay before calling
-the shared command. Each agent `TaskOps` command in `src/host/local/adapter.ts` then checks
-the principal's current execution generation and its relation to the target
-before any side effect, and re-checks at the write fences after each await. An
-authenticated principal is therefore not yet an authorized action. For planned cross-instance
-forwarding, transport must carry trusted host action context, and the owning
-host must verify that context before executing the command. Possession of a
-Task id alone never grants access.
+The owner Task remains a parentless archived top in its local tree. Local
+`parent_id` structure is authoritative; the external relation is used when no
+local parent exists. Links are durable decisions. Host connection state and the
+hub's remote-child display mirror are in memory and never become Task facts.
 
-Create keeps caller kind separate from the requested parent and inheritance
-source. An agent caller maps to its own parent and cwd context and is
-generation-fenced; a user caller carries the authenticated REST route's
-independent `parentId` and `inheritFromTaskId`. The user result carries complete activation facts, which REST exposes directly;
-the MCP projection remains the existing `{ taskId }` result.
+Connections use an owner-issued `host`-scoped token. The hub verifies version,
+token hash, and scope before opening global SSE. Host SSE sends heartbeat and
+connected frames plus only events for Tasks whose `parent` link belongs to that
+token hash. Per-Task host SSE is refused.
 
-For `agent@host`, the Core create command keeps ownership of caller/parent
-authorization and converts the raw coordinate to `{agentId, host}`. It calls
-the one `TaskCreateHost` port once. Host selects RemoteHost, which resolves the
-configured host, checks the Core fence, and sends one peer request with the
-short agent id and external parent id. A `201` is passed through Core's narrow
-completion callback, which re-checks the caller and commits the `child` link.
-No retry or idempotency layer is present: a 4xx is a rejection, transport
-uncertainty is unknown, and local persistence failure is partial success. A
-short/local target goes from the same Host port directly to LocalHost. LocalHost
-does not receive raw coordinates or a remote transport. The initiator never
-copies the peer Task.
+## Create
 
-The owner creates this Task as a parentless archived top: its local
-`tasks.parent_id` is `NULL`, while `remote_task_links` records the logical
-external parent. Local parent structure remains authoritative; the external
-relation is used only when there is no local parent. A same-transaction,
-non-broadcast `system_message` with kind `task_created` is the normal creation
-fact that keeps this deferred Task out of empty-task GC. This slice does not
-change local archive/unarchive or add remote lifecycle behavior.
+MCP `task_create` and REST `POST /api/v1/tasks` use the same Core command. Core
+authorizes the caller and converts `agent@host` to a structured target. The host
+selector calls either LocalHost or one RemoteHost transport.
 
-Cancellation keeps the two caller policies separate. An agent command requires
-a direct-child relation, carries a generation-fenced principal and reason, and
-writes the existing source/target audit rows after re-checking that principal.
-A user command carries only the target Task id: HTTP owns its authorization and
-replay policy, and cancellation keeps the existing REST behavior of writing no
-agent cancellation audit rows. Both commands resolve only an existing local
-execution and therefore do not warm an agent process.
+The owner accepts a Host create only with a non-empty opaque external
+`parentId`, creates a deferred Task with an empty execution slot, and commits the
+`parent` link in the same transaction. It does not start ACP. After a peer `201`,
+the hub records its `child` link through a caller-generation fence. A `4xx` is a
+rejection; transport ambiguity is unknown, and owner success followed by local
+link failure is partial success.
 
-Other operations still use the MCP tool result contract: snake_case fields such as
-`task_id` and `max_seq`, and the current byte limits. `TaskCaller.initializing`
-also names a concept from the MCP handshake period. These couplings remain
-until each operation gains a second caller.
+## Read
 
-## Owner-local facts
+`TaskOps.list/query/read` are asynchronous. `task_list` includes the hub's local
+family plus remote-child entries marked by `kind: "remote"` and `host`. The
+mirror is display-only:
 
-The port does not expose or virtualize ACP processes, ACP sessions, execution
-bindings, execution generations, leases, capabilities, timers, bash processes,
-files, or garbage collection. Those are facts and effects of the instance that
-owns the Task. REST archive checks, Store failure observers, and related
-owner-local lifecycle behavior also remain outside the port.
+- the first connect subscribes to SSE, takes one cold snapshot through the
+  owner's existing task read routes, then applies incremental events;
+- a known Task keeps its last values when the owner is unreachable and gains
+  `unreachable: true`;
+- before the first successful snapshot, a remote child contains only its
+  address and unreachable mark;
+- `lastEventAt` and `lastAgentActivityAt` come from owner events.
 
-## Delivery model (planned)
+`task_query` and `task_read` call `GET /api/v1/tasks/:id/events` on the owner and
+use the shared history projector, bounds, and MCP response shapes. These reads
+never start ACP. The owner does not authorize a read per linked task: the hub
+restricts targets to its own `child` links for the calling Task's family, and
+host scope is limited to task list/detail/events/status reads.
 
-Sending a message or reporting a typed update is a synchronous local commit on
-the caller's own instance: the call returns once that instance has durably
-accepted it. Moving the message to another instance is background transport
-that persists and retries its own facts; network delivery, reachability, and
-the remote outcome are never part of the synchronous result.
+Remote egress may already contain display rewrites. Search cold-reads the
+complete owner history because the owner has no server-side search endpoint.
 
-The obligation account is maintained on the side that executes the Task. A
-remote caller can submit the command, but the owner records delivery and
-reporting effects in its own database and applies the existing account
-semantics there.
+## Dispatch
 
-## Verifying unchanged behavior
+MCP `task_send` to a linked child synchronously POSTs to the owner's existing
+`/api/v1/tasks/:parentId/messages` route with one `X-Client-Op-Id`. `202` is the
+accepted result; a rejection or visible transport failure is returned to the
+agent. Any retry inside one transport call keeps that operation id. An unknown
+outcome is never retried automatically.
 
-The external regression suite records REST, MCP, SSE, ACP, and SQL-visible
-behavior in golden fixtures. Its operation and workflow are documented in
-[`test/regression/README.md`](../../test/regression/README.md). Multi-host
-changes must keep existing single-instance behavior unchanged, so they pass
-that suite without changing an existing golden. New cross-instance behavior
-adds its own scenarios; an intended change to local behavior shows up as a
-reviewed golden diff.
+On the owner, host scope may use an external `sourceTaskId` only when it exactly
+names the target's linked parent and the connection's token hash owns that
+link. The owner creates an agent-authored target-side delivery, so the normal
+drain opens the collaboration account at handoff exactly as a local dispatch.
+There is no source projection on that instance.
+
+After `202`, the hub persists the message, a source projection, and an event on
+the local parent with the display state `accepted`. It intentionally has no
+`deliveries` row: there is no local recipient, and a queued local delivery
+would be consumed by the wrong instance's drain.
+
+## Report
+
+An owner `task_update` always persists its report event. If the obligation
+source is an external parent, or a restart-lost account falls back to the
+external parent link, the owner writes no local collaboration message. A local
+parent remains the fallback when present.
+
+The host stream forwards persisted `done` and `blocked` reports with Task-local
+sequence ids. On every connect the hub also cold-reads each linked child's
+events. For a report addressed to the corresponding local parent, it creates a
+normal local collaboration message and queued delivery on the parent. The
+delivery idempotency key is
+`remote-report:<host>:<childId>:<seq>`, so online forwarding and reconnect
+catch-up collapse to one wake. No cursor, ACK, receipt, or outbound-state table
+exists.
+
+`task_update(waiting)` is not delivered as a report. It does make a Task with a
+remote-child link count as having a visible possible wake source.
+
+## Current status
+
+| Flow | Implemented |
+| --- | --- |
+| `agent@host` create | Yes |
+| Remote discovery and `task_list` mirror | Yes, best-effort and in-memory |
+| Remote `task_query` / `task_read` | Yes, cold owner history |
+| Remote `task_send` | Yes, synchronous owner acceptance |
+| Remote `done` / `blocked` report | Yes, event catch-up and local drain |
+| Unreachable discovery and dispatch | Yes |
+| Remote cancel/rename/archive/delete | No |
+| Browser task routing | No |
+| Owner external-source non-update/no-activity/removal notices | No |
+| Incremental reconnect cursor or server-side search | No |
+
+See [Known issues](../known-issues.md) for limits and closing conditions.

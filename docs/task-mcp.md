@@ -121,7 +121,24 @@ type TaskListItem = {
   lastEventAt: string | null;
   lastAgentActivityAt: string | null;
 };
+
+type RemoteTaskListItem = {
+  kind: "remote";
+  id: string;
+  relation: "child";
+  host: string;
+  unreachable?: true;
+  title?: string;
+  workflowStatus?: "running" | "idle" | "waiting" | "blocked" | "done";
+  executionState?: "idle" | "agent" | "bash";
+  lastEventAt?: string | null;
+  lastAgentActivityAt?: string | null;
+};
 ```
+
+Remote entries come from the hub's in-memory owner mirror. Last-known values
+remain present with `unreachable: true` after disconnect; before the first
+snapshot, the entry has no invented Task fields.
 
 `workflowStatus` uses the same vocabulary as `task_list`: `running` while a turn runs, `idle` after it ended without a typed report, `waiting` when the Task says its work continues without the requester, and `blocked`/`done` when it handed the ball back. `task_query` returns only `task_id`, `max_seq`, and flat event rows.
 It is **per turn, not a lifecycle terminal**: a `done` Task can be woken by a
@@ -209,6 +226,10 @@ letters are case-folded. The search term is limited to 128 code points so the
 centered window always retains the complete match before allocating context.
 An unprojected search hit carries `unprojected: true` so the reason for the hit
 remains visible.
+
+For a remote visible child, the hub obtains the complete owner event history
+through the existing task events route and applies this same projector locally.
+The read does not start ACP on the owner.
 
 The serialized `{task_id, max_seq, rows}` response is subject to a 24 KiB
 implementation limit — one index page is a decision aid, not a corpus, so the
@@ -352,9 +373,13 @@ reported as partial success. These calls are not retried.
 
 ### `task_send`
 
-The message is stored before the call returns, so it survives a restart, and is
-delivered in order with any other queued items. Whether it opens an account is
-defined in [Task Obligations](task-obligations.md#opening-an-account).
+The local message is stored before the call returns, so it survives a restart,
+and is delivered in order with any other queued items. A linked remote child is
+instead handed synchronously to the owner's existing message route; `202` is
+success and the hub records an accepted source projection without a local
+delivery row. A rejection or transport failure is returned as a tool error.
+Whether delivery opens an account is defined in
+[Task Obligations](task-obligations.md#opening-an-account).
 
 ### `task_update`
 
@@ -363,6 +388,9 @@ task_update(status: "waiting" | "blocked" | "done", body: string)
 ```
 
 The call records one `task_update` event on the current Task and sets its
-`workflowStatus`. Routing, settlement, the `waiting` precondition, and the
-turn-end check are defined in [Task Obligations](task-obligations.md). A
-refused `waiting` is an MCP tool error and records nothing.
+`workflowStatus`. For a remotely created Task, `done`/`blocked` report through
+the external-parent link when the in-memory account was lost, including across
+owner restart. The owner does not create a local collaboration message in that
+case. Routing, settlement, the `waiting` precondition, and the turn-end check
+are defined in [Task Obligations](task-obligations.md). A refused `waiting` is
+an MCP tool error and records nothing.

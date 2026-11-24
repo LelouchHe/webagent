@@ -12,6 +12,27 @@ How to add an entry: open it when you knowingly leave a defect or a soft edge
 behind, with the symptom, where it lives, and why deferring was right at the
 time. An entry without a "closing condition" is a wish, not an issue.
 
+## Cross-instance collaboration
+
+- **Remote report catch-up is whole-history and cursorless.** Every host
+  connect cold-reads each linked child's full event log and relies on the
+  idempotency key to discard already-seen `task_update` reports. *Closing:* add
+  a persisted or server-owned incremental cursor/ACK protocol without changing
+  Task facts.
+- **Remote text search fetches the full owner history.** The owner exposes no
+  server-side search endpoint, so the hub applies the shared projector after a
+  full task-events read. *Closing:* add a bounded history-search route and
+  preserve the MCP shapes and limits.
+- **Owner-to-external-source inactivity/removal notices are not forwarded.**
+  `done` and `blocked` reports close the implemented loop; owner `no_update`,
+  `no_activity`, and `target_removed` notices still require a cross-instance
+  delivery path. *Closing:* add the corresponding event-to-collaboration
+  translation and end-to-end regression coverage.
+- **Remote browser routing and lifecycle commands remain local-only.** Cancel,
+  rename, archive, and delete do not yet cross hosts, and the browser does not
+  address remote Task entries. *Closing:* implement the later host lifecycle
+  slices with matching authorization and restart semantics.
+
 ## Permission and turn lifecycle
 
 - **A pending permission has no turn-boundary cleanup.** `bridge.cancel` /

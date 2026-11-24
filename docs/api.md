@@ -292,8 +292,8 @@ was not sent; the body carries `error` plus `agentId` for a local agent)
   or target-reported value; `inherited` only when none can be determined)
 - Local creation cleans up empty tasks older than 60 seconds
 - Remote creation stores only `remote_task_links` on the initiator. Neither side
-  copies a Task row or forwards SSE/ACP; the executor's empty binding materializes
-  on its first later use.
+  copies a Task row; the executor's empty binding materializes when the Task is
+  first dispatched to.
 
 ---
 
@@ -317,6 +317,12 @@ cross-archived-tree target is allowed. It atomically writes one Message,
 source and target projections, and a queued Delivery. The sender's projection
 is written and shown at send time; the receiver's is written when the pending
 deliveries are handed to its agent.
+
+For a `host`-scoped request, `sourceTaskId` may instead be an external Task id.
+The owner accepts it only when the local target's `parent` link names that id
+and the credential hash owns the link. The message is agent-authored and has
+only the target projection plus its delivery; no source projection is created.
+This is the synchronous peer dispatch used by remote `task_send`.
 
 **Response** `202`:
 
@@ -1216,7 +1222,7 @@ This endpoint **always requires** a valid `Authorization: Bearer <token>` header
 | ------- | ------- | ---------------------------------------------------- |
 | `ok`    | boolean | Always `true` on success                             |
 | `name`  | string  | Token's human-readable name (e.g. `"laptop"`)        |
-| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"host"` (Host connection probes and remote Task create only) |
+| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"host"` (host connection, allowed task reads/create/dispatch) |
 | `hash`  | string  | SHA-256 hex digest of the presented token, matching its stored `hash` |
 
 **Response** `401`:
@@ -1257,11 +1263,11 @@ Requires a valid `Authorization: Bearer <token>` header. Returns `401` otherwise
 
 The SSE stream re-checks the bound token on every heartbeat (≤15 s). If the token is revoked mid-stream, the connection is closed within one heartbeat interval; the client must mint a fresh ticket and reconnect.
 
-A `host`-scoped ticket is limited to the global Host connection channel: it
-receives `connected` plus heartbeat frames so B1 connection health can be
-observed, but no task or application-state broadcasts. Its `connected` payload
-also omits the normal `debugLevel` and pending-inbox count. A Host ticket is
-rejected on a per-task stream.
+A `host`-scoped ticket is limited to the global Host connection channel. It
+receives `connected`, heartbeat frames, and business events only for Tasks whose
+external-parent link is owned by the token hash. Its `connected` payload omits
+the normal `debugLevel` and pending-inbox count. A Host ticket is rejected on a
+per-task stream.
 
 ---
 

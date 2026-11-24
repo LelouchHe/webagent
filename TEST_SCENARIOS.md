@@ -25,7 +25,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - Local file viewer (arbitrary paths, signed bytes, slash picker, responsive viewer)
   - first cross-instance Task create slice (Host-scoped credentials, deferred ACP, durable links)
 
-### Multi-host create slice
+### Multi-host collaboration
 
 - `test/regression/scenarios/multi-host-create.ts` (two real runtimes, distinct agent directories)
   - REST and MCP both create `agent@host` Tasks through the same `TaskOps` command
@@ -38,6 +38,16 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - one dispatch/no automatic retry, exact short-agent/parent payload, generation re-check, unknown outcome, local partial-success, and pre-dispatch config rejection
   - Host external parents are required as non-empty strings; owner relay and malformed coordinates are input errors, not transport outcomes
   - deferred owner creation has a same-transaction, non-broadcast creation anchor; aged tasks survive normal empty-task GC while ordinary empty tasks are still removed
+- `test/regression/scenarios/multi-host-loop.ts`
+  - a remote child appears in `task_list` with mirrored fields; cold
+    `task_query` / `task_read` project owner history without starting ACP
+  - `task_send` reaches the owner, records one-sided accepted/queued facts on
+    the hub and owner, and opens the owner-side account
+  - owner restart drops the in-memory account but `task_update(done)` falls
+    back to the external parent; the report wakes the hub parent exactly once
+  - hub restart catch-up replays the same report event without duplicating its
+    delivery; host disconnect marks the mirror unreachable and send fails
+    visibly; a wrong peer token cannot dispatch
 
 ## Unit / Integration Scenarios
 

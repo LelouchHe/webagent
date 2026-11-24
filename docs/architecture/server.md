@@ -29,14 +29,26 @@ The entrypoint contracts live in [Client Architecture](client.md) and
  |  share / files sub-routers    |     +----------------+-----------------+
  |  /api/v1 route handlers       |                      |
  +---------------+---------------+                      v
-                 | TaskOps port (api/tasks.ts)
-                                  |                       Core create command (task-ops.ts)
-                 |                                      |
-                 |                                      v
-                 |                       one Host create port (host selection)
-                 |                              /               \
-                 v                             v                 v
-                                      LocalHost          RemoteHost
+                 |                      |
+                 +----------+-----------+
+                            |
+                            v
+                  TaskOps port (api/tasks.ts)
+                            |
+              +-------------+-------------+
+              |                           |
+              v                           v
+      Local Task operations      Core create command
+              |               (task-ops.ts)
+              |                           |
+              |                           v
+              |                 one Host create port
+              |                    (host selection)
+              |                      /         \
+              |                     v           v
+              +----------------> LocalHost   RemoteHost
+                                      |           |
+                                      v           v
  +--------------------------------------------------------------------------+
  | Domain core                                                              |
  |  TaskManager (task-manager.ts): tasks, prompts, buffers, deliveries,     |
@@ -60,14 +72,15 @@ The entrypoint contracts live in [Client Architecture](client.md) and
  Host layer (src/host/remote/): outbound connections to other instances
 ```
 
-MCP, the general REST task-create entry, and REST task cancellation reach the
-domain core through the same `TaskOps` port instance. Creation's shared Core
-command parses `agent@host` into `{ agentId, host? }`, authorizes the caller,
-then calls one injected Host create port exactly once. The Host implementation
-alone selects LocalHost or RemoteHost; neither HTTP nor MCP nor Core chooses a
-concrete adapter. The other REST routes
-still call the domain core directly. Shared commands retain each entrypoint's
-request, authorization, audit, and response presentation.
+MCP task commands, the general REST task-create entry, and REST task cancellation
+reach the domain core through the same `TaskOps` port instance. Creation's
+shared Core command parses `agent@host` into `{ agentId, host? }`, authorizes the
+caller, then calls one injected Host create port exactly once. The Host
+implementation alone selects LocalHost or RemoteHost; neither HTTP nor MCP nor
+Core chooses a concrete adapter. The MCP list/history/send router also resolves
+linked remote children there. The other REST routes still call the domain core
+directly. Shared commands retain each entrypoint's request, authorization,
+audit, and response presentation.
 
 ## Entrypoints
 
@@ -82,7 +95,8 @@ present REST data while calling that port once.
    per-session capability, not with a Bearer token.
 2. **Auth gate** — any `/api/**` path outside the public whitelist in
    `src/auth-middleware.ts` requires a Bearer token. A `host`-scope token is
-   further limited to its explicit connection/create allowlist.
+   further limited to its explicit connection, task read, create, and
+   dispatch allowlist.
 3. **Share routes** (`src/share/routes.ts`) — public viewer paths and owner
    share endpoints, claimed before the generic API branch.
 4. **File routes** (`src/files/routes.ts`) — task-less, read-only access to
