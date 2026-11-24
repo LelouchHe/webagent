@@ -257,7 +257,7 @@ describe("auth-middleware", () => {
       );
     });
 
-    it("denies snapshot: the UI path may warm", () => {
+    it("denies snapshot until the read allowlist explicitly admits it", () => {
       assert.equal(
         isReadScopeAllowedPath("GET", "/api/v1/tasks/abc/snapshot"),
         false,

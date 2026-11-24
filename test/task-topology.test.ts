@@ -154,9 +154,9 @@ describe("parent reference", () => {
 
   it("reads the task's link and then the parent's binding without a hint", async () => {
     const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/child")
+      if (url.split("?")[0] === "/api/v1/tasks/child")
         return detailBody("child", "parent", "copilot");
-      if (url === "/api/v1/tasks/parent")
+      if (url.split("?")[0] === "/api/v1/tasks/parent")
         return detailBody("parent", null, "pi");
       throw new Error(`Unexpected fetch: ${url}`);
     });
@@ -164,8 +164,8 @@ describe("parent reference", () => {
       setCurrentTask("child");
       await tick();
       assert.deepEqual(fetchStub.urls, [
-        "/api/v1/tasks/child",
-        "/api/v1/tasks/parent",
+        "/api/v1/tasks/child?warm=1",
+        "/api/v1/tasks/parent?warm=1",
       ]);
       assert.deepEqual(parentOf("child"), {
         parentId: "parent",
@@ -178,14 +178,14 @@ describe("parent reference", () => {
 
   it("settles 'no parent' from the task read without a parent read", async () => {
     const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/child")
+      if (url.split("?")[0] === "/api/v1/tasks/child")
         return detailBody("child", null, "copilot");
       throw new Error(`Unexpected fetch: ${url}`);
     });
     try {
       setCurrentTask("child");
       await tick();
-      assert.deepEqual(fetchStub.urls, ["/api/v1/tasks/child"]);
+      assert.deepEqual(fetchStub.urls, ["/api/v1/tasks/child?warm=1"]);
       assert.equal(isParentResolved("child"), true);
       assert.equal(parentOf("child"), null);
     } finally {
@@ -196,7 +196,7 @@ describe("parent reference", () => {
   it("does not let a late read describe a task the client has left", async () => {
     let releaseChild!: (response: Response) => void;
     const fetchStub = stubFetch((url) => {
-      if (url === "/api/v1/tasks/child") {
+      if (url.split("?")[0] === "/api/v1/tasks/child") {
         return new Promise<Response>((resolve) => {
           releaseChild = resolve;
         });

@@ -101,9 +101,9 @@ export function isWhitelistedPath(method: string, path: string): boolean {
  *
  * `/tasks/:id/events` and the task list are the contract with external history
  * consumers. `/status` and `/permissions` report only in-memory runtime facts.
- * `/snapshot` is deliberately excluded: the UI snapshot path may warm a task,
- * and `read` must not. `/version` and `/auth/verify` let a consumer discover
- * itself without starting any agent.
+ * `/snapshot` remains excluded until that route is deliberately admitted.
+ * `/version` and `/auth/verify` let a consumer discover itself without
+ * starting any agent.
  */
 const READ_SCOPE_PATHS: readonly WhitelistEntry[] = [
   { method: "GET", test: (p) => p === "/api/v1/version" },

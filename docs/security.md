@@ -110,7 +110,7 @@ Every HTTP request flows through `src/auth-middleware.ts`:
 1. If the path matches a whitelist entry → pass through unauthenticated.
 2. Otherwise extract `Authorization: Bearer <token>` from the request header.
 3. Hash the token, look up in `AuthStore`. On match, attach `principal: TokenRecord` to the request and continue. On any failure, return `401 Unauthorized`.
-4. A `read`-scope principal is then checked against an explicit read allowlist. Anything outside it — every write, plus undeclared reads such as `/api/v1/config`, `/api/v1/tokens`, and `/api/v1/files/**` — returns `403 Forbidden` with `reason: "read_scope"` before the route runs. The allowlist lives in `src/auth-middleware.ts`: task list, task detail, task events, status, permissions, version, and auth/verify. `/events` returns persisted rows only for this scope (no buffer flush, no seq advance); `/snapshot` is excluded because that path may warm an execution.
+4. A `read`-scope principal is then checked against an explicit read allowlist. Anything outside it — every write, plus undeclared reads such as `/api/v1/config`, `/api/v1/tokens`, and `/api/v1/files/**` — returns `403 Forbidden` with `reason: "read_scope"` before the route runs. The allowlist lives in `src/auth-middleware.ts`: task list, task detail, task events, status, permissions, version, and auth/verify. `/snapshot` remains outside the allowlist. Explicit side-effect selectors are also forbidden to `read`: requests carrying `warm=1` or `flush=1` return `403` before route dispatch. Plain reads are side-effect free for every scope; `api` and `admin` callers opt into warm or flush with those same query parameters.
 
 Whitelisted paths (no auth required):
 

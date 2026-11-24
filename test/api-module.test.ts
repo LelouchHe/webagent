@@ -285,7 +285,18 @@ describe("api module", () => {
       text: () => Promise.resolve('{"id":"s1"}'),
     };
     await api.getTask("s1");
-    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1?warm=1");
+  });
+
+  it("getSnapshot explicitly requests a warm", async () => {
+    fetchResponse = {
+      status: 200,
+      ok: true,
+      json: () => Promise.resolve({}),
+      text: () => Promise.resolve("{}"),
+    };
+    await api.getSnapshot("s1");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/snapshot?warm=1");
   });
 
   it("consumeMessage forwards the task inheritance source", async () => {

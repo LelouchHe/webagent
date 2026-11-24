@@ -463,21 +463,26 @@ agent really attempted — the target is inherited when the request names none)
 
 #### `GET /api/v1/tasks/:id`
 
-Get task details. A read answers with what is known now; for a UI-authenticated
-read, a task that is not live starts a **background warm** in the ACP agent
-(e.g., after a server restart), reported later through `task_runtime_warmed`.
-The response never waits for the restore and a failed restore does not fail the
-read. Interrupted turns are restored without being continued automatically; the
-user decides whether to continue. A task whose binding agent is configured but
-whose execution slot is unmaterialized is materialized by that background warm,
-which also records the execution config the new session reports for the columns
-the task has no value of its own — so this read can change those columns. It
+Get task details. By default the response is a pure projection of stored task
+metadata and the configuration already known in this server process. It does
+not start an execution, materialize a binding, or write a canonicalized model
+identity back to storage. The browser explicitly requests `warm=1` when it
+opens a task, preserving its previous behavior.
+
+With `warm=1`, a task that is not live starts a **background warm** in the ACP
+agent (for example, after a server restart), reported later through
+`task_runtime_warmed`. The response still never waits for the restore and a
+failed restore does not fail the read. Interrupted turns are restored without
+being continued automatically; the user decides whether to continue. A task
+whose binding agent is configured but whose execution slot is unmaterialized is
+materialized by that background warm, which also records the execution config
+the new session reports and may canonicalize the stored model identity. A warm
 never takes a task over from an agent that left the configuration; that remains
 an operation's job (next use or `POST /clear`).
 
-A `read`-scope token never warms: the response is the same metadata read with no
-restore or materialization, so an external consumer walking stored tasks does
-not start one agent process per task.
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `warm` | query | `"1"` | Explicitly start the background execution restore and retain the associated config write-back. Omitted means a pure read. |
 
 **Response** `200`:
 
@@ -753,15 +758,18 @@ carry only what a client can act on: the request's own execution provenance
 
 **Single source of truth** for a task's current runtime state. The frontend calls this on cold-load / reconnect / after long backgrounding, then applies incremental `state_patch` SSE events. This replaces the old "replay history + reconcile" pattern for runtime fields like `busy`.
 
-The response never depends on the task's execution being available, and it
-never waits for one. When the task is not live, the server starts a warm-up in
-the background and serves the snapshot from what it already knows; the restore
-can take as long as a real session replay takes. When it finishes, the restored
-schema and commands are published to the task's subscribers as
-`task_runtime_warmed` (see [Live Events](#live-events)). A missing, dead, or no
-longer configured agent simply means no such event arrives. A `read`-scope
-token may not call this route: the snapshot path is allowed to start that
-background warm.
+The response never depends on the task's execution being available and never
+waits for one. By default it serves the snapshot from what the server already
+knows without starting a restore. The browser explicitly requests `warm=1`;
+with that flag, a task that is not live starts a warm-up in the background.
+When it finishes, the restored schema and commands are published to the task's
+subscribers as `task_runtime_warmed` (see [Live Events](#live-events)). A
+missing, dead, or no longer configured agent simply means no such event
+arrives. `/snapshot` is not in the `read`-scope allowlist.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `warm` | query | `"1"` | Explicitly start a background warm. Omitted means a pure snapshot read. |
 
 A write that needs the execution ready — prompt, config, compact — waits for
 that same restore instead of failing with `409 Task is busy`: the restore is
@@ -848,9 +856,13 @@ Send a user prompt to the agent. Returns immediately; the agent's response strea
 
 #### `GET /api/v1/tasks/:id/events`
 
-Retrieve events for a task (history). This is the primary history endpoint used during page load, and the read contract for external consumers: it never touches execution, so it works for archived, unbound, and never-materialized tasks alike. A `read`-scope token may call it.
-
-A `read` token gets **persisted rows only**: it does not flush in-memory thinking/assistant buffers and does not advance `seq`, so repeated reads are side-effect free and `streaming` is `false`. An ordinary `api`/`admin` read still flushes pending buffers (the UI's existing behavior; tracked in [Known issues](known-issues.md)).
+Retrieve events for a task (history). This is the primary history endpoint
+used during page load, and the read contract for external consumers: it never
+touches execution, so it works for archived, unbound, and never-materialized
+tasks alike. A `read`-scope token may call it. By default every scope gets
+**persisted rows only**: no thinking/assistant buffer is flushed, `seq` does
+not advance, and `streaming` is `false`. The browser explicitly requests
+`flush=1` to preserve its streaming-replay behavior.
 
 | Parameter  | In    | Type           | Description                                                                                                      |
 | ---------- | ----- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -858,6 +870,7 @@ A `read` token gets **persisted rows only**: it does not flush in-memory thinkin
 | `after`    | query | number         | Return only events with `seq > after` (incremental sync)                                                         |
 | `limit`    | query | number         | Return at most N events (latest N, in ASC order). When omitted, returns all events (backward compat). Max 10000. |
 | `before`   | query | number         | Return only events with `seq < before` (cursor for pagination). Combine with `limit` to paginate backwards.      |
+| `flush`    | query | `"1"`          | Flush pending thinking/assistant buffers into stored events before reading. Omitted means no flush or seq advance. |
 
 **Response** `200`: Envelope containing events array and streaming status. When `limit` is provided, `total` and `hasMore` are included.
 
@@ -885,7 +898,7 @@ A `read` token gets **persisted rows only**: it does not flush in-memory thinkin
 | Field       | Present               | Description                                                    |
 | ----------- | --------------------- | -------------------------------------------------------------- |
 | `events`    | always                | Array of stored events, ordered by `seq` ASC                   |
-| `streaming` | always                | Whether thinking/assistant buffers were flushed (see below)    |
+| `streaming` | always                | Whether a requested flush found thinking/assistant buffers      |
 | `total`     | when `limit` provided | Total event count for the task (respects `thinking` filter) |
 | `hasMore`   | when `limit` provided | Whether there are older events before the returned page        |
 
@@ -934,7 +947,10 @@ A failed delivery carries `failureReason` instead of `deliveredAt`. The event is
 best effort; a reload reads the delivery row.
 
 
-The `streaming` flags indicate whether unflushed buffers were present when the request was made. If `true`, the corresponding buffer was flushed into the event list and the frontend should keep the last element open for continued live streaming (to avoid duplicate thinking/assistant blocks on reconnect).
+The `streaming` flags indicate whether an explicit `flush=1` found unflushed
+buffers. If `true`, the corresponding buffer was flushed into the event list
+and the frontend should keep the last element open for continued live streaming
+(to avoid duplicate thinking/assistant blocks on reconnect).
 
 > **Note:** The `data` field is a JSON string that must be parsed by the client. The shape of the parsed object depends on the `type`. See [SSE Event Reference](#sse-event-reference).
 
@@ -1201,7 +1217,7 @@ This endpoint **always requires** a valid `Authorization: Bearer <token>` header
 | ------- | ------- | ---------------------------------------------------- |
 | `ok`    | boolean | Always `true` on success                             |
 | `name`  | string  | Token's human-readable name (e.g. `"laptop"`)        |
-| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), `"host"` (Host connection probes and remote Task create only), or `"read"` (pure reads only: host status, task list, task detail, events, status, permissions, version, auth/verify; events never flushes and no read warms) |
+| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), `"host"` (Host connection probes and remote Task create only), or `"read"` (allowlisted reads only: host status, task list, task detail, events, status, permissions, version, auth/verify; explicit `warm=1` and `flush=1` actions are forbidden) |
 | `hash`  | string  | SHA-256 hex digest of the presented token, matching its stored `hash` |
 
 **Response** `401`:
@@ -2089,7 +2105,7 @@ These events are streamed in real-time via SSE as the agent works.
 | Type                    | Key Fields                                                                               | Description                                                                                                         |
 | ----------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `connected`             | `clientId`, `pendingCount`                                                               | SSE connection established, with the authoritative pending inbox count. Not an agent event — generated by the server. |
-| `task_runtime_warmed`   | `taskId`, `agentId`, `configOptions`, `agentCommands`                                                  | A background warm-up for that task finished. Published after the read that started it already answered; a client applies it only when it is viewing that task. Server-originated, never an execution event. |
+| `task_runtime_warmed`   | `taskId`, `agentId`, `configOptions`, `agentCommands`                                                  | A background warm-up for that task finished. Published after the request with `warm=1` already answered; a client applies it only when it is viewing that task. Server-originated, never an execution event. |
 | `connected` (agent)     | `agentId`, `agent`, `configOptions`                                                                   | One agent's process connected. Same event name as the handshake, distinguished by `agentId` + `agent`; clients only let it complete a reload of the agent carrying their current task. |
 | `task_created`       | `taskId`, `agentId`, `parentId?`, `parentAgentId?`, `cwd`, `cwdDisplay?`, `title`, `configOptions`, `agentCommands?`, `clientOpId?`, `busyKind?`                                | Task created or resumed. A creation a caller asked for (HTTP create, quick prompt, agent `task_create`) announces itself from the creation itself; an internal carrier creation does not. `clientOpId` is the requesting client's own operation. `parentId`/`parentAgentId` are the activation facts: a client settles the status bar's reference without another read. |
 | `task_deleted`       | `taskId`, `agentId?`, `parentId?`, `replacedBy?`, `clientOpId?`                                | Task was deleted; `agentId` is the agent that carried the removed execution; `replacedBy` is its successor when it has one (today only a Root exit), which a client viewing it follows before `parentId` |

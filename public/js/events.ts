@@ -553,7 +553,7 @@ export async function loadHistory(sid: string): Promise<boolean> {
   try {
     const body = await api.withTimeout(async (signal) => {
       const res = await fetch(
-        `/api/v1/tasks/${sid}/events?limit=${HISTORY_PAGE_SIZE}`,
+        `/api/v1/tasks/${sid}/events?flush=1&limit=${HISTORY_PAGE_SIZE}`,
         signal ? { signal } : undefined,
       );
       if (!res.ok) return null;
@@ -809,7 +809,7 @@ async function _loadNewEventsImpl(
   // reconstruct this tail, so cancelling the rAF without flushing loses it.
   flushStreamingRender();
   try {
-    const url = `/api/v1/tasks/${sid}/events?after=${state.lastEventSeq}`;
+    const url = `/api/v1/tasks/${sid}/events?flush=1&after=${state.lastEventSeq}`;
     const body = await api.withTimeout(async (signal) => {
       const res = await fetch(url, signal ? { signal } : undefined);
       if (!res.ok) return null;
@@ -1280,7 +1280,7 @@ async function fetchOlderEventsPage(
 } | null> {
   const body = await api.withTimeout(async (signal) => {
     const res = await fetch(
-      `/api/v1/tasks/${taskId}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
+      `/api/v1/tasks/${taskId}/events?flush=1&limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
       signal ? { signal } : undefined,
     );
     if (!res.ok) return null;

@@ -139,19 +139,20 @@ The operational form of that sentence:
   string, an effort level); carrying them over silently asks the new agent for
   something it may not support, and an unclear replacement falls back to the
   agent's shared schema cache, i.e. another task's session.
-- **A read may write the execution config columns; it may not move an owner.**
-  A detail or snapshot read starts a background warm, and a task whose binding
+- **Only an explicitly warmed read may write the execution config columns; it
+  may not move an owner.** `GET /api/v1/tasks/:id?warm=1` or
+  `.../snapshot?warm=1` starts a background warm, and a task whose binding
   agent is configured but whose execution slot is unmaterialized (an earlier
   takeover, or an exit's replacement Root whose wake-up failed after its commit) is
   materialized by that warm. The session it creates
   reports its own execution config, and adoption records it for the columns the
-  task has no value of its own — so a plain GET can turn `model: null` into the
-  agent's reported value. The same read never takes a task over from an agent
+  task has no value of its own — so an explicit warm can turn `model: null`
+  into the agent's reported value. The same request never takes a task over from an agent
   that left the configuration: a read must answer while the agent is gone, so
   the takeover stays an operation's job (next use or explicit `/clear`).
-  *Why:* the alternative — refusing to write from a read — leaves an
-  unmaterialized task's reads forever unknown, and a fresh session's report is
-  the only honest default. What must not leak from a read is a binding change.
+  Plain reads do not start that warm and do not write. *Why:* callers can
+  choose the materialization and config-write effect explicitly, while the
+  read itself never changes a binding.
 - **A new task may name its agent; an existing task's binding is never chosen
   by a caller.** Creating a child for a different agent than its parent is a
   declared environment, so the parent-binding guard is skipped only there, and
@@ -162,9 +163,9 @@ The operational form of that sentence:
   for one.** Listing, reading a task, its snapshot, attachments, shares, and
   deletion return while the binding agent is missing, dead, or no longer
   configured, and they return immediately: no fixed bound is involved. A read
-  *may* start a warm-up — an opened task starts its agent so the schema and
-  commands can be reported — but that runs in the background and never decides
-  the response. When it finishes, the restored facts are published to that
+  starts a warm-up only when the caller sends `warm=1` — an opened browser
+  task does so to obtain the schema and commands — and it runs in the
+  background without deciding the response. When it finishes, the restored facts are published to that
   task's subscribers as `task_runtime_warmed`, which is the only compensation a
   cold client gets. A failed warm-up is silent, and a warm-up that outlived a
   rotation is refused before publishing (same task, same binding agent, same
@@ -172,7 +173,7 @@ The operational form of that sentence:
   compact, create, approve, reload, explicit `/clear`) resolve one, and they
   fail with the rescue path (`POST /clear { agentId }`) instead of falling back
   to another agent's process. A write that needs the execution ready *waits*
-  for the warm-up/restore a read started (`ensureResumed` shares one resume per
+  for the warm-up/restore an explicit read started (`ensureResumed` shares one resume per
   task) instead of reporting it as busy; only destructive operations (`/clear`,
   delete, Root exit) refuse while restoring, because they would replace the
   execution that is being loaded. *Why:* a real CLI replays history on restore, so any fixed wait is
@@ -268,9 +269,9 @@ Quick reference for code-level work:
 
 - Whitelist lives in `src/auth-middleware.ts` (`WHITELIST` array). Adding a new public path = appending an entry there.
 - HTML entrypoint registry in `src/http/routes.ts` (`HTML_ENTRYPOINTS`) drives both static-file serving AND CSP injection. Adding a new HTML page means adding to that array; the three guard tests (`test/csp.test.ts`, `test/html-entrypoints.test.ts`, `test/inline-assets.test.ts`) will fail loudly otherwise.
-- **Read scope is an allowlist.** `READ_SCOPE_PATHS` / `isReadScopeAllowedPath` in `src/auth-middleware.ts` is the only place a `read` token becomes authorized; every route outside it is denied before dispatch. Adding a read endpoint for external consumers means appending an entry deliberately. `read` calls to `GET /api/v1/tasks/:id` and `/snapshot` must never warm an execution.
-- **The task list never touches execution; stored history is scope-dependent.** `GET /api/v1/tasks` never materializes, warms, or resumes anything for any scope. `GET /api/v1/tasks/:id/events` never touches execution either, but only a `read` token is side-effect free: it returns persisted rows without flushing thinking/assistant buffers or advancing `seq`. An `api`/`admin` read keeps the UI's existing flush behavior and is tracked as a known issue. `test/read-scope.test.ts` guards both the read-token purity and the api-scope control.
-- **What “read pure” covers.** A `read` token writes no task, event, execution, or config row: list, the detail projection (including the legacy model-identity canonicalization, which is display-only for this scope), events, status, and permissions. Accepted non-task metadata: authentication updates token `lastUsedAt`, and normal egress work may fill in-memory display caches (for example attachment labels). `GET /api/v1/tasks/:id/snapshot` is not in the read allowlist because that path may warm an execution.
+- **Read scope is an allowlist.** `READ_SCOPE_PATHS` / `isReadScopeAllowedPath` in `src/auth-middleware.ts` is the only place a `read` token becomes authorized; every route outside it is denied before dispatch. Adding a read endpoint for external consumers means appending an entry deliberately. A `read` request that explicitly asks for `warm=1` or `flush=1` is forbidden with `403`.
+- **The task list never touches execution; read side effects are explicit.** `GET /api/v1/tasks` never materializes, warms, or resumes anything for any scope. Plain task detail, snapshot, and events reads are side-effect free for every scope: no warm, buffer flush, event/`seq` advance, or stored-model write-back. `warm=1` opts into the existing background restore, and `flush=1` opts events into the existing persistence behavior. Each action is accepted only on the route where it is relevant.
+- **What “read pure” covers.** A default task read writes no task, event, execution, or config row: list, detail (including legacy model canonicalization, which is display-only without `warm=1`), events, snapshot, status, and permissions. Accepted non-task metadata: authentication updates token `lastUsedAt`, and normal egress work may fill in-memory display caches (for example attachment labels). `GET /api/v1/tasks/:id/snapshot` remains outside the read-scope allowlist until explicitly admitted.
 - **Archive is structure, not state.** A live, parentless, non-Root task and its subtree are an archived tree; there is no column or table to consult. See [Task Lifecycle](./task-lifecycle.md#archived-trees).
 - Whichever request authenticates first puts the principal on the request; scope gates read it from there. The SSE ticket carries the same scope.
 - Frontend token storage key is `wa_token`, exported as `TOKEN_STORAGE_KEY` from `public/js/login-core.ts`. Never hardcode the literal — import the constant.

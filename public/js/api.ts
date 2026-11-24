@@ -305,7 +305,7 @@ export function getConfig(): Promise<{
 }
 
 export function getTask(id: string): Promise<TaskDetail> {
-  return request("/api/v1/tasks/" + id);
+  return request("/api/v1/tasks/" + id + "?warm=1");
 }
 
 // --- File viewer ---
@@ -355,7 +355,7 @@ export function listFiles(
 
 /** client-server-split M1: fetch the current runtime snapshot. */
 export function getSnapshot(id: string): Promise<Record<string, unknown>> {
-  return request("/api/v1/tasks/" + id + "/snapshot");
+  return request("/api/v1/tasks/" + id + "/snapshot?warm=1");
 }
 
 // --- Prompt ---

@@ -144,7 +144,7 @@ describe("connection", () => {
         return mockResponse({ rootTaskId: configRootId, configOptions: [] });
       }
       // Auto-stub snapshot endpoint so tests that don't care about it don't explode.
-      if (url.endsWith("/snapshot")) {
+      if (url.split("?")[0].endsWith("/snapshot")) {
         return mockResponse(snapshot);
       }
       return handler(url, init);
@@ -252,7 +252,7 @@ describe("connection", () => {
     setFetch(
       async (url: string) => {
         if (url.includes("/visibility")) return mockResponse({});
-        if (url === "/api/v1/tasks/hash-task") {
+        if (url.split("?")[0] === "/api/v1/tasks/hash-task") {
           await taskReady;
           return mockResponse(
             taskResponse("hash-task", { cwdDisplay: "~/project" }),
@@ -295,7 +295,7 @@ describe("connection", () => {
     // Snapshot hydration must wait until metadata and history are complete.
     await flush();
     const snapshotStartedBeforeReplayFinished = fetchCalls.some(
-      (c) => c.url === "/api/v1/tasks/hash-task/snapshot",
+      (c) => c.url.split("?")[0] === "/api/v1/tasks/hash-task/snapshot",
     );
     releaseTask();
     releaseHistory();
@@ -308,7 +308,7 @@ describe("connection", () => {
     assert.equal(state.taskCwd, "/tmp");
     assert.equal(state.taskCwdDisplay, "~/project");
     const urls = fetchCalls.map((c) => c.url);
-    assert.ok(urls.some((u) => u === "/api/v1/tasks/hash-task"));
+    assert.ok(urls.some((u) => u === "/api/v1/tasks/hash-task?warm=1"));
     assert.ok(urls.some((u) => u.startsWith("/api/v1/tasks/hash-task/events")));
     assert.equal(snapshotStartedBeforeReplayFinished, false);
     assert.ok(dom.messages.textContent.includes("restored"));
@@ -336,7 +336,7 @@ describe("connection", () => {
             : [{ id: "parent" }, { id: "child" }],
         );
       }
-      if (url === "/api/v1/tasks/parent")
+      if (url.split("?")[0] === "/api/v1/tasks/parent")
         return mockResponse(taskResponse("parent"));
       if (url.startsWith("/api/v1/tasks/parent/events")) {
         await historyReady;
@@ -416,7 +416,7 @@ describe("connection", () => {
           text: async () => '{"error":"unavailable"}',
         };
       }
-      if (url === "/api/v1/tasks/parent")
+      if (url.split("?")[0] === "/api/v1/tasks/parent")
         return mockResponse(taskResponse("parent"));
       if (url.startsWith("/api/v1/tasks/parent/events")) {
         await historyReady;
@@ -490,11 +490,11 @@ describe("connection", () => {
         }
         return mockResponse([{ id: "parent" }]);
       }
-      if (url === "/api/v1/tasks/parent")
+      if (url.split("?")[0] === "/api/v1/tasks/parent")
         return mockResponse(taskResponse("parent"));
       if (url.startsWith("/api/v1/tasks/parent/events"))
         return mockResponse([]);
-      if (url.endsWith("/snapshot"))
+      if (url.split("?")[0].endsWith("/snapshot"))
         return mockResponse({
           version: 1,
           seq: 0,
@@ -566,7 +566,7 @@ describe("connection", () => {
           text: async () => '{"error":"unavailable"}',
         };
       }
-      if (url === "/api/v1/tasks/parent")
+      if (url.split("?")[0] === "/api/v1/tasks/parent")
         return mockResponse(taskResponse("parent"));
       if (url.startsWith("/api/v1/tasks/parent/events")) {
         await historyReady;
@@ -585,7 +585,7 @@ describe("connection", () => {
           },
         ]);
       }
-      if (url.endsWith("/snapshot"))
+      if (url.split("?")[0].endsWith("/snapshot"))
         return mockResponse({
           version: 1,
           seq: 0,
@@ -625,7 +625,7 @@ describe("connection", () => {
         return mockResponse(
           listResponse([{ id: "recent-task", hasUserInput: true }]),
         );
-      if (url === "/api/v1/tasks/recent-task")
+      if (url.split("?")[0] === "/api/v1/tasks/recent-task")
         return mockResponse(taskResponse("recent-task"));
       if (url.startsWith("/api/v1/tasks/recent-task/events"))
         return mockResponse([]);
@@ -637,7 +637,7 @@ describe("connection", () => {
 
     const urls = fetchCalls.map((c) => c.url);
     assert.ok(urls.some((u) => u.split("?")[0] === "/api/v1/tasks"));
-    assert.ok(urls.some((u) => u === "/api/v1/tasks/recent-task"));
+    assert.ok(urls.some((u) => u === "/api/v1/tasks/recent-task?warm=1"));
     assert.equal(
       state.taskId,
       "recent-task",
@@ -660,7 +660,7 @@ describe("connection", () => {
             { id: ROOT_ID, hasUserInput: false, isRoot: true },
           ]),
         );
-      if (url === "/api/v1/tasks/recent-task")
+      if (url.split("?")[0] === "/api/v1/tasks/recent-task")
         return mockResponse(taskResponse("recent-task"));
       if (url.startsWith("/api/v1/tasks/recent-task/events"))
         return mockResponse([]);
@@ -673,10 +673,14 @@ describe("connection", () => {
     assert.equal(state.taskId, "recent-task");
     assert.equal(location.hash, "#recent-task");
     assert.ok(
-      fetchCalls.some((call) => call.url === "/api/v1/tasks/recent-task"),
+      fetchCalls.some(
+        (call) => call.url.split("?")[0] === "/api/v1/tasks/recent-task",
+      ),
     );
     assert.equal(
-      fetchCalls.some((call) => call.url === "/api/v1/tasks/root"),
+      fetchCalls.some(
+        (call) => call.url.split("?")[0] === "/api/v1/tasks/root",
+      ),
       false,
     );
   });
@@ -691,7 +695,7 @@ describe("connection", () => {
             { id: ROOT_ID, hasUserInput: false, isRoot: true },
           ]),
         );
-      if (url === `/api/v1/tasks/${ROOT_ID}`)
+      if (url.split("?")[0] === `/api/v1/tasks/${ROOT_ID}`)
         return mockResponse(taskResponse(ROOT_ID));
       if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
         return mockResponse([]);
@@ -709,11 +713,11 @@ describe("connection", () => {
     history.replaceState(null, "", `/#${ROOT_ID}`);
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === `/api/v1/tasks/${ROOT_ID}`)
+      if (url.split("?")[0] === `/api/v1/tasks/${ROOT_ID}`)
         return mockResponse(taskResponse(ROOT_ID));
       if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
         return mockResponse({ events: [], streaming: {} });
-      if (url === `/api/v1/tasks/${ROOT_ID}/snapshot`)
+      if (url.split("?")[0] === `/api/v1/tasks/${ROOT_ID}/snapshot`)
         return mockResponse({
           version: 1,
           seq: 0,
@@ -729,7 +733,9 @@ describe("connection", () => {
     assert.equal(state.taskId, ROOT_ID);
     assert.equal(location.hash, `#${ROOT_ID}`);
     assert.ok(
-      fetchCalls.some((call) => call.url === `/api/v1/tasks/${ROOT_ID}`),
+      fetchCalls.some(
+        (call) => call.url.split("?")[0] === `/api/v1/tasks/${ROOT_ID}`,
+      ),
     );
   });
 
@@ -738,7 +744,7 @@ describe("connection", () => {
     history.replaceState(null, "", `/#${foreignRootId}`);
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === `/api/v1/tasks/${foreignRootId}`)
+      if (url.split("?")[0] === `/api/v1/tasks/${foreignRootId}`)
         return {
           ok: false,
           status: 404,
@@ -748,7 +754,7 @@ describe("connection", () => {
         return mockResponse([]);
       if (url.split("?")[0] === "/api/v1/tasks")
         return mockResponse([{ id: "current-backend-task" }]);
-      if (url === "/api/v1/tasks/current-backend-task")
+      if (url.split("?")[0] === "/api/v1/tasks/current-backend-task")
         return mockResponse(taskResponse("current-backend-task"));
       if (url.startsWith("/api/v1/tasks/current-backend-task/events"))
         return mockResponse([]);
@@ -760,10 +766,14 @@ describe("connection", () => {
 
     assert.equal(state.taskId, "current-backend-task");
     assert.ok(
-      fetchCalls.some((call) => call.url === `/api/v1/tasks/${foreignRootId}`),
+      fetchCalls.some(
+        (call) => call.url.split("?")[0] === `/api/v1/tasks/${foreignRootId}`,
+      ),
     );
     assert.equal(
-      fetchCalls.some((call) => call.url === `/api/v1/tasks/${ROOT_ID}`),
+      fetchCalls.some(
+        (call) => call.url.split("?")[0] === `/api/v1/tasks/${ROOT_ID}`,
+      ),
       false,
     );
   });
@@ -773,7 +783,7 @@ describe("connection", () => {
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});
       // The expired task returns 404
-      if (url === "/api/v1/tasks/expired-task")
+      if (url.split("?")[0] === "/api/v1/tasks/expired-task")
         return {
           ok: false,
           status: 404,
@@ -787,7 +797,7 @@ describe("connection", () => {
         (!init?.method || init.method === "GET")
       )
         return mockResponse(listResponse([{ id: "fallback-task" }]));
-      if (url === "/api/v1/tasks/fallback-task")
+      if (url.split("?")[0] === "/api/v1/tasks/fallback-task")
         return mockResponse(
           taskResponse("fallback-task", { title: "Fallback" }),
         );
@@ -808,7 +818,7 @@ describe("connection", () => {
     history.replaceState(null, "", "/#expired-task");
     setFetch(async (url: string, init?: RequestInit) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks/expired-task")
+      if (url.split("?")[0] === "/api/v1/tasks/expired-task")
         return {
           ok: false,
           status: 404,
@@ -822,7 +832,10 @@ describe("connection", () => {
         (!init?.method || init.method === "GET")
       )
         return mockResponse(listResponse([]));
-      if (url === "/api/v1/tasks/bootstrap" && init?.method === "POST")
+      if (
+        url.split("?")[0] === "/api/v1/tasks/bootstrap" &&
+        init?.method === "POST"
+      )
         return mockResponse({ id: "new-1", created: true });
       throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
     });
@@ -842,7 +855,10 @@ describe("connection", () => {
         (!init?.method || init.method === "GET")
       )
         return mockResponse(listResponse([]));
-      if (url === "/api/v1/tasks/bootstrap" && init?.method === "POST")
+      if (
+        url.split("?")[0] === "/api/v1/tasks/bootstrap" &&
+        init?.method === "POST"
+      )
         return mockResponse({ id: "new-1", created: true });
       throw new Error(`Unexpected fetch: ${url} ${init?.method}`);
     });
@@ -855,7 +871,7 @@ describe("connection", () => {
     assert.equal(
       fetchCalls.filter(
         (call) =>
-          call.url === "/api/v1/tasks/bootstrap" &&
+          call.url.split("?")[0] === "/api/v1/tasks/bootstrap" &&
           call.init?.method === "POST",
       ).length,
       1,
@@ -899,7 +915,7 @@ describe("connection", () => {
     let eventsFetchCount = 0;
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks/restored-task")
+      if (url.split("?")[0] === "/api/v1/tasks/restored-task")
         return mockResponse(taskResponse("restored-task"));
       if (url.includes("/api/v1/tasks/restored-task/events")) {
         eventsFetchCount++;
@@ -956,7 +972,7 @@ describe("connection", () => {
     state.taskId = oldRootId;
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === `/api/v1/tasks/${oldRootId}`) {
+      if (url.split("?")[0] === `/api/v1/tasks/${oldRootId}`) {
         return {
           ok: false,
           status: 404,
@@ -969,7 +985,7 @@ describe("connection", () => {
         return mockResponse([
           { id: ROOT_ID, hasUserInput: false, isRoot: true },
         ]);
-      if (url === `/api/v1/tasks/${ROOT_ID}`)
+      if (url.split("?")[0] === `/api/v1/tasks/${ROOT_ID}`)
         return mockResponse(taskResponse(ROOT_ID));
       if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
         return mockResponse({ events: [], streaming: {} });
@@ -999,7 +1015,7 @@ describe("connection", () => {
           { id: "recent-child", hasUserInput: true },
         ]);
       }
-      if (url === `/api/v1/tasks/${ROOT_ID}`)
+      if (url.split("?")[0] === `/api/v1/tasks/${ROOT_ID}`)
         return mockResponse(taskResponse(ROOT_ID));
       if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
         return mockResponse({ events: [], streaming: {} });
@@ -1015,7 +1031,9 @@ describe("connection", () => {
     // the task detail that activated it.
     assert.equal(listCalls, 1);
     assert.equal(
-      fetchCalls.some((call) => call.url === "/api/v1/tasks/recent-child"),
+      fetchCalls.some(
+        (call) => call.url.split("?")[0] === "/api/v1/tasks/recent-child",
+      ),
       false,
     );
   });
@@ -1081,7 +1099,7 @@ describe("connection", () => {
         });
       }
       if (url.split("?")[0] === "/api/v1/tasks") return mockResponse([]);
-      if (url === "/api/v1/tasks/bootstrap") {
+      if (url.split("?")[0] === "/api/v1/tasks/bootstrap") {
         return mockResponse({
           id: ROOT_ID,
           rootTaskId: ROOT_ID,
@@ -1134,7 +1152,7 @@ describe("connection", () => {
           listResponse([{ id: "recent-child", hasUserInput: true }]),
         );
       }
-      if (url === `/api/v1/tasks/${ROOT_ID}`)
+      if (url.split("?")[0] === `/api/v1/tasks/${ROOT_ID}`)
         return mockResponse(taskResponse(ROOT_ID));
       if (url.startsWith(`/api/v1/tasks/${ROOT_ID}/events`))
         return mockResponse([]);
@@ -1177,7 +1195,7 @@ describe("connection", () => {
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks/incr-task")
+      if (url.split("?")[0] === "/api/v1/tasks/incr-task")
         return mockResponse(taskResponse("incr-task"));
       if (url.includes("/api/v1/tasks/incr-task/events")) {
         assert.ok(
@@ -1319,7 +1337,7 @@ describe("connection", () => {
     let eventsFetchCount = 0;
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks/recover-task")
+      if (url.split("?")[0] === "/api/v1/tasks/recover-task")
         return mockResponse(taskResponse("recover-task"));
       if (url.startsWith("/api/v1/tasks/recover-task/events")) {
         eventsFetchCount++;
@@ -1364,7 +1382,7 @@ describe("connection", () => {
     let eventsFetchCount = 0;
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks/stale-success-task")
+      if (url.split("?")[0] === "/api/v1/tasks/stale-success-task")
         return mockResponse(taskResponse("stale-success-task"));
       if (url.startsWith("/api/v1/tasks/stale-success-task/events")) {
         eventsFetchCount++;
@@ -1404,7 +1422,7 @@ describe("connection", () => {
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks/idle-tool-task")
+      if (url.split("?")[0] === "/api/v1/tasks/idle-tool-task")
         return mockResponse(taskResponse("idle-tool-task"));
       if (url.startsWith("/api/v1/tasks/idle-tool-task/events")) {
         if (url.includes("after=0")) {
@@ -1569,7 +1587,7 @@ describe("connection", () => {
           }
           return mockResponse({ ticket: "tkt-2", expiresIn: 60 });
         }
-        if (url.endsWith("/snapshot"))
+        if (url.split("?")[0].endsWith("/snapshot"))
           return mockResponse({
             version: 1,
             seq: 0,
@@ -1609,7 +1627,7 @@ describe("connection", () => {
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks/task-a") {
+      if (url.split("?")[0] === "/api/v1/tasks/task-a") {
         await taskADeferred;
         return mockResponse(taskResponse("task-a"));
       }
@@ -1645,7 +1663,7 @@ describe("connection", () => {
 
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks/idle-task")
+      if (url.split("?")[0] === "/api/v1/tasks/idle-task")
         return mockResponse(taskResponse("idle-task"));
       if (url.includes("/api/v1/tasks/idle-task/events"))
         return mockResponse([]);
@@ -1664,7 +1682,7 @@ describe("connection", () => {
     history.replaceState(null, "", "/#reload-task");
     setFetch(async (url: string) => {
       if (url.includes("/visibility")) return mockResponse({});
-      if (url === "/api/v1/tasks/reload-task")
+      if (url.split("?")[0] === "/api/v1/tasks/reload-task")
         return mockResponse(taskResponse("reload-task"));
       if (url.startsWith("/api/v1/tasks/reload-task/events"))
         return mockResponse([]);

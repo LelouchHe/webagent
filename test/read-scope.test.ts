@@ -159,13 +159,20 @@ describe("read-scope auth", () => {
     assert.match(events.body, /"seq":1/);
   });
 
-  it("allows task detail without warming the execution", async () => {
+  it("keeps task detail pure unless explicitly warmed", async () => {
     seed("t1");
-    const detail = await req(port, "GET", "/api/v1/tasks/t1", readToken);
-    assert.equal(detail.status, 200);
+    for (const token of [readToken, apiToken]) {
+      const detail = await req(port, "GET", "/api/v1/tasks/t1", token);
+      assert.equal(detail.status, 200);
+    }
     await settle();
     assert.equal(bridge.loads, 0, "task detail must not start a restore");
     assert.equal(tasks.liveTasks.has("t1"), false);
+
+    const warmed = await req(port, "GET", "/api/v1/tasks/t1?warm=1", apiToken);
+    assert.equal(warmed.status, 200);
+    await settle();
+    assert.equal(bridge.loads, 1, "the explicit warm is observable");
   });
 
   it("denies the warming snapshot read", async () => {
@@ -181,33 +188,39 @@ describe("read-scope auth", () => {
     assert.equal(bridge.loads, 0);
   });
 
-  it("returns persisted events only, without flushing buffers or seq", async () => {
+  it("returns persisted events only by default for every scope", async () => {
     seed("t1");
     tasks.assistantBuffers.set("t1", "unflushed");
     const before = store.getEvents("t1").length;
     const lastSeq = store.getLastEventSeq("t1");
 
-    const res = await req(port, "GET", "/api/v1/tasks/t1/events", readToken);
-    assert.equal(res.status, 200);
-    const body = JSON.parse(res.body) as {
-      events: unknown[];
-      streaming: { thinking: boolean; assistant: boolean };
-    };
-    assert.equal(body.events.length, before);
-    assert.deepEqual(body.streaming, { thinking: false, assistant: false });
-    assert.equal(store.getEvents("t1").length, before);
-    assert.equal(store.getLastEventSeq("t1"), lastSeq);
-    assert.equal(tasks.assistantBuffers.get("t1"), "unflushed");
+    for (const token of [readToken, apiToken]) {
+      const res = await req(port, "GET", "/api/v1/tasks/t1/events", token);
+      assert.equal(res.status, 200);
+      const body = JSON.parse(res.body) as {
+        events: unknown[];
+        streaming: { thinking: boolean; assistant: boolean };
+      };
+      assert.equal(body.events.length, before);
+      assert.deepEqual(body.streaming, { thinking: false, assistant: false });
+      assert.equal(store.getEvents("t1").length, before);
+      assert.equal(store.getLastEventSeq("t1"), lastSeq);
+      assert.equal(tasks.assistantBuffers.get("t1"), "unflushed");
+    }
 
-    // Control: an ordinary api read still flushes (existing behavior).
-    const api = await req(port, "GET", "/api/v1/tasks/t1/events", apiToken);
+    const api = await req(
+      port,
+      "GET",
+      "/api/v1/tasks/t1/events?flush=1",
+      apiToken,
+    );
     assert.equal(api.status, 200);
     assert.equal(store.getEvents("t1").length, before + 1);
     assert.ok(store.getLastEventSeq("t1") > lastSeq);
     assert.equal(tasks.assistantBuffers.has("t1"), false);
   });
 
-  it("does not persist model canonicalization on a read-token detail", async () => {
+  it("does not persist model canonicalization on default detail reads", async () => {
     seed("t1");
     // A legacy composite identity that canonicalization would rewrite.
     store["db"]
@@ -218,9 +231,17 @@ describe("read-scope auth", () => {
     assert.equal(detail.status, 200);
     assert.equal(store.getTask("t1")?.model, '["provider","model"]');
 
-    // Control: an ordinary api read keeps the write-back behavior.
     const apiDetail = await req(port, "GET", "/api/v1/tasks/t1", apiToken);
     assert.equal(apiDetail.status, 200);
+    assert.equal(store.getTask("t1")?.model, '["provider","model"]');
+
+    const warmDetail = await req(
+      port,
+      "GET",
+      "/api/v1/tasks/t1?warm=1",
+      apiToken,
+    );
+    assert.equal(warmDetail.status, 200);
     assert.equal(store.getTask("t1")?.model, "provider/model");
   });
 
@@ -237,12 +258,68 @@ describe("read-scope auth", () => {
     assert.equal(status.status, 200);
   });
 
-  it("still warms for an ordinary api token (control)", async () => {
+  it("warms snapshot only when explicitly requested", async () => {
     seed("t1");
-    const detail = await req(port, "GET", "/api/v1/tasks/t1", apiToken);
-    assert.equal(detail.status, 200);
+    const snapshot = await req(
+      port,
+      "GET",
+      "/api/v1/tasks/t1/snapshot",
+      apiToken,
+    );
+    assert.equal(snapshot.status, 200);
     await settle();
-    assert.equal(bridge.loads, 1, "the api-scope read warm is observable");
+    assert.equal(bridge.loads, 0);
+
+    const warm = await req(
+      port,
+      "GET",
+      "/api/v1/tasks/t1/snapshot?warm=1",
+      apiToken,
+    );
+    assert.equal(warm.status, 200);
+    await settle();
+    assert.equal(bridge.loads, 1);
+  });
+
+  it("denies explicit side effects to read scope", async () => {
+    seed("t1");
+    tasks.assistantBuffers.set("t1", "unflushed");
+    const before = store.getEvents("t1").length;
+
+    const warm = await req(port, "GET", "/api/v1/tasks/t1?warm=1", readToken);
+    assert.equal(warm.status, 403);
+    assert.equal(JSON.parse(warm.body).reason, "read_scope");
+
+    const flush = await req(
+      port,
+      "GET",
+      "/api/v1/tasks/t1/events?flush=1",
+      readToken,
+    );
+    assert.equal(flush.status, 403);
+    assert.equal(JSON.parse(flush.body).reason, "read_scope");
+
+    await settle();
+    assert.equal(bridge.loads, 0);
+    assert.equal(store.getEvents("t1").length, before);
+    assert.equal(tasks.assistantBuffers.get("t1"), "unflushed");
+  });
+
+  it("accepts side-effect parameters only on their relevant route", async () => {
+    seed("t1");
+    const cases = [
+      "/api/v1/tasks/t1?flush=1",
+      "/api/v1/tasks/t1/snapshot?flush=1",
+      "/api/v1/tasks/t1/events?warm=1",
+      "/api/v1/tasks/t1?warm=0",
+      "/api/v1/tasks/t1/events?flush=true",
+      "/api/v1/tasks/t1?unknown=1",
+      "/api/v1/tasks/t1/events?unknown=1",
+    ];
+    for (const path of cases) {
+      const response = await req(port, "GET", path, apiToken);
+      assert.equal(response.status, 400, path);
+    }
   });
 
   it("denies writes and undeclared reads", async () => {

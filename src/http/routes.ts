@@ -421,6 +421,36 @@ export function getPrincipal(req: IncomingMessage): TokenRecord | undefined {
   return principalByRequest.get(req);
 }
 
+function parseExplicitOneQueryParameter(
+  params: URLSearchParams,
+  name: string,
+  res: ServerResponse,
+): boolean | null {
+  const values = params.getAll(name);
+  if (values.length === 0) return false;
+  if (values.length === 1 && values[0] === "1") return true;
+  json(res, HTTP_STATUS.BAD_REQUEST, {
+    error: `${name} must be '1' when present`,
+  });
+  return null;
+}
+
+function rejectUnsupportedQueryParameters(
+  params: URLSearchParams,
+  allowed: readonly string[],
+  route: string,
+  res: ServerResponse,
+): boolean {
+  for (const name of params.keys()) {
+    if (allowed.includes(name)) continue;
+    json(res, HTTP_STATUS.BAD_REQUEST, {
+      error: `${name} is not supported on ${route}`,
+    });
+    return true;
+  }
+  return false;
+}
+
 /**
  * Multipart upload handler. Streams the `file` field straight to disk under
  * <data_dir>/tasks/<sid>/attachments/<uuid>.<ext>.tmp, atomic-renames on
@@ -778,6 +808,18 @@ export function createRequestHandler(
         if (
           result.principal.scope === "read" &&
           !isReadScopeAllowedPath(method, path)
+        ) {
+          res.writeHead(HTTP_STATUS.FORBIDDEN, {
+            "Content-Type": "application/json",
+          });
+          res.end(JSON.stringify({ error: "Forbidden", reason: "read_scope" }));
+          return;
+        }
+        const actionParams = new URLSearchParams(url.split("?")[1] ?? "");
+        if (
+          result.principal.scope === "read" &&
+          (actionParams.getAll("warm").includes("1") ||
+            actionParams.getAll("flush").includes("1"))
         ) {
           res.writeHead(HTTP_STATUS.FORBIDDEN, {
             "Content-Type": "application/json",
@@ -1364,10 +1406,24 @@ export function createRequestHandler(
       // / after long backgrounding, then applies incremental `state_patch`
       // SSE events.
       const snapshotMatch = url.match(
-        /^\/api\/v1\/tasks\/([^/]+)\/snapshot\/?$/,
+        /^\/api\/v1\/tasks\/([^/]+)\/snapshot\/?(\?.*)?$/,
       );
       if (snapshotMatch && req.method === "GET") {
         const taskId = decodeURIComponent(snapshotMatch[1]);
+        const params = new URLSearchParams(
+          snapshotMatch[2] ? snapshotMatch[2].slice(1) : "",
+        );
+        if (
+          rejectUnsupportedQueryParameters(
+            params,
+            ["warm"],
+            "task snapshot",
+            res,
+          )
+        )
+          return;
+        const warm = parseExplicitOneQueryParameter(params, "warm", res);
+        if (warm === null) return;
         const task = store.getTask(taskId);
         if (!task) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
@@ -1379,19 +1435,11 @@ export function createRequestHandler(
           });
           return;
         }
-        // A read returns what is known now. Warming the execution happens in
-        // the background and reports back through `task_runtime_warmed`; no
-        // fixed wait can be right, because a real restore replays history.
-        if (
-          !tasks.liveTasks.has(taskId) &&
-          getPrincipal(req)?.scope !== "read"
-        ) {
+        // An explicit warm restores in the background and reports back through
+        // `task_runtime_warmed`; a plain snapshot never starts an execution.
+        if (warm && !tasks.liveTasks.has(taskId)) {
           tasks.warmTaskInBackground(taskId);
         }
-        // Make sure runtime reflects the current activePrompts/bash state even
-        // if no patch has been emitted yet for this task.
-        tasks.syncBusy(taskId);
-        tasks.syncPendingPermissions(taskId);
         const runtimeState = tasks.state.getState(taskId);
         const lastEventSeq = store.getLastEventSeq(taskId);
         json(
@@ -2854,28 +2902,35 @@ export function createRequestHandler(
 
         // GET /api/v1/tasks/:id
         if (req.method === "GET") {
+          const params = new URLSearchParams(
+            taskIdMatch[2] ? taskIdMatch[2].slice(1) : "",
+          );
+          if (
+            rejectUnsupportedQueryParameters(
+              params,
+              ["warm"],
+              "task detail",
+              res,
+            )
+          )
+            return;
+          const warm = parseExplicitOneQueryParameter(params, "warm", res);
+          if (warm === null) return;
           const task = store.getTask(taskId);
           if (!task) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
             return;
           }
-          // A read answers with the task's metadata and whatever the process
-          // already knows. Warming a non-live task runs in the background and
-          // publishes `task_runtime_warmed`; the client never waits for ACP
-          // restore, and no fixed timeout is involved.
+          // A plain detail read returns only currently known metadata. A
+          // requested warm retains the browser's previous behavior.
           const wasLive = tasks?.liveTasks.has(taskId) ?? true;
-          // A `read` token never materializes an execution: external consumers
-          // walk history and must not start one agent process per task.
-          const readOnly = principalByRequest.get(req)?.scope === "read";
-          if (tasks && !wasLive && !readOnly)
-            tasks.warmTaskInBackground(taskId);
+          if (tasks && warm && !wasLive) tasks.warmTaskInBackground(taskId);
           const freshTask = store.getTask(taskId) ?? task;
           const configOptions = tasks
             ? tasks.applyStoredConfig(
                 tasks.configOptionsForTask(freshTask.id),
                 freshTask,
-                // A read token must not write the legacy model identity back.
-                { persist: !readOnly },
+                { persist: warm },
               )
             : [];
           json(
@@ -3198,6 +3253,17 @@ export function createRequestHandler(
         const taskId = decodeURIComponent(eventsMatch[1]);
         const queryPart = eventsMatch[2];
         const params = new URLSearchParams(queryPart ? queryPart.slice(1) : "");
+        if (
+          rejectUnsupportedQueryParameters(
+            params,
+            ["thinking", "after", "before", "limit", "flush"],
+            "task events",
+            res,
+          )
+        )
+          return;
+        const flush = parseExplicitOneQueryParameter(params, "flush", res);
+        if (flush === null) return;
         const excludeThinking = params.get("thinking") === "0";
         const afterRaw = params.get("after");
         const afterSeq = afterRaw != null ? Number(afterRaw) : undefined;
@@ -3213,15 +3279,12 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
-        // Flush pending buffers so their content becomes part of the event list.
-        // Track whether each buffer was non-empty so the frontend can keep the
-        // last thinking/assistant element "open" for continued live streaming.
-        // A `read` token gets persisted rows only: flushing writes events and
-        // advances seq, which is not a pure read.
+        // Flushing is explicit because it writes events and advances seq. Track
+        // whether each buffer was non-empty so the browser can keep the last
+        // thinking/assistant element open for continued live streaming.
         let streamingThinking = false;
         let streamingAssistant = false;
-        const readOnly = principalByRequest.get(req)?.scope === "read";
-        if (tasks && !readOnly) {
+        if (tasks && flush) {
           const runtimeStreaming = tasks.state.peekStreaming(taskId);
           streamingThinking =
             runtimeStreaming.thinking ||

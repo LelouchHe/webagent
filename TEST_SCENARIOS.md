@@ -142,7 +142,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a configuration request parked in `readBody` while the task is cleared onto another agent is refused with `409`, and no configuration request reaches the new execution
 
 - `test/runtime-warm.test.ts` (background warm-up)
-  - a read-started materialization of an unmaterialized task projects its creation claim and then re-projects busy to idle when it finishes, so a client that read mid-flight is not left with a spinner no local event can end
+  - an explicitly requested materialization of an unmaterialized task projects its creation claim and then re-projects busy to idle when it finishes, so a client that read mid-flight is not left with a spinner no local event can end
   - a completed warm-up publishes the restored schema and commands once per task and generation
   - concurrent reads share one restore; a failed warm-up publishes nothing
   - a warm-up that outlived a rotation publishes nothing (the guard is exercised directly: a stale generation and a moved binding are both refused)
@@ -150,6 +150,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/e2e/runtime-warm.spec.ts` (slow restore, 3s load delay)
   - the snapshot answers in well under the restore time, and the detail read returns no schema
+  - the browser's task detail/snapshot call sites explicitly send `warm=1`, and history loads explicitly send `flush=1`
   - while that restore is in flight the UI stays idle (`↵`, `runtime.busy` null): a background restore is never rendered as busy
   - without a refresh, the restored model and command appear from `task_runtime_warmed`
 
@@ -157,6 +158,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - three genuinely different unavailable shapes, each produced its own way: a real spawn of a missing binary, a configured agent whose transport was shut down, and a binding whose agent left the configuration
   - reads cover task detail, snapshot, events, the list, attachment bytes, the owner share list, and deletion, in every state, without moving the binding
   - the snapshot returns while a restore is still hanging (it does not wait at all)
+  - a default snapshot does not recompute busy state or advance runtime `seq`
 
 - `test/multi-agent-clear.test.ts` (HTTP)
   - `/clear { agentId }` moves a task off a removed agent, records `explicit_clear`, preserves history, and creates exactly one session on the configured agent
@@ -908,13 +910,13 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a `read` token reaches the task list, stored history, detail, status, and
     permissions (including trailing-slash forms the routes support), but is
     denied every write and undeclared read, including `/snapshot`
-  - a read-token `/events` returns persisted rows only: no buffer flush, no seq
-    advance, `streaming: false`; an api-token control still flushes
-  - read-scope detail never warms an execution; an api-scope read still warms
-    (control)
+  - default detail, snapshot, and `/events` reads are pure for every scope: no
+    warm, buffer flush, event or seq advance, or stored-config write-back
+  - `warm=1` and `flush=1` retain the previous effects for `api` callers;
+    `read` callers receive 403 for either explicit action
   - the task list never warms anything for any scope
-  - a read-token detail does not persist legacy model canonicalization; an api
-    read keeps the write-back (control)
+  - frontend API tests guard the browser's explicit warm flags, and event
+    loading guards its explicit flush flags
 
 ### Frontend state and UI event flow
 

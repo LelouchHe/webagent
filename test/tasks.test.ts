@@ -1301,11 +1301,15 @@ describe("Task REST API", () => {
       assert.equal(JSON.parse(res.body).parentId, store.rootTaskId);
     });
 
-    it("auto-resumes a non-live task", async () => {
+    it("explicitly warms a non-live task", async () => {
       // Create a task directly in store (not in liveTasks)
       store.createTask("stored-only", tmpDir, "auto", "test-agent");
 
-      const res = await makeRequest(port, "GET", "/api/v1/tasks/stored-only");
+      const res = await makeRequest(
+        port,
+        "GET",
+        "/api/v1/tasks/stored-only?warm=1",
+      );
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.id, "stored-only");
@@ -1326,7 +1330,11 @@ describe("Task REST API", () => {
         promptCalls++;
       };
 
-      const res = await makeRequest(port, "GET", "/api/v1/tasks/interrupted");
+      const res = await makeRequest(
+        port,
+        "GET",
+        "/api/v1/tasks/interrupted?warm=1",
+      );
       assert.equal(res.status, 200);
       await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -1355,7 +1363,7 @@ describe("Task REST API", () => {
       const detail = await makeRequest(
         port,
         "GET",
-        "/api/v1/tasks/stored-only",
+        "/api/v1/tasks/stored-only?warm=1",
       );
       assert.equal(detail.status, 200);
       // A read does not wait for the restore: the response is immediate and
@@ -1364,7 +1372,7 @@ describe("Task REST API", () => {
       const first = await makeRequest(
         port,
         "GET",
-        "/api/v1/tasks/stored-only/snapshot",
+        "/api/v1/tasks/stored-only/snapshot?warm=1",
       );
       assert.deepEqual(
         JSON.parse(first.body).agentCommands.commands,
@@ -1379,7 +1387,7 @@ describe("Task REST API", () => {
         const next = await makeRequest(
           port,
           "GET",
-          "/api/v1/tasks/stored-only/snapshot",
+          "/api/v1/tasks/stored-only/snapshot?warm=1",
         );
         commands = JSON.parse(next.body).agentCommands.commands;
         if (commands.length > 0) break;
@@ -2061,7 +2069,7 @@ describe("Task REST API", () => {
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/tasks/${taskId}/events`,
+        `/api/v1/tasks/${taskId}/events?flush=1`,
       );
       const body = JSON.parse(res.body);
       assert.equal(body.streaming.thinking, true);
@@ -2085,7 +2093,7 @@ describe("Task REST API", () => {
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/tasks/${taskId}/events`,
+        `/api/v1/tasks/${taskId}/events?flush=1`,
       );
       const body = JSON.parse(res.body);
       assert.equal(body.streaming.thinking, false);
@@ -2110,7 +2118,7 @@ describe("Task REST API", () => {
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/tasks/${taskId}/events`,
+        `/api/v1/tasks/${taskId}/events?flush=1`,
       );
       const body = JSON.parse(res.body);
       assert.equal(body.streaming.thinking, false);
@@ -2126,7 +2134,7 @@ describe("Task REST API", () => {
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/tasks/${taskId}/events`,
+        `/api/v1/tasks/${taskId}/events?flush=1`,
       );
       const body = JSON.parse(res.body);
 
@@ -2163,7 +2171,7 @@ describe("Task REST API", () => {
       const res = await makeRequest(
         port,
         "GET",
-        `/api/v1/tasks/${taskId}/events`,
+        `/api/v1/tasks/${taskId}/events?flush=1`,
       );
       const body = JSON.parse(res.body);
 
