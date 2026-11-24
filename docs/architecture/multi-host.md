@@ -30,6 +30,68 @@ token hash, and scope before opening global SSE. Host SSE sends heartbeat and
 connected frames plus only events for Tasks whose `parent` link belongs to that
 token hash. Per-Task host SSE is refused.
 
+## The loop at a glance
+
+P is a Task on the hub; R1 is its child created on the owner. Each instance
+keeps one `remote_task_links` row; nothing else is shared.
+
+```text
+ P (hub agent, MCP)      hub server                     owner server               R1 (owner Task)
+                         link: child P -> R1@owner      link: parent R1 <- P,
+                         mirror: in memory              peer token hash
+   |                          |                               |                          |
+ 1 create                     |                               |                          |
+   |-- task_create mock@owner>|                               |                          |
+   |                          |-- POST /tasks (host token) -->| create R1 (archived top, |
+   |                          |                               | no ACP) + parent link    |
+   |                          |<------------------ 201 R1 ----|                          |
+   |                          | write child link              |                          |
+   |<----------------- R1 id -|                               |                          |
+   |                          |                               |                          |
+ 2 discover (every connect)   |                               |                          |
+   |                          |-- subscribe global SSE ------>| forwards only Tasks whose|
+   |                          |-- snapshot detail/status/ --->| parent link has this     |
+   |                          |   events per child link       | token hash               |
+   |                          |<== live events: title, =======|                          |
+   |                          |    state, activity            |                          |
+   |-- task_list ------------>| local family + mirrored       |                          |
+   |<-------------------------| remote children               |                          |
+   |                          | {kind: "remote", host};       |                          |
+   |                          | last values + unreachable     |                          |
+   |                          | while the owner is down       |                          |
+   |                          |                               |                          |
+ 3 read                       |                               |                          |
+   |-- task_query/task_read ->| check child link (database)   |                          |
+   |                          |-- GET /tasks/R1/events ------>| pure read, no ACP        |
+   |                          |<------------------- rows -----|                          |
+   |<------- MCP shapes ------| shared task-history projection|                          |
+   |                          |                               |                          |
+ 4 dispatch                   |                               |                          |
+   |-- task_send R1 --------->| check child link              |                          |
+   |                          |-- POST /tasks/P/messages ---->| P is R1's parent link    |
+   |                          |   X-Client-Op-Id              | and token hash matches   |
+   |                          |                               | -> agent dispatch queued |
+   |                          |<---------------------- 202 ---|-- drain --------------->| account opens
+   |                          | message on P's side only      |                          | (source: external P)
+   |<----- accepted by owner -| (no deliveries row)           |                          |
+   |                          |                               |                          | ... works ...
+ 5 report                     |                               |<---- task_update(done) --|
+   |                          |                               | external source: persist |
+   |                          |                               | the task_update event    |
+   |                          |                               | only, no local message   |
+   |                          |<===== SSE task_update ========|                          |
+   |                          | target == P: local message    |                          |
+   |                          | into P, idempotency key       |                          |
+   |                          | remote-report:owner:R1:<seq>  |                          |
+   |<-- drain wakes P --------|                               |                          |
+```
+
+The hub decides routing, authorization, and wake sources from the durable
+links only; the mirror feeds `task_list` and nothing else. The owner authorizes
+every push and dispatch against its `parent` link and the caller's token hash.
+A `202` means the owner accepted the message; whether it later reached R1 is
+not visible to the hub.
+
 ## Create
 
 MCP `task_create` and REST `POST /api/v1/tasks` use the same Core command. Core
@@ -103,6 +165,18 @@ exists.
 
 `task_update(waiting)` is not delivered as a report. It does make a Task with a
 remote-child link count as having a visible possible wake source.
+
+```text
+ hub restart or reconnect
+   -> for every child link: cold-read GET /tasks/R1/events
+   -> each done/blocked addressed to P is inserted with the same idempotency key
+   -> an undelivered report is delivered once; a delivered one is not repeated
+
+ owner restart (in-memory account lost), then R1 calls task_update(done)
+   -> no account: a local parent wins if R1 has one
+   -> otherwise the external parent from the parent link (P)
+   -> the persisted event reaches the hub live or through catch-up -> P wakes
+```
 
 ## Current status
 
