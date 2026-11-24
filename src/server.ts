@@ -195,7 +195,7 @@ const receiveRemoteReport = createRemoteReportHandler({
 const hostRegistry = new HostRegistry(config.hosts, {
   listLinks: () =>
     store
-      .listRemoteTaskLinks()
+      .listRemoteTasks()
       .filter(
         (
           link,
@@ -224,9 +224,7 @@ sseManager.setRevocationCheck(
 );
 sseManager.setAttachmentSecret(attachmentSecret);
 sseManager.setLabelMapProvider((taskId) => tasks.getLabelMap(taskId));
-sseManager.setHostEventFilter((taskId, peerTokenHash) =>
-  store.isRemoteTaskOwnedByPeer(taskId, peerTokenHash),
-);
+sseManager.setHostEventFilter((taskId) => store.hasExternalParent(taskId));
 
 // Broadcast runtime state patches to all SSE clients interested in the task.
 tasks.state.onPatch((event) => {
@@ -237,6 +235,9 @@ const broadcastCollaboration = (input: CollaborationBroadcastRequest): void => {
   sseManager.broadcast(buildCollaborationBroadcast(input));
 };
 tasks.setCollaborationBroadcast(broadcastCollaboration);
+tasks.setCollaborationPromptBroadcast((event, seq) => {
+  sseManager.broadcastHost(event, seq);
+});
 tasks.setDeliveryStatusBroadcast((event) => {
   sseManager.broadcast(event);
 });

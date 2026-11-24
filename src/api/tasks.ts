@@ -15,28 +15,28 @@ export interface TaskHistoryRow {
   unprojected?: true;
 }
 
-export interface LocalTaskListItem {
+export interface TaskListItem {
   id: string;
-  title: string;
+  title?: string | null;
   relation: "self" | "parent" | "child";
   /**
    * Lifecycle status of the Task's last turn, matching `task_query`'s
    * `workflowStatus`. `done` is per turn, not a lifecycle terminal.
    */
-  workflowStatus: TaskWorkflowStatus;
+  workflowStatus?: TaskWorkflowStatus;
   /**
    * Live execution source from the runtime: `agent` while an ACP turn or
    * delivery is running, `bash` while a user shell command owns the task, and
    * `idle` otherwise. Distinct from `workflowStatus`, which is the last typed
    * report, not execution truth.
    */
-  executionState: "idle" | "agent" | "bash";
+  executionState?: "idle" | "agent" | "bash";
   /**
    * ISO-8601 time of the Task's latest qualifying agent-runtime event, or
    * null when none has been observed. Unlike `lastEventAt`, it ignores user
    * and system events, so it is a silence signal for a running turn.
    */
-  lastAgentActivityAt: string | null;
+  lastAgentActivityAt?: string | null;
   /**
    * `created_at` of the Task's most recent persisted event, any type — the
    * Task's own activity clock. Rendered as ISO-8601 UTC with an explicit `Z`,
@@ -44,23 +44,10 @@ export interface LocalTaskListItem {
    * events yet. It is a lag signal, not proof of work: a long silent tool call
    * can look stale while the Task is still running.
    */
-  lastEventAt: string | null;
-}
-
-export interface RemoteTaskListItem {
-  kind: "remote";
-  id: string;
-  relation: "child";
-  host: string;
-  unreachable?: true;
-  title?: string;
-  workflowStatus?: TaskWorkflowStatus;
-  executionState?: "idle" | "agent" | "bash";
-  lastAgentActivityAt?: string | null;
   lastEventAt?: string | null;
+  host?: string | null;
+  unreachable?: true;
 }
-
-export type TaskListItem = LocalTaskListItem | RemoteTaskListItem;
 
 export interface TaskQueryInput {
   taskId?: string;
@@ -145,7 +132,7 @@ export interface TaskCreateInput {
 export type TaskCreateCaller =
   | { kind: "user" }
   | { kind: "agent"; principal: TaskCaller }
-  | { kind: "host"; peerTokenHash: string };
+  | { kind: "host" };
 
 abstract class CreateError extends Error {}
 

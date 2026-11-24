@@ -12,34 +12,32 @@ carry separate `agentId` and `host` fields. The hub resolves `host` from its
 `[hosts.<name>]` configuration, sends the short agent id to that owner, and then
 continues to address the created Task by its stable Task id.
 
-`remote_task_links` records the cross-instance relation on both sides:
+`remote_tasks` records the cross-instance relation on both sides:
 
 | Fact | Hub row | Owner row |
 | --- | --- | --- |
 | Local Task | parent id | remote-created Task id |
 | Remote Task | child id | external parent id |
 | Role | `child` | `parent` |
-| Credential | configured host name | owner-side peer token hash |
+| Address | configured host name | no host identity |
 
 The owner Task remains a parentless archived top in its local tree. Local
 `parent_id` structure is authoritative; the external relation is used when no
 local parent exists. Links are durable decisions. Host connection state and the
 hub's remote-child display mirror are in memory and never become Task facts.
 
-Connections use an owner-issued `host`-scoped token. The hub verifies version,
-token hash, and scope before opening global SSE. Host SSE sends heartbeat and
-connected frames plus only events for Tasks whose `parent` link belongs to that
-token hash. Per-Task host SSE is refused.
+Connections use an owner-issued `host`-scoped token. The hub verifies version
+and scope before opening global SSE. Per-Task host SSE is refused.
 
 ## The loop at a glance
 
 P is a Task on the hub; R1 is its child created on the owner. Each instance
-keeps one `remote_task_links` row; nothing else is shared.
+keeps one `remote_tasks` row; nothing else is shared.
 
 ```text
  P (hub agent, MCP)      hub server                     owner server               R1 (owner Task)
                          link: child P -> R1@owner      link: parent R1 <- P,
-                         mirror: in memory              peer token hash
+                         mirror: in memory              external parent id
    |                          |                               |                          |
  1 create                     |                               |                          |
    |-- task_create(mock, owner)>                               |                          |
@@ -58,7 +56,7 @@ keeps one `remote_task_links` row; nothing else is shared.
    |                          |    state, activity            |                          |
    |-- task_list ------------>| local family + mirrored       |                          |
    |<-------------------------| remote children               |                          |
-   |                          | {kind: "remote", host};       |                          |
+   |                          | {host, ...};                  |                          |
    |                          | last values + unreachable     |                          |
    |                          | while the owner is down       |                          |
    |                          |                               |                          |
@@ -112,14 +110,14 @@ the browser's reference marks; replay does not create that existence fact.
 ## Read
 
 `TaskOps.list/query/read` are asynchronous. `task_list` includes the hub's local
-family plus remote-child entries marked by `kind: "remote"` and `host`. REST
+family plus remote-child entries marked by `host`. REST
 `GET /api/v1/tasks` appends the same remote children after their listed local
 parents; the browser uses them only so a reference to a remote child is not
 shown as removed. The mirror is display-only:
 
 The owner applies the reverse relation to the same list read: for each listed
 local Task with a `parent` link, it appends that external parent as
-`{kind: "remote", id, parent_id: null, title: null}`. This is a reference
+`{host: null, id, parent_id: null, title: null}`. This is a reference
 existence fact, not a browsable local topology.
 
 - the first connect subscribes to SSE, takes one cold snapshot through the
@@ -148,16 +146,16 @@ agent. Any retry inside one transport call keeps that operation id. An unknown
 outcome is never retried automatically.
 
 On the owner, host scope may use an external `sourceTaskId` only when it exactly
-names the target's linked parent and the connection's token hash owns that
-link. The request carries P's `sourceLabel`. The owner keeps it in memory for
+names the target's linked parent. The request carries P's `sourceLabel`. The owner keeps it in memory for
 this message, creates an agent-authored target-side delivery, and uses the label
 for both R's receiver row and its `From "…"` prompt. The normal drain opens the
 collaboration account at handoff exactly as a local dispatch. There is no source
 projection on that instance.
 
 For local and remote dispatch, Host only enqueues. Core then writes the caller's
-sender row. Locally its delivery starts `queued`; remotely it is `accepted`
-after `202` and has no local `deliveries` row.
+sender row. Both start `queued`; a remote row becomes `delivered` when the
+owner's persisted `collaboration_prompt` event reports the same returned message
+id. Restart catch-up replays that acknowledgment.
 
 ## Report
 

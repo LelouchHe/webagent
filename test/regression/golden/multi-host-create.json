@@ -321,11 +321,10 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO remote_task_links\n             (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n             VALUES (?, ?, 'parent', NULL, ?)",
+                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', NULL)",
                   "args": [
                     "00000000-0000-4000-8000-000000000002",
-                    "00000000-0000-4000-8001-000000000001",
-                    "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+                    "00000000-0000-4000-8001-000000000001"
                   ]
                 },
                 {
@@ -374,7 +373,7 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO remote_task_links\n           (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n           VALUES (?, ?, 'child', ?, NULL)",
+                  "sql": "INSERT INTO remote_tasks\n           (local_task_id, remote_task_id, remote_role, remote_host)\n           VALUES (?, ?, 'child', ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
                     "00000000-0000-4000-8000-000000000002",
@@ -396,7 +395,7 @@
                 }
               ]
             ],
-            "reads": 5
+            "reads": 6
           }
         }
       ]
@@ -445,11 +444,10 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO remote_task_links\n             (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n             VALUES (?, ?, 'parent', NULL, ?)",
+                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', NULL)",
                   "args": [
                     "00000000-0000-4000-8000-000000000003",
-                    "00000000-0000-4000-8001-000000000001",
-                    "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+                    "00000000-0000-4000-8001-000000000001"
                   ]
                 },
                 {
@@ -684,7 +682,7 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO remote_task_links\n           (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n           VALUES (?, ?, 'child', ?, NULL)",
+                  "sql": "INSERT INTO remote_tasks\n           (local_task_id, remote_task_id, remote_role, remote_host)\n           VALUES (?, ?, 'child', ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
                     "00000000-0000-4000-8000-000000000003",
@@ -717,7 +715,7 @@
                 }
               ]
             ],
-            "reads": 24
+            "reads": 25
           }
         }
       ]
@@ -754,15 +752,13 @@
             "local_task_id": "00000000-0000-4000-8000-000000000002",
             "remote_task_id": "00000000-0000-4000-8001-000000000001",
             "remote_role": "parent",
-            "remote_host": null,
-            "peer_token_hash": "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+            "remote_host": null
           },
           {
             "local_task_id": "00000000-0000-4000-8000-000000000003",
             "remote_task_id": "00000000-0000-4000-8001-000000000001",
             "remote_role": "parent",
-            "remote_host": null,
-            "peer_token_hash": "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+            "remote_host": null
           }
         ],
         "hubLinks": [
@@ -770,15 +766,13 @@
             "local_task_id": "00000000-0000-4000-8001-000000000001",
             "remote_task_id": "00000000-0000-4000-8000-000000000002",
             "remote_role": "child",
-            "remote_host": "owner",
-            "peer_token_hash": null
+            "remote_host": "owner"
           },
           {
             "local_task_id": "00000000-0000-4000-8001-000000000001",
             "remote_task_id": "00000000-0000-4000-8000-000000000003",
             "remote_role": "child",
-            "remote_host": "owner",
-            "peer_token_hash": null
+            "remote_host": "owner"
           }
         ],
         "ownerBindings": [
@@ -868,7 +862,7 @@
                 }
               ]
             ],
-            "reads": 50
+            "reads": 54
           }
         }
       ]

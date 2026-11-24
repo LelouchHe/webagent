@@ -2,7 +2,7 @@ import type { HostConfig } from "../../config.ts";
 import type {
   RemoteTaskCreateInput,
   RemoteTaskCreateTransport,
-  RemoteTaskListItem,
+  TaskListItem,
   TaskCreateResult,
   TaskQueryInput,
   TaskQueryResult,
@@ -38,19 +38,19 @@ import {
 
 const hlog = log.scope("hosts");
 
-export interface RemoteTaskLink {
+export interface RemoteTask {
   localTaskId: string;
   remoteTaskId: string;
   host: string;
 }
 
 export interface RemoteTaskSnapshot {
-  item: RemoteTaskListItem;
+  item: TaskListItem;
 }
 
 export interface HostRegistryOptions {
   fetch?: typeof globalThis.fetch;
-  listLinks: () => RemoteTaskLink[];
+  listLinks: () => RemoteTask[];
   onRemoteEvent: (
     host: string,
     childId: string,
@@ -61,7 +61,7 @@ export interface HostRegistryOptions {
 export class HostRegistry implements RemoteTaskCreateTransport {
   private readonly states = new Map<string, HostRuntimeState>();
   private readonly connections = new Map<string, HostConnection>();
-  private readonly mirrors = new Map<string, RemoteTaskListItem>();
+  private readonly mirrors = new Map<string, TaskListItem>();
   private started = false;
   private readonly options?: HostRegistryOptions;
 
@@ -123,7 +123,6 @@ export class HostRegistry implements RemoteTaskCreateTransport {
         const activation = attempt.result.activation;
         if (activation) {
           this.mirror(nameKey(host, attempt.result.taskId), {
-            kind: "remote",
             id: attempt.result.taskId,
             relation: "child",
             host,
@@ -170,7 +169,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     }
   }
 
-  listRemoteChildren(localParentTaskId: string): RemoteTaskListItem[] {
+  listRemoteChildren(localParentTaskId: string): TaskListItem[] {
     const links = this.linksForParent(localParentTaskId);
     const stateByHost = this.states;
     return links.map((link) => {
@@ -179,7 +178,6 @@ export class HostRegistry implements RemoteTaskCreateTransport {
       const mirrored = this.mirrors.get(key);
       return {
         ...(mirrored ?? {
-          kind: "remote" as const,
           id: link.remoteTaskId,
           relation: "child" as const,
           host,
@@ -195,7 +193,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
   /** Remote children of the given local parents, for list egress. */
   listRemoteChildrenOf(
     parentTaskIds: ReadonlySet<string>,
-  ): Array<RemoteTaskListItem & { parentTaskId: string }> {
+  ): Array<TaskListItem & { parentTaskId: string }> {
     if (this.connections.size === 0) return [];
     const parents = new Set(
       (this.options?.listLinks() ?? [])
@@ -272,7 +270,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
       throw new Error(`Remote task send failed: ${result.reason}`);
     }
     return {
-      messageId: randomUUID(),
+      messageId: result.messageId,
       targetTaskId: target.taskId,
       targetLabel: this.remoteTitle(target) ?? target.taskId.slice(0, 8),
       sourceLabel,
@@ -281,12 +279,14 @@ export class HostRegistry implements RemoteTaskCreateTransport {
   }
 
   remoteTitle(target: RemoteTaskTarget): string | undefined {
-    return this.mirrors.get(nameKey(target.host, target.taskId))?.title;
+    return (
+      this.mirrors.get(nameKey(target.host, target.taskId))?.title ?? undefined
+    );
   }
 
   remoteTitleForTaskId(taskId: string): string | undefined {
     for (const mirror of this.mirrors.values()) {
-      if (mirror.id === taskId) return mirror.title;
+      if (mirror.id === taskId) return mirror.title ?? undefined;
     }
     return undefined;
   }
@@ -353,7 +353,6 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     if (!isCurrent() || !status) return;
     const previous = this.mirrors.get(nameKey(host, childId));
     this.mirror(nameKey(host, childId), {
-      kind: "remote",
       id: childId,
       relation: "child",
       host,
@@ -384,7 +383,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     const key = nameKey(name, childId);
     const current = this.mirrors.get(key);
     if (!current) return;
-    const next: RemoteTaskListItem = {
+    const next: TaskListItem = {
       ...current,
       lastEventAt: new Date().toISOString(),
     };
@@ -420,7 +419,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     this.options?.onRemoteEvent(name, childId, event);
   }
 
-  private mirror(key: string, item: RemoteTaskListItem): void {
+  private mirror(key: string, item: TaskListItem): void {
     this.mirrors.set(key, item);
   }
 
@@ -429,7 +428,6 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     const previous = this.mirrors.get(key);
     this.mirror(key, {
       ...(previous ?? {
-        kind: "remote",
         id: childId,
         relation: "child",
         host,
@@ -438,13 +436,13 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     });
   }
 
-  private linksForParent(localTaskId: string): RemoteTaskLink[] {
+  private linksForParent(localTaskId: string): RemoteTask[] {
     return (this.options?.listLinks() ?? []).filter(
       (link) => link.localTaskId === localTaskId,
     );
   }
 
-  private linksForHost(host: string): RemoteTaskLink[] {
+  private linksForHost(host: string): RemoteTask[] {
     return (this.options?.listLinks() ?? []).filter(
       (link) => link.host === host,
     );
@@ -503,14 +501,14 @@ interface RemoteStatusRow {
 
 function executionStateFromStatus(
   status: RemoteStatusRow,
-): RemoteTaskListItem["executionState"] {
+): TaskListItem["executionState"] {
   if (status.busy !== true) return "idle";
   return status.busyKind === "bash" ? "bash" : "agent";
 }
 
 function executionStateFromPatch(
   patch: unknown,
-): RemoteTaskListItem["executionState"] | undefined {
+): TaskListItem["executionState"] | undefined {
   if (!patch || typeof patch !== "object" || Array.isArray(patch))
     return undefined;
   const runtime = (patch as { runtime?: unknown }).runtime;

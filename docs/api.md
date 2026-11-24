@@ -177,7 +177,7 @@ that archived list for `@` path resolution. `created_at` and
 When hosts are configured, each listed task's linked remote children follow it
 into the same response, after the local entries, so a client sees the tree that
 MCP `task_list` sees. A remote entry is
-`{kind: "remote", id, host, parent_id, title, workflow_status?, unreachable?}`:
+`{id, host, parent_id, title, workflow_status?, unreachable?}`:
 `parent_id` is the local parent, the other values come from the hub's
 best-effort mirror, and `title` is `null` until the owner has been read. The
 browser uses remote entries only to know that a referenced task exists; it does
@@ -309,7 +309,7 @@ was not sent; the body carries `error` plus `agentId` for a local agent)
   and the `model` / `thinking` values that took effect (an inherited, explicit,
   or target-reported value; `inherited` only when none can be determined)
 - Local creation cleans up empty tasks older than 60 seconds
-- Remote creation stores its `remote_task_links` child row plus the same
+- Remote creation stores its `remote_tasks` child row plus the same
   caller-side `task_created` transcript event used by a local create on the
   initiator. Neither side copies a Task row; the executor's empty binding
   materializes when the Task is first dispatched to.
@@ -339,8 +339,8 @@ is written and shown at send time; the receiver's is written when the pending
 deliveries are handed to its agent.
 
 For a `host`-scoped request, `sourceTaskId` may instead be an external Task id.
-The owner accepts it only when the local target's `parent` link names that id
-and the credential hash owns the link. The message is agent-authored and has
+The owner accepts it only when the local target's `parent` link names that id.
+The message is agent-authored and has
 only the target projection plus its delivery; no source projection is created.
 This is the synchronous peer dispatch used by remote `task_send`.
 
@@ -350,7 +350,7 @@ is absent, the owner falls back to the external id prefix. The label is not
 persisted and is not a table or task fact.
 
 `GET /api/v1/tasks` also appends remote external-parent entries for listed
-owner Tasks. These entries have `kind: "remote"`, the external id, `parent_id:
+owner Tasks. These entries have the external id, `host: null`, `parent_id:
 null`, and `title: null`; they feed reference existence only.
 
 **Response** `202`:

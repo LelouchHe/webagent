@@ -7,6 +7,19 @@ export function createRemoteReportHandler(deps: {
   enqueueReport: EnqueueRemoteReport;
 }) {
   return (host: string, childId: string, event: HostStreamEvent): void => {
+    const link = deps.store.getRemoteChild(host, childId);
+    if (!link) return;
+    if (
+      event.data.type === "collaboration_prompt" &&
+      Array.isArray(event.data.messageIds)
+    ) {
+      for (const messageId of event.data.messageIds) {
+        if (typeof messageId === "string") {
+          deps.store.markDeliveryDeliveredByMessage(messageId);
+        }
+      }
+      return;
+    }
     if (
       event.seq === undefined ||
       event.data.type !== "task_update" ||
@@ -15,8 +28,7 @@ export function createRemoteReportHandler(deps: {
     ) {
       return;
     }
-    const link = deps.store.getRemoteChildLink(host, childId);
-    if (!link || event.data.targetTaskId !== link.local_task_id) return;
+    if (event.data.targetTaskId !== link.local_task_id) return;
     deps.enqueueReport({
       host,
       childId,

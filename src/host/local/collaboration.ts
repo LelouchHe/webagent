@@ -16,12 +16,11 @@ export function createHostCollaborationCommand(deps: {
       if (
         !target ||
         !deps.store
-          .getRemoteTaskLinks(target.id)
+          .getRemoteTasks(target.id)
           .some(
             (link) =>
               link.remote_role === "parent" &&
-              link.remote_task_id === input.sourceTaskId &&
-              link.peer_token_hash === input.peerTokenHash,
+              link.remote_task_id === input.sourceTaskId,
           )
       ) {
         throw new HostExternalParentError();

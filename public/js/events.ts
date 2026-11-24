@@ -109,6 +109,10 @@ import {
   clearMarkdownImageReferenceScope,
 } from "./markdown-image-references.ts";
 import { clearMarkdownImageHosts } from "./markdown-stream.ts";
+import {
+  isCollaborationDeliveryStatus,
+  type CollaborationDeliveryState,
+} from "../../src/shared/delivery-status.ts";
 
 const orphanToolUpdates = new OrphanToolUpdateCache({
   // An entry expiring without its host ever appearing is the one genuinely
@@ -1447,22 +1451,11 @@ function renderMessageCard(msg: AgentEvent & { type: "message" }) {
 }
 
 /** Read the egress-attached delivery state from one stored system row. */
-function deliveryStateFrom(d: Record<string, unknown>):
-  | {
-      status: "queued" | "delivered" | "failed" | "accepted";
-      deliveredAt?: string;
-      failureReason?: string;
-    }
-  | undefined {
+function deliveryStateFrom(
+  d: Record<string, unknown>,
+): CollaborationDeliveryState | undefined {
   const status = d.deliveryStatus;
-  if (
-    status !== "queued" &&
-    status !== "delivered" &&
-    status !== "failed" &&
-    status !== "accepted"
-  ) {
-    return undefined;
-  }
+  if (!isCollaborationDeliveryStatus(status)) return undefined;
   return {
     status,
     ...(typeof d.deliveredAt === "string"

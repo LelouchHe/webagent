@@ -9,7 +9,6 @@ import { createRequestHandler } from "../src/http/routes.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { TicketStore } from "../src/sse-ticket.ts";
 import { SseManager } from "../src/sse-manager.ts";
-import { hashToken } from "../src/auth.ts";
 
 interface Resp {
   status: number;
@@ -75,7 +74,6 @@ describe("SSE ticket flow", () => {
       source: "host",
       agentId: "mock",
       externalParentId: "hub-parent",
-      peerTokenHash: hashToken(hostToken),
       title: "Hub child",
       creationAnchor: {},
     });
@@ -85,16 +83,13 @@ describe("SSE ticket flow", () => {
       source: "host",
       agentId: "mock",
       externalParentId: "other-hub-parent",
-      peerTokenHash: hashToken(otherHostToken),
       title: "Other hub child",
       creationAnchor: {},
     });
 
     ticketStore = new TicketStore({ ttlMs: 60_000 });
     sseManager = new SseManager(60_000); // long heartbeat (won't fire in test)
-    sseManager.setHostEventFilter((taskId, peerTokenHash) =>
-      store.isRemoteTaskOwnedByPeer(taskId, peerTokenHash),
-    );
+    sseManager.setHostEventFilter((taskId) => store.hasExternalParent(taskId));
 
     const handler = createRequestHandler({
       store,
@@ -221,7 +216,7 @@ describe("SSE ticket flow", () => {
     assert.equal(connected.pendingCount, 0);
   });
 
-  it("limits host tickets to heartbeat and peer-owned task events", async () => {
+  it("broadcasts every external-parent task event to every host client", async () => {
     const connectHost = async (rawToken: string) => {
       const ticketResp = await req(port, "POST", "/api/v1/sse-ticket", {
         Authorization: `Bearer ${rawToken}`,
@@ -279,9 +274,9 @@ describe("SSE ticket flow", () => {
       assert.match(first(), /event: heartbeat/);
       assert.match(first(), /"type":"connected"/);
       assert.match(first(), /owned-by-hub/);
-      assert.doesNotMatch(first(), /owned-by-other-hub/);
+      assert.match(first(), /owned-by-other-hub/);
       assert.match(second(), /owned-by-other-hub/);
-      assert.doesNotMatch(second(), /owned-by-hub(?=[^:])/);
+      assert.match(second(), /owned-by-hub(?=[^:])/);
       for (const received of [first(), second()]) {
         assert.doesNotMatch(received, /inbox_count_changed/);
         assert.doesNotMatch(received, /pendingCount/);

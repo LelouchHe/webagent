@@ -43,7 +43,7 @@ import {
 } from "../collaboration-message.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { validateTaskTitle } from "../shared/task-title.ts";
-import type { RemoteTaskListItem, TaskOps } from "../api/tasks.ts";
+import type { TaskListItem, TaskOps } from "../api/tasks.ts";
 import {
   assertCollaborationSourceLabel,
   HostExternalParentError,
@@ -250,7 +250,7 @@ interface HostStatusRegistry {
   }>;
   listRemoteChildrenOf(
     parentTaskIds: ReadonlySet<string>,
-  ): Array<RemoteTaskListItem & { parentTaskId: string }>;
+  ): Array<TaskListItem & { parentTaskId: string }>;
 }
 
 export interface RequestHandlerDeps {
@@ -963,8 +963,8 @@ export function createRequestHandler(
               .map((task) => task.remote_parent_id) as string[],
           ),
         ].map((id) => ({
-          kind: "remote" as const,
           id,
+          host: null,
           parent_id: null,
           title: null,
         }));
@@ -973,7 +973,6 @@ export function createRequestHandler(
             new Set(publicTasks.map((task) => task.id)),
           ) ?? []
         ).map((item) => ({
-          kind: "remote" as const,
           id: item.id,
           host: item.host,
           parent_id: item.parentTaskId,
@@ -1523,7 +1522,6 @@ export function createRequestHandler(
             accepted = deps.hostCollaboration.receive({
               sourceTaskId,
               targetTaskId: body.targetTaskId,
-              peerTokenHash: requestPrincipal.hash,
               body: body.body,
               ...(body.sourceLabel === undefined
                 ? {}
@@ -3156,10 +3154,7 @@ export function createRequestHandler(
         try {
           const created = await taskOps.create(
             requestPrincipal?.scope === "host"
-              ? {
-                  kind: "host",
-                  peerTokenHash: requestPrincipal.hash,
-                }
+              ? { kind: "host" }
               : { kind: "user" },
             {
               cwd: body.cwd,
@@ -3426,7 +3421,6 @@ export function createRequestHandler(
         // When authStore is configured, every SSE connection MUST present a
         // valid single-use ticket from POST /api/v1/sse-ticket.
         let tokenName: string | undefined;
-        let hostTokenHash: string | undefined;
         let hostScope = false;
         const receiveBusinessEvents = true;
         if (deps.authStore) {
@@ -3441,7 +3435,6 @@ export function createRequestHandler(
           }
           tokenName = principal.tokenName;
           hostScope = principal.scope === "host";
-          hostTokenHash = hostScope ? principal.hash : undefined;
         }
 
         const clientId = sseManager.generateClientId();
@@ -3457,7 +3450,7 @@ export function createRequestHandler(
           res,
           tokenName,
           receiveBusinessEvents,
-          ...(hostTokenHash === undefined ? {} : { hostTokenHash }),
+          ...(hostScope ? { hostScoped: true } : {}),
         };
         sseManager.add(client);
 

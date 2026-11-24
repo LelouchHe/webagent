@@ -5,6 +5,7 @@ import {
   EMPTY_MOCK,
   hubHostConfig,
   provisionHostToken,
+  readHostToken,
   waitForHost,
 } from "../multi-host.ts";
 
@@ -12,7 +13,8 @@ interface State {
   parentId: string;
   ownerDb: string;
   hubDb: string;
-  wrongPeerToken: string;
+  hostToken: string;
+  ownerOrigin: string;
 }
 
 function readRows(dbPath: string, sql: string): Json {
@@ -95,6 +97,24 @@ export default scenario<State>({
                 ],
               },
               { type: "reply", text: "Completion recorded." },
+            ],
+          },
+          {
+            match: "replayed dispatch",
+            actions: [
+              {
+                type: "mcp",
+                calls: [
+                  {
+                    tool: "task_update",
+                    arguments: {
+                      status: "done",
+                      body: "Replay deduplicated.",
+                    },
+                  },
+                ],
+              },
+              { type: "reply", text: "Replay deduplicated." },
             ],
           },
         ],
@@ -210,17 +230,7 @@ export default scenario<State>({
     },
   },
   async setup(context) {
-    await provisionHostToken(context, { scope: "host" });
-    const wrongPeer = await context
-      .instance("owner")
-      .rest("POST", "/api/v1/tokens", {
-        name: "wrong-peer",
-        scope: "host",
-      });
-    const wrongBody = wrongPeer.body as JsonObject;
-    if (wrongPeer.status !== 201 || typeof wrongBody.token !== "string") {
-      throw new Error(`wrong-peer token failed: ${JSON.stringify(wrongPeer)}`);
-    }
+    const provisioned = await provisionHostToken(context, { scope: "host" });
     const bootstrapped = await context
       .instance("hub")
       .rest("POST", "/api/v1/tasks/bootstrap");
@@ -230,7 +240,8 @@ export default scenario<State>({
     }
     return {
       parentId: body.id,
-      wrongPeerToken: wrongBody.token,
+      hostToken: readHostToken(provisioned),
+      ownerOrigin: context.instances.owner.origin,
       ownerDb: join(context.instances.owner.root, "data", "webagent.db"),
       hubDb: join(context.instances.hub.root, "data", "webagent.db"),
     };
@@ -373,22 +384,58 @@ export default scenario<State>({
             links: readRows(
               state.hubDb,
               `SELECT local_task_id, remote_task_id, remote_role, remote_host
-               FROM remote_task_links ORDER BY remote_role, local_task_id`,
+               FROM remote_tasks ORDER BY remote_role, local_task_id`,
             ),
           };
         },
       },
       {
-        name: "wrong-peer-cannot-dispatch",
+        name: "replayed-dispatch-keeps-owner-message-id",
+        action: async () => {
+          const request = () =>
+            fetch(
+              `${state.ownerOrigin}/api/v1/tasks/${state.parentId}/messages`,
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${state.hostToken}`,
+                  "Content-Type": "application/json",
+                  "X-Client-Op-Id": "replay-dispatch-op",
+                },
+                body: JSON.stringify({
+                  targetTaskId: readRemoteId(state),
+                  body: "replayed dispatch",
+                  sourceLabel: "root",
+                }),
+              },
+            ).then(async (response) => ({
+              status: response.status,
+              body: (await response.json()) as Json,
+            }));
+          const first = await request();
+          const second = await request();
+          return {
+            first,
+            second,
+            messages: await waitForRows(
+              state.ownerDb,
+              `SELECT id, COUNT(*) AS count FROM messages
+               WHERE body = 'replayed dispatch'`,
+            ),
+          };
+        },
+      },
+      {
+        name: "wrong-source-cannot-dispatch",
         action: (client) =>
           client.instance("owner").rest(
             "POST",
-            `/api/v1/tasks/${state.parentId}/messages`,
+            `/api/v1/tasks/not-the-external-parent/messages`,
             {
               targetTaskId: readRemoteId(state),
-              body: "wrong peer dispatch",
+              body: "wrong source dispatch",
             },
-            state.wrongPeerToken,
+            state.hostToken,
           ),
       },
       {

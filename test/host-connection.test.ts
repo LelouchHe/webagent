@@ -164,7 +164,10 @@ describe("host connection helpers", () => {
         fetch: async (_input, init) => {
           if (typeof init?.body !== "string") throw new Error("missing body");
           requestBody = JSON.parse(init.body) as Record<string, unknown>;
-          return Response.json({ status: "queued" }, { status: 202 });
+          return Response.json(
+            { messageId: "owner-message", status: "queued" },
+            { status: 202 },
+          );
         },
       },
     );
@@ -860,7 +863,6 @@ describe("host connection helpers", () => {
       mirrors: Map<
         string,
         {
-          kind: "remote";
           id: string;
           relation: "child";
           host: string;
@@ -877,7 +879,6 @@ describe("host connection helpers", () => {
       ) => void;
     };
     internals.mirrors.set("owner\0child", {
-      kind: "remote",
       id: "child",
       relation: "child",
       host: "owner",
@@ -907,7 +908,6 @@ describe("host connection helpers", () => {
       },
     });
     assert.deepEqual(internals.mirrors.get("owner\0child"), {
-      kind: "remote",
       id: "child",
       relation: "child",
       host: "owner",

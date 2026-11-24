@@ -67,8 +67,9 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/regression/scenarios/multi-host-loop.ts`
   - a remote child appears in `task_list` with mirrored fields; cold
     `task_query` / `task_read` project owner history without starting ACP
-  - `task_send` reaches the owner, records one-sided accepted/queued facts on
-    the hub and owner, and opens the owner-side account; a permission request
+  - `task_send` reaches the owner, returns its generated message id, records
+    queued facts on both sides, and changes the hub row to delivered when the
+    owner's prompt audit arrives, including after hub restart; a permission request
     in that delegated turn is auto-answered and leaves no pending permission
   - owner restart drops the in-memory account but `task_update(done)` falls
     back to the external parent; the owner writes no local collaboration
@@ -78,8 +79,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - hub restart catch-up replays the same report event without duplicating its
     delivery, while the duplicate row remains drainable if still queued; host
     disconnect marks the mirror unreachable and send fails visibly; a wrong
-    peer token cannot dispatch
-  - Core records a remote `Created task` row with an `agent@host` label; the
+    external parent id cannot dispatch
+  - Core records a remote `Created task` row with separate agent and host fields; the
     live row marks the child id present without browser navigation
   - dispatch and report rows share the mirrored remote-child title; the owner
     receiver row and prompt use the hub parent's carried title

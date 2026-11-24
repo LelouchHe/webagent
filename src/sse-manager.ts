@@ -25,7 +25,7 @@ export interface SseClient {
   taskId?: string; // undefined = global stream
   tokenName?: string; // bound at connect via SSE ticket; used for revoke detection
   receiveBusinessEvents?: boolean;
-  hostTokenHash?: string;
+  hostScoped?: boolean;
 }
 
 /**
@@ -40,8 +40,7 @@ export class SseManager {
   private isTokenRevoked: ((tokenName: string) => boolean) | null = null;
   private attachmentSecret: Buffer | null = null;
   private getLabelMap: ((taskId: string) => LabelMap) | null = null;
-  private hostEventAllowed:
-    ((taskId: string, peerTokenHash: string) => boolean) | null = null;
+  private hostEventAllowed: ((taskId: string) => boolean) | null = null;
 
   constructor(heartbeatMs = SSE_HEARTBEAT_INTERVAL_MS) {
     this.heartbeatInterval = heartbeatMs;
@@ -71,9 +70,7 @@ export class SseManager {
     this.getLabelMap = fn;
   }
 
-  setHostEventFilter(
-    fn: (taskId: string, peerTokenHash: string) => boolean,
-  ): void {
+  setHostEventFilter(fn: (taskId: string) => boolean): void {
     this.hostEventAllowed = fn;
   }
 
@@ -198,17 +195,14 @@ export class SseManager {
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
       if (client.receiveBusinessEvents === false) continue;
-      if (
-        client.hostTokenHash &&
-        (!taskId || !this.hostEventAllowed?.(taskId, client.hostTokenHash))
-      ) {
+      if (client.hostScoped && (!taskId || !this.hostEventAllowed?.(taskId))) {
         continue;
       }
       if (client.taskId && client.taskId !== taskId) continue;
       this.sendEvent(
         client,
         event,
-        client.hostTokenHash ? persistedSeq : undefined,
+        client.hostScoped ? persistedSeq : undefined,
       );
     }
   }
@@ -219,7 +213,7 @@ export class SseManager {
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
       if (client.receiveBusinessEvents === false) continue;
-      if (client.hostTokenHash) continue;
+      if (client.hostScoped) continue;
       this.sendEvent(client, event);
     }
   }
@@ -231,9 +225,9 @@ export class SseManager {
     for (const client of snapshot) {
       if (
         client.res.writableEnded ||
-        !client.hostTokenHash ||
+        !client.hostScoped ||
         !taskId ||
-        !this.hostEventAllowed?.(taskId, client.hostTokenHash)
+        !this.hostEventAllowed?.(taskId)
       ) {
         continue;
       }

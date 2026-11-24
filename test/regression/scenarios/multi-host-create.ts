@@ -195,13 +195,13 @@ export default scenario<State>({
             ),
             ownerLinks: readRows(
               state.ownerDb,
-              `SELECT local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash
-               FROM remote_task_links ORDER BY local_task_id`,
+              `SELECT local_task_id, remote_task_id, remote_role, remote_host
+               FROM remote_tasks ORDER BY local_task_id`,
             ),
             hubLinks: readRows(
               state.hubDb,
-              `SELECT local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash
-               FROM remote_task_links ORDER BY local_task_id`,
+              `SELECT local_task_id, remote_task_id, remote_role, remote_host
+               FROM remote_tasks ORDER BY local_task_id`,
             ),
             ownerBindings: readRows(
               state.ownerDb,

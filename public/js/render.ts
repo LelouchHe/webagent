@@ -9,6 +9,7 @@ import type {
   TaskRefRowInput,
   TaskRefTarget,
 } from "./task-ref-marks.ts";
+import type { CollaborationDeliveryState } from "../../src/shared/delivery-status.ts";
 
 // Pure DOM helpers live in render-event.ts (single source for both main app
 // and share viewer). Re-exported here for callers that want them via render.ts.
@@ -45,11 +46,7 @@ export function addMessage(role: string, text: string): HTMLDivElement {
   return el;
 }
 
-export interface DeliveryState {
-  status: "queued" | "delivered" | "failed" | "accepted";
-  deliveredAt?: string;
-  failureReason?: string;
-}
+export type DeliveryState = CollaborationDeliveryState;
 
 export interface SystemMessageOptions {
   title: string;
@@ -157,7 +154,6 @@ const DELIVERY_SYMBOL: Record<DeliveryState["status"], string> = {
   queued: "⋯",
   delivered: "✓",
   failed: "✗",
-  accepted: "✓",
 };
 
 function deliveryTooltip(delivery: DeliveryState): string {
@@ -174,14 +170,11 @@ function deliveryTooltip(delivery: DeliveryState): string {
       return delivery.failureReason
         ? `Delivery failed: ${delivery.failureReason}`
         : "Delivery failed";
-    case "accepted":
-      return "Accepted by owner";
   }
 }
 
 function deliveryClass(delivery: DeliveryState): string {
-  if (delivery.status === "delivered" || delivery.status === "accepted")
-    return "delivered";
+  if (delivery.status === "delivered") return "delivered";
   if (delivery.status === "failed") return "failed";
   return "queued";
 }

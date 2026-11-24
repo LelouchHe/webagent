@@ -137,7 +137,7 @@ export type HostTaskCreateAttempt =
   | { kind: "not_sent"; reason: string };
 
 export type HostTaskSendAttempt =
-  | { kind: "accepted" }
+  | { kind: "accepted"; messageId: string }
   | { kind: "rejected"; status: number; reason: string }
   | { kind: "unknown"; reason: string };
 
@@ -386,7 +386,17 @@ export class HostConnection {
       body = null;
     }
     if (response.status === HTTP_STATUS.ACCEPTED) {
-      return { kind: "accepted" };
+      if (
+        body &&
+        typeof body === "object" &&
+        typeof (body as { messageId?: unknown }).messageId === "string"
+      ) {
+        return {
+          kind: "accepted",
+          messageId: (body as { messageId: string }).messageId,
+        };
+      }
+      return { kind: "unknown", reason: "Owner returned no message id" };
     }
     const reason =
       body &&

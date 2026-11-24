@@ -8,7 +8,6 @@ export interface HostCollaborationCommand {
   receive(input: {
     sourceTaskId: string;
     targetTaskId: string;
-    peerTokenHash: string;
     body: string;
     sourceLabel?: string;
   }): {

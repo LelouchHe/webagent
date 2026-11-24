@@ -302,9 +302,8 @@ export function sendCollaborationMessage(
 
 /** A remote child in a list read; it follows its local parent. */
 export interface RemoteTaskSummary {
-  kind: "remote";
   id: string;
-  host?: string;
+  host: string | null;
   parent_id: string | null;
   title: string | null;
   workflow_status?: string;
@@ -322,7 +321,7 @@ export async function listTaskTree(archived = false): Promise<{
   const tasks: TaskSummary[] = [];
   const remote: RemoteTaskSummary[] = [];
   for (const entry of entries) {
-    if ("kind" in entry) remote.push(entry);
+    if ("host" in entry) remote.push(entry);
     else tasks.push(entry);
   }
   return { tasks, remote };

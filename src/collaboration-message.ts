@@ -1,6 +1,6 @@
 import { formatTaskReference } from "./shared/task-reference.ts";
 import { isoFromMillis } from "./shared/time.ts";
-import type { CollaborationDeliveryStatus } from "./store.ts";
+import type { CollaborationDeliveryStatus } from "./shared/delivery-status.ts";
 import type { AgentEvent } from "./types.ts";
 
 export type CollaborationRole = "source" | "target";
@@ -128,7 +128,7 @@ export interface CollaborationBroadcastRequest extends CollaborationLabels {
   taskId: string;
   role: CollaborationRole;
   runtimeMessage?: RuntimeMessageKind;
-  deliveryStatus?: CollaborationDeliveryStatus | "accepted";
+  deliveryStatus?: CollaborationDeliveryStatus;
   deliveredAt?: string;
   deliveryFailureReason?: string;
 }

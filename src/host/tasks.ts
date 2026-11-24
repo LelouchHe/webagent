@@ -145,7 +145,7 @@ export function createRoutedTaskOps(deps: {
         body,
         taskId: principal.taskId,
         role: "source",
-        deliveryStatus: performed.targetIsLocal ? "queued" : "accepted",
+        deliveryStatus: "queued",
       });
       if (performed.targetIsLocal) {
         void tasks.drainCollaborationDeliveries(performed.targetTaskId);

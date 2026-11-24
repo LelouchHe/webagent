@@ -22,7 +22,7 @@ import type {
   TaskCaller,
   TaskCreateCaller,
   TaskQueryResult,
-  LocalTaskListItem,
+  TaskListItem,
   TaskOps,
   TaskReadResult,
   TaskCreateInput,
@@ -41,6 +41,7 @@ import {
   normalizeTaskHistoryRange,
   uniqueTaskHistorySeqs,
 } from "../../task-history.ts";
+import type { CollaborationDeliveryStatus } from "../../shared/delivery-status.ts";
 
 export interface TaskCollaborationEvent {
   messageId: string;
@@ -53,7 +54,7 @@ export interface TaskCollaborationEvent {
   /** The task this projection renders into. */
   taskId: string;
   role: "source" | "target";
-  deliveryStatus?: "queued" | "delivered" | "failed" | "accepted";
+  deliveryStatus?: CollaborationDeliveryStatus;
   deliveredAt?: string;
   deliveryFailureReason?: string;
 }
@@ -88,7 +89,7 @@ export function assertTaskCaller(
  */
 export type TaskCancelNotice = Extract<AgentEvent, { type: "system_message" }>;
 
-function relationOrder(relation: LocalTaskListItem["relation"]): number {
+function relationOrder(relation: TaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2 }[relation];
 }
 
@@ -199,7 +200,7 @@ export function createLocalTaskOps(deps: {
             entry,
           ): entry is {
             task: TaskRow;
-            relation: LocalTaskListItem["relation"];
+            relation: TaskListItem["relation"];
           } => entry.relation !== null,
         )
         .sort(
@@ -210,7 +211,7 @@ export function createLocalTaskOps(deps: {
       const lastEventTimes = store.getLatestEventTimes(
         entries.map((entry) => entry.task.id),
       );
-      return entries.map(({ task, relation }): LocalTaskListItem => ({
+      return entries.map(({ task, relation }): TaskListItem => ({
         id: task.id,
         title: task.title ?? task.id,
         relation,
@@ -297,7 +298,6 @@ export function createLocalTaskOps(deps: {
           cwd: input.cwd,
           source: input.source ?? "host",
           externalParentId: input.parentId,
-          peerTokenHash: caller.peerTokenHash,
           title: input.title,
           workflowStatus: input.workflowStatus,
         });

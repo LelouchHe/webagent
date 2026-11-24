@@ -17,6 +17,7 @@ import {
   type BindingChange,
   type ExecutionBinding,
 } from "./execution-authority.ts";
+import type { CollaborationDeliveryStatus } from "./shared/delivery-status.ts";
 
 /** Namespace WebAgent reserves for the per-task empty execution slot. */
 const EMPTY_EXECUTION_PREFIX = "no-execution:";
@@ -212,7 +213,7 @@ export type CollaborationProjectionRole = "source" | "target";
  * the drain hands it over, not when the recipient's turn ends; `failed` means
  * it could not be handed over. What the recipient does with it is not tracked.
  */
-export type CollaborationDeliveryStatus = "queued" | "delivered" | "failed";
+export type { CollaborationDeliveryStatus };
 
 export interface CollaborationMessageRow {
   id: string;
@@ -744,23 +745,22 @@ export class Store {
         from_ref TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, seq);
-      CREATE TABLE IF NOT EXISTS remote_task_links (
+      CREATE TABLE IF NOT EXISTS remote_tasks (
         local_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
         remote_task_id TEXT NOT NULL,
         remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
         remote_host TEXT,
-        peer_token_hash TEXT,
         CHECK (
-          (remote_role = 'child' AND remote_host IS NOT NULL AND peer_token_hash IS NULL)
+          (remote_role = 'child' AND remote_host IS NOT NULL)
           OR
-          (remote_role = 'parent' AND remote_host IS NULL AND peer_token_hash IS NOT NULL)
+          (remote_role = 'parent' AND remote_host IS NULL)
         )
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS remote_task_links_one_parent
-        ON remote_task_links(local_task_id)
+      CREATE UNIQUE INDEX IF NOT EXISTS remote_tasks_one_parent
+        ON remote_tasks(local_task_id)
         WHERE remote_role = 'parent';
-      CREATE UNIQUE INDEX IF NOT EXISTS remote_task_links_one_child
-        ON remote_task_links(remote_task_id)
+      CREATE UNIQUE INDEX IF NOT EXISTS remote_tasks_one_child
+        ON remote_tasks(remote_task_id)
         WHERE remote_role = 'child';
       CREATE TABLE IF NOT EXISTS push_subscriptions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1156,7 +1156,6 @@ export class Store {
     source: string;
     agentId: string;
     externalParentId: string;
-    peerTokenHash: string;
     title?: string;
     workflowStatus?: WorkflowStatus;
     creationAnchor: Record<string, unknown>;
@@ -1166,7 +1165,7 @@ export class Store {
         `Reserved Root id cannot be created as an ordinary task: ${input.id}`,
       );
     }
-    if (!input.externalParentId.trim() || !input.peerTokenHash) {
+    if (!input.externalParentId.trim()) {
       throw new Error("invalid_external_parent");
     }
     return this.writeBindings(() => {
@@ -1197,11 +1196,11 @@ export class Store {
       this.collectBindingChange(input.id, null);
       this.db
         .prepare(
-          `INSERT INTO remote_task_links
-             (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)
-             VALUES (?, ?, 'parent', NULL, ?)`,
+          `INSERT INTO remote_tasks
+             (local_task_id, remote_task_id, remote_role, remote_host)
+             VALUES (?, ?, 'parent', NULL)`,
         )
-        .run(input.id, input.externalParentId, input.peerTokenHash);
+        .run(input.id, input.externalParentId);
       this.saveEvent(input.id, "system_message", input.creationAnchor, {
         from_ref: "system",
       });
@@ -1211,49 +1210,45 @@ export class Store {
     });
   }
 
-  getRemoteTaskLinks(localTaskId: string): Array<{
+  getRemoteTasks(localTaskId: string): Array<{
     local_task_id: string;
     remote_task_id: string;
     remote_role: "parent" | "child";
     remote_host: string | null;
-    peer_token_hash: string | null;
   }> {
     return this.db
       .prepare(
-        `SELECT local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash
-         FROM remote_task_links WHERE local_task_id = ?`,
+        `SELECT local_task_id, remote_task_id, remote_role, remote_host
+         FROM remote_tasks WHERE local_task_id = ?`,
       )
       .all(localTaskId) as Array<{
       local_task_id: string;
       remote_task_id: string;
       remote_role: "parent" | "child";
       remote_host: string | null;
-      peer_token_hash: string | null;
     }>;
   }
 
-  listRemoteTaskLinks(): Array<{
+  listRemoteTasks(): Array<{
     local_task_id: string;
     remote_task_id: string;
     remote_role: "parent" | "child";
     remote_host: string | null;
-    peer_token_hash: string | null;
   }> {
     return this.db
       .prepare(
-        `SELECT local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash
-           FROM remote_task_links`,
+        `SELECT local_task_id, remote_task_id, remote_role, remote_host
+           FROM remote_tasks`,
       )
       .all() as Array<{
       local_task_id: string;
       remote_task_id: string;
       remote_role: "parent" | "child";
       remote_host: string | null;
-      peer_token_hash: string | null;
     }>;
   }
 
-  getRemoteChildLink(
+  getRemoteChild(
     remoteHost: string,
     remoteTaskId: string,
   ):
@@ -1266,7 +1261,7 @@ export class Store {
     return this.db
       .prepare(
         `SELECT local_task_id, remote_task_id, remote_host
-           FROM remote_task_links
+           FROM remote_tasks
            WHERE remote_role = 'child' AND remote_host = ? AND remote_task_id = ?`,
       )
       .get(remoteHost, remoteTaskId) as
@@ -1278,20 +1273,19 @@ export class Store {
       | undefined;
   }
 
-  isRemoteTaskOwnedByPeer(taskId: string, peerTokenHash: string): boolean {
+  hasExternalParent(taskId: string): boolean {
     return (
       this.db
         .prepare(
-          `SELECT 1 FROM remote_task_links
+          `SELECT 1 FROM remote_tasks
              WHERE local_task_id = ? AND remote_role = 'parent'
-               AND peer_token_hash = ?
              LIMIT 1`,
         )
-        .get(taskId, peerTokenHash) !== undefined
+        .get(taskId) !== undefined
     );
   }
 
-  recordRemoteTaskChild(
+  recordRemoteChild(
     localParentTaskId: string,
     remoteTaskId: string,
     remoteHost: string,
@@ -1300,9 +1294,9 @@ export class Store {
     this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO remote_task_links
-           (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)
-           VALUES (?, ?, 'child', ?, NULL)`,
+          `INSERT INTO remote_tasks
+           (local_task_id, remote_task_id, remote_role, remote_host)
+           VALUES (?, ?, 'child', ?)`,
         )
         .run(localParentTaskId, remoteTaskId, remoteHost);
       if (creation) {
@@ -1347,7 +1341,7 @@ export class Store {
       .prepare(
         `SELECT s.*,
            (SELECT r.remote_task_id
-            FROM remote_task_links r
+            FROM remote_tasks r
             WHERE r.local_task_id = s.id
               AND r.remote_role = 'parent'
             LIMIT 1) AS remote_parent_id,
@@ -1399,7 +1393,7 @@ export class Store {
       .prepare(
         `SELECT s.*,
                 (SELECT r.remote_task_id
-                 FROM remote_task_links r
+                 FROM remote_tasks r
                  WHERE r.local_task_id = s.id
                    AND r.remote_role = 'parent'
                  LIMIT 1) AS remote_parent_id
@@ -2973,6 +2967,19 @@ export class Store {
             input.body,
             createdAt,
           );
+        this.db
+          .prepare(
+            `INSERT INTO deliveries
+             (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
+             VALUES (?, ?, ?, ?, 'queued', ?)`,
+          )
+          .run(
+            randomUUID(),
+            input.id,
+            input.directTargetTaskId,
+            `${input.id}:${input.directTargetTaskId}`,
+            createdAt,
+          );
       }
       this.db
         .prepare(
@@ -2994,11 +3001,31 @@ export class Store {
             role: "source",
             body: input.body,
           }),
-          ...(input.targetIsLocal ? {} : { deliveryStatus: "accepted" }),
+          ...(input.targetIsLocal ? {} : { deliveryStatus: "queued" }),
         },
         { from_ref: `msg:${input.id}` },
       );
     })();
+  }
+
+  markDeliveryDeliveredByMessage(
+    messageId: string,
+    deliveredAt = Date.now(),
+  ): boolean {
+    const row = this.db
+      .prepare(
+        `UPDATE deliveries
+         SET status = 'delivered', delivered_at = ?, failed_at = NULL,
+             failure_reason = NULL
+         WHERE message_id = ? AND status = 'queued'`,
+      )
+      .run(deliveredAt, messageId);
+    if (row.changes === 0) return false;
+    const delivery = this.db
+      .prepare("SELECT id FROM deliveries WHERE message_id = ?")
+      .get(messageId) as { id: string } | undefined;
+    if (delivery) this.broadcastDeliveryStatus([delivery.id]);
+    return true;
   }
 
   /**

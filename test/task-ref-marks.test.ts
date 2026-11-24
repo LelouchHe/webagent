@@ -140,14 +140,12 @@ describe("task-reference marks", () => {
           JSON.stringify([
             { id: "root", title: null, parent_id: null },
             {
-              kind: "remote",
               id: "remote-known",
               host: "owner",
               parent_id: "root",
               title: "remote-child",
             },
             {
-              kind: "remote",
               id: "remote-untitled",
               host: "owner",
               parent_id: "root",

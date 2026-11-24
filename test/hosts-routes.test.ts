@@ -132,7 +132,6 @@ describe("task list egress with remote children", () => {
       source: "host",
       agentId: "mock",
       externalParentId: "external-parent",
-      peerTokenHash: "peer",
       title: "Remote owned",
       creationAnchor: { kind: "task_created" },
     });
@@ -195,7 +194,6 @@ describe("task list egress with remote children", () => {
     assert.deepEqual(
       entries.find((entry) => entry.id === "remote-child"),
       {
-        kind: "remote",
         id: "remote-child",
         host: "owner",
         parent_id: store.rootTaskId,
@@ -206,8 +204,8 @@ describe("task list egress with remote children", () => {
     assert.deepEqual(
       entries.find((entry) => entry.id === "external-parent"),
       {
-        kind: "remote",
         id: "external-parent",
+        host: null,
         parent_id: null,
         title: null,
       },

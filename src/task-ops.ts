@@ -157,21 +157,12 @@ export function createTaskOpsCore(deps: {
           }
           prepareRecord();
           if (taskCreated) {
-            store.recordRemoteTaskChild(
-              localParentId,
-              result.taskId,
-              remoteHost,
-              {
-                data: taskCreated.data,
-                fromRef: caller.kind === "agent" ? "agent" : "user",
-              },
-            );
+            store.recordRemoteChild(localParentId, result.taskId, remoteHost, {
+              data: taskCreated.data,
+              fromRef: caller.kind === "agent" ? "agent" : "user",
+            });
           } else {
-            store.recordRemoteTaskChild(
-              localParentId,
-              result.taskId,
-              remoteHost,
-            );
+            store.recordRemoteChild(localParentId, result.taskId, remoteHost);
           }
         } catch (error) {
           throw new TaskRemoteCreatePartialSuccessError(

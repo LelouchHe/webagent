@@ -708,6 +708,12 @@ export class TaskManager implements ObligationHost {
   private deliveryStatusBroadcast:
     | ((event: Extract<AgentEvent, { type: "collaboration_delivery" }>) => void)
     | null = null;
+  private collaborationPromptBroadcast:
+    | ((
+        event: Extract<AgentEvent, { type: "collaboration_prompt" }>,
+        seq: number,
+      ) => void)
+    | null = null;
   private remoteChildWakeSource: ((taskId: string) => boolean) | null = null;
   /**
    * SSE broadcast hook for a task that just became live. Every creation that
@@ -878,7 +884,7 @@ export class TaskManager implements ObligationHost {
         !message.has_source_projection
       ) {
         externalParentTaskId = this.store
-          .getRemoteTaskLinks(recipientTaskId)
+          .getRemoteTasks(recipientTaskId)
           .find((link) => link.remote_role === "parent")?.remote_task_id;
       }
       const external = externalParentTaskId === message.source_task_id;
@@ -1605,7 +1611,6 @@ export class TaskManager implements ObligationHost {
     cwd?: string;
     source: string;
     externalParentId: string;
-    peerTokenHash: string;
     title?: string;
     workflowStatus?: WorkflowStatus;
   }): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
@@ -1637,7 +1642,6 @@ export class TaskManager implements ObligationHost {
       source: input.source,
       agentId: input.agentId,
       externalParentId: input.externalParentId,
-      peerTokenHash: input.peerTokenHash,
       title: input.title,
       workflowStatus: input.workflowStatus,
       creationAnchor,
@@ -3946,6 +3950,15 @@ export class TaskManager implements ObligationHost {
     this.deliveryStatusBroadcast = broadcast;
   }
 
+  setCollaborationPromptBroadcast(
+    broadcast: (
+      event: Extract<AgentEvent, { type: "collaboration_prompt" }>,
+      seq: number,
+    ) => void,
+  ): void {
+    this.collaborationPromptBroadcast = broadcast;
+  }
+
   setRemoteChildWakeSource(check: (taskId: string) => boolean): void {
     this.remoteChildWakeSource = check;
   }
@@ -4297,11 +4310,15 @@ export class TaskManager implements ObligationHost {
       const bounded = truncated
         ? `${text.slice(0, MAX_COLLABORATION_PROMPT_AUDIT - 2)}\n…`
         : text;
-      this.store.saveEvent(
+      const saved = this.store.saveEvent(
         taskId,
         "collaboration_prompt",
         { messageIds, text: bounded, truncated, rawSize },
         { from_ref: "system" },
+      );
+      this.collaborationPromptBroadcast?.(
+        { type: "collaboration_prompt", taskId, messageIds },
+        saved.seq,
       );
     } catch (error) {
       slog.warn("collaboration prompt audit failed", {

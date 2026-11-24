@@ -114,21 +114,10 @@ prioritization policy. A sibling is not visible.
 ```ts
 type TaskListItem = {
   id: string;
-  title: string;
+  title?: string | null;
   relation: "self" | "parent" | "child";
-  workflowStatus: "running" | "idle" | "waiting" | "blocked" | "done";
-  executionState: "idle" | "agent" | "bash";
-  lastEventAt: string | null;
-  lastAgentActivityAt: string | null;
-};
-
-type RemoteTaskListItem = {
-  kind: "remote";
-  id: string;
-  relation: "child";
-  host: string;
+  host?: string | null;
   unreachable?: true;
-  title?: string;
   workflowStatus?: "running" | "idle" | "waiting" | "blocked" | "done";
   executionState?: "idle" | "agent" | "bash";
   lastEventAt?: string | null;
@@ -136,7 +125,8 @@ type RemoteTaskListItem = {
 };
 ```
 
-Remote entries come from the hub's in-memory owner mirror. Last-known values
+Remote entries carry `host`; local entries omit it. They come from the hub's
+in-memory owner mirror. Last-known values
 remain present with `unreachable: true` after disconnect; before the first
 snapshot, the entry has no invented Task fields.
 
@@ -370,7 +360,7 @@ genuinely cannot be determined, so a cross-agent child shows the target's
 defaults instead of claiming an inheritance that did not happen.
 
 For a remote target, the result still contains only the new Task id. A local
-`remote_task_links` row records it after the peer's `201`. Rejections are
+`remote_tasks` row records it after the peer's `201`. Rejections are
 definite tool errors; an ambiguous transport result is reported as
 `result is unknown`, and a remote success followed by a local link failure is
 reported as partial success. These calls are not retried.
@@ -380,9 +370,11 @@ reported as partial success. These calls are not retried.
 
 The local message is stored before the call returns, so it survives a restart,
 and is delivered in order with any other queued items. A linked remote child is
-instead handed synchronously to the owner's existing message route; `202` is
-success and the hub records an accepted source projection without a local
-delivery row. A rejection or transport failure is returned as a tool error.
+instead handed synchronously to the owner's existing message route. The owner
+returns its generated message id in `202`; the hub records that id as `queued`
+and changes it to `delivered` when the owner's prompt audit arrives over the
+host stream or reconnect catch-up. A rejection or transport failure is returned
+as a tool error.
 Whether delivery opens an account is defined in
 [Task Obligations](task-obligations.md#opening-an-account).
 

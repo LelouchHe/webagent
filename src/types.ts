@@ -1,5 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import { z } from "zod";
+import type { CollaborationDeliveryStatus } from "./shared/delivery-status.ts";
 
 // --- Config option (subset of ACP TaskConfigOption we care about) ---
 
@@ -353,6 +354,11 @@ export type AgentEvent =
       targetTaskId: string | null;
     }
   | {
+      type: "collaboration_prompt";
+      taskId: string;
+      messageIds: string[];
+    }
+  | {
       type: "user_message";
       taskId: string;
       text: string;
@@ -389,7 +395,7 @@ export type AgentEvent =
        * Delivery state of a collaboration message, attached at render/egress
        * for the sender's own projection. Never persisted in the event.
        */
-      deliveryStatus?: "queued" | "delivered" | "failed" | "accepted";
+      deliveryStatus?: CollaborationDeliveryStatus;
       deliveredAt?: string;
       deliveryFailureReason?: string;
       /**
@@ -410,7 +416,7 @@ export type AgentEvent =
       type: "collaboration_delivery";
       taskId: string;
       messageId: string;
-      status: "queued" | "delivered" | "failed";
+      status: CollaborationDeliveryStatus;
       deliveredAt?: string;
       failureReason?: string;
     }
