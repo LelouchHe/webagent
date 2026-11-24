@@ -341,3 +341,115 @@ export const TASK_HISTORY_LIMITS = {
   readSingleBytes: 1024 * 1024,
   readSeqs: 100,
 } as const;
+
+export interface CanonicalTaskHistoryEvent {
+  task_id: string;
+  seq: number;
+  type: string;
+  created_at: string;
+  from_ref: string;
+  data: string;
+}
+
+export function normalizeTaskHistoryRange(
+  range: [number, number] | undefined,
+  maxSeq: number,
+): [number, number] {
+  if (maxSeq < 1) return [1, 0];
+  const resolveIndex = (value: number) =>
+    value < 0 ? maxSeq + value + 1 : value;
+  const clamp = (value: number) => Math.min(maxSeq, Math.max(1, value));
+  const a = clamp(resolveIndex(range?.[0] ?? 1));
+  const b = clamp(resolveIndex(range?.[1] ?? maxSeq));
+  return a <= b ? [a, b] : [b, a];
+}
+
+function taskHistoryTooLarge(
+  value: unknown,
+  limitBytes: number,
+  extra: Record<string, unknown>,
+): never {
+  throw new Error(
+    JSON.stringify({
+      error: "response_too_large",
+      required_bytes: Buffer.byteLength(JSON.stringify(value), "utf8"),
+      limit_bytes: limitBytes,
+      ...extra,
+    }),
+  );
+}
+
+export function buildTaskHistoryQuery(input: {
+  taskId: string;
+  events: readonly CanonicalTaskHistoryEvent[];
+  maxSeq: number;
+  range?: [number, number];
+  text?: string;
+}): import("./api/tasks.ts").TaskQueryResult {
+  const [start, end] = normalizeTaskHistoryRange(input.range, input.maxSeq);
+  const result = {
+    task_id: input.taskId,
+    max_seq: input.maxSeq,
+    rows: input.events
+      .filter((event) => event.seq >= start && event.seq <= end)
+      .map((event) => projectTaskHistoryRow(event, input.text))
+      .filter((row) => input.text === undefined || row.field !== undefined),
+  };
+  if (
+    Buffer.byteLength(JSON.stringify(result), "utf8") >
+    TASK_HISTORY_LIMITS.queryBytes
+  ) {
+    taskHistoryTooLarge(result, TASK_HISTORY_LIMITS.queryBytes, {
+      max_seq: input.maxSeq,
+      hint: { range: [-Math.min(50, input.maxSeq), -1] },
+    });
+  }
+  return result;
+}
+
+export function uniqueTaskHistorySeqs(seqs: readonly number[]): number[] {
+  const uniqueSeqs = [...new Set(seqs)].sort((a, b) => a - b);
+  if (
+    uniqueSeqs.length > TASK_HISTORY_LIMITS.readSeqs &&
+    uniqueSeqs.length !== 1
+  ) {
+    throw new Error(
+      `too_many_seqs: maximum is ${TASK_HISTORY_LIMITS.readSeqs}`,
+    );
+  }
+  return uniqueSeqs;
+}
+
+export function buildTaskHistoryRead(input: {
+  taskId: string;
+  events: readonly CanonicalTaskHistoryEvent[];
+  seqs: readonly number[];
+}): import("./api/tasks.ts").TaskReadResult {
+  const uniqueSeqs = uniqueTaskHistorySeqs(input.seqs);
+  const bySeq = new Map(input.events.map((event) => [event.seq, event]));
+  const missing = uniqueSeqs.filter((seq) => !bySeq.has(seq));
+  if (missing.length > 0) {
+    throw new Error(JSON.stringify({ error: "unknown_seq", missing }));
+  }
+  const result = {
+    task_id: input.taskId,
+    rows: uniqueSeqs.map((seq) => {
+      const event = bySeq.get(seq)!;
+      return {
+        seq: event.seq,
+        type: event.type,
+        at: event.created_at,
+        from: event.from_ref,
+        data: parseTaskHistoryData(event.data),
+      };
+    }),
+  };
+  const limit =
+    uniqueSeqs.length === 1
+      ? TASK_HISTORY_LIMITS.readSingleBytes
+      : TASK_HISTORY_LIMITS.readBytes;
+  if (Buffer.byteLength(JSON.stringify(result), "utf8") > limit) {
+    taskHistoryTooLarge(result, limit, { seqs: uniqueSeqs });
+  }
+  return result;
+}

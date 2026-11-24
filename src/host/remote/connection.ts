@@ -18,8 +18,15 @@ import {
 } from "./state.ts";
 import type {
   RemoteTaskCreateInput,
+  TaskReadInput,
+  TaskReadResult,
   TaskCreateResult,
 } from "../../api/tasks.ts";
+import type { CanonicalTaskHistoryEvent } from "../../task-history.ts";
+import {
+  buildTaskHistoryRead,
+  uniqueTaskHistorySeqs,
+} from "../../task-history.ts";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 
@@ -67,6 +74,60 @@ const TaskCreateResponseSchema = z.object({
   }),
 });
 
+const TaskEventSchema = z
+  .object({
+    task_id: z.string().min(1),
+    seq: z.number().int().positive(),
+    type: z.string(),
+    created_at: z.string(),
+    from_ref: z.string(),
+    data: z.string(),
+  })
+  .passthrough();
+
+export interface RemoteTaskDetail {
+  id: string;
+  title: string | null;
+  workflowStatus: "running" | "idle" | "waiting" | "blocked" | "done";
+}
+
+export interface OwnerTaskHistoryEvent extends CanonicalTaskHistoryEvent {
+  parsedData: Record<string, unknown>;
+}
+
+export function decodeOwnerTaskEvents(
+  raw: unknown,
+  taskId: string,
+): OwnerTaskHistoryEvent[] {
+  const parsed = z.object({ events: z.array(z.unknown()) }).safeParse(raw);
+  if (!parsed.success) {
+    throw new HostConnectionFailure("protocol_mismatch");
+  }
+  return parsed.data.events.map((event) => {
+    const row = TaskEventSchema.safeParse(event);
+    if (!row.success || row.data.task_id !== taskId) {
+      throw new HostConnectionFailure("protocol_mismatch");
+    }
+    let parsedData: unknown;
+    try {
+      parsedData = JSON.parse(row.data.data) as unknown;
+    } catch {
+      throw new HostConnectionFailure("protocol_mismatch");
+    }
+    if (
+      !parsedData ||
+      typeof parsedData !== "object" ||
+      Array.isArray(parsedData)
+    ) {
+      throw new HostConnectionFailure("protocol_mismatch");
+    }
+    return {
+      ...row.data,
+      parsedData: parsedData as Record<string, unknown>,
+    };
+  });
+}
+
 export type HostTaskCreateAttempt =
   | { kind: "success"; result: TaskCreateResult }
   | { kind: "rejected"; status: number; reason: string }
@@ -74,7 +135,7 @@ export type HostTaskCreateAttempt =
   | { kind: "not_sent"; reason: string };
 
 export type HostTaskSendAttempt =
-  | { kind: "accepted"; messageId?: string }
+  | { kind: "accepted" }
   | { kind: "rejected"; status: number; reason: string }
   | { kind: "unknown"; reason: string };
 
@@ -234,6 +295,49 @@ export class HostConnection {
     }
   }
 
+  async readTaskDetail(taskId: string): Promise<RemoteTaskDetail> {
+    const raw = await this.getJson(
+      `/api/v1/tasks/${encodeURIComponent(taskId)}`,
+    );
+    const parsed = z
+      .object({
+        id: z.literal(taskId),
+        title: z.string().nullable(),
+        workflowStatus: z.enum([
+          "running",
+          "idle",
+          "waiting",
+          "blocked",
+          "done",
+        ]),
+      })
+      .passthrough()
+      .safeParse(raw);
+    if (!parsed.success) {
+      throw new HostConnectionFailure("protocol_mismatch");
+    }
+    return parsed.data;
+  }
+
+  async readTaskEvents(taskId: string): Promise<OwnerTaskHistoryEvent[]> {
+    const raw = await this.getJson(
+      `/api/v1/tasks/${encodeURIComponent(taskId)}/events`,
+    );
+    return decodeOwnerTaskEvents(raw, taskId);
+  }
+
+  async readTaskHistory(
+    taskId: string,
+    input: TaskReadInput,
+  ): Promise<TaskReadResult> {
+    uniqueTaskHistorySeqs(input.seqs);
+    return buildTaskHistoryRead({
+      taskId,
+      events: await this.readTaskEvents(taskId),
+      seqs: input.seqs,
+    });
+  }
+
   async sendTaskMessage(input: {
     sourceTaskId: string;
     targetTaskId: string;
@@ -271,16 +375,7 @@ export class HostConnection {
       body = null;
     }
     if (response.status === HTTP_STATUS.ACCEPTED) {
-      const messageId =
-        body &&
-        typeof body === "object" &&
-        typeof (body as { messageId?: unknown }).messageId === "string"
-          ? (body as { messageId: string }).messageId
-          : undefined;
-      return {
-        kind: "accepted",
-        ...(messageId === undefined ? {} : { messageId }),
-      };
+      return { kind: "accepted" };
     }
     const reason =
       body &&
@@ -447,6 +542,8 @@ export class HostConnection {
     const decoder = new TextDecoder();
     let buffer = "";
     let connected = false;
+    let refreshPromise: Promise<void> | null = null;
+    let bufferedEvents: HostStreamEvent[] = [];
     try {
       while (attempt.isCurrent()) {
         const result = await reader.read();
@@ -479,27 +576,40 @@ export class HostConnection {
               connected = true;
               this.supervisor.connected(attempt);
               if (!attempt.isCurrent()) return;
-              const refreshed = this.options.onConnected?.(() =>
-                attempt.isCurrent(),
+              refreshPromise = Promise.resolve(
+                this.options.onConnected?.(() => attempt.isCurrent()),
               );
-              if (refreshed instanceof Promise) {
-                void refreshed.then(
-                  () => {
-                    if (attempt.isCurrent())
-                      this.options.onState?.("connected");
-                  },
-                  (error: unknown) => {
-                    if (attempt.isCurrent()) {
-                      this.options.onState?.(
-                        "unreachable",
-                        HostConnection.failureReason(error),
-                      );
+              const ownedRefresh = refreshPromise;
+              void ownedRefresh.then(
+                async () => {
+                  if (!attempt.isCurrent() || refreshPromise !== ownedRefresh)
+                    return;
+                  try {
+                    while (bufferedEvents.length > 0) {
+                      const pending = bufferedEvents;
+                      bufferedEvents = [];
+                      for (const pendingEvent of pending) {
+                        if (!attempt.isCurrent()) return;
+                        await this.options.onEvent?.(pendingEvent);
+                      }
                     }
-                  },
-                );
-              } else if (attempt.isCurrent()) {
-                this.options.onState?.("connected");
-              }
+                    if (
+                      attempt.isCurrent() &&
+                      refreshPromise === ownedRefresh
+                    ) {
+                      refreshPromise = null;
+                      this.options.onState?.("connected");
+                    }
+                  } catch {
+                    if (attempt.isCurrent()) this.supervisor.reconnect(attempt);
+                  }
+                },
+                () => {
+                  if (attempt.isCurrent() && refreshPromise === ownedRefresh) {
+                    this.supervisor.reconnect(attempt);
+                  }
+                },
+              );
               boundary = buffer.indexOf("\n\n");
               continue;
             }
@@ -522,10 +632,15 @@ export class HostConnection {
                 ?.slice(3)
                 .trim();
               const seq = id === undefined ? NaN : Number(id);
-              await this.options.onEvent?.({
+              const streamEvent: HostStreamEvent = {
                 ...(Number.isInteger(seq) ? { seq } : {}),
                 data: payload as Record<string, unknown>,
-              });
+              };
+              if (refreshPromise) {
+                bufferedEvents.push(streamEvent);
+              } else {
+                await this.options.onEvent?.(streamEvent);
+              }
             }
           }
           if (connected && event === "heartbeat") {

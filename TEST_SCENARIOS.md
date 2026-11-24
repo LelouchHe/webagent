@@ -51,7 +51,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
     the hub and owner, and opens the owner-side account; a permission request
     in that delegated turn is auto-answered and leaves no pending permission
   - owner restart drops the in-memory account but `task_update(done)` falls
-    back to the external parent; the report wakes the hub parent exactly once
+    back to the external parent even after owner-local unarchive; the report
+    wakes the hub parent exactly once
+  - a busy hub parent queues the report, observes the row as queued, restarts,
+    and catches up to exactly one delivered report after reconnect
   - hub restart catch-up replays the same report event without duplicating its
     delivery, while the duplicate row remains drainable if still queued; host
     disconnect marks the mirror unreachable and send fails visibly; a wrong

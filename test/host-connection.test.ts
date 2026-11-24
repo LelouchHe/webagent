@@ -6,7 +6,11 @@ import {
 } from "../src/host/remote/credentials.ts";
 import { retryDelay } from "../src/host/remote/state.ts";
 import { hashToken } from "../src/auth.ts";
-import { HostConnection } from "../src/host/remote/connection.ts";
+import {
+  HostConnection,
+  HostRequestError,
+  decodeOwnerTaskEvents,
+} from "../src/host/remote/connection.ts";
 import {
   HostRegistry,
   remoteCatchupEvent,
@@ -387,6 +391,138 @@ describe("host connection helpers", () => {
     assert.equal(hookCalls, 0);
   });
 
+  it("reconnects when connected catch-up fails", async () => {
+    let sseAttempts = 0;
+    let refreshes = 0;
+    const second = deferred<void>();
+    const fetchImpl: typeof globalThis.fetch = async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (url.endsWith("/api/v1/version")) {
+        return Response.json({ hostProtocol: 1 });
+      }
+      if (url.endsWith("/api/v1/auth/verify")) {
+        return Response.json({
+          ok: true,
+          name: "hub",
+          scope: "api",
+          hash: hashToken("wat_hub"),
+        });
+      }
+      if (url.endsWith("/api/v1/sse-ticket")) {
+        return Response.json({ ticket: `ticket-${sseAttempts}` });
+      }
+      sseAttempts += 1;
+      if (sseAttempts === 2) second.resolve();
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode('data: {"type":"connected"}\n\n'),
+            );
+          },
+        }),
+      );
+    };
+    const connection = new HostConnection(
+      { url: "http://owner.example", token: "wat_hub" },
+      {
+        fetch: fetchImpl,
+        retryDelay: () => 0,
+        onConnected: async () => {
+          refreshes += 1;
+          if (refreshes === 1) throw new Error("events GET failed");
+        },
+      },
+    );
+    connection.start();
+    await Promise.race([
+      second.promise,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => {
+          reject(new Error("catch-up reconnect timed out"));
+        }, 1_000);
+      }),
+    ]);
+    await until(() => refreshes === 2);
+    connection.stop();
+    assert.equal(refreshes, 2);
+    assert.ok(sseAttempts >= 2);
+  });
+
+  it("keeps buffered events owned by their connection attempt", async () => {
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
+    const refreshes = [deferred<void>(), deferred<void>()];
+    const events: string[] = [];
+    let attempt = 0;
+    const fetchImpl: typeof globalThis.fetch = async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      if (url.endsWith("/api/v1/version")) {
+        return Response.json({ hostProtocol: 1 });
+      }
+      if (url.endsWith("/api/v1/auth/verify")) {
+        return Response.json({
+          ok: true,
+          name: "hub",
+          scope: "api",
+          hash: hashToken("wat_hub"),
+        });
+      }
+      if (url.endsWith("/api/v1/sse-ticket")) {
+        return Response.json({ ticket: `ticket-${attempt}` });
+      }
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            streams.push(controller);
+          },
+        }),
+      );
+    };
+    const connection = new HostConnection(
+      { url: "http://owner.example", token: "wat_hub" },
+      {
+        fetch: fetchImpl,
+        retryDelay: () => 0,
+        onConnected: () => refreshes[attempt++].promise,
+        onEvent: (event) => {
+          events.push(event.data.id as string);
+        },
+      },
+    );
+    connection.start();
+    await until(() => streams.length === 1);
+    streams[0].enqueue(
+      new TextEncoder().encode('data: {"type":"connected"}\n\n'),
+    );
+    await until(() => attempt === 1);
+    connection.stop();
+    connection.start();
+    await until(() => streams.length === 2);
+    streams[1].enqueue(
+      new TextEncoder().encode(
+        'data: {"type":"connected"}\n\ndata: {"id":"new"}\n\n',
+      ),
+    );
+    await until(() => attempt === 2);
+    refreshes[0].resolve();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(events, []);
+    refreshes[1].resolve();
+    await until(() => events.length === 1);
+    connection.stop();
+    assert.deepEqual(events, ["new"]);
+  });
+
   it("parses coalesced and split SSE frames after the handshake", async () => {
     let stream!: ReadableStreamDefaultController<Uint8Array>;
     let streamReady = false;
@@ -446,8 +582,8 @@ describe("host connection helpers", () => {
       encode.encode('id: 2\ndata: {"type":"task_update","taskId":"chi'),
     );
     stream.enqueue(encode.encode('ld","status":"done"}\n\n'));
-    await until(() => events.length === 2);
     refresh.resolve();
+    await until(() => events.length === 2);
     connection.stop();
     assert.deepEqual(
       events.map((event) => [event.seq, event.data.taskId, event.data.status]),
@@ -459,19 +595,26 @@ describe("host connection helpers", () => {
   });
 
   it("validates catch-up rows and keeps the outer event type authoritative", () => {
-    const row = {
-      task_id: "child",
-      seq: 3,
-      type: "task_update",
-      created_at: "2026-01-01T00:00:00.000Z",
-      from_ref: "agent",
-      data: JSON.stringify({
-        type: "tool_call",
-        task_id: "other",
-        status: "done",
-      }),
-    };
-    assert.deepEqual(remoteCatchupEvent(row, "child"), {
+    const [row] = decodeOwnerTaskEvents(
+      {
+        events: [
+          {
+            task_id: "child",
+            seq: 3,
+            type: "task_update",
+            created_at: "2026-01-01T00:00:00.000Z",
+            from_ref: "agent",
+            data: JSON.stringify({
+              type: "tool_call",
+              task_id: "other",
+              status: "done",
+            }),
+          },
+        ],
+      },
+      "child",
+    );
+    assert.deepEqual(remoteCatchupEvent(row), {
       seq: 3,
       data: {
         type: "task_update",
@@ -480,7 +623,14 @@ describe("host connection helpers", () => {
         status: "done",
       },
     });
-    assert.equal(remoteCatchupEvent(row, "different"), null);
+    assert.throws(
+      () =>
+        decodeOwnerTaskEvents(
+          { events: [{ ...row, task_id: "different" }] },
+          "child",
+        ),
+      /protocol_mismatch/,
+    );
   });
 
   it("catches up a disconnected report before stalled display reads fail", async () => {
@@ -491,10 +641,9 @@ describe("host connection helpers", () => {
       {
         listLinks: () => [
           {
-            local_task_id: "parent",
-            remote_task_id: "child",
-            remote_role: "child",
-            remote_host: "owner",
+            localTaskId: "parent",
+            remoteTaskId: "child",
+            host: "owner",
           },
         ],
         onRemoteEvent: (_host, _child, event) => {
@@ -518,12 +667,41 @@ describe("host connection helpers", () => {
                   body: "finished",
                   targetTaskId: "parent",
                 }),
+                parsedData: {
+                  status: "done",
+                  body: "finished",
+                  targetTaskId: "parent",
+                },
               },
             ],
           };
         }
         return display.promise;
       },
+      readTaskDetail: async () => ({
+        id: "child",
+        title: "child",
+        workflowStatus: "idle" as const,
+      }),
+      readTaskEvents: async () => [
+        {
+          task_id: "child",
+          seq: 2,
+          type: "task_update",
+          created_at: "2026-01-01T00:00:00.000Z",
+          from_ref: "agent",
+          data: JSON.stringify({
+            status: "done",
+            body: "finished",
+            targetTaskId: "parent",
+          }),
+          parsedData: {
+            status: "done",
+            body: "finished",
+            targetTaskId: "parent",
+          },
+        },
+      ],
     };
     const internals = registry as unknown as {
       connections: Map<string, typeof connection>;
@@ -545,24 +723,55 @@ describe("host connection helpers", () => {
     ]);
   });
 
+  it("marks a removed child unreachable without reconnecting", async () => {
+    const registry = new HostRegistry(
+      {},
+      {
+        listLinks: () => [
+          { localTaskId: "parent", remoteTaskId: "child", host: "owner" },
+        ],
+        onRemoteEvent: () => {
+          throw new Error("removed child must not catch up");
+        },
+      },
+    );
+    const connection = {
+      getJson: async () => ({ busy: false, busyKind: null }),
+      readTaskDetail: async () => ({
+        id: "child",
+        title: "child",
+        workflowStatus: "idle" as const,
+      }),
+      readTaskEvents: async () => {
+        throw new HostRequestError("/events", 404);
+      },
+    };
+    const internals = registry as unknown as {
+      connections: Map<string, typeof connection>;
+      refresh: (name: string) => Promise<void>;
+    };
+    internals.connections.set("owner", connection);
+    await internals.refresh("owner");
+    assert.equal(registry.listRemoteChildren("parent")[0]?.unreachable, true);
+  });
+
   it("stops a stale refresh before issuing child reads", async () => {
     let listReads = 0;
     let childReads = 0;
+    let eventReads = 0;
     const registry = new HostRegistry(
       {},
       {
         listLinks: () => [
           {
-            local_task_id: "parent",
-            remote_task_id: "child",
-            remote_role: "child",
-            remote_host: "owner",
+            localTaskId: "parent",
+            remoteTaskId: "child",
+            host: "owner",
           },
           {
-            local_task_id: "parent",
-            remote_task_id: "second-child",
-            remote_role: "child",
-            remote_host: "owner",
+            localTaskId: "parent",
+            remoteTaskId: "second-child",
+            host: "owner",
           },
         ],
         onRemoteEvent: () => {},
@@ -576,8 +785,17 @@ describe("host connection helpers", () => {
           return [];
         }
         childReads += 1;
-        if (childReads === 2) current = false;
         return { events: [] };
+      },
+      readTaskDetail: async () => ({
+        id: "child",
+        title: "child",
+        workflowStatus: "idle" as const,
+      }),
+      readTaskEvents: async () => {
+        eventReads += 1;
+        current = false;
+        return [];
       },
     };
     const internals = registry as unknown as {
@@ -586,8 +804,9 @@ describe("host connection helpers", () => {
     };
     internals.connections.set("owner", connection);
     await internals.refresh("owner", () => current);
-    assert.equal(listReads, 2);
-    assert.equal(childReads, 2);
+    assert.equal(listReads, 0);
+    assert.equal(childReads, 1);
+    assert.equal(eventReads, 1);
   });
 
   it("updates mirror fields only from their owning events", async () => {
@@ -596,10 +815,9 @@ describe("host connection helpers", () => {
       {
         listLinks: () => [
           {
-            local_task_id: "parent",
-            remote_task_id: "child",
-            remote_role: "child",
-            remote_host: "owner",
+            localTaskId: "parent",
+            remoteTaskId: "child",
+            host: "owner",
           },
         ],
         onRemoteEvent: () => {},
@@ -669,16 +887,15 @@ describe("host connection helpers", () => {
     });
   });
 
-  it("takes cold workflow status from the owner list", async () => {
+  it("takes cold workflow status from the owner detail", async () => {
     const registry = new HostRegistry(
       {},
       {
         listLinks: () => [
           {
-            local_task_id: "parent",
-            remote_task_id: "child",
-            remote_role: "child",
-            remote_host: "owner",
+            localTaskId: "parent",
+            remoteTaskId: "child",
+            host: "owner",
           },
         ],
         onRemoteEvent: () => {},
@@ -686,21 +903,17 @@ describe("host connection helpers", () => {
     );
     const connection = {
       getJson: async (path: string) => {
-        if (path === "/api/v1/tasks") {
-          return [
-            {
-              id: "child",
-              title: "Remote child",
-              workflow_status: "blocked",
-            },
-          ];
-        }
-        if (path === "/api/v1/tasks?archived=true") return [];
         if (path.endsWith("/status")) {
           return { busy: false, busyKind: null };
         }
         return { events: [] };
       },
+      readTaskDetail: async () => ({
+        id: "child",
+        title: "Remote child",
+        workflowStatus: "blocked" as const,
+      }),
+      readTaskEvents: async () => [],
     };
     const internals = registry as unknown as {
       connections: Map<string, typeof connection>;

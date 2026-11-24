@@ -9,6 +9,7 @@ import {
   buildCollaborationSystemMessage,
   collaborationTitle,
 } from "./collaboration-message.ts";
+import { formatTaskReport } from "./task-report.ts";
 import { migrateTimestampsToMillis } from "./timestamp-migration.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { assertNotLegacyDatabase } from "./legacy-database.ts";
@@ -138,6 +139,8 @@ export interface TaskRow {
   pending_compact_summary: string | null;
   /** Present on listTasks rows: whether a user-originated input exists. */
   has_user_input?: number;
+  /** Present on single-task reads when an external parent relation exists. */
+  remote_parent_id?: string | null;
 }
 
 export interface AgentSessionRow {
@@ -219,7 +222,7 @@ export interface CollaborationMessageRow {
   source_actor: CollaborationActor;
   body: string;
   created_at: number;
-  external_source_account?: number;
+  has_source_projection?: number;
 }
 
 export interface CollaborationProjectionRow {
@@ -1276,17 +1279,6 @@ export class Store {
       | undefined;
   }
 
-  hasRemoteTaskChild(localTaskId: string): boolean {
-    return (
-      this.db
-        .prepare(
-          `SELECT 1 FROM remote_task_links
-             WHERE local_task_id = ? AND remote_role = 'child' LIMIT 1`,
-        )
-        .get(localTaskId) !== undefined
-    );
-  }
-
   isRemoteTaskOwnedByPeer(taskId: string, peerTokenHash: string): boolean {
     return (
       this.db
@@ -1393,7 +1385,13 @@ export class Store {
   getTask(id: string): TaskRow | undefined {
     return this.db
       .prepare(
-        "SELECT s.* FROM tasks s WHERE s.id = ? AND s.deleted_at IS NULL",
+        `SELECT s.*,
+                (SELECT r.remote_task_id
+                 FROM remote_task_links r
+                 WHERE r.local_task_id = s.id
+                   AND r.remote_role = 'parent'
+                 LIMIT 1) AS remote_parent_id
+         FROM tasks s WHERE s.id = ? AND s.deleted_at IS NULL`,
       )
       .get(id) as TaskRow | undefined;
   }
@@ -2856,50 +2854,16 @@ export class Store {
     sourceTaskId: string;
     directTargetTaskId: string;
     body: string;
-  }): {
-    message: CollaborationMessageRow;
-    delivery: CollaborationDeliveryRow;
-  } {
+  }): void {
     const createdAt = Date.now();
-    return this.db.transaction(() => {
+    this.db.transaction(() => {
       this.requireLiveTask(input.directTargetTaskId);
-      this.db
-        .prepare(
-          `INSERT INTO messages
-           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
-           VALUES (?, ?, ?, 'agent', ?, ?)`,
-        )
-        .run(
-          input.id,
-          input.sourceTaskId,
-          input.directTargetTaskId,
-          input.body,
-          createdAt,
-        );
-      this.db
-        .prepare(
-          `INSERT INTO message_projections
-           (message_id, task_id, role, created_at)
-           VALUES (?, ?, 'target', ?)`,
-        )
-        .run(input.id, input.directTargetTaskId, createdAt);
-      this.db
-        .prepare(
-          `INSERT INTO deliveries
-           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
-           VALUES (?, ?, ?, ?, 'queued', ?)`,
-        )
-        .run(
-          input.deliveryId,
-          input.id,
-          input.directTargetTaskId,
-          `${input.id}:${input.directTargetTaskId}`,
-          createdAt,
-        );
-      return {
-        message: this.getCollaborationMessage(input.id)!,
-        delivery: this.getCollaborationDelivery(input.deliveryId)!,
-      };
+      this.createTargetOnlyDelivery({
+        ...input,
+        actor: "agent",
+        idempotencyKey: `${input.id}:${input.directTargetTaskId}`,
+        createdAt,
+      });
     })();
   }
 
@@ -2911,7 +2875,6 @@ export class Store {
     targetTaskId: string;
     body: string;
   }): boolean {
-    const createdAt = Date.now();
     return this.db.transaction(() => {
       const duplicate = this.db
         .prepare(
@@ -2920,39 +2883,16 @@ export class Store {
         .get(input.idempotencyKey) as { status: string } | undefined;
       if (duplicate) return duplicate.status === "queued";
       this.requireLiveTask(input.targetTaskId);
-      this.db
-        .prepare(
-          `INSERT INTO messages
-           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
-           VALUES (?, ?, ?, 'agent', ?, ?)`,
-        )
-        .run(
-          input.id,
-          input.sourceTaskId,
-          input.targetTaskId,
-          input.body,
-          createdAt,
-        );
-      this.db
-        .prepare(
-          `INSERT INTO message_projections
-           (message_id, task_id, role, created_at)
-           VALUES (?, ?, 'target', ?)`,
-        )
-        .run(input.id, input.targetTaskId, createdAt);
-      this.db
-        .prepare(
-          `INSERT INTO deliveries
-           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
-           VALUES (?, ?, ?, ?, 'queued', ?)`,
-        )
-        .run(
-          input.deliveryId,
-          input.id,
-          input.targetTaskId,
-          input.idempotencyKey,
-          createdAt,
-        );
+      this.createTargetOnlyDelivery({
+        id: input.id,
+        deliveryId: input.deliveryId,
+        sourceTaskId: input.sourceTaskId,
+        directTargetTaskId: input.targetTaskId,
+        actor: "agent",
+        body: input.body,
+        idempotencyKey: input.idempotencyKey,
+        createdAt: Date.now(),
+      });
       return true;
     })();
   }
@@ -3028,38 +2968,16 @@ export class Store {
     this.requireLiveTask(input.recipientTaskId);
     const createdAt = input.createdAt ?? Date.now();
     return this.db.transaction(() => {
-      this.db
-        .prepare(
-          `INSERT INTO messages
-           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
-           VALUES (?, ?, ?, 'system', ?, ?)`,
-        )
-        .run(
-          input.messageId,
-          input.fromTaskId,
-          input.recipientTaskId,
-          input.body,
-          createdAt,
-        );
-      this.db
-        .prepare(
-          `INSERT INTO message_projections (message_id, task_id, role, created_at)
-           VALUES (?, ?, 'target', ?)`,
-        )
-        .run(input.messageId, input.recipientTaskId, createdAt);
-      this.db
-        .prepare(
-          `INSERT INTO deliveries
-           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
-           VALUES (?, ?, ?, ?, 'queued', ?)`,
-        )
-        .run(
-          input.deliveryId,
-          input.messageId,
-          input.recipientTaskId,
-          `${input.messageId}:${input.recipientTaskId}`,
-          createdAt,
-        );
+      this.createTargetOnlyDelivery({
+        id: input.messageId,
+        deliveryId: input.deliveryId,
+        sourceTaskId: input.fromTaskId,
+        directTargetTaskId: input.recipientTaskId,
+        actor: "system",
+        body: input.body,
+        idempotencyKey: `${input.messageId}:${input.recipientTaskId}`,
+        createdAt,
+      });
       return {
         message: this.getCollaborationMessage(input.messageId)!,
         delivery: this.getCollaborationDelivery(input.deliveryId)!,
@@ -3131,6 +3049,7 @@ export class Store {
     if (input.sourceTaskId === input.directTargetTaskId) {
       throw new Error("Collaboration source and target must differ");
     }
+
     this.requireLiveTask(input.sourceTaskId);
     this.requireLiveTask(input.directTargetTaskId);
     this.db
@@ -3199,6 +3118,57 @@ export class Store {
     };
   }
 
+  private createTargetOnlyDelivery(input: {
+    id: string;
+    deliveryId: string;
+    sourceTaskId: string;
+    directTargetTaskId: string;
+    actor: "agent" | "system";
+    body: string;
+    idempotencyKey: string;
+    createdAt: number;
+  }): void {
+    const messageSql =
+      input.actor === "system"
+        ? `INSERT INTO messages
+           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+           VALUES (?, ?, ?, 'system', ?, ?)`
+        : `INSERT INTO messages
+           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+           VALUES (?, ?, ?, 'agent', ?, ?)`;
+    const messageArgs = [
+      input.id,
+      input.sourceTaskId,
+      input.directTargetTaskId,
+      input.body,
+      input.createdAt,
+    ];
+    this.db.prepare(messageSql).run(...messageArgs);
+    this.db
+      .prepare(
+        input.actor === "system"
+          ? `INSERT INTO message_projections (message_id, task_id, role, created_at)
+           VALUES (?, ?, 'target', ?)`
+          : `INSERT INTO message_projections
+           (message_id, task_id, role, created_at)
+           VALUES (?, ?, 'target', ?)`,
+      )
+      .run(input.id, input.directTargetTaskId, input.createdAt);
+    this.db
+      .prepare(
+        `INSERT INTO deliveries
+           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
+           VALUES (?, ?, ?, ?, 'queued', ?)`,
+      )
+      .run(
+        input.deliveryId,
+        input.id,
+        input.directTargetTaskId,
+        input.idempotencyKey,
+        input.createdAt,
+      );
+  }
+
   /**
    * Atomically record an Agent workflow update and, when a bound account
    * target is supplied, its directed account message. The endpoint is passed
@@ -3247,7 +3217,7 @@ export class Store {
         sourceTaskId: taskId,
         directTargetTaskId: accountTargetTaskId,
         sourceActor: "agent",
-        body: `Task status: ${status}\n${body}`,
+        body: formatTaskReport(status, body),
       });
       return { collaborationMessageId, event };
     })();
@@ -3259,11 +3229,9 @@ export class Store {
       .prepare(
         `SELECT m.*,
                 EXISTS (
-                  SELECT 1 FROM remote_task_links r
-                  WHERE r.local_task_id = m.direct_target_task_id
-                    AND r.remote_role = 'parent'
-                    AND r.remote_task_id = m.source_task_id
-                ) AS external_source_account
+                  SELECT 1 FROM message_projections p
+                  WHERE p.message_id = m.id AND p.role = 'source'
+                ) AS has_source_projection
          FROM messages m WHERE m.id = ?`,
       )
       .get(id) as CollaborationMessageRow | undefined;

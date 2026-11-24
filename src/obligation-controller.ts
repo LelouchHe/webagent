@@ -58,7 +58,7 @@ export interface ObligationControllerOptions {
 interface Account {
   sourceTaskId: string;
   targetTaskId: string;
-  externalSource: boolean;
+  sourceKind: "local" | "external";
   /** Consecutive target turns that ended with no `task_update`. */
   noUpdateTurns: number;
   /** `no_update` was already reported; stop reminding until an update. */
@@ -111,7 +111,7 @@ export class ObligationController {
   arm(
     sourceTaskId: string,
     targetTaskId: string,
-    externalSource = false,
+    sourceKind: "local" | "external" = "local",
   ): void {
     if (this.disposed) return;
     const existing = this.accounts.get(targetTaskId);
@@ -124,7 +124,7 @@ export class ObligationController {
     this.accounts.set(targetTaskId, {
       sourceTaskId,
       targetTaskId,
-      externalSource,
+      sourceKind,
       noUpdateTurns: 0,
       stopped: false,
     });
@@ -170,12 +170,13 @@ export class ObligationController {
   }
 
   /** Open account source for a target, without closing it. */
-  peekSource(targetTaskId: string): string | undefined {
-    return this.accounts.get(targetTaskId)?.sourceTaskId;
-  }
-
-  sourceIsExternal(targetTaskId: string): boolean {
-    return this.accounts.get(targetTaskId)?.externalSource ?? false;
+  peekSource(
+    targetTaskId: string,
+  ): { sourceTaskId: string; sourceKind: "local" | "external" } | undefined {
+    const account = this.accounts.get(targetTaskId);
+    return account
+      ? { sourceTaskId: account.sourceTaskId, sourceKind: account.sourceKind }
+      : undefined;
   }
 
   /** Close an account after the settlement transaction committed. */

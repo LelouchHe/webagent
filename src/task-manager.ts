@@ -865,15 +865,14 @@ export class TaskManager implements ObligationHost {
     const target = this.store.getTaskIncludingDeleted(recipientTaskId);
     if (!target) return;
     for (const message of messages) {
-      const externalParentTaskId = message.external_source_account
-        ? message.source_task_id
-        : undefined;
+      const sourceKind =
+        message.source_actor === "agent" && !message.has_source_projection
+          ? "external"
+          : "local";
+      const externalParentTaskId =
+        sourceKind === "external" ? message.source_task_id : undefined;
       if (!shouldArm(message, target, externalParentTaskId)) continue;
-      this.obligations.arm(
-        message.source_task_id,
-        recipientTaskId,
-        Boolean(message.external_source_account),
-      );
+      this.obligations.arm(message.source_task_id, recipientTaskId, sourceKind);
     }
   }
 
@@ -4009,32 +4008,22 @@ export class TaskManager implements ObligationHost {
         ...(watched ? { silenceWatchMs: this.obligations.silenceMs } : {}),
       };
     }
-    const accountSource = this.obligations.peekSource(targetTaskId);
-    const accountSourceIsExternal =
-      this.obligations.sourceIsExternal(targetTaskId);
-    const localParentTaskId =
-      accountSource === undefined
-        ? (this.store.getTask(targetTaskId)?.parent_id ?? null)
-        : null;
-    const needsExternalLink =
-      accountSourceIsExternal ||
-      (accountSource === undefined &&
-        localParentTaskId === null &&
-        !this.store.isRootTaskId(targetTaskId));
-    const externalParentTaskId = needsExternalLink
-      ? (this.store
-          .getRemoteTaskLinks(targetTaskId)
-          .find((link) => link.remote_role === "parent")?.remote_task_id ??
-        null)
-      : null;
+    const account = this.obligations.peekSource(targetTaskId);
+    const accountSource = account?.sourceTaskId;
+    const task =
+      accountSource === undefined ? this.store.getTask(targetTaskId) : null;
+    const localParentTaskId = task?.parent_id ?? null;
+    const externalParentTaskId =
+      account?.sourceKind === "external"
+        ? account.sourceTaskId
+        : account === undefined && localParentTaskId === null
+          ? (task?.remote_parent_id ?? null)
+          : null;
     const accountTargetTaskId =
       accountSource ?? localParentTaskId ?? externalParentTaskId;
     const externalAccountTarget =
       externalParentTaskId !== null &&
-      (accountSourceIsExternal
-        ? accountSource === externalParentTaskId
-        : localParentTaskId === null &&
-          accountTargetTaskId === externalParentTaskId);
+      accountTargetTaskId === externalParentTaskId;
     const { collaborationMessageId, event } =
       this.store.recordAgentWorkflowUpdate(
         targetTaskId,
@@ -4060,7 +4049,7 @@ export class TaskManager implements ObligationHost {
     if (message?.source_actor !== "agent") return;
     const text = `A message to the target was not delivered (${change.failureReason ?? "unknown"}).`;
     if (
-      this.obligations.peekSource(change.recipientTaskId) ===
+      this.obligations.peekSource(change.recipientTaskId)?.sourceTaskId ===
       message.source_task_id
     ) {
       this.obligations.noteTargetUnavailable(change.recipientTaskId, text);

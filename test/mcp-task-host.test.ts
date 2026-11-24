@@ -18,7 +18,11 @@ import {
   type TaskCreateHost,
 } from "../src/api/tasks.ts";
 import { createTaskOpsCore } from "../src/task-ops.ts";
-import { createTaskHost } from "../src/host/tasks.ts";
+import {
+  createRoutedTaskOps as createRemoteRoutedTaskOps,
+  createTaskHost,
+} from "../src/host/tasks.ts";
+import { HostRegistry } from "../src/host/remote/registry.ts";
 import { projectTaskHistoryRow } from "../src/task-history.ts";
 import type { AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
@@ -361,6 +365,7 @@ describe("MCP Task tool host", () => {
       title: "Attached remote child",
       creationAnchor: { kind: "task_created" },
     });
+
     assert.equal(
       store.unarchiveTask("attached-remote-child").status,
       "unarchived",
@@ -371,12 +376,12 @@ describe("MCP Task tool host", () => {
           arm: (
             sourceTaskId: string,
             targetTaskId: string,
-            externalSource: boolean,
+            sourceKind: "local" | "external",
           ) => void;
         };
       }
     ).obligations;
-    obligations.arm("external-parent", "attached-remote-child", true);
+    obligations.arm("external-parent", "attached-remote-child", "external");
 
     const settled = tasks.settleAgentUpdate(
       "attached-remote-child",
@@ -389,6 +394,21 @@ describe("MCP Task tool host", () => {
       JSON.parse(settled.event.data).targetTaskId,
       "external-parent",
     );
+  });
+
+  it("uses a restored local parent for a fallback report", () => {
+    store.archiveTask("alpha-child");
+    assert.equal(store.unarchiveTask("alpha-child").status, "unarchived");
+    const settled = tasks.settleAgentUpdate(
+      "alpha-child",
+      "done",
+      "local completion",
+    );
+    assert.equal(settled.accountTargetTaskId, "alpha");
+    assert.equal(typeof settled.collaborationMessageId, "string");
+    const event = store.getEvents("alpha-child").at(-1);
+    assert.ok(event);
+    assert.match(event.data, /local completion/);
   });
 
   it("re-signals an existing queued remote report for replay drain", () => {
@@ -589,6 +609,100 @@ describe("MCP Task tool host", () => {
     );
     assert.equal(calls, 1);
     assert.deepEqual(store.getRemoteTaskLinks("alpha"), []);
+  });
+
+  it("does not route a partial remote create without a durable link", async () => {
+    const registry = new HostRegistry(
+      { owner: { url: "http://owner.example", token: "wat_hub" } },
+      {
+        listLinks: () => [],
+        onRemoteEvent: () => {},
+        fetch: async (input) => {
+          const url =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.href
+                : input.url;
+          if (url.endsWith("/api/v1/tasks")) {
+            return Response.json(
+              {
+                id: "partial-remote-child",
+                cwd: dir,
+                cwdDisplay: dir,
+                parentId: null,
+                parentAgentId: null,
+                agentId: "test-agent",
+                title: "Partial child",
+                workflowStatus: "idle",
+                source: "agent",
+                configOptions: [],
+                agentCommands: {
+                  epoch: "remote",
+                  revision: 0,
+                  commands: [],
+                },
+              },
+              { status: 201 },
+            );
+          }
+          throw new Error(`unexpected fetch ${url}`);
+        },
+      },
+    );
+    const local = createLocalTaskOps({ store, tasks });
+    const core = createTaskOpsCore({
+      host: createTaskHost({ local, remote: registry }),
+      store,
+      tasks,
+    });
+    const original = store.recordRemoteTaskChild.bind(store);
+    store.recordRemoteTaskChild = () => {
+      throw new Error("write-back failed");
+    };
+    try {
+      await assert.rejects(
+        core.create(
+          { kind: "agent", principal: principal() },
+          {
+            title: "Partial child",
+            agentId: "test-agent@owner",
+            parentId: "alpha",
+            inheritFromTaskId: "alpha",
+          },
+        ),
+        TaskRemoteCreatePartialSuccessError,
+      );
+      const routed = {
+        ...local,
+        ...core,
+        ...createRemoteRoutedTaskOps({
+          local,
+          remote: registry,
+          store,
+          tasks,
+          broadcastCollaboration: () => {},
+        }),
+      };
+      await assert.rejects(
+        routed.query(principal(), { taskId: "partial-remote-child" }),
+        /target_not_allowed/,
+      );
+      await assert.rejects(
+        routed.read(principal(), {
+          taskId: "partial-remote-child",
+          seqs: [1],
+        }),
+        /target_not_allowed/,
+      );
+      await assert.rejects(
+        routed.send(principal(), "partial-remote-child", "hello"),
+        /task_not_found|target_not_allowed/,
+      );
+    } finally {
+      store.recordRemoteTaskChild = original;
+      registry.stopAll();
+    }
   });
 
   it("does not retry unknown remote outcomes", async () => {

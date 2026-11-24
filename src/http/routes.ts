@@ -44,6 +44,10 @@ import {
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { validateTaskTitle } from "../shared/task-title.ts";
 import type { TaskOps } from "../api/tasks.ts";
+import {
+  HostExternalParentError,
+  type HostCollaborationCommand,
+} from "../api/collaboration.ts";
 import { isTaskCreateError } from "../api/tasks.ts";
 
 const rlog = log.scope("routes");
@@ -249,6 +253,7 @@ export interface RequestHandlerDeps {
   store: Store;
   tasks?: TaskManager;
   taskOps?: TaskOps;
+  hostCollaboration?: HostCollaborationCommand;
   sseManager: SseManager;
   clientRegistry?: ClientRegistry;
   publicDir: string;
@@ -312,6 +317,25 @@ function readBodyRaw(req: IncomingMessage): Promise<string> {
     });
     req.on("error", reject);
   });
+}
+
+function parseCollaborationBody(body: string): {
+  targetTaskId: string;
+  body: string;
+} {
+  const raw = JSON.parse(body) as unknown;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("invalid_collaboration_body");
+  }
+  const value = raw as { targetTaskId?: unknown; body?: unknown };
+  if (
+    typeof value.targetTaskId !== "string" ||
+    typeof value.body !== "string" ||
+    !value.body.trim()
+  ) {
+    throw new Error("invalid_collaboration_body");
+  }
+  return { targetTaskId: value.targetTaskId, body: value.body };
 }
 
 /**
@@ -1410,50 +1434,26 @@ export function createRequestHandler(
       );
       if (collaborationMessageMatch && req.method === "POST") {
         const sourceTaskId = decodeURIComponent(collaborationMessageMatch[1]);
-        const sourceTask = store.getTask(sourceTaskId);
         const requestPrincipal = principalByRequest.get(req);
-        if (!sourceTask && requestPrincipal?.scope !== "host") {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Source task not found" });
-          return;
-        }
         if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task manager not available",
           });
           return;
         }
+        let body: { targetTaskId: string; body: string };
+        try {
+          body = parseCollaborationBody(await readBody(req));
+        } catch {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "targetTaskId and non-empty body are required",
+          });
+          return;
+        }
         if (requestPrincipal?.scope === "host") {
-          let body: { targetTaskId?: unknown; body?: unknown };
-          try {
-            body = JSON.parse(await readBody(req)) as typeof body;
-          } catch {
-            json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
-            return;
-          }
-          if (
-            typeof body.targetTaskId !== "string" ||
-            typeof body.body !== "string" ||
-            !body.body.trim()
-          ) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "targetTaskId and non-empty body are required",
-            });
-            return;
-          }
-          const target = store.getTask(body.targetTaskId);
-          if (
-            !target ||
-            !store
-              .getRemoteTaskLinks(target.id)
-              .some(
-                (link) =>
-                  link.remote_role === "parent" &&
-                  link.remote_task_id === sourceTaskId &&
-                  link.peer_token_hash === requestPrincipal.hash,
-              )
-          ) {
-            json(res, HTTP_STATUS.FORBIDDEN, {
-              error: "Host is not the target's external parent",
+          if (!deps.hostCollaboration) {
+            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+              error: "Host collaboration is not configured",
             });
             return;
           }
@@ -1464,18 +1464,23 @@ export function createRequestHandler(
             sourceTaskId,
           );
           if (replayed) return;
-          const messageId = randomUUID();
-          const deliveryId = randomUUID();
-          store.createExternalSourceCollaborationMessage({
-            id: messageId,
-            deliveryId,
-            sourceTaskId,
-            directTargetTaskId: target.id,
-            body: body.body,
-          });
+          let accepted;
+          try {
+            accepted = deps.hostCollaboration.receive({
+              sourceTaskId,
+              targetTaskId: body.targetTaskId,
+              peerTokenHash: requestPrincipal.hash,
+              body: body.body,
+            });
+          } catch (error) {
+            if (!(error instanceof HostExternalParentError)) throw error;
+            json(res, HTTP_STATUS.FORBIDDEN, {
+              error: "Host is not the target's external parent",
+            });
+            return;
+          }
           const result = {
-            messageId,
-            deliveryId,
+            ...accepted,
             status: "queued",
             clientOpId: opId ?? undefined,
           };
@@ -1487,9 +1492,9 @@ export function createRequestHandler(
             result,
           );
           json(res, HTTP_STATUS.ACCEPTED, result, req);
-          void tasks.drainCollaborationDeliveries(target.id);
           return;
         }
+        const sourceTask = store.getTask(sourceTaskId);
         if (!sourceTask) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Source task not found" });
           return;
@@ -1501,23 +1506,6 @@ export function createRequestHandler(
           sourceTaskId,
         );
         if (replayed) return;
-        let body: { targetTaskId?: unknown; body?: unknown };
-        try {
-          body = JSON.parse(await readBody(req)) as typeof body;
-        } catch {
-          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
-          return;
-        }
-        if (
-          typeof body.targetTaskId !== "string" ||
-          typeof body.body !== "string" ||
-          !body.body.trim()
-        ) {
-          json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "targetTaskId and non-empty body are required",
-          });
-          return;
-        }
         const targetTask = store.getTask(body.targetTaskId);
         if (!targetTask) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Target task not found" });
@@ -2940,6 +2928,7 @@ export function createRequestHandler(
               source: freshTask.source,
               model: freshTask.model,
               mode: freshTask.mode,
+              workflowStatus: freshTask.workflow_status,
               archived: store.isArchivedTask(freshTask.id),
               configOptions,
             },

@@ -20,6 +20,7 @@ import { isoFromMillis, isoFromMillisOrNull } from "../../shared/time.ts";
 import { buildTaskCreatedSystemMessage } from "../../task-created-message.ts";
 import { formatSilence } from "../../obligation-controller.ts";
 import { abbreviateHomePath } from "../../home-path.ts";
+import { formatTaskReport } from "../../task-report.ts";
 import type {
   TaskCaller,
   TaskCreateCaller,
@@ -38,17 +39,11 @@ import {
   TaskCreateConfigError,
 } from "../../api/tasks.ts";
 import {
-  parseTaskHistoryData,
-  projectTaskHistoryRow,
-  TASK_HISTORY_LIMITS,
+  buildTaskHistoryQuery,
+  buildTaskHistoryRead,
+  normalizeTaskHistoryRange,
+  uniqueTaskHistorySeqs,
 } from "../../task-history.ts";
-
-const {
-  queryBytes: QUERY_LIMIT_BYTES,
-  readBytes: READ_LIMIT_BYTES,
-  readSingleBytes: READ_SINGLE_LIMIT_BYTES,
-  readSeqs: MAX_READ_SEQS,
-} = TASK_HISTORY_LIMITS;
 
 export interface TaskCollaborationEvent {
   messageId: string;
@@ -106,6 +101,20 @@ export type TaskCancelNotice = Extract<AgentEvent, { type: "system_message" }>;
 
 function relationOrder(relation: LocalTaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2 }[relation];
+}
+
+function canonicalHistoryEvent(event: {
+  task_id: string;
+  seq: number;
+  type: string;
+  created_at: number;
+  from_ref: string;
+  data: string;
+}) {
+  return {
+    ...event,
+    created_at: isoFromMillis(event.created_at),
+  };
 }
 
 export function createLocalTaskOps(deps: {
@@ -204,35 +213,6 @@ export function createLocalTaskOps(deps: {
     });
   }
 
-  function responseTooLarge(
-    value: unknown,
-    limitBytes: number,
-    extra: Record<string, unknown>,
-  ): never {
-    const requiredBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
-    throw new Error(
-      JSON.stringify({
-        error: "response_too_large",
-        required_bytes: requiredBytes,
-        limit_bytes: limitBytes,
-        ...extra,
-      }),
-    );
-  }
-
-  function normalizeRange(
-    range: [number, number] | undefined,
-    maxSeq: number,
-  ): [number, number] {
-    if (maxSeq < 1) return [1, 0];
-    const resolveIndex = (value: number) =>
-      value < 0 ? maxSeq + value + 1 : value;
-    const clamp = (value: number) => Math.min(maxSeq, Math.max(1, value));
-    const a = clamp(resolveIndex(range?.[0] ?? 1));
-    const b = clamp(resolveIndex(range?.[1] ?? maxSeq));
-    return a <= b ? [a, b] : [b, a];
-  }
-
   function requireChildTarget(sourceTaskId: string, targetTaskId: string) {
     const source = requireTask(sourceTaskId);
     const target = requireTask(targetTaskId);
@@ -295,7 +275,7 @@ export function createLocalTaskOps(deps: {
       const targetId = input.taskId ?? sourceTaskId;
       const target = requireHistoryTarget(sourceTaskId, targetId);
       const maxSeq = store.getLastEventSeq(target.id);
-      const [start, end] = normalizeRange(input.range, maxSeq);
+      const [start, end] = normalizeTaskHistoryRange(input.range, maxSeq);
       const events =
         start > end
           ? []
@@ -303,22 +283,13 @@ export function createLocalTaskOps(deps: {
               afterSeq: start - 1,
               beforeSeq: end + 1,
             });
-      const rows = events
-        .map((event) => projectTaskHistoryRow(event, input.text))
-        .filter((row) => input.text === undefined || row.field !== undefined);
-      const result: TaskQueryResult = {
-        task_id: target.id,
-        max_seq: maxSeq,
-        rows,
-      };
-      const requiredBytes = Buffer.byteLength(JSON.stringify(result), "utf8");
-      if (requiredBytes > QUERY_LIMIT_BYTES) {
-        responseTooLarge(result, QUERY_LIMIT_BYTES, {
-          max_seq: maxSeq,
-          hint: { range: [-Math.min(50, maxSeq), -1] },
-        });
-      }
-      return result;
+      return buildTaskHistoryQuery({
+        taskId: target.id,
+        events: events.map(canonicalHistoryEvent),
+        maxSeq,
+        range: input.range,
+        text: input.text,
+      });
     },
 
     async read(principal, input): Promise<TaskReadResult> {
@@ -328,31 +299,17 @@ export function createLocalTaskOps(deps: {
         sourceTaskId,
         input.taskId ?? sourceTaskId,
       );
-      const uniqueSeqs = [...new Set(input.seqs)].sort((a, b) => a - b);
-      if (uniqueSeqs.length > MAX_READ_SEQS && uniqueSeqs.length !== 1) {
-        throw new Error(`too_many_seqs: maximum is ${MAX_READ_SEQS}`);
-      }
+      const uniqueSeqs = uniqueTaskHistorySeqs(input.seqs);
       const events = uniqueSeqs.map((seq) => store.getEvent(target.id, seq));
       const missing = uniqueSeqs.filter((_, index) => !events[index]);
       if (missing.length > 0) {
         throw new Error(JSON.stringify({ error: "unknown_seq", missing }));
       }
-      const rows = events.map((event) => ({
-        seq: event!.seq,
-        type: event!.type,
-        at: isoFromMillis(event!.created_at),
-        from: event!.from_ref,
-        data: parseTaskHistoryData(event!.data),
-      }));
-      const result: TaskReadResult = { task_id: target.id, rows };
-      // A single-seq request is exempt from the batch byte budget so one
-      // legitimate event is never permanently unreadable.
-      const limitBytes =
-        uniqueSeqs.length === 1 ? READ_SINGLE_LIMIT_BYTES : READ_LIMIT_BYTES;
-      if (Buffer.byteLength(JSON.stringify(result), "utf8") > limitBytes) {
-        responseTooLarge(result, limitBytes, { seqs: uniqueSeqs });
-      }
-      return result;
+      return buildTaskHistoryRead({
+        taskId: target.id,
+        events: events.map((event) => canonicalHistoryEvent(event!)),
+        seqs: uniqueSeqs,
+      });
     },
 
     // eslint-disable-next-line complexity -- one command owns both caller-specific target resolution and shared create effects.
@@ -735,7 +692,7 @@ export function createLocalTaskOps(deps: {
           targetTaskId: accountTargetTaskId,
           sourceLabel: source.title ?? source.id.slice(0, 8),
           targetLabel: target.title ?? target.id.slice(0, 8),
-          body: `Task status: ${status}\n${body}`,
+          body: formatTaskReport(status, body),
           taskId: sourceTaskId,
           role: "source",
           deliveryStatus: "queued",

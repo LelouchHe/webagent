@@ -40,6 +40,16 @@ function readRemoteId(state: State): string {
   return (id as JsonObject).id as string;
 }
 
+async function waitForRows(state: State, sql: string): Promise<Json> {
+  const deadline = performance.now() + 10_000;
+  while (performance.now() < deadline) {
+    const rows = readRows(state.hubDb, sql);
+    if (Array.isArray(rows) && rows.length > 0) return rows;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`rows did not arrive: ${sql}`);
+}
+
 export default scenario<State>({
   mock: EMPTY_MOCK,
   instances: {
@@ -153,8 +163,44 @@ export default scenario<State>({
             ],
           },
           {
+            match: "hold parent busy",
+            actions: [
+              {
+                type: "mcp",
+                calls: [
+                  {
+                    tool: "task_update",
+                    arguments: {
+                      status: "waiting",
+                      body: "Busy until the remote report arrives.",
+                    },
+                  },
+                ],
+              },
+              { type: "wait", label: "report arrives" },
+            ],
+          },
+          {
             match: "Task status: done",
             actions: [{ type: "reply", text: "Remote report received." }],
+          },
+          {
+            match: "Task Handoff Required",
+            actions: [
+              {
+                type: "mcp",
+                calls: [
+                  {
+                    tool: "task_update",
+                    arguments: {
+                      status: "done",
+                      body: "Interrupted busy turn closed.",
+                    },
+                  },
+                ],
+              },
+              { type: "reply", text: "Interrupted turn closed." },
+            ],
           },
           {
             match: "probe unreachable remote",
@@ -218,6 +264,13 @@ export default scenario<State>({
             }),
       },
       {
+        name: "owner-attaches-remote-task-locally",
+        action: (client) =>
+          client
+            .instance("owner")
+            .rest("POST", `/api/v1/tasks/${readRemoteId(state)}/unarchive`),
+      },
+      {
         name: "list-query-read-without-owner-acp",
         action: async (client) => {
           const response = await client
@@ -255,6 +308,15 @@ export default scenario<State>({
         },
       },
       {
+        name: "hold-parent-busy-before-report",
+        action: (client) =>
+          client
+            .instance("hub")
+            .rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
+              text: "hold parent busy",
+            }),
+      },
+      {
         name: "owner-restart-report-uses-external-parent-fallback",
         action: async (client) => {
           const restart = await client.restart("owner", () =>
@@ -271,10 +333,37 @@ export default scenario<State>({
             .rest("POST", `/api/v1/tasks/${readRemoteId(state)}/prompt`, {
               text: "finish after owner restart",
             });
+          const queuedReports = await waitForRows(
+            state,
+            `SELECT d.status, d.idempotency_key
+             FROM deliveries d
+             WHERE d.idempotency_key LIKE 'remote-report:%'
+               AND d.status = 'queued'
+             ORDER BY d.idempotency_key`,
+          );
+          const hubRestart = await client.restart("hub");
+          const reconnected = await waitForHost(
+            client,
+            "hub",
+            "owner",
+            "connected",
+          );
+          const reports = readRows(
+            state.hubDb,
+            `SELECT m.source_task_id, m.direct_target_task_id, d.idempotency_key, d.status
+             FROM messages m
+             JOIN deliveries d ON d.message_id = m.id
+             WHERE d.idempotency_key LIKE 'remote-report:%'
+             ORDER BY d.idempotency_key`,
+          );
           return {
             restart,
             connected,
             prompt: { status: prompt.status, body: prompt.body },
+            queuedReports,
+            hubRestart,
+            reconnected,
+            reports,
           };
         },
       },

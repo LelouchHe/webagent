@@ -20,7 +20,7 @@ import { mockBridgeStubs, waitFor } from "./fixtures.ts";
 function request(
   port: number,
   path: string,
-  body: Record<string, unknown>,
+  body: unknown,
   method = "POST",
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   return new Promise((resolve, reject) => {
@@ -460,6 +460,11 @@ describe("S3 collaboration write routes", () => {
       ],
       "both projections must announce the labels their title was built from",
     );
+  });
+
+  it("rejects a null collaboration body without a server error", async () => {
+    const response = await request(port, "/api/v1/tasks/parent/messages", null);
+    assert.equal(response.status, 400);
   });
 
   it("rejects renaming a task to a live sibling title", async () => {
