@@ -28,11 +28,11 @@ import type {
 import { WORKFLOW_STATUSES } from "./shared/workflow-status.ts";
 import { HTTP_STATUS } from "./http-status.ts";
 import {
-  type PeerEnvelope,
-  type PeerMessageData,
-  type PeerReceiptData,
-  PeerProtocolError,
-} from "./shared/peer-envelope.ts";
+  type LinkEnvelope,
+  type LinkMessageData,
+  type LinkReceiptData,
+  LinkProtocolError,
+} from "./shared/link-envelope.ts";
 
 /** Namespace WebAgent reserves for the per-task empty execution slot. */
 const EMPTY_EXECUTION_PREFIX = "no-execution:";
@@ -256,64 +256,53 @@ export interface CollaborationDeliveryRow {
   delivered_at: number | null;
   failed_at: number | null;
   failure_reason: string | null;
-  source_remote_role: PeerRemoteRole | null;
+  source_remote_role: LinkRemoteRole | null;
   source_remote_host: string | null;
   source_entry_id: string | null;
   source_label: string | null;
+  source_category: "message" | "report" | null;
 }
 
-export type PeerRemoteRole = "parent" | "child";
-export type PeerOutboxCategory = "message" | "report" | "receipt";
-export type PeerOutboxHandoffStatus = "pending" | "handed_off" | "rejected";
+export type LinkRemoteRole = "parent" | "child";
+export type OutboxCategory = "message" | "report" | "receipt";
+export type OutboxHandoffStatus = "pending" | "handed_off" | "rejected";
 
-export interface PeerOutboxRow {
+export interface OutboxRow {
   pos: number;
   entry_id: string;
-  remote_role: PeerRemoteRole;
+  remote_role: LinkRemoteRole;
   remote_host: string;
   prev: number;
-  category: PeerOutboxCategory;
+  category: OutboxCategory;
   data_json: string;
-  business_status: CollaborationDeliveryStatus | null;
-  failure_reason: string | null;
-  handoff_status: PeerOutboxHandoffStatus;
+  handoff_status: OutboxHandoffStatus;
   delivery_id: string | null;
   created_at: number;
 }
 
-export interface PeerApplyEffects {
+export interface LinkApplyEffects {
   drainTaskIds: string[];
   deliveryStatusIds: string[];
   outboxEntryIds: string[];
   handoffEntryIds: string[];
-  businessStateEntryIds: string[];
 }
 
-export type PeerOutboxInput =
+export type OutboxInput =
   | {
-      category: "message";
+      category: "message" | "report";
       deliveryId: string;
       data: unknown;
     }
   | {
-      category: "report" | "receipt";
+      category: "receipt";
       data: unknown;
     };
 
-export interface PeerInboundOpRow {
-  remote_role: PeerRemoteRole;
-  remote_host: string;
-  entry_id: string;
-  request_json: string;
-  response_status: number;
-  response_json: string;
-  created_at: number;
-}
-
-export interface PeerInboundAssociation {
-  remoteRole: PeerRemoteRole;
+export interface LinkInboundAssociation {
+  remoteRole: LinkRemoteRole;
   remoteHost: string;
   entryId: string;
+  category: "message" | "report";
 }
 
 function canTransitionDeliveryStatus(
@@ -324,21 +313,20 @@ function canTransitionDeliveryStatus(
   return current === "delivered" && next === "failed";
 }
 
-function stringifyPeerData(data: unknown): string {
+function stringifyLinkData(data: unknown): string {
   const encoded: unknown = JSON.stringify(data);
   if (typeof encoded !== "string") {
-    throw new Error("peer_outbox_data_not_serializable");
+    throw new Error("link_outbox_data_not_serializable");
   }
   return encoded;
 }
 
-function emptyPeerApplyEffects(): PeerApplyEffects {
+function emptyLinkApplyEffects(): LinkApplyEffects {
   return {
     drainTaskIds: [],
     deliveryStatusIds: [],
     outboxEntryIds: [],
     handoffEntryIds: [],
-    businessStateEntryIds: [],
   };
 }
 
@@ -743,6 +731,7 @@ export class Store {
         "source_remote_host",
         "source_entry_id",
         "source_label",
+        "source_category",
       ],
     };
     // Columns that earlier versions wrote and this one migrates away (see
@@ -954,10 +943,11 @@ export class Store {
         source_remote_host TEXT,
         source_entry_id TEXT,
         source_label TEXT,
+        source_category TEXT CHECK (source_category IN ('message', 'report')),
         CHECK (
-          (source_remote_role IS NULL AND source_remote_host IS NULL AND source_entry_id IS NULL)
+          (source_remote_role IS NULL AND source_remote_host IS NULL AND source_entry_id IS NULL AND source_category IS NULL)
           OR
-          (source_remote_role IS NOT NULL AND source_remote_host IS NOT NULL AND source_entry_id IS NOT NULL)
+          (source_remote_role IS NOT NULL AND source_remote_host IS NOT NULL AND source_entry_id IS NOT NULL AND source_category IS NOT NULL)
         )
       );
       CREATE INDEX IF NOT EXISTS idx_deliveries_recipient_status_queued
@@ -966,7 +956,7 @@ export class Store {
         ON deliveries (source_remote_role, source_remote_host, source_entry_id)
         WHERE source_entry_id IS NOT NULL;
 
-      CREATE TABLE IF NOT EXISTS peer_outbox (
+      CREATE TABLE IF NOT EXISTS outbox (
         pos INTEGER PRIMARY KEY,
         entry_id TEXT NOT NULL UNIQUE,
         remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
@@ -974,37 +964,17 @@ export class Store {
         prev INTEGER NOT NULL,
         category TEXT NOT NULL CHECK (category IN ('message', 'report', 'receipt')),
         data_json TEXT NOT NULL,
-        business_status TEXT CHECK (business_status IN ('queued', 'delivered', 'failed')),
-        failure_reason TEXT,
         handoff_status TEXT NOT NULL DEFAULT 'pending'
           CHECK (handoff_status IN ('pending', 'handed_off', 'rejected')),
         delivery_id TEXT,
-        created_at INTEGER NOT NULL,
-        CHECK (
-          (category = 'message' AND delivery_id IS NOT NULL AND business_status IS NULL AND failure_reason IS NULL)
-          OR
-          (category = 'report' AND delivery_id IS NULL AND business_status IS NOT NULL)
-          OR
-          (category = 'receipt' AND delivery_id IS NULL AND business_status IS NULL AND failure_reason IS NULL)
-        )
+        created_at INTEGER NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS idx_peer_outbox_link_pos
-        ON peer_outbox (remote_role, remote_host, pos);
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_peer_outbox_delivery
-        ON peer_outbox (delivery_id) WHERE delivery_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_outbox_link_pos
+        ON outbox (remote_role, remote_host, pos);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_outbox_delivery
+        ON outbox (delivery_id) WHERE delivery_id IS NOT NULL;
 
-      CREATE TABLE IF NOT EXISTS peer_inbound_ops (
-        remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
-        remote_host TEXT NOT NULL,
-        entry_id TEXT NOT NULL,
-        request_json TEXT NOT NULL,
-        response_status INTEGER NOT NULL,
-        response_json TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        PRIMARY KEY (remote_role, remote_host, entry_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS peer_feed_progress (
+      CREATE TABLE IF NOT EXISTS outbox_cursors (
         remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
         remote_host TEXT NOT NULL,
         applied_pos INTEGER NOT NULL DEFAULT 0,
@@ -2974,7 +2944,7 @@ export class Store {
       )
       .get(deliveryId, expected) as
       | {
-          source_remote_role: PeerRemoteRole | null;
+          source_remote_role: LinkRemoteRole | null;
           source_remote_host: string | null;
           source_entry_id: string | null;
         }
@@ -3004,7 +2974,7 @@ export class Store {
       delivery.source_remote_host !== null &&
       delivery.source_entry_id !== null
     ) {
-      this.enqueuePeerOutboxInTransaction({
+      this.enqueueOutboxInTransaction({
         entryId: randomUUID(),
         remoteRole: delivery.source_remote_role,
         remoteHost: delivery.source_remote_host,
@@ -3067,123 +3037,167 @@ export class Store {
     }
   }
 
-  enqueuePeerOutbox(
-    input: PeerOutboxInput & {
+  enqueueOutbox(
+    input: OutboxInput & {
       id?: string;
-      remoteRole: PeerRemoteRole;
+      remoteRole: LinkRemoteRole;
       remoteHost: string;
       createdAt?: number;
     },
-  ): PeerOutboxRow {
-    const dataJson = stringifyPeerData(input.data);
+  ): OutboxRow {
+    const dataJson = stringifyLinkData(input.data);
     return this.db.transaction(() =>
-      this.enqueuePeerOutboxInTransaction({
+      this.enqueueOutboxInTransaction({
         entryId: input.id ?? randomUUID(),
         remoteRole: input.remoteRole,
         remoteHost: input.remoteHost,
         category: input.category,
         dataJson,
-        deliveryId: input.category === "message" ? input.deliveryId : null,
+        deliveryId: input.category === "receipt" ? null : input.deliveryId,
         createdAt: input.createdAt ?? Date.now(),
       }),
     )();
   }
 
-  applyPeerPushOperation(input: {
-    remoteRole: PeerRemoteRole;
+  applyLinkPushOperation(input: {
+    remoteRole: LinkRemoteRole;
     remoteHost: string;
-    envelope: PeerEnvelope;
+    envelope: LinkEnvelope;
   }): {
     replayed: boolean;
     status: number;
     body: unknown;
-    effects: PeerApplyEffects;
+    effects: LinkApplyEffects;
   } {
-    const requestJson = stringifyPeerData(input.envelope);
     return this.db.transaction(() => {
-      const existing = this.db
-        .prepare(
-          `SELECT * FROM peer_inbound_ops
-           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?`,
-        )
-        .get(input.remoteRole, input.remoteHost, input.envelope.id) as
-        PeerInboundOpRow | undefined;
-      if (existing) {
-        if (existing.request_json !== requestJson) {
-          throw new Error("peer_inbound_op_conflict");
+      if (input.envelope.category !== "receipt") {
+        const existing = this.getInboundLinkDelivery(
+          input.remoteRole,
+          input.remoteHost,
+          input.envelope.id,
+        );
+        if (existing) {
+          const replayed: LinkEnvelope = {
+            id: existing.source_entry_id!,
+            category: existing.source_category!,
+            data: {
+              sourceTaskId: existing.source_task_id,
+              targetTaskId: existing.recipient_task_id,
+              sourceLabel: existing.source_label ?? "",
+              body: existing.body,
+            },
+          };
+          if (
+            stringifyLinkData(replayed) !== stringifyLinkData(input.envelope)
+          ) {
+            throw new Error("link_inbound_op_conflict");
+          }
+          return {
+            replayed: true,
+            status: HTTP_STATUS.ACCEPTED,
+            body: { accepted: true },
+            effects: emptyLinkApplyEffects(),
+          };
         }
-        return {
-          replayed: true,
-          status: existing.response_status,
-          body: JSON.parse(existing.response_json) as unknown,
-          effects: emptyPeerApplyEffects(),
-        };
       }
-      const effects = this.applyPeerEnvelopeInTransaction(
+      const effects = this.applyLinkEnvelopeInTransaction(
         input.remoteRole,
         input.remoteHost,
         input.envelope,
       );
-      const result = {
+      return {
+        replayed: false,
         status: HTTP_STATUS.ACCEPTED,
         body: { accepted: true },
+        effects,
       };
-      this.db
-        .prepare(
-          `INSERT INTO peer_inbound_ops
-             (remote_role, remote_host, entry_id, request_json,
-              response_status, response_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          input.remoteRole,
-          input.remoteHost,
-          input.envelope.id,
-          requestJson,
-          result.status,
-          stringifyPeerData(result.body),
-          Date.now(),
-        );
-      return { replayed: false, ...result, effects };
     })();
   }
 
-  getPeerFeedApplied(remoteRole: PeerRemoteRole, remoteHost: string): number {
+  enqueueLinkReport(input: {
+    id?: string;
+    deliveryId?: string;
+    remoteRole: LinkRemoteRole;
+    remoteHost: string;
+    sourceTaskId: string;
+    targetTaskId: string;
+    sourceLabel: string;
+    body: string;
+    createdAt?: number;
+  }): OutboxRow {
+    const entryId = input.id ?? randomUUID();
+    const deliveryId = input.deliveryId ?? randomUUID();
+    const createdAt = input.createdAt ?? Date.now();
+    return this.db.transaction(() => {
+      this.requireLiveTask(input.sourceTaskId);
+      const envelope: LinkEnvelope = {
+        id: entryId,
+        category: "report",
+        data: {
+          sourceTaskId: input.sourceTaskId,
+          targetTaskId: input.targetTaskId,
+          sourceLabel: input.sourceLabel,
+          body: input.body,
+        },
+      };
+      this.insertDeliveryMessage({
+        id: entryId,
+        deliveryId,
+        sourceTaskId: input.sourceTaskId,
+        recipientTaskId: input.targetTaskId,
+        sourceActor: "agent",
+        body: input.body,
+        sourceLabel: input.sourceLabel,
+        idempotencyKey: `${entryId}:${input.targetTaskId}`,
+        createdAt,
+        status: "queued",
+        projection: "source",
+      });
+      return this.enqueueOutboxInTransaction({
+        entryId,
+        remoteRole: input.remoteRole,
+        remoteHost: input.remoteHost,
+        category: "report",
+        dataJson: stringifyLinkData(envelope.data),
+        deliveryId,
+        createdAt,
+      });
+    })();
+  }
+
+  getOutboxCursor(remoteRole: LinkRemoteRole, remoteHost: string): number {
     const row = this.db
       .prepare(
-        `SELECT applied_pos FROM peer_feed_progress
+        `SELECT applied_pos FROM outbox_cursors
          WHERE remote_role = ? AND remote_host = ?`,
       )
       .get(remoteRole, remoteHost) as { applied_pos: number } | undefined;
     return row?.applied_pos ?? 0;
   }
 
-  applyPeerFeedOperation(input: {
-    remoteRole: PeerRemoteRole;
+  applyLinkFeedOperation(input: {
+    remoteRole: LinkRemoteRole;
     remoteHost: string;
     expectedApplied: number;
     nextApplied: number;
-    envelope: PeerEnvelope;
-  }): { committed: boolean; effects: PeerApplyEffects } {
+    envelope: LinkEnvelope;
+  }): { committed: boolean; effects: LinkApplyEffects } {
     return this.db.transaction(() => {
-      const applied = this.getPeerFeedApplied(
-        input.remoteRole,
-        input.remoteHost,
-      );
+      const applied = this.getOutboxCursor(input.remoteRole, input.remoteHost);
       if (applied !== input.expectedApplied) {
-        return { committed: false, effects: emptyPeerApplyEffects() };
+        return { committed: false, effects: emptyLinkApplyEffects() };
       }
       if (input.nextApplied <= applied) {
-        throw new Error("peer_feed_position_does_not_advance");
+        throw new Error("outbox_cursor_does_not_advance");
       }
-      const effects = this.applyPeerEnvelopeInTransaction(
+      const effects = this.applyLinkEnvelopeInTransaction(
         input.remoteRole,
         input.remoteHost,
         input.envelope,
       );
       this.db
         .prepare(
-          `INSERT INTO peer_feed_progress (remote_role, remote_host, applied_pos)
+          `INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos)
            VALUES (?, ?, ?)
            ON CONFLICT (remote_role, remote_host)
            DO UPDATE SET applied_pos = excluded.applied_pos`,
@@ -3193,35 +3207,62 @@ export class Store {
     })();
   }
 
-  listPeerOutbox(
-    remoteRole: PeerRemoteRole,
+  listOutbox(
+    remoteRole: LinkRemoteRole,
     remoteHost: string,
     after = 0,
     limit = 100,
-  ): PeerOutboxRow[] {
+  ): OutboxRow[] {
     return this.db
       .prepare(
-        `SELECT * FROM peer_outbox
+        `SELECT * FROM outbox
          WHERE remote_role = ? AND remote_host = ? AND pos > ?
          ORDER BY pos
          LIMIT ?`,
       )
-      .all(remoteRole, remoteHost, after, limit) as PeerOutboxRow[];
+      .all(remoteRole, remoteHost, after, limit) as OutboxRow[];
   }
 
-  getPeerOutbox(entryId: string): PeerOutboxRow | undefined {
+  getOutbox(entryId: string): OutboxRow | undefined {
     return this.db
-      .prepare("SELECT * FROM peer_outbox WHERE entry_id = ?")
-      .get(entryId) as PeerOutboxRow | undefined;
+      .prepare("SELECT * FROM outbox WHERE entry_id = ?")
+      .get(entryId) as OutboxRow | undefined;
   }
 
-  private applyPeerEnvelopeInTransaction(
-    remoteRole: PeerRemoteRole,
+  private getInboundLinkDelivery(
+    remoteRole: LinkRemoteRole,
     remoteHost: string,
-    envelope: PeerEnvelope,
-  ): PeerApplyEffects {
+    entryId: string,
+  ):
+    | (CollaborationDeliveryRow & {
+        body: string;
+        source_task_id: string;
+      })
+    | undefined {
+    return this.db
+      .prepare(
+        `SELECT d.*, m.source_task_id, m.body
+         FROM deliveries d
+         JOIN messages m ON m.id = d.message_id
+         WHERE d.source_remote_role = ?
+           AND d.source_remote_host = ?
+           AND d.source_entry_id = ?`,
+      )
+      .get(remoteRole, remoteHost, entryId) as
+      | (CollaborationDeliveryRow & {
+          body: string;
+          source_task_id: string;
+        })
+      | undefined;
+  }
+
+  private applyLinkEnvelopeInTransaction(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    envelope: LinkEnvelope,
+  ): LinkApplyEffects {
     if (envelope.category === "receipt") {
-      const receipt = this.applyPeerReceiptInTransaction({
+      const receipt = this.applyLinkReceiptInTransaction({
         remoteRole,
         remoteHost,
         entryId: envelope.data.originalEntryId,
@@ -3231,37 +3272,55 @@ export class Store {
             ? envelope.data.failureReason
             : null,
       });
-      if (!receipt.known) throw new PeerProtocolError("unknown_peer_receipt");
+      if (!receipt.known) throw new LinkProtocolError("unknown_link_receipt");
       return receipt.effects;
     }
-    return this.applyPeerDeliveryInTransaction(
+    return this.applyLinkDeliveryInTransaction(
       remoteRole,
       remoteHost,
       envelope.id,
       envelope.data,
+      envelope.category,
     );
   }
 
-  private applyPeerDeliveryInTransaction(
-    remoteRole: PeerRemoteRole,
+  private applyLinkDeliveryInTransaction(
+    remoteRole: LinkRemoteRole,
     remoteHost: string,
     entryId: string,
-    message: PeerMessageData,
-  ): PeerApplyEffects {
-    const effects = emptyPeerApplyEffects();
+    message: LinkMessageData,
+    category: "message" | "report",
+  ): LinkApplyEffects {
+    const effects = emptyLinkApplyEffects();
     const target = this.getTask(message.targetTaskId);
     if (!target) {
+      const deliveryId = entryId;
+      this.insertDeliveryMessage({
+        id: entryId,
+        deliveryId,
+        sourceTaskId: message.sourceTaskId,
+        recipientTaskId: message.targetTaskId,
+        sourceActor: "agent",
+        body: message.body,
+        sourceLabel: message.sourceLabel,
+        idempotencyKey: `${entryId}:${message.targetTaskId}`,
+        createdAt: Date.now(),
+        status: "failed",
+        failureReason: "target_deleted",
+        inbound: { remoteRole, remoteHost, entryId, category },
+        projection: null,
+      });
       const receiptId = randomUUID();
-      this.enqueuePeerOutboxInTransaction({
+      this.enqueueOutboxInTransaction({
         entryId: receiptId,
         remoteRole,
         remoteHost,
         category: "receipt",
-        dataJson: stringifyPeerData({
+        dataJson: stringifyLinkData({
           originalEntryId: entryId,
           status: "failed",
           failureReason: "target_deleted",
-        } satisfies PeerReceiptData),
+        } satisfies LinkReceiptData),
         deliveryId: null,
         createdAt: Date.now(),
       });
@@ -3280,7 +3339,7 @@ export class Store {
         : this.getRemoteChild(remoteHost, message.sourceTaskId)
             ?.local_task_id === message.targetTaskId;
     if (!relationMatches) {
-      throw new PeerProtocolError("peer_link_mismatch");
+      throw new LinkProtocolError("link_mismatch");
     }
     this.enqueueTargetCollaboration({
       id: entryId,
@@ -3289,40 +3348,40 @@ export class Store {
       targetTaskId: message.targetTaskId,
       body: message.body,
       sourceLabel: message.sourceLabel,
-      inbound: { remoteRole, remoteHost, entryId },
+      inbound: { remoteRole, remoteHost, entryId, category },
     });
     effects.drainTaskIds.push(message.targetTaskId);
     return effects;
   }
 
-  private applyPeerReceiptInTransaction(input: {
-    remoteRole: PeerRemoteRole;
+  private applyLinkReceiptInTransaction(input: {
+    remoteRole: LinkRemoteRole;
     remoteHost: string;
     entryId: string;
     status: Exclude<CollaborationDeliveryStatus, "queued">;
     failureReason?: string | null;
-  }): { known: boolean; changed: boolean; effects: PeerApplyEffects } {
+  }): { known: boolean; changed: boolean; effects: LinkApplyEffects } {
     const row = this.db
       .prepare(
-        `SELECT * FROM peer_outbox
+        `SELECT * FROM outbox
          WHERE entry_id = ? AND remote_role = ? AND remote_host = ?
            AND category <> 'receipt'`,
       )
       .get(input.entryId, input.remoteRole, input.remoteHost) as
-      PeerOutboxRow | undefined;
-    const effects = emptyPeerApplyEffects();
+      OutboxRow | undefined;
+    const effects = emptyLinkApplyEffects();
     if (!row) return { known: false, changed: false, effects };
     const handedOff = this.db
       .prepare(
-        `UPDATE peer_outbox SET handoff_status = 'handed_off'
+        `UPDATE outbox SET handoff_status = 'handed_off'
          WHERE entry_id = ? AND handoff_status = 'pending'`,
       )
       .run(row.entry_id).changes;
     if (handedOff === 1) effects.handoffEntryIds.push(row.entry_id);
-    if (row.category === "message") {
-      if (!row.delivery_id) {
-        throw new Error("peer_message_missing_delivery_id");
-      }
+    if (!row.delivery_id) {
+      throw new Error("link_entry_missing_delivery_id");
+    }
+    {
       const delivery = this.getCollaborationDelivery(row.delivery_id);
       if (!delivery) return { known: true, changed: false, effects };
       const previous = delivery.status;
@@ -3351,47 +3410,30 @@ export class Store {
       }
       return { known: true, changed: false, effects };
     }
-    if (!canTransitionDeliveryStatus(row.business_status, input.status)) {
-      return { known: true, changed: false, effects };
-    }
-    const changed = this.db
-      .prepare(
-        `UPDATE peer_outbox
-         SET business_status = ?, failure_reason = ?
-         WHERE entry_id = ? AND business_status = ?`,
-      )
-      .run(
-        input.status,
-        input.status === "failed" ? (input.failureReason ?? "failed") : null,
-        row.entry_id,
-        row.business_status,
-      ).changes;
-    if (changed === 1) effects.businessStateEntryIds.push(row.entry_id);
-    return { known: true, changed: changed === 1, effects };
   }
 
-  applyPeerReceipt(input: {
-    remoteRole: PeerRemoteRole;
+  applyLinkReceipt(input: {
+    remoteRole: LinkRemoteRole;
     remoteHost: string;
     entryId: string;
     status: Exclude<CollaborationDeliveryStatus, "queued">;
     failureReason?: string | null;
-  }): { known: boolean; changed: boolean; effects: PeerApplyEffects } {
+  }): { known: boolean; changed: boolean; effects: LinkApplyEffects } {
     return this.db.transaction(() =>
-      this.applyPeerReceiptInTransaction(input),
+      this.applyLinkReceiptInTransaction(input),
     )();
   }
 
-  markPeerOutboxHandoff(
+  markOutboxHandoff(
     entryId: string,
-    expected: PeerOutboxHandoffStatus,
-    next: PeerOutboxHandoffStatus,
+    expected: OutboxHandoffStatus,
+    next: OutboxHandoffStatus,
   ): boolean {
     if (expected !== "pending" || next === "pending") return false;
     return (
       this.db
         .prepare(
-          `UPDATE peer_outbox
+          `UPDATE outbox
            SET handoff_status = ?
            WHERE entry_id = ? AND handoff_status = ?`,
         )
@@ -3399,27 +3441,27 @@ export class Store {
     );
   }
 
-  private enqueuePeerOutboxInTransaction(input: {
+  private enqueueOutboxInTransaction(input: {
     entryId: string;
-    remoteRole: PeerRemoteRole;
+    remoteRole: LinkRemoteRole;
     remoteHost: string;
-    category: PeerOutboxCategory;
+    category: OutboxCategory;
     dataJson: string;
     deliveryId: string | null;
     createdAt: number;
-  }): PeerOutboxRow {
+  }): OutboxRow {
     const previous = this.db
       .prepare(
-        `SELECT COALESCE(MAX(pos), 0) AS pos FROM peer_outbox
+        `SELECT COALESCE(MAX(pos), 0) AS pos FROM outbox
          WHERE remote_role = ? AND remote_host = ?`,
       )
       .get(input.remoteRole, input.remoteHost) as { pos: number };
     this.db
       .prepare(
-        `INSERT INTO peer_outbox
+        `INSERT INTO outbox
            (entry_id, remote_role, remote_host, prev, category, data_json,
-            business_status, delivery_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            delivery_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.entryId,
@@ -3428,11 +3470,10 @@ export class Store {
         previous.pos,
         input.category,
         input.dataJson,
-        input.category === "report" ? "queued" : null,
         input.deliveryId,
         input.createdAt,
       );
-    return this.getPeerOutbox(input.entryId)!;
+    return this.getOutbox(input.entryId)!;
   }
 
   /**
@@ -3459,7 +3500,7 @@ export class Store {
       id?: string;
       deliveryId?: string;
       sourceLabel?: string;
-      inbound?: PeerInboundAssociation;
+      inbound?: LinkInboundAssociation;
     },
     record?: (result: { messageId: string; deliveryId: string }) => void,
   ): { messageId: string; deliveryId: string } {
@@ -3493,7 +3534,7 @@ export class Store {
     targetTaskId: string;
     body: string;
     sourceLabel?: string;
-    inbound?: PeerInboundAssociation;
+    inbound?: LinkInboundAssociation;
   }): boolean {
     return this.db.transaction(() => {
       const duplicate = this.db
@@ -3828,8 +3869,39 @@ export class Store {
     body: string;
     idempotencyKey: string;
     createdAt: number;
-    inbound?: PeerInboundAssociation;
+    inbound?: LinkInboundAssociation;
     sourceLabel?: string;
+  }): void {
+    this.insertDeliveryMessage({
+      id: input.id,
+      deliveryId: input.deliveryId,
+      sourceTaskId: input.sourceTaskId,
+      recipientTaskId: input.directTargetTaskId,
+      sourceActor: input.actor,
+      body: input.body,
+      sourceLabel: input.sourceLabel,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: input.createdAt,
+      status: "queued",
+      inbound: input.inbound,
+      projection: "target",
+    });
+  }
+
+  private insertDeliveryMessage(input: {
+    id: string;
+    deliveryId: string;
+    sourceTaskId: string;
+    recipientTaskId: string;
+    sourceActor: "agent" | "system";
+    body: string;
+    sourceLabel?: string;
+    idempotencyKey: string;
+    createdAt: number;
+    status: "queued" | "failed";
+    failureReason?: string;
+    inbound?: LinkInboundAssociation;
+    projection: "source" | "target" | null;
   }): void {
     this.db
       .prepare(
@@ -3840,35 +3912,51 @@ export class Store {
       .run(
         input.id,
         input.sourceTaskId,
-        input.directTargetTaskId,
-        input.actor,
+        input.recipientTaskId,
+        input.sourceActor,
         input.body,
         input.createdAt,
       );
-    this.db
-      .prepare(
-        `INSERT INTO message_projections
-         (message_id, task_id, role, created_at)
-         VALUES (?, ?, 'target', ?)`,
-      )
-      .run(input.id, input.directTargetTaskId, input.createdAt);
+    if (input.projection) {
+      this.db
+        .prepare(
+          `INSERT INTO message_projections
+           (message_id, task_id, role, created_at)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .run(
+          input.id,
+          input.projection === "source"
+            ? input.sourceTaskId
+            : input.recipientTaskId,
+          input.projection,
+          input.createdAt,
+        );
+    }
     this.db
       .prepare(
         `INSERT INTO deliveries
            (id, message_id, recipient_task_id, idempotency_key, status, queued_at,
-            source_remote_role, source_remote_host, source_entry_id, source_label)
-           VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
+            delivered_at, failed_at, failure_reason,
+            source_remote_role, source_remote_host, source_entry_id, source_label,
+            source_category)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.deliveryId,
         input.id,
-        input.directTargetTaskId,
+        input.recipientTaskId,
         input.idempotencyKey,
+        input.status,
         input.createdAt,
+        null,
+        input.status === "failed" ? input.createdAt : null,
+        input.failureReason ?? null,
         input.inbound?.remoteRole ?? null,
         input.inbound?.remoteHost ?? null,
         input.inbound?.entryId ?? null,
         input.sourceLabel ?? null,
+        input.inbound?.category ?? null,
       );
   }
 
@@ -3985,7 +4073,12 @@ export class Store {
   countQueuedDeliveries(recipientTaskId: string): number {
     const row = this.db
       .prepare(
-        "SELECT COUNT(*) AS count FROM deliveries WHERE recipient_task_id = ? AND status = 'queued'",
+        `SELECT COUNT(*) AS count
+         FROM deliveries d
+         WHERE d.recipient_task_id = ? AND d.status = 'queued'
+           AND NOT EXISTS (
+             SELECT 1 FROM outbox o WHERE o.delivery_id = d.id
+           )`,
       )
       .get(recipientTaskId) as { count: number };
     return row.count;
@@ -4001,9 +4094,12 @@ export class Store {
     const claimed = this.db.transaction(() => {
       const ids = this.db
         .prepare(
-          `SELECT id FROM deliveries
-           WHERE recipient_task_id = ? AND status = 'queued'
-           ORDER BY queued_at, rowid`,
+          `SELECT d.id FROM deliveries d
+           WHERE d.recipient_task_id = ? AND d.status = 'queued'
+             AND NOT EXISTS (
+               SELECT 1 FROM outbox o WHERE o.delivery_id = d.id
+             )
+           ORDER BY d.queued_at, d.rowid`,
         )
         .all(recipientTaskId) as Array<{ id: string }>;
       const rows: CollaborationDeliveryRow[] = [];

@@ -1,9 +1,9 @@
 import { HTTP_STATUS } from "../http-status.ts";
 import {
-  parsePeerEnvelope,
-  PeerProtocolError,
-  type PeerEnvelope,
-} from "../shared/peer-envelope.ts";
+  parseLinkEnvelope,
+  LinkProtocolError,
+  type LinkEnvelope,
+} from "../shared/link-envelope.ts";
 import {
   SyncFeedConsumer,
   SyncFeedProtocolError,
@@ -11,23 +11,22 @@ import {
   type SyncFeedEntry,
   type SyncFeedTransport,
 } from "../shared/sync/index.ts";
-import type { PeerApplyEffects, PeerOutboxRow, Store } from "../store.ts";
+import type { LinkApplyEffects, OutboxRow, Store } from "../store.ts";
 
-export interface PeerWatchObserver {
-  entry(entry: SyncFeedEntry<PeerEnvelope>): void | Promise<void>;
+export interface LinkWatchObserver {
+  entry(entry: SyncFeedEntry<LinkEnvelope>): void | Promise<void>;
   heartbeat?(): void;
 }
 
-export interface PeerPushResponse {
+export interface LinkPushResponse {
   status: number;
   body: unknown;
 }
 
-export interface PeerSyncEffectCallbacks {
+export interface LinkSyncEffectCallbacks {
   drainTask?(taskId: string): void;
   outboxChanged?(entryId: string): void;
   handedOff?(entryId: string): void;
-  businessStateChanged?(entryId: string): void;
 }
 
 interface OwnerSubscription {
@@ -36,15 +35,15 @@ interface OwnerSubscription {
   pumping: boolean;
   after: number;
   host: string;
-  observer: PeerWatchObserver;
+  observer: LinkWatchObserver;
 }
 
-export class PeerSyncOwner {
+export class LinkSyncOwner {
   private readonly store: Store;
-  private readonly effects: PeerSyncEffectCallbacks;
+  private readonly effects: LinkSyncEffectCallbacks;
   private readonly subscriptions = new Set<OwnerSubscription>();
 
-  constructor(store: Store, effects: PeerSyncEffectCallbacks = {}) {
+  constructor(store: Store, effects: LinkSyncEffectCallbacks = {}) {
     this.store = store;
     this.effects = effects;
   }
@@ -53,14 +52,14 @@ export class PeerSyncOwner {
     host: string,
     after: number,
     limit = 100,
-  ): SyncFeedEntry<PeerEnvelope>[] {
+  ): SyncFeedEntry<LinkEnvelope>[] {
     const boundedLimit = Math.max(1, Math.min(100, limit));
     return this.store
-      .listPeerOutbox("parent", host, after, boundedLimit)
-      .map(peerFeedEntry);
+      .listOutbox("parent", host, after, boundedLimit)
+      .map(outboxEntry);
   }
 
-  watch(host: string, after: number, observer: PeerWatchObserver): () => void {
+  watch(host: string, after: number, observer: LinkWatchObserver): () => void {
     const subscription: OwnerSubscription = {
       active: true,
       dirty: true,
@@ -78,7 +77,7 @@ export class PeerSyncOwner {
   }
 
   publish(entryId: string): void {
-    const row = this.store.getPeerOutbox(entryId);
+    const row = this.store.getOutbox(entryId);
     if (row?.remote_role !== "parent") return;
     for (const subscription of this.subscriptions) {
       if (subscription.host === row.remote_host) {
@@ -94,21 +93,21 @@ export class PeerSyncOwner {
     }
   }
 
-  push(host: string, raw: unknown): PeerPushResponse {
-    let envelope: PeerEnvelope;
+  push(host: string, raw: unknown): LinkPushResponse {
+    let envelope: LinkEnvelope;
     try {
-      envelope = parsePeerEnvelope(raw);
+      envelope = parseLinkEnvelope(raw);
     } catch (error) {
       return protocolResponse(error);
     }
     try {
-      const result = this.store.applyPeerPushOperation({
+      const result = this.store.applyLinkPushOperation({
         remoteRole: "parent",
         remoteHost: host,
         envelope,
       });
       if (!result.replayed) {
-        executePeerEffects(this.store, result.effects, this.effects);
+        executeLinkEffects(this.store, result.effects, this.effects);
         for (const entryId of result.effects.outboxEntryIds) {
           this.publish(entryId);
         }
@@ -117,11 +116,11 @@ export class PeerSyncOwner {
     } catch (error) {
       if (
         error instanceof Error &&
-        error.message === "peer_inbound_op_conflict"
+        error.message === "link_inbound_op_conflict"
       ) {
         return {
           status: HTTP_STATUS.CONFLICT,
-          body: { error: "peer_op_conflict" },
+          body: { error: "link_op_conflict" },
         };
       }
       return protocolResponse(error);
@@ -165,7 +164,7 @@ export class PeerSyncOwner {
   }
 }
 
-export interface PeerSyncHubOptions {
+export interface LinkSyncHubOptions {
   host: string;
   store: Store;
   transport: SyncFeedTransport<unknown>;
@@ -173,18 +172,18 @@ export interface PeerSyncHubOptions {
   onFailure?: SyncFeedConsumerOptions["onFailure"];
   onProtocolError?: SyncFeedConsumerOptions["onProtocolError"];
   clock?: SyncFeedConsumerOptions["clock"];
-  effects?: PeerSyncEffectCallbacks;
+  effects?: LinkSyncEffectCallbacks;
 }
 
-export class PeerSyncHubConsumer {
-  private readonly options: PeerSyncHubOptions;
+export class LinkSyncHubConsumer {
+  private readonly options: LinkSyncHubOptions;
   private readonly consumer: SyncFeedConsumer<unknown>;
 
-  constructor(options: PeerSyncHubOptions) {
+  constructor(options: LinkSyncHubOptions) {
     this.options = options;
     this.consumer = new SyncFeedConsumer({
       port: {
-        applied: () => options.store.getPeerFeedApplied("child", options.host),
+        applied: () => options.store.getOutboxCursor("child", options.host),
         apply: (entry, expected) => this.apply(entry, expected),
       },
       transport: options.transport,
@@ -212,8 +211,8 @@ export class PeerSyncHubConsumer {
     expectedApplied: number,
   ): boolean {
     try {
-      const envelope = parsePeerEnvelope(entry.data);
-      const result = this.options.store.applyPeerFeedOperation({
+      const envelope = parseLinkEnvelope(entry.data);
+      const result = this.options.store.applyLinkFeedOperation({
         remoteRole: "child",
         remoteHost: this.options.host,
         expectedApplied,
@@ -221,7 +220,7 @@ export class PeerSyncHubConsumer {
         envelope,
       });
       if (result.committed) {
-        executePeerEffects(
+        executeLinkEffects(
           this.options.store,
           result.effects,
           this.options.effects,
@@ -229,7 +228,7 @@ export class PeerSyncHubConsumer {
       }
       return result.committed;
     } catch (error) {
-      if (error instanceof PeerProtocolError) {
+      if (error instanceof LinkProtocolError) {
         throw new SyncFeedProtocolError(error.message);
       }
       throw error;
@@ -237,10 +236,10 @@ export class PeerSyncHubConsumer {
   }
 }
 
-function executePeerEffects(
+function executeLinkEffects(
   store: Store,
-  effects: PeerApplyEffects,
-  callbacks: PeerSyncEffectCallbacks | undefined,
+  effects: LinkApplyEffects,
+  callbacks: LinkSyncEffectCallbacks | undefined,
 ): void {
   store.broadcastDeliveryStatus(effects.deliveryStatusIds, {
     suppressFailureNotice: true,
@@ -252,16 +251,13 @@ function executePeerEffects(
   for (const entryId of effects.handoffEntryIds) {
     callbacks?.handedOff?.(entryId);
   }
-  for (const entryId of effects.businessStateEntryIds) {
-    callbacks?.businessStateChanged?.(entryId);
-  }
 }
 
-function peerFeedEntry(row: PeerOutboxRow): SyncFeedEntry<PeerEnvelope> {
+function outboxEntry(row: OutboxRow): SyncFeedEntry<LinkEnvelope> {
   return {
     pos: row.pos,
     prev: row.prev,
-    data: parsePeerEnvelope({
+    data: parseLinkEnvelope({
       id: row.entry_id,
       category: row.category,
       data: JSON.parse(row.data_json) as unknown,
@@ -269,8 +265,8 @@ function peerFeedEntry(row: PeerOutboxRow): SyncFeedEntry<PeerEnvelope> {
   };
 }
 
-function protocolResponse(error: unknown): PeerPushResponse {
-  if (error instanceof PeerProtocolError) {
+function protocolResponse(error: unknown): LinkPushResponse {
+  if (error instanceof LinkProtocolError) {
     return {
       status: HTTP_STATUS.BAD_REQUEST,
       body: { error: error.message },

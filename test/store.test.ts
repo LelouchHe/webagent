@@ -238,7 +238,8 @@ describe("Store", () => {
           source_remote_role TEXT,
           source_remote_host TEXT,
           source_entry_id TEXT,
-          source_label TEXT
+          source_label TEXT,
+          source_category TEXT
         )`);
       db.close();
       try {

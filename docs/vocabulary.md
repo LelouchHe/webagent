@@ -96,6 +96,19 @@ entity; they name the runtime's bookkeeping.
 | **runtime message** | A message the runtime queues for one Task about its own bookkeeping — a closing reminder or a fact notice. Delivered like any other message, but not correspondence: no source handle, no delivery mark, and its `kind` names the item instead of `collaboration`. Its title never uses the task-reference grammar, because a source title would repeat and would read as a Task talking. |
 | **closing reminder** | A runtime message delivered as a runtime-injected closing turn that asks the target for a typed update after a turn that carried none. It is a recovery aid, not a lifecycle verdict. |
 
+## Link transport vocabulary
+
+| Term | Means |
+|---|---|
+| **link** | One directed connection identified inside an instance by `(remote_role, remote_host)`. The two names are managed independently on the two instances and may happen to be equal. |
+| **outbox** | The immutable, durable sequence of transport entries an instance sends over one link. Message and report entries point to their sender-side `deliveries` row; receipt entries do not. |
+| **outbox cursor** | This instance's durable `applied_pos` in the other instance's outbox, stored once per link in `outbox_cursors`. It is a feed position, not an acknowledgement. |
+| **receipt** | A delivery-state fact sent back over the source link. It CASes the referenced sender delivery and never becomes agent delivery work. |
+
+The transport `outbox` is unrelated to the product **Inbox** exposed by
+`/api/v1/messages`. Inbox holds pending unbound user/system messages; outbox is
+the internal cross-instance transfer sequence.
+
 **`handoff` stays reserved.** It continues to mean the provider/lifecycle handoff
 and the session-compaction handoff (for example `pending_compact_summary`); it is
 not another name for the account or settlement. Prefer *account*

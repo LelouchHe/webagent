@@ -4,15 +4,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import type { PeerEnvelope } from "../src/shared/peer-envelope.ts";
+import type { LinkEnvelope } from "../src/shared/link-envelope.ts";
 import { Store } from "../src/store.ts";
 
-describe("peer outbox", () => {
+describe("link outbox", () => {
   let dir: string;
   let store: Store;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "webagent-peer-outbox-"));
+    dir = mkdtempSync(join(tmpdir(), "webagent-link-outbox-"));
     store = new Store(dir);
   });
 
@@ -22,7 +22,7 @@ describe("peer outbox", () => {
   });
 
   it("assigns pos and prev by authenticated link direction", () => {
-    const first = store.enqueuePeerOutbox({
+    const first = store.enqueueOutbox({
       id: "first",
       remoteRole: "parent",
       remoteHost: "same-name",
@@ -30,14 +30,18 @@ describe("peer outbox", () => {
       deliveryId: "first-delivery",
       data: { body: "one" },
     });
-    const second = store.enqueuePeerOutbox({
+    store.createTask("report-source", dir, "auto", "mock", "report-session");
+    const second = store.enqueueLinkReport({
       id: "second",
+      deliveryId: "second-delivery",
       remoteRole: "parent",
       remoteHost: "same-name",
-      category: "report",
-      data: { body: "two" },
+      sourceTaskId: "report-source",
+      targetTaskId: "external-parent",
+      sourceLabel: "Report source",
+      body: "two",
     });
-    const oppositeDirection = store.enqueuePeerOutbox({
+    const oppositeDirection = store.enqueueOutbox({
       id: "opposite",
       remoteRole: "child",
       remoteHost: "same-name",
@@ -53,14 +57,14 @@ describe("peer outbox", () => {
       [oppositeDirection.pos, 0],
     );
     assert.deepEqual(
-      store.listPeerOutbox("parent", "same-name").map((row) => row.entry_id),
+      store.listOutbox("parent", "same-name").map((row) => row.entry_id),
       ["first", "second"],
     );
   });
 
   it("stores message business state on the sender delivery, not the outbox row", () => {
     const { deliveryId } = createOutgoingDelivery(store, dir);
-    const entry = store.enqueuePeerOutbox({
+    const entry = store.enqueueOutbox({
       id: "original",
       remoteRole: "child",
       remoteHost: "owner",
@@ -68,28 +72,28 @@ describe("peer outbox", () => {
       deliveryId,
       data: { body: "work" },
     });
-    assert.equal(entry.business_status, null);
+    assert.equal(entry.delivery_id, deliveryId);
 
-    const delivered = store.applyPeerReceipt({
+    const delivered = store.applyLinkReceipt({
       remoteRole: "child",
       remoteHost: "owner",
       entryId: entry.entry_id,
       status: "delivered",
     });
-    const duplicate = store.applyPeerReceipt({
+    const duplicate = store.applyLinkReceipt({
       remoteRole: "child",
       remoteHost: "owner",
       entryId: entry.entry_id,
       status: "delivered",
     });
-    const failed = store.applyPeerReceipt({
+    const failed = store.applyLinkReceipt({
       remoteRole: "child",
       remoteHost: "owner",
       entryId: entry.entry_id,
       status: "failed",
       failureReason: "target_deleted",
     });
-    const lateDelivered = store.applyPeerReceipt({
+    const lateDelivered = store.applyLinkReceipt({
       remoteRole: "child",
       remoteHost: "owner",
       entryId: entry.entry_id,
@@ -102,11 +106,8 @@ describe("peer outbox", () => {
     assert.equal(failed.changed, true);
     assert.equal(lateDelivered.changed, false);
     assert.deepEqual(delivered.effects.deliveryStatusIds, [deliveryId]);
-    assert.equal(store.getPeerOutbox(entry.entry_id)?.business_status, null);
-    assert.equal(
-      store.getPeerOutbox(entry.entry_id)?.handoff_status,
-      "handed_off",
-    );
+    assert.equal(store.getOutbox(entry.entry_id)?.delivery_id, deliveryId);
+    assert.equal(store.getOutbox(entry.entry_id)?.handoff_status, "handed_off");
     assert.deepEqual(
       {
         status: store.getCollaborationDelivery(deliveryId)?.status,
@@ -116,23 +117,49 @@ describe("peer outbox", () => {
     );
   });
 
-  it("keeps report business state on the report outbox row", () => {
-    store.enqueuePeerOutbox({
+  it("stores report business state on its delivery with no target projection", () => {
+    store.createTask("report-source", dir, "auto", "mock", "report-session");
+    store.createTask(
+      "external-parent",
+      dir,
+      "auto",
+      "mock",
+      "external-parent-session",
+    );
+    const entry = store.enqueueLinkReport({
       id: "report",
+      deliveryId: "report-delivery",
       remoteRole: "child",
       remoteHost: "owner",
-      category: "report",
-      data: { body: "done" },
+      sourceTaskId: "report-source",
+      targetTaskId: "external-parent",
+      sourceLabel: "Report source",
+      body: "done",
     });
-    assert.equal(store.getPeerOutbox("report")?.business_status, "queued");
-    const delivered = store.applyPeerReceipt({
+    assert.equal(entry.delivery_id, "report-delivery");
+    assert.equal(
+      store.getCollaborationDelivery("report-delivery")?.status,
+      "queued",
+    );
+    assert.deepEqual(
+      store
+        .listCollaborationProjections("report")
+        .map((projection) => projection.role),
+      ["source"],
+    );
+    assert.equal(store.countQueuedDeliveries("external-parent"), 0);
+    assert.deepEqual(store.claimQueuedDeliveries("external-parent"), []);
+    const delivered = store.applyLinkReceipt({
       remoteRole: "child",
       remoteHost: "owner",
       entryId: "report",
       status: "delivered",
     });
-    assert.deepEqual(delivered.effects.businessStateEntryIds, ["report"]);
-    assert.equal(store.getPeerOutbox("report")?.business_status, "delivered");
+    assert.deepEqual(delivered.effects.deliveryStatusIds, ["report-delivery"]);
+    assert.equal(
+      store.getCollaborationDelivery("report-delivery")?.status,
+      "delivered",
+    );
   });
 
   it("persists push op replay and conflict from the canonical envelope", () => {
@@ -147,12 +174,12 @@ describe("peer outbox", () => {
       creationAnchor: {},
     });
     const envelope = peerMessageEnvelope("source", "target");
-    const first = store.applyPeerPushOperation({
+    const first = store.applyLinkPushOperation({
       remoteRole: "parent",
       remoteHost: "hub",
       envelope,
     });
-    const replay = store.applyPeerPushOperation({
+    const replay = store.applyLinkPushOperation({
       remoteRole: "parent",
       remoteHost: "hub",
       envelope,
@@ -164,12 +191,11 @@ describe("peer outbox", () => {
       deliveryStatusIds: [],
       outboxEntryIds: [],
       handoffEntryIds: [],
-      businessStateEntryIds: [],
     });
     assert.equal(first.effects.drainTaskIds[0], "target");
     assert.throws(
       () =>
-        store.applyPeerPushOperation({
+        store.applyLinkPushOperation({
           remoteRole: "parent",
           remoteHost: "hub",
           envelope: {
@@ -177,7 +203,41 @@ describe("peer outbox", () => {
             data: { ...envelope.data, body: "changed" },
           },
         }),
-      /peer_inbound_op_conflict/,
+      /link_inbound_op_conflict/,
+    );
+
+    const report: LinkEnvelope = {
+      id: randomUUID(),
+      category: "report",
+      data: envelope.data,
+    };
+    assert.equal(
+      store.applyLinkPushOperation({
+        remoteRole: "parent",
+        remoteHost: "hub",
+        envelope: report,
+      }).replayed,
+      false,
+    );
+    assert.equal(
+      store.applyLinkPushOperation({
+        remoteRole: "parent",
+        remoteHost: "hub",
+        envelope: report,
+      }).replayed,
+      true,
+    );
+    assert.throws(
+      () =>
+        store.applyLinkPushOperation({
+          remoteRole: "parent",
+          remoteHost: "hub",
+          envelope: {
+            ...report,
+            data: { ...report.data, body: "changed report" },
+          },
+        }),
+      /link_inbound_op_conflict/,
     );
   });
 
@@ -185,14 +245,14 @@ describe("peer outbox", () => {
     const envelope = peerMessageEnvelope("source", "missing");
     store["db"].exec(`
       CREATE TRIGGER reject_feed_receipt
-      BEFORE INSERT ON peer_outbox
+      BEFORE INSERT ON outbox
       BEGIN
         SELECT RAISE(ABORT, 'receipt_write_failed');
       END;
     `);
     assert.throws(
       () =>
-        store.applyPeerFeedOperation({
+        store.applyLinkFeedOperation({
           remoteRole: "child",
           remoteHost: "owner",
           expectedApplied: 0,
@@ -201,10 +261,10 @@ describe("peer outbox", () => {
         }),
       /receipt_write_failed/,
     );
-    assert.equal(store.getPeerFeedApplied("child", "owner"), 0);
+    assert.equal(store.getOutboxCursor("child", "owner"), 0);
     store["db"].exec("DROP TRIGGER reject_feed_receipt");
 
-    const applied = store.applyPeerFeedOperation({
+    const applied = store.applyLinkFeedOperation({
       remoteRole: "child",
       remoteHost: "owner",
       expectedApplied: 0,
@@ -213,9 +273,9 @@ describe("peer outbox", () => {
     });
     assert.equal(applied.committed, true);
     assert.equal(applied.effects.outboxEntryIds.length, 1);
-    assert.equal(store.getPeerFeedApplied("child", "owner"), 8);
+    assert.equal(store.getOutboxCursor("child", "owner"), 8);
     assert.equal(
-      store.applyPeerFeedOperation({
+      store.applyLinkFeedOperation({
         remoteRole: "child",
         remoteHost: "owner",
         expectedApplied: 0,
@@ -228,7 +288,7 @@ describe("peer outbox", () => {
 
   it("rolls back a message receipt's delivery and handoff on a state-write failure", () => {
     const { deliveryId } = createOutgoingDelivery(store, dir);
-    const entry = store.enqueuePeerOutbox({
+    const entry = store.enqueueOutbox({
       id: randomUUID(),
       remoteRole: "child",
       remoteHost: "owner",
@@ -245,7 +305,7 @@ describe("peer outbox", () => {
     `);
     assert.throws(
       () =>
-        store.applyPeerReceipt({
+        store.applyLinkReceipt({
           remoteRole: "child",
           remoteHost: "owner",
           entryId: entry.entry_id,
@@ -253,10 +313,7 @@ describe("peer outbox", () => {
         }),
       /delivery_state_write_failed/,
     );
-    assert.equal(
-      store.getPeerOutbox(entry.entry_id)?.handoff_status,
-      "pending",
-    );
+    assert.equal(store.getOutbox(entry.entry_id)?.handoff_status, "pending");
     assert.equal(store.getCollaborationDelivery(deliveryId)?.status, "queued");
   });
   it("writes inbound claim and rejection receipts atomically", () => {
@@ -268,7 +325,7 @@ describe("peer outbox", () => {
       /receipt_write_failed/,
     );
     assert.equal(store.getCollaborationDelivery(deliveryId)?.status, "queued");
-    store["db"].exec("DROP TRIGGER reject_peer_receipt");
+    store["db"].exec("DROP TRIGGER reject_link_receipt");
 
     store.claimQueuedDeliveries("target");
     installReceiptRejectTrigger(store);
@@ -305,7 +362,7 @@ describe("peer outbox", () => {
         store.getCollaborationDelivery(`${taskId}-delivery`)?.status,
         "queued",
       );
-      store["db"].exec("DROP TRIGGER reject_peer_receipt");
+      store["db"].exec("DROP TRIGGER reject_link_receipt");
     }
   });
 
@@ -330,24 +387,25 @@ describe("peer outbox", () => {
         store.getCollaborationDelivery(`${taskId}-delivery`)?.status,
         "queued",
       );
-      store["db"].exec("DROP TRIGGER reject_peer_receipt");
+      store["db"].exec("DROP TRIGGER reject_link_receipt");
     }
   });
 
   it("does not cascade an outbox row or inbound association with deletion", () => {
     const root = store.ensureRootTask(dir).id;
     store.createTask("target", dir, "auto", "mock", "target-session", root);
-    store.enqueuePeerOutbox({
+    store.enqueueOutbox({
       id: "durable",
       remoteRole: "child",
       remoteHost: "owner",
       category: "report",
+      deliveryId: "durable-delivery",
       data: { body: "queued" },
     });
     const { deliveryId } = enqueueInbound(store, "durable-inbound", "target");
     store.deleteTask("target");
 
-    assert.equal(store.getPeerOutbox("durable")?.entry_id, "durable");
+    assert.equal(store.getOutbox("durable")?.entry_id, "durable");
     const delivery = store.getCollaborationDelivery(deliveryId);
     assert.ok(delivery);
     assert.equal(delivery.status, "failed");
@@ -389,6 +447,7 @@ function enqueueInbound(
       remoteRole: "parent",
       remoteHost: "hub",
       entryId: `${name}-entry`,
+      category: "message",
     },
   });
   return { deliveryId };
@@ -397,7 +456,7 @@ function enqueueInbound(
 function peerMessageEnvelope(
   sourceTaskId: string,
   targetTaskId: string,
-): Extract<PeerEnvelope, { category: "message" }> {
+): Extract<LinkEnvelope, { category: "message" }> {
   return {
     id: randomUUID(),
     category: "message",
@@ -412,8 +471,8 @@ function peerMessageEnvelope(
 
 function installReceiptRejectTrigger(store: Store): void {
   store["db"].exec(`
-    CREATE TRIGGER reject_peer_receipt
-    BEFORE INSERT ON peer_outbox
+    CREATE TRIGGER reject_link_receipt
+    BEFORE INSERT ON outbox
     BEGIN
       SELECT RAISE(ABORT, 'receipt_write_failed');
     END;

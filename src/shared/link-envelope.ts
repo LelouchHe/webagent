@@ -19,7 +19,7 @@ const receiptDataSchema = z.discriminatedUnion("status", [
   }),
 ]);
 
-export const peerEnvelopeSchema = z.discriminatedUnion("category", [
+export const linkEnvelopeSchema = z.discriminatedUnion("category", [
   z.object({
     id: z.uuid(),
     category: z.literal("message"),
@@ -37,19 +37,19 @@ export const peerEnvelopeSchema = z.discriminatedUnion("category", [
   }),
 ]);
 
-export type PeerEnvelope = z.infer<typeof peerEnvelopeSchema>;
-export type PeerMessageData = z.infer<typeof messageDataSchema>;
-export type PeerReceiptData = z.infer<typeof receiptDataSchema>;
+export type LinkEnvelope = z.infer<typeof linkEnvelopeSchema>;
+export type LinkMessageData = z.infer<typeof messageDataSchema>;
+export type LinkReceiptData = z.infer<typeof receiptDataSchema>;
 
-export class PeerProtocolError extends Error {
+export class LinkProtocolError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "PeerProtocolError";
+    this.name = "LinkProtocolError";
   }
 }
 
-export function parsePeerEnvelope(input: unknown): PeerEnvelope {
-  const result = peerEnvelopeSchema.safeParse(input);
-  if (!result.success) throw new PeerProtocolError("invalid_peer_envelope");
+export function parseLinkEnvelope(input: unknown): LinkEnvelope {
+  const result = linkEnvelopeSchema.safeParse(input);
+  if (!result.success) throw new LinkProtocolError("invalid_link_envelope");
   return result.data;
 }

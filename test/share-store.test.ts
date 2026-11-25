@@ -396,13 +396,14 @@ describe("shares store", () => {
           remoteRole: "parent",
           remoteHost: "hub",
           entryId: "reap-inbound-entry",
+          category: "message",
         },
       });
       assert.equal(store.deleteTask(taskId).mode, "soft");
       store.revokeShare(token);
       store["db"].exec(`
         CREATE TRIGGER reject_reap_receipt
-        BEFORE INSERT ON peer_outbox
+        BEFORE INSERT ON outbox
         BEGIN
           SELECT RAISE(ABORT, 'receipt_write_failed');
         END;
@@ -417,7 +418,7 @@ describe("shares store", () => {
         store.getCollaborationDelivery("reap-inbound-delivery")?.status,
         "queued",
       );
-      assert.equal(store.listPeerOutbox("parent", "hub").length, 0);
+      assert.equal(store.listOutbox("parent", "hub").length, 0);
 
       store["db"].exec("DROP TRIGGER reject_reap_receipt");
       assert.equal(store.reapTombstoneIfOrphaned(taskId), true);

@@ -113,7 +113,7 @@ export class SyncFeedConsumer<TData = unknown> {
       const entries = await this.transport.read(applied, attempt.signal);
       if (!attempt.isCurrent()) return;
       if (entries.length === 0) {
-        this.protocolError("peer read did not fill feed gap");
+        this.protocolError("link read did not fill feed gap");
         return;
       }
       let progress = false;
@@ -121,7 +121,7 @@ export class SyncFeedConsumer<TData = unknown> {
         if (!attempt.isCurrent()) return;
         if (missing.pos <= applied) continue;
         if (missing.prev !== applied) {
-          this.protocolError("peer read returned a broken chain");
+          this.protocolError("link read returned a broken chain");
           return;
         }
         if (!(await this.apply(missing, applied, attempt))) return;
@@ -130,7 +130,7 @@ export class SyncFeedConsumer<TData = unknown> {
         if (entry.pos <= applied) return;
       }
       if (!progress) {
-        this.protocolError("peer read made no progress");
+        this.protocolError("link read made no progress");
         return;
       }
     }

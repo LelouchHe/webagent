@@ -26,7 +26,7 @@ test("regression forwarder controls post responses and watch connections", async
   let slowClosed = 0;
   let slowNextPost = false;
   const target = createServer((request, response) => {
-    if (request.method === "POST" && request.url === "/peer-post") {
+    if (request.method === "POST" && request.url === "/link-post") {
       commits += 1;
       if (slowNextPost) {
         slowNextPost = false;
@@ -39,7 +39,7 @@ test("regression forwarder controls post responses and watch connections", async
       response.end(JSON.stringify({ commit: commits }));
       return;
     }
-    if (request.url === "/peer-watch") {
+    if (request.url === "/link-watch") {
       response.writeHead(200, { "Content-Type": "text/event-stream" });
       response.write("data: connected\n\n");
       return;
@@ -52,11 +52,11 @@ test("regression forwarder controls post responses and watch connections", async
   assert(address && typeof address !== "string");
   const forwarder = await RegressionForwarder.start(
     `http://127.0.0.1:${address.port}`,
-    { post: "/peer-post", watch: "/peer-watch" },
+    { post: "/link-post", watch: "/link-watch" },
   );
   servers.push(forwarder);
 
-  const watch = await fetch(`${forwarder.origin}/peer-watch`);
+  const watch = await fetch(`${forwarder.origin}/link-watch`);
   assert.equal(watch.status, 200);
   const reader = watch.body?.getReader();
   assert(reader);
@@ -77,13 +77,13 @@ test("regression forwarder controls post responses and watch connections", async
     { path: "/other-post" },
   );
   forwarder.connect("watch");
-  const reconnectedWatch = await fetch(`${forwarder.origin}/peer-watch`);
+  const reconnectedWatch = await fetch(`${forwarder.origin}/link-watch`);
   assert.equal(reconnectedWatch.status, 200);
   await reconnectedWatch.body?.cancel();
 
   const barrier = forwarder.holdNextResponse("post");
   let heldSettled = false;
-  const held = fetch(`${forwarder.origin}/peer-post`, { method: "POST" }).then(
+  const held = fetch(`${forwarder.origin}/link-post`, { method: "POST" }).then(
     (response) => {
       heldSettled = true;
       return response;
@@ -96,26 +96,26 @@ test("regression forwarder controls post responses and watch connections", async
 
   forwarder.dropNextResponse("post");
   await assert.rejects(
-    fetch(`${forwarder.origin}/peer-post`, { method: "POST" }),
+    fetch(`${forwarder.origin}/link-post`, { method: "POST" }),
   );
   assert.equal(commits, 2);
 
   forwarder.disconnect("post");
   assert.equal(
-    (await fetch(`${forwarder.origin}/peer-post`, { method: "POST" })).status,
+    (await fetch(`${forwarder.origin}/link-post`, { method: "POST" })).status,
     503,
   );
   forwarder.connect("post");
   assert.deepEqual(
     await (
-      await fetch(`${forwarder.origin}/peer-post`, { method: "POST" })
+      await fetch(`${forwarder.origin}/link-post`, { method: "POST" })
     ).json(),
     { commit: 3 },
   );
 
   slowNextPost = true;
   forwarder.connect("post");
-  const slow = fetch(`${forwarder.origin}/peer-post`, { method: "POST" });
+  const slow = fetch(`${forwarder.origin}/link-post`, { method: "POST" });
   await waitUntil(() => slowStarted === 1);
   forwarder.disconnect("post");
   await assert.rejects(slow);

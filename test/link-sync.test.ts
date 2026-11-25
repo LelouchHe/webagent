@@ -4,19 +4,19 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { PeerSyncHubConsumer, PeerSyncOwner } from "../src/host/peer-sync.ts";
+import { LinkSyncHubConsumer, LinkSyncOwner } from "../src/host/link-sync.ts";
 import type {
   SyncFeedEntry,
   SyncFeedTransport,
 } from "../src/shared/sync/index.ts";
 import { Store } from "../src/store.ts";
 
-describe("dormant peer sync handlers", () => {
+describe("dormant link sync handlers", () => {
   let dir: string;
   let store: Store;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "webagent-peer-sync-"));
+    dir = mkdtempSync(join(tmpdir(), "webagent-link-sync-"));
     store = new Store(dir);
   });
 
@@ -26,27 +26,46 @@ describe("dormant peer sync handlers", () => {
   });
 
   it("wakes one serial owner pump across multiple history pages", async () => {
-    const owner = new PeerSyncOwner(store);
+    store.createTask("child", dir, "auto", "mock", "child-session");
+    const owner = new LinkSyncOwner(store);
     for (let index = 0; index < 101; index += 1) {
-      store.enqueuePeerOutbox({
+      store.enqueueLinkReport({
         remoteRole: "parent",
         remoteHost: "hub-a",
-        category: "report",
-        data: peerMessageData("child", "parent", `report-${index}`),
+        sourceTaskId: "child",
+        targetTaskId: "parent",
+        sourceLabel: "Child",
+        body: `report-${index}`,
       });
     }
-    store.enqueuePeerOutbox({
+    store.createTask("parent", dir, "auto", "mock", "parent-session");
+    store.recordRemoteChild("parent", "remote", "hub-a");
+    store.recordCallerSend({
+      id: "outgoing",
+      sourceTaskId: "parent",
+      directTargetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "outgoing",
+    });
+    const outgoing = store
+      .getCollaborationDeliveriesForMessages(["outgoing"])
+      .get("outgoing");
+    assert.ok(outgoing);
+    store.enqueueOutbox({
       remoteRole: "child",
       remoteHost: "hub-a",
       category: "message",
-      deliveryId: "other-direction",
+      deliveryId: outgoing.id,
       data: peerMessageData("parent", "child", "outgoing"),
     });
-    store.enqueuePeerOutbox({
+    store.enqueueLinkReport({
       remoteRole: "parent",
       remoteHost: "hub-b",
-      category: "report",
-      data: peerMessageData("other", "parent", "other-link"),
+      sourceTaskId: "child",
+      targetTaskId: "other-parent",
+      sourceLabel: "Child",
+      body: "other-link",
     });
 
     assert.equal(owner.read("hub-a", 0).length, 100);
@@ -68,7 +87,7 @@ describe("dormant peer sync handlers", () => {
       },
     });
     await waitUntil(() => watched.length === 1);
-    const live = store.enqueuePeerOutbox({
+    const live = store.enqueueOutbox({
       remoteRole: "parent",
       remoteHost: "hub-a",
       category: "receipt",
@@ -87,13 +106,16 @@ describe("dormant peer sync handlers", () => {
   });
 
   it("dispose prevents a held owner watch from resuming after publish", async () => {
-    store.enqueuePeerOutbox({
+    store.createTask("child", dir, "auto", "mock", "child-session");
+    store.enqueueLinkReport({
       remoteRole: "parent",
       remoteHost: "hub-a",
-      category: "report",
-      data: peerMessageData("child", "parent", "first"),
+      sourceTaskId: "child",
+      targetTaskId: "parent",
+      sourceLabel: "Child",
+      body: "first",
     });
-    const owner = new PeerSyncOwner(store);
+    const owner = new LinkSyncOwner(store);
     let release: (() => void) | undefined;
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -106,11 +128,13 @@ describe("dormant peer sync handlers", () => {
       },
     });
     await waitUntil(() => watched.length === 1);
-    const live = store.enqueuePeerOutbox({
+    const live = store.enqueueLinkReport({
       remoteRole: "parent",
       remoteHost: "hub-a",
-      category: "report",
-      data: peerMessageData("child", "parent", "live"),
+      sourceTaskId: "child",
+      targetTaskId: "parent",
+      sourceLabel: "Child",
+      body: "live",
     });
     stop();
     owner.publish(live.entry_id);
@@ -131,7 +155,7 @@ describe("dormant peer sync handlers", () => {
       creationAnchor: {},
     });
     const drained: string[] = [];
-    const owner = new PeerSyncOwner(store, {
+    const owner = new LinkSyncOwner(store, {
       drainTask: (taskId) => drained.push(taskId),
     });
     const operationId = randomUUID();
@@ -183,15 +207,31 @@ describe("dormant peer sync handlers", () => {
       data: peerMessageData("gone-parent", "gone-target", "late"),
     };
     assert.equal(owner.push("hub", missing).status, 202);
-    const receipt = store.listPeerOutbox("parent", "hub").at(-1);
+    const receipt = store.listOutbox("parent", "hub").at(-1);
     assert.ok(receipt);
     assert.deepEqual(JSON.parse(receipt.data_json), {
       originalEntryId: missing.id,
       status: "failed",
       failureReason: "target_deleted",
     });
+    const failedDelivery = store.getCollaborationDelivery(missing.id);
+    assert.ok(failedDelivery);
+    assert.equal(failedDelivery.status, "failed");
+    assert.equal(failedDelivery.failure_reason, "target_deleted");
+    assert.equal(failedDelivery.source_entry_id, missing.id);
+    assert.equal(failedDelivery.source_category, "message");
+    assert.deepEqual(store.listCollaborationProjections(missing.id), []);
+    const message = store.getCollaborationMessage(missing.id);
+    assert.equal(message?.body, missing.data.body);
     assert.equal(owner.push("hub", missing).status, 202);
-    assert.equal(store.listPeerOutbox("parent", "hub").length, 2);
+    assert.equal(store.listOutbox("parent", "hub").length, 2);
+    assert.equal(
+      owner.push("hub", {
+        ...missing,
+        data: { ...missing.data, body: "changed" },
+      }).status,
+      409,
+    );
   });
 
   it("rejects a new push whose task relationship belongs to another link", () => {
@@ -205,7 +245,7 @@ describe("dormant peer sync handlers", () => {
       title: "Owned child",
       creationAnchor: {},
     });
-    const result = new PeerSyncOwner(store).push("hub-a", {
+    const result = new LinkSyncOwner(store).push("hub-a", {
       id: randomUUID(),
       category: "message",
       data: peerMessageData("parent-task", "owned-child", "work"),
@@ -228,7 +268,7 @@ describe("dormant peer sync handlers", () => {
       .getCollaborationDeliveriesForMessages(["outbound-message"])
       .get("outbound-message");
     assert.ok(outgoingDelivery);
-    const original = store.enqueuePeerOutbox({
+    const original = store.enqueueOutbox({
       id: randomUUID(),
       remoteRole: "child",
       remoteHost: "owner",
@@ -245,7 +285,7 @@ describe("dormant peer sync handlers", () => {
     });
     const transport = new CapturedFeedTransport();
     const drained: string[] = [];
-    const consumer = new PeerSyncHubConsumer({
+    const consumer = new LinkSyncHubConsumer({
       store,
       host: "owner",
       transport,
@@ -270,7 +310,7 @@ describe("dormant peer sync handlers", () => {
         ),
       },
     });
-    assert.equal(store.getPeerFeedApplied("child", "owner"), 4);
+    assert.equal(store.getOutboxCursor("child", "owner"), 4);
     assert.deepEqual(drained, ["parent"]);
     assert.equal(
       store.getCollaborationDelivery(reportId)?.source_entry_id,
@@ -294,10 +334,13 @@ describe("dormant peer sync handlers", () => {
         },
       },
     });
-    assert.equal(store.getPeerFeedApplied("child", "owner"), 5);
-    assert.equal(store.getPeerOutbox(original.entry_id)?.business_status, null);
+    assert.equal(store.getOutboxCursor("child", "owner"), 5);
     assert.equal(
-      store.getPeerOutbox(original.entry_id)?.handoff_status,
+      store.getOutbox(original.entry_id)?.delivery_id,
+      outgoingDelivery.id,
+    );
+    assert.equal(
+      store.getOutbox(original.entry_id)?.handoff_status,
       "handed_off",
     );
     assert.equal(
@@ -311,7 +354,7 @@ describe("dormant peer sync handlers", () => {
   it("hub consumer records a missing target and stops a relationship protocol error", async () => {
     const transport = new CapturedFeedTransport();
     const errors: Error[] = [];
-    const consumer = new PeerSyncHubConsumer({
+    const consumer = new LinkSyncHubConsumer({
       store,
       host: "owner",
       transport,
@@ -331,8 +374,8 @@ describe("dormant peer sync handlers", () => {
         data: peerMessageData("remote-child", "deleted-parent", "done"),
       },
     });
-    assert.equal(store.getPeerFeedApplied("child", "owner"), 1);
-    assert.equal(store.listPeerOutbox("child", "owner").length, 1);
+    assert.equal(store.getOutboxCursor("child", "owner"), 1);
+    assert.equal(store.listOutbox("child", "owner").length, 1);
 
     store.createTask("live", dir, "auto", "mock", "live-session");
     await transport.deliver({
@@ -344,8 +387,8 @@ describe("dormant peer sync handlers", () => {
         data: peerMessageData("wrong-child", "live", "done", "Wrong child"),
       },
     });
-    assert.equal(store.getPeerFeedApplied("child", "owner"), 1);
-    assert.match(errors[0].message, /peer_link_mismatch/);
+    assert.equal(store.getOutboxCursor("child", "owner"), 1);
+    assert.match(errors[0].message, /link_mismatch/);
     consumer.stop();
   });
 });
