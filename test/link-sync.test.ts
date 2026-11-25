@@ -57,7 +57,7 @@ describe("dormant link sync handlers", () => {
       remoteHost: "hub-a",
       category: "message",
       deliveryId: outgoing.id,
-      data: peerMessageData("parent", "child", "outgoing"),
+      data: linkMessageData("parent", "child", "outgoing"),
     });
     store.enqueueLinkReport({
       remoteRole: "parent",
@@ -192,7 +192,7 @@ describe("dormant link sync handlers", () => {
     const push = {
       id: operationId,
       category: "message",
-      data: peerMessageData("parent-task", "owned-child", "work"),
+      data: linkMessageData("parent-task", "owned-child", "work"),
     };
     assert.equal(owner.push("hub", push).status, 202);
     assert.deepEqual(drained, ["owned-child"]);
@@ -234,7 +234,7 @@ describe("dormant link sync handlers", () => {
     const missing = {
       id: randomUUID(),
       category: "message",
-      data: peerMessageData("gone-parent", "gone-target", "late"),
+      data: linkMessageData("gone-parent", "gone-target", "late"),
     };
     assert.equal(owner.push("hub", missing).status, 202);
     const receipt = store.listOutbox("parent", "hub").at(-1);
@@ -278,7 +278,7 @@ describe("dormant link sync handlers", () => {
     const result = new LinkSyncOwner(store).push("hub-a", {
       id: randomUUID(),
       category: "message",
-      data: peerMessageData("parent-task", "owned-child", "work"),
+      data: linkMessageData("parent-task", "owned-child", "work"),
     });
     assert.equal(result.status, 400);
   });
@@ -342,7 +342,7 @@ describe("dormant link sync handlers", () => {
       remoteHost: "owner",
       category: "message",
       deliveryId: outgoingDelivery.id,
-      data: peerMessageData("parent", "remote-child", "work"),
+      data: linkMessageData("parent", "remote-child", "work"),
     });
     const deliveryChanges: Array<{ status: string; suppressed: boolean }> = [];
     store.onDeliveryStatusChanged((change) => {
@@ -370,7 +370,7 @@ describe("dormant link sync handlers", () => {
       data: {
         id: reportId,
         category: "report",
-        data: peerMessageData(
+        data: linkMessageData(
           "remote-child",
           "parent",
           "Task status: done",
@@ -439,7 +439,7 @@ describe("dormant link sync handlers", () => {
       data: {
         id: missingId,
         category: "report",
-        data: peerMessageData("remote-child", "deleted-parent", "done"),
+        data: linkMessageData("remote-child", "deleted-parent", "done"),
       },
     });
     assert.equal(store.getOutboxCursor("child", "owner"), 1);
@@ -452,7 +452,7 @@ describe("dormant link sync handlers", () => {
       data: {
         id: randomUUID(),
         category: "report",
-        data: peerMessageData("wrong-child", "live", "done", "Wrong child"),
+        data: linkMessageData("wrong-child", "live", "done", "Wrong child"),
       },
     });
     assert.equal(store.getOutboxCursor("child", "owner"), 1);
@@ -480,7 +480,7 @@ class CapturedFeedTransport implements SyncFeedTransport {
   }
 }
 
-function peerMessageData(
+function linkMessageData(
   sourceTaskId: string,
   targetTaskId: string,
   body: string,
