@@ -309,6 +309,31 @@ describe("peer outbox", () => {
     }
   });
 
+  it("rolls back recovery failure and empty-task GC receipts", () => {
+    const root = store.ensureRootTask(dir).id;
+    for (const taskId of ["recovery", "gc"]) {
+      store.createTask(taskId, dir, "auto", "mock", `${taskId}-session`, root);
+      enqueueInbound(store, taskId, taskId);
+      installReceiptRejectTrigger(store);
+      assert.throws(() => {
+        if (taskId === "recovery") {
+          store.failQueuedDeliveries(taskId, "resume_failed");
+        } else {
+          store["db"]
+            .prepare("UPDATE tasks SET created_at = 0 WHERE id = ?")
+            .run(taskId);
+          store.deleteEmptyTasks(1);
+        }
+      }, /receipt_write_failed/);
+      assert.ok(store.getTask(taskId));
+      assert.equal(
+        store.getCollaborationDelivery(`${taskId}-delivery`)?.status,
+        "queued",
+      );
+      store["db"].exec("DROP TRIGGER reject_peer_receipt");
+    }
+  });
+
   it("does not cascade an outbox row or inbound association with deletion", () => {
     const root = store.ensureRootTask(dir).id;
     store.createTask("target", dir, "auto", "mock", "target-session", root);
