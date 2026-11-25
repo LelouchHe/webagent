@@ -116,7 +116,17 @@ export class SyncFeedConsumer {
       }
       return this.consume(entry, attempt, false);
     }
-    const committed = await this.port.apply(entry, applied);
+    let committed: boolean;
+    try {
+      committed = await this.port.apply(entry, applied);
+    } catch (error) {
+      if (error instanceof SyncFeedProtocolError) {
+        this.supervisor.stop();
+        this.onProtocolError?.(error);
+        return;
+      }
+      throw error;
+    }
     if (!committed && attempt.isCurrent()) {
       this.protocolError("persistent apply did not advance expected position");
     }

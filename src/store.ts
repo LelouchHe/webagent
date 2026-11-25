@@ -252,6 +252,7 @@ export interface CollaborationDeliveryRow {
   source_remote_role: PeerRemoteRole | null;
   source_remote_host: string | null;
   source_entry_id: string | null;
+  source_label: string | null;
 }
 
 export type PeerRemoteRole = "parent" | "child";
@@ -703,6 +704,7 @@ export class Store {
         "source_remote_role",
         "source_remote_host",
         "source_entry_id",
+        "source_label",
       ],
     };
     // Columns that earlier versions wrote and this one migrates away (see
@@ -913,6 +915,7 @@ export class Store {
         source_remote_role TEXT CHECK (source_remote_role IN ('parent', 'child')),
         source_remote_host TEXT,
         source_entry_id TEXT,
+        source_label TEXT,
         CHECK (
           (source_remote_role IS NULL AND source_remote_host IS NULL AND source_entry_id IS NULL)
           OR
@@ -3161,6 +3164,12 @@ export class Store {
         .get(input.entryId, input.remoteRole, input.remoteHost) as
         PeerOutboxRow | undefined;
       if (!row) return { known: false, changed: false };
+      this.db
+        .prepare(
+          `UPDATE peer_outbox SET handoff_status = 'handed_off'
+           WHERE entry_id = ? AND handoff_status = 'pending'`,
+        )
+        .run(row.entry_id);
       if (!canTransitionDeliveryStatus(row.business_status, input.status)) {
         return { known: true, changed: false };
       }
@@ -3254,6 +3263,7 @@ export class Store {
       body: string;
       id?: string;
       deliveryId?: string;
+      sourceLabel?: string;
       inbound?: PeerInboundAssociation;
     },
     record?: (result: { messageId: string; deliveryId: string }) => void,
@@ -3273,6 +3283,7 @@ export class Store {
         idempotencyKey: `${messageId}:${input.targetTaskId}`,
         createdAt,
         inbound: input.inbound,
+        sourceLabel: input.sourceLabel,
       });
       record?.({ messageId, deliveryId });
     })();
@@ -3286,6 +3297,7 @@ export class Store {
     sourceTaskId: string;
     targetTaskId: string;
     body: string;
+    sourceLabel?: string;
     inbound?: PeerInboundAssociation;
   }): boolean {
     return this.db.transaction(() => {
@@ -3306,6 +3318,7 @@ export class Store {
         idempotencyKey: input.idempotencyKey,
         createdAt: Date.now(),
         inbound: input.inbound,
+        sourceLabel: input.sourceLabel,
       });
       return true;
     })();
@@ -3621,6 +3634,7 @@ export class Store {
     idempotencyKey: string;
     createdAt: number;
     inbound?: PeerInboundAssociation;
+    sourceLabel?: string;
   }): void {
     this.db
       .prepare(
@@ -3647,8 +3661,8 @@ export class Store {
       .prepare(
         `INSERT INTO deliveries
            (id, message_id, recipient_task_id, idempotency_key, status, queued_at,
-            source_remote_role, source_remote_host, source_entry_id)
-           VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+            source_remote_role, source_remote_host, source_entry_id, source_label)
+           VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)`,
       )
       .run(
         input.deliveryId,
@@ -3659,6 +3673,7 @@ export class Store {
         input.inbound?.remoteRole ?? null,
         input.inbound?.remoteHost ?? null,
         input.inbound?.entryId ?? null,
+        input.sourceLabel ?? null,
       );
   }
 

@@ -323,6 +323,7 @@ on target task deletion; deletion explicitly terminalizes pending rows as
 | `source_remote_role` | TEXT NULL | Source peer-link direction for an inbound entry |
 | `source_remote_host` | TEXT NULL | Source peer-link name for an inbound entry |
 | `source_entry_id` | TEXT NULL | Immutable source outbox entry id |
+| `source_label` | TEXT NULL | Sender-title snapshot for inbound peer delivery |
 
 The three `source_*` columns are all null for local deliveries and all present
 for peer-inbound deliveries. The unique `(source_remote_role,

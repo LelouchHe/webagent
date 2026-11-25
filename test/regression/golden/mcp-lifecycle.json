@@ -614,13 +614,14 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            source_remote_role, source_remote_host, source_entry_id)\n           VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)",
+              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            source_remote_role, source_remote_host, source_entry_id, source_label)\n           VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000008",
                 "00000000-0000-4000-8000-000000000007",
                 "00000000-0000-4000-8000-000000000005",
                 "00000000-0000-4000-8000-000000000007:00000000-0000-4000-8000-000000000005",
                 1789333200000,
+                null,
                 null,
                 null,
                 null
@@ -1567,7 +1568,8 @@
         "failure_reason": null,
         "source_remote_role": null,
         "source_remote_host": null,
-        "source_entry_id": null
+        "source_entry_id": null,
+        "source_label": null
       }
     ],
     "client_ops": [],

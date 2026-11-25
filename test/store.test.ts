@@ -237,7 +237,8 @@ describe("Store", () => {
           failure_reason TEXT,
           source_remote_role TEXT,
           source_remote_host TEXT,
-          source_entry_id TEXT
+          source_entry_id TEXT,
+          source_label TEXT
         )`);
       db.close();
       try {

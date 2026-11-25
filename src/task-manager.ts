@@ -4448,6 +4448,14 @@ export class TaskManager implements ObligationHost {
         taskId,
         claimed.map(({ message }) => message),
       );
+      for (const { delivery, message } of claimed) {
+        if (delivery.source_label) {
+          this.rememberCollaborationSourceLabel(
+            message.id,
+            delivery.source_label,
+          );
+        }
+      }
       const sourceActors = claimed.map(({ message }) => message.source_actor);
       const entries = claimed.map(({ message }) => this.deliveryEntry(message));
       // The receiver's rows appear now, at the turn boundary where the agent
