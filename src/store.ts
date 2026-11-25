@@ -26,6 +26,13 @@ import type {
   WorkflowStatus,
 } from "./shared/workflow-status.ts";
 import { WORKFLOW_STATUSES } from "./shared/workflow-status.ts";
+import { HTTP_STATUS } from "./http-status.ts";
+import {
+  type PeerEnvelope,
+  type PeerMessageData,
+  type PeerReceiptData,
+  PeerProtocolError,
+} from "./shared/peer-envelope.ts";
 
 /** Namespace WebAgent reserves for the per-task empty execution slot. */
 const EMPTY_EXECUTION_PREFIX = "no-execution:";
@@ -270,8 +277,27 @@ export interface PeerOutboxRow {
   business_status: CollaborationDeliveryStatus | null;
   failure_reason: string | null;
   handoff_status: PeerOutboxHandoffStatus;
+  delivery_id: string | null;
   created_at: number;
 }
+
+export interface PeerApplyEffects {
+  drainTaskIds: string[];
+  deliveryStatusIds: string[];
+  outboxEntryIds: string[];
+  handoffEntryIds: string[];
+}
+
+export type PeerOutboxInput =
+  | {
+      category: "message";
+      deliveryId: string;
+      data: unknown;
+    }
+  | {
+      category: "report" | "receipt";
+      data: unknown;
+    };
 
 export interface PeerInboundOpRow {
   remote_role: PeerRemoteRole;
@@ -305,6 +331,15 @@ function stringifyPeerData(data: unknown): string {
   return encoded;
 }
 
+function emptyPeerApplyEffects(): PeerApplyEffects {
+  return {
+    drainTaskIds: [],
+    deliveryStatusIds: [],
+    outboxEntryIds: [],
+    handoffEntryIds: [],
+  };
+}
+
 export interface CollaborationDeliveryStatusChange {
   deliveryId: string;
   messageId: string;
@@ -313,6 +348,7 @@ export interface CollaborationDeliveryStatusChange {
   status: CollaborationDeliveryStatus;
   deliveredAt: number | null;
   failureReason: string | null;
+  suppressFailureNotice: boolean;
 }
 
 export interface SystemDeliveryInput {
@@ -940,10 +976,20 @@ export class Store {
         failure_reason TEXT,
         handoff_status TEXT NOT NULL DEFAULT 'pending'
           CHECK (handoff_status IN ('pending', 'handed_off', 'rejected')),
-        created_at INTEGER NOT NULL
+        delivery_id TEXT,
+        created_at INTEGER NOT NULL,
+        CHECK (
+          (category = 'message' AND delivery_id IS NOT NULL AND business_status IS NULL AND failure_reason IS NULL)
+          OR
+          (category = 'report' AND delivery_id IS NULL AND business_status IS NOT NULL)
+          OR
+          (category = 'receipt' AND delivery_id IS NULL AND business_status IS NULL AND failure_reason IS NULL)
+        )
       );
       CREATE INDEX IF NOT EXISTS idx_peer_outbox_link_pos
         ON peer_outbox (remote_role, remote_host, pos);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_peer_outbox_delivery
+        ON peer_outbox (delivery_id) WHERE delivery_id IS NOT NULL;
 
       CREATE TABLE IF NOT EXISTS peer_inbound_ops (
         remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
@@ -2199,17 +2245,15 @@ export class Store {
         .all(seedTaskId) as Array<{ id: string }>
     ).map((row) => row.id);
     if (ids.length === 0) return ids;
-    return this.db.transaction(() =>
-      ids.filter((id) =>
-        this.transitionDeliveryStatusInTransaction(
-          id,
-          "queued",
-          "failed",
-          failedAt,
-          "archived_edge_cut",
-        ),
+    return ids.filter((id) =>
+      this.transitionDeliveryStatusInTransaction(
+        id,
+        "queued",
+        "failed",
+        failedAt,
+        "archived_edge_cut",
       ),
-    )();
+    );
   }
 
   /**
@@ -2310,29 +2354,26 @@ export class Store {
    */
   reapTombstoneIfOrphaned(taskId: string): boolean {
     if (this.isRootTaskId(taskId)) return false;
-    const row = this.db
-      .prepare("SELECT id FROM tasks WHERE id = ? AND deleted_at IS NOT NULL")
-      .get(taskId) as { id: string } | undefined;
-    if (!row) return false;
-    const remaining = (
-      this.db
-        .prepare("SELECT COUNT(*) AS n FROM shares WHERE task_id = ?")
-        .get(taskId) as { n: number }
-    ).n;
-    if (remaining > 0) return false;
-    // Its live children were deleted when it was tombstoned; any survivor
-    // (a share-tombstoned descendant of this tombstone) still references it
-    // and must be re-parented under Root before the row goes away.
-    this.reparentChildrenToRoot(taskId);
-    this.failOutstandingDeliveriesForDeletedTask(taskId);
-    const failedDeliveryIds = this.failedDeliveryIdsForRecipient(
-      taskId,
-      "target_deleted",
-    );
-    this.db.prepare("DELETE FROM events WHERE task_id = ?").run(taskId);
-    this.db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
-    // Publish the sender marks only after the reaper's writes landed.
-    this.broadcastDeliveryStatus(failedDeliveryIds);
+    const reaped = this.db.transaction(() => {
+      const row = this.db
+        .prepare("SELECT id FROM tasks WHERE id = ? AND deleted_at IS NOT NULL")
+        .get(taskId) as { id: string } | undefined;
+      if (!row) return null;
+      const remaining = (
+        this.db
+          .prepare("SELECT COUNT(*) AS n FROM shares WHERE task_id = ?")
+          .get(taskId) as { n: number }
+      ).n;
+      if (remaining > 0) return null;
+      this.reparentChildrenToRoot(taskId);
+      const failedDeliveryIds =
+        this.failOutstandingDeliveriesForDeletedTask(taskId);
+      this.db.prepare("DELETE FROM events WHERE task_id = ?").run(taskId);
+      this.db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
+      return failedDeliveryIds;
+    })();
+    if (!reaped) return false;
+    this.broadcastDeliveryStatus(reaped);
     return true;
   }
 
@@ -2950,7 +2991,8 @@ export class Store {
         : this.db
             .prepare(
               `UPDATE deliveries
-               SET status = 'failed', failed_at = ?, failure_reason = ?
+               SET status = 'failed', delivered_at = NULL,
+                   failed_at = ?, failure_reason = ?
                WHERE id = ? AND status = ?`,
             )
             .run(changedAt, failureReason ?? "failed", deliveryId, expected);
@@ -2972,13 +3014,17 @@ export class Store {
             ? { failureReason: failureReason ?? "failed" }
             : {}),
         }),
+        deliveryId: null,
         createdAt: changedAt,
       });
     }
     return true;
   }
 
-  broadcastDeliveryStatus(ids: readonly string[]): void {
+  broadcastDeliveryStatus(
+    ids: readonly string[],
+    options: { suppressFailureNotice?: boolean } = {},
+  ): void {
     if (ids.length === 0 || this.deliveryStatusObservers.length === 0) return;
     const changes: CollaborationDeliveryStatusChange[] = [];
     for (let index = 0; index < ids.length; index += 400) {
@@ -3010,6 +3056,7 @@ export class Store {
           status: row.status,
           deliveredAt: row.delivered_at,
           failureReason: row.failure_reason,
+          suppressFailureNotice: options.suppressFailureNotice === true,
         });
       }
     }
@@ -3018,14 +3065,14 @@ export class Store {
     }
   }
 
-  enqueuePeerOutbox(input: {
-    id?: string;
-    remoteRole: PeerRemoteRole;
-    remoteHost: string;
-    category: PeerOutboxCategory;
-    data: unknown;
-    createdAt?: number;
-  }): PeerOutboxRow {
+  enqueuePeerOutbox(
+    input: PeerOutboxInput & {
+      id?: string;
+      remoteRole: PeerRemoteRole;
+      remoteHost: string;
+      createdAt?: number;
+    },
+  ): PeerOutboxRow {
     const dataJson = stringifyPeerData(input.data);
     return this.db.transaction(() =>
       this.enqueuePeerOutboxInTransaction({
@@ -3034,26 +3081,30 @@ export class Store {
         remoteHost: input.remoteHost,
         category: input.category,
         dataJson,
+        deliveryId: input.category === "message" ? input.deliveryId : null,
         createdAt: input.createdAt ?? Date.now(),
       }),
     )();
   }
 
-  applyPeerInboundOperation(input: {
+  applyPeerPushOperation(input: {
     remoteRole: PeerRemoteRole;
     remoteHost: string;
-    entryId: string;
-    request: unknown;
-    execute: () => { status: number; body: unknown };
-  }): { replayed: boolean; status: number; body: unknown } {
-    const requestJson = stringifyPeerData(input.request);
+    envelope: PeerEnvelope;
+  }): {
+    replayed: boolean;
+    status: number;
+    body: unknown;
+    effects: PeerApplyEffects;
+  } {
+    const requestJson = stringifyPeerData(input.envelope);
     return this.db.transaction(() => {
       const existing = this.db
         .prepare(
           `SELECT * FROM peer_inbound_ops
            WHERE remote_role = ? AND remote_host = ? AND entry_id = ?`,
         )
-        .get(input.remoteRole, input.remoteHost, input.entryId) as
+        .get(input.remoteRole, input.remoteHost, input.envelope.id) as
         PeerInboundOpRow | undefined;
       if (existing) {
         if (existing.request_json !== requestJson) {
@@ -3063,9 +3114,18 @@ export class Store {
           replayed: true,
           status: existing.response_status,
           body: JSON.parse(existing.response_json) as unknown,
+          effects: emptyPeerApplyEffects(),
         };
       }
-      const result = input.execute();
+      const effects = this.applyPeerEnvelopeInTransaction(
+        input.remoteRole,
+        input.remoteHost,
+        input.envelope,
+      );
+      const result = {
+        status: HTTP_STATUS.ACCEPTED,
+        body: { accepted: true },
+      };
       this.db
         .prepare(
           `INSERT INTO peer_inbound_ops
@@ -3076,13 +3136,13 @@ export class Store {
         .run(
           input.remoteRole,
           input.remoteHost,
-          input.entryId,
+          input.envelope.id,
           requestJson,
           result.status,
           stringifyPeerData(result.body),
           Date.now(),
         );
-      return { replayed: false, ...result };
+      return { replayed: false, ...result, effects };
     })();
   }
 
@@ -3096,23 +3156,29 @@ export class Store {
     return row?.applied_pos ?? 0;
   }
 
-  applyPeerFeedEntry(input: {
+  applyPeerFeedOperation(input: {
     remoteRole: PeerRemoteRole;
     remoteHost: string;
     expectedApplied: number;
     nextApplied: number;
-    apply: () => void;
-  }): boolean {
+    envelope: PeerEnvelope;
+  }): { committed: boolean; effects: PeerApplyEffects } {
     return this.db.transaction(() => {
       const applied = this.getPeerFeedApplied(
         input.remoteRole,
         input.remoteHost,
       );
-      if (applied !== input.expectedApplied) return false;
+      if (applied !== input.expectedApplied) {
+        return { committed: false, effects: emptyPeerApplyEffects() };
+      }
       if (input.nextApplied <= applied) {
         throw new Error("peer_feed_position_does_not_advance");
       }
-      input.apply();
+      const effects = this.applyPeerEnvelopeInTransaction(
+        input.remoteRole,
+        input.remoteHost,
+        input.envelope,
+      );
       this.db
         .prepare(
           `INSERT INTO peer_feed_progress (remote_role, remote_host, applied_pos)
@@ -3121,7 +3187,7 @@ export class Store {
            DO UPDATE SET applied_pos = excluded.applied_pos`,
         )
         .run(input.remoteRole, input.remoteHost, input.nextApplied);
-      return true;
+      return { committed: true, effects };
     })();
   }
 
@@ -3147,46 +3213,170 @@ export class Store {
       .get(entryId) as PeerOutboxRow | undefined;
   }
 
+  private applyPeerEnvelopeInTransaction(
+    remoteRole: PeerRemoteRole,
+    remoteHost: string,
+    envelope: PeerEnvelope,
+  ): PeerApplyEffects {
+    if (envelope.category === "receipt") {
+      const receipt = this.applyPeerReceiptInTransaction({
+        remoteRole,
+        remoteHost,
+        entryId: envelope.data.originalEntryId,
+        status: envelope.data.status,
+        failureReason:
+          envelope.data.status === "failed"
+            ? envelope.data.failureReason
+            : null,
+      });
+      if (!receipt.known) throw new PeerProtocolError("unknown_peer_receipt");
+      return receipt.effects;
+    }
+    return this.applyPeerDeliveryInTransaction(
+      remoteRole,
+      remoteHost,
+      envelope.id,
+      envelope.data,
+    );
+  }
+
+  private applyPeerDeliveryInTransaction(
+    remoteRole: PeerRemoteRole,
+    remoteHost: string,
+    entryId: string,
+    message: PeerMessageData,
+  ): PeerApplyEffects {
+    const effects = emptyPeerApplyEffects();
+    const target = this.getTask(message.targetTaskId);
+    if (!target) {
+      const receiptId = randomUUID();
+      this.enqueuePeerOutboxInTransaction({
+        entryId: receiptId,
+        remoteRole,
+        remoteHost,
+        category: "receipt",
+        dataJson: stringifyPeerData({
+          originalEntryId: entryId,
+          status: "failed",
+          failureReason: "target_deleted",
+        } satisfies PeerReceiptData),
+        deliveryId: null,
+        createdAt: Date.now(),
+      });
+      effects.outboxEntryIds.push(receiptId);
+      return effects;
+    }
+    const relationMatches =
+      remoteRole === "parent"
+        ? (() => {
+            const relation = this.getExternalParentLink(message.targetTaskId);
+            return (
+              relation?.remote_host === remoteHost &&
+              relation.remote_task_id === message.sourceTaskId
+            );
+          })()
+        : this.getRemoteChild(remoteHost, message.sourceTaskId)
+            ?.local_task_id === message.targetTaskId;
+    if (!relationMatches) {
+      throw new PeerProtocolError("peer_link_mismatch");
+    }
+    this.enqueueTargetCollaboration({
+      id: entryId,
+      deliveryId: entryId,
+      sourceTaskId: message.sourceTaskId,
+      targetTaskId: message.targetTaskId,
+      body: message.body,
+      sourceLabel: message.sourceLabel,
+      inbound: { remoteRole, remoteHost, entryId },
+    });
+    effects.drainTaskIds.push(message.targetTaskId);
+    return effects;
+  }
+
+  private applyPeerReceiptInTransaction(input: {
+    remoteRole: PeerRemoteRole;
+    remoteHost: string;
+    entryId: string;
+    status: Exclude<CollaborationDeliveryStatus, "queued">;
+    failureReason?: string | null;
+  }): { known: boolean; changed: boolean; effects: PeerApplyEffects } {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM peer_outbox
+         WHERE entry_id = ? AND remote_role = ? AND remote_host = ?
+           AND category <> 'receipt'`,
+      )
+      .get(input.entryId, input.remoteRole, input.remoteHost) as
+      PeerOutboxRow | undefined;
+    const effects = emptyPeerApplyEffects();
+    if (!row) return { known: false, changed: false, effects };
+    const handedOff = this.db
+      .prepare(
+        `UPDATE peer_outbox SET handoff_status = 'handed_off'
+         WHERE entry_id = ? AND handoff_status = 'pending'`,
+      )
+      .run(row.entry_id).changes;
+    if (handedOff === 1) effects.handoffEntryIds.push(row.entry_id);
+    if (row.category === "message") {
+      if (!row.delivery_id) {
+        throw new Error("peer_message_missing_delivery_id");
+      }
+      const delivery = this.getCollaborationDelivery(row.delivery_id);
+      if (!delivery) return { known: true, changed: false, effects };
+      const previous = delivery.status;
+      const changed =
+        previous === "queued" &&
+        this.transitionDeliveryStatusInTransaction(
+          row.delivery_id,
+          "queued",
+          input.status,
+          Date.now(),
+          input.failureReason,
+        );
+      const terminal =
+        previous === "delivered" &&
+        input.status === "failed" &&
+        this.transitionDeliveryStatusInTransaction(
+          row.delivery_id,
+          "delivered",
+          "failed",
+          Date.now(),
+          input.failureReason,
+        );
+      if (changed || terminal) {
+        effects.deliveryStatusIds.push(row.delivery_id);
+        return { known: true, changed: true, effects };
+      }
+      return { known: true, changed: false, effects };
+    }
+    if (!canTransitionDeliveryStatus(row.business_status, input.status)) {
+      return { known: true, changed: false, effects };
+    }
+    const changed = this.db
+      .prepare(
+        `UPDATE peer_outbox
+         SET business_status = ?, failure_reason = ?
+         WHERE entry_id = ? AND business_status = ?`,
+      )
+      .run(
+        input.status,
+        input.status === "failed" ? (input.failureReason ?? "failed") : null,
+        row.entry_id,
+        row.business_status,
+      ).changes;
+    return { known: true, changed: changed === 1, effects };
+  }
+
   applyPeerReceipt(input: {
     remoteRole: PeerRemoteRole;
     remoteHost: string;
     entryId: string;
     status: Exclude<CollaborationDeliveryStatus, "queued">;
     failureReason?: string | null;
-  }): { known: boolean; changed: boolean } {
-    return this.db.transaction(() => {
-      const row = this.db
-        .prepare(
-          `SELECT * FROM peer_outbox
-           WHERE entry_id = ? AND remote_role = ? AND remote_host = ?
-             AND category <> 'receipt'`,
-        )
-        .get(input.entryId, input.remoteRole, input.remoteHost) as
-        PeerOutboxRow | undefined;
-      if (!row) return { known: false, changed: false };
-      this.db
-        .prepare(
-          `UPDATE peer_outbox SET handoff_status = 'handed_off'
-           WHERE entry_id = ? AND handoff_status = 'pending'`,
-        )
-        .run(row.entry_id);
-      if (!canTransitionDeliveryStatus(row.business_status, input.status)) {
-        return { known: true, changed: false };
-      }
-      const changed = this.db
-        .prepare(
-          `UPDATE peer_outbox
-           SET business_status = ?, failure_reason = ?
-           WHERE entry_id = ? AND business_status = ?`,
-        )
-        .run(
-          input.status,
-          input.status === "failed" ? (input.failureReason ?? "failed") : null,
-          row.entry_id,
-          row.business_status,
-        ).changes;
-      return { known: true, changed: changed === 1 };
-    })();
+  }): { known: boolean; changed: boolean; effects: PeerApplyEffects } {
+    return this.db.transaction(() =>
+      this.applyPeerReceiptInTransaction(input),
+    )();
   }
 
   markPeerOutboxHandoff(
@@ -3212,6 +3402,7 @@ export class Store {
     remoteHost: string;
     category: PeerOutboxCategory;
     dataJson: string;
+    deliveryId: string | null;
     createdAt: number;
   }): PeerOutboxRow {
     const previous = this.db
@@ -3224,8 +3415,8 @@ export class Store {
       .prepare(
         `INSERT INTO peer_outbox
            (entry_id, remote_role, remote_host, prev, category, data_json,
-            business_status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            business_status, delivery_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.entryId,
@@ -3234,7 +3425,8 @@ export class Store {
         previous.pos,
         input.category,
         input.dataJson,
-        input.category === "receipt" ? null : "queued",
+        input.category === "report" ? "queued" : null,
+        input.deliveryId,
         input.createdAt,
       );
     return this.getPeerOutbox(input.entryId)!;
@@ -3924,7 +4116,7 @@ export class Store {
   }
 
   /** Preserve the fact while recording that a deleted target cannot receive it. */
-  private failOutstandingDeliveriesForDeletedTask(taskId: string): void {
+  private failOutstandingDeliveriesForDeletedTask(taskId: string): string[] {
     const failedAt = Date.now();
     const ids = this.db
       .prepare(
@@ -3932,15 +4124,17 @@ export class Store {
          WHERE recipient_task_id = ? AND status = 'queued'`,
       )
       .all(taskId) as Array<{ id: string }>;
-    for (const { id } of ids) {
-      this.transitionDeliveryStatusInTransaction(
-        id,
-        "queued",
-        "failed",
-        failedAt,
-        "target_deleted",
-      );
-    }
+    return ids
+      .filter(({ id }) =>
+        this.transitionDeliveryStatusInTransaction(
+          id,
+          "queued",
+          "failed",
+          failedAt,
+          "target_deleted",
+        ),
+      )
+      .map(({ id }) => id);
   }
 
   /** Delivery ids a deletion failed, for the post-commit mark broadcast. */

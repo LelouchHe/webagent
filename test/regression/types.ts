@@ -22,7 +22,7 @@ export interface RegressionForwarderControl {
   connect(channel: "post" | "watch"): void;
   disconnect(channel: "post" | "watch"): void;
   dropNextResponse(channel: "post" | "watch"): void;
-  holdNextResponse(channel: "post" | "watch"): void;
+  holdNextResponse(channel: "post" | "watch"): Promise<void>;
   release(channel: "post" | "watch"): void;
 }
 
@@ -90,7 +90,10 @@ export interface ScenarioStep<State> {
 export interface RegressionScenario<State> {
   mock: MockBehavior;
   instances?: Record<string, RegressionInstanceSpec>;
-  forwarders?: Record<string, { target: string }>;
+  forwarders?: Record<
+    string,
+    { target: string; postPath: string; watchPath: string }
+  >;
   setup(context: RegressionContext): Promise<State> | State;
   steps: (client: RegressionClient, state: State) => ScenarioStep<State>[];
 }

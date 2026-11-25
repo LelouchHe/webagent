@@ -272,7 +272,10 @@ async function createInstances(
       throw new Error(`Unknown regression forwarder target: ${spec.target}`);
     forwarders.set(
       forwarderName,
-      await RegressionForwarder.start(`http://127.0.0.1:${target.port}`),
+      await RegressionForwarder.start(`http://127.0.0.1:${target.port}`, {
+        post: spec.postPath,
+        watch: spec.watchPath,
+      }),
     );
   }
   const forwarderOrigins = Object.fromEntries(

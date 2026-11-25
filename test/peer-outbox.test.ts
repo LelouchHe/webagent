@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import type { PeerEnvelope } from "../src/shared/peer-envelope.ts";
 import { Store } from "../src/store.ts";
 
 describe("peer outbox", () => {
@@ -19,12 +21,13 @@ describe("peer outbox", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("assigns pos and prev by link in the enqueue transaction", () => {
+  it("assigns pos and prev by authenticated link direction", () => {
     const first = store.enqueuePeerOutbox({
       id: "first",
       remoteRole: "parent",
       remoteHost: "same-name",
       category: "message",
+      deliveryId: "first-delivery",
       data: { body: "one" },
     });
     const second = store.enqueuePeerOutbox({
@@ -39,6 +42,7 @@ describe("peer outbox", () => {
       remoteRole: "child",
       remoteHost: "same-name",
       category: "message",
+      deliveryId: "opposite-delivery",
       data: { body: "three" },
     });
 
@@ -48,299 +52,344 @@ describe("peer outbox", () => {
       [oppositeDirection.pos, oppositeDirection.prev],
       [oppositeDirection.pos, 0],
     );
-    assert.equal(second.pos > first.pos, true);
     assert.deepEqual(
       store.listPeerOutbox("parent", "same-name").map((row) => row.entry_id),
       ["first", "second"],
     );
   });
 
-  it("applies receipt state monotonically without creating another receipt", () => {
-    store.enqueuePeerOutbox({
+  it("stores message business state on the sender delivery, not the outbox row", () => {
+    const { deliveryId } = createOutgoingDelivery(store, dir);
+    const entry = store.enqueuePeerOutbox({
       id: "original",
       remoteRole: "child",
       remoteHost: "owner",
       category: "message",
+      deliveryId,
       data: { body: "work" },
     });
+    assert.equal(entry.business_status, null);
+
     const delivered = store.applyPeerReceipt({
       remoteRole: "child",
       remoteHost: "owner",
-      entryId: "original",
+      entryId: entry.entry_id,
       status: "delivered",
     });
     const duplicate = store.applyPeerReceipt({
       remoteRole: "child",
       remoteHost: "owner",
-      entryId: "original",
+      entryId: entry.entry_id,
       status: "delivered",
     });
     const failed = store.applyPeerReceipt({
       remoteRole: "child",
       remoteHost: "owner",
-      entryId: "original",
+      entryId: entry.entry_id,
       status: "failed",
       failureReason: "target_deleted",
     });
     const lateDelivered = store.applyPeerReceipt({
       remoteRole: "child",
       remoteHost: "owner",
-      entryId: "original",
+      entryId: entry.entry_id,
       status: "delivered",
     });
 
-    assert.deepEqual(delivered, { known: true, changed: true });
-    assert.deepEqual(duplicate, { known: true, changed: false });
-    assert.deepEqual(failed, { known: true, changed: true });
-    assert.deepEqual(lateDelivered, { known: true, changed: false });
+    assert.equal(delivered.known, true);
+    assert.equal(delivered.changed, true);
+    assert.equal(duplicate.changed, false);
+    assert.equal(failed.changed, true);
+    assert.equal(lateDelivered.changed, false);
+    assert.deepEqual(delivered.effects.deliveryStatusIds, [deliveryId]);
+    assert.equal(store.getPeerOutbox(entry.entry_id)?.business_status, null);
+    assert.equal(
+      store.getPeerOutbox(entry.entry_id)?.handoff_status,
+      "handed_off",
+    );
     assert.deepEqual(
       {
-        status: store.getPeerOutbox("original")?.business_status,
-        reason: store.getPeerOutbox("original")?.failure_reason,
+        status: store.getCollaborationDelivery(deliveryId)?.status,
+        reason: store.getCollaborationDelivery(deliveryId)?.failure_reason,
       },
       { status: "failed", reason: "target_deleted" },
     );
-    assert.equal(store.listPeerOutbox("child", "owner").length, 1);
-    assert.deepEqual(
-      store.applyPeerReceipt({
-        remoteRole: "parent",
-        remoteHost: "owner",
-        entryId: "original",
-        status: "delivered",
-      }),
-      { known: false, changed: false },
-    );
   });
 
-  it("persists push op results and conflicts under the link identity", () => {
-    let executes = 0;
-    const first = store.applyPeerInboundOperation({
-      remoteRole: "parent",
-      remoteHost: "hub",
-      entryId: "op",
-      request: { category: "message", data: { body: "work" } },
-      execute: () => {
-        executes += 1;
-        return { status: 202, body: { accepted: true } };
-      },
+  it("keeps report business state on the report outbox row", () => {
+    store.enqueuePeerOutbox({
+      id: "report",
+      remoteRole: "child",
+      remoteHost: "owner",
+      category: "report",
+      data: { body: "done" },
     });
-    const replay = store.applyPeerInboundOperation({
-      remoteRole: "parent",
-      remoteHost: "hub",
-      entryId: "op",
-      request: { category: "message", data: { body: "work" } },
-      execute: () => {
-        executes += 1;
-        return { status: 500, body: null };
-      },
+    assert.equal(store.getPeerOutbox("report")?.business_status, "queued");
+    store.applyPeerReceipt({
+      remoteRole: "child",
+      remoteHost: "owner",
+      entryId: "report",
+      status: "delivered",
     });
+    assert.equal(store.getPeerOutbox("report")?.business_status, "delivered");
+  });
 
-    assert.deepEqual(first, {
-      replayed: false,
-      status: 202,
-      body: { accepted: true },
+  it("persists push op replay and conflict from the canonical envelope", () => {
+    store.createDeferredRemoteTask({
+      id: "target",
+      cwd: dir,
+      source: "host",
+      agentId: "mock",
+      externalParentId: "source",
+      remoteHost: "hub",
+      title: "Target",
+      creationAnchor: {},
     });
-    assert.deepEqual(replay, {
-      replayed: true,
-      status: 202,
-      body: { accepted: true },
+    const envelope = peerMessageEnvelope("source", "target");
+    const first = store.applyPeerPushOperation({
+      remoteRole: "parent",
+      remoteHost: "hub",
+      envelope,
     });
-    assert.equal(executes, 1);
+    const replay = store.applyPeerPushOperation({
+      remoteRole: "parent",
+      remoteHost: "hub",
+      envelope,
+    });
+    assert.equal(first.replayed, false);
+    assert.equal(replay.replayed, true);
+    assert.deepEqual(replay.effects, {
+      drainTaskIds: [],
+      deliveryStatusIds: [],
+      outboxEntryIds: [],
+      handoffEntryIds: [],
+    });
+    assert.equal(first.effects.drainTaskIds[0], "target");
     assert.throws(
       () =>
-        store.applyPeerInboundOperation({
+        store.applyPeerPushOperation({
           remoteRole: "parent",
           remoteHost: "hub",
-          entryId: "op",
-          request: { category: "message", data: { body: "changed" } },
-          execute: () => ({ status: 202, body: null }),
+          envelope: {
+            ...envelope,
+            data: { ...envelope.data, body: "changed" },
+          },
         }),
       /peer_inbound_op_conflict/,
     );
   });
 
-  it("advances feed progress only with its committed business write", () => {
-    let applied = 0;
-    assert.equal(
-      store.applyPeerFeedEntry({
-        remoteRole: "child",
-        remoteHost: "owner",
-        expectedApplied: 0,
-        nextApplied: 8,
-        apply: () => {
-          applied += 1;
-        },
-      }),
-      true,
-    );
-    assert.equal(store.getPeerFeedApplied("child", "owner"), 8);
-    assert.equal(applied, 1);
-    assert.equal(
-      store.applyPeerFeedEntry({
-        remoteRole: "child",
-        remoteHost: "owner",
-        expectedApplied: 0,
-        nextApplied: 9,
-        apply: () => {
-          applied += 1;
-        },
-      }),
-      false,
-    );
-    assert.throws(
-      () =>
-        store.applyPeerFeedEntry({
-          remoteRole: "child",
-          remoteHost: "owner",
-          expectedApplied: 8,
-          nextApplied: 9,
-          apply: () => {
-            throw new Error("business_write_failed");
-          },
-        }),
-      /business_write_failed/,
-    );
-    assert.equal(store.getPeerFeedApplied("child", "owner"), 8);
-  });
-
-  it("writes each inbound delivery transition and receipt atomically", () => {
-    store.createTask("target", dir, "auto", "mock", "target-session");
-    store.enqueueTargetCollaboration({
-      id: "incoming",
-      deliveryId: "incoming-delivery",
-      sourceTaskId: "external-parent",
-      targetTaskId: "target",
-      body: "work",
-      inbound: {
-        remoteRole: "parent",
-        remoteHost: "hub",
-        entryId: "incoming-entry",
-      },
-    });
-
+  it("advances feed progress with one precise apply and rolls it back", () => {
+    const envelope = peerMessageEnvelope("source", "missing");
     store["db"].exec(`
-      CREATE TRIGGER reject_peer_receipt
+      CREATE TRIGGER reject_feed_receipt
       BEFORE INSERT ON peer_outbox
       BEGIN
         SELECT RAISE(ABORT, 'receipt_write_failed');
       END;
     `);
     assert.throws(
+      () =>
+        store.applyPeerFeedOperation({
+          remoteRole: "child",
+          remoteHost: "owner",
+          expectedApplied: 0,
+          nextApplied: 8,
+          envelope,
+        }),
+      /receipt_write_failed/,
+    );
+    assert.equal(store.getPeerFeedApplied("child", "owner"), 0);
+    store["db"].exec("DROP TRIGGER reject_feed_receipt");
+
+    const applied = store.applyPeerFeedOperation({
+      remoteRole: "child",
+      remoteHost: "owner",
+      expectedApplied: 0,
+      nextApplied: 8,
+      envelope,
+    });
+    assert.equal(applied.committed, true);
+    assert.equal(applied.effects.outboxEntryIds.length, 1);
+    assert.equal(store.getPeerFeedApplied("child", "owner"), 8);
+    assert.equal(
+      store.applyPeerFeedOperation({
+        remoteRole: "child",
+        remoteHost: "owner",
+        expectedApplied: 0,
+        nextApplied: 9,
+        envelope,
+      }).committed,
+      false,
+    );
+  });
+
+  it("rolls back a message receipt's delivery and handoff on a state-write failure", () => {
+    const { deliveryId } = createOutgoingDelivery(store, dir);
+    const entry = store.enqueuePeerOutbox({
+      id: randomUUID(),
+      remoteRole: "child",
+      remoteHost: "owner",
+      category: "message",
+      deliveryId,
+      data: { body: "work" },
+    });
+    store["db"].exec(`
+      CREATE TRIGGER reject_delivery_receipt
+      BEFORE UPDATE ON deliveries
+      BEGIN
+        SELECT RAISE(ABORT, 'delivery_state_write_failed');
+      END;
+    `);
+    assert.throws(
+      () =>
+        store.applyPeerReceipt({
+          remoteRole: "child",
+          remoteHost: "owner",
+          entryId: entry.entry_id,
+          status: "delivered",
+        }),
+      /delivery_state_write_failed/,
+    );
+    assert.equal(
+      store.getPeerOutbox(entry.entry_id)?.handoff_status,
+      "pending",
+    );
+    assert.equal(store.getCollaborationDelivery(deliveryId)?.status, "queued");
+  });
+
+  it("writes inbound claim and rejection receipts atomically", () => {
+    store.createTask("target", dir, "auto", "mock", "target-session");
+    const { deliveryId } = enqueueInbound(store, "incoming");
+    installReceiptRejectTrigger(store);
+    assert.throws(
       () => store.claimQueuedDeliveries("target"),
       /receipt_write_failed/,
     );
-    assert.equal(
-      store.getCollaborationDelivery("incoming-delivery")?.status,
-      "queued",
-    );
+    assert.equal(store.getCollaborationDelivery(deliveryId)?.status, "queued");
     store["db"].exec("DROP TRIGGER reject_peer_receipt");
 
-    assert.equal(store.claimQueuedDeliveries("target").length, 1);
-    store.failRejectedDeliveries(["incoming-delivery"], "acp_rejected", 123);
-    store.failRejectedDeliveries(
-      ["incoming-delivery"],
-      "acp_rejected_again",
-      124,
-    );
-
-    const receipts = store.listPeerOutbox("parent", "hub");
-    assert.deepEqual(
-      receipts.map((row) => JSON.parse(row.data_json)),
-      [
-        {
-          originalEntryId: "incoming-entry",
-          status: "delivered",
-        },
-        {
-          originalEntryId: "incoming-entry",
-          status: "failed",
-          failureReason: "acp_rejected",
-        },
-      ],
-    );
-    assert.equal(receipts[1]?.prev, receipts[0]?.pos);
+    store.claimQueuedDeliveries("target");
+    installReceiptRejectTrigger(store);
+    assert.throws(() => {
+      store.failRejectedDeliveries([deliveryId], "acp_rejected");
+    }, /receipt_write_failed/);
     assert.equal(
-      store.getCollaborationDelivery("incoming-delivery")?.status,
-      "failed",
+      store.getCollaborationDelivery(deliveryId)?.status,
+      "delivered",
+    );
+    assert.equal(
+      store.getCollaborationDelivery(deliveryId)?.delivered_at !== null,
+      true,
     );
   });
 
-  it("persists queued-failure receipts for clear, delete, and archive paths", () => {
+  it("rolls back clear, delete, and archive with their rejected receipts", () => {
     const root = store.ensureRootTask(dir).id;
-    store.createTask("clear", dir, "auto", "mock", "clear-session", root);
-    store.createTask("delete", dir, "auto", "mock", "delete-session", root);
-    store.createTask("archive", dir, "auto", "mock", "archive-session", root);
-
     for (const taskId of ["clear", "delete", "archive"]) {
-      store.enqueueTargetCollaboration({
-        id: `${taskId}-incoming`,
-        deliveryId: `${taskId}-delivery`,
-        sourceTaskId: `${taskId}-source`,
-        targetTaskId: taskId,
-        body: "work",
-        inbound: {
-          remoteRole: "parent",
-          remoteHost: taskId,
-          entryId: `${taskId}-entry`,
-        },
-      });
-    }
-
-    store.failOutstandingDeliveriesForTaskClear("clear");
-    store.deleteTask("delete");
-    store.archiveTask("archive");
-
-    for (const taskId of ["clear", "delete", "archive"]) {
-      const receipts = store.listPeerOutbox("parent", taskId);
-      assert.equal(receipts.length, 1);
-      const receipt = receipts[0];
-      assert.ok(receipt);
-      const data = JSON.parse(receipt.data_json) as {
-        originalEntryId: string;
-        status: string;
-      };
-      assert.deepEqual(
-        { originalEntryId: data.originalEntryId, status: data.status },
-        {
-          originalEntryId: `${taskId}-entry`,
-          status: "failed",
-        },
+      store.createTask(taskId, dir, "auto", "mock", `${taskId}-session`, root);
+      enqueueInbound(store, taskId, taskId);
+      installReceiptRejectTrigger(store);
+      assert.throws(
+        () =>
+          taskId === "clear"
+            ? store.failOutstandingDeliveriesForTaskClear(taskId)
+            : taskId === "delete"
+              ? store.deleteTask(taskId)
+              : store.archiveTask(taskId),
+        /receipt_write_failed/,
       );
+      assert.ok(store.getTask(taskId));
+      assert.equal(
+        store.getCollaborationDelivery(`${taskId}-delivery`)?.status,
+        "queued",
+      );
+      store["db"].exec("DROP TRIGGER reject_peer_receipt");
     }
   });
 
-  it("does not cascade outbox or inbound association with task deletion", () => {
+  it("does not cascade an outbox row or inbound association with deletion", () => {
     const root = store.ensureRootTask(dir).id;
     store.createTask("target", dir, "auto", "mock", "target-session", root);
     store.enqueuePeerOutbox({
       id: "durable",
       remoteRole: "child",
       remoteHost: "owner",
-      category: "message",
+      category: "report",
       data: { body: "queued" },
     });
-    store.enqueueTargetCollaboration({
-      id: "durable-inbound",
-      deliveryId: "durable-delivery",
-      sourceTaskId: "external",
-      targetTaskId: "target",
-      body: "queued",
-      inbound: {
-        remoteRole: "parent",
-        remoteHost: "hub",
-        entryId: "durable-entry",
-      },
-    });
-
+    const { deliveryId } = enqueueInbound(store, "durable-inbound", "target");
     store.deleteTask("target");
 
-    const outbox = store.getPeerOutbox("durable");
-    assert.ok(outbox);
-    assert.equal(outbox.entry_id, "durable");
-    const delivery = store.getCollaborationDelivery("durable-delivery");
+    assert.equal(store.getPeerOutbox("durable")?.entry_id, "durable");
+    const delivery = store.getCollaborationDelivery(deliveryId);
     assert.ok(delivery);
     assert.equal(delivery.status, "failed");
     assert.equal(delivery.source_remote_host, "hub");
-    assert.equal(delivery.source_entry_id, "durable-entry");
+    assert.equal(delivery.source_entry_id, "durable-inbound-entry");
   });
 });
+
+function createOutgoingDelivery(
+  store: Store,
+  dir: string,
+): { deliveryId: string } {
+  store.createTask("source", dir, "auto", "mock", "source-session");
+  store.createTask("outbox-target", dir, "auto", "mock", "target-session");
+  const created = store.createCollaborationMessage({
+    id: randomUUID(),
+    deliveryId: randomUUID(),
+    sourceTaskId: "source",
+    directTargetTaskId: "outbox-target",
+    sourceActor: "agent",
+    body: "work",
+  });
+  return { deliveryId: created.delivery.id };
+}
+
+function enqueueInbound(
+  store: Store,
+  name: string,
+  targetTaskId = "target",
+): { deliveryId: string } {
+  const deliveryId = `${name}-delivery`;
+  store.enqueueTargetCollaboration({
+    id: name,
+    deliveryId,
+    sourceTaskId: `${name}-source`,
+    targetTaskId,
+    body: "work",
+    inbound: {
+      remoteRole: "parent",
+      remoteHost: "hub",
+      entryId: `${name}-entry`,
+    },
+  });
+  return { deliveryId };
+}
+
+function peerMessageEnvelope(
+  sourceTaskId: string,
+  targetTaskId: string,
+): Extract<PeerEnvelope, { category: "message" }> {
+  return {
+    id: randomUUID(),
+    category: "message",
+    data: {
+      sourceTaskId,
+      targetTaskId,
+      sourceLabel: "Source",
+      body: "work",
+    },
+  };
+}
+
+function installReceiptRejectTrigger(store: Store): void {
+  store["db"].exec(`
+    CREATE TRIGGER reject_peer_receipt
+    BEFORE INSERT ON peer_outbox
+    BEGIN
+      SELECT RAISE(ABORT, 'receipt_write_failed');
+    END;
+  `);
+}

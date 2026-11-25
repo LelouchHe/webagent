@@ -796,7 +796,9 @@ export class TaskManager implements ObligationHost {
     // The Store owns every delivery status write, so one observer covers the
     // drain, archive, clear, deletion, and failure paths for the sender mark.
     this.store.onDeliveryStatusChanged((change) => {
-      if (change.status === "failed") this.onDeliveryFailed(change);
+      if (change.status === "failed" && !change.suppressFailureNotice) {
+        this.onDeliveryFailed(change);
+      }
       this.deliveryStatusBroadcast?.({
         type: "collaboration_delivery",
         taskId: change.sourceTaskId,

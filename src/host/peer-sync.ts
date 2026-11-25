@@ -1,37 +1,20 @@
-import { z } from "zod";
 import { HTTP_STATUS } from "../http-status.ts";
 import {
-  SyncFeedProtocolError,
+  parsePeerEnvelope,
+  PeerProtocolError,
+  type PeerEnvelope,
+} from "../shared/peer-envelope.ts";
+import {
   SyncFeedConsumer,
+  SyncFeedProtocolError,
+  type SyncFeedConsumerOptions,
   type SyncFeedEntry,
   type SyncFeedTransport,
-  type SyncFeedConsumerOptions,
 } from "../shared/sync/index.ts";
-import type { PeerOutboxRow, PeerRemoteRole, Store } from "../store.ts";
-
-const envelopeSchema = z.object({
-  id: z.uuid(),
-  category: z.enum(["message", "report", "receipt"]),
-  data: z.unknown(),
-});
-
-const messageSchema = z.object({
-  sourceTaskId: z.string(),
-  targetTaskId: z.string(),
-  sourceLabel: z.string(),
-  body: z.string(),
-});
-
-const receiptSchema = z.object({
-  originalEntryId: z.uuid(),
-  status: z.enum(["delivered", "failed"]),
-  failureReason: z.string().optional(),
-});
-
-type PeerEnvelope = z.infer<typeof envelopeSchema>;
+import type { PeerApplyEffects, PeerOutboxRow, Store } from "../store.ts";
 
 export interface PeerWatchObserver {
-  entry(entry: SyncFeedEntry): void | Promise<void>;
+  entry(entry: SyncFeedEntry<PeerEnvelope>): void | Promise<void>;
   heartbeat?(): void;
 }
 
@@ -40,19 +23,36 @@ export interface PeerPushResponse {
   body: unknown;
 }
 
+export interface PeerSyncEffectCallbacks {
+  drainTask?(taskId: string): void;
+  outboxChanged?(entryId: string): void;
+  handedOff?(entryId: string): void;
+}
+
+interface OwnerSubscription {
+  active: boolean;
+  dirty: boolean;
+  pumping: boolean;
+  after: number;
+  host: string;
+  observer: PeerWatchObserver;
+}
+
 export class PeerSyncOwner {
   private readonly store: Store;
-  private readonly observers = new Set<{
-    host: string;
-    after: number;
-    observer: PeerWatchObserver;
-  }>();
+  private readonly effects: PeerSyncEffectCallbacks;
+  private readonly subscriptions = new Set<OwnerSubscription>();
 
-  constructor(store: Store) {
+  constructor(store: Store, effects: PeerSyncEffectCallbacks = {}) {
     this.store = store;
+    this.effects = effects;
   }
 
-  read(host: string, after: number, limit = 100): SyncFeedEntry[] {
+  read(
+    host: string,
+    after: number,
+    limit = 100,
+  ): SyncFeedEntry<PeerEnvelope>[] {
     const boundedLimit = Math.max(1, Math.min(100, limit));
     return this.store
       .listPeerOutbox("parent", host, after, boundedLimit)
@@ -60,47 +60,58 @@ export class PeerSyncOwner {
   }
 
   watch(host: string, after: number, observer: PeerWatchObserver): () => void {
-    const registration = { host, after, observer };
-    this.observers.add(registration);
-    void this.emitSnapshot(registration);
+    const subscription: OwnerSubscription = {
+      active: true,
+      dirty: true,
+      pumping: false,
+      after,
+      host,
+      observer,
+    };
+    this.subscriptions.add(subscription);
+    void this.pump(subscription);
     return () => {
-      this.observers.delete(registration);
+      subscription.active = false;
+      this.subscriptions.delete(subscription);
     };
   }
 
   publish(entryId: string): void {
     const row = this.store.getPeerOutbox(entryId);
     if (row?.remote_role !== "parent") return;
-    const frame = peerFeedEntry(row);
-    for (const observer of this.observers) {
-      if (observer.host !== row.remote_host || frame.pos <= observer.after) {
-        continue;
+    for (const subscription of this.subscriptions) {
+      if (subscription.host === row.remote_host) {
+        subscription.dirty = true;
+        void this.pump(subscription);
       }
-      observer.after = frame.pos;
-      void observer.observer.entry(frame);
     }
   }
 
   heartbeat(): void {
-    for (const observer of this.observers) observer.observer.heartbeat?.();
+    for (const subscription of this.subscriptions) {
+      subscription.observer.heartbeat?.();
+    }
   }
 
   push(host: string, raw: unknown): PeerPushResponse {
-    const envelope = parseEnvelope(raw);
+    let envelope: PeerEnvelope;
     try {
-      const result = this.store.applyPeerInboundOperation({
+      envelope = parsePeerEnvelope(raw);
+    } catch (error) {
+      return protocolResponse(error);
+    }
+    try {
+      const result = this.store.applyPeerPushOperation({
         remoteRole: "parent",
         remoteHost: host,
-        entryId: envelope.id,
-        request: envelope,
-        execute: () => {
-          this.applyPush(host, envelope);
-          return {
-            status: HTTP_STATUS.ACCEPTED,
-            body: { accepted: true },
-          };
-        },
+        envelope,
       });
+      if (!result.replayed) {
+        executePeerEffects(this.store, result.effects, this.effects);
+        for (const entryId of result.effects.outboxEntryIds) {
+          this.publish(entryId);
+        }
+      }
       return { status: result.status, body: result.body };
     } catch (error) {
       if (
@@ -112,86 +123,61 @@ export class PeerSyncOwner {
           body: { error: "peer_op_conflict" },
         };
       }
-      if (error instanceof SyncFeedProtocolError) {
-        return {
-          status: HTTP_STATUS.BAD_REQUEST,
-          body: { error: error.message },
-        };
+      return protocolResponse(error);
+    }
+  }
+
+  private async pump(subscription: OwnerSubscription): Promise<void> {
+    if (!this.isActive(subscription) || subscription.pumping) return;
+    subscription.pumping = true;
+    try {
+      for (;;) {
+        if (!this.isActive(subscription)) return;
+        subscription.dirty = false;
+        const frames = this.read(subscription.host, subscription.after);
+        if (frames.length === 0) {
+          if (this.isDirty(subscription)) continue;
+          return;
+        }
+        for (const frame of frames) {
+          if (!this.isActive(subscription)) return;
+          if (frame.pos <= subscription.after) continue;
+          await subscription.observer.entry(frame);
+          subscription.after = frame.pos;
+        }
+        if (!this.isActive(subscription)) return;
       }
-      throw error;
+    } finally {
+      subscription.pumping = false;
+      if (this.isActive(subscription) && this.isDirty(subscription)) {
+        void this.pump(subscription);
+      }
     }
   }
 
-  private async emitSnapshot(registration: {
-    host: string;
-    after: number;
-    observer: PeerWatchObserver;
-  }): Promise<void> {
-    for (const frame of this.read(registration.host, registration.after)) {
-      if (frame.pos <= registration.after) continue;
-      registration.after = frame.pos;
-      await registration.observer.entry(frame);
-    }
+  private isActive(subscription: OwnerSubscription): boolean {
+    return subscription.active;
   }
 
-  private applyPush(host: string, envelope: PeerEnvelope): void {
-    if (envelope.category === "receipt") {
-      const receipt = parseReceipt(envelope.data);
-      const applied = this.store.applyPeerReceipt({
-        remoteRole: "parent",
-        remoteHost: host,
-        entryId: receipt.originalEntryId,
-        status: receipt.status,
-        failureReason: receipt.failureReason,
-      });
-      if (!applied.known) protocolError("unknown_peer_receipt");
-      return;
-    }
-    if (envelope.category !== "message") {
-      protocolError("unsupported_peer_push_category");
-    }
-    const message = parseMessage(envelope.data);
-    const target = this.store.getTask(message.targetTaskId);
-    if (!target) {
-      enqueueFailureReceipt(this.store, "parent", host, envelope.id);
-      return;
-    }
-    const relation = this.store.getExternalParentLink(message.targetTaskId);
-    if (
-      relation?.remote_host !== host ||
-      relation.remote_task_id !== message.sourceTaskId
-    ) {
-      protocolError("peer_link_mismatch");
-    }
-    this.store.enqueueTargetCollaboration({
-      id: envelope.id,
-      deliveryId: envelope.id,
-      sourceTaskId: message.sourceTaskId,
-      targetTaskId: message.targetTaskId,
-      body: message.body,
-      sourceLabel: message.sourceLabel,
-      inbound: {
-        remoteRole: "parent",
-        remoteHost: host,
-        entryId: envelope.id,
-      },
-    });
+  private isDirty(subscription: OwnerSubscription): boolean {
+    return subscription.dirty;
   }
 }
 
 export interface PeerSyncHubOptions {
   host: string;
   store: Store;
-  transport: SyncFeedTransport;
+  transport: SyncFeedTransport<unknown>;
   retryDelay: SyncFeedConsumerOptions["retryDelay"];
   onFailure?: SyncFeedConsumerOptions["onFailure"];
   onProtocolError?: SyncFeedConsumerOptions["onProtocolError"];
   clock?: SyncFeedConsumerOptions["clock"];
+  effects?: PeerSyncEffectCallbacks;
 }
 
 export class PeerSyncHubConsumer {
   private readonly options: PeerSyncHubOptions;
-  private readonly consumer: SyncFeedConsumer;
+  private readonly consumer: SyncFeedConsumer<unknown>;
 
   constructor(options: PeerSyncHubOptions) {
     this.options = options;
@@ -220,114 +206,71 @@ export class PeerSyncHubConsumer {
     this.consumer.reconnect();
   }
 
-  private apply(entry: SyncFeedEntry, expectedApplied: number): boolean {
-    const envelope = parseEnvelope(entry.data);
-    return this.options.store.applyPeerFeedEntry({
-      remoteRole: "child",
-      remoteHost: this.options.host,
-      expectedApplied,
-      nextApplied: entry.pos,
-      apply: () => {
-        this.applyEnvelope(envelope);
-      },
-    });
-  }
-
-  private applyEnvelope(envelope: PeerEnvelope): void {
-    if (envelope.category === "receipt") {
-      const receipt = parseReceipt(envelope.data);
-      const applied = this.options.store.applyPeerReceipt({
+  private apply(
+    entry: SyncFeedEntry<unknown>,
+    expectedApplied: number,
+  ): boolean {
+    try {
+      const envelope = parsePeerEnvelope(entry.data);
+      const result = this.options.store.applyPeerFeedOperation({
         remoteRole: "child",
         remoteHost: this.options.host,
-        entryId: receipt.originalEntryId,
-        status: receipt.status,
-        failureReason: receipt.failureReason,
+        expectedApplied,
+        nextApplied: entry.pos,
+        envelope,
       });
-      if (!applied.known) protocolError("unknown_peer_receipt");
-      return;
+      if (result.committed) {
+        executePeerEffects(
+          this.options.store,
+          result.effects,
+          this.options.effects,
+        );
+      }
+      return result.committed;
+    } catch (error) {
+      if (error instanceof PeerProtocolError) {
+        throw new SyncFeedProtocolError(error.message);
+      }
+      throw error;
     }
-    const message = parseMessage(envelope.data);
-    const target = this.options.store.getTask(message.targetTaskId);
-    if (!target) {
-      enqueueFailureReceipt(
-        this.options.store,
-        "child",
-        this.options.host,
-        envelope.id,
-      );
-      return;
-    }
-    const relation = this.options.store.getRemoteChild(
-      this.options.host,
-      message.sourceTaskId,
-    );
-    if (relation?.local_task_id !== message.targetTaskId) {
-      protocolError("peer_link_mismatch");
-    }
-    this.options.store.enqueueTargetCollaboration({
-      id: envelope.id,
-      deliveryId: envelope.id,
-      sourceTaskId: message.sourceTaskId,
-      targetTaskId: message.targetTaskId,
-      body: message.body,
-      sourceLabel: message.sourceLabel,
-      inbound: {
-        remoteRole: "child",
-        remoteHost: this.options.host,
-        entryId: envelope.id,
-      },
-    });
   }
 }
 
-function peerFeedEntry(row: PeerOutboxRow): SyncFeedEntry {
+function executePeerEffects(
+  store: Store,
+  effects: PeerApplyEffects,
+  callbacks: PeerSyncEffectCallbacks | undefined,
+): void {
+  store.broadcastDeliveryStatus(effects.deliveryStatusIds, {
+    suppressFailureNotice: true,
+  });
+  for (const taskId of effects.drainTaskIds) callbacks?.drainTask?.(taskId);
+  for (const entryId of effects.outboxEntryIds) {
+    callbacks?.outboxChanged?.(entryId);
+  }
+  for (const entryId of effects.handoffEntryIds) {
+    callbacks?.handedOff?.(entryId);
+  }
+}
+
+function peerFeedEntry(row: PeerOutboxRow): SyncFeedEntry<PeerEnvelope> {
   return {
     pos: row.pos,
     prev: row.prev,
-    data: {
+    data: parsePeerEnvelope({
       id: row.entry_id,
       category: row.category,
       data: JSON.parse(row.data_json) as unknown,
-    },
+    }),
   };
 }
 
-function enqueueFailureReceipt(
-  store: Store,
-  remoteRole: PeerRemoteRole,
-  host: string,
-  entryId: string,
-): void {
-  store.enqueuePeerOutbox({
-    remoteRole,
-    remoteHost: host,
-    category: "receipt",
-    data: {
-      originalEntryId: entryId,
-      status: "failed",
-      failureReason: "target_deleted",
-    },
-  });
-}
-
-function parseEnvelope(input: unknown): PeerEnvelope {
-  const result = envelopeSchema.safeParse(input);
-  if (!result.success) protocolError("invalid_peer_envelope");
-  return result.data;
-}
-
-function parseMessage(input: unknown): z.infer<typeof messageSchema> {
-  const result = messageSchema.safeParse(input);
-  if (!result.success) protocolError("invalid_peer_message");
-  return result.data;
-}
-
-function parseReceipt(input: unknown): z.infer<typeof receiptSchema> {
-  const result = receiptSchema.safeParse(input);
-  if (!result.success) protocolError("invalid_peer_receipt");
-  return result.data;
-}
-
-function protocolError(message: string): never {
-  throw new SyncFeedProtocolError(message);
+function protocolResponse(error: unknown): PeerPushResponse {
+  if (error instanceof PeerProtocolError) {
+    return {
+      status: HTTP_STATUS.BAD_REQUEST,
+      body: { error: error.message },
+    };
+  }
+  throw error;
 }

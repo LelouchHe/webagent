@@ -25,58 +25,98 @@ describe("dormant peer sync handlers", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("reads only the authenticated owner link and closes the watch seam", async () => {
+  it("wakes one serial owner pump across multiple history pages", async () => {
     const owner = new PeerSyncOwner(store);
-    const first = store.enqueuePeerOutbox({
-      remoteRole: "parent",
-      remoteHost: "hub-a",
-      category: "report",
-      data: { taskId: "child" },
-    });
+    for (let index = 0; index < 101; index += 1) {
+      store.enqueuePeerOutbox({
+        remoteRole: "parent",
+        remoteHost: "hub-a",
+        category: "report",
+        data: peerMessageData("child", "parent", `report-${index}`),
+      });
+    }
     store.enqueuePeerOutbox({
       remoteRole: "child",
       remoteHost: "hub-a",
       category: "message",
-      data: { body: "outgoing" },
+      deliveryId: "other-direction",
+      data: peerMessageData("parent", "child", "outgoing"),
     });
     store.enqueuePeerOutbox({
       remoteRole: "parent",
       remoteHost: "hub-b",
       category: "report",
-      data: { taskId: "other" },
+      data: peerMessageData("other", "parent", "other-link"),
     });
 
-    assert.deepEqual(
-      owner.read("hub-a", 0).map((entry) => entry.pos),
-      [first.pos],
-    );
-    const watched: number[] = [];
+    assert.equal(owner.read("hub-a", 0).length, 100);
+    const watched: string[] = [];
+    let releaseFirst: (() => void) | undefined;
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
     let heartbeats = 0;
     const stop = owner.watch("hub-a", 0, {
       entry: async (entry) => {
-        watched.push(entry.pos);
+        watched.push(entry.data.id);
         if (watched.length === 1) {
-          const live = store.enqueuePeerOutbox({
-            remoteRole: "parent",
-            remoteHost: "hub-a",
-            category: "receipt",
-            data: { originalEntryId: randomUUID(), status: "delivered" },
-          });
-          owner.publish(live.entry_id);
+          await firstHeld;
         }
       },
       heartbeat: () => {
         heartbeats += 1;
       },
     });
-    await waitUntil(() => watched.length === 2);
+    await waitUntil(() => watched.length === 1);
+    const live = store.enqueuePeerOutbox({
+      remoteRole: "parent",
+      remoteHost: "hub-a",
+      category: "receipt",
+      data: { originalEntryId: randomUUID(), status: "delivered" },
+    });
+    owner.publish(live.entry_id);
+    assert.equal(watched.length, 1);
+    releaseFirst?.();
+    await waitUntil(() => watched.length === 102);
     owner.heartbeat();
     assert.equal(heartbeats, 1);
-    assert.equal(watched[0], first.pos);
-    assert.equal(watched[1] > first.pos, true);
+    assert.equal(new Set(watched).size, 102);
     stop();
-    owner.publish(first.entry_id);
-    assert.equal(watched.length, 2);
+    owner.publish(live.entry_id);
+    assert.equal(watched.length, 102);
+  });
+
+  it("dispose prevents a held owner watch from resuming after publish", async () => {
+    store.enqueuePeerOutbox({
+      remoteRole: "parent",
+      remoteHost: "hub-a",
+      category: "report",
+      data: peerMessageData("child", "parent", "first"),
+    });
+    const owner = new PeerSyncOwner(store);
+    let release: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const watched: string[] = [];
+    const stop = owner.watch("hub-a", 0, {
+      entry: async (entry) => {
+        watched.push(entry.data.id);
+        await held;
+      },
+    });
+    await waitUntil(() => watched.length === 1);
+    const live = store.enqueuePeerOutbox({
+      remoteRole: "parent",
+      remoteHost: "hub-a",
+      category: "report",
+      data: peerMessageData("child", "parent", "live"),
+    });
+    stop();
+    owner.publish(live.entry_id);
+    release?.();
+    await Promise.resolve();
+    assert.deepEqual(watched.length, 1);
   });
 
   it("pushes idempotently and records target deletion as a replayable 202", () => {
@@ -90,24 +130,45 @@ describe("dormant peer sync handlers", () => {
       title: "Owned child",
       creationAnchor: {},
     });
-    const owner = new PeerSyncOwner(store);
+    const drained: string[] = [];
+    const owner = new PeerSyncOwner(store, {
+      drainTask: (taskId) => drained.push(taskId),
+    });
     const operationId = randomUUID();
     const push = {
       id: operationId,
       category: "message",
-      data: {
-        sourceTaskId: "parent-task",
-        targetTaskId: "owned-child",
-        sourceLabel: "Parent",
-        body: "work",
-      },
+      data: peerMessageData("parent-task", "owned-child", "work"),
     };
     assert.equal(owner.push("hub", push).status, 202);
+    assert.deepEqual(drained, ["owned-child"]);
+    assert.equal(
+      owner.push("hub", { ...push, data: { body: "invalid" } }).status,
+      400,
+      "payload validation runs before op lookup",
+    );
     store.deleteTask("owned-child");
-    assert.deepEqual(owner.push("hub", push), {
-      status: 202,
-      body: { accepted: true },
-    });
+    assert.deepEqual(
+      owner.push("hub", {
+        data: {
+          body: push.data.body,
+          sourceLabel: push.data.sourceLabel,
+          targetTaskId: push.data.targetTaskId,
+          sourceTaskId: push.data.sourceTaskId,
+        },
+        category: "message",
+        id: push.id,
+      }),
+      {
+        status: 202,
+        body: { accepted: true },
+      },
+    );
+    assert.deepEqual(
+      drained,
+      ["owned-child"],
+      "replay exposes no apply effects",
+    );
     assert.equal(
       owner.push("hub", {
         ...push,
@@ -119,12 +180,7 @@ describe("dormant peer sync handlers", () => {
     const missing = {
       id: randomUUID(),
       category: "message",
-      data: {
-        sourceTaskId: "gone-parent",
-        targetTaskId: "gone-target",
-        sourceLabel: "Parent",
-        body: "late",
-      },
+      data: peerMessageData("gone-parent", "gone-target", "late"),
     };
     assert.equal(owner.push("hub", missing).status, 202);
     const receipt = store.listPeerOutbox("parent", "hub").at(-1);
@@ -152,12 +208,7 @@ describe("dormant peer sync handlers", () => {
     const result = new PeerSyncOwner(store).push("hub-a", {
       id: randomUUID(),
       category: "message",
-      data: {
-        sourceTaskId: "parent-task",
-        targetTaskId: "owned-child",
-        sourceLabel: "Parent",
-        body: "work",
-      },
+      data: peerMessageData("parent-task", "owned-child", "work"),
     });
     assert.equal(result.status, 400);
   });
@@ -165,19 +216,41 @@ describe("dormant peer sync handlers", () => {
   it("hub consumer applies reports, receipts, and durable progress", async () => {
     store.createTask("parent", dir, "auto", "mock", "parent-session");
     store.recordRemoteChild("parent", "remote-child", "owner");
+    store.recordCallerSend({
+      id: "outbound-message",
+      sourceTaskId: "parent",
+      directTargetTaskId: "remote-child",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "work",
+    });
+    const outgoingDelivery = store
+      .getCollaborationDeliveriesForMessages(["outbound-message"])
+      .get("outbound-message");
+    assert.ok(outgoingDelivery);
     const original = store.enqueuePeerOutbox({
       id: randomUUID(),
       remoteRole: "child",
       remoteHost: "owner",
       category: "message",
-      data: { body: "work" },
+      deliveryId: outgoingDelivery.id,
+      data: peerMessageData("parent", "remote-child", "work"),
+    });
+    const deliveryChanges: Array<{ status: string; suppressed: boolean }> = [];
+    store.onDeliveryStatusChanged((change) => {
+      deliveryChanges.push({
+        status: change.status,
+        suppressed: change.suppressFailureNotice,
+      });
     });
     const transport = new CapturedFeedTransport();
+    const drained: string[] = [];
     const consumer = new PeerSyncHubConsumer({
       store,
       host: "owner",
       transport,
       retryDelay: () => 0,
+      effects: { drainTask: (taskId) => drained.push(taskId) },
     });
     consumer.start();
     await waitUntil(() => transport.watchInput !== undefined);
@@ -189,15 +262,16 @@ describe("dormant peer sync handlers", () => {
       data: {
         id: reportId,
         category: "report",
-        data: {
-          sourceTaskId: "remote-child",
-          targetTaskId: "parent",
-          sourceLabel: "Remote child",
-          body: "Task status: done",
-        },
+        data: peerMessageData(
+          "remote-child",
+          "parent",
+          "Task status: done",
+          "Remote child",
+        ),
       },
     });
     assert.equal(store.getPeerFeedApplied("child", "owner"), 4);
+    assert.deepEqual(drained, ["parent"]);
     assert.equal(
       store.getCollaborationDelivery(reportId)?.source_entry_id,
       reportId,
@@ -215,19 +289,22 @@ describe("dormant peer sync handlers", () => {
         category: "receipt",
         data: {
           originalEntryId: original.entry_id,
-          status: "delivered",
+          status: "failed",
+          failureReason: "target_deleted",
         },
       },
     });
     assert.equal(store.getPeerFeedApplied("child", "owner"), 5);
-    assert.equal(
-      store.getPeerOutbox(original.entry_id)?.business_status,
-      "delivered",
-    );
+    assert.equal(store.getPeerOutbox(original.entry_id)?.business_status, null);
     assert.equal(
       store.getPeerOutbox(original.entry_id)?.handoff_status,
       "handed_off",
     );
+    assert.equal(
+      store.getCollaborationDelivery(outgoingDelivery.id)?.status,
+      "failed",
+    );
+    assert.deepEqual(deliveryChanges, [{ status: "failed", suppressed: true }]);
     consumer.stop();
   });
 
@@ -251,12 +328,7 @@ describe("dormant peer sync handlers", () => {
       data: {
         id: missingId,
         category: "report",
-        data: {
-          sourceTaskId: "remote-child",
-          targetTaskId: "deleted-parent",
-          sourceLabel: "Remote child",
-          body: "done",
-        },
+        data: peerMessageData("remote-child", "deleted-parent", "done"),
       },
     });
     assert.equal(store.getPeerFeedApplied("child", "owner"), 1);
@@ -269,12 +341,7 @@ describe("dormant peer sync handlers", () => {
       data: {
         id: randomUUID(),
         category: "report",
-        data: {
-          sourceTaskId: "wrong-child",
-          targetTaskId: "live",
-          sourceLabel: "Wrong child",
-          body: "done",
-        },
+        data: peerMessageData("wrong-child", "live", "done", "Wrong child"),
       },
     });
     assert.equal(store.getPeerFeedApplied("child", "owner"), 1);
@@ -300,6 +367,15 @@ class CapturedFeedTransport implements SyncFeedTransport {
     assert.ok(this.watchInput);
     await this.watchInput.entry(entry);
   }
+}
+
+function peerMessageData(
+  sourceTaskId: string,
+  targetTaskId: string,
+  body: string,
+  sourceLabel = "Source",
+) {
+  return { sourceTaskId, targetTaskId, sourceLabel, body };
 }
 
 async function waitUntil(predicate: () => boolean): Promise<void> {

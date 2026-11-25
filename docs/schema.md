@@ -167,13 +167,16 @@ changed after insert except for local business, failure, and handoff metadata.
 | `prev` | INTEGER NOT NULL | Previous `pos` in the same link; first entry is `0` |
 | `category` | TEXT NOT NULL | `message`, `report`, or `receipt` |
 | `data_json` | TEXT NOT NULL | Immutable wire data |
-| `business_status` | TEXT NULL | `queued`, `delivered`, or `failed`; receipts have no business state |
+| `business_status` | TEXT NULL | Report-only state: `queued`, `delivered`, or `failed`; message state lives on its delivery, and receipts have no state |
 | `failure_reason` | TEXT NULL | Business failure detail |
 | `handoff_status` | TEXT NOT NULL | Push-only local metadata: `pending`, `handed_off`, or `rejected` |
+| `delivery_id` | TEXT NULL | Required for `message`; identifies the sender's durable delivery business state |
 | `created_at` | INTEGER NOT NULL | Local enqueue time |
 
 Index `idx_peer_outbox_link_pos` supports ordered `(remote_role,
 remote_host)` reads.
+Index `idx_peer_outbox_delivery` uniquely associates a message outbox entry with
+its sender-side delivery.
 
 The table has no Task or `remote_tasks` foreign key. Task and link deletion
 cannot cascade away an entry that still needs to be delivered or acknowledged.
@@ -317,7 +320,7 @@ on target task deletion; deletion explicitly terminalizes pending rows as
 | `idempotency_key` | TEXT NOT NULL UNIQUE | Message/recipient delivery identity |
 | `status` | TEXT NOT NULL | `queued`, `delivered`, or `failed` |
 | `queued_at` | INTEGER NOT NULL | Unix milliseconds |
-| `delivered_at` | INTEGER | Set when the drain hands the row to the recipient's agent, not when its turn ends |
+| `delivered_at` | INTEGER | Set when the drain hands the row to the recipient's agent, not when its turn ends; cleared when an ACP rejection terminalizes that delivery as failed |
 | `failed_at` | INTEGER | Set when the row could not be handed over |
 | `failure_reason` | TEXT | Stable terminal failure reason, e.g. `target_deleted` |
 | `source_remote_role` | TEXT NULL | Source peer-link direction for an inbound entry |
