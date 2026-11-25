@@ -1,9 +1,9 @@
-export interface SyncRequestTransport {
+export interface SyncRequestTransport<TRequest = unknown, TResponse = unknown> {
   send(
     operationId: string,
-    request: unknown,
+    request: TRequest,
     signal: AbortSignal,
-  ): Promise<{ status: number; body: unknown }>;
+  ): Promise<{ status: number; body: TResponse }>;
 }
 
 export interface SyncTimer {
@@ -11,21 +11,25 @@ export interface SyncTimer {
   clearTimeout(handle: unknown): void;
 }
 
-export type SyncRequestResult =
-  | { kind: "success"; status: number; body: unknown }
-  | { kind: "rejected"; status: number; body: unknown }
+export type SyncRequestResult<TResponse = unknown> =
+  | { kind: "success"; status: number; body: TResponse }
+  | { kind: "rejected"; status: number; body: TResponse }
   | { kind: "unknown"; error: unknown };
 
-export async function sendSyncRequest(input: {
+export async function sendSyncRequest<
+  TRequest = unknown,
+  TResponse = unknown,
+>(input: {
   operationId: string;
-  request: unknown;
+  request: TRequest;
   timeoutMs: number;
-  transport: SyncRequestTransport;
+  transport: SyncRequestTransport<TRequest, TResponse>;
   timer: SyncTimer;
-}): Promise<SyncRequestResult> {
+}): Promise<SyncRequestResult<TResponse>> {
   const abort = new AbortController();
-  let timeoutCallback: ((result: SyncRequestResult) => void) | undefined;
-  const timedOut = new Promise<SyncRequestResult>((resolve) => {
+  let timeoutCallback:
+    ((result: SyncRequestResult<TResponse>) => void) | undefined;
+  const timedOut = new Promise<SyncRequestResult<TResponse>>((resolve) => {
     timeoutCallback = resolve;
   });
   const timeout = input.timer.setTimeout(() => {

@@ -5,37 +5,43 @@ import {
   type SyncTimer,
 } from "./request.ts";
 
-export interface SyncOutboxEntry {
+export interface SyncOutboxEntry<TRequest = unknown> {
   id: string;
-  request: unknown;
+  request: TRequest;
 }
 
-export interface SyncOutboxPort {
-  next(): SyncOutboxEntry | undefined | Promise<SyncOutboxEntry | undefined>;
+export interface SyncOutboxPort<TRequest = unknown, TResponse = unknown> {
+  next():
+    | SyncOutboxEntry<TRequest>
+    | undefined
+    | Promise<SyncOutboxEntry<TRequest> | undefined>;
   finish(
-    entry: SyncOutboxEntry,
-    result: SyncRequestResult,
+    entry: SyncOutboxEntry<TRequest>,
+    result: SyncRequestResult<TResponse>,
   ): boolean | Promise<boolean>;
 }
 
-export interface SyncOutboxOptions {
-  port: SyncOutboxPort;
-  transport: SyncRequestTransport;
+export interface SyncOutboxOptions<TRequest = unknown, TResponse = unknown> {
+  port: SyncOutboxPort<TRequest, TResponse>;
+  transport: SyncRequestTransport<TRequest, TResponse>;
   timer: SyncTimer;
   timeoutMs: number;
-  retryDelay(attempt: number, result: SyncRequestResult): number;
+  retryDelay(attempt: number, result: SyncRequestResult<TResponse>): number;
 }
 
-export class SyncOutbox {
-  private readonly port: SyncOutboxPort;
-  private readonly options: SyncOutboxOptions;
-  private active: { id: string; generation: number } | null = null;
+export class SyncOutbox<TRequest = unknown, TResponse = unknown> {
+  private readonly port: SyncOutboxPort<TRequest, TResponse>;
+  private readonly options: SyncOutboxOptions<TRequest, TResponse>;
+  private active: {
+    id: string;
+    generation: number;
+    retry: unknown;
+  } | null = null;
   private generation = 0;
-  private retry: unknown = null;
   private started = false;
   private pumping = false;
 
-  constructor(options: SyncOutboxOptions) {
+  constructor(options: SyncOutboxOptions<TRequest, TResponse>) {
     this.port = options.port;
     this.options = options;
   }
@@ -49,24 +55,22 @@ export class SyncOutbox {
   stop(): void {
     this.started = false;
     this.generation += 1;
-    this.active = null;
-    if (this.retry !== null) {
-      this.options.timer.clearTimeout(this.retry);
-      this.retry = null;
+    if (this.active?.retry !== null && this.active?.retry !== undefined) {
+      this.options.timer.clearTimeout(this.active.retry);
     }
+    this.active = null;
   }
 
   wake(): void {
     if (!this.started) return;
-    if (this.retry !== null) {
-      this.options.timer.clearTimeout(this.retry);
-      this.retry = null;
-    }
     void this.pump();
   }
 
   handedOff(entryId: string): void {
     if (this.active?.id !== entryId) return;
+    if (this.active.retry !== null) {
+      this.options.timer.clearTimeout(this.active.retry);
+    }
     this.generation += 1;
     this.active = null;
     void this.pump();
@@ -79,7 +83,7 @@ export class SyncOutbox {
       const entry = await this.port.next();
       if (!entry || !this.isStarted() || this.hasActive()) return;
       const generation = ++this.generation;
-      this.active = { id: entry.id, generation };
+      this.active = { id: entry.id, generation, retry: null };
       void this.send(entry, generation, 1);
     } finally {
       this.pumping = false;
@@ -87,10 +91,17 @@ export class SyncOutbox {
   }
 
   private async send(
-    entry: SyncOutboxEntry,
+    entry: SyncOutboxEntry<TRequest>,
     generation: number,
     attempt: number,
   ): Promise<void> {
+    if (
+      !this.isStarted() ||
+      this.generation !== generation ||
+      !this.isActive(entry.id, generation)
+    ) {
+      return;
+    }
     const result = await sendSyncRequest({
       operationId: entry.id,
       request: entry.request,
@@ -122,8 +133,11 @@ export class SyncOutbox {
       void this.send(entry, generation, attempt + 1);
       return;
     }
-    this.retry = this.options.timer.setTimeout(() => {
-      this.retry = null;
+    const active = this.active;
+    if (!active) return;
+    active.retry = this.options.timer.setTimeout(() => {
+      if (this.active !== active) return;
+      active.retry = null;
       void this.send(entry, generation, attempt + 1);
     }, delay);
   }

@@ -5,48 +5,49 @@ import {
   type StreamFailure,
 } from "../stream-supervisor.ts";
 
-export interface SyncFeedEntry {
+export interface SyncFeedEntry<TData = unknown> {
   pos: number;
   prev: number;
-  data: unknown;
+  data: TData;
 }
 
-export interface SyncFeedPort {
+export interface SyncFeedPort<TData = unknown> {
   applied(): number | Promise<number>;
   apply(
-    entry: SyncFeedEntry,
+    entry: SyncFeedEntry<TData>,
     expectedApplied: number,
   ): boolean | Promise<boolean>;
 }
 
-export interface SyncFeedTransport {
-  read(after: number, signal: AbortSignal): Promise<SyncFeedEntry[]>;
+export interface SyncFeedTransport<TData = unknown> {
+  read(after: number, signal: AbortSignal): Promise<SyncFeedEntry<TData>[]>;
   watch(input: {
     after: number;
     signal: AbortSignal;
     connected(): void;
-    entry(entry: SyncFeedEntry): void | Promise<void>;
+    activity(): void;
+    entry(entry: SyncFeedEntry<TData>): void | Promise<void>;
   }): Promise<void>;
 }
 
 export class SyncFeedProtocolError extends Error {}
 
-export interface SyncFeedConsumerOptions {
-  port: SyncFeedPort;
-  transport: SyncFeedTransport;
+export interface SyncFeedConsumerOptions<TData = unknown> {
+  port: SyncFeedPort<TData>;
+  transport: SyncFeedTransport<TData>;
   retryDelay: (failures: number, failure: StreamFailure) => number;
   onFailure?: (failure: StreamFailure) => void;
   onProtocolError?: (error: SyncFeedProtocolError) => void;
   clock?: Partial<StreamClock>;
 }
 
-export class SyncFeedConsumer {
+export class SyncFeedConsumer<TData = unknown> {
   private readonly supervisor: StreamSupervisor;
-  private readonly port: SyncFeedPort;
-  private readonly transport: SyncFeedTransport;
+  private readonly port: SyncFeedPort<TData>;
+  private readonly transport: SyncFeedTransport<TData>;
   private serial = Promise.resolve();
 
-  constructor(options: SyncFeedConsumerOptions) {
+  constructor(options: SyncFeedConsumerOptions<TData>) {
     this.port = options.port;
     this.transport = options.transport;
     this.supervisor = new StreamSupervisor({
@@ -81,41 +82,66 @@ export class SyncFeedConsumer {
       connected: () => {
         this.supervisor.connected(attempt);
       },
-      entry: (entry) => this.queue(entry, attempt),
+      activity: () => {
+        this.supervisor.noteActivity(attempt);
+      },
+      entry: (entry) => {
+        this.supervisor.noteActivity(attempt);
+        return this.queue(entry, attempt);
+      },
     });
     this.supervisor.reconnect(attempt);
   }
 
-  private queue(entry: SyncFeedEntry, attempt: StreamAttempt): Promise<void> {
+  private queue(
+    entry: SyncFeedEntry<TData>,
+    attempt: StreamAttempt,
+  ): Promise<void> {
     const next = this.serial.then(() => this.consume(entry, attempt));
     this.serial = next.catch(() => undefined);
     return next;
   }
 
   private async consume(
-    entry: SyncFeedEntry,
+    entry: SyncFeedEntry<TData>,
     attempt: StreamAttempt,
-    canRead = true,
   ): Promise<void> {
     if (!attempt.isCurrent()) return;
-    const applied = await this.port.applied();
+    let applied = await this.port.applied();
     if (!attempt.isCurrent() || entry.pos <= applied) return;
-    if (entry.prev !== applied) {
-      if (!canRead) {
-        this.protocolError("gap remained after peer read");
-        return;
-      }
+    while (entry.prev !== applied && entry.pos > applied) {
       const entries = await this.transport.read(applied, attempt.signal);
       if (!attempt.isCurrent()) return;
       if (entries.length === 0) {
         this.protocolError("peer read did not fill feed gap");
         return;
       }
+      let progress = false;
       for (const missing of entries) {
-        await this.consume(missing, attempt, false);
+        if (!attempt.isCurrent()) return;
+        if (missing.pos <= applied) continue;
+        if (missing.prev !== applied) {
+          this.protocolError("peer read returned a broken chain");
+          return;
+        }
+        if (!(await this.apply(missing, applied, attempt))) return;
+        applied = await this.port.applied();
+        progress = true;
+        if (entry.pos <= applied) return;
       }
-      return this.consume(entry, attempt, false);
+      if (!progress) {
+        this.protocolError("peer read made no progress");
+        return;
+      }
     }
+    await this.apply(entry, applied, attempt);
+  }
+
+  private async apply(
+    entry: SyncFeedEntry<TData>,
+    applied: number,
+    attempt: StreamAttempt,
+  ): Promise<boolean> {
     let committed: boolean;
     try {
       committed = await this.port.apply(entry, applied);
@@ -123,13 +149,15 @@ export class SyncFeedConsumer {
       if (error instanceof SyncFeedProtocolError) {
         this.supervisor.stop();
         this.onProtocolError?.(error);
-        return;
+        return false;
       }
       throw error;
     }
     if (!committed && attempt.isCurrent()) {
       this.protocolError("persistent apply did not advance expected position");
+      return false;
     }
+    return committed;
   }
 
   private protocolError(message: string): void {
