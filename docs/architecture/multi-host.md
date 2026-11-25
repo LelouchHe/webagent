@@ -162,9 +162,10 @@ an unexplainable `prev` are explicit protocol failures for that link.
 
 Business state lives only in `deliveries`: `queued`, `delivered`, or `failed`,
 plus the failure reason. A message or report outbox row points at its delivery
-with `delivery_id`. A receipt has no delivery of its own. Hand-off state is
-separate local transport metadata on `outbox` (`pending`, `handed_off`,
-`rejected`); it is never part of the immutable wire data.
+with `delivery_id`. A receipt has no delivery of its own. Outbox rows are
+immutable. Hand-off is represented only by the per-link `pushed_pos` cursor;
+an exact `202`, current-head receipt, or authenticated rejection advances it.
+Credential or link failure does not.
 
 One authenticated link apply has four outcomes:
 

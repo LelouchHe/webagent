@@ -53,7 +53,9 @@ code allowed to advance `applied`.
 The outbox primitive keeps one active entry, retries it with the same operation
 id, and separates request state from the local result. A normal wake does not
 clear an active retry. `handedOff(entryId)` or stop invalidates the current
-generation and clears its timer before the next entry can start. A response
+generation and clears its timer before the next entry can start. In the
+injected persistence port, hand-off is a monotonic `pushed_pos` update rather
+than mutable outbox-row state. A response
 that arrives after hand-off reaches the old callback but cannot call `finish`
 for that entry.
 

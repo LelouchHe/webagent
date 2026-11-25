@@ -419,10 +419,7 @@ describe("dormant link sync handlers", () => {
       store.getOutbox(original.entry_id)?.delivery_id,
       outgoingDelivery.id,
     );
-    assert.equal(
-      store.getOutbox(original.entry_id)?.handoff_status,
-      "handed_off",
-    );
+    assert.equal(store.getOutboxPushCursor("child", "owner"), original.pos);
     assert.equal(
       store.getCollaborationDelivery(outgoingDelivery.id)?.status,
       "failed",

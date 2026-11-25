@@ -21,6 +21,97 @@ describe("link outbox", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("never updates outbox rows after insert", () => {
+    const deliveryId = createOutgoingDelivery(store, dir).deliveryId;
+    store["db"].exec(`
+      CREATE TRIGGER reject_outbox_update
+      BEFORE UPDATE ON outbox
+      BEGIN
+        SELECT RAISE(ABORT, 'outbox_was_updated');
+      END;
+    `);
+    const entry = store.enqueueOutbox({
+      remoteRole: "child",
+      remoteHost: "owner",
+      category: "message",
+      deliveryId,
+      data: { body: "work" },
+    });
+    const effects = applyReceipt(
+      store,
+      "child",
+      "owner",
+      entry.entry_id,
+      "delivered",
+    );
+    assert.deepEqual(effects.pushCursorPos, [entry.pos]);
+    assert.equal(store.getOutboxPushCursor("child", "owner"), entry.pos);
+  });
+
+  it("advances the push cursor for 202 and advances monotonically", () => {
+    const deliveryId = createOutgoingDelivery(store, dir).deliveryId;
+    const entry = store.enqueueOutbox({
+      remoteRole: "child",
+      remoteHost: "owner",
+      category: "message",
+      deliveryId,
+      data: { body: "work" },
+    });
+    assert.equal(
+      store.advanceOutboxPushCursor("child", "owner", entry.entry_id),
+      entry.pos,
+    );
+    assert.equal(
+      store.advanceOutboxPushCursor("child", "owner", entry.entry_id),
+      null,
+    );
+    assert.equal(store.getOutboxPushCursor("child", "owner"), entry.pos);
+  });
+
+  it("does not advance on a credential failure or after a late result", () => {
+    const deliveryId = createOutgoingDelivery(store, dir).deliveryId;
+    const entry = store.enqueueOutbox({
+      remoteRole: "child",
+      remoteHost: "owner",
+      category: "message",
+      deliveryId,
+      data: { body: "work" },
+    });
+    assert.equal(store.getOutboxPushCursor("child", "owner"), 0);
+    assert.equal(
+      store.advanceOutboxPushCursor("child", "owner", entry.entry_id),
+      entry.pos,
+    );
+    assert.equal(
+      store.advanceOutboxPushCursor("child", "owner", entry.entry_id),
+      null,
+    );
+    assert.equal(store.getOutboxPushCursor("child", "owner"), entry.pos);
+  });
+
+  it("advances on authenticated rejection and fails the delivery", () => {
+    const deliveryId = createOutgoingDelivery(store, dir).deliveryId;
+    const entry = store.enqueueOutbox({
+      remoteRole: "child",
+      remoteHost: "owner",
+      category: "message",
+      deliveryId,
+      data: { body: "work" },
+    });
+    const effects = store.rejectOutboxHead(
+      "child",
+      "owner",
+      entry.entry_id,
+      "link_rejected",
+    );
+    assert.deepEqual(effects.deliveryStatusIds, [deliveryId]);
+    assert.deepEqual(effects.pushCursorPos, [entry.pos]);
+    assert.equal(
+      store.getCollaborationDelivery(deliveryId)?.failure_reason,
+      "link_rejected",
+    );
+  });
+
   it("assigns pos and prev by authenticated link direction", () => {
     const firstDelivery = createOutgoingDelivery(store, dir).deliveryId;
     const oppositeDelivery = createOutgoingDelivery(
@@ -114,7 +205,8 @@ describe("link outbox", () => {
     assert.deepEqual(failed.deliveryStatusIds, [deliveryId]);
     assert.deepEqual(lateDelivered.deliveryStatusIds, []);
     assert.equal(store.getOutbox(entry.entry_id)?.delivery_id, deliveryId);
-    assert.equal(store.getOutbox(entry.entry_id)?.handoff_status, "handed_off");
+    assert.equal(store.getOutboxPushCursor("child", "owner"), entry.pos);
+    assert.equal(store.getOutbox(entry.entry_id)?.delivery_id, deliveryId);
     assert.deepEqual(
       {
         status: store.getCollaborationDelivery(deliveryId)?.status,
@@ -197,7 +289,7 @@ describe("link outbox", () => {
       drainTaskIds: [],
       deliveryStatusIds: [],
       outboxEntryIds: [],
-      handoffEntryIds: [],
+      pushCursorPos: [],
     });
     assert.throws(
       () =>
@@ -325,7 +417,7 @@ describe("link outbox", () => {
       () => applyReceipt(store, "child", "owner", entry.entry_id, "delivered"),
       /delivery_state_write_failed/,
     );
-    assert.equal(store.getOutbox(entry.entry_id)?.handoff_status, "pending");
+    assert.equal(store.getOutboxPushCursor("child", "owner"), 0);
     assert.equal(store.getCollaborationDelivery(deliveryId)?.status, "queued");
   });
 
@@ -351,7 +443,7 @@ describe("link outbox", () => {
       () => applyReceipt(store, "child", "owner", entry.entry_id, "delivered"),
       /link_delivery_missing/,
     );
-    assert.equal(store.getOutbox(entry.entry_id)?.handoff_status, "pending");
+    assert.equal(store.getOutboxPushCursor("child", "owner"), 0);
   });
   it("writes inbound claim and rejection receipts atomically", () => {
     store.createTask("target", dir, "auto", "mock", "target-session");
@@ -653,8 +745,8 @@ describe("link outbox", () => {
     const insert = store["db"].prepare(
       `INSERT INTO outbox
          (pos, entry_id, remote_role, remote_host, prev, category,
-          data_json, handoff_status, delivery_id, created_at)
-       VALUES (?, ?, 'child', 'owner', 0, ?, '{}', 'pending', ?, 1)`,
+          data_json, delivery_id, created_at)
+       VALUES (?, ?, 'child', 'owner', 0, ?, '{}', ?, 1)`,
     );
     assert.throws(
       () => insert.run(10, "missing-fk", "message", "missing-delivery"),

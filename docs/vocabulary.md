@@ -106,7 +106,7 @@ entity; they name the runtime's bookkeeping.
 | **watch** | The live request for a feed. `watch(after)` registers first, catches up, and then pushes future committed entries without an acknowledgement protocol. |
 | **outbox cursor** | This instance's durable `applied_pos` in the other instance's outbox, stored once per link in `outbox_cursors`. It is a feed position, not an acknowledgement. |
 | **receipt** | A delivery-state fact sent back over the source link. It CASes the referenced sender delivery and never becomes agent delivery work. |
-| **hand-off** | Local transport progress: a push has durably reached `202` or a receipt arrived for its entry, so the head may release the next outbox row. It is distinct from business state in `deliveries`. |
+| **hand-off** | Push cursor advancement: an exact `202`, a current-head receipt, or an authenticated rejection advances the link's `pushed_pos`, so the pump may send the next immutable outbox row. It is distinct from business state in `deliveries`. |
 
 The transport `outbox` is unrelated to the product **Inbox** exposed by
 `/api/v1/messages`, whose external messages are consumed to create or address

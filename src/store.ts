@@ -264,8 +264,6 @@ export interface CollaborationDeliveryRow {
 
 export type LinkRemoteRole = "parent" | "child";
 export type OutboxCategory = "message" | "report" | "receipt";
-export type OutboxHandoffStatus = "pending" | "handed_off" | "rejected";
-
 export interface OutboxRow {
   pos: number;
   entry_id: string;
@@ -274,7 +272,6 @@ export interface OutboxRow {
   prev: number;
   category: OutboxCategory;
   data_json: string;
-  handoff_status: OutboxHandoffStatus;
   delivery_id: string | null;
   created_at: number;
 }
@@ -283,7 +280,7 @@ export interface LinkApplyEffects {
   drainTaskIds: string[];
   deliveryStatusIds: string[];
   outboxEntryIds: string[];
-  handoffEntryIds: string[];
+  pushCursorPos: number[];
 }
 
 export type OutboxInput =
@@ -325,7 +322,7 @@ function emptyLinkApplyEffects(): LinkApplyEffects {
     drainTaskIds: [],
     deliveryStatusIds: [],
     outboxEntryIds: [],
-    handoffEntryIds: [],
+    pushCursorPos: [],
   };
 }
 
@@ -963,8 +960,6 @@ export class Store {
         prev INTEGER NOT NULL,
         category TEXT NOT NULL CHECK (category IN ('message', 'report', 'receipt')),
         data_json TEXT NOT NULL,
-        handoff_status TEXT NOT NULL DEFAULT 'pending'
-          CHECK (handoff_status IN ('pending', 'handed_off', 'rejected')),
         delivery_id TEXT REFERENCES deliveries(id),
         created_at INTEGER NOT NULL
         CHECK (
@@ -982,6 +977,7 @@ export class Store {
         remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
         remote_host TEXT NOT NULL,
         applied_pos INTEGER NOT NULL DEFAULT 0,
+        pushed_pos INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (remote_role, remote_host)
       );
     `);
@@ -3238,8 +3234,8 @@ export class Store {
       );
       this.db
         .prepare(
-          `INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos)
-           VALUES (?, ?, ?)
+          `INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)
+           VALUES (?, ?, ?, 0)
            ON CONFLICT (remote_role, remote_host)
            DO UPDATE SET applied_pos = excluded.applied_pos`,
         )
@@ -3268,6 +3264,92 @@ export class Store {
     return this.db
       .prepare("SELECT * FROM outbox WHERE entry_id = ?")
       .get(entryId) as OutboxRow | undefined;
+  }
+
+  getOutboxPushCursor(remoteRole: LinkRemoteRole, remoteHost: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT pushed_pos FROM outbox_cursors
+         WHERE remote_role = ? AND remote_host = ?`,
+      )
+      .get(remoteRole, remoteHost) as { pushed_pos: number } | undefined;
+    return row?.pushed_pos ?? 0;
+  }
+
+  advanceOutboxPushCursor(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    entryId: string,
+  ): number | null {
+    return this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          `SELECT pos FROM outbox
+           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?
+             AND category <> 'receipt'`,
+        )
+        .get(remoteRole, remoteHost, entryId) as { pos: number } | undefined;
+      if (!row) throw new Error("outbox_entry_not_found");
+      const previous = this.db
+        .prepare(
+          `SELECT pushed_pos FROM outbox_cursors
+           WHERE remote_role = ? AND remote_host = ?`,
+        )
+        .get(remoteRole, remoteHost) as { pushed_pos: number } | undefined;
+      this.db
+        .prepare(
+          `INSERT INTO outbox_cursors
+             (remote_role, remote_host, applied_pos, pushed_pos)
+           VALUES (?, ?, 0, ?)
+           ON CONFLICT (remote_role, remote_host) DO NOTHING`,
+        )
+        .run(remoteRole, remoteHost, row.pos);
+      const update = this.db
+        .prepare(
+          `UPDATE outbox_cursors SET pushed_pos = ?
+           WHERE remote_role = ? AND remote_host = ? AND pushed_pos < ?`,
+        )
+        .run(row.pos, remoteRole, remoteHost, row.pos);
+      return previous === undefined || update.changes === 1 ? row.pos : null;
+    })();
+  }
+
+  rejectOutboxHead(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    entryId: string,
+    failureReason: string,
+  ): LinkApplyEffects {
+    return this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          `SELECT entry_id, pos, delivery_id FROM outbox
+           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?
+             AND category <> 'receipt'`,
+        )
+        .get(remoteRole, remoteHost, entryId) as
+        | { entry_id: string; pos: number; delivery_id: string | null }
+        | undefined;
+      if (!row?.delivery_id) throw new Error("outbox_entry_not_found");
+      const changed = this.transitionDeliveryStatusInTransaction(
+        row.delivery_id,
+        "queued",
+        "failed",
+        Date.now(),
+        failureReason,
+      );
+      const pushedPos = this.advanceOutboxPushCursor(
+        remoteRole,
+        remoteHost,
+        entryId,
+      );
+      return {
+        drainTaskIds: [],
+        deliveryStatusIds: changed ? [row.delivery_id] : [],
+        outboxEntryIds: [],
+        pushCursorPos: pushedPos === null ? [] : [pushedPos],
+      };
+    })();
   }
 
   private getInboundLinkDelivery(
@@ -3437,35 +3519,17 @@ export class Store {
         Date.now(),
         input.failureReason,
       );
-    const handedOff = this.db
-      .prepare(
-        `UPDATE outbox SET handoff_status = 'handed_off'
-         WHERE entry_id = ? AND handoff_status = 'pending'`,
-      )
-      .run(row.entry_id).changes;
-    if (handedOff === 1) effects.handoffEntryIds.push(row.entry_id);
+    const pushedPos = this.advanceOutboxPushCursor(
+      row.remote_role,
+      row.remote_host,
+      row.entry_id,
+    );
+    if (pushedPos !== null) effects.pushCursorPos.push(pushedPos);
     if (changed || terminal) {
       effects.deliveryStatusIds.push(row.delivery_id);
       return { known: true, changed: true, effects };
     }
     return { known: true, changed: false, effects };
-  }
-
-  markOutboxHandoff(
-    entryId: string,
-    expected: OutboxHandoffStatus,
-    next: OutboxHandoffStatus,
-  ): boolean {
-    if (expected !== "pending" || next === "pending") return false;
-    return (
-      this.db
-        .prepare(
-          `UPDATE outbox
-           SET handoff_status = ?
-           WHERE entry_id = ? AND handoff_status = ?`,
-        )
-        .run(next, entryId, expected).changes === 1
-    );
   }
 
   private enqueueOutboxInTransaction(input: {

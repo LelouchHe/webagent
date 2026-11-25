@@ -8,6 +8,7 @@ import {
 export interface SyncOutboxEntry<TRequest = unknown> {
   id: string;
   request: TRequest;
+  position: number;
 }
 
 export interface SyncOutboxPort<TRequest = unknown, TResponse = unknown> {

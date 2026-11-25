@@ -400,8 +400,11 @@ describe("shared/sync", () => {
     for (const ordering of ["wake", "handedOff", "stop"] as const) {
       const clock = new FakeClock();
       const sent: string[] = [];
-      let head: { id: string; request: { body: string } } | undefined = {
+      let head:
+        | { id: string; position: number; request: { body: string } }
+        | undefined = {
         id: "one",
+        position: 1,
         request: { body: "one" },
       };
       const outbox = new SyncOutbox<{ body: string }>({
@@ -423,7 +426,7 @@ describe("shared/sync", () => {
       await waitUntil(() => sent.length === 1 && clock.size() > 0);
       if (ordering === "wake") outbox.wake();
       if (ordering === "handedOff") {
-        head = { id: "two", request: { body: "two" } };
+        head = { id: "two", position: 2, request: { body: "two" } };
         outbox.handedOff("one");
         assert.equal(clock.size(), 0);
       }
@@ -448,8 +451,8 @@ describe("shared/sync", () => {
     for (const lateStatus of [202, 409]) {
       const clock = new FakeClock();
       const queue = [
-        { id: "one", request: { body: "one" } },
-        { id: "two", request: { body: "two" } },
+        { id: "one", position: 1, request: { body: "one" } },
+        { id: "two", position: 2, request: { body: "two" } },
       ];
       const resolvers = new Map<
         string,
@@ -491,6 +494,91 @@ describe("shared/sync", () => {
       assert.equal(finished.includes("one"), false);
       outbox.stop();
     }
+  });
+
+  it("resumes after the persisted push cursor and safely replays a reset cursor", async () => {
+    const clock = new FakeClock();
+    let pushedPos = 5;
+    const rows = [
+      { id: "five", position: 5, request: { body: "five" } },
+      { id: "six", position: 6, request: { body: "six" } },
+    ];
+    const sent: string[] = [];
+    const accepted = new Set<string>(["five"]);
+    const makeOutbox = () =>
+      new SyncOutbox<{ body: string }>({
+        port: {
+          next: () => rows.find((row) => row.position > pushedPos),
+          finish: (entry, result) => {
+            if (result.kind === "success" && result.status === 202) {
+              pushedPos = Math.max(pushedPos, entry.position);
+              accepted.add(entry.id);
+              return true;
+            }
+            return false;
+          },
+        },
+        transport: {
+          send: async (operationId) => {
+            sent.push(operationId);
+            return {
+              status: 202,
+              body: { duplicate: accepted.has(operationId) },
+            };
+          },
+        },
+        timer: clock.api,
+        timeoutMs: 10_000,
+        retryDelay: () => 0,
+      });
+
+    const first = makeOutbox();
+    first.start();
+    await waitUntil(() => pushedPos === 6);
+    first.stop();
+    const resumed = makeOutbox();
+    resumed.start();
+    await Promise.resolve();
+    assert.deepEqual(sent, ["six"]);
+    resumed.stop();
+
+    pushedPos = 0;
+    const replay = makeOutbox();
+    replay.start();
+    await waitUntil(() => sent.includes("five") && pushedPos === 6);
+    assert.deepEqual(accepted, new Set(["five", "six"]));
+    replay.stop();
+  });
+
+  it("does not advance the push cursor on a credential failure", async () => {
+    const clock = new FakeClock();
+    let pushedPos = 0;
+    const entry = {
+      id: "credential-check",
+      position: 7,
+      request: { body: "work" },
+    };
+    const outbox = new SyncOutbox<{ body: string }>({
+      port: {
+        next: () => (pushedPos < entry.position ? entry : undefined),
+        finish: (_entry, result) => {
+          if (result.kind === "rejected" && result.status === 401) return false;
+          if (result.kind === "success") pushedPos = entry.position;
+          return true;
+        },
+      },
+      transport: {
+        send: async () => ({ status: 401, body: { error: "credential" } }),
+      },
+      timer: clock.api,
+      timeoutMs: 1_000,
+      retryDelay: () => 100,
+    });
+    outbox.start();
+    await waitUntil(() => clock.size() > 0);
+    assert.equal(pushedPos, 0);
+    outbox.stop();
+    assert.equal(clock.size(), 0);
   });
 
   it("enforces the shared/sync dependency boundary in lint", async () => {

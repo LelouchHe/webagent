@@ -27,7 +27,7 @@ export interface LinkPushResponse {
 export interface LinkSyncEffectCallbacks {
   drainTask?(taskId: string): void;
   outboxChanged?(entryId: string): void;
-  handedOff?(entryId: string): void;
+  pushed?(position: number): void;
 }
 
 interface OwnerSubscription {
@@ -241,8 +241,8 @@ function executeLinkEffects(
   for (const entryId of effects.outboxEntryIds) {
     callbacks?.outboxChanged?.(entryId);
   }
-  for (const entryId of effects.handoffEntryIds) {
-    callbacks?.handedOff?.(entryId);
+  for (const position of effects.pushCursorPos) {
+    callbacks?.pushed?.(position);
   }
 }
 

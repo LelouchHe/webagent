@@ -154,9 +154,8 @@ table deliberately stores no title, timestamp, or status.
 One instance-local, immutable outbox for facts sent over links. Each entry
 is partitioned by `(remote_role, remote_host)`; `pos` is its global SQLite
 rowid and `prev` is the previous position in the same link. `prev` is assigned
-in the same transaction as the insert, starting at `0`. Entries are never
-changed after insert except for local handoff metadata. Business state lives on
-the referenced delivery.
+in the same transaction as the insert, starting at `0`. Entries are immutable
+after insert. Business state lives on the referenced delivery.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -167,7 +166,6 @@ the referenced delivery.
 | `prev` | INTEGER NOT NULL | Previous `pos` in the same link; first entry is `0` |
 | `category` | TEXT NOT NULL | `message`, `report`, or `receipt` |
 | `data_json` | TEXT NOT NULL | Immutable wire data |
-| `handoff_status` | TEXT NOT NULL | Push-only local metadata: `pending`, `handed_off`, or `rejected` |
 | `delivery_id` | TEXT NULL FK | Required for `message` / `report`; identifies the sender's durable delivery business state; null for receipts |
 | `created_at` | INTEGER NOT NULL | Local enqueue time |
 
@@ -187,8 +185,8 @@ cannot cascade away an entry that still needs to be delivered or acknowledged.
 | entry_id                     |          | id                           |
 | category: message|report     |-- exact --> status: queued/delivered/failed |
 | delivery_id                  |   id     | failure fields               |
-| handoff_status               |          +------------------------------+
 +------------------------------+
+                                          +------------------------------+
 
 receipt outbox rows have delivery_id = NULL. Their original entry id names an
 outbox row whose delivery_id is the business-state CAS target.
@@ -196,16 +194,20 @@ outbox row whose delivery_id is the business-state CAS target.
 
 ### `outbox_cursors`
 
-The consumer's durable `applied_pos` for each `(remote_role, remote_host)`.
-Feed apply writes the business fact first and advances this position in the
-same transaction. It has no foreign key, so task or `remote_tasks` deletion
-does not erase transfer progress.
+The durable progress for each `(remote_role, remote_host)`. `applied_pos` is
+how far this instance has consumed the peer's outbox; `pushed_pos` is how far
+the peer has durably accepted this instance's outbox. Feed apply advances
+`applied_pos` in the same transaction as its business fact. Push advances
+`pushed_pos` monotonically after an exact `202`, a current-head receipt, or an
+authenticated rejection. It has no foreign key, so task or `remote_tasks`
+deletion does not erase transfer progress.
 
 | Column | Type | Notes |
 |---|---|---|
 | `remote_role` | TEXT NOT NULL | Link direction |
 | `remote_host` | TEXT NOT NULL | Link name |
 | `applied_pos` | INTEGER NOT NULL | Last durably applied outbox position |
+| `pushed_pos` | INTEGER NOT NULL | Last durably accepted position in this instance's outbox |
 
 ### `events`
 
