@@ -139,12 +139,13 @@ edge. Task rows are never copied between instances.
 | `local_task_id` | TEXT NOT NULL FK | The Task row owned by this instance; cascade-delete removes the edge |
 | `remote_task_id` | TEXT NOT NULL | Opaque Task id on the other instance |
 | `remote_role` | TEXT NOT NULL | `parent` on the executor (local Task is the child) or `child` on the initiator |
-| `remote_host` | TEXT | Configured host name; required only for `child`, null otherwise |
+| `remote_host` | TEXT NOT NULL | Link name: configured host name for `child`, authenticated host token name for `parent` |
 
-CHECK constraints keep the direction-specific fields exclusive. Partial unique
-indexes `remote_tasks_one_parent` and `remote_tasks_one_child` permit
-at most one external parent per local Task and one local link per remote child
-id. The table deliberately stores no title, timestamp, or status.
+The link identity is `(remote_role, remote_host)`. Names in each direction are
+managed independently and may be equal. Partial unique indexes
+`remote_tasks_one_parent` and `remote_tasks_one_child` permit at most one
+external parent per local Task and one local link per remote child id. The
+table deliberately stores no title, timestamp, or status.
 
 ### `events`
 

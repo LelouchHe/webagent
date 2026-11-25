@@ -99,6 +99,7 @@ export class RegressionForwarder {
         if (error) reject(error);
         else resolve();
       });
+      this.server.closeAllConnections();
     });
   }
 

@@ -763,12 +763,7 @@ export class Store {
         local_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
         remote_task_id TEXT NOT NULL,
         remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
-        remote_host TEXT,
-        CHECK (
-          (remote_role = 'child' AND remote_host IS NOT NULL)
-          OR
-          (remote_role = 'parent' AND remote_host IS NULL)
-        )
+        remote_host TEXT NOT NULL
       );
       CREATE UNIQUE INDEX IF NOT EXISTS remote_tasks_one_parent
         ON remote_tasks(local_task_id)
@@ -1170,6 +1165,7 @@ export class Store {
     source: string;
     agentId: string;
     externalParentId: string;
+    remoteHost: string;
     title?: string;
     workflowStatus?: WorkflowStatus;
     creationAnchor: Record<string, unknown>;
@@ -1212,9 +1208,9 @@ export class Store {
         .prepare(
           `INSERT INTO remote_tasks
              (local_task_id, remote_task_id, remote_role, remote_host)
-             VALUES (?, ?, 'parent', NULL)`,
+             VALUES (?, ?, 'parent', ?)`,
         )
-        .run(input.id, input.externalParentId);
+        .run(input.id, input.externalParentId, input.remoteHost);
       this.saveEvent(input.id, "system_message", input.creationAnchor, {
         from_ref: "system",
       });
@@ -1276,6 +1272,26 @@ export class Store {
       )
       .get(taskId) as { remote_task_id: string } | undefined;
     return row?.remote_task_id ?? null;
+  }
+
+  getExternalParentLink(taskId: string):
+    | {
+        remote_task_id: string;
+        remote_host: string;
+      }
+    | undefined {
+    return this.db
+      .prepare(
+        `SELECT remote_task_id, remote_host FROM remote_tasks
+         WHERE local_task_id = ? AND remote_role = 'parent'
+         LIMIT 1`,
+      )
+      .get(taskId) as
+      | {
+          remote_task_id: string;
+          remote_host: string;
+        }
+      | undefined;
   }
 
   recordRemoteChild(

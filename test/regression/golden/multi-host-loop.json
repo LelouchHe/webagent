@@ -173,10 +173,11 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', NULL)",
+                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000002",
-                    "00000000-0000-4000-8001-000000000001"
+                    "00000000-0000-4000-8001-000000000001",
+                    "hub-connection"
                   ]
                 },
                 {
@@ -2035,7 +2036,7 @@
                 }
               ]
             ],
-            "reads": 117
+            "reads": 118
           }
         },
         {
@@ -2228,7 +2229,7 @@
                 }
               ]
             ],
-            "reads": 121
+            "reads": 122
           }
         }
       ]
@@ -2302,7 +2303,7 @@
                 }
               ]
             ],
-            "reads": 62
+            "reads": 63
           }
         }
       ]
@@ -2806,7 +2807,7 @@
                 }
               ]
             ],
-            "reads": 62
+            "reads": 63
           }
         },
         {

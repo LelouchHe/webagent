@@ -321,10 +321,11 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', NULL)",
+                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000002",
-                    "00000000-0000-4000-8001-000000000001"
+                    "00000000-0000-4000-8001-000000000001",
+                    "hub-connection"
                   ]
                 },
                 {
@@ -444,10 +445,11 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', NULL)",
+                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000003",
-                    "00000000-0000-4000-8001-000000000001"
+                    "00000000-0000-4000-8001-000000000001",
+                    "hub-connection"
                   ]
                 },
                 {
@@ -752,13 +754,13 @@
             "local_task_id": "00000000-0000-4000-8000-000000000002",
             "remote_task_id": "00000000-0000-4000-8001-000000000001",
             "remote_role": "parent",
-            "remote_host": null
+            "remote_host": "hub-connection"
           },
           {
             "local_task_id": "00000000-0000-4000-8000-000000000003",
             "remote_task_id": "00000000-0000-4000-8001-000000000001",
             "remote_role": "parent",
-            "remote_host": null
+            "remote_host": "hub-connection"
           }
         ],
         "hubLinks": [
@@ -830,7 +832,7 @@
                 }
               ]
             ],
-            "reads": 96
+            "reads": 97
           }
         },
         {
@@ -862,7 +864,7 @@
                 }
               ]
             ],
-            "reads": 56
+            "reads": 57
           }
         }
       ]

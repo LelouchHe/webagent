@@ -11,6 +11,7 @@ afterEach(async () => {
       return server instanceof RegressionForwarder
         ? server.close()
         : new Promise<void>((resolve) => {
+            server.closeAllConnections();
             server.close(() => {
               resolve();
             });
@@ -51,7 +52,9 @@ test("regression forwarder controls post responses and watch connections", async
   forwarder.disconnect("watch");
   await assert.rejects(reader.read());
   forwarder.connect("watch");
-  assert.equal((await fetch(`${forwarder.origin}/watch`)).status, 200);
+  const reconnectedWatch = await fetch(`${forwarder.origin}/watch`);
+  assert.equal(reconnectedWatch.status, 200);
+  await reconnectedWatch.body?.cancel();
 
   forwarder.holdNextResponse("post");
   let heldSettled = false;

@@ -1611,6 +1611,7 @@ export class TaskManager implements ObligationHost {
     cwd?: string;
     source: string;
     externalParentId: string;
+    remoteHost: string;
     title?: string;
     workflowStatus?: WorkflowStatus;
   }): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
@@ -1642,6 +1643,7 @@ export class TaskManager implements ObligationHost {
       source: input.source,
       agentId: input.agentId,
       externalParentId: input.externalParentId,
+      remoteHost: input.remoteHost,
       title: input.title,
       workflowStatus: input.workflowStatus,
       creationAnchor,

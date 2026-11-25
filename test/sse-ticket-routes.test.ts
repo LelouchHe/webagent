@@ -74,6 +74,7 @@ describe("SSE ticket flow", () => {
       source: "host",
       agentId: "mock",
       externalParentId: "hub-parent",
+      remoteHost: "hub",
       title: "Hub child",
       creationAnchor: {},
     });
@@ -83,6 +84,7 @@ describe("SSE ticket flow", () => {
       source: "host",
       agentId: "mock",
       externalParentId: "other-hub-parent",
+      remoteHost: "other-hub",
       title: "Other hub child",
       creationAnchor: {},
     });
@@ -104,6 +106,7 @@ describe("SSE ticket flow", () => {
             source: "host",
             agentId: "mock",
             externalParentId: input.parentId!,
+            remoteHost: "hub",
             title: "New subscription child",
             creationAnchor: {},
           });

@@ -16,6 +16,7 @@ export interface LegacyDatabaseReport {
   taskCount: number;
   hasRoot: boolean;
   pathLikeAgentKeys: string[];
+  outdatedRemoteTasks: boolean;
 }
 
 export class LegacyDatabaseError extends Error {
@@ -25,10 +26,15 @@ export class LegacyDatabaseError extends Error {
     // The message says what to do, not which signal fired: the operator's
     // action is the same either way. The signals stay on `report`.
     super(
-      "This database was created by an older WebAgent and cannot be used by " +
-        "this version; nothing in it was changed. Back up the data " +
-        "directory, then remove webagent.db (or the whole data directory) " +
-        "and restart to create a new one.",
+      report.outdatedRemoteTasks
+        ? "This database uses an older WebAgent remote_tasks link schema and " +
+            "cannot be used by this version; nothing in it was changed. " +
+            "Back up the data directory, then remove webagent.db (or the " +
+            "whole data directory) and restart to create a new one."
+        : "This database was created by an older WebAgent and cannot be used " +
+            "by this version; nothing in it was changed. Back up the data " +
+            "directory, then remove webagent.db (or the whole data " +
+            "directory) and restart to create a new one.",
     );
     this.name = "LegacyDatabaseError";
     this.report = report;
@@ -69,12 +75,24 @@ export function detectLegacyDatabase(
         .map((row) => row.value)
         .filter((key) => !AGENT_ID_PATTERN.test(key))
     : [];
+  const remoteHostColumn = tables.has("remote_tasks")
+    ? (
+        db.prepare("PRAGMA table_info(remote_tasks)").all() as Array<{
+          name: string;
+          notnull: number;
+        }>
+      ).find((column) => column.name === "remote_host")
+    : undefined;
+  const outdatedRemoteTasks =
+    tables.has("remote_tasks") && remoteHostColumn?.notnull !== 1;
 
   const report = {
     taskCount,
     hasRoot,
     pathLikeAgentKeys,
+    outdatedRemoteTasks,
   };
+  if (outdatedRemoteTasks) return report;
   if (report.taskCount === 0 || report.hasRoot) {
     return report.pathLikeAgentKeys.length > 0 ? report : null;
   }
