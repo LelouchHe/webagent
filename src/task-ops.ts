@@ -128,7 +128,7 @@ export function createTaskOpsCore(deps: {
         taskCreated = buildTaskCreatedSystemMessage({
           taskId: result.task.id,
           taskTitle,
-          agentId: result.task.agentId ?? "",
+          agentId: result.task.agentId,
           host: isRemote ? target.host : undefined,
           cwd: result.task.cwd,
           model: result.task.model,

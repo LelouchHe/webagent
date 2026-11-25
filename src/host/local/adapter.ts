@@ -299,7 +299,7 @@ export function createLocalTaskOps(deps: {
           task: {
             id: created.taskId,
             title: task.title,
-            agentId: store.getBindingAgent(task.id) ?? null,
+            agentId: requestedAgent,
             cwd: task.cwd,
             model: task.model,
             thinking: task.reasoning_effort,

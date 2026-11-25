@@ -130,7 +130,7 @@ describe("MCP Task tool host", () => {
           task: {
             id: "created-on-selected-host",
             title: command.input.title ?? null,
-            agentId: command.target.agentId ?? null,
+            agentId: command.target.agentId ?? "inherited",
             cwd: dir,
             model: null,
             thinking: null,
@@ -1882,7 +1882,7 @@ describe("MCP Task tool host", () => {
             task: {
               id: "unexpected",
               title: null,
-              agentId: null,
+              agentId: "unexpected",
               cwd: dir,
               model: null,
               thinking: null,

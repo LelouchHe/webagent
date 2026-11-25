@@ -194,7 +194,7 @@
                 }
               ]
             ],
-            "reads": 21
+            "reads": 20
           }
         },
         {
@@ -1157,11 +1157,12 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000003",
                     "00000000-0000-4000-8001-000000000001",
                     "00000000-0000-4000-8000-000000000002",
+                    "agent",
                     "dispatch remote wait",
                     1789333200000
                   ]
@@ -1169,7 +1170,7 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+                  "sql": "INSERT INTO message_projections\n         (message_id, task_id, role, created_at)\n         VALUES (?, ?, 'target', ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000003",
                     "00000000-0000-4000-8000-000000000002",
@@ -2130,11 +2131,12 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-00000000000b",
                     "00000000-0000-4000-8000-000000000002",
                     "00000000-0000-4000-8001-000000000001",
+                    "agent",
                     "Task status: done\nRemote work completed after restart.",
                     1789333200000
                   ]
@@ -2142,7 +2144,7 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+                  "sql": "INSERT INTO message_projections\n         (message_id, task_id, role, created_at)\n         VALUES (?, ?, 'target', ?)",
                   "args": [
                     "00000000-0000-4000-8001-00000000000b",
                     "00000000-0000-4000-8001-000000000001",
@@ -2468,11 +2470,12 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000004",
                     "00000000-0000-4000-8001-000000000001",
                     "00000000-0000-4000-8000-000000000002",
+                    "agent",
                     "replayed dispatch",
                     1789333200000
                   ]
@@ -2480,7 +2483,7 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+                  "sql": "INSERT INTO message_projections\n         (message_id, task_id, role, created_at)\n         VALUES (?, ?, 'target', ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000004",
                     "00000000-0000-4000-8000-000000000002",
@@ -2648,11 +2651,12 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000003",
                     "00000000-0000-4000-8000-000000000002",
                     "00000000-0000-4000-8001-000000000001",
+                    "agent",
                     "Task status: done\nReplay deduplicated.",
                     1789333200000
                   ]
@@ -2660,7 +2664,7 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+                  "sql": "INSERT INTO message_projections\n         (message_id, task_id, role, created_at)\n         VALUES (?, ?, 'target', ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000003",
                     "00000000-0000-4000-8001-000000000001",

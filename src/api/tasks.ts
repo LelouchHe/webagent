@@ -204,7 +204,7 @@ export interface TaskCreateResult {
   task: {
     id: string;
     title: string | null;
-    agentId: string | null;
+    agentId: string;
     cwd: string;
     model: string | null;
     thinking: string | null;

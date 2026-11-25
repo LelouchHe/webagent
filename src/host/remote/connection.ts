@@ -59,7 +59,7 @@ const TaskCreateResponseSchema = z.object({
   cwdDisplay: z.string(),
   parentId: z.string().nullable(),
   parentAgentId: z.string().nullable(),
-  agentId: z.string().nullable(),
+  agentId: z.string().min(1),
   title: z.string().nullable(),
   model: z.string().nullable(),
   thinking: z.string().nullable(),

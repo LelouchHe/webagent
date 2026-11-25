@@ -1258,11 +1258,12 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO messages\n           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n           VALUES (?, ?, ?, 'agent', ?, ?)",
+              "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000a",
                 "00000000-0000-4000-8000-000000000005",
                 "00000000-0000-4000-8000-000000000001",
+                "agent",
                 "hello parent",
                 1789333200000
               ]
@@ -1270,7 +1271,7 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'target', ?)",
+              "sql": "INSERT INTO message_projections\n         (message_id, task_id, role, created_at)\n         VALUES (?, ?, 'target', ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000a",
                 "00000000-0000-4000-8000-000000000001",
@@ -1354,7 +1355,7 @@
             }
           ]
         ],
-        "reads": 73
+        "reads": 71
       }
     },
     {

@@ -290,7 +290,7 @@ describe("S3 collaboration write routes", () => {
             task: {
               id: "unexpected",
               title: null,
-              agentId: null,
+              agentId: "unexpected",
               cwd: tmpDir,
               model: null,
               thinking: null,
