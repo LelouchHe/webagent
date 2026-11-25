@@ -3296,21 +3296,17 @@ export class Store {
            WHERE remote_role = ? AND remote_host = ?`,
         )
         .get(remoteRole, remoteHost) as { pushed_pos: number } | undefined;
-      this.db
+      const result = this.db
         .prepare(
           `INSERT INTO outbox_cursors
              (remote_role, remote_host, applied_pos, pushed_pos)
            VALUES (?, ?, 0, ?)
-           ON CONFLICT (remote_role, remote_host) DO NOTHING`,
+           ON CONFLICT (remote_role, remote_host)
+           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)
+           RETURNING pushed_pos`,
         )
-        .run(remoteRole, remoteHost, row.pos);
-      const update = this.db
-        .prepare(
-          `UPDATE outbox_cursors SET pushed_pos = ?
-           WHERE remote_role = ? AND remote_host = ? AND pushed_pos < ?`,
-        )
-        .run(row.pos, remoteRole, remoteHost, row.pos);
-      return previous === undefined || update.changes === 1 ? row.pos : null;
+        .get(remoteRole, remoteHost, row.pos) as { pushed_pos: number };
+      return (previous?.pushed_pos ?? 0) < result.pushed_pos ? row.pos : null;
     })();
   }
 
