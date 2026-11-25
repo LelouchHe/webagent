@@ -15,6 +15,15 @@ export interface RegressionClient {
   ): Promise<RestResponse>;
   instance(name: string): RegressionInstanceClient;
   restart(name: string, whileStopped?: () => Promise<Json>): Promise<Json>;
+  forwarder(name: string): RegressionForwarderControl;
+}
+
+export interface RegressionForwarderControl {
+  connect(channel: "post" | "watch"): void;
+  disconnect(channel: "post" | "watch"): void;
+  dropNextResponse(channel: "post" | "watch"): void;
+  holdNextResponse(channel: "post" | "watch"): void;
+  release(channel: "post" | "watch"): void;
 }
 
 export interface RegressionInstanceClient {
@@ -35,6 +44,7 @@ export interface RegressionContext extends RegressionClient {
 export interface RegressionInstanceContext {
   root: string;
   origin: string;
+  forwarders: Record<string, string>;
 }
 
 export interface RegressionInstanceSpec {
@@ -80,6 +90,7 @@ export interface ScenarioStep<State> {
 export interface RegressionScenario<State> {
   mock: MockBehavior;
   instances?: Record<string, RegressionInstanceSpec>;
+  forwarders?: Record<string, { target: string }>;
   setup(context: RegressionContext): Promise<State> | State;
   steps: (client: RegressionClient, state: State) => ScenarioStep<State>[];
 }
