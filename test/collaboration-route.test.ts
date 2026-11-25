@@ -287,13 +287,16 @@ describe("S3 collaboration write routes", () => {
         local: localHost,
         remote: {
           create: async () => ({
-            taskId: "unexpected",
-            facts: {
+            task: {
+              id: "unexpected",
               title: null,
               agentId: null,
               cwd: tmpDir,
               model: null,
               thinking: null,
+              parentId: null,
+              workflowStatus: "idle" as const,
+              source: "agent",
             },
           }),
         },

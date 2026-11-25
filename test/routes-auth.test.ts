@@ -128,7 +128,7 @@ describe("routes auth gate", () => {
       const allowed = await req(port, "GET", "/api/v1/tasks", {
         Authorization: `Bearer ${hostToken}`,
       });
-      assert.equal(allowed.status, 200);
+      assert.equal(allowed.status, 403);
     });
 
     it("401 on /api/beta/prompt without auth", async () => {

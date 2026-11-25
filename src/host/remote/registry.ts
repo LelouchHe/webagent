@@ -9,7 +9,6 @@ import type {
   TaskReadInput,
   TaskReadResult,
   TaskSendResult,
-  TaskWorkflowStatus,
 } from "../../api/tasks.ts";
 import {
   buildTaskHistoryQuery,
@@ -24,6 +23,7 @@ import {
 } from "../../api/tasks.ts";
 import { log } from "../../log.ts";
 import { HTTP_STATUS } from "../../http-status.ts";
+import { isWorkflowStatus } from "../../shared/workflow-status.ts";
 import {
   HostConnection,
   HostRequestError,
@@ -124,24 +124,22 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     const attempt = await connection.createTask(input);
     switch (attempt.kind) {
       case "success": {
-        const activation = attempt.result.activation;
-        if (activation) {
-          this.mirror(nameKey(host, attempt.result.taskId), {
-            id: attempt.result.taskId,
-            relation: "child",
-            host,
-            title: activation.title ?? attempt.result.taskId,
-            workflowStatus: activation.workflowStatus,
-          });
-        }
+        const { task } = attempt.result;
+        this.mirror(nameKey(host, task.id), {
+          id: task.id,
+          relation: "child",
+          host,
+          title: task.title ?? task.id,
+          workflowStatus: task.workflowStatus,
+        });
         try {
           const snapshot = await this.refreshChild(
             connection,
             host,
-            attempt.result.taskId,
+            task.id,
             () => true,
           );
-          const key = nameKey(host, attempt.result.taskId);
+          const key = nameKey(host, task.id);
           if (snapshot) {
             this.mirror(key, {
               ...(this.mirrors.get(key) ?? {}),
@@ -154,7 +152,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
         } catch (error) {
           hlog.warn("remote create snapshot failed", {
             host,
-            taskId: attempt.result.taskId,
+            taskId: task.id,
             error: String(error),
           });
         }
@@ -477,12 +475,6 @@ export class HostRegistry implements RemoteTaskCreateTransport {
 
 function nameKey(host: string, taskId: string): string {
   return `${host}\0${taskId}`;
-}
-
-function isWorkflowStatus(value: unknown): value is TaskWorkflowStatus {
-  return ["running", "idle", "waiting", "blocked", "done"].includes(
-    value as string,
-  );
 }
 
 export function remoteCatchupEvent(

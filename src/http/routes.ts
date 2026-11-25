@@ -50,6 +50,11 @@ import {
   type HostCollaborationCommand,
 } from "../api/collaboration.ts";
 import { isTaskCreateError } from "../api/tasks.ts";
+import { z } from "zod";
+
+const TaskCreateCoordinateSchema = z
+  .object({ agentId: z.string().optional(), host: z.string().optional() })
+  .passthrough();
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -3164,11 +3169,20 @@ export function createRequestHandler(
           source?: string;
           parentId?: string;
           title?: string;
-          agentId?: unknown;
-          host?: unknown;
+          agentId?: string;
+          host?: string;
         };
         try {
-          body = JSON.parse(await readBody(req)) as typeof body;
+          const raw = JSON.parse(await readBody(req)) as unknown;
+          const parsed = TaskCreateCoordinateSchema.safeParse(raw);
+          if (!parsed.success) {
+            const field = parsed.error.issues[0]?.path[0];
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: `${field === "host" ? "host" : "agentId"} must be a string`,
+            });
+            return;
+          }
+          body = raw as typeof body;
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
@@ -3210,26 +3224,26 @@ export function createRequestHandler(
               sseManager.subscribeHost(connectionId, body.parentId);
             }
           }
-          const activation = created.activation;
-          if (!activation) throw new Error("missing_create_activation");
+          const session = created.session;
+          if (!session) throw new Error("missing_create_session");
           json(res, HTTP_STATUS.CREATED, {
-            id: created.taskId,
-            cwd: activation.cwd,
-            cwdDisplay: activation.cwdDisplay,
-            parentId: activation.parentId,
-            parentAgentId: activation.parentAgentId,
-            agentId: activation.agentId,
-            title: activation.title,
+            id: created.task.id,
+            cwd: created.task.cwd,
+            cwdDisplay: session.cwdDisplay,
+            parentId: created.task.parentId,
+            parentAgentId: session.parentAgentId,
+            agentId: created.task.agentId,
+            title: created.task.title,
             ...(requestPrincipal?.scope === "host"
               ? {
-                  model: created.facts.model,
-                  thinking: created.facts.thinking,
+                  model: created.task.model,
+                  thinking: created.task.thinking,
                 }
               : {}),
-            workflowStatus: activation.workflowStatus,
-            source: activation.source,
-            configOptions: activation.configOptions,
-            agentCommands: activation.agentCommands,
+            workflowStatus: created.task.workflowStatus,
+            source: created.task.source,
+            configOptions: session.configOptions,
+            agentCommands: session.agentCommands,
             clientOpId: clientOpId ?? undefined,
           });
         } catch (err) {
@@ -3237,11 +3251,6 @@ export function createRequestHandler(
           if (isTaskCreateError(err)) {
             const classified = err;
             switch (classified.kind) {
-              case "agent_id_type":
-                json(res, HTTP_STATUS.BAD_REQUEST, {
-                  error: "agentId must be a string",
-                });
-                return;
               case "input":
                 json(res, HTTP_STATUS.BAD_REQUEST, {
                   error: classified.clientMessage,

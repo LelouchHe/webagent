@@ -75,13 +75,16 @@ function registeredTools(
       status: "idle" as const,
     }),
     create: async () => ({
-      taskId: "child",
-      facts: {
+      task: {
+        id: "child",
         title: "child",
         agentId: "agent-a",
         cwd: "/tmp",
         model: null,
         thinking: null,
+        parentId: "current",
+        workflowStatus: "idle" as const,
+        source: "agent",
       },
     }),
     send: async () => ({

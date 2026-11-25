@@ -256,13 +256,16 @@ describe("createMcpEndpoint", () => {
     create: async (...args: unknown[]) => {
       calls.push({ kind: "create", args });
       return {
-        taskId: "task-3",
-        facts: {
+        task: {
+          id: "task-3",
           title: "task-3",
           agentId: "agent-a",
           cwd: "/tmp",
           model: null,
           thinking: null,
+          parentId: "current",
+          workflowStatus: "idle" as const,
+          source: "agent",
         },
       };
     },

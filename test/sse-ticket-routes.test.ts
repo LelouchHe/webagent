@@ -108,23 +108,20 @@ describe("SSE ticket flow", () => {
             creationAnchor: {},
           });
           return {
-            taskId: "new-subscription-child",
-            facts: {
+            task: {
+              id: "new-subscription-child",
               title: "New subscription child",
               agentId: "mock",
               cwd: tmpDir,
               model: null,
               thinking: null,
-            },
-            activation: {
-              cwd: tmpDir,
-              cwdDisplay: tmpDir,
-              title: "New subscription child",
               parentId: null,
-              parentAgentId: null,
-              agentId: "mock",
               workflowStatus: "idle" as const,
               source: "host",
+            },
+            session: {
+              cwdDisplay: tmpDir,
+              parentAgentId: null,
               configOptions: [],
               agentCommands: { epoch: "test", revision: 0, commands: [] },
             },

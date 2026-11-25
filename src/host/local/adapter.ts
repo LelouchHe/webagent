@@ -29,7 +29,6 @@ import type {
   TaskCreateResult,
 } from "../../api/tasks.ts";
 import {
-  TaskAgentIdTypeError,
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
   TaskCreateInputError,
@@ -272,12 +271,6 @@ export function createLocalTaskOps(deps: {
     ): Promise<TaskCreateResult> {
       if (caller.kind === "host") {
         const requestedAgent = input.agentId;
-        if (
-          requestedAgent !== undefined &&
-          typeof requestedAgent !== "string"
-        ) {
-          throw new TaskAgentIdTypeError();
-        }
         if (requestedAgent === undefined) {
           throw new TaskAgentNotConfiguredError("");
         }
@@ -303,23 +296,20 @@ export function createLocalTaskOps(deps: {
         });
         const task = requireTask(created.taskId);
         return {
-          taskId: created.taskId,
-          facts: {
+          task: {
+            id: created.taskId,
             title: task.title,
             agentId: store.getBindingAgent(task.id) ?? null,
             cwd: task.cwd,
             model: task.model,
             thinking: task.reasoning_effort,
-          },
-          activation: {
-            cwd: task.cwd,
-            cwdDisplay: abbreviateHomePath(task.cwd),
-            title: task.title,
             parentId: task.parent_id,
-            parentAgentId: null,
-            agentId: store.getBindingAgent(task.id) ?? null,
             workflowStatus: task.workflow_status,
             source: task.source,
+          },
+          session: {
+            cwdDisplay: abbreviateHomePath(task.cwd),
+            parentAgentId: null,
             configOptions: [],
             agentCommands: tasks.getAgentCommands(created.taskId),
           },
@@ -342,9 +332,6 @@ export function createLocalTaskOps(deps: {
         }
       }
       const requestedAgent = input.agentId;
-      if (requestedAgent !== undefined && typeof requestedAgent !== "string") {
-        throw new TaskAgentIdTypeError();
-      }
       let targetAgentId: string;
       let targetBridge: DeliveryBridge;
       if (requestedAgent !== undefined) {
@@ -449,30 +436,26 @@ export function createLocalTaskOps(deps: {
       }
       if (agentCaller) authorize(agentCaller);
       const taskFacts = created.facts;
-      const createdAgentId = taskFacts.agentId;
       return {
-        taskId: created.taskId,
-        facts: {
+        task: {
+          id: created.taskId,
           title: taskFacts.title,
           agentId: taskFacts.agentId,
           cwd: agentCaller ? (cwd ?? taskFacts.cwd) : taskFacts.cwd,
           model: taskFacts.model,
           thinking: taskFacts.thinking,
+          parentId: taskFacts.parentId,
+          workflowStatus: taskFacts.workflowStatus,
+          source: taskFacts.source,
         },
         ...(!agentCaller
           ? {
-              activation: {
-                cwd: taskFacts.cwd,
+              session: {
                 cwdDisplay: abbreviateHomePath(taskFacts.cwd),
-                title: taskFacts.title,
-                parentId: taskFacts.parentId,
                 parentAgentId:
                   taskFacts.parentId !== null
                     ? (store.getBindingAgent(taskFacts.parentId) ?? null)
                     : null,
-                agentId: createdAgentId,
-                workflowStatus: taskFacts.workflowStatus,
-                source: taskFacts.source,
                 configOptions: created.configOptions,
                 agentCommands: tasks.getAgentCommands(created.taskId),
               },

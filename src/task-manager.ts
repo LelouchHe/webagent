@@ -62,6 +62,7 @@ import { buildTaskCreatedSystemMessage } from "./task-created-message.ts";
 import { canonicalCwd } from "./cwd-path.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { log } from "./log.ts";
+import type { TaskUpdateStatus } from "./shared/workflow-status.ts";
 import { TaskTreeLock, type TaskTreeLockRelease } from "./task-tree-lock.ts";
 
 const slog = log.scope("task");
@@ -4029,7 +4030,7 @@ export class TaskManager implements ObligationHost {
   // eslint-disable-next-line complexity -- one settlement selects local/account/external report ownership.
   settleAgentUpdate(
     targetTaskId: string,
-    status: "waiting" | "blocked" | "done",
+    status: TaskUpdateStatus,
     body: string,
     recordReport?: (report: {
       targetTaskId: string;

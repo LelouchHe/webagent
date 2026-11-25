@@ -9,6 +9,7 @@ import {
   buildTaskCreateDescription,
   buildTaskCreateHostDescription,
 } from "./task-create-description.ts";
+import { TASK_UPDATE_STATUSES } from "../shared/workflow-status.ts";
 import {
   agentStartError,
   configOverrideError,
@@ -252,9 +253,7 @@ export function registerMcpTools(
                 title,
                 cwd: cwd ?? undefined,
                 agentId: agent ?? undefined,
-                ...(remoteHost === undefined || remoteHost === null
-                  ? {}
-                  : { host: remoteHost }),
+                ...(remoteHost == null ? {} : { host: remoteHost as string }),
                 model: model ?? undefined,
                 thinking: thinking ?? undefined,
                 parentId: principal.taskId,
@@ -262,14 +261,12 @@ export function registerMcpTools(
                 source: "agent",
               },
             )
-          ).taskId,
+          ).task.id,
         });
       } catch (error) {
         if (isTaskCreateError(error)) {
           const classified = error;
           switch (classified.kind) {
-            case "agent_id_type":
-              throw new Error("agentId must be a string", { cause: error });
             case "agent_not_configured":
               throw new Error(unconfiguredAgentError(classified.agentId), {
                 cause: error,
@@ -373,7 +370,7 @@ export function registerMcpTools(
         "Any update satisfies the current turn's account check. The Task is not deleted or closed.",
       inputSchema: {
         status: z
-          .enum(["waiting", "blocked", "done"])
+          .enum(TASK_UPDATE_STATUSES)
           .describe(
             "`done`: the work is complete. `blocked`: progress needs the requester, a human, an external event, missing information, or permission. `waiting`: work continues without the requester, and a Task this one dispatched or its own background work will wake it.",
           ),

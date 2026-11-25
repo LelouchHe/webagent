@@ -18,6 +18,10 @@ import {
   type ExecutionBinding,
 } from "./execution-authority.ts";
 import type { CollaborationDeliveryStatus } from "./shared/delivery-status.ts";
+import type {
+  TaskUpdateStatus,
+  WorkflowStatus,
+} from "./shared/workflow-status.ts";
 
 /** Namespace WebAgent reserves for the per-task empty execution slot. */
 const EMPTY_EXECUTION_PREFIX = "no-execution:";
@@ -83,8 +87,7 @@ export interface TaskDelete {
   agentId: string | null;
 }
 
-export type WorkflowStatus =
-  "running" | "idle" | "waiting" | "blocked" | "done";
+export type { WorkflowStatus } from "./shared/workflow-status.ts";
 
 /** The system message a successful archive appends to the detached task. */
 export interface ArchiveSystemMessage {
@@ -3255,7 +3258,7 @@ export class Store {
    */
   recordAgentWorkflowUpdate(
     taskId: string,
-    status: Extract<WorkflowStatus, "waiting" | "blocked" | "done">,
+    status: TaskUpdateStatus,
     body: string,
     accountTargetTaskId: string | null,
     reason: "settled" | "fallback" | "waiting",

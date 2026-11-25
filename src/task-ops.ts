@@ -9,7 +9,6 @@ import type {
   TaskOps,
 } from "./api/tasks.ts";
 import {
-  TaskAgentIdTypeError,
   TaskCreateInputError,
   TaskRemoteCreatePartialSuccessError,
 } from "./api/tasks.ts";
@@ -21,17 +20,11 @@ import { randomUUID } from "node:crypto";
 import type { AgentEvent } from "./types.ts";
 
 function buildTarget(caller: TaskCreateCaller, input: TaskCreateInput) {
-  if (input.agentId !== undefined && typeof input.agentId !== "string") {
-    throw new TaskAgentIdTypeError();
-  }
   if (input.agentId?.includes("@")) {
     throw new TaskCreateInputError(
       "invalid_agent",
       "agentId must be a bare agent id",
     );
-  }
-  if (input.host !== undefined && typeof input.host !== "string") {
-    throw new TaskCreateInputError("invalid_host", "host must be a string");
   }
   const target: TaskCreateTarget = {
     agentId: input.agentId,
@@ -128,18 +121,18 @@ export function createTaskOpsCore(deps: {
         ReturnType<typeof buildTaskCreatedSystemMessage> | undefined;
       const prepareRecord = () => {
         if (caller.kind === "host" || !localParentId || !input.title) return;
-        if (result.facts.title === null) {
+        if (result.task.title === null) {
           throw new Error("task_create_facts_incomplete");
         }
-        taskTitle = result.facts.title;
+        taskTitle = result.task.title;
         taskCreated = buildTaskCreatedSystemMessage({
-          taskId: result.taskId,
+          taskId: result.task.id,
           taskTitle,
-          agentId: result.facts.agentId ?? "",
+          agentId: result.task.agentId ?? "",
           host: isRemote ? target.host : undefined,
-          cwd: result.facts.cwd,
-          model: result.facts.model,
-          thinking: result.facts.thinking,
+          cwd: result.task.cwd,
+          model: result.task.model,
+          thinking: result.task.thinking,
         });
         if (target.host === undefined) {
           store.saveEvent(localParentId, "system_message", taskCreated.data, {
@@ -157,17 +150,17 @@ export function createTaskOpsCore(deps: {
           }
           prepareRecord();
           if (taskCreated) {
-            store.recordRemoteChild(localParentId, result.taskId, remoteHost, {
+            store.recordRemoteChild(localParentId, result.task.id, remoteHost, {
               data: taskCreated.data,
               fromRef: caller.kind === "agent" ? "agent" : "user",
             });
           } else {
-            store.recordRemoteChild(localParentId, result.taskId, remoteHost);
+            store.recordRemoteChild(localParentId, result.task.id, remoteHost);
           }
         } catch (error) {
           throw new TaskRemoteCreatePartialSuccessError(
             remoteHost,
-            result.taskId,
+            result.task.id,
             { cause: error },
           );
         }
@@ -179,7 +172,7 @@ export function createTaskOpsCore(deps: {
         deps.broadcastTaskCreated?.({
           messageId: randomUUID(),
           sourceTaskId: localParentId,
-          targetTaskId: result.taskId,
+          targetTaskId: result.task.id,
           taskTitle,
           title: taskCreated.title,
           body: taskCreated.body,
@@ -188,22 +181,22 @@ export function createTaskOpsCore(deps: {
       if (
         !isRemote &&
         caller.kind !== "agent" &&
-        result.activation?.configOptions.length
+        result.session?.configOptions.length
       ) {
         deps.broadcastConfigUpdate?.({
           type: "config_option_update",
-          taskId: result.taskId,
-          configOptions: result.activation.configOptions,
+          taskId: result.task.id,
+          configOptions: result.session.configOptions,
         });
       }
-      if (caller.kind === "agent") return { ...result, activation: undefined };
-      if (isRemote && result.activation) {
+      if (caller.kind === "agent") return { ...result, session: undefined };
+      if (isRemote && result.session) {
         if (localParentId === undefined) throw new Error("parent_not_found");
         return {
           ...result,
-          activation: {
-            ...result.activation,
-            parentId: localParentId,
+          task: { ...result.task, parentId: localParentId },
+          session: {
+            ...result.session,
             parentAgentId: store.getBindingAgent(localParentId) ?? null,
           },
         };

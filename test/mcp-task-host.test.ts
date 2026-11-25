@@ -126,13 +126,16 @@ describe("MCP Task tool host", () => {
       async create(command) {
         targets.push(command.target);
         const result = {
-          taskId: "created-on-selected-host",
-          facts: {
+          task: {
+            id: "created-on-selected-host",
             title: command.input.title ?? null,
             agentId: command.target.agentId ?? null,
             cwd: dir,
             model: null,
             thinking: null,
+            parentId: null,
+            workflowStatus: "idle" as const,
+            source: "agent",
           },
         };
         return result;
@@ -195,7 +198,7 @@ describe("MCP Task tool host", () => {
         cwd: dir,
       },
     );
-    assert.ok(store.getTask(created.taskId));
+    assert.ok(store.getTask(created.task.id));
     assert.equal(remoteCalls, 0);
 
     await assert.rejects(
@@ -260,19 +263,19 @@ describe("MCP Task tool host", () => {
       },
     );
 
-    const task = store.getTask(created.taskId);
+    const task = store.getTask(created.task.id);
     assert.ok(task);
     assert.equal(task.parent_id, null);
     assert.equal(sessionsStarted, 0);
-    const binding = store.getCurrentExecutionBinding(created.taskId);
+    const binding = store.getCurrentExecutionBinding(created.task.id);
     assert.ok(binding);
     assert.equal(
-      isEmptyExecutionSlot(created.taskId, binding.agent_session_id),
+      isEmptyExecutionSlot(created.task.id, binding.agent_session_id),
       true,
     );
-    assert.deepEqual(store.getRemoteTasks(created.taskId), [
+    assert.deepEqual(store.getRemoteTasks(created.task.id), [
       {
-        local_task_id: created.taskId,
+        local_task_id: created.task.id,
         remote_task_id: "external-parent",
         remote_role: "parent",
         remote_host: null,
@@ -299,9 +302,9 @@ describe("MCP Task tool host", () => {
       },
     );
 
-    assert.equal(store.getTask(created.taskId)?.parent_id, null);
+    assert.equal(store.getTask(created.task.id)?.parent_id, null);
     assert.equal(
-      store.getRemoteTasks(created.taskId)[0]?.remote_task_id,
+      store.getRemoteTasks(created.task.id)[0]?.remote_task_id,
       "external-parent",
     );
   });
@@ -376,10 +379,10 @@ describe("MCP Task tool host", () => {
     );
     store["db"]
       .prepare("UPDATE tasks SET created_at = 0 WHERE id = ?")
-      .run(remote.taskId);
+      .run(remote.task.id);
     assert.deepEqual(store.deleteEmptyTasks(60), []);
-    assert.ok(store.getTask(remote.taskId));
-    const anchors = store.getEvents(remote.taskId);
+    assert.ok(store.getTask(remote.task.id));
+    const anchors = store.getEvents(remote.task.id);
     assert.equal(anchors.length, 1);
     assert.equal(anchors[0]?.type, "system_message");
     assert.equal(JSON.parse(anchors[0]?.data ?? "{}").kind, "task_created");
@@ -770,23 +773,20 @@ describe("MCP Task tool host", () => {
       async create(remoteHost, input) {
         calls.push({ remoteHost, input });
         return {
-          taskId: "remote-child",
-          facts: {
+          task: {
+            id: "remote-child",
             title: "Remote child",
             agentId: "test-agent",
             cwd: dir,
             model: null,
             thinking: null,
-          },
-          activation: {
-            cwd: dir,
-            cwdDisplay: dir,
-            title: "Remote child",
             parentId: null,
-            parentAgentId: null,
-            agentId: "test-agent",
-            workflowStatus: "idle",
+            workflowStatus: "idle" as const,
             source: "agent",
+          },
+          session: {
+            cwdDisplay: dir,
+            parentAgentId: null,
             configOptions: [],
             agentCommands: {
               epoch: "remote",
@@ -811,7 +811,7 @@ describe("MCP Task tool host", () => {
       },
     );
 
-    assert.equal(created.taskId, "remote-child");
+    assert.equal(created.task.id, "remote-child");
     assert.deepEqual(calls, [
       {
         remoteHost: "mini",
@@ -867,23 +867,20 @@ describe("MCP Task tool host", () => {
           "session-alpha-replaced",
         );
         return {
-          taskId: "remote-child",
-          facts: {
+          task: {
+            id: "remote-child",
             title: null,
             agentId: "test-agent",
             cwd: dir,
             model: null,
             thinking: null,
-          },
-          activation: {
-            cwd: dir,
-            cwdDisplay: dir,
-            title: null,
             parentId: null,
-            parentAgentId: null,
-            agentId: "test-agent",
-            workflowStatus: "idle",
+            workflowStatus: "idle" as const,
             source: "agent",
+          },
+          session: {
+            cwdDisplay: dir,
+            parentAgentId: null,
             configOptions: [],
             agentCommands: {
               epoch: "remote",
@@ -1028,23 +1025,20 @@ describe("MCP Task tool host", () => {
         local,
         remote: {
           create: async () => ({
-            taskId: "remote-created",
-            facts: {
+            task: {
+              id: "remote-created",
               title: "Effective remote child",
               agentId: "owner-agent",
               cwd: "/remote",
               model: null,
               thinking: null,
-            },
-            activation: {
-              cwd: "/remote",
-              cwdDisplay: "/remote",
-              title: "Effective remote child",
               parentId: null,
-              parentAgentId: null,
-              agentId: "owner-agent",
-              workflowStatus: "idle",
+              workflowStatus: "idle" as const,
               source: "agent",
+            },
+            session: {
+              cwdDisplay: "/remote",
+              parentAgentId: null,
               configOptions: [],
               agentCommands: { epoch: "remote", revision: 0, commands: [] },
             },
@@ -1835,13 +1829,16 @@ describe("MCP Task tool host", () => {
         local,
         remote: {
           create: async () => ({
-            taskId: "unexpected",
-            facts: {
+            task: {
+              id: "unexpected",
               title: null,
               agentId: null,
               cwd: dir,
               model: null,
               thinking: null,
+              parentId: null,
+              workflowStatus: "idle" as const,
+              source: "agent",
             },
           }),
         },
@@ -1863,7 +1860,7 @@ describe("MCP Task tool host", () => {
             source: "agent",
           },
         )
-      ).taskId,
+      ).task.id,
       "created-child",
     );
     assert.ok(createCall);
@@ -1927,7 +1924,7 @@ describe("MCP Task tool host", () => {
       );
       assert.equal(announced.length, 1);
       const event = announced[0];
-      assert.equal(event.taskId, created.taskId);
+      assert.equal(event.taskId, created.task.id);
       // `noteTaskCreated(taskId, title)` needs both, or the client can only
       // prove existence and has to leave the reference unknown.
       assert.equal(event.title, "Agent child");

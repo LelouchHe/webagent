@@ -1,6 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk";
 import { z } from "zod";
 import type { CollaborationDeliveryStatus } from "./shared/delivery-status.ts";
+import type { TaskUpdateStatus } from "./shared/workflow-status.ts";
 
 // --- Config option (subset of ACP TaskConfigOption we care about) ---
 
@@ -347,7 +348,7 @@ export type AgentEvent =
   | {
       type: "task_update";
       taskId: string;
-      status: "waiting" | "blocked" | "done";
+      status: TaskUpdateStatus;
       body: string;
       reason: "settled" | "fallback" | "waiting";
       sourceTaskId: string;

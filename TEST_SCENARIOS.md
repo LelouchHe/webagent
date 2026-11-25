@@ -120,6 +120,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - unknown/revoked tokens are refused before any protocol work; the caller principal is frozen and carries `(task, agent, generation)`
 
 - `test/multi-agent-mcp-create.test.ts` (production host + endpoint + real REST handler, one distinguishable transport per configured agent)
+  - REST validates `agentId` and `host` at entry before constructing the
+    typed create input, while MCP uses its own strict schema
+  - one create result carries effective `task` fields and optional `session`
+    fields without duplicating title/agent/cwd in both
   - `task_create(agent: …)` creates the child on the target: exactly one new session on B, none on the parent's A, the child's binding and session belong to B, a relative `cwd` still resolves against the parent's `cwd`, and exactly one five-field creation record (`Task ID`/`agent`/`cwd`/`model`/`thinking`) is written to the parent
   - the three argument forms resolve to three bindings: omitted (parent's A), explicit same agent (A), and a third configured agent (C, with B never started)
   - an explicit `model` the target accepts really applies: the row, the detail read, the target mock's session values, and the creation record all agree

@@ -536,6 +536,23 @@ describe("Task REST API", () => {
       assert.match(res.body, /bare agent id/);
     });
 
+    it("validates create agent and host as strings at REST entry", async () => {
+      const rootId = store.ensureRootTask(tmpDir).id;
+      for (const [field, value] of [
+        ["agentId", 42],
+        ["host", 42],
+      ] as const) {
+        const res = await makeRequest(
+          port,
+          "POST",
+          "/api/v1/tasks",
+          JSON.stringify({ parentId: rootId, [field]: value }),
+        );
+        assert.equal(res.status, 400);
+        assert.match(res.body, new RegExp(`${field} must be a string`));
+      }
+    });
+
     it("rejects an unknown parent task with 400", async () => {
       const res = await makeRequest(
         port,

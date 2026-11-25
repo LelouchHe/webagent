@@ -1,7 +1,10 @@
 import type { AgentCommandSnapshot, ConfigOption } from "../types.ts";
+import type {
+  TaskUpdateStatus,
+  WorkflowStatus,
+} from "../shared/workflow-status.ts";
 
-export type TaskWorkflowStatus =
-  "running" | "idle" | "waiting" | "blocked" | "done";
+export type TaskWorkflowStatus = WorkflowStatus;
 
 export interface TaskHistoryRow {
   seq: number;
@@ -97,7 +100,7 @@ export interface TaskSendResult {
 export interface TaskReport {
   sourceTaskId: string;
   targetTaskId: string;
-  status: "blocked" | "done";
+  status: Exclude<TaskUpdateStatus, "waiting">;
   body: string;
   sourceLabel: string;
   targetLabel: string;
@@ -118,8 +121,8 @@ export type TaskCancelCommand =
 export interface TaskCreateInput {
   title?: string;
   cwd?: string;
-  agentId?: unknown;
-  host?: unknown;
+  agentId?: string;
+  host?: string;
   model?: string;
   thinking?: string;
   parentId?: string;
@@ -144,14 +147,6 @@ export class TaskAgentNotConfiguredError extends CreateError {
     super("agent_not_configured");
     this.name = "TaskAgentNotConfiguredError";
     this.agentId = agentId;
-  }
-}
-
-export class TaskAgentIdTypeError extends CreateError {
-  readonly kind = "agent_id_type";
-  constructor() {
-    super("invalid_agent_id_type");
-    this.name = "TaskAgentIdTypeError";
   }
 }
 
@@ -207,23 +202,20 @@ export class TaskCreateConfigError extends CreateError {
 }
 
 export interface TaskCreateResult {
-  taskId: string;
-  facts: {
+  task: {
+    id: string;
     title: string | null;
     agentId: string | null;
     cwd: string;
     model: string | null;
     thinking: string | null;
-  };
-  activation?: {
-    cwd: string;
-    cwdDisplay: string;
-    title: string | null;
     parentId: string | null;
-    parentAgentId: string | null;
-    agentId: string | null;
     workflowStatus: TaskWorkflowStatus;
     source: string;
+  };
+  session?: {
+    cwdDisplay: string;
+    parentAgentId: string | null;
     configOptions: ConfigOption[];
     agentCommands: AgentCommandSnapshot;
   };
@@ -353,7 +345,6 @@ export class TaskCreateInputError extends CreateError {
 }
 
 export type TaskCreateError =
-  | TaskAgentIdTypeError
   | TaskAgentNotConfiguredError
   | TaskAgentStartError
   | TaskCreateConfigError
@@ -413,7 +404,7 @@ export interface TaskOps {
   ): Promise<TaskSendResult>;
   update(
     principal: TaskCaller,
-    status: "waiting" | "blocked" | "done",
+    status: TaskUpdateStatus,
     body: string,
     recordReport?: (report: TaskReport) => void,
   ): Promise<{ note?: string }>;

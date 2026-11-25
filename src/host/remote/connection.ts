@@ -1,6 +1,10 @@
 import { hashToken } from "../../auth.ts";
 import { isScope } from "../../auth-store.ts";
 import { z } from "zod";
+import {
+  WORKFLOW_STATUSES,
+  type WorkflowStatus,
+} from "../../shared/workflow-status.ts";
 import { HTTP_STATUS } from "../../http-status.ts";
 import {
   StreamSupervisor,
@@ -60,7 +64,7 @@ const TaskCreateResponseSchema = z.object({
   title: z.string().nullable(),
   model: z.string().nullable().optional(),
   thinking: z.string().nullable().optional(),
-  workflowStatus: z.enum(["running", "idle", "waiting", "blocked", "done"]),
+  workflowStatus: z.enum(WORKFLOW_STATUSES),
   source: z.string(),
   configOptions: z.array(ConfigOptionSchema),
   agentCommands: z.object({
@@ -90,7 +94,7 @@ const TaskEventSchema = z
 export interface RemoteTaskDetail {
   id: string;
   title: string | null;
-  workflowStatus: "running" | "idle" | "waiting" | "blocked" | "done";
+  workflowStatus: WorkflowStatus;
 }
 
 export interface OwnerTaskHistoryEvent extends CanonicalTaskHistoryEvent {
@@ -280,15 +284,23 @@ export class HostConnection {
     return {
       kind: "success",
       result: {
-        taskId: activation.id,
-        facts: {
+        task: {
+          id: activation.id,
           title: activation.title,
           agentId: activation.agentId,
           cwd: activation.cwd,
           model: activation.model ?? null,
           thinking: activation.thinking ?? null,
+          parentId: activation.parentId,
+          workflowStatus: activation.workflowStatus,
+          source: activation.source,
         },
-        activation,
+        session: {
+          cwdDisplay: activation.cwdDisplay,
+          parentAgentId: activation.parentAgentId,
+          configOptions: activation.configOptions,
+          agentCommands: activation.agentCommands,
+        },
       },
     };
   }
