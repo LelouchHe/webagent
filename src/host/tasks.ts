@@ -131,7 +131,7 @@ export function createRoutedTaskOps(deps: {
           sourceLabel: performed.sourceLabel,
           targetLabel: performed.targetLabel,
           body,
-          targetIsLocal: performed.targetIsLocal,
+          deliveryId: performed.deliveryId,
         });
       };
       const performed = target
@@ -154,7 +154,7 @@ export function createRoutedTaskOps(deps: {
         role: "source",
         deliveryStatus: "queued",
       });
-      if (performed.targetIsLocal) {
+      if (!target) {
         void tasks.drainCollaborationDeliveries(performed.targetTaskId);
       }
       return performed;
@@ -185,7 +185,7 @@ export function createRoutedTaskOps(deps: {
           sourceLabel: report.sourceLabel,
           targetLabel: report.targetLabel,
           body: text,
-          targetIsLocal: true,
+          deliveryId,
         });
         afterCommit = () => {
           broadcastCollaboration({

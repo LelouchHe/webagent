@@ -16,23 +16,17 @@ export function createHostCollaborationCommand(deps: {
       const target = deps.store.getTask(input.targetTaskId);
       if (
         !target ||
-        !deps.store
-          .getRemoteTasks(target.id)
-          .some(
-            (link) =>
-              link.remote_role === "parent" &&
-              link.remote_task_id === input.sourceTaskId,
-          )
+        deps.store.getExternalParentId(target.id) !== input.sourceTaskId
       ) {
         throw new HostExternalParentError();
       }
       const messageId = randomUUID();
       const deliveryId = randomUUID();
-      deps.store.createExternalSourceCollaborationMessage({
+      deps.store.enqueueTargetCollaboration({
         id: messageId,
         deliveryId,
         sourceTaskId: input.sourceTaskId,
-        directTargetTaskId: target.id,
+        targetTaskId: target.id,
         body: input.body,
       });
       const sourceLabel = taskDisplayLabel(input.sourceLabel);

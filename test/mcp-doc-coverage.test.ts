@@ -92,7 +92,6 @@ function registeredTools(
       targetTaskId: "child",
       targetLabel: "child",
       sourceLabel: "current",
-      targetIsLocal: true,
     }),
     update: async () => ({}),
   };

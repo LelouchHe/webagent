@@ -194,21 +194,11 @@ const receiveRemoteReport = createRemoteReportHandler({
 });
 const hostRegistry = new HostRegistry(config.hosts, {
   listLinks: () =>
-    store
-      .listRemoteTasks()
-      .filter(
-        (
-          link,
-        ): link is typeof link & {
-          remote_role: "child";
-          remote_host: string;
-        } => link.remote_role === "child" && link.remote_host !== null,
-      )
-      .map((link) => ({
-        localTaskId: link.local_task_id,
-        remoteTaskId: link.remote_task_id,
-        host: link.remote_host,
-      })),
+    store.listRemoteChildren().map((link) => ({
+      localTaskId: link.local_task_id,
+      remoteTaskId: link.remote_task_id,
+      host: link.remote_host,
+    })),
   onRemoteEvent: receiveRemoteReport,
 });
 tasks.setRemoteCollaborationTitle((taskId) =>

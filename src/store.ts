@@ -1224,41 +1224,21 @@ export class Store {
     });
   }
 
-  getRemoteTasks(localTaskId: string): Array<{
+  listRemoteChildren(): Array<{
     local_task_id: string;
     remote_task_id: string;
-    remote_role: "parent" | "child";
-    remote_host: string | null;
+    remote_host: string;
   }> {
     return this.db
       .prepare(
-        `SELECT local_task_id, remote_task_id, remote_role, remote_host
-         FROM remote_tasks WHERE local_task_id = ?`,
-      )
-      .all(localTaskId) as Array<{
-      local_task_id: string;
-      remote_task_id: string;
-      remote_role: "parent" | "child";
-      remote_host: string | null;
-    }>;
-  }
-
-  listRemoteTasks(): Array<{
-    local_task_id: string;
-    remote_task_id: string;
-    remote_role: "parent" | "child";
-    remote_host: string | null;
-  }> {
-    return this.db
-      .prepare(
-        `SELECT local_task_id, remote_task_id, remote_role, remote_host
-           FROM remote_tasks`,
+        `SELECT local_task_id, remote_task_id, remote_host
+           FROM remote_tasks
+           WHERE remote_role = 'child'`,
       )
       .all() as Array<{
       local_task_id: string;
       remote_task_id: string;
-      remote_role: "parent" | "child";
-      remote_host: string | null;
+      remote_host: string;
     }>;
   }
 
@@ -1285,10 +1265,6 @@ export class Store {
           remote_host: string;
         }
       | undefined;
-  }
-
-  hasExternalParent(taskId: string): boolean {
-    return this.getExternalParentId(taskId) !== null;
   }
 
   getExternalParentId(taskId: string): string | null {
@@ -2871,25 +2847,6 @@ export class Store {
     )();
   }
 
-  createExternalSourceCollaborationMessage(input: {
-    id: string;
-    deliveryId: string;
-    sourceTaskId: string;
-    directTargetTaskId: string;
-    body: string;
-  }): void {
-    const createdAt = Date.now();
-    this.db.transaction(() => {
-      this.requireLiveTask(input.directTargetTaskId);
-      this.createTargetOnlyDelivery({
-        ...input,
-        actor: "agent",
-        idempotencyKey: `${input.id}:${input.directTargetTaskId}`,
-        createdAt,
-      });
-    })();
-  }
-
   enqueueTargetCollaboration(
     input: {
       sourceTaskId: string;
@@ -2957,21 +2914,13 @@ export class Store {
     sourceLabel: string;
     targetLabel: string;
     body: string;
-    targetIsLocal: boolean;
+    deliveryId?: string;
   }): void {
     const createdAt = Date.now();
     const acknowledged: { deliveryId: string | null } = { deliveryId: null };
     this.db.transaction(() => {
       this.requireLiveTask(input.sourceTaskId);
-      const sourceLabel = input.targetIsLocal
-        ? (this.getTask(input.sourceTaskId)?.title ??
-          input.sourceTaskId.slice(0, 8))
-        : input.sourceLabel;
-      const targetLabel = input.targetIsLocal
-        ? (this.getTask(input.directTargetTaskId)?.title ??
-          input.directTargetTaskId.slice(0, 8))
-        : input.targetLabel;
-      if (!input.targetIsLocal) {
+      if (input.deliveryId === undefined) {
         this.db
           .prepare(
             `INSERT INTO messages
@@ -3032,13 +2981,15 @@ export class Store {
           ...buildCollaborationSystemMessage({
             messageId: input.id,
             sourceTaskId: input.sourceTaskId,
-            sourceLabel,
+            sourceLabel: input.sourceLabel,
             targetTaskId: input.directTargetTaskId,
-            targetLabel,
+            targetLabel: input.targetLabel,
             role: "source",
             body: input.body,
           }),
-          ...(input.targetIsLocal ? {} : { deliveryStatus: "queued" }),
+          ...(input.deliveryId === undefined
+            ? { deliveryStatus: "queued" }
+            : {}),
         },
         { from_ref: `msg:${input.id}` },
       );
@@ -3256,30 +3207,25 @@ export class Store {
     idempotencyKey: string;
     createdAt: number;
   }): void {
-    const messageSql =
-      input.actor === "system"
-        ? `INSERT INTO messages
-           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
-           VALUES (?, ?, ?, 'system', ?, ?)`
-        : `INSERT INTO messages
-           (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
-           VALUES (?, ?, ?, 'agent', ?, ?)`;
-    const messageArgs = [
-      input.id,
-      input.sourceTaskId,
-      input.directTargetTaskId,
-      input.body,
-      input.createdAt,
-    ];
-    this.db.prepare(messageSql).run(...messageArgs);
     this.db
       .prepare(
-        input.actor === "system"
-          ? `INSERT INTO message_projections (message_id, task_id, role, created_at)
-           VALUES (?, ?, 'target', ?)`
-          : `INSERT INTO message_projections
-           (message_id, task_id, role, created_at)
-           VALUES (?, ?, 'target', ?)`,
+        `INSERT INTO messages
+         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id,
+        input.sourceTaskId,
+        input.directTargetTaskId,
+        input.actor,
+        input.body,
+        input.createdAt,
+      );
+    this.db
+      .prepare(
+        `INSERT INTO message_projections
+         (message_id, task_id, role, created_at)
+         VALUES (?, ?, 'target', ?)`,
       )
       .run(input.id, input.directTargetTaskId, input.createdAt);
     this.db

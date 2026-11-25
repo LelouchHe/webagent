@@ -90,7 +90,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
             return this.refresh(name, isCurrent);
           },
           onEvent: (event) => {
-            this.acceptEvent(name, event);
+            this.applyEvent(name, event);
           },
         }),
       );
@@ -258,16 +258,11 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     return {
       messageId: result.messageId,
       targetTaskId: target.taskId,
-      targetLabel: this.remoteTitle(target) ?? target.taskId.slice(0, 8),
+      targetLabel:
+        this.mirrors.get(nameKey(target.host, target.taskId))?.title ??
+        target.taskId.slice(0, 8),
       sourceLabel,
-      targetIsLocal: false,
     };
-  }
-
-  remoteTitle(target: RemoteTaskTarget): string | undefined {
-    return (
-      this.mirrors.get(nameKey(target.host, target.taskId))?.title ?? undefined
-    );
   }
 
   remoteTitleForTaskId(taskId: string): string | undefined {
@@ -353,10 +348,6 @@ export class HostRegistry implements RemoteTaskCreateTransport {
       lastEventAt: latestEventAt(events),
       lastAgentActivityAt: latestAgentActivityAt(events),
     });
-  }
-
-  private acceptEvent(name: string, event: HostStreamEvent): void {
-    this.applyEvent(name, event);
   }
 
   private applyEvent(name: string, event: HostStreamEvent): void {

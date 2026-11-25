@@ -274,14 +274,7 @@ describe("MCP Task tool host", () => {
       isEmptyExecutionSlot(created.task.id, binding.agent_session_id),
       true,
     );
-    assert.deepEqual(store.getRemoteTasks(created.task.id), [
-      {
-        local_task_id: created.task.id,
-        remote_task_id: "external-parent",
-        remote_role: "parent",
-        remote_host: null,
-      },
-    ]);
+    assert.equal(store.getExternalParentId(created.task.id), "external-parent");
   });
 
   it("does not reinterpret a local-id collision as a remote parent", async () => {
@@ -304,10 +297,7 @@ describe("MCP Task tool host", () => {
     );
 
     assert.equal(store.getTask(created.task.id)?.parent_id, null);
-    assert.equal(
-      store.getRemoteTasks(created.task.id)[0]?.remote_task_id,
-      "external-parent",
-    );
+    assert.equal(store.getExternalParentId(created.task.id), "external-parent");
   });
 
   it("validates the executor agent and cwd before committing", async () => {
@@ -364,7 +354,7 @@ describe("MCP Task tool host", () => {
       );
     }
     assert.equal(store.listTasks().length, before);
-    assert.deepEqual(store.getRemoteTasks("alpha"), []);
+    assert.equal(store.getExternalParentId("alpha"), null);
   });
 
   it("keeps deferred remote tasks after empty-task cleanup", async () => {
@@ -588,7 +578,6 @@ describe("MCP Task tool host", () => {
         sourceLabel: "parent",
         targetLabel: "remote child",
         body: "work",
-        targetIsLocal: false,
       });
       assert.equal(
         deliveryStore
@@ -638,7 +627,6 @@ describe("MCP Task tool host", () => {
       sourceLabel: "Alpha",
       targetLabel: "Remote child",
       body: "work",
-      targetIsLocal: false,
     });
     assert.equal(
       store.getCollaborationDeliveriesForMessages([messageId]).get(messageId)
@@ -681,11 +669,11 @@ describe("MCP Task tool host", () => {
       title: "Owned remote child",
       creationAnchor: { kind: "task_created" },
     });
-    store.createExternalSourceCollaborationMessage({
+    store.enqueueTargetCollaboration({
       id: "owner-dispatch",
       deliveryId: "owner-dispatch-delivery",
       sourceTaskId: "external-parent",
-      directTargetTaskId: "owned-remote-child",
+      targetTaskId: "owned-remote-child",
       body: "do the work",
     });
     armDelivered("owned-remote-child", "owner-dispatch");
@@ -863,11 +851,10 @@ describe("MCP Task tool host", () => {
         },
       },
     ]);
-    assert.deepEqual(store.getRemoteTasks("alpha"), [
+    assert.deepEqual(store.listRemoteChildren(), [
       {
         local_task_id: "alpha",
         remote_task_id: "remote-child",
-        remote_role: "child",
         remote_host: "mini",
       },
     ]);
@@ -969,7 +956,7 @@ describe("MCP Task tool host", () => {
         error.remoteTaskId === "remote-child",
     );
     assert.equal(calls, 1);
-    assert.deepEqual(store.getRemoteTasks("alpha"), []);
+    assert.deepEqual(store.listRemoteChildren(), []);
   });
 
   it("does not route a partial remote create without a durable link", async () => {
@@ -1041,7 +1028,7 @@ describe("MCP Task tool host", () => {
         ),
         TaskRemoteCreatePartialSuccessError,
       );
-      assert.equal(store.getRemoteTasks("alpha").length, 0);
+      assert.equal(store.listRemoteChildren().length, 0);
       assert.equal(
         store
           .getEvents("alpha")

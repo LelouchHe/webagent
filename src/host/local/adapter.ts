@@ -557,7 +557,6 @@ export function createLocalTaskOps(deps: {
         targetTaskId: target.id,
         targetLabel,
         sourceLabel: source.title ?? source.id.slice(0, 8),
-        targetIsLocal: true as const,
       };
       const created = store.enqueueTargetCollaboration(
         {

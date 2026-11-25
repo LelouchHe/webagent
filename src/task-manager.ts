@@ -884,9 +884,8 @@ export class TaskManager implements ObligationHost {
         message.source_actor === "agent" &&
         !message.has_source_projection
       ) {
-        externalParentTaskId = this.store
-          .getRemoteTasks(recipientTaskId)
-          .find((link) => link.remote_role === "parent")?.remote_task_id;
+        externalParentTaskId =
+          this.store.getExternalParentId(recipientTaskId) ?? undefined;
       }
       const external = externalParentTaskId === message.source_task_id;
       if (

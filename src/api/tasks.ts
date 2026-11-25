@@ -94,7 +94,6 @@ export interface TaskSendResult {
   targetTaskId: string;
   targetLabel: string;
   sourceLabel: string;
-  targetIsLocal: boolean;
 }
 
 export interface TaskReport {

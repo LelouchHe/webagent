@@ -276,7 +276,6 @@ describe("createMcpEndpoint", () => {
         targetTaskId: "child",
         targetLabel: "child",
         sourceLabel: "current",
-        targetIsLocal: true,
       };
     },
     update: async (...args: unknown[]) => {

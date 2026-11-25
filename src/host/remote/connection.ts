@@ -180,6 +180,22 @@ function endpoint(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${path}`;
 }
 
+async function responseBody(response: Response): Promise<unknown> {
+  try {
+    return (await response.json()) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function responseError(body: unknown, status: number): string {
+  return body &&
+    typeof body === "object" &&
+    typeof (body as { error?: unknown }).error === "string"
+    ? (body as { error: string }).error
+    : `HTTP ${status}`;
+}
+
 interface HostFetchOptions {
   signal?: AbortSignal;
   token?: string;
@@ -261,19 +277,9 @@ export class HostConnection {
       };
     }
 
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      body = null;
-    }
+    const body = await responseBody(response);
     if (!response.ok) {
-      const reason =
-        body &&
-        typeof body === "object" &&
-        typeof (body as { error?: unknown }).error === "string"
-          ? (body as { error: string }).error
-          : `HTTP ${response.status}`;
+      const reason = responseError(body, response.status);
       return response.status >= HTTP_STATUS.BAD_REQUEST &&
         response.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
         ? { kind: "rejected", status: response.status, reason }
@@ -302,8 +308,8 @@ export class HostConnection {
           title: activation.title,
           agentId: activation.agentId,
           cwd: activation.cwd,
-          model: activation.model ?? null,
-          thinking: activation.thinking ?? null,
+          model: activation.model,
+          thinking: activation.thinking,
           parentId: activation.parentId,
           workflowStatus: activation.workflowStatus,
           source: activation.source,
@@ -403,12 +409,7 @@ export class HostConnection {
     } catch (error) {
       return { kind: "unknown", reason: errorMessage(error) };
     }
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      body = null;
-    }
+    const body = await responseBody(response);
     if (response.status === HTTP_STATUS.ACCEPTED) {
       if (
         body &&
@@ -422,12 +423,7 @@ export class HostConnection {
       }
       return { kind: "unknown", reason: "Owner returned no message id" };
     }
-    const reason =
-      body &&
-      typeof body === "object" &&
-      typeof (body as { error?: unknown }).error === "string"
-        ? (body as { error: string }).error
-        : `HTTP ${response.status}`;
+    const reason = responseError(body, response.status);
     return response.status >= HTTP_STATUS.BAD_REQUEST &&
       response.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
       ? { kind: "rejected", status: response.status, reason }

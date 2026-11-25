@@ -146,11 +146,11 @@ describe("TaskManager collaboration delivery drain", () => {
   });
 
   it("drops an external parent's cached label after projection", async () => {
-    store.createExternalSourceCollaborationMessage({
+    store.enqueueTargetCollaboration({
       id: "external-dispatch",
       deliveryId: "external-delivery",
       sourceTaskId: "external-parent",
-      directTargetTaskId: "target",
+      targetTaskId: "target",
       body: "work",
     });
     tasks.rememberCollaborationSourceLabel(
