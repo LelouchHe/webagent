@@ -27,11 +27,11 @@ export interface LinkSyncEffectCallbacks {
   drainTask?(taskId: string): void;
   outboxChanged?(entryId: string): void;
   handedOff?(entryId: string): void;
+  watchClosed?(error: unknown): void;
 }
 
 interface OwnerSubscription {
   active: boolean;
-  dirty: boolean;
   pumping: boolean;
   after: number;
   host: string;
@@ -62,7 +62,6 @@ export class LinkSyncOwner {
   watch(host: string, after: number, observer: LinkWatchObserver): () => void {
     const subscription: OwnerSubscription = {
       active: true,
-      dirty: true,
       pumping: false,
       after,
       host,
@@ -81,7 +80,6 @@ export class LinkSyncOwner {
     if (row?.remote_role !== "parent") return;
     for (const subscription of this.subscriptions) {
       if (subscription.host === row.remote_host) {
-        subscription.dirty = true;
         void this.pump(subscription);
       }
     }
@@ -106,13 +104,11 @@ export class LinkSyncOwner {
         remoteHost: host,
         envelope,
       });
-      if (!result.replayed) {
-        executeLinkEffects(this.store, result.effects, this.effects);
-        for (const entryId of result.effects.outboxEntryIds) {
-          this.publish(entryId);
-        }
+      executeLinkEffects(this.store, result, this.effects);
+      for (const entryId of result.outboxEntryIds) {
+        this.publish(entryId);
       }
-      return { status: result.status, body: result.body };
+      return { status: HTTP_STATUS.ACCEPTED, body: { accepted: true } };
     } catch (error) {
       if (
         error instanceof Error &&
@@ -133,12 +129,8 @@ export class LinkSyncOwner {
     try {
       for (;;) {
         if (!this.isActive(subscription)) return;
-        subscription.dirty = false;
         const frames = this.read(subscription.host, subscription.after);
-        if (frames.length === 0) {
-          if (this.isDirty(subscription)) continue;
-          return;
-        }
+        if (frames.length === 0) return;
         for (const frame of frames) {
           if (!this.isActive(subscription)) return;
           if (frame.pos <= subscription.after) continue;
@@ -147,20 +139,21 @@ export class LinkSyncOwner {
         }
         if (!this.isActive(subscription)) return;
       }
+    } catch (error) {
+      this.subscriptions.delete(subscription);
+      subscription.active = false;
+      try {
+        this.effects.watchClosed?.(error);
+      } catch {
+        // A reporting hook cannot keep a failed subscription registered.
+      }
     } finally {
       subscription.pumping = false;
-      if (this.isActive(subscription) && this.isDirty(subscription)) {
-        void this.pump(subscription);
-      }
     }
   }
 
   private isActive(subscription: OwnerSubscription): boolean {
     return subscription.active;
-  }
-
-  private isDirty(subscription: OwnerSubscription): boolean {
-    return subscription.dirty;
   }
 }
 

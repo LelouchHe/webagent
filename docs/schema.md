@@ -168,13 +168,15 @@ the referenced delivery.
 | `category` | TEXT NOT NULL | `message`, `report`, or `receipt` |
 | `data_json` | TEXT NOT NULL | Immutable wire data |
 | `handoff_status` | TEXT NOT NULL | Push-only local metadata: `pending`, `handed_off`, or `rejected` |
-| `delivery_id` | TEXT NULL | Required for `message` / `report`; identifies the sender's durable delivery business state; null for receipts |
+| `delivery_id` | TEXT NULL FK | Required for `message` / `report`; identifies the sender's durable delivery business state; null for receipts |
 | `created_at` | INTEGER NOT NULL | Local enqueue time |
 
 Index `idx_outbox_link_pos` supports ordered `(remote_role,
 remote_host)` reads.
 Index `idx_outbox_delivery` uniquely associates a message/report outbox entry with
-its sender-side delivery.
+its sender-side delivery. The table CHECK requires the pairing
+(`message`/`report` with a non-null delivery id; `receipt` with null), and the
+foreign key refuses dangling delivery references.
 
 The table has no Task or `remote_tasks` foreign key. Task and link deletion
 cannot cascade away an entry that still needs to be delivered or acknowledged.
@@ -300,10 +302,12 @@ PK: `(message_id, task_id)`.
 
 ### `deliveries`
 
-One queued ACP-context delivery for a collaboration Message target. It records
-queue outcome independently from the immutable Message and does not FK-cascade
-on target task deletion; deletion explicitly terminalizes pending rows as
-`failed(target_deleted)`.
+One durable business-state row for a collaboration message or report. Local
+deliveries are ACP queue work. Link-outbound deliveries are transfer work and
+are excluded from the local drain; link-inbound deliveries may be ACP work or
+definite failures. Queue outcome is independent from the immutable Message and
+does not FK-cascade on target task deletion; deletion explicitly terminalizes
+eligible pending rows as `failed(target_deleted)`.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -322,8 +326,11 @@ on target task deletion; deletion explicitly terminalizes pending rows as
 | `source_label` | TEXT NULL | Sender-title snapshot for inbound link delivery |
 | `source_category` | TEXT NULL | Inbound entry category: `message` or `report` |
 
-All five `source_*` columns are null for local deliveries and present for
-link-inbound deliveries. The unique `(source_remote_role,
+The first four inbound fields plus `source_category` are either all present
+(`source_remote_role`, `source_remote_host`, `source_entry_id`,
+`source_category`) or all null. `source_label` is a separate nullable display
+snapshot: inbound facts normally carry it, but the CHECK does not require it.
+All five are null for local deliveries. The unique `(source_remote_role,
 source_remote_host, source_entry_id)` index prevents applying one link entry
 into two deliveries. Status transitions use the delivery id CAS and write a
 receipt to the source link in the same transaction when that association is

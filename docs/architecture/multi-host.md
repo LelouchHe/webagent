@@ -72,40 +72,25 @@ the hub pushes toward the owner, while the owner publishes entries that the hub
 pulls.
 
 ```text
-+------------------------------- hub -------------------------------+
-|                                                                    |
-|  +-------------------+       +----------------------------------+  |
-|  | outbox             |       | outbox_cursors                   |  |
-|  | role/name/pos/prev |       | owner outbox positions I applied |  |
-|  +---------+---------+       +----------------+-----------------+  |
-|            | PUSH                               ^                    |
-|            v                                    | watch/read         |
-|  +-------------------+                          |                    |
-|  | inbound apply     |<-------------------------+                    |
-|  | message/report/   |                                               |
-|  | receipt           |                                               |
-|  +---------+---------+                                               |
-|            |                                                        |
-|            v                                                        |
-|  +-------------------+                                              |
-|  | receipt primitive |-- enqueue receipt --> same outbox            |
-|  +-------------------+                                              |
-+---------------------------------------------------------------------+
-                                  |
-                    durable HTTP wire, no shared DB
-                                  |
-+------------------------------- owner -----------------------------+
-|  +-------------------+       +----------------------------------+  |
-|  | inbound apply     |       | outbox                           |  |
-|  | message/report/   |       | role/name/pos/prev -> hub        |  |
-|  | receipt           |       | cursor source for watch/read      |  |
-|  +---------+---------+       +----------------+-----------------+  |
-|            ^                                    |                   |
-|            | PUSH                               | watch/read        |
-|  +---------+---------+                          v                   |
-|  | receipt primitive |<--------- hub outbox receipt goes back -------|
-|  +-------------------+                                             |
-+---------------------------------------------------------------------+
++---------------- hub ----------------+             +--------------- owner ----------------+
+|                                     |             |                                      |
+|  hub outbox                         |             |  owner inbound apply                 |
+|  +-------------------------------+  |   PUSH U    |  +--------------------------------+  |
+|  | role/name | pos/prev | data   |--+------------>+->| delivery + progress fact       |  |
+|  +-------------------------------+  |             |  +----------------+---------------+  |
+|                                     |             |                   |                  |
+|  hub inbound apply                  |             |  owner outbox     v                  |
+|  +--------------------------------+ |             |  +--------------------------------+  |
+|  | delivery + cursor transaction  |<-+------ PULL -+--| role/name | pos/prev | data   |  |
+|  +---------------+----------------+ |  watch/read |  +--------------------------------+  |
+|                  |                  |             |                                      |
+|                  v                  |             |                                      |
+|          outbox_cursors             |             |                                      |
+|                  |                  |             |                                      |
+|                  v                  |             |                                      |
+|  delivery CAS -> own outbox receipt |-------------> inbound receipt apply               |
+|                                     |             |        -> delivery CAS              |
++-------------------------------------+             +--------------------------------------+
 ```
 
 The wire entry contains only immutable facts: entry id, category, and data.
@@ -114,10 +99,12 @@ in the same insertion transaction.
 
 ### Push: hub to owner
 
-The operation id is the outbox entry id. The owner first parses the envelope
-and authenticated link, then looks for the persisted inbound delivery. Matching
-canonical content rebuilds the original `202`; different content is `409`.
-Only when no business fact exists does the owner inspect the current task.
+The operation id is the outbox entry id. For a message or report, the owner
+first parses the envelope and authenticated link, then looks for the inbound
+delivery by `(link, entry id)`. Matching canonical content rebuilds the
+original `202`; different content is `409`. Only when no business fact exists
+does the owner inspect the current task. A receipt instead looks up the
+original outbound row and performs an idempotent delivery CAS.
 
 ```text
 hub                                      owner
@@ -155,8 +142,8 @@ hub                                           owner
  |<---------------- page pos 7 prev 5 ------------|
  |  apply 7 + cursor=7 in one transaction        |
  |                                               | enqueue live pos 9
- |<---------------- live pos 9 prev 7 ------------|
- |                                               |  (gap: pos 8 is missing)
+ |<---------------- live pos 9 prev 8 ------------|
+ |                                               |  (applied 7, so pos 8 is missing)
  | read(after=7) -------------------------------->|
  |<---------------- page pos 8 prev 7 ------------|
  |  apply 8 + cursor=8                           |
@@ -309,11 +296,12 @@ existence fact, not a browsable local topology.
   address and unreachable mark;
 - `lastEventAt` and `lastAgentActivityAt` come from owner events.
 
-`task_query` and `task_read` call `GET /api/v1/tasks/:id/events` on the owner and
-use the shared history projector, bounds, and MCP response shapes. These reads
-never start ACP. The owner does not authorize a read per linked task: the hub
-restricts targets to its own `child` links for the calling Task's family, and
-host scope is limited to task list/detail/events/status reads.
+`task_query` and `task_read` call `GET /api/v1/tasks/:id/events` on the owner
+and use the shared history projector, bounds, and MCP response shapes. These
+reads never start ACP. The hub restricts targets to its own `child` links. The
+owner authorizes host detail, events, and status reads by matching the target's
+`parent` link to the authenticated host token name; host scope has no task-list
+route.
 
 Remote egress may already contain display rewrites. Search cold-reads the
 complete owner history because the owner has no server-side search endpoint.
@@ -352,8 +340,8 @@ report operation: enqueue into P, then let the existing drain wake P. The
 remote entry uses a normal local message and queued delivery on the parent. The
 delivery idempotency key is
 `remote-report:<host>:<childId>:<seq>`, so online forwarding and reconnect
-catch-up collapse to one wake. No cursor, ACK, receipt, or outbound-state table
-exists.
+catch-up collapse to one wake. This **old live host-SSE path** has no cursor,
+ACK, receipt, or outbound-state table; the dormant 03a transport foundations do.
 
 `task_update(waiting)` is not delivered as a report. It does make a Task with a
 remote-child link count as having a visible possible wake source.

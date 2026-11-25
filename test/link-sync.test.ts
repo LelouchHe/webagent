@@ -53,7 +53,7 @@ describe("dormant link sync handlers", () => {
       .get("outgoing");
     assert.ok(outgoing);
     store.enqueueOutbox({
-      remoteRole: "child",
+      remoteRole: "parent",
       remoteHost: "hub-a",
       category: "message",
       deliveryId: outgoing.id,
@@ -96,13 +96,13 @@ describe("dormant link sync handlers", () => {
     owner.publish(live.entry_id);
     assert.equal(watched.length, 1);
     releaseFirst?.();
-    await waitUntil(() => watched.length === 102);
+    await waitUntil(() => watched.length === 103);
     owner.heartbeat();
     assert.equal(heartbeats, 1);
-    assert.equal(new Set(watched).size, 102);
+    assert.equal(new Set(watched).size, 103);
     stop();
     owner.publish(live.entry_id);
-    assert.equal(watched.length, 102);
+    assert.equal(watched.length, 103);
   });
 
   it("dispose prevents a held owner watch from resuming after publish", async () => {
@@ -141,6 +141,36 @@ describe("dormant link sync handlers", () => {
     release?.();
     await Promise.resolve();
     assert.deepEqual(watched.length, 1);
+  });
+
+  it("unregisters a throwing watch observer without stopping another", async () => {
+    store.createTask("child", dir, "auto", "mock", "child-session");
+    const errors: unknown[] = [];
+    const owner = new LinkSyncOwner(store, {
+      watchClosed: (error) => errors.push(error),
+    });
+    owner.watch("hub-a", 0, {
+      entry: () => {
+        throw new Error("observer failed");
+      },
+    });
+    const received: string[] = [];
+    owner.watch("hub-a", 0, {
+      entry: (entry) => {
+        received.push(entry.data.id);
+      },
+    });
+    const row = store.enqueueLinkReport({
+      remoteRole: "parent",
+      remoteHost: "hub-a",
+      sourceTaskId: "child",
+      targetTaskId: "parent",
+      sourceLabel: "Child",
+      body: "one",
+    });
+    owner.publish(row.entry_id);
+    await waitUntil(() => errors.length === 1 && received.length === 1);
+    assert.match(String(errors[0]), /observer failed/);
   });
 
   it("pushes idempotently and records target deletion as a replayable 202", () => {
@@ -251,6 +281,44 @@ describe("dormant link sync handlers", () => {
       data: peerMessageData("parent-task", "owned-child", "work"),
     });
     assert.equal(result.status, 400);
+  });
+
+  it("publishes a repeated push receipt only once", () => {
+    store.createTask("source", dir, "auto", "mock", "source-session");
+    store.createTask("target", dir, "auto", "mock", "target-session");
+    const delivery = store.createCollaborationMessage({
+      id: "receipt-message",
+      deliveryId: "receipt-delivery",
+      sourceTaskId: "source",
+      directTargetTaskId: "target",
+      sourceActor: "agent",
+      body: "work",
+    }).delivery;
+    const entryId = randomUUID();
+    store.enqueueOutbox({
+      id: entryId,
+      remoteRole: "parent",
+      remoteHost: "owner",
+      category: "message",
+      deliveryId: delivery.id,
+      data: { body: "work" },
+    });
+    const changes: string[] = [];
+    store.onDeliveryStatusChanged((change) => {
+      changes.push(change.status);
+    });
+    const owner = new LinkSyncOwner(store);
+    const receipt = {
+      id: randomUUID(),
+      category: "receipt",
+      data: {
+        originalEntryId: entryId,
+        status: "delivered",
+      },
+    };
+    assert.equal(owner.push("owner", receipt).status, 202);
+    assert.equal(owner.push("owner", receipt).status, 202);
+    assert.deepEqual(changes, ["delivered"]);
   });
 
   it("hub consumer applies reports, receipts, and durable progress", async () => {

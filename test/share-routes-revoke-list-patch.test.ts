@@ -329,6 +329,58 @@ describe("DELETE /api/v1/tasks/:id/share — revoke", () => {
     });
   });
 
+  it("retries revoke after a reaper receipt failure without losing the token", async () => {
+    const token = await createPreview(deps, sid);
+    await publish(deps, sid, token);
+    store.enqueueTargetCollaboration({
+      id: "share-reap-inbound",
+      deliveryId: "share-reap-inbound-delivery",
+      sourceTaskId: "external-parent",
+      targetTaskId: sid,
+      body: "queued",
+      inbound: {
+        remoteRole: "parent",
+        remoteHost: "hub",
+        entryId: "share-reap-inbound-entry",
+        category: "message",
+      },
+    });
+    assert.equal(store.deleteTask(sid).mode, "soft");
+    store["db"].exec(`
+      CREATE TRIGGER reject_route_reap_receipt
+      BEFORE INSERT ON outbox
+      BEGIN
+        SELECT RAISE(ABORT, 'route_receipt_failed');
+      END;
+    `);
+
+    await assert.rejects(
+      handleShareRoutes(
+        ownerReq(`/api/v1/tasks/${sid}/share`, "DELETE", { token }),
+        mockRes().res,
+        deps,
+      ),
+      /route_receipt_failed/,
+    );
+    assert.ok(store.getShareByToken(token));
+    assert.ok(store.getTaskIncludingDeleted(sid));
+    assert.equal(
+      store.getCollaborationDelivery("share-reap-inbound-delivery")?.status,
+      "queued",
+    );
+
+    store["db"].exec("DROP TRIGGER reject_route_reap_receipt");
+    const retry = mockRes();
+    await handleShareRoutes(
+      ownerReq(`/api/v1/tasks/${sid}/share`, "DELETE", { token }),
+      retry.res,
+      deps,
+    );
+    assert.equal(retry.status(), 200);
+    assert.equal((retry.json() as { revoked: boolean }).revoked, true);
+    assert.equal(store.getTaskIncludingDeleted(sid), undefined);
+  });
+
   it("404 for a hard-deleted task (widening the gate never resurrects one)", async () => {
     // A preview-only task hard-deletes and its preview row goes with it.
     const token = await createPreview(deps, sid);

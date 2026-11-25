@@ -26,7 +26,6 @@ import type {
   WorkflowStatus,
 } from "./shared/workflow-status.ts";
 import { WORKFLOW_STATUSES } from "./shared/workflow-status.ts";
-import { HTTP_STATUS } from "./http-status.ts";
 import {
   type LinkEnvelope,
   type LinkMessageData,
@@ -966,8 +965,13 @@ export class Store {
         data_json TEXT NOT NULL,
         handoff_status TEXT NOT NULL DEFAULT 'pending'
           CHECK (handoff_status IN ('pending', 'handed_off', 'rejected')),
-        delivery_id TEXT,
+        delivery_id TEXT REFERENCES deliveries(id),
         created_at INTEGER NOT NULL
+        CHECK (
+          (category IN ('message', 'report') AND delivery_id IS NOT NULL)
+          OR
+          (category = 'receipt' AND delivery_id IS NULL)
+        )
       );
       CREATE INDEX IF NOT EXISTS idx_outbox_link_pos
         ON outbox (remote_role, remote_host, pos);
@@ -2206,6 +2210,9 @@ export class Store {
            )
            SELECT d.id FROM deliveries d
            WHERE d.status = 'queued'
+             AND NOT EXISTS (
+               SELECT 1 FROM outbox o WHERE o.delivery_id = d.id
+             )
              AND d.message_id IN (
                SELECT m.id FROM messages m
                WHERE (
@@ -2325,8 +2332,55 @@ export class Store {
    * Returns true if a tombstone was reaped.
    */
   reapTombstoneIfOrphaned(taskId: string): boolean {
-    if (this.isRootTaskId(taskId)) return false;
-    const reaped = this.db.transaction(() => {
+    const reaped = this.db.transaction(() =>
+      this.reapTombstoneIfOrphanedTransaction(taskId),
+    )();
+    if (!reaped) return false;
+    this.broadcastDeliveryStatus(reaped.failedDeliveryIds);
+    return true;
+  }
+
+  revokeShareAndReap(token: string): {
+    revoked: boolean;
+    reaped: boolean;
+    taskId: string | null;
+    failedDeliveryIds: string[];
+  } {
+    const result = this.db.transaction(() => {
+      const row = this.getShareByToken(token);
+      if (!row) {
+        return {
+          revoked: false,
+          reaped: false,
+          taskId: null,
+          failedDeliveryIds: [],
+        };
+      }
+      if (!this.revokeShare(token)) {
+        return {
+          revoked: false,
+          reaped: false,
+          taskId: row.task_id,
+          failedDeliveryIds: [],
+        };
+      }
+      const reaped = this.reapTombstoneIfOrphanedTransaction(row.task_id);
+      return {
+        revoked: true,
+        reaped: reaped !== null,
+        taskId: row.task_id,
+        failedDeliveryIds: reaped?.failedDeliveryIds ?? [],
+      };
+    })();
+    this.broadcastDeliveryStatus(result.failedDeliveryIds);
+    return result;
+  }
+
+  private reapTombstoneIfOrphanedTransaction(taskId: string): {
+    failedDeliveryIds: string[];
+  } | null {
+    if (this.isRootTaskId(taskId)) return null;
+    const reaped = (() => {
       const row = this.db
         .prepare("SELECT id FROM tasks WHERE id = ? AND deleted_at IS NOT NULL")
         .get(taskId) as { id: string } | undefined;
@@ -2344,9 +2398,8 @@ export class Store {
       this.db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
       return failedDeliveryIds;
     })();
-    if (!reaped) return false;
-    this.broadcastDeliveryStatus(reaped);
-    return true;
+    if (!reaped) return null;
+    return { failedDeliveryIds: reaped };
   }
 
   /** Delete tasks that have zero events and are older than minAgeS seconds. Returns IDs deleted. */
@@ -3045,6 +3098,9 @@ export class Store {
       createdAt?: number;
     },
   ): OutboxRow {
+    if (input.category === "receipt" && "deliveryId" in input) {
+      throw new Error("link_receipt_has_delivery");
+    }
     const dataJson = stringifyLinkData(input.data);
     return this.db.transaction(() =>
       this.enqueueOutboxInTransaction({
@@ -3063,12 +3119,7 @@ export class Store {
     remoteRole: LinkRemoteRole;
     remoteHost: string;
     envelope: LinkEnvelope;
-  }): {
-    replayed: boolean;
-    status: number;
-    body: unknown;
-    effects: LinkApplyEffects;
-  } {
+  }): LinkApplyEffects {
     return this.db.transaction(() => {
       if (input.envelope.category !== "receipt") {
         const existing = this.getInboundLinkDelivery(
@@ -3093,10 +3144,7 @@ export class Store {
             throw new Error("link_inbound_op_conflict");
           }
           return {
-            replayed: true,
-            status: HTTP_STATUS.ACCEPTED,
-            body: { accepted: true },
-            effects: emptyLinkApplyEffects(),
+            ...emptyLinkApplyEffects(),
           };
         }
       }
@@ -3105,12 +3153,7 @@ export class Store {
         input.remoteHost,
         input.envelope,
       );
-      return {
-        replayed: false,
-        status: HTTP_STATUS.ACCEPTED,
-        body: { accepted: true },
-        effects,
-      };
+      return effects;
     })();
   }
 
@@ -3147,7 +3190,6 @@ export class Store {
         recipientTaskId: input.targetTaskId,
         sourceActor: "agent",
         body: input.body,
-        sourceLabel: input.sourceLabel,
         idempotencyKey: `${entryId}:${input.targetTaskId}`,
         createdAt,
         status: "queued",
@@ -3371,6 +3413,31 @@ export class Store {
       OutboxRow | undefined;
     const effects = emptyLinkApplyEffects();
     if (!row) return { known: false, changed: false, effects };
+    if (!row.delivery_id) {
+      throw new Error("link_entry_missing_delivery_id");
+    }
+    const delivery = this.getCollaborationDelivery(row.delivery_id);
+    if (!delivery) throw new Error("link_delivery_missing");
+    const previous = delivery.status;
+    const changed =
+      previous === "queued" &&
+      this.transitionDeliveryStatusInTransaction(
+        row.delivery_id,
+        "queued",
+        input.status,
+        Date.now(),
+        input.failureReason,
+      );
+    const terminal =
+      previous === "delivered" &&
+      input.status === "failed" &&
+      this.transitionDeliveryStatusInTransaction(
+        row.delivery_id,
+        "delivered",
+        "failed",
+        Date.now(),
+        input.failureReason,
+      );
     const handedOff = this.db
       .prepare(
         `UPDATE outbox SET handoff_status = 'handed_off'
@@ -3378,50 +3445,11 @@ export class Store {
       )
       .run(row.entry_id).changes;
     if (handedOff === 1) effects.handoffEntryIds.push(row.entry_id);
-    if (!row.delivery_id) {
-      throw new Error("link_entry_missing_delivery_id");
+    if (changed || terminal) {
+      effects.deliveryStatusIds.push(row.delivery_id);
+      return { known: true, changed: true, effects };
     }
-    {
-      const delivery = this.getCollaborationDelivery(row.delivery_id);
-      if (!delivery) return { known: true, changed: false, effects };
-      const previous = delivery.status;
-      const changed =
-        previous === "queued" &&
-        this.transitionDeliveryStatusInTransaction(
-          row.delivery_id,
-          "queued",
-          input.status,
-          Date.now(),
-          input.failureReason,
-        );
-      const terminal =
-        previous === "delivered" &&
-        input.status === "failed" &&
-        this.transitionDeliveryStatusInTransaction(
-          row.delivery_id,
-          "delivered",
-          "failed",
-          Date.now(),
-          input.failureReason,
-        );
-      if (changed || terminal) {
-        effects.deliveryStatusIds.push(row.delivery_id);
-        return { known: true, changed: true, effects };
-      }
-      return { known: true, changed: false, effects };
-    }
-  }
-
-  applyLinkReceipt(input: {
-    remoteRole: LinkRemoteRole;
-    remoteHost: string;
-    entryId: string;
-    status: Exclude<CollaborationDeliveryStatus, "queued">;
-    failureReason?: string | null;
-  }): { known: boolean; changed: boolean; effects: LinkApplyEffects } {
-    return this.db.transaction(() =>
-      this.applyLinkReceiptInTransaction(input),
-    )();
+    return { known: true, changed: false, effects };
   }
 
   markOutboxHandoff(
@@ -3450,6 +3478,14 @@ export class Store {
     deliveryId: string | null;
     createdAt: number;
   }): OutboxRow {
+    if (input.category === "receipt" && input.deliveryId !== null) {
+      throw new Error("link_receipt_has_delivery");
+    }
+    if (input.category !== "receipt") {
+      if (!input.deliveryId) throw new Error("link_entry_missing_delivery");
+      const delivery = this.getCollaborationDelivery(input.deliveryId);
+      if (!delivery) throw new Error("link_delivery_missing");
+    }
     const previous = this.db
       .prepare(
         `SELECT COALESCE(MAX(pos), 0) AS pos FROM outbox
@@ -4163,6 +4199,9 @@ export class Store {
         .prepare(
           `SELECT id FROM deliveries
            WHERE recipient_task_id = ? AND status = 'queued'
+             AND NOT EXISTS (
+               SELECT 1 FROM outbox o WHERE o.delivery_id = deliveries.id
+             )
            ORDER BY queued_at, rowid`,
         )
         .all(recipientTaskId) as Array<{ id: string }>;
@@ -4196,7 +4235,10 @@ export class Store {
       const rows = this.db
         .prepare(
           `SELECT id, message_id FROM deliveries
-           WHERE recipient_task_id = ? AND status = 'queued'`,
+           WHERE recipient_task_id = ? AND status = 'queued'
+             AND NOT EXISTS (
+               SELECT 1 FROM outbox o WHERE o.delivery_id = deliveries.id
+             )`,
         )
         .all(taskId) as Array<{ id: string; message_id: string }>;
       return rows.filter((row) =>
@@ -4220,7 +4262,10 @@ export class Store {
     const ids = this.db
       .prepare(
         `SELECT id FROM deliveries
-         WHERE recipient_task_id = ? AND status = 'queued'`,
+         WHERE recipient_task_id = ? AND status = 'queued'
+           AND NOT EXISTS (
+             SELECT 1 FROM outbox o WHERE o.delivery_id = deliveries.id
+           )`,
       )
       .all(taskId) as Array<{ id: string }>;
     return ids

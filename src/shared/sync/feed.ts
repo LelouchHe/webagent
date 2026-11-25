@@ -146,6 +146,7 @@ export class SyncFeedConsumer<TData = unknown> {
     try {
       committed = await this.port.apply(entry, applied);
     } catch (error) {
+      if (!attempt.isCurrent()) return false;
       if (error instanceof SyncFeedProtocolError) {
         this.supervisor.stop();
         this.onProtocolError?.(error);
@@ -153,7 +154,8 @@ export class SyncFeedConsumer<TData = unknown> {
       }
       throw error;
     }
-    if (!committed && attempt.isCurrent()) {
+    if (!attempt.isCurrent()) return false;
+    if (!committed) {
       this.protocolError("persistent apply did not advance expected position");
       return false;
     }

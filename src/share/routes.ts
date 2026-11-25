@@ -1105,23 +1105,17 @@ async function handleRevoke(
     return;
   }
 
-  const revoked = deps.store.revokeShare(body.token);
-  // If this was the last share on a soft-deleted task, finish the
-  // hard-delete (events + tasks row) so we don't leak orphans.
-  if (revoked) {
-    const reaped = deps.store.reapTombstoneIfOrphaned(row.task_id);
-    if (reaped && deps.dataDir) {
-      // Tombstoned task is fully gone; sweep its attachments directory too.
-      rm(join(deps.dataDir, "tasks", row.task_id), {
-        recursive: true,
-        force: true,
-      }).catch(() => {});
-    }
+  const result = deps.store.revokeShareAndReap(body.token);
+  if (result.reaped && result.taskId && deps.dataDir) {
+    rm(join(deps.dataDir, "tasks", result.taskId), {
+      recursive: true,
+      force: true,
+    }).catch(() => {});
   }
   json(res, HTTP_STATUS.OK, {
     ok: true,
     token: body.token,
-    revoked,
+    revoked: result.revoked,
     purge_status: "skipped",
   });
 }

@@ -20,7 +20,6 @@ interface ActiveExchange {
 }
 
 interface HoldArm {
-  promise: Promise<void>;
   resolve(): void;
 }
 
@@ -94,7 +93,6 @@ export class RegressionForwarder {
       releaseHeld = resolve;
     });
     this.channels[channel].holdArms.push({
-      promise,
       resolve: () => releaseHeld?.(),
     });
     return promise;

@@ -5,10 +5,10 @@ import { ESLint } from "eslint";
 import {
   sendSyncRequest,
   SyncFeedConsumer,
+  SyncFeedProtocolError,
   SyncOutbox,
   type SyncFeedEntry,
   type SyncFeedTransport,
-  type SyncFeedProtocolError,
 } from "../src/shared/sync/index.ts";
 
 class FakeClock {
@@ -222,8 +222,12 @@ describe("shared/sync", () => {
     await waitUntil(() => attempts.one === 2);
     assert.equal(attempts.one, 2);
     assert.equal(attempts.two, 1);
+    const secondSignal = second.signal;
     one.stop();
     two.stop();
+    assert.equal(secondSignal.aborted, true);
+    clock.advance(100_000);
+    assert.equal(attempts.two, 1);
   });
 
   it("invalidates old feed frames and reports a protocol error only on that link", async () => {
@@ -272,13 +276,61 @@ describe("shared/sync", () => {
     consumer.stop();
   });
 
+  it("does not let a stale async apply stop the new generation", async () => {
+    const clock = new FakeClock();
+    const watches: Array<Parameters<SyncFeedTransport<number>["watch"]>[0]> =
+      [];
+    let rejectOld: ((error: Error) => void) | undefined;
+    let newConnected = false;
+    const consumer = new SyncFeedConsumer<number>({
+      port: {
+        applied: () => 0,
+        apply: () => {
+          if (!rejectOld) {
+            return new Promise<boolean>((_resolve, reject) => {
+              rejectOld = reject;
+            });
+          }
+          return true;
+        },
+      },
+      transport: {
+        read: async () => [],
+        watch: async (input) => {
+          watches.push(input);
+          input.connected();
+          if (watches.length === 2) newConnected = true;
+          await new Promise(() => undefined);
+        },
+      },
+      retryDelay: () => 0,
+      clock: clock.api,
+    });
+    consumer.start();
+    await waitUntil(() => watches.length === 1);
+    const oldApply = watches[0].entry({ pos: 1, prev: 0, data: 1 });
+    await waitUntil(() => rejectOld !== undefined);
+    consumer.start();
+    await waitUntil(() => watches.length === 2);
+    rejectOld?.(new SyncFeedProtocolError("stale"));
+    await oldApply;
+    assert.equal(newConnected, true);
+    await watches[1].entry({ pos: 1, prev: 0, data: 1 });
+    assert.equal(watches[1].signal.aborted, false);
+    consumer.stop();
+  });
+
   it("keeps an active retry on wake and clears it on hand-off or stop", async () => {
     for (const ordering of ["wake", "handedOff", "stop"] as const) {
       const clock = new FakeClock();
       const sent: string[] = [];
+      let head: { id: string; request: { body: string } } | undefined = {
+        id: "one",
+        request: { body: "one" },
+      };
       const outbox = new SyncOutbox<{ body: string }>({
         port: {
-          next: () => ({ id: "one", request: { body: "one" } }),
+          next: () => head,
           finish: () => false,
         },
         transport: {
@@ -294,10 +346,25 @@ describe("shared/sync", () => {
       outbox.start();
       await waitUntil(() => sent.length === 1 && clock.size() > 0);
       if (ordering === "wake") outbox.wake();
-      if (ordering === "handedOff") outbox.handedOff("one");
+      if (ordering === "handedOff") {
+        head = { id: "two", request: { body: "two" } };
+        outbox.handedOff("one");
+        assert.equal(clock.size(), 0);
+      }
       if (ordering === "stop") outbox.stop();
       clock.advance(100);
-      assert.equal(sent.length, ordering === "wake" ? 2 : 1);
+      await Promise.resolve();
+      await waitUntil(() => ordering !== "handedOff" || sent.includes("two"));
+      assert.deepEqual(
+        sent,
+        ordering === "wake"
+          ? ["one", "one"]
+          : ordering === "handedOff"
+            ? ["one", "two"]
+            : ["one"],
+      );
+      if (ordering === "handedOff") outbox.stop();
+      if (ordering === "stop") assert.equal(clock.size(), 0);
     }
   });
 

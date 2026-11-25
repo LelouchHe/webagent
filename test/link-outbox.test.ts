@@ -22,12 +22,19 @@ describe("link outbox", () => {
   });
 
   it("assigns pos and prev by authenticated link direction", () => {
+    const firstDelivery = createOutgoingDelivery(store, dir).deliveryId;
+    const oppositeDelivery = createOutgoingDelivery(
+      store,
+      dir,
+      "opposite-source",
+      "opposite-target",
+    ).deliveryId;
     const first = store.enqueueOutbox({
       id: "first",
       remoteRole: "parent",
       remoteHost: "same-name",
       category: "message",
-      deliveryId: "first-delivery",
+      deliveryId: firstDelivery,
       data: { body: "one" },
     });
     store.createTask("report-source", dir, "auto", "mock", "report-session");
@@ -46,16 +53,15 @@ describe("link outbox", () => {
       remoteRole: "child",
       remoteHost: "same-name",
       category: "message",
-      deliveryId: "opposite-delivery",
+      deliveryId: oppositeDelivery,
       data: { body: "three" },
     });
 
-    assert.deepEqual([first.pos, first.prev], [first.pos, 0]);
-    assert.deepEqual([second.pos, second.prev], [second.pos, first.pos]);
-    assert.deepEqual(
-      [oppositeDirection.pos, oppositeDirection.prev],
-      [oppositeDirection.pos, 0],
-    );
+    assert.equal(first.pos, 1);
+    assert.equal(first.prev, 0);
+    assert.equal(second.pos, 2);
+    assert.equal(second.prev, first.pos);
+    assert.deepEqual([oppositeDirection.pos, oppositeDirection.prev], [3, 0]);
     assert.deepEqual(
       store.listOutbox("parent", "same-name").map((row) => row.entry_id),
       ["first", "second"],
@@ -74,38 +80,39 @@ describe("link outbox", () => {
     });
     assert.equal(entry.delivery_id, deliveryId);
 
-    const delivered = store.applyLinkReceipt({
-      remoteRole: "child",
-      remoteHost: "owner",
-      entryId: entry.entry_id,
-      status: "delivered",
-    });
-    const duplicate = store.applyLinkReceipt({
-      remoteRole: "child",
-      remoteHost: "owner",
-      entryId: entry.entry_id,
-      status: "delivered",
-    });
-    const failed = store.applyLinkReceipt({
-      remoteRole: "child",
-      remoteHost: "owner",
-      entryId: entry.entry_id,
-      status: "failed",
-      failureReason: "target_deleted",
-    });
-    const lateDelivered = store.applyLinkReceipt({
-      remoteRole: "child",
-      remoteHost: "owner",
-      entryId: entry.entry_id,
-      status: "delivered",
-    });
+    const delivered = applyReceipt(
+      store,
+      "child",
+      "owner",
+      entry.entry_id,
+      "delivered",
+    );
+    const duplicate = applyReceipt(
+      store,
+      "child",
+      "owner",
+      entry.entry_id,
+      "delivered",
+    );
+    const failed = applyReceipt(
+      store,
+      "child",
+      "owner",
+      entry.entry_id,
+      "failed",
+    );
+    const lateDelivered = applyReceipt(
+      store,
+      "child",
+      "owner",
+      entry.entry_id,
+      "delivered",
+    );
 
-    assert.equal(delivered.known, true);
-    assert.equal(delivered.changed, true);
-    assert.equal(duplicate.changed, false);
-    assert.equal(failed.changed, true);
-    assert.equal(lateDelivered.changed, false);
-    assert.deepEqual(delivered.effects.deliveryStatusIds, [deliveryId]);
+    assert.deepEqual(delivered.deliveryStatusIds, [deliveryId]);
+    assert.deepEqual(duplicate.deliveryStatusIds, []);
+    assert.deepEqual(failed.deliveryStatusIds, [deliveryId]);
+    assert.deepEqual(lateDelivered.deliveryStatusIds, []);
     assert.equal(store.getOutbox(entry.entry_id)?.delivery_id, deliveryId);
     assert.equal(store.getOutbox(entry.entry_id)?.handoff_status, "handed_off");
     assert.deepEqual(
@@ -149,13 +156,14 @@ describe("link outbox", () => {
     );
     assert.equal(store.countQueuedDeliveries("external-parent"), 0);
     assert.deepEqual(store.claimQueuedDeliveries("external-parent"), []);
-    const delivered = store.applyLinkReceipt({
-      remoteRole: "child",
-      remoteHost: "owner",
-      entryId: "report",
-      status: "delivered",
-    });
-    assert.deepEqual(delivered.effects.deliveryStatusIds, ["report-delivery"]);
+    const delivered = applyReceipt(
+      store,
+      "child",
+      "owner",
+      "report",
+      "delivered",
+    );
+    assert.deepEqual(delivered.deliveryStatusIds, ["report-delivery"]);
     assert.equal(
       store.getCollaborationDelivery("report-delivery")?.status,
       "delivered",
@@ -173,7 +181,7 @@ describe("link outbox", () => {
       title: "Target",
       creationAnchor: {},
     });
-    const envelope = peerMessageEnvelope("source", "target");
+    const envelope = linkMessageEnvelope("source", "target");
     const first = store.applyLinkPushOperation({
       remoteRole: "parent",
       remoteHost: "hub",
@@ -184,15 +192,13 @@ describe("link outbox", () => {
       remoteHost: "hub",
       envelope,
     });
-    assert.equal(first.replayed, false);
-    assert.equal(replay.replayed, true);
-    assert.deepEqual(replay.effects, {
+    assert.equal(first.drainTaskIds[0], "target");
+    assert.deepEqual(replay, {
       drainTaskIds: [],
       deliveryStatusIds: [],
       outboxEntryIds: [],
       handoffEntryIds: [],
     });
-    assert.equal(first.effects.drainTaskIds[0], "target");
     assert.throws(
       () =>
         store.applyLinkPushOperation({
@@ -202,6 +208,15 @@ describe("link outbox", () => {
             ...envelope,
             data: { ...envelope.data, body: "changed" },
           },
+        }),
+      /link_inbound_op_conflict/,
+    );
+    assert.throws(
+      () =>
+        store.applyLinkPushOperation({
+          remoteRole: "parent",
+          remoteHost: "hub",
+          envelope: { ...envelope, category: "report" },
         }),
       /link_inbound_op_conflict/,
     );
@@ -216,16 +231,16 @@ describe("link outbox", () => {
         remoteRole: "parent",
         remoteHost: "hub",
         envelope: report,
-      }).replayed,
-      false,
+      }).drainTaskIds.length,
+      1,
     );
     assert.equal(
       store.applyLinkPushOperation({
         remoteRole: "parent",
         remoteHost: "hub",
         envelope: report,
-      }).replayed,
-      true,
+      }).drainTaskIds.length,
+      0,
     );
     assert.throws(
       () =>
@@ -242,12 +257,12 @@ describe("link outbox", () => {
   });
 
   it("advances feed progress with one precise apply and rolls it back", () => {
-    const envelope = peerMessageEnvelope("source", "missing");
+    const envelope = linkMessageEnvelope("source", "missing");
     store["db"].exec(`
-      CREATE TRIGGER reject_feed_receipt
-      BEFORE INSERT ON outbox
+      CREATE TRIGGER reject_feed_cursor
+      BEFORE INSERT ON outbox_cursors
       BEGIN
-        SELECT RAISE(ABORT, 'receipt_write_failed');
+        SELECT RAISE(ABORT, 'cursor_write_failed');
       END;
     `);
     assert.throws(
@@ -259,10 +274,13 @@ describe("link outbox", () => {
           nextApplied: 8,
           envelope,
         }),
-      /receipt_write_failed/,
+      /cursor_write_failed/,
     );
     assert.equal(store.getOutboxCursor("child", "owner"), 0);
-    store["db"].exec("DROP TRIGGER reject_feed_receipt");
+    assert.equal(store.getCollaborationMessage(envelope.id), undefined);
+    assert.equal(store.getCollaborationDelivery(envelope.id), undefined);
+    assert.equal(store.listOutbox("child", "owner").length, 0);
+    store["db"].exec("DROP TRIGGER reject_feed_cursor");
 
     const applied = store.applyLinkFeedOperation({
       remoteRole: "child",
@@ -304,17 +322,31 @@ describe("link outbox", () => {
       END;
     `);
     assert.throws(
-      () =>
-        store.applyLinkReceipt({
-          remoteRole: "child",
-          remoteHost: "owner",
-          entryId: entry.entry_id,
-          status: "delivered",
-        }),
+      () => applyReceipt(store, "child", "owner", entry.entry_id, "delivered"),
       /delivery_state_write_failed/,
     );
     assert.equal(store.getOutbox(entry.entry_id)?.handoff_status, "pending");
     assert.equal(store.getCollaborationDelivery(deliveryId)?.status, "queued");
+  });
+
+  it("rolls back handoff when an outbox association has no delivery", () => {
+    const deliveryId = createOutgoingDelivery(store, dir).deliveryId;
+    const entry = store.enqueueOutbox({
+      id: randomUUID(),
+      remoteRole: "child",
+      remoteHost: "owner",
+      category: "message",
+      deliveryId,
+      data: { body: "work" },
+    });
+    store["db"].pragma("foreign_keys = OFF");
+    store["db"].prepare("DELETE FROM deliveries WHERE id = ?").run(deliveryId);
+    store["db"].pragma("foreign_keys = ON");
+    assert.throws(
+      () => applyReceipt(store, "child", "owner", entry.entry_id, "delivered"),
+      /link_delivery_missing/,
+    );
+    assert.equal(store.getOutbox(entry.entry_id)?.handoff_status, "pending");
   });
   it("writes inbound claim and rejection receipts atomically", () => {
     store.createTask("target", dir, "auto", "mock", "target-session");
@@ -391,40 +423,221 @@ describe("link outbox", () => {
     }
   });
 
+  it("keeps an offline outbound report sendable across archive", () => {
+    const root = store.ensureRootTask(dir).id;
+    store.createTask(
+      "archive-parent",
+      dir,
+      "auto",
+      "mock",
+      "archive-parent-session",
+      root,
+    );
+    store.createTask(
+      "report-source",
+      dir,
+      "auto",
+      "mock",
+      "report-source-session",
+      "archive-parent",
+    );
+    const entry = store.enqueueLinkReport({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "report-source",
+      targetTaskId: "external-parent",
+      sourceLabel: "Report",
+      body: "done",
+    });
+    const deliveryId = entry.delivery_id;
+    assert.ok(deliveryId);
+
+    assert.equal(store.archiveTask("archive-parent")?.status, "archived");
+    assert.equal(store.getCollaborationDelivery(deliveryId)?.status, "queued");
+    assert.equal(store.getOutbox(entry.entry_id)?.entry_id, entry.entry_id);
+
+    const effects = applyReceipt(
+      store,
+      "child",
+      "owner",
+      entry.entry_id,
+      "delivered",
+    );
+    assert.deepEqual(effects.deliveryStatusIds, [deliveryId]);
+    assert.equal(
+      store.getCollaborationDelivery(deliveryId)?.status,
+      "delivered",
+    );
+  });
+
+  it("does not fail outbox-owned deliveries from local lifecycle cleanup", () => {
+    const root = store.ensureRootTask(dir).id;
+    store.createTask(
+      "report-source",
+      dir,
+      "auto",
+      "mock",
+      "report-source-session",
+      root,
+    );
+    for (const action of ["clear", "resume", "gc", "delete"] as const) {
+      const taskId = `${action}-target`;
+      store.createTask(taskId, dir, "auto", "mock", `${taskId}-session`, root);
+      const delivery = store.createCollaborationMessage({
+        id: `${action}-message`,
+        deliveryId: `${action}-delivery`,
+        sourceTaskId: "report-source",
+        directTargetTaskId: taskId,
+        sourceActor: "agent",
+        body: "report",
+      });
+      store.enqueueOutbox({
+        id: `${action}-entry`,
+        remoteRole: "child",
+        remoteHost: "owner",
+        category: "report",
+        deliveryId: delivery.delivery.id,
+        data: { body: "report" },
+      });
+
+      if (action === "clear") {
+        store.failOutstandingDeliveriesForTaskClear(taskId);
+      } else if (action === "resume") {
+        store.failQueuedDeliveries(taskId, "resume_failed");
+      } else if (action === "gc") {
+        store["db"]
+          .prepare("UPDATE tasks SET created_at = 0 WHERE id = ?")
+          .run(taskId);
+        store.deleteEmptyTasks(1);
+      } else {
+        store.deleteTask(taskId);
+      }
+      assert.equal(
+        store.getCollaborationDelivery(`${action}-delivery`)?.status,
+        "queued",
+      );
+    }
+  });
+
   it("does not cascade an outbox row or inbound association with deletion", () => {
     const root = store.ensureRootTask(dir).id;
     store.createTask("target", dir, "auto", "mock", "target-session", root);
-    store.enqueueOutbox({
+    store.createTask("report-source", dir, "auto", "mock", "report-session");
+    const outbound = store.enqueueLinkReport({
       id: "durable",
       remoteRole: "child",
       remoteHost: "owner",
-      category: "report",
-      deliveryId: "durable-delivery",
-      data: { body: "queued" },
+      sourceTaskId: "report-source",
+      targetTaskId: "external-parent",
+      sourceLabel: "Report",
+      body: "queued",
     });
     const { deliveryId } = enqueueInbound(store, "durable-inbound", "target");
     store.deleteTask("target");
 
-    assert.equal(store.getOutbox("durable")?.entry_id, "durable");
+    assert.equal(
+      store.getOutbox(outbound.entry_id)?.entry_id,
+      outbound.entry_id,
+    );
     const delivery = store.getCollaborationDelivery(deliveryId);
     assert.ok(delivery);
     assert.equal(delivery.status, "failed");
     assert.equal(delivery.source_remote_host, "hub");
     assert.equal(delivery.source_entry_id, "durable-inbound-entry");
   });
+
+  it("rejects dangling and category-mismatched outbox deliveries atomically", () => {
+    const before = store.listOutbox("child", "owner", 0, 100).length;
+    assert.throws(
+      () =>
+        store.enqueueOutbox({
+          remoteRole: "child",
+          remoteHost: "owner",
+          category: "message",
+          deliveryId: "missing",
+          data: { body: "work" },
+        }),
+      /link_delivery_missing/,
+    );
+    assert.equal(store.listOutbox("child", "owner").length, before);
+    const deliveryId = createOutgoingDelivery(store, dir).deliveryId;
+    assert.throws(
+      () =>
+        store.enqueueOutbox({
+          remoteRole: "child",
+          remoteHost: "owner",
+          category: "receipt",
+          deliveryId,
+          data: { originalEntryId: randomUUID(), status: "delivered" },
+        } as never),
+      /link_receipt_has_delivery/,
+    );
+
+    const firstDelivery = createOutgoingDelivery(
+      store,
+      dir,
+      "rollback-source",
+      "rollback-target",
+    ).deliveryId;
+    const first = store.enqueueOutbox({
+      id: randomUUID(),
+      remoteRole: "child",
+      remoteHost: "rollback",
+      category: "message",
+      deliveryId: firstDelivery,
+      data: { body: "first" },
+    });
+    const secondDelivery = createOutgoingDelivery(
+      store,
+      dir,
+      "rollback-source",
+      "rollback-target-2",
+    ).deliveryId;
+    store["db"].exec(`
+      CREATE TRIGGER reject_second_outbox
+      BEFORE INSERT ON outbox
+      WHEN NEW.entry_id = 'blocked-entry'
+      BEGIN
+        SELECT RAISE(ABORT, 'outbox_insert_failed');
+      END;
+    `);
+    assert.throws(
+      () =>
+        store.enqueueOutbox({
+          id: "blocked-entry",
+          remoteRole: "child",
+          remoteHost: "rollback",
+          category: "message",
+          deliveryId: secondDelivery,
+          data: { body: "second" },
+        }),
+      /outbox_insert_failed/,
+    );
+    const rows = store.listOutbox("child", "rollback");
+    assert.deepEqual(
+      rows.map((row) => [row.entry_id, row.pos, row.prev]),
+      [[first.entry_id, first.pos, 0]],
+    );
+  });
 });
 
 function createOutgoingDelivery(
   store: Store,
   dir: string,
+  sourceId = "source",
+  targetId = "outbox-target",
 ): { deliveryId: string } {
-  store.createTask("source", dir, "auto", "mock", "source-session");
-  store.createTask("outbox-target", dir, "auto", "mock", "target-session");
+  if (!store.getTask(sourceId)) {
+    store.createTask(sourceId, dir, "auto", "mock", `${sourceId}-session`);
+  }
+  if (!store.getTask(targetId)) {
+    store.createTask(targetId, dir, "auto", "mock", `${targetId}-session`);
+  }
   const created = store.createCollaborationMessage({
     id: randomUUID(),
     deliveryId: randomUUID(),
-    sourceTaskId: "source",
-    directTargetTaskId: "outbox-target",
+    sourceTaskId: sourceId,
+    directTargetTaskId: targetId,
     sourceActor: "agent",
     body: "work",
   });
@@ -453,7 +666,7 @@ function enqueueInbound(
   return { deliveryId };
 }
 
-function peerMessageEnvelope(
+function linkMessageEnvelope(
   sourceTaskId: string,
   targetTaskId: string,
 ): Extract<LinkEnvelope, { category: "message" }> {
@@ -467,6 +680,29 @@ function peerMessageEnvelope(
       body: "work",
     },
   };
+}
+
+function applyReceipt(
+  store: Store,
+  remoteRole: "parent" | "child",
+  remoteHost: string,
+  entryId: string,
+  status: "delivered" | "failed",
+) {
+  return store.applyLinkPushOperation({
+    remoteRole,
+    remoteHost,
+    envelope: {
+      id: randomUUID(),
+      category: "receipt",
+      data: {
+        originalEntryId: entryId,
+        ...(status === "failed"
+          ? { status, failureReason: "target_deleted" }
+          : { status }),
+      },
+    },
+  });
 }
 
 function installReceiptRejectTrigger(store: Store): void {
