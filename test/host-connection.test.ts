@@ -797,10 +797,11 @@ describe("host connection helpers", () => {
     assert.equal(registry.listRemoteChildren("parent")[0]?.unreachable, true);
   });
 
-  for (const [name, sentId, expectedReconnects] of [
-    ["missing connection id", null, 1],
-    ["stale connection id", "stale", 1],
-    ["current connection id", "current", 0],
+  for (const [name, sentId, currentId, expectedReconnects] of [
+    ["missing connection id", null, "current", 1],
+    ["missing connection id while still connecting", null, null, 1],
+    ["stale connection id", "stale", "current", 1],
+    ["current connection id", "current", "current", 0],
   ] as const) {
     it(`handles a remote create with a ${name}`, async () => {
       let reconnects = 0;
@@ -835,7 +836,7 @@ describe("host connection helpers", () => {
         reconnect: () => {
           reconnects += 1;
         },
-        currentConnectionId: "current",
+        currentConnectionId: currentId,
         readTaskEvents: async () => [],
         readTaskDetail: async () => ({
           id: "child",

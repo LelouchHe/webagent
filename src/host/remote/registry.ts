@@ -120,7 +120,13 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     const attempt = await connection.createTask(input);
     switch (attempt.kind) {
       case "success": {
-        if (attempt.connectionId !== connection.currentConnectionId) {
+        // A create sent without a connection id, or on a connection that has
+        // since been replaced, may predate the ticket that would carry its
+        // parent; reconnect so the next ticket includes the committed link.
+        if (
+          attempt.connectionId === null ||
+          attempt.connectionId !== connection.currentConnectionId
+        ) {
           connection.reconnect();
         }
         const { task } = attempt.result;
