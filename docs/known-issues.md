@@ -282,6 +282,17 @@ time. An entry without a "closing condition" is a wish, not an issue.
 
 ## Performance
 
+- **Plain HTTP/1.1 exhausts a browser origin's connection pool at about six
+  WebAgent tabs.** Browsers allow roughly six concurrent connections per
+  origin for plain HTTP/1.1, shared across all tabs. Every WebAgent tab holds
+  one long-lived SSE connection (for example when opened directly at
+  `http://127.0.0.1:6800`), so around six open tabs consume the pool: further
+  tabs' SSE connections and all tabs' REST requests queue, and the UI appears
+  frozen. HTTPS through a reverse proxy or CDN serving HTTP/2 or HTTP/3 avoids
+  this limit. *Closing:* move each browser profile's long-lived connection into
+  a SharedWorker that owns one `watch` and fans out to tabs over MessagePort
+  (planned with the browser migration to the feed model), or document HTTP/2
+  as a deployment requirement.
 - **A cold page load waits six serial round trips before it settles.** With a
   task hash: HTML → assets → `POST /sse-ticket` → `GET /config` (stream opens)
   → history + detail → snapshot. Server time is 1–7 ms per call, so this is
