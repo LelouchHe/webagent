@@ -5,20 +5,27 @@ requests, streams, retries, and injected persistence/transport ports. It does
 not know Tasks, links, delivery rules, or WebAgent storage.
 
 ```text
-+---------------- request ----------------+     +---------------- feed ----------------+
-| operation id + timeout                 |     | read(after)  watch(after)            |
-| success / explicit 4xx / unknown       |     | pos + prev + applied                 |
-+-------------------+--------------------+     +-------------------+------------------+
-                    |                                              |
-                    v                                              v
-           +---------------- outbox ---------------+      +-------- consumer -------+
-           | one active entry                     |      | serial apply            |
-           | same operation id on retry           |      | overlap ignore          |
-           | release only after hand-off          |      | gap -> read pages       |
-           +----------------+---------------------+      | generation invalidation |
-                            |                            +-------------------------+
-                            +--- injected transport, persistence, Clock/Timer ---+
+ module          uses              caller injects
+ ------------    --------------    ------------------------------------------
+ request         -                 transport, Clock/Timer
+ outbox          request           next() / finish() persistence port
+ feed consumer   -                 read / watch transport, applied() / apply()
+
+ request         one call: operation id + timeout
+                 -> success | explicit 4xx | unknown (network, timeout, 5xx)
+
+ outbox          one active entry at a time
+                 retry the same entry with the same operation id
+                 release the next entry only after the caller reports hand-off
+
+ feed consumer   read(after) / watch(after); entries carry pos + prev
+                 serial apply; overlap ignored; gaps filled by read pages;
+                 a new watch generation voids the old one's work
 ```
+
+The module only decides *when* to send, retry, read, or stop. What an entry
+means, how it is stored, and what counts as hand-off are the caller's: for
+links, `src/host/link-sync.ts` and the `Store` implement those ports.
 
 ## Request
 

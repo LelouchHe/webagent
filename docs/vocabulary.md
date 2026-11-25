@@ -104,7 +104,7 @@ entity; they name the runtime's bookkeeping.
 | **outbox** | The immutable, durable sequence of transport entries an instance sends over one link. Message and report entries point to their sender-side `deliveries` row; receipt entries do not. |
 | **feed** | The ordered view of one link's durable outbox, addressed by `pos` and `prev`. |
 | **watch** | The live request for a feed. `watch(after)` registers first, catches up, and then pushes future committed entries without an acknowledgement protocol. |
-| **outbox cursor** | This instance's durable `applied_pos` in the other instance's outbox, stored once per link in `outbox_cursors`. It is a feed position, not an acknowledgement. |
+| **outbox cursor** | One row per link in `outbox_cursors` with two positions: `applied_pos`, how far this instance has applied the peer's outbox (pull), and `pushed_pos`, how far the peer has durably accepted this instance's outbox (push). Positions, not acknowledgements: outbox rows never change. |
 | **receipt** | A delivery-state fact sent back over the source link. It CASes the referenced sender delivery and never becomes agent delivery work. |
 | **hand-off** | Push cursor advancement: an exact `202`, a current-head receipt, or an authenticated rejection advances the link's `pushed_pos`, so the pump may send the next immutable outbox row. It is distinct from business state in `deliveries`. |
 

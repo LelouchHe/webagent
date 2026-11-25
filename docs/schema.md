@@ -177,20 +177,34 @@ its sender-side delivery. The table CHECK requires the pairing
 foreign key refuses dangling delivery references.
 
 The table has no Task or `remote_tasks` foreign key. Task and link deletion
-cannot cascade away an entry that still needs to be delivered or acknowledged.
+cannot cascade away an entry that still has to be sent or that a later receipt refers to.
+
+How the link tables relate, within one instance and across a link:
 
 ```text
-+------------------------------+          +------------------------------+
-| outbox                       |          | deliveries                   |
-| entry_id                     |          | id                           |
-| category: message|report     |-- exact --> status: queued/delivered/failed |
-| delivery_id                  |   id     | failure fields               |
-+------------------------------+
-                                          +------------------------------+
+ one instance
+   remote_tasks  (local, remote, remote_role, remote_host)   edges; names the link
+   outbox_cursors(remote_role, remote_host) -> applied_pos, pushed_pos   one row per link
+   outbox        (pos, prev, entry_id, remote_role, remote_host,
+                  category, data_json, delivery_id)           immutable
+                    |
+                    | message / report: delivery_id --FK--> deliveries.id
+                    | receipt: delivery_id = NULL
+                    v
+   deliveries    business state: queued / delivered / failed
 
-receipt outbox rows have delivery_id = NULL. Their original entry id names an
-outbox row whose delivery_id is the business-state CAS target.
+ across a link (sender S, receiver R)
+   S.outbox row E --delivery_id--> S.deliveries D        (outbound, business state)
+        |
+        | wire: entry E
+        v
+   R.deliveries I   source_remote_role/host = link, source_entry_id = E   (inbound)
+        |
+        | I changes state -> same tx -> receipt {originalEntryId: E, status}
+        v
+   R.outbox receipt row  --wire-->  S: find outbox row E -> CAS D
 ```
+
 
 ### `outbox_cursors`
 
@@ -304,10 +318,17 @@ PK: `(message_id, task_id)`.
 
 ### `deliveries`
 
-One durable business-state row for a collaboration message or report. Local
-deliveries are ACP queue work. Link-outbound deliveries are transfer work and
-are excluded from the local drain; link-inbound deliveries may be ACP work or
-definite failures. Queue outcome is independent from the immutable Message and
+One durable business-state row for a collaboration message or report. There
+are three kinds, told apart by their links rather than a type column:
+
+| Kind | How to recognize it | Who changes its state |
+|---|---|---|
+| local | no source association, no outbox row points at it | local drain and lifecycle (claim, ACP rejection, clear, delete, archive, ...) |
+| link outbound | an `outbox.delivery_id` points at it | only receipts from the peer and authenticated push rejection; local drain and lifecycle skip it |
+| link inbound | source association set | local drain and lifecycle, like a local row; every transition also emits a receipt |
+
+Inbound rows may also be created directly as definite failures (for example,
+the target Task does not exist). Queue outcome is independent from the immutable Message and
 does not FK-cascade on target task deletion; deletion explicitly terminalizes
 eligible pending rows as `failed(target_deleted)`.
 
@@ -322,15 +343,15 @@ eligible pending rows as `failed(target_deleted)`.
 | `delivered_at` | INTEGER | Set when the drain hands the row to the recipient's agent, not when its turn ends; cleared when an ACP rejection terminalizes that delivery as failed |
 | `failed_at` | INTEGER | Set when the row could not be handed over |
 | `failure_reason` | TEXT | Stable terminal failure reason, e.g. `target_deleted` |
-| `source_remote_role` | TEXT NULL | Source link-link direction for an inbound entry |
-| `source_remote_host` | TEXT NULL | Source link-link name for an inbound entry |
+| `source_remote_role` | TEXT NULL | Source link direction for an inbound entry |
+| `source_remote_host` | TEXT NULL | Source link name for an inbound entry |
 | `source_entry_id` | TEXT NULL | Immutable source outbox entry id |
 | `source_label` | TEXT NULL | Sender-title snapshot for inbound link delivery |
 | `source_category` | TEXT NULL | Inbound entry category: `message` or `report` |
 
 The four association fields
 (`source_remote_role`, `source_remote_host`, `source_entry_id`,
-`source_category`) or all null. `source_label` is a separate nullable display
+`source_category`) are all set or all null. `source_label` is a separate nullable display
 snapshot: inbound facts normally carry it, but the CHECK does not require it.
 All five are null for local deliveries. The unique `(source_remote_role,
 source_remote_host, source_entry_id)` index prevents applying one link entry
