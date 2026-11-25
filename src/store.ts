@@ -286,6 +286,7 @@ export interface PeerApplyEffects {
   deliveryStatusIds: string[];
   outboxEntryIds: string[];
   handoffEntryIds: string[];
+  businessStateEntryIds: string[];
 }
 
 export type PeerOutboxInput =
@@ -337,6 +338,7 @@ function emptyPeerApplyEffects(): PeerApplyEffects {
     deliveryStatusIds: [],
     outboxEntryIds: [],
     handoffEntryIds: [],
+    businessStateEntryIds: [],
   };
 }
 
@@ -3364,6 +3366,7 @@ export class Store {
         row.entry_id,
         row.business_status,
       ).changes;
+    if (changed === 1) effects.businessStateEntryIds.push(row.entry_id);
     return { known: true, changed: changed === 1, effects };
   }
 

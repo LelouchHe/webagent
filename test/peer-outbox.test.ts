@@ -125,12 +125,13 @@ describe("peer outbox", () => {
       data: { body: "done" },
     });
     assert.equal(store.getPeerOutbox("report")?.business_status, "queued");
-    store.applyPeerReceipt({
+    const delivered = store.applyPeerReceipt({
       remoteRole: "child",
       remoteHost: "owner",
       entryId: "report",
       status: "delivered",
     });
+    assert.deepEqual(delivered.effects.businessStateEntryIds, ["report"]);
     assert.equal(store.getPeerOutbox("report")?.business_status, "delivered");
   });
 
@@ -163,6 +164,7 @@ describe("peer outbox", () => {
       deliveryStatusIds: [],
       outboxEntryIds: [],
       handoffEntryIds: [],
+      businessStateEntryIds: [],
     });
     assert.equal(first.effects.drainTaskIds[0], "target");
     assert.throws(
@@ -257,7 +259,6 @@ describe("peer outbox", () => {
     );
     assert.equal(store.getCollaborationDelivery(deliveryId)?.status, "queued");
   });
-
   it("writes inbound claim and rejection receipts atomically", () => {
     store.createTask("target", dir, "auto", "mock", "target-session");
     const { deliveryId } = enqueueInbound(store, "incoming");

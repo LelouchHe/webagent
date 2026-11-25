@@ -27,6 +27,7 @@ export interface PeerSyncEffectCallbacks {
   drainTask?(taskId: string): void;
   outboxChanged?(entryId: string): void;
   handedOff?(entryId: string): void;
+  businessStateChanged?(entryId: string): void;
 }
 
 interface OwnerSubscription {
@@ -250,6 +251,9 @@ function executePeerEffects(
   }
   for (const entryId of effects.handoffEntryIds) {
     callbacks?.handedOff?.(entryId);
+  }
+  for (const entryId of effects.businessStateEntryIds) {
+    callbacks?.businessStateChanged?.(entryId);
   }
 }
 
