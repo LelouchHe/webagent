@@ -119,6 +119,7 @@ describe("task list egress with remote children", () => {
   let server: http.Server;
   let port: number;
   let apiToken: string;
+  let hostToken: string;
   let asked: ReadonlySet<string> | null = null;
 
   before(async () => {
@@ -139,6 +140,7 @@ describe("task list egress with remote children", () => {
     authStore = new AuthStore(join(root, "auth.json"));
     await authStore.load();
     apiToken = (await authStore.addToken("hub", "api")).token;
+    hostToken = (await authStore.addToken("owner-hub", "host")).token;
     const handler = createRequestHandler({
       store,
       authStore,
@@ -210,5 +212,26 @@ describe("task list egress with remote children", () => {
         title: null,
       },
     );
+  });
+
+  it("limits host scope reads to external-parented tasks", async () => {
+    assert.equal((await request(port, "/api/v1/tasks", hostToken)).status, 403);
+    for (const suffix of ["", "/events", "/status"]) {
+      assert.equal(
+        (
+          await request(
+            port,
+            `/api/v1/tasks/${store.rootTaskId}${suffix}`,
+            hostToken,
+          )
+        ).status,
+        404,
+      );
+      assert.equal(
+        (await request(port, `/api/v1/tasks/remote-owned${suffix}`, hostToken))
+          .status,
+        200,
+      );
+    }
   });
 });
