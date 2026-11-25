@@ -414,15 +414,23 @@ export default scenario<State>({
             }));
           const first = await request();
           const second = await request();
-          return {
-            first,
-            second,
-            messages: await waitForRows(
-              state.ownerDb,
-              `SELECT id, COUNT(*) AS count FROM messages
-               WHERE body = 'replayed dispatch'`,
-            ),
-          };
+          const messages = await waitForRows(
+            state.ownerDb,
+            `SELECT id, COUNT(*) AS count FROM messages
+             WHERE body = 'replayed dispatch'`,
+          );
+          // The owner's report reaches the hub asynchronously (watch, apply,
+          // drain, then a hub parent turn). Wait for that turn to finish, so
+          // its writes land in this step on every run.
+          await waitForRows(
+            state.hubDb,
+            `SELECT 1 FROM events
+             WHERE task_id = '${state.parentId}' AND type = 'prompt_done'
+               AND seq > (SELECT MAX(seq) FROM events
+                          WHERE task_id = '${state.parentId}'
+                            AND data LIKE '%Replay deduplicated.%')`,
+          );
+          return { first, second, messages };
         },
       },
       {

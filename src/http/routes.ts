@@ -1430,10 +1430,15 @@ export function createRequestHandler(
       if (statusMatch && req.method === "GET") {
         const taskId = decodeURIComponent(statusMatch[1]);
         const task = store.getTask(taskId);
+        const principal = principalByRequest.get(req);
+        const externalParent =
+          principal?.scope === "host"
+            ? store.getExternalParentLink(taskId)
+            : null;
         if (
           !task ||
-          (principalByRequest.get(req)?.scope === "host" &&
-            store.getExternalParentId(taskId) === null)
+          (principal?.scope === "host" &&
+            externalParent?.remote_host !== principal.name)
         ) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
@@ -2984,10 +2989,15 @@ export function createRequestHandler(
         if (req.method === "GET") {
           const warm = requestParams.get("warm") === "1";
           const task = store.getTask(taskId);
+          const principal = principalByRequest.get(req);
+          const externalParent =
+            principal?.scope === "host"
+              ? store.getExternalParentLink(taskId)
+              : null;
           if (
             !task ||
-            (principalByRequest.get(req)?.scope === "host" &&
-              store.getExternalParentId(taskId) === null)
+            (principal?.scope === "host" &&
+              externalParent?.remote_host !== principal.name)
           ) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
             return;
@@ -3194,7 +3204,7 @@ export function createRequestHandler(
         try {
           const created = await taskOps.create(
             requestPrincipal?.scope === "host"
-              ? { kind: "host" }
+              ? { kind: "host", name: requestPrincipal.name }
               : { kind: "user" },
             {
               cwd: body.cwd,
@@ -3348,10 +3358,15 @@ export function createRequestHandler(
             ? Math.max(1, Math.min(10000, Number(limitRaw)))
             : undefined;
         const task = store.getTask(taskId);
+        const principal = principalByRequest.get(req);
+        const externalParent =
+          principal?.scope === "host"
+            ? store.getExternalParentLink(taskId)
+            : null;
         if (
           !task ||
-          (principalByRequest.get(req)?.scope === "host" &&
-            store.getExternalParentId(taskId) === null)
+          (principal?.scope === "host" &&
+            externalParent?.remote_host !== principal.name)
         ) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;

@@ -234,7 +234,12 @@ describe("Store", () => {
           queued_at INTEGER NOT NULL,
           delivered_at INTEGER,
           failed_at INTEGER,
-          failure_reason TEXT
+          failure_reason TEXT,
+          source_remote_role TEXT,
+          source_remote_host TEXT,
+          source_entry_id TEXT,
+          source_label TEXT,
+          source_category TEXT
         )`);
       db.close();
       try {

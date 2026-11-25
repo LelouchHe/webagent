@@ -134,7 +134,7 @@ export interface TaskCreateInput {
 export type TaskCreateCaller =
   | { kind: "user" }
   | { kind: "agent"; principal: TaskCaller }
-  | { kind: "host" };
+  | { kind: "host"; name: string };
 
 abstract class CreateError extends Error {}
 

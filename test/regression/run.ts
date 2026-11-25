@@ -30,6 +30,7 @@ import {
   type SpecServer,
 } from "../e2e/spawn-server.ts";
 import { pickFreePort } from "../e2e/run-context.ts";
+import { RegressionForwarder } from "./forwarder.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCENARIO_DIR = join(ROOT, "test", "regression", "scenarios");
@@ -87,6 +88,11 @@ interface Instance {
   sseFramesConsumed: number;
   sseClientId: string | null;
   compareSseDrain: boolean;
+}
+
+interface InstanceSet {
+  instances: Map<string, Instance>;
+  forwarders: Map<string, RegressionForwarder>;
 }
 
 async function main(): Promise<void> {
@@ -181,13 +187,13 @@ async function runOnce(
   name: string,
   definition: RegressionScenario<unknown>,
 ): Promise<Json> {
-  const instances = await createInstances(name, definition);
+  const { instances, forwarders } = await createInstances(name, definition);
   const primary = [...instances.values()][0];
   try {
-    const client = createClient(instances);
+    const client = createClient(instances, forwarders);
     await Promise.all([...instances.values()].map(connectSse));
     for (const instance of instances.values()) markCursor(instance);
-    const context = createContext(instances);
+    const context = createContext(instances, forwarders);
     const state = await timed(`${name}: setup`, () =>
       definition.setup({
         ...client,
@@ -226,7 +232,7 @@ async function runOnce(
       { cause: error },
     );
   } finally {
-    await stopInstances(instances);
+    await stopInstances(instances, forwarders);
   }
 }
 
@@ -249,7 +255,7 @@ interface InstancePlan {
 async function createInstances(
   name: string,
   definition: RegressionScenario<unknown>,
-): Promise<Map<string, Instance>> {
+): Promise<InstanceSet> {
   const specs: Record<string, RegressionInstanceSpec> =
     definition.instances ?? {
       default: { mock: definition.mock },
@@ -257,12 +263,34 @@ async function createInstances(
   const plans = Object.entries(specs).map(([instanceName, spec], index) =>
     createInstancePlan(name, instanceName, spec, index),
   );
+  const forwarders = new Map<string, RegressionForwarder>();
+  for (const [forwarderName, spec] of Object.entries(
+    definition.forwarders ?? {},
+  )) {
+    const target = plans.find((plan) => plan.name === spec.target);
+    if (!target)
+      throw new Error(`Unknown regression forwarder target: ${spec.target}`);
+    forwarders.set(
+      forwarderName,
+      await RegressionForwarder.start(`http://127.0.0.1:${target.port}`, {
+        post: spec.postPath,
+        watch: spec.watchPath,
+      }),
+    );
+  }
+  const forwarderOrigins = Object.fromEntries(
+    [...forwarders].map(([forwarderName, forwarder]) => [
+      forwarderName,
+      forwarder.origin,
+    ]),
+  );
   const contexts = Object.fromEntries(
     plans.map((plan) => [
       plan.name,
       {
         root: plan.root,
         origin: `http://127.0.0.1:${plan.port}`,
+        forwarders: forwarderOrigins,
       } satisfies RegressionInstanceContext,
     ]),
   );
@@ -311,9 +339,12 @@ async function createInstances(
         compareSseDrain: true,
       });
     }
-    return instances;
+    return { instances, forwarders };
   } catch (error) {
     await stopInstances(instances);
+    await Promise.all(
+      [...forwarders.values()].map((forwarder) => forwarder.close()),
+    );
     for (const plan of plans)
       rmSync(plan.root, { recursive: true, force: true });
     throw error;
@@ -373,19 +404,27 @@ function createInstancePlan(
 
 function createContext(
   instances: Map<string, Instance>,
+  forwarders: Map<string, RegressionForwarder>,
 ): Record<string, RegressionInstanceContext> {
+  const origins = Object.fromEntries(
+    [...forwarders].map(([name, forwarder]) => [name, forwarder.origin]),
+  );
   return Object.fromEntries(
     [...instances.entries()].map(([name, instance]) => [
       name,
       {
         root: instance.root,
         origin: instance.origin,
+        forwarders: origins,
       },
     ]),
   );
 }
 
-function createClient(instances: Map<string, Instance>): RegressionClient {
+function createClient(
+  instances: Map<string, Instance>,
+  forwarders: Map<string, RegressionForwarder>,
+): RegressionClient {
   const primary = [...instances.values()][0];
   return {
     rest: createInstanceClient(primary),
@@ -394,6 +433,11 @@ function createClient(instances: Map<string, Instance>): RegressionClient {
     }),
     restart: async (name: string, whileStopped?: () => Promise<Json>) =>
       restartInstance(requireInstance(instances, name), whileStopped),
+    forwarder: (name: string) => {
+      const forwarder = forwarders.get(name);
+      if (!forwarder) throw new Error(`Unknown regression forwarder: ${name}`);
+      return forwarder;
+    },
   };
 }
 
@@ -833,8 +877,14 @@ async function stopInstance(instance: Instance): Promise<void> {
   rmSync(instance.root, { recursive: true, force: true });
 }
 
-async function stopInstances(instances: Map<string, Instance>): Promise<void> {
+async function stopInstances(
+  instances: Map<string, Instance>,
+  forwarders = new Map<string, RegressionForwarder>(),
+): Promise<void> {
   await Promise.all([...instances.values()].map(stopInstance));
+  await Promise.all(
+    [...forwarders.values()].map((forwarder) => forwarder.close()),
+  );
 }
 
 async function restartInstance(

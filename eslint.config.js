@@ -323,6 +323,30 @@ export default tseslint.config(
     },
   },
 
+  {
+    files: ["src/shared/sync/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: [
+                "node:*",
+                "better-sqlite3",
+                "**/store.ts",
+                "**/task-manager.ts",
+                "**/host/**",
+              ],
+              message:
+                "shared/sync must remain platform-neutral and depend only on injected transport, persistence, and timer ports.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   // public/js: browser globals + strict console ban.
   // Convention (CLAUDE.md): use `log.*` (public/js/log.ts) so entries appear
   // in the inline debug panel. console.* bypasses that channel entirely.

@@ -123,6 +123,7 @@ describe("task list egress with remote children", () => {
   let port: number;
   let apiToken: string;
   let hostToken: string;
+  let otherHostToken: string;
   let asked: ReadonlySet<string> | null = null;
 
   before(async () => {
@@ -136,6 +137,7 @@ describe("task list egress with remote children", () => {
       source: "host",
       agentId: "mock",
       externalParentId: "external-parent",
+      remoteHost: "owner-hub",
       title: "Remote owned",
       creationAnchor: { kind: "task_created" },
     });
@@ -144,6 +146,7 @@ describe("task list egress with remote children", () => {
     await authStore.load();
     apiToken = (await authStore.addToken("hub", "api")).token;
     hostToken = (await authStore.addToken("owner-hub", "host")).token;
+    otherHostToken = (await authStore.addToken("other-hub", "host")).token;
     const handler = createRequestHandler({
       store,
       authStore,
@@ -217,7 +220,7 @@ describe("task list egress with remote children", () => {
     );
   });
 
-  it("limits host scope reads to external-parented tasks", async () => {
+  it("limits host scope reads to the authenticated link", async () => {
     assert.equal((await request(port, "/api/v1/tasks", hostToken)).status, 403);
     for (const suffix of ["", "/events", "/status"]) {
       assert.equal(
@@ -234,6 +237,16 @@ describe("task list egress with remote children", () => {
         (await request(port, `/api/v1/tasks/remote-owned${suffix}`, hostToken))
           .status,
         200,
+      );
+      assert.equal(
+        (
+          await request(
+            port,
+            `/api/v1/tasks/remote-owned${suffix}`,
+            otherHostToken,
+          )
+        ).status,
+        404,
       );
     }
   });

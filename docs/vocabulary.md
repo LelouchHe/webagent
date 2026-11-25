@@ -96,6 +96,23 @@ entity; they name the runtime's bookkeeping.
 | **runtime message** | A message the runtime queues for one Task about its own bookkeeping — a closing reminder or a fact notice. Delivered like any other message, but not correspondence: no source handle, no delivery mark, and its `kind` names the item instead of `collaboration`. Its title never uses the task-reference grammar, because a source title would repeat and would read as a Task talking. |
 | **closing reminder** | A runtime message delivered as a runtime-injected closing turn that asks the target for a typed update after a turn that carried none. It is a recovery aid, not a lifecycle verdict. |
 
+## Link transport vocabulary
+
+| Term | Means |
+|---|---|
+| **link** | One directed connection identified inside an instance by `(remote_role, remote_host)`. The two names are managed independently on the two instances and may happen to be equal. |
+| **outbox** | The immutable, durable sequence of transport entries an instance sends over one link. Message and report entries point to their sender-side `deliveries` row; receipt entries do not. |
+| **feed** | The ordered view of one link's durable outbox, addressed by `pos` and `prev`. |
+| **watch** | The live request for a feed. `watch(after)` registers first, catches up, and then pushes future committed entries without an acknowledgement protocol. |
+| **outbox cursor** | One row per link in `outbox_cursors` with two positions: `applied_pos`, how far this instance has applied the peer's outbox (pull), and `pushed_pos`, how far the peer has durably accepted this instance's outbox (push). Positions, not acknowledgements: outbox rows never change. |
+| **receipt** | A delivery-state fact sent back over the source link. It CASes the referenced sender delivery and never becomes agent delivery work. |
+| **hand-off** | Push cursor advancement: an exact `202`, a current-head receipt, or an authenticated rejection advances the link's `pushed_pos`, so the pump may send the next immutable outbox row. It is distinct from business state in `deliveries`. |
+
+The transport `outbox` is unrelated to the product **Inbox** exposed by
+`/api/v1/messages`, whose external messages are consumed to create or address
+tasks. Inbox holds those pending product messages; outbox is the internal
+cross-instance transfer sequence.
+
 **`handoff` stays reserved.** It continues to mean the provider/lifecycle handoff
 and the session-compaction handoff (for example `pending_compact_summary`); it is
 not another name for the account or settlement. Prefer *account*

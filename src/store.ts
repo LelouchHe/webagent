@@ -26,6 +26,12 @@ import type {
   WorkflowStatus,
 } from "./shared/workflow-status.ts";
 import { WORKFLOW_STATUSES } from "./shared/workflow-status.ts";
+import {
+  type LinkEnvelope,
+  type LinkMessageData,
+  type LinkReceiptData,
+  LinkProtocolError,
+} from "./shared/link-envelope.ts";
 
 /** Namespace WebAgent reserves for the per-task empty execution slot. */
 const EMPTY_EXECUTION_PREFIX = "no-execution:";
@@ -249,6 +255,75 @@ export interface CollaborationDeliveryRow {
   delivered_at: number | null;
   failed_at: number | null;
   failure_reason: string | null;
+  source_remote_role: LinkRemoteRole | null;
+  source_remote_host: string | null;
+  source_entry_id: string | null;
+  source_label: string | null;
+  source_category: "message" | "report" | null;
+}
+
+export type LinkRemoteRole = "parent" | "child";
+export type OutboxCategory = "message" | "report" | "receipt";
+export interface OutboxRow {
+  pos: number;
+  entry_id: string;
+  remote_role: LinkRemoteRole;
+  remote_host: string;
+  prev: number;
+  category: OutboxCategory;
+  data_json: string;
+  delivery_id: string | null;
+  created_at: number;
+}
+
+export interface LinkApplyEffects {
+  drainTaskIds: string[];
+  deliveryStatusIds: string[];
+  outboxEntryIds: string[];
+  pushCursorPos: number[];
+}
+
+export type OutboxInput =
+  | {
+      category: "message" | "report";
+      deliveryId: string;
+      data: unknown;
+    }
+  | {
+      category: "receipt";
+      data: unknown;
+    };
+
+export interface LinkInboundAssociation {
+  remoteRole: LinkRemoteRole;
+  remoteHost: string;
+  entryId: string;
+  category: "message" | "report";
+}
+
+function canTransitionDeliveryStatus(
+  current: CollaborationDeliveryStatus | null,
+  next: Exclude<CollaborationDeliveryStatus, "queued">,
+): boolean {
+  if (current === "queued") return true;
+  return current === "delivered" && next === "failed";
+}
+
+function stringifyLinkData(data: unknown): string {
+  const encoded: unknown = JSON.stringify(data);
+  if (typeof encoded !== "string") {
+    throw new Error("link_outbox_data_not_serializable");
+  }
+  return encoded;
+}
+
+function emptyLinkApplyEffects(): LinkApplyEffects {
+  return {
+    drainTaskIds: [],
+    deliveryStatusIds: [],
+    outboxEntryIds: [],
+    pushCursorPos: [],
+  };
 }
 
 export interface CollaborationDeliveryStatusChange {
@@ -259,6 +334,7 @@ export interface CollaborationDeliveryStatusChange {
   status: CollaborationDeliveryStatus;
   deliveredAt: number | null;
   failureReason: string | null;
+  suppressFailureNotice: boolean;
 }
 
 export interface SystemDeliveryInput {
@@ -647,6 +723,11 @@ export class Store {
         "delivered_at",
         "failed_at",
         "failure_reason",
+        "source_remote_role",
+        "source_remote_host",
+        "source_entry_id",
+        "source_label",
+        "source_category",
       ],
     };
     // Columns that earlier versions wrote and this one migrates away (see
@@ -763,12 +844,7 @@ export class Store {
         local_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
         remote_task_id TEXT NOT NULL,
         remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
-        remote_host TEXT,
-        CHECK (
-          (remote_role = 'child' AND remote_host IS NOT NULL)
-          OR
-          (remote_role = 'parent' AND remote_host IS NULL)
-        )
+        remote_host TEXT NOT NULL
       );
       CREATE UNIQUE INDEX IF NOT EXISTS remote_tasks_one_parent
         ON remote_tasks(local_task_id)
@@ -858,10 +934,52 @@ export class Store {
         queued_at INTEGER NOT NULL,
         delivered_at INTEGER,
         failed_at INTEGER,
-        failure_reason TEXT
+        failure_reason TEXT,
+        source_remote_role TEXT CHECK (source_remote_role IN ('parent', 'child')),
+        source_remote_host TEXT,
+        source_entry_id TEXT,
+        source_label TEXT,
+        source_category TEXT CHECK (source_category IN ('message', 'report')),
+        CHECK (
+          (source_remote_role IS NULL AND source_remote_host IS NULL AND source_entry_id IS NULL AND source_category IS NULL)
+          OR
+          (source_remote_role IS NOT NULL AND source_remote_host IS NOT NULL AND source_entry_id IS NOT NULL AND source_category IS NOT NULL)
+        )
       );
       CREATE INDEX IF NOT EXISTS idx_deliveries_recipient_status_queued
         ON deliveries (recipient_task_id, status, queued_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_deliveries_source_entry
+        ON deliveries (source_remote_role, source_remote_host, source_entry_id)
+        WHERE source_entry_id IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS outbox (
+        pos INTEGER PRIMARY KEY,
+        entry_id TEXT NOT NULL UNIQUE,
+        remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
+        remote_host TEXT NOT NULL,
+        prev INTEGER NOT NULL,
+        category TEXT NOT NULL CHECK (category IN ('message', 'report', 'receipt')),
+        data_json TEXT NOT NULL,
+        delivery_id TEXT REFERENCES deliveries(id),
+        created_at INTEGER NOT NULL
+        CHECK (
+          (category IN ('message', 'report') AND delivery_id IS NOT NULL)
+          OR
+          (category = 'receipt' AND delivery_id IS NULL)
+        )
+      );
+      CREATE INDEX IF NOT EXISTS idx_outbox_link_pos
+        ON outbox (remote_role, remote_host, pos);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_outbox_delivery
+        ON outbox (delivery_id) WHERE delivery_id IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS outbox_cursors (
+        remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
+        remote_host TEXT NOT NULL,
+        applied_pos INTEGER NOT NULL DEFAULT 0,
+        pushed_pos INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (remote_role, remote_host)
+      );
     `);
 
     // client-server-split M2: idempotency for mutating REST calls. Stores
@@ -1170,6 +1288,7 @@ export class Store {
     source: string;
     agentId: string;
     externalParentId: string;
+    remoteHost: string;
     title?: string;
     workflowStatus?: WorkflowStatus;
     creationAnchor: Record<string, unknown>;
@@ -1212,9 +1331,9 @@ export class Store {
         .prepare(
           `INSERT INTO remote_tasks
              (local_task_id, remote_task_id, remote_role, remote_host)
-             VALUES (?, ?, 'parent', NULL)`,
+             VALUES (?, ?, 'parent', ?)`,
         )
-        .run(input.id, input.externalParentId);
+        .run(input.id, input.externalParentId, input.remoteHost);
       this.saveEvent(input.id, "system_message", input.creationAnchor, {
         from_ref: "system",
       });
@@ -1276,6 +1395,26 @@ export class Store {
       )
       .get(taskId) as { remote_task_id: string } | undefined;
     return row?.remote_task_id ?? null;
+  }
+
+  getExternalParentLink(taskId: string):
+    | {
+        remote_task_id: string;
+        remote_host: string;
+      }
+    | undefined {
+    return this.db
+      .prepare(
+        `SELECT remote_task_id, remote_host FROM remote_tasks
+         WHERE local_task_id = ? AND remote_role = 'parent'
+         LIMIT 1`,
+      )
+      .get(taskId) as
+      | {
+          remote_task_id: string;
+          remote_host: string;
+        }
+      | undefined;
   }
 
   recordRemoteChild(
@@ -2067,6 +2206,9 @@ export class Store {
            )
            SELECT d.id FROM deliveries d
            WHERE d.status = 'queued'
+             AND NOT EXISTS (
+               SELECT 1 FROM outbox o WHERE o.delivery_id = d.id
+             )
              AND d.message_id IN (
                SELECT m.id FROM messages m
                WHERE (
@@ -2078,15 +2220,15 @@ export class Store {
         .all(seedTaskId) as Array<{ id: string }>
     ).map((row) => row.id);
     if (ids.length === 0) return ids;
-    const fail = this.db.prepare(
-      `UPDATE deliveries
-       SET status = 'failed', failed_at = ?, failure_reason = 'archived_edge_cut'
-       WHERE id = ? AND status = 'queued'`,
+    return ids.filter((id) =>
+      this.transitionDeliveryStatusInTransaction(
+        id,
+        "queued",
+        "failed",
+        failedAt,
+        "archived_edge_cut",
+      ),
     );
-    this.db.transaction(() => {
-      for (const id of ids) fail.run(failedAt, id);
-    })();
-    return ids;
   }
 
   /**
@@ -2186,31 +2328,73 @@ export class Store {
    * Returns true if a tombstone was reaped.
    */
   reapTombstoneIfOrphaned(taskId: string): boolean {
-    if (this.isRootTaskId(taskId)) return false;
+    const reaped = this.db.transaction(() =>
+      this.reapTombstoneIfOrphanedTransaction(taskId),
+    )();
+    if (!reaped) return false;
+    this.broadcastDeliveryStatus(reaped.failedDeliveryIds);
+    return true;
+  }
+
+  revokeShareAndReap(token: string): {
+    revoked: boolean;
+    reaped: boolean;
+    taskId: string | null;
+  } {
+    const result = this.db.transaction(() => {
+      const row = this.getShareByToken(token);
+      if (!row) {
+        return {
+          revoked: false,
+          reaped: false,
+          taskId: null,
+          failedDeliveryIds: [],
+        };
+      }
+      if (!this.revokeShare(token)) {
+        return {
+          revoked: false,
+          reaped: false,
+          taskId: row.task_id,
+          failedDeliveryIds: [],
+        };
+      }
+      const reaped = this.reapTombstoneIfOrphanedTransaction(row.task_id);
+      return {
+        revoked: true,
+        reaped: reaped !== null,
+        taskId: row.task_id,
+        failedDeliveryIds: reaped?.failedDeliveryIds ?? [],
+      };
+    })();
+    this.broadcastDeliveryStatus(result.failedDeliveryIds);
+    return {
+      revoked: result.revoked,
+      reaped: result.reaped,
+      taskId: result.taskId,
+    };
+  }
+
+  private reapTombstoneIfOrphanedTransaction(taskId: string): {
+    failedDeliveryIds: string[];
+  } | null {
+    if (this.isRootTaskId(taskId)) return null;
     const row = this.db
       .prepare("SELECT id FROM tasks WHERE id = ? AND deleted_at IS NOT NULL")
       .get(taskId) as { id: string } | undefined;
-    if (!row) return false;
+    if (!row) return null;
     const remaining = (
       this.db
         .prepare("SELECT COUNT(*) AS n FROM shares WHERE task_id = ?")
         .get(taskId) as { n: number }
     ).n;
-    if (remaining > 0) return false;
-    // Its live children were deleted when it was tombstoned; any survivor
-    // (a share-tombstoned descendant of this tombstone) still references it
-    // and must be re-parented under Root before the row goes away.
+    if (remaining > 0) return null;
     this.reparentChildrenToRoot(taskId);
-    this.failOutstandingDeliveriesForDeletedTask(taskId);
-    const failedDeliveryIds = this.failedDeliveryIdsForRecipient(
-      taskId,
-      "target_deleted",
-    );
+    const failedDeliveryIds =
+      this.failOutstandingDeliveriesForDeletedTask(taskId);
     this.db.prepare("DELETE FROM events WHERE task_id = ?").run(taskId);
     this.db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
-    // Publish the sender marks only after the reaper's writes landed.
-    this.broadcastDeliveryStatus(failedDeliveryIds);
-    return true;
+    return { failedDeliveryIds };
   }
 
   /** Delete tasks that have zero events and are older than minAgeS seconds. Returns IDs deleted. */
@@ -2791,7 +2975,76 @@ export class Store {
     this.deliveryStatusObservers.push(observer);
   }
 
-  broadcastDeliveryStatus(ids: readonly string[]): void {
+  private transitionDeliveryStatusInTransaction(
+    deliveryId: string,
+    expected: "queued" | "delivered",
+    next: Exclude<CollaborationDeliveryStatus, "queued">,
+    changedAt: number,
+    failureReason?: string | null,
+  ): boolean {
+    if (!canTransitionDeliveryStatus(expected, next)) {
+      throw new Error(`invalid_delivery_transition:${expected}->${next}`);
+    }
+    const delivery = this.db
+      .prepare(
+        `SELECT source_remote_role, source_remote_host, source_entry_id
+         FROM deliveries WHERE id = ? AND status = ?`,
+      )
+      .get(deliveryId, expected) as
+      | {
+          source_remote_role: LinkRemoteRole | null;
+          source_remote_host: string | null;
+          source_entry_id: string | null;
+        }
+      | undefined;
+    if (!delivery) return false;
+    const result =
+      next === "delivered"
+        ? this.db
+            .prepare(
+              `UPDATE deliveries
+               SET status = 'delivered', delivered_at = ?, failed_at = NULL,
+                   failure_reason = NULL
+               WHERE id = ? AND status = ?`,
+            )
+            .run(changedAt, deliveryId, expected)
+        : this.db
+            .prepare(
+              `UPDATE deliveries
+               SET status = 'failed', delivered_at = NULL,
+                   failed_at = ?, failure_reason = ?
+               WHERE id = ? AND status = ?`,
+            )
+            .run(changedAt, failureReason ?? "failed", deliveryId, expected);
+    if (result.changes !== 1) return false;
+    if (
+      delivery.source_remote_role !== null &&
+      delivery.source_remote_host !== null &&
+      delivery.source_entry_id !== null
+    ) {
+      this.enqueueOutboxInTransaction({
+        entryId: randomUUID(),
+        remoteRole: delivery.source_remote_role,
+        remoteHost: delivery.source_remote_host,
+        category: "receipt",
+        dataJson: JSON.stringify({
+          originalEntryId: delivery.source_entry_id,
+          status: next,
+          ...(next === "failed"
+            ? { failureReason: failureReason ?? "failed" }
+            : {}),
+        }),
+        deliveryId: null,
+        createdAt: changedAt,
+      });
+    }
+    return true;
+  }
+
+  broadcastDeliveryStatus(
+    ids: readonly string[],
+    options: { suppressFailureNotice?: boolean } = {},
+  ): void {
     if (ids.length === 0 || this.deliveryStatusObservers.length === 0) return;
     const changes: CollaborationDeliveryStatusChange[] = [];
     for (let index = 0; index < ids.length; index += 400) {
@@ -2823,12 +3076,509 @@ export class Store {
           status: row.status,
           deliveredAt: row.delivered_at,
           failureReason: row.failure_reason,
+          suppressFailureNotice: options.suppressFailureNotice === true,
         });
       }
     }
     for (const change of changes) {
       for (const observer of this.deliveryStatusObservers) observer(change);
     }
+  }
+
+  enqueueOutbox(
+    input: OutboxInput & {
+      id?: string;
+      remoteRole: LinkRemoteRole;
+      remoteHost: string;
+      createdAt?: number;
+    },
+  ): OutboxRow {
+    if (input.category === "receipt" && "deliveryId" in input) {
+      throw new Error("link_receipt_has_delivery");
+    }
+    const dataJson = stringifyLinkData(input.data);
+    return this.db.transaction(() =>
+      this.enqueueOutboxInTransaction({
+        entryId: input.id ?? randomUUID(),
+        remoteRole: input.remoteRole,
+        remoteHost: input.remoteHost,
+        category: input.category,
+        dataJson,
+        deliveryId: input.category === "receipt" ? null : input.deliveryId,
+        createdAt: input.createdAt ?? Date.now(),
+      }),
+    )();
+  }
+
+  applyLinkPushOperation(input: {
+    remoteRole: LinkRemoteRole;
+    remoteHost: string;
+    envelope: LinkEnvelope;
+  }): LinkApplyEffects {
+    return this.db.transaction(() => {
+      if (input.envelope.category !== "receipt") {
+        const existing = this.getInboundLinkDelivery(
+          input.remoteRole,
+          input.remoteHost,
+          input.envelope.id,
+        );
+        if (existing) {
+          const replayed: LinkEnvelope = {
+            id: existing.source_entry_id!,
+            category: existing.source_category!,
+            data: {
+              sourceTaskId: existing.source_task_id,
+              targetTaskId: existing.recipient_task_id,
+              sourceLabel: existing.source_label ?? "",
+              body: existing.body,
+            },
+          };
+          if (
+            stringifyLinkData(replayed) !== stringifyLinkData(input.envelope)
+          ) {
+            throw new Error("link_inbound_op_conflict");
+          }
+          return {
+            ...emptyLinkApplyEffects(),
+          };
+        }
+      }
+      const effects = this.applyLinkEnvelopeInTransaction(
+        input.remoteRole,
+        input.remoteHost,
+        input.envelope,
+      );
+      return effects;
+    })();
+  }
+
+  enqueueLinkReport(input: {
+    id?: string;
+    deliveryId?: string;
+    remoteRole: LinkRemoteRole;
+    remoteHost: string;
+    sourceTaskId: string;
+    targetTaskId: string;
+    sourceLabel: string;
+    body: string;
+    createdAt?: number;
+  }): OutboxRow {
+    const entryId = input.id ?? randomUUID();
+    const deliveryId = input.deliveryId ?? randomUUID();
+    const createdAt = input.createdAt ?? Date.now();
+    return this.db.transaction(() => {
+      this.requireLiveTask(input.sourceTaskId);
+      const envelope: LinkEnvelope = {
+        id: entryId,
+        category: "report",
+        data: {
+          sourceTaskId: input.sourceTaskId,
+          targetTaskId: input.targetTaskId,
+          sourceLabel: input.sourceLabel,
+          body: input.body,
+        },
+      };
+      this.insertDeliveryMessage({
+        id: entryId,
+        deliveryId,
+        sourceTaskId: input.sourceTaskId,
+        recipientTaskId: input.targetTaskId,
+        sourceActor: "agent",
+        body: input.body,
+        idempotencyKey: `${entryId}:${input.targetTaskId}`,
+        createdAt,
+        status: "queued",
+        projection: "source",
+      });
+      return this.enqueueOutboxInTransaction({
+        entryId,
+        remoteRole: input.remoteRole,
+        remoteHost: input.remoteHost,
+        category: "report",
+        dataJson: stringifyLinkData(envelope.data),
+        deliveryId,
+        createdAt,
+      });
+    })();
+  }
+
+  getOutboxCursor(remoteRole: LinkRemoteRole, remoteHost: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT applied_pos FROM outbox_cursors
+         WHERE remote_role = ? AND remote_host = ?`,
+      )
+      .get(remoteRole, remoteHost) as { applied_pos: number } | undefined;
+    return row?.applied_pos ?? 0;
+  }
+
+  applyLinkFeedOperation(input: {
+    remoteRole: LinkRemoteRole;
+    remoteHost: string;
+    expectedApplied: number;
+    nextApplied: number;
+    envelope: LinkEnvelope;
+  }): { committed: boolean; effects: LinkApplyEffects } {
+    return this.db.transaction(() => {
+      const applied = this.getOutboxCursor(input.remoteRole, input.remoteHost);
+      if (applied !== input.expectedApplied) {
+        return { committed: false, effects: emptyLinkApplyEffects() };
+      }
+      if (input.nextApplied <= applied) {
+        throw new Error("outbox_cursor_does_not_advance");
+      }
+      const effects = this.applyLinkEnvelopeInTransaction(
+        input.remoteRole,
+        input.remoteHost,
+        input.envelope,
+      );
+      this.db
+        .prepare(
+          `INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)
+           VALUES (?, ?, ?, 0)
+           ON CONFLICT (remote_role, remote_host)
+           DO UPDATE SET applied_pos = excluded.applied_pos`,
+        )
+        .run(input.remoteRole, input.remoteHost, input.nextApplied);
+      return { committed: true, effects };
+    })();
+  }
+
+  listOutbox(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    after = 0,
+    limit = 100,
+  ): OutboxRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM outbox
+         WHERE remote_role = ? AND remote_host = ? AND pos > ?
+         ORDER BY pos
+         LIMIT ?`,
+      )
+      .all(remoteRole, remoteHost, after, limit) as OutboxRow[];
+  }
+
+  getOutbox(entryId: string): OutboxRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM outbox WHERE entry_id = ?")
+      .get(entryId) as OutboxRow | undefined;
+  }
+
+  getOutboxPushCursor(remoteRole: LinkRemoteRole, remoteHost: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT pushed_pos FROM outbox_cursors
+         WHERE remote_role = ? AND remote_host = ?`,
+      )
+      .get(remoteRole, remoteHost) as { pushed_pos: number } | undefined;
+    return row?.pushed_pos ?? 0;
+  }
+
+  advanceOutboxPushCursor(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    entryId: string,
+  ): number | null {
+    return this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          `SELECT pos FROM outbox
+           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?`,
+        )
+        .get(remoteRole, remoteHost, entryId) as { pos: number } | undefined;
+      if (!row) throw new Error("outbox_entry_not_found");
+      const previous = this.db
+        .prepare(
+          `SELECT pushed_pos FROM outbox_cursors
+           WHERE remote_role = ? AND remote_host = ?`,
+        )
+        .get(remoteRole, remoteHost) as { pushed_pos: number } | undefined;
+      const result = this.db
+        .prepare(
+          `INSERT INTO outbox_cursors
+             (remote_role, remote_host, applied_pos, pushed_pos)
+           VALUES (?, ?, 0, ?)
+           ON CONFLICT (remote_role, remote_host)
+           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)
+           RETURNING pushed_pos`,
+        )
+        .get(remoteRole, remoteHost, row.pos) as { pushed_pos: number };
+      return (previous?.pushed_pos ?? 0) < result.pushed_pos ? row.pos : null;
+    })();
+  }
+
+  rejectOutboxHead(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    entryId: string,
+    failureReason: string,
+  ): LinkApplyEffects {
+    return this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          `SELECT entry_id, pos, category, delivery_id FROM outbox
+           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?`,
+        )
+        .get(remoteRole, remoteHost, entryId) as
+        | {
+            entry_id: string;
+            pos: number;
+            category: OutboxCategory;
+            delivery_id: string | null;
+          }
+        | undefined;
+      if (!row) throw new Error("outbox_entry_not_found");
+      if (row.category === "receipt") {
+        throw new Error("receipt_rejected_link_fault");
+      }
+      if (!row.delivery_id) throw new Error("link_entry_missing_delivery_id");
+      const changed = this.transitionDeliveryStatusInTransaction(
+        row.delivery_id,
+        "queued",
+        "failed",
+        Date.now(),
+        failureReason,
+      );
+      const pushedPos = this.advanceOutboxPushCursor(
+        remoteRole,
+        remoteHost,
+        entryId,
+      );
+      return {
+        drainTaskIds: [],
+        deliveryStatusIds: changed ? [row.delivery_id] : [],
+        outboxEntryIds: [],
+        pushCursorPos: pushedPos === null ? [] : [pushedPos],
+      };
+    })();
+  }
+
+  private getInboundLinkDelivery(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    entryId: string,
+  ):
+    | (CollaborationDeliveryRow & {
+        body: string;
+        source_task_id: string;
+      })
+    | undefined {
+    return this.db
+      .prepare(
+        `SELECT d.*, m.source_task_id, m.body
+         FROM deliveries d
+         JOIN messages m ON m.id = d.message_id
+         WHERE d.source_remote_role = ?
+           AND d.source_remote_host = ?
+           AND d.source_entry_id = ?`,
+      )
+      .get(remoteRole, remoteHost, entryId) as
+      | (CollaborationDeliveryRow & {
+          body: string;
+          source_task_id: string;
+        })
+      | undefined;
+  }
+
+  private applyLinkEnvelopeInTransaction(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    envelope: LinkEnvelope,
+  ): LinkApplyEffects {
+    if (envelope.category === "receipt") {
+      const receipt = this.applyLinkReceiptInTransaction({
+        remoteRole,
+        remoteHost,
+        entryId: envelope.data.originalEntryId,
+        status: envelope.data.status,
+        failureReason:
+          envelope.data.status === "failed"
+            ? envelope.data.failureReason
+            : null,
+      });
+      if (!receipt.known) throw new LinkProtocolError("unknown_link_receipt");
+      return receipt.effects;
+    }
+    return this.applyLinkDeliveryInTransaction(
+      remoteRole,
+      remoteHost,
+      envelope.id,
+      envelope.data,
+      envelope.category,
+    );
+  }
+
+  private applyLinkDeliveryInTransaction(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    entryId: string,
+    message: LinkMessageData,
+    category: "message" | "report",
+  ): LinkApplyEffects {
+    const effects = emptyLinkApplyEffects();
+    const target = this.getTask(message.targetTaskId);
+    if (!target) {
+      const deliveryId = entryId;
+      this.insertDeliveryMessage({
+        id: entryId,
+        deliveryId,
+        sourceTaskId: message.sourceTaskId,
+        recipientTaskId: message.targetTaskId,
+        sourceActor: "agent",
+        body: message.body,
+        sourceLabel: message.sourceLabel,
+        idempotencyKey: `${entryId}:${message.targetTaskId}`,
+        createdAt: Date.now(),
+        status: "failed",
+        failureReason: "target_deleted",
+        inbound: { remoteRole, remoteHost, entryId, category },
+        projection: null,
+      });
+      const receiptId = randomUUID();
+      this.enqueueOutboxInTransaction({
+        entryId: receiptId,
+        remoteRole,
+        remoteHost,
+        category: "receipt",
+        dataJson: stringifyLinkData({
+          originalEntryId: entryId,
+          status: "failed",
+          failureReason: "target_deleted",
+        } satisfies LinkReceiptData),
+        deliveryId: null,
+        createdAt: Date.now(),
+      });
+      effects.outboxEntryIds.push(receiptId);
+      return effects;
+    }
+    const relationMatches =
+      remoteRole === "parent"
+        ? (() => {
+            const relation = this.getExternalParentLink(message.targetTaskId);
+            return (
+              relation?.remote_host === remoteHost &&
+              relation.remote_task_id === message.sourceTaskId
+            );
+          })()
+        : this.getRemoteChild(remoteHost, message.sourceTaskId)
+            ?.local_task_id === message.targetTaskId;
+    if (!relationMatches) {
+      throw new LinkProtocolError("link_mismatch");
+    }
+    this.enqueueTargetCollaboration({
+      id: entryId,
+      deliveryId: entryId,
+      sourceTaskId: message.sourceTaskId,
+      targetTaskId: message.targetTaskId,
+      body: message.body,
+      sourceLabel: message.sourceLabel,
+      inbound: { remoteRole, remoteHost, entryId, category },
+    });
+    effects.drainTaskIds.push(message.targetTaskId);
+    return effects;
+  }
+
+  private applyLinkReceiptInTransaction(input: {
+    remoteRole: LinkRemoteRole;
+    remoteHost: string;
+    entryId: string;
+    status: Exclude<CollaborationDeliveryStatus, "queued">;
+    failureReason?: string | null;
+  }): { known: boolean; changed: boolean; effects: LinkApplyEffects } {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM outbox
+         WHERE entry_id = ? AND remote_role = ? AND remote_host = ?
+           AND category <> 'receipt'`,
+      )
+      .get(input.entryId, input.remoteRole, input.remoteHost) as
+      OutboxRow | undefined;
+    const effects = emptyLinkApplyEffects();
+    if (!row) return { known: false, changed: false, effects };
+    if (!row.delivery_id) {
+      throw new Error("link_entry_missing_delivery_id");
+    }
+    const delivery = this.getCollaborationDelivery(row.delivery_id);
+    if (!delivery) throw new Error("link_delivery_missing");
+    const previous = delivery.status;
+    const changed =
+      previous === "queued" &&
+      this.transitionDeliveryStatusInTransaction(
+        row.delivery_id,
+        "queued",
+        input.status,
+        Date.now(),
+        input.failureReason,
+      );
+    const terminal =
+      previous === "delivered" &&
+      input.status === "failed" &&
+      this.transitionDeliveryStatusInTransaction(
+        row.delivery_id,
+        "delivered",
+        "failed",
+        Date.now(),
+        input.failureReason,
+      );
+    const pushedPos = this.advanceOutboxPushCursor(
+      row.remote_role,
+      row.remote_host,
+      row.entry_id,
+    );
+    if (pushedPos !== null) effects.pushCursorPos.push(pushedPos);
+    if (changed || terminal) {
+      effects.deliveryStatusIds.push(row.delivery_id);
+      return { known: true, changed: true, effects };
+    }
+    return { known: true, changed: false, effects };
+  }
+
+  private enqueueOutboxInTransaction(input: {
+    entryId: string;
+    remoteRole: LinkRemoteRole;
+    remoteHost: string;
+    category: OutboxCategory;
+    dataJson: string;
+    deliveryId: string | null;
+    createdAt: number;
+  }): OutboxRow {
+    if (input.category === "receipt" && input.deliveryId !== null) {
+      throw new Error("link_receipt_has_delivery");
+    }
+    if (input.category !== "receipt") {
+      if (!input.deliveryId) throw new Error("link_entry_missing_delivery");
+      const delivery = this.getCollaborationDelivery(input.deliveryId);
+      if (!delivery) throw new Error("link_delivery_missing");
+      if (delivery.source_entry_id !== null) {
+        throw new Error("link_inbound_delivery_cannot_be_outbound");
+      }
+    }
+    const previous = this.db
+      .prepare(
+        `SELECT COALESCE(MAX(pos), 0) AS pos FROM outbox
+         WHERE remote_role = ? AND remote_host = ?`,
+      )
+      .get(input.remoteRole, input.remoteHost) as { pos: number };
+    this.db
+      .prepare(
+        `INSERT INTO outbox
+           (entry_id, remote_role, remote_host, prev, category, data_json,
+            delivery_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.entryId,
+        input.remoteRole,
+        input.remoteHost,
+        previous.pos,
+        input.category,
+        input.dataJson,
+        input.deliveryId,
+        input.createdAt,
+      );
+    return this.getOutbox(input.entryId)!;
   }
 
   /**
@@ -2854,6 +3604,8 @@ export class Store {
       body: string;
       id?: string;
       deliveryId?: string;
+      sourceLabel?: string;
+      inbound?: LinkInboundAssociation;
     },
     record?: (result: { messageId: string; deliveryId: string }) => void,
   ): { messageId: string; deliveryId: string } {
@@ -2871,6 +3623,8 @@ export class Store {
         body: input.body,
         idempotencyKey: `${messageId}:${input.targetTaskId}`,
         createdAt,
+        inbound: input.inbound,
+        sourceLabel: input.sourceLabel,
       });
       record?.({ messageId, deliveryId });
     })();
@@ -2884,6 +3638,8 @@ export class Store {
     sourceTaskId: string;
     targetTaskId: string;
     body: string;
+    sourceLabel?: string;
+    inbound?: LinkInboundAssociation;
   }): boolean {
     return this.db.transaction(() => {
       const duplicate = this.db
@@ -2902,6 +3658,8 @@ export class Store {
         body: input.body,
         idempotencyKey: input.idempotencyKey,
         createdAt: Date.now(),
+        inbound: input.inbound,
+        sourceLabel: input.sourceLabel,
       });
       return true;
     })();
@@ -2955,15 +3713,16 @@ export class Store {
             )
             .get(input.id) as { id: string } | undefined;
           if (delivery) {
-            this.db
-              .prepare(
-                `UPDATE deliveries
-                 SET status = 'delivered', delivered_at = ?, failed_at = NULL,
-                     failure_reason = NULL
-                 WHERE id = ?`,
+            if (
+              this.transitionDeliveryStatusInTransaction(
+                delivery.id,
+                "queued",
+                "delivered",
+                createdAt,
               )
-              .run(createdAt, delivery.id);
-            acknowledged.deliveryId = delivery.id;
+            ) {
+              acknowledged.deliveryId = delivery.id;
+            }
           }
         }
       }
@@ -3003,15 +3762,24 @@ export class Store {
     messageId: string,
     deliveredAt = Date.now(),
   ): boolean {
-    const row = this.db
-      .prepare(
-        `UPDATE deliveries
-         SET status = 'delivered', delivered_at = ?, failed_at = NULL,
-             failure_reason = NULL
-         WHERE message_id = ? AND status = 'queued'`,
-      )
-      .run(deliveredAt, messageId);
-    if (row.changes === 0) {
+    const changed = this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          `SELECT id FROM deliveries
+           WHERE message_id = ? AND status = 'queued'
+           LIMIT 1`,
+        )
+        .get(messageId) as { id: string } | undefined;
+      return row
+        ? this.transitionDeliveryStatusInTransaction(
+            row.id,
+            "queued",
+            "delivered",
+            deliveredAt,
+          )
+        : false;
+    })();
+    if (!changed) {
       const exists = this.db
         .prepare("SELECT 1 FROM deliveries WHERE message_id = ? LIMIT 1")
         .get(messageId);
@@ -3206,6 +3974,39 @@ export class Store {
     body: string;
     idempotencyKey: string;
     createdAt: number;
+    inbound?: LinkInboundAssociation;
+    sourceLabel?: string;
+  }): void {
+    this.insertDeliveryMessage({
+      id: input.id,
+      deliveryId: input.deliveryId,
+      sourceTaskId: input.sourceTaskId,
+      recipientTaskId: input.directTargetTaskId,
+      sourceActor: input.actor,
+      body: input.body,
+      sourceLabel: input.sourceLabel,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: input.createdAt,
+      status: "queued",
+      inbound: input.inbound,
+      projection: "target",
+    });
+  }
+
+  private insertDeliveryMessage(input: {
+    id: string;
+    deliveryId: string;
+    sourceTaskId: string;
+    recipientTaskId: string;
+    sourceActor: "agent" | "system";
+    body: string;
+    sourceLabel?: string;
+    idempotencyKey: string;
+    createdAt: number;
+    status: "queued" | "failed";
+    failureReason?: string;
+    inbound?: LinkInboundAssociation;
+    projection: "source" | "target" | null;
   }): void {
     this.db
       .prepare(
@@ -3216,30 +4017,51 @@ export class Store {
       .run(
         input.id,
         input.sourceTaskId,
-        input.directTargetTaskId,
-        input.actor,
+        input.recipientTaskId,
+        input.sourceActor,
         input.body,
         input.createdAt,
       );
-    this.db
-      .prepare(
-        `INSERT INTO message_projections
-         (message_id, task_id, role, created_at)
-         VALUES (?, ?, 'target', ?)`,
-      )
-      .run(input.id, input.directTargetTaskId, input.createdAt);
+    if (input.projection) {
+      this.db
+        .prepare(
+          `INSERT INTO message_projections
+           (message_id, task_id, role, created_at)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .run(
+          input.id,
+          input.projection === "source"
+            ? input.sourceTaskId
+            : input.recipientTaskId,
+          input.projection,
+          input.createdAt,
+        );
+    }
     this.db
       .prepare(
         `INSERT INTO deliveries
-           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
-           VALUES (?, ?, ?, ?, 'queued', ?)`,
+           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,
+            delivered_at, failed_at, failure_reason,
+            source_remote_role, source_remote_host, source_entry_id, source_label,
+            source_category)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.deliveryId,
         input.id,
-        input.directTargetTaskId,
+        input.recipientTaskId,
         input.idempotencyKey,
+        input.status,
         input.createdAt,
+        null,
+        input.status === "failed" ? input.createdAt : null,
+        input.failureReason ?? null,
+        input.inbound?.remoteRole ?? null,
+        input.inbound?.remoteHost ?? null,
+        input.inbound?.entryId ?? null,
+        input.sourceLabel ?? null,
+        input.inbound?.category ?? null,
       );
   }
 
@@ -3356,7 +4178,12 @@ export class Store {
   countQueuedDeliveries(recipientTaskId: string): number {
     const row = this.db
       .prepare(
-        "SELECT COUNT(*) AS count FROM deliveries WHERE recipient_task_id = ? AND status = 'queued'",
+        `SELECT COUNT(*) AS count
+         FROM deliveries d
+         WHERE d.recipient_task_id = ? AND d.status = 'queued'
+           AND NOT EXISTS (
+             SELECT 1 FROM outbox o WHERE o.delivery_id = d.id
+           )`,
       )
       .get(recipientTaskId) as { count: number };
     return row.count;
@@ -3372,19 +4199,26 @@ export class Store {
     const claimed = this.db.transaction(() => {
       const ids = this.db
         .prepare(
-          `SELECT id FROM deliveries
-           WHERE recipient_task_id = ? AND status = 'queued'
-           ORDER BY queued_at, rowid`,
+          `SELECT d.id FROM deliveries d
+           WHERE d.recipient_task_id = ? AND d.status = 'queued'
+             AND NOT EXISTS (
+               SELECT 1 FROM outbox o WHERE o.delivery_id = d.id
+             )
+           ORDER BY d.queued_at, d.rowid`,
         )
         .all(recipientTaskId) as Array<{ id: string }>;
-      const claim = this.db.prepare(
-        `UPDATE deliveries
-         SET status = 'delivered', delivered_at = ?
-         WHERE id = ? AND status = 'queued'`,
-      );
       const rows: CollaborationDeliveryRow[] = [];
       for (const { id } of ids) {
-        if (claim.run(deliveredAt, id).changes !== 1) continue;
+        if (
+          !this.transitionDeliveryStatusInTransaction(
+            id,
+            "queued",
+            "delivered",
+            deliveredAt,
+          )
+        ) {
+          continue;
+        }
         const delivery = this.getCollaborationDelivery(id);
         if (delivery) rows.push(delivery);
       }
@@ -3403,15 +4237,24 @@ export class Store {
     failureReason: string,
     failedAt = Date.now(),
   ): void {
-    const fail = this.db.prepare(
-      `UPDATE deliveries
-       SET status = 'failed', failed_at = ?, failure_reason = ?, delivered_at = NULL
-       WHERE id = ? AND status = 'delivered'`,
-    );
-    this.db.transaction(() => {
-      for (const id of ids) fail.run(failedAt, failureReason, id);
+    const changed = this.db.transaction(() => {
+      const changedIds: string[] = [];
+      for (const id of ids) {
+        if (
+          this.transitionDeliveryStatusInTransaction(
+            id,
+            "delivered",
+            "failed",
+            failedAt,
+            failureReason,
+          )
+        ) {
+          changedIds.push(id);
+        }
+      }
+      return changedIds;
     })();
-    this.broadcastDeliveryStatus(ids);
+    this.broadcastDeliveryStatus(changed);
   }
 
   /** Fail every Delivery still queued for one target; returns the failed rows. */
@@ -3425,17 +4268,25 @@ export class Store {
         .prepare(
           `SELECT id FROM deliveries
            WHERE recipient_task_id = ? AND status = 'queued'
+             AND NOT EXISTS (
+               SELECT 1 FROM outbox o WHERE o.delivery_id = deliveries.id
+             )
            ORDER BY queued_at, rowid`,
         )
         .all(recipientTaskId) as Array<{ id: string }>;
-      const fail = this.db.prepare(
-        `UPDATE deliveries
-         SET status = 'failed', failed_at = ?, failure_reason = ?
-         WHERE id = ? AND status = 'queued'`,
-      );
       const rows: CollaborationDeliveryRow[] = [];
       for (const { id } of ids) {
-        if (fail.run(failedAt, failureReason, id).changes !== 1) continue;
+        if (
+          !this.transitionDeliveryStatusInTransaction(
+            id,
+            "queued",
+            "failed",
+            failedAt,
+            failureReason,
+          )
+        ) {
+          continue;
+        }
         const delivery = this.getCollaborationDelivery(id);
         if (delivery) rows.push(delivery);
       }
@@ -3449,34 +4300,54 @@ export class Store {
     taskId: string,
   ): Array<{ id: string; messageId: string }> {
     const failedAt = Date.now();
-    const rows = this.db
-      .prepare(
-        `SELECT id, message_id FROM deliveries
-         WHERE recipient_task_id = ? AND status = 'queued'`,
-      )
-      .all(taskId) as Array<{ id: string; message_id: string }>;
-    const ids = rows.map((row) => row.id);
-    this.db
-      .prepare(
-        `UPDATE deliveries
-         SET status = 'failed', failed_at = ?,
-           failure_reason = 'cleared_before_delivery'
-         WHERE recipient_task_id = ? AND status = 'queued'`,
-      )
-      .run(failedAt, taskId);
+    const failed = this.db.transaction(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT id, message_id FROM deliveries
+           WHERE recipient_task_id = ? AND status = 'queued'
+             AND NOT EXISTS (
+               SELECT 1 FROM outbox o WHERE o.delivery_id = deliveries.id
+             )`,
+        )
+        .all(taskId) as Array<{ id: string; message_id: string }>;
+      return rows.filter((row) =>
+        this.transitionDeliveryStatusInTransaction(
+          row.id,
+          "queued",
+          "failed",
+          failedAt,
+          "cleared_before_delivery",
+        ),
+      );
+    })();
+    const ids = failed.map((row) => row.id);
     this.broadcastDeliveryStatus(ids);
-    return rows.map((row) => ({ id: row.id, messageId: row.message_id }));
+    return failed.map((row) => ({ id: row.id, messageId: row.message_id }));
   }
 
   /** Preserve the fact while recording that a deleted target cannot receive it. */
-  private failOutstandingDeliveriesForDeletedTask(taskId: string): void {
-    this.db
+  private failOutstandingDeliveriesForDeletedTask(taskId: string): string[] {
+    const failedAt = Date.now();
+    const ids = this.db
       .prepare(
-        `UPDATE deliveries
-         SET status = 'failed', failed_at = ?, failure_reason = 'target_deleted'
-         WHERE recipient_task_id = ? AND status = 'queued'`,
+        `SELECT id FROM deliveries
+         WHERE recipient_task_id = ? AND status = 'queued'
+           AND NOT EXISTS (
+             SELECT 1 FROM outbox o WHERE o.delivery_id = deliveries.id
+           )`,
       )
-      .run(Date.now(), taskId);
+      .all(taskId) as Array<{ id: string }>;
+    return ids
+      .filter(({ id }) =>
+        this.transitionDeliveryStatusInTransaction(
+          id,
+          "queued",
+          "failed",
+          failedAt,
+          "target_deleted",
+        ),
+      )
+      .map(({ id }) => id);
   }
 
   /** Delivery ids a deletion failed, for the post-commit mark broadcast. */

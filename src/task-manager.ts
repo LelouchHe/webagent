@@ -796,7 +796,9 @@ export class TaskManager implements ObligationHost {
     // The Store owns every delivery status write, so one observer covers the
     // drain, archive, clear, deletion, and failure paths for the sender mark.
     this.store.onDeliveryStatusChanged((change) => {
-      if (change.status === "failed") this.onDeliveryFailed(change);
+      if (change.status === "failed" && !change.suppressFailureNotice) {
+        this.onDeliveryFailed(change);
+      }
       this.deliveryStatusBroadcast?.({
         type: "collaboration_delivery",
         taskId: change.sourceTaskId,
@@ -1611,6 +1613,7 @@ export class TaskManager implements ObligationHost {
     cwd?: string;
     source: string;
     externalParentId: string;
+    remoteHost: string;
     title?: string;
     workflowStatus?: WorkflowStatus;
   }): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
@@ -1642,6 +1645,7 @@ export class TaskManager implements ObligationHost {
       source: input.source,
       agentId: input.agentId,
       externalParentId: input.externalParentId,
+      remoteHost: input.remoteHost,
       title: input.title,
       workflowStatus: input.workflowStatus,
       creationAnchor,
@@ -4446,6 +4450,14 @@ export class TaskManager implements ObligationHost {
         taskId,
         claimed.map(({ message }) => message),
       );
+      for (const { delivery, message } of claimed) {
+        if (delivery.source_label) {
+          this.rememberCollaborationSourceLabel(
+            message.id,
+            delivery.source_label,
+          );
+        }
+      }
       const sourceActors = claimed.map(({ message }) => message.source_actor);
       const entries = claimed.map(({ message }) => this.deliveryEntry(message));
       // The receiver's rows appear now, at the turn boundary where the agent

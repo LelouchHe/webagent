@@ -1013,14 +1013,6 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "UPDATE deliveries\n         SET status = 'failed', failed_at = ?,\n           failure_reason = 'cleared_before_delivery'\n         WHERE recipient_task_id = ? AND status = 'queued'",
-              "args": [1789333200000, "00000000-0000-4000-8000-000000000001"]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
               "sql": "UPDATE tasks SET cwd = ? WHERE id = ?",
               "args": ["/", "00000000-0000-4000-8000-000000000001"]
             },

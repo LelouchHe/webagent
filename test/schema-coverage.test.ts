@@ -85,6 +85,12 @@ describe("schema coverage", () => {
     );
   });
 
+  it("keeps link transfer persistence to outbox and outbox_cursors", () => {
+    assert.equal(tables.includes("outbox"), true);
+    assert.equal(tables.includes("outbox_cursors"), true);
+    assert.equal(tables.includes("peer_inbound_ops"), false);
+  });
+
   it("should find indexes in src/store.ts", () => {
     assert.ok(
       indexes.length >= 5,

@@ -291,6 +291,7 @@ export function createLocalTaskOps(deps: {
           cwd: input.cwd,
           source: input.source ?? "host",
           externalParentId: input.parentId,
+          remoteHost: caller.name,
           title: input.title,
           workflowStatus: input.workflowStatus,
         });

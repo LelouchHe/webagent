@@ -69,6 +69,31 @@ function makeLegacyDb(
   return dbPath;
 }
 
+function makeOldRemoteTasksDb(dir: string): string {
+  const store = new Store(dir);
+  store.ensureRootTask("/tmp/root");
+  store.close();
+  const dbPath = join(dir, "webagent.db");
+  const db = new Database(dbPath);
+  db.pragma("foreign_keys = OFF");
+  db.exec(`
+    DROP TABLE remote_tasks;
+    CREATE TABLE remote_tasks (
+      local_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      remote_task_id TEXT NOT NULL,
+      remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
+      remote_host TEXT,
+      CHECK (
+        (remote_role = 'child' AND remote_host IS NOT NULL)
+        OR
+        (remote_role = 'parent' AND remote_host IS NULL)
+      )
+    );
+  `);
+  db.close();
+  return dbPath;
+}
+
 describe("legacy database refusal", () => {
   it("detects tasks without a Root and command-path agent keys", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-detect-"));
@@ -167,6 +192,34 @@ describe("legacy database refusal", () => {
       }
       const beforeHash = sha256(dbPath);
       assert.throws(() => new Store(dir), /older WebAgent/);
+      assert.equal(sha256(dbPath), beforeHash);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses the old remote_tasks constraint even with no remote rows", () => {
+    const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-link-"));
+    try {
+      const dbPath = makeOldRemoteTasksDb(dir);
+      const beforeHash = sha256(dbPath);
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const report = detectLegacyDatabase(db);
+        assert.ok(report);
+        assert.equal(report.outdatedRemoteTasks, true);
+      } finally {
+        db.close();
+      }
+      assert.throws(
+        () => new Store(dir),
+        (error: unknown) => {
+          assert.ok(error instanceof LegacyDatabaseError);
+          assert.match(error.message, /remote_tasks link schema/);
+          assert.match(error.message, /nothing in it was changed/);
+          return true;
+        },
+      );
       assert.equal(sha256(dbPath), beforeHash);
     } finally {
       rmSync(dir, { recursive: true, force: true });

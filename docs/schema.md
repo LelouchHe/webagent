@@ -24,6 +24,8 @@ or counters rather than instants (`ttl_hours`, `share_snapshot_seq`,
   - [tasks](#tasks)
   - [agent_sessions](#agent_sessions)
   - [remote_tasks](#remote_tasks)
+  - [outbox](#outbox)
+  - [outbox_cursors](#outbox_cursors)
   - [events](#events)
   - [push_subscriptions](#push_subscriptions)
   - [inbox_messages](#inbox_messages)
@@ -139,12 +141,87 @@ edge. Task rows are never copied between instances.
 | `local_task_id` | TEXT NOT NULL FK | The Task row owned by this instance; cascade-delete removes the edge |
 | `remote_task_id` | TEXT NOT NULL | Opaque Task id on the other instance |
 | `remote_role` | TEXT NOT NULL | `parent` on the executor (local Task is the child) or `child` on the initiator |
-| `remote_host` | TEXT | Configured host name; required only for `child`, null otherwise |
+| `remote_host` | TEXT NOT NULL | Link name: configured host name for `child`, authenticated host token name for `parent` |
 
-CHECK constraints keep the direction-specific fields exclusive. Partial unique
-indexes `remote_tasks_one_parent` and `remote_tasks_one_child` permit
-at most one external parent per local Task and one local link per remote child
-id. The table deliberately stores no title, timestamp, or status.
+The link identity is `(remote_role, remote_host)`. Names in each direction are
+managed independently and may be equal. Partial unique indexes
+`remote_tasks_one_parent` and `remote_tasks_one_child` permit at most one
+external parent per local Task and one local link per remote child id. The
+table deliberately stores no title, timestamp, or status.
+
+### `outbox`
+
+One instance-local, immutable outbox for facts sent over links. Each entry
+is partitioned by `(remote_role, remote_host)`; `pos` is its global SQLite
+rowid and `prev` is the previous position in the same link. `prev` is assigned
+in the same transaction as the insert, starting at `0`. Entries are immutable
+after insert. Business state lives on the referenced delivery.
+
+| Column | Type | Notes |
+|---|---|---|
+| `pos` | INTEGER PRIMARY KEY | Immutable rowid position |
+| `entry_id` | TEXT NOT NULL UNIQUE | Globally unique entry and push operation id |
+| `remote_role` | TEXT NOT NULL | Link direction: `parent` or `child` |
+| `remote_host` | TEXT NOT NULL | Link name in that direction |
+| `prev` | INTEGER NOT NULL | Previous `pos` in the same link; first entry is `0` |
+| `category` | TEXT NOT NULL | `message`, `report`, or `receipt` |
+| `data_json` | TEXT NOT NULL | Immutable wire data |
+| `delivery_id` | TEXT NULL FK | Required for `message` / `report`; identifies the sender's durable delivery business state; null for receipts |
+| `created_at` | INTEGER NOT NULL | Local enqueue time |
+
+Index `idx_outbox_link_pos` supports ordered `(remote_role,
+remote_host)` reads.
+Index `idx_outbox_delivery` uniquely associates a message/report outbox entry with
+its sender-side delivery. The table CHECK requires the pairing
+(`message`/`report` with a non-null delivery id; `receipt` with null), and the
+foreign key refuses dangling delivery references.
+
+The table has no Task or `remote_tasks` foreign key. Task and link deletion
+cannot cascade away an entry that still has to be sent or that a later receipt refers to.
+
+How the link tables relate, within one instance and across a link:
+
+```text
+ one instance
+   remote_tasks  (local, remote, remote_role, remote_host)   edges; names the link
+   outbox_cursors(remote_role, remote_host) -> applied_pos, pushed_pos   one row per link
+   outbox        (pos, prev, entry_id, remote_role, remote_host,
+                  category, data_json, delivery_id)           immutable
+                    |
+                    | message / report: delivery_id --FK--> deliveries.id
+                    | receipt: delivery_id = NULL
+                    v
+   deliveries    business state: queued / delivered / failed
+
+ across a link (sender S, receiver R)
+   S.outbox row E --delivery_id--> S.deliveries D        (outbound, business state)
+        |
+        | wire: entry E
+        v
+   R.deliveries I   source_remote_role/host = link, source_entry_id = E   (inbound)
+        |
+        | I changes state -> same tx -> receipt {originalEntryId: E, status}
+        v
+   R.outbox receipt row  --wire-->  S: find outbox row E -> CAS D
+```
+
+
+### `outbox_cursors`
+
+The durable progress for each `(remote_role, remote_host)`. `applied_pos` is
+how far this instance has consumed the peer's outbox; `pushed_pos` is how far
+the peer has durably accepted this instance's outbox. Feed apply advances
+`applied_pos` in the same transaction as its business fact. Push advances
+`pushed_pos` monotonically after an exact `202`, a current-head receipt, or an
+authenticated rejection. It has no foreign key, so task or `remote_tasks`
+deletion does not erase transfer progress.
+
+| Column | Type | Notes |
+|---|---|---|
+| `remote_role` | TEXT NOT NULL | Link direction |
+| `remote_host` | TEXT NOT NULL | Link name |
+| `applied_pos` | INTEGER NOT NULL | Last durably applied outbox position |
+| `pushed_pos` | INTEGER NOT NULL | Last durably accepted position in this instance's outbox |
 
 ### `events`
 
@@ -204,7 +281,7 @@ existing task's `events` and deletes the `inbox_messages` row.
 
 Immutable cross-task collaboration facts. A row is not owned by either task:
 `source_task_id` and `direct_target_task_id` are validated when written but do
-not FK-cascade, so a surviving task retains the record after a peer is hard
+not FK-cascade, so a surviving task retains the record after a link is hard
 deleted. No reply/thread chain exists in S3.0.
 
 A message the runtime queues (`source_actor = 'system'`: a closing reminder or a
@@ -241,10 +318,19 @@ PK: `(message_id, task_id)`.
 
 ### `deliveries`
 
-One queued ACP-context delivery for a collaboration Message target. It records
-queue outcome independently from the immutable Message and does not FK-cascade
-on target task deletion; deletion explicitly terminalizes pending rows as
-`failed(target_deleted)`.
+One durable business-state row for a collaboration message or report. There
+are three kinds, told apart by their links rather than a type column:
+
+| Kind | How to recognize it | Who changes its state |
+|---|---|---|
+| local | no source association, no outbox row points at it | local drain and lifecycle (claim, ACP rejection, clear, delete, archive, ...) |
+| link outbound | an `outbox.delivery_id` points at it | only receipts from the peer and authenticated push rejection; local drain and lifecycle skip it |
+| link inbound | source association set | local drain and lifecycle, like a local row; every transition also emits a receipt |
+
+Inbound rows may also be created directly as definite failures (for example,
+the target Task does not exist). Queue outcome is independent from the immutable Message and
+does not FK-cascade on target task deletion; deletion explicitly terminalizes
+eligible pending rows as `failed(target_deleted)`.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -254,9 +340,26 @@ on target task deletion; deletion explicitly terminalizes pending rows as
 | `idempotency_key` | TEXT NOT NULL UNIQUE | Message/recipient delivery identity |
 | `status` | TEXT NOT NULL | `queued`, `delivered`, or `failed` |
 | `queued_at` | INTEGER NOT NULL | Unix milliseconds |
-| `delivered_at` | INTEGER | Set when the drain hands the row to the recipient's agent, not when its turn ends; cleared if the agent rejects the request |
+| `delivered_at` | INTEGER | Set when the drain hands the row to the recipient's agent, not when its turn ends; cleared when an ACP rejection terminalizes that delivery as failed |
 | `failed_at` | INTEGER | Set when the row could not be handed over |
 | `failure_reason` | TEXT | Stable terminal failure reason, e.g. `target_deleted` |
+| `source_remote_role` | TEXT NULL | Source link direction for an inbound entry |
+| `source_remote_host` | TEXT NULL | Source link name for an inbound entry |
+| `source_entry_id` | TEXT NULL | Immutable source outbox entry id |
+| `source_label` | TEXT NULL | Sender-title snapshot for inbound link delivery |
+| `source_category` | TEXT NULL | Inbound entry category: `message` or `report` |
+
+The four association fields
+(`source_remote_role`, `source_remote_host`, `source_entry_id`,
+`source_category`) are all set or all null. `source_label` is a separate nullable display
+snapshot: inbound facts normally carry it, but the CHECK does not require it.
+All five are null for local deliveries. The unique `(source_remote_role,
+source_remote_host, source_entry_id)` index prevents applying one link entry
+into two deliveries. Status transitions use the delivery id CAS and write a
+receipt to the source link in the same transaction when that association is
+present.
+
+Index `idx_deliveries_source_entry` enforces that link-entry uniqueness.
 
 ### `client_ops`
 
@@ -548,6 +651,12 @@ change, with no in-place rename), or
 directory, remove the old database (or the whole data directory), and restart
 to create the single-Root schema. There is no in-place conversion, and startup
 never edits an old database.
+
+The 03a link schema is also a hard break. `remote_tasks.remote_host` is required
+for both `parent` and `child` rows. The read-only preflight rejects the old
+nullable-parent CHECK even when the old database contains zero `remote_tasks`
+rows; it leaves the database bytes unchanged. Backup the data directory, remove
+the old database (or the whole data directory), and restart.
 
 ---
 

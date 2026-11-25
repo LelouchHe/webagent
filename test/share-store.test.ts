@@ -377,8 +377,56 @@ describe("shares store", () => {
           status: "failed",
           deliveredAt: null,
           failureReason: "target_deleted",
+          suppressFailureNotice: false,
         },
       ]);
+    });
+
+    it("rolls back the tombstone and receipt when reaping cannot publish a receipt", () => {
+      const token = generateShareToken();
+      store.insertSharePreview({ token, taskId, snapshotSeq: 1 });
+      store.activateShare(token);
+      store.enqueueTargetCollaboration({
+        id: "reap-inbound",
+        deliveryId: "reap-inbound-delivery",
+        sourceTaskId: "external-parent",
+        targetTaskId: taskId,
+        body: "queued",
+        inbound: {
+          remoteRole: "parent",
+          remoteHost: "hub",
+          entryId: "reap-inbound-entry",
+          category: "message",
+        },
+      });
+      assert.equal(store.deleteTask(taskId).mode, "soft");
+      store.revokeShare(token);
+      store["db"].exec(`
+        CREATE TRIGGER reject_reap_receipt
+        BEFORE INSERT ON outbox
+        BEGIN
+          SELECT RAISE(ABORT, 'receipt_write_failed');
+        END;
+      `);
+
+      assert.throws(
+        () => store.reapTombstoneIfOrphaned(taskId),
+        /receipt_write_failed/,
+      );
+      assert.ok(store.getTaskIncludingDeleted(taskId));
+      assert.equal(
+        store.getCollaborationDelivery("reap-inbound-delivery")?.status,
+        "queued",
+      );
+      assert.equal(store.listOutbox("parent", "hub").length, 0);
+
+      store["db"].exec("DROP TRIGGER reject_reap_receipt");
+      assert.equal(store.reapTombstoneIfOrphaned(taskId), true);
+      assert.equal(store.getTaskIncludingDeleted(taskId), undefined);
+      assert.equal(
+        store.getCollaborationDelivery("reap-inbound-delivery")?.status,
+        "failed",
+      );
     });
 
     it("reapTombstoneIfOrphaned is a no-op on a live (not-tombstoned) task", () => {

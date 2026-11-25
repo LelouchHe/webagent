@@ -191,7 +191,7 @@ describe("MCP Task tool host", () => {
     };
 
     const created = await routed.create(
-      { kind: "host" },
+      { kind: "host", name: "peer" },
       {
         agentId: "test-agent",
         parentId: "external-parent",
@@ -204,7 +204,7 @@ describe("MCP Task tool host", () => {
 
     await assert.rejects(
       routed.create(
-        { kind: "host" },
+        { kind: "host", name: "peer" },
         {
           agentId: "test-agent",
           host: "another-host",
@@ -254,7 +254,7 @@ describe("MCP Task tool host", () => {
     const host = createLocalTaskOps({ store, tasks });
 
     const created = await host.create(
-      { kind: "host" },
+      { kind: "host", name: "peer" },
       {
         agentId: "test-agent",
         parentId: "external-parent",
@@ -287,7 +287,7 @@ describe("MCP Task tool host", () => {
     );
     const host = createLocalTaskOps({ store, tasks });
     const created = await host.create(
-      { kind: "host" },
+      { kind: "host", name: "peer" },
       {
         agentId: "test-agent",
         parentId: "external-parent",
@@ -304,7 +304,7 @@ describe("MCP Task tool host", () => {
     const host = createLocalTaskOps({ store, tasks });
     await assert.rejects(
       host.create(
-        { kind: "host" },
+        { kind: "host", name: "peer" },
         {
           agentId: "missing",
           parentId: "external-parent",
@@ -317,7 +317,7 @@ describe("MCP Task tool host", () => {
     );
     await assert.rejects(
       host.create(
-        { kind: "host" },
+        { kind: "host", name: "peer" },
         {
           agentId: "test-agent",
           parentId: "external-parent",
@@ -342,7 +342,7 @@ describe("MCP Task tool host", () => {
     for (const parentId of [undefined, "", "   ", 42]) {
       await assert.rejects(
         host.create(
-          { kind: "host" },
+          { kind: "host", name: "peer" },
           {
             agentId: "test-agent",
             parentId: parentId as string | undefined,
@@ -360,7 +360,7 @@ describe("MCP Task tool host", () => {
   it("keeps deferred remote tasks after empty-task cleanup", async () => {
     const host = createLocalTaskOps({ store, tasks });
     const remote = await host.create(
-      { kind: "host" },
+      { kind: "host", name: "peer" },
       {
         agentId: "test-agent",
         parentId: "external-parent",
@@ -395,6 +395,7 @@ describe("MCP Task tool host", () => {
       source: "host",
       agentId: "test-agent",
       externalParentId: "external-parent",
+      remoteHost: "peer",
       title: "Attached remote child",
       creationAnchor: { kind: "task_created" },
     });
@@ -666,6 +667,7 @@ describe("MCP Task tool host", () => {
       source: "host",
       agentId: "test-agent",
       externalParentId: "external-parent",
+      remoteHost: "peer",
       title: "Owned remote child",
       creationAnchor: { kind: "task_created" },
     });
@@ -690,6 +692,7 @@ describe("MCP Task tool host", () => {
       source: "host",
       agentId: "test-agent",
       externalParentId: "right-parent",
+      remoteHost: "peer",
       title: "Owned child",
       creationAnchor: {},
     });
@@ -712,6 +715,7 @@ describe("MCP Task tool host", () => {
       source: "host",
       agentId: "test-agent",
       externalParentId: "long-label-parent",
+      remoteHost: "peer",
       title: "Owned child",
       creationAnchor: {},
     });

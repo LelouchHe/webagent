@@ -360,6 +360,10 @@ describe("TaskManager collaboration delivery drain", () => {
       "prompt_failed",
     );
     assert.equal(
+      store.getCollaborationDelivery("reject-delivery")?.delivered_at,
+      null,
+    );
+    assert.equal(
       store.getTask("target")?.workflow_status,
       "idle",
       "a failed delivery prompt must not strand the target in running",
