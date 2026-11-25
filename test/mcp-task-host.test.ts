@@ -995,6 +995,8 @@ describe("MCP Task tool host", () => {
                 parentAgentId: null,
                 agentId: "test-agent",
                 title: "Partial child",
+                model: null,
+                thinking: null,
                 workflowStatus: "idle",
                 source: "agent",
                 configOptions: [],

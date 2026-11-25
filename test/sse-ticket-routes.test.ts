@@ -384,10 +384,16 @@ describe("SSE ticket flow", () => {
   });
 
   it("rejects host tickets for per-task streams", async () => {
-    const ticketResp = await req(port, "POST", "/api/v1/sse-ticket", {
-      Authorization: `Bearer ${hostToken}`,
-      "Content-Length": "0",
-    });
+    const ticketResp = await req(
+      port,
+      "POST",
+      "/api/v1/sse-ticket",
+      {
+        Authorization: `Bearer ${hostToken}`,
+        "Content-Type": "application/json",
+      },
+      JSON.stringify({ parentIds: [] }),
+    );
     const ticket = JSON.parse(ticketResp.body).ticket;
     const response = await req(
       port,

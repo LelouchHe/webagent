@@ -26,14 +26,13 @@ The owner Task remains a parentless archived top in its local tree. Local
 local parent exists. Links are durable decisions. Host connection state and the
 hub's remote-child display mirror are in memory and never become Task facts.
 
-Connections use an owner-issued `host`-scoped token. The hub verifies version
-and scope before opening global SSE. The ticket request carries the hub's
+Connections use an owner-issued `host`-scoped token. The hub verifies scope
+before opening global SSE. The ticket request carries the hub's
 subscribed local parent ids; the owner returns a connection id and keeps the
 set only for that live connection. Per-Task host SSE is refused.
 
-The current host protocol version is `2`. Owner and hub upgrades are
-coordinated: mixed versions fail the handshake; there is no compatibility
-layer.
+There is no multi-host protocol version. Owner and hub must be upgraded
+together; malformed current-wire responses fail as invalid responses.
 
 ## The loop at a glance
 

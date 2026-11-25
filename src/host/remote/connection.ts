@@ -16,7 +16,6 @@ import type { HostConfig } from "../../config.ts";
 import { errorMessage } from "../../types.ts";
 import { resolveHostToken, TokenCommandError } from "./credentials.ts";
 import {
-  HOST_PROTOCOL_VERSION,
   type HostConnectionState,
   type HostUnreachableReason,
 } from "./state.ts";
@@ -62,8 +61,8 @@ const TaskCreateResponseSchema = z.object({
   parentAgentId: z.string().nullable(),
   agentId: z.string().nullable(),
   title: z.string().nullable(),
-  model: z.string().nullable().optional(),
-  thinking: z.string().nullable().optional(),
+  model: z.string().nullable(),
+  thinking: z.string().nullable(),
   workflowStatus: z.enum(WORKFLOW_STATUSES),
   source: z.string(),
   configOptions: z.array(ConfigOptionSchema),
@@ -107,25 +106,25 @@ export function decodeOwnerTaskEvents(
 ): OwnerTaskHistoryEvent[] {
   const parsed = z.object({ events: z.array(z.unknown()) }).safeParse(raw);
   if (!parsed.success) {
-    throw new HostConnectionFailure("protocol_mismatch");
+    throw new HostConnectionFailure("invalid_response");
   }
   return parsed.data.events.map((event) => {
     const row = TaskEventSchema.safeParse(event);
     if (!row.success || row.data.task_id !== taskId) {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
     let parsedData: unknown;
     try {
       parsedData = JSON.parse(row.data.data) as unknown;
     } catch {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
     if (
       !parsedData ||
       typeof parsedData !== "object" ||
       Array.isArray(parsedData)
     ) {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
     return {
       ...row.data,
@@ -135,7 +134,11 @@ export function decodeOwnerTaskEvents(
 }
 
 export type HostTaskCreateAttempt =
-  | { kind: "success"; result: TaskCreateResult; subscribed: boolean }
+  | {
+      kind: "success";
+      result: TaskCreateResult;
+      connectionId: string | null;
+    }
   | { kind: "rejected"; status: number; reason: string }
   | { kind: "unknown"; reason: string }
   | { kind: "not_sent"; reason: string };
@@ -221,6 +224,10 @@ export class HostConnection {
     this.supervisor.stop();
   }
 
+  get currentConnectionId(): string | null {
+    return this.connectionId;
+  }
+
   reconnect(): void {
     this.supervisor.reconnect();
   }
@@ -228,6 +235,7 @@ export class HostConnection {
   async createTask(
     input: RemoteTaskCreateInput,
   ): Promise<HostTaskCreateAttempt> {
+    const connectionId = this.connectionId;
     let token: string;
     try {
       token = await this.resolveToken();
@@ -241,8 +249,8 @@ export class HostConnection {
         token,
         method: "POST",
         body: input,
-        headers: this.connectionId
-          ? { "X-Host-Connection-Id": this.connectionId }
+        headers: connectionId
+          ? { "X-Host-Connection-Id": connectionId }
           : undefined,
         redirect: "error",
       });
@@ -287,7 +295,7 @@ export class HostConnection {
     const activation = parsed.data;
     return {
       kind: "success",
-      subscribed: response.headers.get("X-Host-Subscription") === "applied",
+      connectionId,
       result: {
         task: {
           id: activation.id,
@@ -322,7 +330,7 @@ export class HostConnection {
     try {
       return (await response.json()) as unknown;
     } catch (error) {
-      throw new HostConnectionFailure("protocol_mismatch", { cause: error });
+      throw new HostConnectionFailure("invalid_response", { cause: error });
     }
   }
 
@@ -339,7 +347,7 @@ export class HostConnection {
       .passthrough()
       .safeParse(raw);
     if (!parsed.success) {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
     return parsed.data;
   }
@@ -431,26 +439,17 @@ export class HostConnection {
     const token = await this.resolveToken(attempt);
     if (!attempt.isCurrent()) return;
     this.supervisor.beginHandshake(attempt);
-    const version = await this.request(attempt.signal, "/api/v1/version");
-    if (
-      !version ||
-      typeof version !== "object" ||
-      (version as { hostProtocol?: unknown }).hostProtocol !==
-        HOST_PROTOCOL_VERSION
-    ) {
-      throw new HostConnectionFailure("protocol_mismatch");
-    }
     const caller = await this.request(
       attempt.signal,
       "/api/v1/auth/verify",
       token,
     );
     if (!caller || typeof caller !== "object") {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
     const identity = caller as { hash?: unknown; scope?: unknown };
     if (identity.hash !== hashToken(token) || !isScope(identity.scope)) {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
     const ticketResponse = await this.fetchResponse("/api/v1/sse-ticket", {
       signal: attempt.signal,
@@ -463,21 +462,21 @@ export class HostConnection {
     try {
       ticketBody = await ticketResponse.json();
     } catch {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
     const ticket =
       ticketBody && typeof ticketBody === "object"
         ? (ticketBody as { ticket?: unknown }).ticket
         : undefined;
     if (typeof ticket !== "string" || !ticket) {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
     const response = await this.fetchResponse(
       `/api/v1/events/stream?ticket=${encodeURIComponent(ticket)}`,
       { signal: attempt.signal, timeoutMs: null },
     );
     if (!response.ok) throw this.httpFailure(response.status);
-    if (!response.body) throw new HostConnectionFailure("protocol_mismatch");
+    if (!response.body) throw new HostConnectionFailure("invalid_response");
     this.connectionId = response.headers.get("X-Host-Connection-Id");
     try {
       await this.consume(response.body, attempt);
@@ -540,7 +539,7 @@ export class HostConnection {
     try {
       return (await response.json()) as unknown;
     } catch {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
   }
 
@@ -618,7 +617,7 @@ export class HostConnection {
             try {
               parsed = JSON.parse(data) as { type?: unknown };
             } catch {
-              throw new HostConnectionFailure("protocol_mismatch");
+              throw new HostConnectionFailure("invalid_response");
             }
             if (parsed.type === "connected") {
               if (!attempt.isCurrent()) return;
@@ -668,7 +667,7 @@ export class HostConnection {
             try {
               payload = JSON.parse(data) as unknown;
             } catch {
-              throw new HostConnectionFailure("protocol_mismatch");
+              throw new HostConnectionFailure("invalid_response");
             }
             if (
               payload &&

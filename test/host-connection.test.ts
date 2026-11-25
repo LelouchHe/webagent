@@ -71,6 +71,8 @@ describe("host connection helpers", () => {
               parentAgentId: null,
               agentId: "copilot",
               title: "Child",
+              model: null,
+              thinking: null,
               workflowStatus: "idle",
               source: "agent",
               configOptions: [],
@@ -252,9 +254,6 @@ describe("host connection helpers", () => {
           : input instanceof URL
             ? input.href
             : input.url;
-      if (url.endsWith("/api/v1/version")) {
-        return Response.json({ hostProtocol: 2 });
-      }
       if (url.endsWith("/api/v1/auth/verify")) {
         assert.equal(
           new Headers(init?.headers).get("authorization"),
@@ -377,9 +376,6 @@ describe("host connection helpers", () => {
           : input instanceof URL
             ? input.href
             : input.url;
-      if (url.endsWith("/api/v1/version")) {
-        return Response.json({ hostProtocol: 2 });
-      }
       if (url.endsWith("/api/v1/auth/verify")) {
         return Response.json({
           ok: true,
@@ -438,9 +434,6 @@ describe("host connection helpers", () => {
           : input instanceof URL
             ? input.href
             : input.url;
-      if (url.endsWith("/api/v1/version")) {
-        return Response.json({ hostProtocol: 2 });
-      }
       if (url.endsWith("/api/v1/auth/verify")) {
         return Response.json({
           ok: true,
@@ -502,9 +495,6 @@ describe("host connection helpers", () => {
           : input instanceof URL
             ? input.href
             : input.url;
-      if (url.endsWith("/api/v1/version")) {
-        return Response.json({ hostProtocol: 2 });
-      }
       if (url.endsWith("/api/v1/auth/verify")) {
         return Response.json({
           ok: true,
@@ -572,9 +562,6 @@ describe("host connection helpers", () => {
           : input instanceof URL
             ? input.href
             : input.url;
-      if (url.endsWith("/api/v1/version")) {
-        return Response.json({ hostProtocol: 2 });
-      }
       if (url.endsWith("/api/v1/auth/verify")) {
         return Response.json({
           ok: true,
@@ -684,7 +671,7 @@ describe("host connection helpers", () => {
           { events: [{ ...row, task_id: "different" }] },
           "child",
         ),
-      /protocol_mismatch/,
+      /invalid_response/,
     );
   });
 
@@ -810,8 +797,12 @@ describe("host connection helpers", () => {
     assert.equal(registry.listRemoteChildren("parent")[0]?.unreachable, true);
   });
 
-  for (const name of ["missing connection id", "stale connection id"]) {
-    it(`reconnects after a remote create with a ${name}`, async () => {
+  for (const [name, sentId, expectedReconnects] of [
+    ["missing connection id", null, 1],
+    ["stale connection id", "stale", 1],
+    ["current connection id", "current", 0],
+  ] as const) {
+    it(`handles a remote create with a ${name}`, async () => {
       let reconnects = 0;
       const registry = new HostRegistry(
         {},
@@ -820,7 +811,7 @@ describe("host connection helpers", () => {
       const connection = {
         createTask: async () => ({
           kind: "success" as const,
-          subscribed: false,
+          connectionId: sentId,
           result: {
             task: {
               id: "child",
@@ -844,6 +835,7 @@ describe("host connection helpers", () => {
         reconnect: () => {
           reconnects += 1;
         },
+        currentConnectionId: "current",
         readTaskEvents: async () => [],
         readTaskDetail: async () => ({
           id: "child",
@@ -860,7 +852,7 @@ describe("host connection helpers", () => {
         parentId: "parent",
         source: "agent",
       });
-      assert.equal(reconnects, 1);
+      assert.equal(reconnects, expectedReconnects);
     });
   }
 

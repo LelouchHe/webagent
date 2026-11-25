@@ -120,7 +120,9 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     const attempt = await connection.createTask(input);
     switch (attempt.kind) {
       case "success": {
-        if (!attempt.subscribed) connection.reconnect();
+        if (attempt.connectionId !== connection.currentConnectionId) {
+          connection.reconnect();
+        }
         const { task } = attempt.result;
         this.mirror(nameKey(host, task.id), {
           id: task.id,

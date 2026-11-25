@@ -171,11 +171,6 @@ import {
 } from "../attachments.ts";
 import { readImageInfo } from "../image-info.ts";
 import { HTTP_STATUS } from "../http-status.ts";
-// FIXME(a3-http-boundaries): HTTP still serves the legacy host protocol
-// version directly from remote state. Move this protocol fact to a neutral
-// host contract when the host status route is migrated.
-// eslint-disable-next-line no-restricted-imports
-import { HOST_PROTOCOL_VERSION } from "../host/remote/state.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -1035,7 +1030,6 @@ export function createRequestHandler(
         json(res, HTTP_STATUS.OK, {
           server: deps.serverVersion ?? "unknown",
           agent: tasks?.agentInfoFor(tasks.defaultAgentId) ?? null,
-          hostProtocol: HOST_PROTOCOL_VERSION,
         });
         return;
       }
@@ -1072,29 +1066,27 @@ export function createRequestHandler(
         let parentIds: string[] | undefined;
         if (principal.scope === "host") {
           const raw = await readBody(req);
-          if (raw.length > 0) {
-            let body: unknown;
-            try {
-              body = JSON.parse(raw) as unknown;
-            } catch {
-              json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
-              return;
-            }
-            if (
-              !body ||
-              typeof body !== "object" ||
-              !Array.isArray((body as { parentIds?: unknown }).parentIds) ||
-              !(body as { parentIds: unknown[] }).parentIds.every(
-                (id) => typeof id === "string",
-              )
-            ) {
-              json(res, HTTP_STATUS.BAD_REQUEST, {
-                error: "parentIds must be an array of strings",
-              });
-              return;
-            }
-            parentIds = (body as { parentIds: string[] }).parentIds;
+          let body: unknown;
+          try {
+            body = JSON.parse(raw) as unknown;
+          } catch {
+            json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+            return;
           }
+          if (
+            !body ||
+            typeof body !== "object" ||
+            !Array.isArray((body as { parentIds?: unknown }).parentIds) ||
+            !(body as { parentIds: unknown[] }).parentIds.every(
+              (id) => typeof id === "string",
+            )
+          ) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "parentIds must be an array of strings",
+            });
+            return;
+          }
+          parentIds = (body as { parentIds: string[] }).parentIds;
         }
         const ticket = deps.ticketStore.mint({
           tokenName: principal.name,
@@ -3219,15 +3211,7 @@ export function createRequestHandler(
           if (requestPrincipal?.scope === "host" && body.parentId) {
             const connectionId = req.headers["x-host-connection-id"];
             if (typeof connectionId === "string") {
-              res.setHeader(
-                "X-Host-Subscription",
-                sseManager.subscribeHost(connectionId, body.parentId)
-                  ? "applied"
-                  : "stale",
-              );
-            }
-            if (typeof connectionId !== "string") {
-              res.setHeader("X-Host-Subscription", "missing");
+              sseManager.subscribeHost(connectionId, body.parentId);
             }
           }
           const session = created.session;

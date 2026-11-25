@@ -47,8 +47,7 @@
           "status": 200,
           "body": {
             "server": "0.13.1",
-            "agent": null,
-            "hostProtocol": 2
+            "agent": null
           }
         },
         {

@@ -1177,8 +1177,7 @@ Get server and agent version information.
 ```json
 {
   "server": "0.1.10",
-  "agent": { "name": "Copilot CLI", "version": "1.0.5" },
-  "hostProtocol": 1
+  "agent": { "name": "Copilot CLI", "version": "1.0.5" }
 }
 ```
 
@@ -1188,7 +1187,6 @@ Get server and agent version information.
 | `agent`         | object \| null | Default agent's ACP identity; `null` until it has started (reading metadata never starts it) |
 | `agent.name`    | string         | Agent name reported via ACP                               |
 | `agent.version` | string         | Agent version reported via ACP                            |
-| `hostProtocol`  | number         | Multi-host connection protocol; `1` currently             |
 
 ---
 
@@ -1224,7 +1222,7 @@ browser UI does not consume it yet.
 
 `state` is `connecting`, `connected`, or `unreachable`. Unreachable entries
 include a stable machine-readable `reason`, currently
-`token_command_failed`, `unauthorized`, `network`, or `protocol_mismatch`.
+`token_command_failed`, `unauthorized`, `network`, or `invalid_response`.
 `since` is the start of the current state in ISO-8601 UTC form. The response
 never contains credentials or token command output.
 
