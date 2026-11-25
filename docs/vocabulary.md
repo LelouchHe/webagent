@@ -102,12 +102,16 @@ entity; they name the runtime's bookkeeping.
 |---|---|
 | **link** | One directed connection identified inside an instance by `(remote_role, remote_host)`. The two names are managed independently on the two instances and may happen to be equal. |
 | **outbox** | The immutable, durable sequence of transport entries an instance sends over one link. Message and report entries point to their sender-side `deliveries` row; receipt entries do not. |
+| **feed** | The ordered view of one link's durable outbox, addressed by `pos` and `prev`. |
+| **watch** | The live request for a feed. `watch(after)` registers first, catches up, and then pushes future committed entries without an acknowledgement protocol. |
 | **outbox cursor** | This instance's durable `applied_pos` in the other instance's outbox, stored once per link in `outbox_cursors`. It is a feed position, not an acknowledgement. |
 | **receipt** | A delivery-state fact sent back over the source link. It CASes the referenced sender delivery and never becomes agent delivery work. |
+| **hand-off** | Local transport progress: a push has durably reached `202` or a receipt arrived for its entry, so the head may release the next outbox row. It is distinct from business state in `deliveries`. |
 
 The transport `outbox` is unrelated to the product **Inbox** exposed by
-`/api/v1/messages`. Inbox holds pending unbound user/system messages; outbox is
-the internal cross-instance transfer sequence.
+`/api/v1/messages`, whose external messages are consumed to create or address
+tasks. Inbox holds those pending product messages; outbox is the internal
+cross-instance transfer sequence.
 
 **`handoff` stays reserved.** It continues to mean the provider/lifecycle handoff
 and the session-compaction handoff (for example `pending_compact_summary`); it is

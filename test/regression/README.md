@@ -68,6 +68,27 @@ scenario may declare a single implicit `default` instance or a named
 `instances` map such as `owner` and `hub`. The runner allocates every port
 before rendering configs, so an `extraConfig` callback can point one instance
 at another.
+
+Multi-instance scenarios can put a controllable forwarding proxy between the
+hub and owner. A scenario selects one exact POST path and one exact GET watch
+path; all other requests, including old status/detail reads, pass through
+unchanged. The controls are:
+
+```text
+connect(channel)            allow POST or watch requests again
+disconnect(channel)         reject new requests and destroy issued exchanges
+dropNextResponse(channel)   let the upstream commit, then lose that response
+holdNextResponse(channel)   arm a hold and return an awaitable "held" barrier
+release(channel)            release the held upstream response
+```
+
+An exchange becomes active when the downstream request is issued, before
+upstream response headers arrive, so a cut can exercise the hard window around
+an accepted-but-unreturned response. `holdNextResponse` resolves when the
+upstream response is actually held; tests do not use sleeps to discover that
+point. Disconnecting one channel does not affect the other channel or unrelated
+routes.
+
 The config fixes every task's default cwd to `/`, so path-sensitive byte counts
 are stable before golden normalization; regression tasks do not read files.
 Setup and steps use authenticated REST or MCP-over-HTTP only. The agent is

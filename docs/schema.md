@@ -155,7 +155,8 @@ One instance-local, immutable outbox for facts sent over links. Each entry
 is partitioned by `(remote_role, remote_host)`; `pos` is its global SQLite
 rowid and `prev` is the previous position in the same link. `prev` is assigned
 in the same transaction as the insert, starting at `0`. Entries are never
-changed after insert except for local business, failure, and handoff metadata.
+changed after insert except for local handoff metadata. Business state lives on
+the referenced delivery.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -177,6 +178,19 @@ its sender-side delivery.
 
 The table has no Task or `remote_tasks` foreign key. Task and link deletion
 cannot cascade away an entry that still needs to be delivered or acknowledged.
+
+```text
++------------------------------+          +------------------------------+
+| outbox                       |          | deliveries                   |
+| entry_id                     |          | id                           |
+| category: message|report     |-- exact --> status: queued/delivered/failed |
+| delivery_id                  |   id     | failure fields               |
+| handoff_status               |          +------------------------------+
++------------------------------+
+
+receipt outbox rows have delivery_id = NULL. Their original entry id names an
+outbox row whose delivery_id is the business-state CAS target.
+```
 
 ### `outbox_cursors`
 
@@ -308,8 +322,8 @@ on target task deletion; deletion explicitly terminalizes pending rows as
 | `source_label` | TEXT NULL | Sender-title snapshot for inbound link delivery |
 | `source_category` | TEXT NULL | Inbound entry category: `message` or `report` |
 
-The three `source_*` columns are all null for local deliveries and all present
-for link-inbound deliveries. The unique `(source_remote_role,
+All five `source_*` columns are null for local deliveries and present for
+link-inbound deliveries. The unique `(source_remote_role,
 source_remote_host, source_entry_id)` index prevents applying one link entry
 into two deliveries. Status transitions use the delivery id CAS and write a
 receipt to the source link in the same transaction when that association is
@@ -607,6 +621,12 @@ change, with no in-place rename), or
 directory, remove the old database (or the whole data directory), and restart
 to create the single-Root schema. There is no in-place conversion, and startup
 never edits an old database.
+
+The 03a link schema is also a hard break. `remote_tasks.remote_host` is required
+for both `parent` and `child` rows. The read-only preflight rejects the old
+nullable-parent CHECK even when the old database contains zero `remote_tasks`
+rows; it leaves the database bytes unchanged. Backup the data directory, remove
+the old database (or the whole data directory), and restart.
 
 ---
 
