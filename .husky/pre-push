@@ -9,6 +9,7 @@
 #   typecheck  ~3s
 #   build      ~3s
 #   npm test   ~7s
+#   regression ~15s
 #   test:e2e   ~50s
 #
 # Skip with: git push --no-verify
@@ -34,6 +35,9 @@ npm run build
 
 echo "▶ pre-push: unit tests (npm test)"
 npm test
+
+echo "▶ pre-push: regression goldens (npm run test:regression)"
+npm run test:regression
 
 echo "▶ pre-push: E2E tests (npm run test:e2e)"
 npm run test:e2e
