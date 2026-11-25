@@ -70,8 +70,8 @@ export function buildTaskCreateHostDescription(
   const intro = "Configured Host; choose one of: ";
   for (let shown = ids.length; shown >= 1; shown--) {
     const more = shown < ids.length ? `… ${ids.length - shown} more` : "";
-    const text = `${intro}${ids.slice(0, shown).join(", ")}${more}. Omit or use null for local.`;
+    const text = `${intro}${ids.slice(0, shown).join(", ")}${more}. Omit or use null for local. A remote host requires an explicit bare agent id.`;
     if (text.length <= TASK_CREATE_DESCRIPTION_BUDGET) return text;
   }
-  return "Configured Host names are too long to list here. Omit or use null for local.";
+  return "Configured Host names are too long to list here. Omit or use null for local. A remote host requires an explicit bare agent id.";
 }

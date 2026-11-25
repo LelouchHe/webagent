@@ -73,7 +73,7 @@ export function registerMcpTools(
     {
       description:
         "List the current Task, its parent, and its direct children. " +
-        "Remote children are marked with kind=remote, host, and optional unreachable. " +
+        "Remote children carry host and optional unreachable. " +
         "workflowStatus is the last typed update or the runtime turn status " +
         "(`running`, `idle`); it is not a lifecycle terminal. executionState is " +
         "the live runtime (`agent`, `bash`, or `idle`). lastEventAt is the " +

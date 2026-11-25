@@ -5,19 +5,13 @@ import {
   buildCollaborationSystemMessage,
   collaborationTitle,
 } from "../src/collaboration-message.ts";
-import { assertCollaborationSourceLabel } from "../src/api/collaboration.ts";
+import { taskDisplayLabel } from "../src/shared/task-title.ts";
 
 describe("collaboration source labels", () => {
-  it("accepts quoted display text but rejects multiline or oversized values", () => {
-    assert.doesNotThrow(() => {
-      assertCollaborationSourceLabel('Parent "quoted"');
-    });
-    assert.throws(() => {
-      assertCollaborationSourceLabel("Parent\nInjected");
-    });
-    assert.throws(() => {
-      assertCollaborationSourceLabel("x".repeat(201));
-    });
+  it("uses task-title validity and omits multiline labels", () => {
+    assert.equal(taskDisplayLabel('Parent "quoted"'), 'Parent "quoted"');
+    assert.equal(taskDisplayLabel("Parent\nInjected"), undefined);
+    assert.equal(taskDisplayLabel("x".repeat(256)), "x".repeat(256));
   });
 });
 

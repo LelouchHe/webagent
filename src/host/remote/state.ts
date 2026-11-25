@@ -1,6 +1,6 @@
 export type HostConnectionState = "connecting" | "connected" | "unreachable";
 
-export const HOST_PROTOCOL_VERSION = 1;
+export const HOST_PROTOCOL_VERSION = 2;
 
 export type HostUnreachableReason =
   "token_command_failed" | "unauthorized" | "network" | "protocol_mismatch";

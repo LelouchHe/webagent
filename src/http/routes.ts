@@ -42,10 +42,9 @@ import {
   buildCollaborationBroadcast,
 } from "../collaboration-message.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
-import { validateTaskTitle } from "../shared/task-title.ts";
+import { taskDisplayLabel, validateTaskTitle } from "../shared/task-title.ts";
 import type { TaskListItem, TaskOps } from "../api/tasks.ts";
 import {
-  assertCollaborationSourceLabel,
   HostExternalParentError,
   type HostCollaborationCommand,
 } from "../api/collaboration.ts";
@@ -349,15 +348,14 @@ function parseCollaborationBody(body: string): {
   ) {
     throw new Error("invalid_collaboration_body");
   }
-  if (typeof value.sourceLabel === "string") {
-    assertCollaborationSourceLabel(value.sourceLabel);
-  }
+  const sourceLabel =
+    typeof value.sourceLabel === "string"
+      ? taskDisplayLabel(value.sourceLabel)
+      : undefined;
   return {
     targetTaskId: value.targetTaskId,
     body: value.body,
-    ...(typeof value.sourceLabel === "string"
-      ? { sourceLabel: value.sourceLabel }
-      : {}),
+    ...(sourceLabel ? { sourceLabel } : {}),
   };
 }
 
@@ -3221,7 +3219,15 @@ export function createRequestHandler(
           if (requestPrincipal?.scope === "host" && body.parentId) {
             const connectionId = req.headers["x-host-connection-id"];
             if (typeof connectionId === "string") {
-              sseManager.subscribeHost(connectionId, body.parentId);
+              res.setHeader(
+                "X-Host-Subscription",
+                sseManager.subscribeHost(connectionId, body.parentId)
+                  ? "applied"
+                  : "stale",
+              );
+            }
+            if (typeof connectionId !== "string") {
+              res.setHeader("X-Host-Subscription", "missing");
             }
           }
           const session = created.session;

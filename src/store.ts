@@ -17,11 +17,15 @@ import {
   type BindingChange,
   type ExecutionBinding,
 } from "./execution-authority.ts";
-import type { CollaborationDeliveryStatus } from "./shared/delivery-status.ts";
+import {
+  COLLABORATION_DELIVERY_STATUSES,
+  type CollaborationDeliveryStatus,
+} from "./shared/delivery-status.ts";
 import type {
   TaskUpdateStatus,
   WorkflowStatus,
 } from "./shared/workflow-status.ts";
+import { WORKFLOW_STATUSES } from "./shared/workflow-status.ts";
 
 /** Namespace WebAgent reserves for the per-task empty execution slot. */
 const EMPTY_EXECUTION_PREFIX = "no-execution:";
@@ -420,6 +424,7 @@ export class Store {
   private readonly deliveryStatusObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
   > = [];
+  private readonly pendingRemoteDeliveryAcks = new Set<string>();
   /**
    * Binding facts belong to the outermost successful commit, not to any one
    * recursive Store method. Every binding write registers its before/after
@@ -711,13 +716,19 @@ export class Store {
   }
 
   private initializeSchema(): void {
+    const workflowValues = WORKFLOW_STATUSES.map((value) => `'${value}'`).join(
+      ", ",
+    );
+    const deliveryValues = COLLABORATION_DELIVERY_STATUSES.map(
+      (value) => `'${value}'`,
+    ).join(", ");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
         cwd TEXT NOT NULL,
         title TEXT,
         workflow_status TEXT NOT NULL DEFAULT 'idle'
-          CHECK (workflow_status IN ('running', 'idle', 'waiting', 'blocked', 'done')),
+          CHECK (workflow_status IN (${workflowValues})),
         parent_id TEXT REFERENCES tasks(id),
         pending_compact_summary TEXT,
         model TEXT,
@@ -843,7 +854,7 @@ export class Store {
         message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
         recipient_task_id TEXT NOT NULL,
         idempotency_key TEXT NOT NULL UNIQUE,
-        status TEXT NOT NULL CHECK (status IN ('queued', 'delivered', 'failed')),
+        status TEXT NOT NULL CHECK (status IN (${deliveryValues})),
         queued_at INTEGER NOT NULL,
         delivered_at INTEGER,
         failed_at INTEGER,
@@ -2949,6 +2960,7 @@ export class Store {
     targetIsLocal: boolean;
   }): void {
     const createdAt = Date.now();
+    const acknowledged: { deliveryId: string | null } = { deliveryId: null };
     this.db.transaction(() => {
       this.requireLiveTask(input.sourceTaskId);
       const sourceLabel = input.targetIsLocal
@@ -2986,6 +2998,25 @@ export class Store {
             `${input.id}:${input.directTargetTaskId}`,
             createdAt,
           );
+        if (this.pendingRemoteDeliveryAcks.delete(input.id)) {
+          const delivery = this.db
+            .prepare(
+              `SELECT id FROM deliveries
+               WHERE message_id = ? AND status = 'queued'`,
+            )
+            .get(input.id) as { id: string } | undefined;
+          if (delivery) {
+            this.db
+              .prepare(
+                `UPDATE deliveries
+                 SET status = 'delivered', delivered_at = ?, failed_at = NULL,
+                     failure_reason = NULL
+                 WHERE id = ?`,
+              )
+              .run(createdAt, delivery.id);
+            acknowledged.deliveryId = delivery.id;
+          }
+        }
       }
       this.db
         .prepare(
@@ -3012,6 +3043,9 @@ export class Store {
         { from_ref: `msg:${input.id}` },
       );
     })();
+    if (acknowledged.deliveryId) {
+      this.broadcastDeliveryStatus([acknowledged.deliveryId]);
+    }
   }
 
   markDeliveryDeliveredByMessage(
@@ -3026,7 +3060,21 @@ export class Store {
          WHERE message_id = ? AND status = 'queued'`,
       )
       .run(deliveredAt, messageId);
-    if (row.changes === 0) return false;
+    if (row.changes === 0) {
+      const exists = this.db
+        .prepare("SELECT 1 FROM deliveries WHERE message_id = ? LIMIT 1")
+        .get(messageId);
+      if (!exists) {
+        this.pendingRemoteDeliveryAcks.add(messageId);
+        if (this.pendingRemoteDeliveryAcks.size > 1024) {
+          const oldest = this.pendingRemoteDeliveryAcks.values().next().value;
+          if (oldest !== undefined) {
+            this.pendingRemoteDeliveryAcks.delete(oldest);
+          }
+        }
+      }
+      return false;
+    }
     const delivery = this.db
       .prepare("SELECT id FROM deliveries WHERE message_id = ?")
       .get(messageId) as { id: string } | undefined;

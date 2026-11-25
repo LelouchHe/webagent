@@ -1,9 +1,3 @@
-export function assertCollaborationSourceLabel(value: string): void {
-  if (!value || value.length > 200 || /[\r\n\u2028\u2029]/.test(value)) {
-    throw new Error("invalid_source_label");
-  }
-}
-
 export interface HostCollaborationCommand {
   receive(input: {
     sourceTaskId: string;

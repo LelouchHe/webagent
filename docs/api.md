@@ -262,6 +262,8 @@ than `inheritFromTaskId`'s does not inherit that task's `model` or
 
 Passing `host` beside a bare `agentId` creates the Task on a configured Host.
 An `agentId` containing `@` is invalid; `agent@host` is browser UI syntax only.
+A `host` without an explicit `agentId` is a `400` input error because remote
+agent inheritance is not defined.
 The shared
 `TaskOps.create` command validates the local parent and caller first, sends one
 `POST /api/v1/tasks` with the short agent id and local parent id, and never

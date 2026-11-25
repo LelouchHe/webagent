@@ -44,10 +44,6 @@ export interface RemoteTask {
   host: string;
 }
 
-export interface RemoteTaskSnapshot {
-  item: TaskListItem;
-}
-
 export interface HostRegistryOptions {
   fetch?: typeof globalThis.fetch;
   listLinks: () => RemoteTask[];
@@ -124,6 +120,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     const attempt = await connection.createTask(input);
     switch (attempt.kind) {
       case "success": {
+        if (!attempt.subscribed) connection.reconnect();
         const { task } = attempt.result;
         this.mirror(nameKey(host, task.id), {
           id: task.id,
@@ -133,22 +130,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
           workflowStatus: task.workflowStatus,
         });
         try {
-          const snapshot = await this.refreshChild(
-            connection,
-            host,
-            task.id,
-            () => true,
-          );
-          const key = nameKey(host, task.id);
-          if (snapshot) {
-            this.mirror(key, {
-              ...(this.mirrors.get(key) ?? {}),
-              ...snapshot.item,
-              workflowStatus:
-                snapshot.item.workflowStatus ??
-                this.mirrors.get(key)?.workflowStatus,
-            });
-          }
+          await this.refreshChild(connection, host, task.id, () => true);
         } catch (error) {
           hlog.warn("remote create snapshot failed", {
             host,
@@ -316,7 +298,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     host: string,
     childId: string,
     isCurrent: () => boolean,
-  ): Promise<RemoteTaskSnapshot | undefined> {
+  ): Promise<void> {
     const statusPromise = connection
       .getJson(`/api/v1/tasks/${encodeURIComponent(childId)}/status`)
       .then((value) => value as RemoteStatusRow)
@@ -369,9 +351,6 @@ export class HostRegistry implements RemoteTaskCreateTransport {
       lastEventAt: latestEventAt(events),
       lastAgentActivityAt: latestAgentActivityAt(events),
     });
-    return {
-      item: this.mirrors.get(nameKey(host, childId))!,
-    };
   }
 
   private acceptEvent(name: string, event: HostStreamEvent): void {

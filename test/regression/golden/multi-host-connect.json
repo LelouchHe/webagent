@@ -48,7 +48,7 @@
           "body": {
             "server": "0.13.1",
             "agent": null,
-            "hostProtocol": 1
+            "hostProtocol": 2
           }
         },
         {

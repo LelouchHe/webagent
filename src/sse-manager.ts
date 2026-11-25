@@ -75,8 +75,11 @@ export class SseManager {
     this.externalParentId = fn;
   }
 
-  subscribeHost(connectionId: string, parentId: string): void {
-    this.clients.get(connectionId)?.hostParentIds?.add(parentId);
+  subscribeHost(connectionId: string, parentId: string): boolean {
+    const parentIds = this.clients.get(connectionId)?.hostParentIds;
+    if (!parentIds) return false;
+    parentIds.add(parentId);
+    return true;
   }
 
   /** Install a revocation check called on every heartbeat. If it returns

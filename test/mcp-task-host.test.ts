@@ -16,6 +16,7 @@ import {
   TaskRemoteCreatePartialSuccessError,
   TaskRemoteCreateUnknownError,
   TaskHostNotConfiguredError,
+  TaskCreateInputError,
   type RemoteTaskCreateTransport,
   type TaskCreateHost,
 } from "../src/api/tasks.ts";
@@ -627,6 +628,25 @@ describe("MCP Task tool host", () => {
     }
   });
 
+  it("applies an owner delivery acknowledgment before the queued write", () => {
+    const messageId = "early-ack-message";
+    assert.equal(store.markDeliveryDeliveredByMessage(messageId), false);
+    store.recordCallerSend({
+      id: messageId,
+      sourceTaskId: "alpha",
+      directTargetTaskId: "remote-child",
+      sourceLabel: "Alpha",
+      targetLabel: "Remote child",
+      body: "work",
+      targetIsLocal: false,
+    });
+    assert.equal(
+      store.getCollaborationDeliveriesForMessages([messageId]).get(messageId)
+        ?.status,
+      "delivered",
+    );
+  });
+
   it("opens an account for an external parent's dispatch but not for a remote child's report", () => {
     const armDelivered = (taskId: string, messageId: string): void => {
       const message = store.getCollaborationMessage(messageId);
@@ -695,6 +715,25 @@ describe("MCP Task tool host", () => {
         }),
       HostExternalParentError,
     );
+  });
+
+  it("accepts a maximum-length valid task title as remote source label", () => {
+    store.createDeferredRemoteTask({
+      id: "long-label-child",
+      cwd: dir,
+      source: "host",
+      agentId: "test-agent",
+      externalParentId: "long-label-parent",
+      title: "Owned child",
+      creationAnchor: {},
+    });
+    const received = createHostCollaborationCommand({ store, tasks }).receive({
+      sourceTaskId: "long-label-parent",
+      targetTaskId: "long-label-child",
+      sourceLabel: "x".repeat(256),
+      body: "work",
+    });
+    assert.equal(typeof received.messageId, "string");
   });
 
   it("checks a stale agent caller before resolving Host configuration", async () => {
@@ -853,6 +892,28 @@ describe("MCP Task tool host", () => {
         },
       ),
       TaskHostNotConfiguredError,
+    );
+  });
+
+  it("requires agent when host is named", async () => {
+    const host = createRoutedTaskOps({
+      async create() {
+        assert.fail("invalid remote target must not dispatch");
+      },
+    });
+    await assert.rejects(
+      host.create(
+        { kind: "agent", principal: principal() },
+        {
+          host: "mini",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Missing agent",
+        },
+      ),
+      (error) =>
+        error instanceof TaskCreateInputError &&
+        error.clientMessage === "A remote target requires an explicit agent",
     );
   });
 

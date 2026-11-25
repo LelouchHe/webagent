@@ -253,7 +253,7 @@ describe("host connection helpers", () => {
             ? input.href
             : input.url;
       if (url.endsWith("/api/v1/version")) {
-        return Response.json({ hostProtocol: 1 });
+        return Response.json({ hostProtocol: 2 });
       }
       if (url.endsWith("/api/v1/auth/verify")) {
         assert.equal(
@@ -378,7 +378,7 @@ describe("host connection helpers", () => {
             ? input.href
             : input.url;
       if (url.endsWith("/api/v1/version")) {
-        return Response.json({ hostProtocol: 1 });
+        return Response.json({ hostProtocol: 2 });
       }
       if (url.endsWith("/api/v1/auth/verify")) {
         return Response.json({
@@ -439,7 +439,7 @@ describe("host connection helpers", () => {
             ? input.href
             : input.url;
       if (url.endsWith("/api/v1/version")) {
-        return Response.json({ hostProtocol: 1 });
+        return Response.json({ hostProtocol: 2 });
       }
       if (url.endsWith("/api/v1/auth/verify")) {
         return Response.json({
@@ -503,7 +503,7 @@ describe("host connection helpers", () => {
             ? input.href
             : input.url;
       if (url.endsWith("/api/v1/version")) {
-        return Response.json({ hostProtocol: 1 });
+        return Response.json({ hostProtocol: 2 });
       }
       if (url.endsWith("/api/v1/auth/verify")) {
         return Response.json({
@@ -573,7 +573,7 @@ describe("host connection helpers", () => {
             ? input.href
             : input.url;
       if (url.endsWith("/api/v1/version")) {
-        return Response.json({ hostProtocol: 1 });
+        return Response.json({ hostProtocol: 2 });
       }
       if (url.endsWith("/api/v1/auth/verify")) {
         return Response.json({
@@ -809,6 +809,60 @@ describe("host connection helpers", () => {
     await internals.refresh("owner");
     assert.equal(registry.listRemoteChildren("parent")[0]?.unreachable, true);
   });
+
+  for (const name of ["missing connection id", "stale connection id"]) {
+    it(`reconnects after a remote create with a ${name}`, async () => {
+      let reconnects = 0;
+      const registry = new HostRegistry(
+        {},
+        { listLinks: () => [], onRemoteEvent: () => {} },
+      );
+      const connection = {
+        createTask: async () => ({
+          kind: "success" as const,
+          subscribed: false,
+          result: {
+            task: {
+              id: "child",
+              title: "child",
+              agentId: "mock",
+              cwd: "/",
+              model: null,
+              thinking: null,
+              parentId: null,
+              workflowStatus: "idle" as const,
+              source: "agent",
+            },
+            session: {
+              cwdDisplay: "/",
+              parentAgentId: null,
+              configOptions: [],
+              agentCommands: { epoch: "test", revision: 0, commands: [] },
+            },
+          },
+        }),
+        reconnect: () => {
+          reconnects += 1;
+        },
+        readTaskEvents: async () => [],
+        readTaskDetail: async () => ({
+          id: "child",
+          title: "child",
+          workflowStatus: "idle" as const,
+        }),
+        getJson: async () => ({ busy: false }),
+      };
+      (
+        registry as unknown as { connections: Map<string, typeof connection> }
+      ).connections.set("owner", connection);
+      await registry.create("owner", {
+        agentId: "mock",
+        parentId: "parent",
+        source: "agent",
+      });
+      assert.equal(reconnects, 1);
+    });
+  }
 
   it("stops a stale refresh before issuing child reads", async () => {
     let listReads = 0;

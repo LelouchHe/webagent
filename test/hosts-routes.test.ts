@@ -90,7 +90,7 @@ describe("multi-host routes", () => {
     const version = await request(port, "/api/v1/version", apiToken);
     const verified = await request(port, "/api/v1/auth/verify", apiToken);
     assert.equal(version.status, 200);
-    assert.equal((version.body as { hostProtocol: number }).hostProtocol, 1);
+    assert.equal((version.body as { hostProtocol: number }).hostProtocol, 2);
     assert.equal(verified.status, 200);
     assert.deepEqual(verified.body, {
       ok: true,

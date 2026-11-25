@@ -14,6 +14,15 @@ time. An entry without a "closing condition" is a wish, not an issue.
 
 ## Cross-instance collaboration
 
+- **A committed remote create can outlive a failed post-commit read/broadcast.**
+  The durable owner task and hub link are already complete; only follow-up
+  display refresh may fail. *Closing:* require presentation to be retriable
+  without weakening the durable write.
+- **Owner enqueue and replay-cache handoff retain a crash window.** A process
+  loss after owner dispatch commit but before replay publication can delay the
+  first `collaboration_prompt` acknowledgment until reconnect catch-up.
+  *Closing:* make replay publication restart-recoverable with the enqueue fact.
+
 - **Remote report catch-up is whole-history and cursorless.** Every host
   connect cold-reads each linked child's full event log and relies on the
   idempotency key to discard already-seen `task_update` reports. *Closing:* add

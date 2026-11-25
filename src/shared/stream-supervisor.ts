@@ -122,7 +122,8 @@ export class StreamSupervisor {
     this.noteActivity(attempt);
   }
 
-  reconnect(attempt: StreamAttempt): void {
+  reconnect(attempt: StreamAttempt | null = this.current): void {
+    if (!attempt) return;
     this.fail(attempt, "requested");
   }
 

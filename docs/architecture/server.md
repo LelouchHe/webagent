@@ -259,8 +259,8 @@ on the wire): both entrypoints
 call the same `TaskOps.create()` → the Core command validates the initiating
 caller/parent, produces `{agentId, host}`, and calls the one Host create port →
 Host selects RemoteHost → RemoteHost re-checks through the Core-supplied fence,
-performs one request through the configured Host connection, then submits the
-accepted result through the Core's narrow completion callback → the peer
+performs one request through the configured Host connection and returns the
+effective `task` plus optional `session` result → the peer
 executes its existing `POST /api/v1/tasks` as a Host-scoped caller → a Task,
 empty execution binding, and external-parent link commit without ACP → the
 initiator records only its child link and preserves the REST or MCP response

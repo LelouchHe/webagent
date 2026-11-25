@@ -31,6 +31,10 @@ and scope before opening global SSE. The ticket request carries the hub's
 subscribed local parent ids; the owner returns a connection id and keeps the
 set only for that live connection. Per-Task host SSE is refused.
 
+The current host protocol version is `2`. Owner and hub upgrades are
+coordinated: mixed versions fail the handshake; there is no compatibility
+layer.
+
 ## The loop at a glance
 
 P is a Task on the hub; R1 is its child created on the owner. Each instance
@@ -72,11 +76,11 @@ keeps one `remote_tasks` row; nothing else is shared.
  4 dispatch                   |                               |                          |
    |-- task_send R1 --------->| check child link              |                          |
    |                          |-- POST /tasks/P/messages ---->| P is R1's parent link    |
-   |                          |   X-Client-Op-Id, sourceLabel | and token hash matches   |
+   |                          |   X-Client-Op-Id, sourceLabel | and parent id matches    |
    |                          |                               | -> agent dispatch queued |
    |                          |<---------------------- 202 ---|-- drain --------------->| account opens
    |                          | Core records P's sender row   |                          | (source: external P)
-   |<----- accepted by owner -| (no deliveries row)           |                          |
+   |<----- 202 + message id --| queues hub delivery row       |                          |
    |                          |                               |                          | ... works ...
  5 report                     |                               |<---- task_update(done) --|
    |                          |                               | external source: persist |
@@ -91,9 +95,10 @@ keeps one `remote_tasks` row; nothing else is shared.
 
 The hub decides routing, authorization, and wake sources from the durable
 links only; the mirror feeds `task_list` and nothing else. The owner authorizes
-every push and dispatch against its `parent` link and the caller's token hash.
-A `202` means the owner accepted the message; whether it later reached R1 is
-not visible to the hub.
+every push and dispatch against its `parent` link and the request's source id.
+A `202` means the owner enqueued the message and returned its message id. The
+hub starts its delivery row as `queued`; the owner's `collaboration_prompt`
+event moves it to `delivered` live or through reconnect catch-up.
 
 ## Create
 

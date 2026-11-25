@@ -540,6 +540,15 @@ describe("S3 collaboration write routes", () => {
     assert.equal(response.status, 400);
   });
 
+  it("does not reject a maximum-length task title used as a source label", async () => {
+    const response = await request(port, "/api/v1/tasks/parent/messages", {
+      targetTaskId: "sibling",
+      body: "valid title label",
+      sourceLabel: "x".repeat(256),
+    });
+    assert.equal(response.status, 202);
+  });
+
   it("rejects renaming a task to a live sibling title", async () => {
     store.createTask(
       "sibling2",

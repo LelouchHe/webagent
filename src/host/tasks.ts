@@ -10,7 +10,10 @@ import type {
   TaskOps,
   TaskListItem,
 } from "../api/tasks.ts";
-import { TaskRemoteCreateConfigError } from "../api/tasks.ts";
+import {
+  TaskCreateInputError,
+  TaskRemoteCreateConfigError,
+} from "../api/tasks.ts";
 import type { Store } from "../store.ts";
 import type { TaskManager } from "../task-manager.ts";
 import {
@@ -45,7 +48,11 @@ export function createTaskHost(deps: {
       }
       const host = command.target.host;
       const agentId = command.target.agentId;
-      if (agentId === undefined) throw new Error("invalid_remote_create");
+      if (agentId === undefined)
+        throw new TaskCreateInputError(
+          "agent_required",
+          "A remote target requires an explicit agent",
+        );
       if (!command.parentId) throw new Error("parent_not_found");
       command.assertRemoteCaller();
       const remote = await deps.remote.create(host, {

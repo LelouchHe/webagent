@@ -318,6 +318,8 @@ between.
 `agent` is always a bare id; a value containing `@` is invalid. When the
 deployment has configured hosts, the schema adds a separate `host` field whose
 description lists those host names. Omit `host` or pass null to create locally.
+Naming a remote `host` requires an explicit bare `agent` id; there is no
+inheritance across the host boundary.
 With no configured hosts, the field is absent from the schema. The target
 remains `parentId`-authorized on the local instance, while cwd and agent
 selection are evaluated by the peer. Explicit `model` or `thinking`

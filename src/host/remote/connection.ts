@@ -135,7 +135,7 @@ export function decodeOwnerTaskEvents(
 }
 
 export type HostTaskCreateAttempt =
-  | { kind: "success"; result: TaskCreateResult }
+  | { kind: "success"; result: TaskCreateResult; subscribed: boolean }
   | { kind: "rejected"; status: number; reason: string }
   | { kind: "unknown"; reason: string }
   | { kind: "not_sent"; reason: string };
@@ -221,6 +221,10 @@ export class HostConnection {
     this.supervisor.stop();
   }
 
+  reconnect(): void {
+    this.supervisor.reconnect();
+  }
+
   async createTask(
     input: RemoteTaskCreateInput,
   ): Promise<HostTaskCreateAttempt> {
@@ -283,6 +287,7 @@ export class HostConnection {
     const activation = parsed.data;
     return {
       kind: "success",
+      subscribed: response.headers.get("X-Host-Subscription") === "applied",
       result: {
         task: {
           id: activation.id,
@@ -329,13 +334,7 @@ export class HostConnection {
       .object({
         id: z.literal(taskId),
         title: z.string().nullable(),
-        workflowStatus: z.enum([
-          "running",
-          "idle",
-          "waiting",
-          "blocked",
-          "done",
-        ]),
+        workflowStatus: z.enum(WORKFLOW_STATUSES),
       })
       .passthrough()
       .safeParse(raw);
