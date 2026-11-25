@@ -170,6 +170,50 @@ describe("shared/sync", () => {
     consumer.stop();
   });
 
+  it("does not apply an old live frame after an async applied lookup", async () => {
+    const watches: Array<Parameters<SyncFeedTransport<number>["watch"]>[0]> =
+      [];
+    let releaseApplied: ((value: number) => void) | undefined;
+    let appliedCalls = 0;
+    const committed: number[] = [];
+    const consumer = new SyncFeedConsumer<number>({
+      port: {
+        applied: () => {
+          appliedCalls += 1;
+          if (appliedCalls !== 2) return 0;
+          return new Promise<number>((resolveApplied) => {
+            releaseApplied = resolveApplied;
+          });
+        },
+        apply: (entry) => {
+          committed.push(entry.pos);
+          return true;
+        },
+      },
+      transport: {
+        read: async () => [],
+        watch: async (input) => {
+          watches.push(input);
+          input.connected();
+          await new Promise(() => undefined);
+        },
+      },
+      retryDelay: () => 0,
+    });
+    consumer.start();
+    await waitUntil(() => watches.length === 1);
+    const staleFrame = watches[0].entry({ pos: 9, prev: 0, data: 9 });
+    await waitUntil(() => releaseApplied !== undefined);
+    consumer.start();
+    await waitUntil(() => watches.length === 2);
+    releaseApplied?.(0);
+    await staleFrame;
+    assert.deepEqual(committed, []);
+    await watches[1].entry({ pos: 1, prev: 0, data: 1 });
+    assert.deepEqual(committed, [1]);
+    consumer.stop();
+  });
+
   it("treats heartbeats as activity without reconnecting another link", async () => {
     const clock = new FakeClock();
     const attempts = { one: 0, two: 0 };
@@ -235,6 +279,7 @@ describe("shared/sync", () => {
     const callbacks: Array<
       (entry: SyncFeedEntry<number>) => Promise<void> | void
     > = [];
+    const signals: AbortSignal[] = [];
     let applied = 0;
     let attempts = 0;
     const protocolErrors: SyncFeedProtocolError[] = [];
@@ -249,6 +294,7 @@ describe("shared/sync", () => {
       transport: {
         read: async () => [],
         watch: async (input) => {
+          signals.push(input.signal);
           callbacks.push((entry) => input.entry(entry));
           input.connected();
           attempts += 1;
@@ -273,6 +319,36 @@ describe("shared/sync", () => {
     assert.equal(protocolErrors.length, 1);
     assert.match(protocolErrors[0].message, /gap/);
     assert.equal(attempts, 2);
+    assert.equal(signals[1].aborted, true);
+    const otherApplied: number[] = [];
+    let otherWatch:
+      Parameters<SyncFeedTransport<number>["watch"]>[0] | undefined;
+    const other = new SyncFeedConsumer<number>({
+      port: {
+        applied: () => 0,
+        apply: (entry) => {
+          otherApplied.push(entry.pos);
+          return true;
+        },
+      },
+      transport: {
+        read: async () => [],
+        watch: async (input) => {
+          otherWatch = input;
+          input.connected();
+          await new Promise(() => undefined);
+        },
+      },
+      retryDelay: () => 0,
+      clock: clock.api,
+    });
+    other.start();
+    await waitUntil(() => otherWatch !== undefined);
+    assert.ok(otherWatch);
+    await otherWatch.entry({ pos: 1, prev: 0, data: 1 });
+    assert.deepEqual(otherApplied, [1]);
+    assert.equal(otherWatch.signal.aborted, false);
+    other.stop();
     consumer.stop();
   });
 

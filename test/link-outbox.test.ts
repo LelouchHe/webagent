@@ -330,7 +330,12 @@ describe("link outbox", () => {
   });
 
   it("rolls back handoff when an outbox association has no delivery", () => {
-    const deliveryId = createOutgoingDelivery(store, dir).deliveryId;
+    const deliveryId = createOutgoingDelivery(
+      store,
+      dir,
+      "sql-source",
+      "sql-target",
+    ).deliveryId;
     const entry = store.enqueueOutbox({
       id: randomUUID(),
       remoteRole: "child",
@@ -587,6 +592,7 @@ describe("link outbox", () => {
       deliveryId: firstDelivery,
       data: { body: "first" },
     });
+
     const secondDelivery = createOutgoingDelivery(
       store,
       dir,
@@ -618,6 +624,56 @@ describe("link outbox", () => {
       rows.map((row) => [row.entry_id, row.pos, row.prev]),
       [[first.entry_id, first.pos, 0]],
     );
+  });
+
+  it("rejects attaching an inbound delivery as outbound", () => {
+    store.createTask("target", dir, "auto", "mock", "target-session");
+    const inbound = enqueueInbound(store, "inbound-only");
+    assert.throws(
+      () =>
+        store.enqueueOutbox({
+          remoteRole: "child",
+          remoteHost: "owner",
+          category: "message",
+          deliveryId: inbound.deliveryId,
+          data: { body: "wrong direction" },
+        }),
+      /link_inbound_delivery_cannot_be_outbound/,
+    );
+    assert.equal(store.listOutbox("child", "owner").length, 0);
+  });
+
+  it("enforces outbox delivery pairing with SQL FK and CHECK constraints", () => {
+    const sqlDeliveryId = createOutgoingDelivery(
+      store,
+      dir,
+      "sql-source",
+      "sql-target",
+    ).deliveryId;
+    const insert = store["db"].prepare(
+      `INSERT INTO outbox
+         (pos, entry_id, remote_role, remote_host, prev, category,
+          data_json, handoff_status, delivery_id, created_at)
+       VALUES (?, ?, 'child', 'owner', 0, ?, '{}', 'pending', ?, 1)`,
+    );
+    assert.throws(
+      () => insert.run(10, "missing-fk", "message", "missing-delivery"),
+      /FOREIGN KEY constraint failed/,
+    );
+    assert.throws(
+      () => insert.run(11, "receipt-with-delivery", "receipt", sqlDeliveryId),
+      /CHECK constraint failed/,
+    );
+    assert.throws(
+      () => insert.run(12, "message-without-delivery", "message", null),
+      /CHECK constraint failed/,
+    );
+    insert.run(13, "valid-reference", "message", sqlDeliveryId);
+    assert.throws(() => {
+      store["db"]
+        .prepare("DELETE FROM deliveries WHERE id = ?")
+        .run(sqlDeliveryId);
+    }, /FOREIGN KEY constraint failed/);
   });
 });
 

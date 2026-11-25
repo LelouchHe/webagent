@@ -326,7 +326,7 @@ eligible pending rows as `failed(target_deleted)`.
 | `source_label` | TEXT NULL | Sender-title snapshot for inbound link delivery |
 | `source_category` | TEXT NULL | Inbound entry category: `message` or `report` |
 
-The first four inbound fields plus `source_category` are either all present
+The four association fields
 (`source_remote_role`, `source_remote_host`, `source_entry_id`,
 `source_category`) or all null. `source_label` is a separate nullable display
 snapshot: inbound facts normally carry it, but the CHECK does not require it.

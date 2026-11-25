@@ -81,13 +81,13 @@ pulls.
 |                                     |             |                   |                  |
 |  hub inbound apply                  |             |  owner outbox     v                  |
 |  +--------------------------------+ |             |  +--------------------------------+  |
-|  | delivery + cursor transaction  |<-+------ PULL -+--| role/name | pos/prev | data   |  |
+|  | apply + cursor transaction     |<-+------ PULL -+--| role/name | pos/prev | data   |  |
 |  +---------------+----------------+ |  watch/read |  +--------------------------------+  |
 |                  |                  |             |                                      |
 |                  v                  |             |                                      |
-|          outbox_cursors             |             |                                      |
-|                  |                  |             |                                      |
-|                  v                  |             |                                      |
+|  outbox_cursors + delivery fact     |             |                                      |
+|                                     |             |                                      |
+|  later local inbound state change   |             |                                      |
 |  delivery CAS -> own outbox receipt |-------------> inbound receipt apply               |
 |                                     |             |        -> delivery CAS              |
 +-------------------------------------+             +--------------------------------------+

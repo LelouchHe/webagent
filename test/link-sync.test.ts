@@ -146,13 +146,14 @@ describe("dormant link sync handlers", () => {
   it("unregisters a throwing watch observer without stopping another", async () => {
     store.createTask("child", dir, "auto", "mock", "child-session");
     const errors: unknown[] = [];
-    const owner = new LinkSyncOwner(store, {
-      watchClosed: (error) => errors.push(error),
-    });
+    const owner = new LinkSyncOwner(store);
+    let failedCalls = 0;
     owner.watch("hub-a", 0, {
       entry: () => {
+        failedCalls += 1;
         throw new Error("observer failed");
       },
+      closed: (error) => errors.push(error),
     });
     const received: string[] = [];
     owner.watch("hub-a", 0, {
@@ -171,6 +172,17 @@ describe("dormant link sync handlers", () => {
     owner.publish(row.entry_id);
     await waitUntil(() => errors.length === 1 && received.length === 1);
     assert.match(String(errors[0]), /observer failed/);
+    const second = store.enqueueLinkReport({
+      remoteRole: "parent",
+      remoteHost: "hub-a",
+      sourceTaskId: "child",
+      targetTaskId: "parent",
+      sourceLabel: "Child",
+      body: "two",
+    });
+    owner.publish(second.entry_id);
+    await waitUntil(() => received.length === 2);
+    assert.equal(failedCalls, 1);
   });
 
   it("pushes idempotently and records target deletion as a replayable 202", () => {

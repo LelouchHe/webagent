@@ -16,6 +16,7 @@ import type { LinkApplyEffects, OutboxRow, Store } from "../store.ts";
 export interface LinkWatchObserver {
   entry(entry: SyncFeedEntry<LinkEnvelope>): void | Promise<void>;
   heartbeat?(): void;
+  closed?(error: unknown): void;
 }
 
 export interface LinkPushResponse {
@@ -27,7 +28,6 @@ export interface LinkSyncEffectCallbacks {
   drainTask?(taskId: string): void;
   outboxChanged?(entryId: string): void;
   handedOff?(entryId: string): void;
-  watchClosed?(error: unknown): void;
 }
 
 interface OwnerSubscription {
@@ -143,7 +143,7 @@ export class LinkSyncOwner {
       this.subscriptions.delete(subscription);
       subscription.active = false;
       try {
-        this.effects.watchClosed?.(error);
+        subscription.observer.closed?.(error);
       } catch {
         // A reporting hook cannot keep a failed subscription registered.
       }

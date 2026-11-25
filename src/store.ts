@@ -2344,7 +2344,6 @@ export class Store {
     revoked: boolean;
     reaped: boolean;
     taskId: string | null;
-    failedDeliveryIds: string[];
   } {
     const result = this.db.transaction(() => {
       const row = this.getShareByToken(token);
@@ -2373,33 +2372,33 @@ export class Store {
       };
     })();
     this.broadcastDeliveryStatus(result.failedDeliveryIds);
-    return result;
+    return {
+      revoked: result.revoked,
+      reaped: result.reaped,
+      taskId: result.taskId,
+    };
   }
 
   private reapTombstoneIfOrphanedTransaction(taskId: string): {
     failedDeliveryIds: string[];
   } | null {
     if (this.isRootTaskId(taskId)) return null;
-    const reaped = (() => {
-      const row = this.db
-        .prepare("SELECT id FROM tasks WHERE id = ? AND deleted_at IS NOT NULL")
-        .get(taskId) as { id: string } | undefined;
-      if (!row) return null;
-      const remaining = (
-        this.db
-          .prepare("SELECT COUNT(*) AS n FROM shares WHERE task_id = ?")
-          .get(taskId) as { n: number }
-      ).n;
-      if (remaining > 0) return null;
-      this.reparentChildrenToRoot(taskId);
-      const failedDeliveryIds =
-        this.failOutstandingDeliveriesForDeletedTask(taskId);
-      this.db.prepare("DELETE FROM events WHERE task_id = ?").run(taskId);
-      this.db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
-      return failedDeliveryIds;
-    })();
-    if (!reaped) return null;
-    return { failedDeliveryIds: reaped };
+    const row = this.db
+      .prepare("SELECT id FROM tasks WHERE id = ? AND deleted_at IS NOT NULL")
+      .get(taskId) as { id: string } | undefined;
+    if (!row) return null;
+    const remaining = (
+      this.db
+        .prepare("SELECT COUNT(*) AS n FROM shares WHERE task_id = ?")
+        .get(taskId) as { n: number }
+    ).n;
+    if (remaining > 0) return null;
+    this.reparentChildrenToRoot(taskId);
+    const failedDeliveryIds =
+      this.failOutstandingDeliveriesForDeletedTask(taskId);
+    this.db.prepare("DELETE FROM events WHERE task_id = ?").run(taskId);
+    this.db.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
+    return { failedDeliveryIds };
   }
 
   /** Delete tasks that have zero events and are older than minAgeS seconds. Returns IDs deleted. */
@@ -3485,6 +3484,9 @@ export class Store {
       if (!input.deliveryId) throw new Error("link_entry_missing_delivery");
       const delivery = this.getCollaborationDelivery(input.deliveryId);
       if (!delivery) throw new Error("link_delivery_missing");
+      if (delivery.source_entry_id !== null) {
+        throw new Error("link_inbound_delivery_cannot_be_outbound");
+      }
     }
     const previous = this.db
       .prepare(

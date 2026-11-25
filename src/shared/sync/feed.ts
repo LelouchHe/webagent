@@ -108,7 +108,8 @@ export class SyncFeedConsumer<TData = unknown> {
   ): Promise<void> {
     if (!attempt.isCurrent()) return;
     let applied = await this.port.applied();
-    if (!attempt.isCurrent() || entry.pos <= applied) return;
+    if (!attempt.isCurrent()) return;
+    if (entry.pos <= applied) return;
     while (entry.prev !== applied && entry.pos > applied) {
       const entries = await this.transport.read(applied, attempt.signal);
       if (!attempt.isCurrent()) return;
@@ -126,6 +127,7 @@ export class SyncFeedConsumer<TData = unknown> {
         }
         if (!(await this.apply(missing, applied, attempt))) return;
         applied = await this.port.applied();
+        if (!attempt.isCurrent()) return;
         progress = true;
         if (entry.pos <= applied) return;
       }
