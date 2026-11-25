@@ -3285,8 +3285,7 @@ export class Store {
       const row = this.db
         .prepare(
           `SELECT pos FROM outbox
-           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?
-             AND category <> 'receipt'`,
+           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?`,
         )
         .get(remoteRole, remoteHost, entryId) as { pos: number } | undefined;
       if (!row) throw new Error("outbox_entry_not_found");
@@ -3319,14 +3318,22 @@ export class Store {
     return this.db.transaction(() => {
       const row = this.db
         .prepare(
-          `SELECT entry_id, pos, delivery_id FROM outbox
-           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?
-             AND category <> 'receipt'`,
+          `SELECT entry_id, pos, category, delivery_id FROM outbox
+           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?`,
         )
         .get(remoteRole, remoteHost, entryId) as
-        | { entry_id: string; pos: number; delivery_id: string | null }
+        | {
+            entry_id: string;
+            pos: number;
+            category: OutboxCategory;
+            delivery_id: string | null;
+          }
         | undefined;
-      if (!row?.delivery_id) throw new Error("outbox_entry_not_found");
+      if (!row) throw new Error("outbox_entry_not_found");
+      if (row.category === "receipt") {
+        throw new Error("receipt_rejected_link_fault");
+      }
+      if (!row.delivery_id) throw new Error("link_entry_missing_delivery_id");
       const changed = this.transitionDeliveryStatusInTransaction(
         row.delivery_id,
         "queued",

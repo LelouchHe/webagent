@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import type { LinkEnvelope } from "../src/shared/link-envelope.ts";
+import { SyncOutbox } from "../src/shared/sync/index.ts";
 import { Store } from "../src/store.ts";
 
 describe("link outbox", () => {
@@ -110,6 +111,94 @@ describe("link outbox", () => {
       store.getCollaborationDelivery(deliveryId)?.failure_reason,
       "link_rejected",
     );
+  });
+
+  it("advances a receipt head on 202 and sends the next entry", async () => {
+    const receipt = store.enqueueOutbox({
+      remoteRole: "child",
+      remoteHost: "owner",
+      category: "receipt",
+      data: {
+        originalEntryId: randomUUID(),
+        status: "delivered",
+      },
+    });
+    const deliveryId = createOutgoingDelivery(store, dir).deliveryId;
+    const next = store.enqueueOutbox({
+      remoteRole: "child",
+      remoteHost: "owner",
+      category: "message",
+      deliveryId,
+      data: { body: "after receipt" },
+    });
+    const sent: string[] = [];
+    const outbox = new SyncOutbox<{ kind: string }>({
+      port: {
+        next: () => {
+          const row = store
+            .listOutbox(
+              "child",
+              "owner",
+              store.getOutboxPushCursor("child", "owner"),
+              1,
+            )
+            .at(0);
+          if (!row) return undefined;
+          return {
+            id: row.entry_id,
+            position: row.pos,
+            request: { kind: row.category },
+          };
+        },
+        finish: (entry, result) => {
+          if (result.kind !== "success" || result.status !== 202) return false;
+          return (
+            store.advanceOutboxPushCursor("child", "owner", entry.id) !== null
+          );
+        },
+      },
+      transport: {
+        send: async (operationId) => {
+          sent.push(operationId);
+          return { status: 202, body: { accepted: true } };
+        },
+      },
+      timer: {
+        setTimeout: () => 1,
+        clearTimeout: () => {},
+      },
+      timeoutMs: 1_000,
+      retryDelay: () => 0,
+    });
+    outbox.start();
+    await waitUntil(() => sent.length === 2);
+    assert.deepEqual(sent, [receipt.entry_id, next.entry_id]);
+    assert.equal(store.getOutboxPushCursor("child", "owner"), next.pos);
+    outbox.stop();
+  });
+
+  it("retains a rejected receipt as a link fault", () => {
+    const receipt = store.enqueueOutbox({
+      remoteRole: "child",
+      remoteHost: "owner",
+      category: "receipt",
+      data: {
+        originalEntryId: randomUUID(),
+        status: "delivered",
+      },
+    });
+    assert.throws(
+      () =>
+        store.rejectOutboxHead(
+          "child",
+          "owner",
+          receipt.entry_id,
+          "authenticated_rejection",
+        ),
+      /receipt_rejected_link_fault/,
+    );
+    assert.equal(store.getOutboxPushCursor("child", "owner"), 0);
+    assert.equal(store.getOutbox(receipt.entry_id)?.entry_id, receipt.entry_id);
   });
 
   it("assigns pos and prev by authenticated link direction", () => {
@@ -851,6 +940,14 @@ function applyReceipt(
       },
     },
   });
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  const deadline = performance.now() + 1_000;
+  while (!predicate()) {
+    if (performance.now() >= deadline) throw new Error("condition timed out");
+    await new Promise((resolveTimer) => setTimeout(resolveTimer, 0));
+  }
 }
 
 function installReceiptRejectTrigger(store: Store): void {
