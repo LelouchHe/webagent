@@ -24,6 +24,9 @@ or counters rather than instants (`ttl_hours`, `share_snapshot_seq`,
   - [tasks](#tasks)
   - [agent_sessions](#agent_sessions)
   - [remote_tasks](#remote_tasks)
+  - [peer_outbox](#peer_outbox)
+  - [peer_inbound_ops](#peer_inbound_ops)
+  - [peer_feed_progress](#peer_feed_progress)
   - [events](#events)
   - [push_subscriptions](#push_subscriptions)
   - [inbox_messages](#inbox_messages)
@@ -147,6 +150,65 @@ managed independently and may be equal. Partial unique indexes
 external parent per local Task and one local link per remote child id. The
 table deliberately stores no title, timestamp, or status.
 
+### `peer_outbox`
+
+One instance-local, immutable outbox for facts sent to peer links. Each entry
+is partitioned by `(remote_role, remote_host)`; `pos` is its global SQLite
+rowid and `prev` is the previous position in the same link. `prev` is assigned
+in the same transaction as the insert, starting at `0`. Entries are never
+changed after insert except for local business, failure, and handoff metadata.
+
+| Column | Type | Notes |
+|---|---|---|
+| `pos` | INTEGER PRIMARY KEY | Immutable rowid position |
+| `entry_id` | TEXT NOT NULL UNIQUE | Globally unique entry and push operation id |
+| `remote_role` | TEXT NOT NULL | Link direction: `parent` or `child` |
+| `remote_host` | TEXT NOT NULL | Link name in that direction |
+| `prev` | INTEGER NOT NULL | Previous `pos` in the same link; first entry is `0` |
+| `category` | TEXT NOT NULL | `message`, `report`, or `receipt` |
+| `data_json` | TEXT NOT NULL | Immutable wire data |
+| `business_status` | TEXT NULL | `queued`, `delivered`, or `failed`; receipts have no business state |
+| `failure_reason` | TEXT NULL | Business failure detail |
+| `handoff_status` | TEXT NOT NULL | Push-only local metadata: `pending`, `handed_off`, or `rejected` |
+| `created_at` | INTEGER NOT NULL | Local enqueue time |
+
+Index `idx_peer_outbox_link_pos` supports ordered `(remote_role,
+remote_host)` reads.
+
+The table has no Task or `remote_tasks` foreign key. Task and link deletion
+cannot cascade away an entry that still needs to be delivered or acknowledged.
+
+### `peer_inbound_ops`
+
+The durable push operation result keyed by `(remote_role, remote_host,
+entry_id)`. A matching normalized `request_json` replays the original
+`response_status` and `response_json`; different content for the same key is a
+conflict. The result has no Task foreign key and is written in the same
+transaction as the first apply.
+
+| Column | Type | Notes |
+|---|---|---|
+| `remote_role` | TEXT NOT NULL | Link direction |
+| `remote_host` | TEXT NOT NULL | Link name |
+| `entry_id` | TEXT NOT NULL | Peer entry and operation id |
+| `request_json` | TEXT NOT NULL | Normalized request contract |
+| `response_status` | INTEGER NOT NULL | Original response status |
+| `response_json` | TEXT NOT NULL | Original response body |
+| `created_at` | INTEGER NOT NULL | First-apply time |
+
+### `peer_feed_progress`
+
+The consumer's durable `applied_pos` for each `(remote_role, remote_host)`.
+Feed apply writes the business fact first and advances this position in the
+same transaction. It has no foreign key, so task or `remote_tasks` deletion
+does not erase transfer progress.
+
+| Column | Type | Notes |
+|---|---|---|
+| `remote_role` | TEXT NOT NULL | Link direction |
+| `remote_host` | TEXT NOT NULL | Link name |
+| `applied_pos` | INTEGER NOT NULL | Last durably applied outbox position |
+
 ### `events`
 
 Append-only ordered log of everything that happened in a task — user
@@ -255,9 +317,21 @@ on target task deletion; deletion explicitly terminalizes pending rows as
 | `idempotency_key` | TEXT NOT NULL UNIQUE | Message/recipient delivery identity |
 | `status` | TEXT NOT NULL | `queued`, `delivered`, or `failed` |
 | `queued_at` | INTEGER NOT NULL | Unix milliseconds |
-| `delivered_at` | INTEGER | Set when the drain hands the row to the recipient's agent, not when its turn ends; cleared if the agent rejects the request |
+| `delivered_at` | INTEGER | Set when the drain hands the row to the recipient's agent, not when its turn ends |
 | `failed_at` | INTEGER | Set when the row could not be handed over |
 | `failure_reason` | TEXT | Stable terminal failure reason, e.g. `target_deleted` |
+| `source_remote_role` | TEXT NULL | Source peer-link direction for an inbound entry |
+| `source_remote_host` | TEXT NULL | Source peer-link name for an inbound entry |
+| `source_entry_id` | TEXT NULL | Immutable source outbox entry id |
+
+The three `source_*` columns are all null for local deliveries and all present
+for peer-inbound deliveries. The unique `(source_remote_role,
+source_remote_host, source_entry_id)` index prevents applying one peer entry
+into two deliveries. Status transitions use the delivery id CAS and write a
+receipt to the source link in the same transaction when that association is
+present.
+
+Index `idx_deliveries_source_entry` enforces that peer-entry uniqueness.
 
 ### `client_ops`
 

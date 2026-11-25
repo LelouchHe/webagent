@@ -249,6 +249,59 @@ export interface CollaborationDeliveryRow {
   delivered_at: number | null;
   failed_at: number | null;
   failure_reason: string | null;
+  source_remote_role: PeerRemoteRole | null;
+  source_remote_host: string | null;
+  source_entry_id: string | null;
+}
+
+export type PeerRemoteRole = "parent" | "child";
+export type PeerOutboxCategory = "message" | "report" | "receipt";
+export type PeerOutboxHandoffStatus = "pending" | "handed_off" | "rejected";
+
+export interface PeerOutboxRow {
+  pos: number;
+  entry_id: string;
+  remote_role: PeerRemoteRole;
+  remote_host: string;
+  prev: number;
+  category: PeerOutboxCategory;
+  data_json: string;
+  business_status: CollaborationDeliveryStatus | null;
+  failure_reason: string | null;
+  handoff_status: PeerOutboxHandoffStatus;
+  created_at: number;
+}
+
+export interface PeerInboundOpRow {
+  remote_role: PeerRemoteRole;
+  remote_host: string;
+  entry_id: string;
+  request_json: string;
+  response_status: number;
+  response_json: string;
+  created_at: number;
+}
+
+export interface PeerInboundAssociation {
+  remoteRole: PeerRemoteRole;
+  remoteHost: string;
+  entryId: string;
+}
+
+function canTransitionDeliveryStatus(
+  current: CollaborationDeliveryStatus | null,
+  next: Exclude<CollaborationDeliveryStatus, "queued">,
+): boolean {
+  if (current === "queued") return true;
+  return current === "delivered" && next === "failed";
+}
+
+function stringifyPeerData(data: unknown): string {
+  const encoded: unknown = JSON.stringify(data);
+  if (typeof encoded !== "string") {
+    throw new Error("peer_outbox_data_not_serializable");
+  }
+  return encoded;
 }
 
 export interface CollaborationDeliveryStatusChange {
@@ -647,6 +700,9 @@ export class Store {
         "delivered_at",
         "failed_at",
         "failure_reason",
+        "source_remote_role",
+        "source_remote_host",
+        "source_entry_id",
       ],
     };
     // Columns that earlier versions wrote and this one migrates away (see
@@ -853,10 +909,56 @@ export class Store {
         queued_at INTEGER NOT NULL,
         delivered_at INTEGER,
         failed_at INTEGER,
-        failure_reason TEXT
+        failure_reason TEXT,
+        source_remote_role TEXT CHECK (source_remote_role IN ('parent', 'child')),
+        source_remote_host TEXT,
+        source_entry_id TEXT,
+        CHECK (
+          (source_remote_role IS NULL AND source_remote_host IS NULL AND source_entry_id IS NULL)
+          OR
+          (source_remote_role IS NOT NULL AND source_remote_host IS NOT NULL AND source_entry_id IS NOT NULL)
+        )
       );
       CREATE INDEX IF NOT EXISTS idx_deliveries_recipient_status_queued
         ON deliveries (recipient_task_id, status, queued_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_deliveries_source_entry
+        ON deliveries (source_remote_role, source_remote_host, source_entry_id)
+        WHERE source_entry_id IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS peer_outbox (
+        pos INTEGER PRIMARY KEY,
+        entry_id TEXT NOT NULL UNIQUE,
+        remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
+        remote_host TEXT NOT NULL,
+        prev INTEGER NOT NULL,
+        category TEXT NOT NULL CHECK (category IN ('message', 'report', 'receipt')),
+        data_json TEXT NOT NULL,
+        business_status TEXT CHECK (business_status IN ('queued', 'delivered', 'failed')),
+        failure_reason TEXT,
+        handoff_status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (handoff_status IN ('pending', 'handed_off', 'rejected')),
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_peer_outbox_link_pos
+        ON peer_outbox (remote_role, remote_host, pos);
+
+      CREATE TABLE IF NOT EXISTS peer_inbound_ops (
+        remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
+        remote_host TEXT NOT NULL,
+        entry_id TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        response_status INTEGER NOT NULL,
+        response_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (remote_role, remote_host, entry_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS peer_feed_progress (
+        remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
+        remote_host TEXT NOT NULL,
+        applied_pos INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (remote_role, remote_host)
+      );
     `);
 
     // client-server-split M2: idempotency for mutating REST calls. Stores
@@ -2094,15 +2196,17 @@ export class Store {
         .all(seedTaskId) as Array<{ id: string }>
     ).map((row) => row.id);
     if (ids.length === 0) return ids;
-    const fail = this.db.prepare(
-      `UPDATE deliveries
-       SET status = 'failed', failed_at = ?, failure_reason = 'archived_edge_cut'
-       WHERE id = ? AND status = 'queued'`,
-    );
-    this.db.transaction(() => {
-      for (const id of ids) fail.run(failedAt, id);
-    })();
-    return ids;
+    return this.db.transaction(() =>
+      ids.filter((id) =>
+        this.transitionDeliveryStatusInTransaction(
+          id,
+          "queued",
+          "failed",
+          failedAt,
+          "archived_edge_cut",
+        ),
+      ),
+    )();
   }
 
   /**
@@ -2807,6 +2911,70 @@ export class Store {
     this.deliveryStatusObservers.push(observer);
   }
 
+  private transitionDeliveryStatusInTransaction(
+    deliveryId: string,
+    expected: "queued" | "delivered",
+    next: Exclude<CollaborationDeliveryStatus, "queued">,
+    changedAt: number,
+    failureReason?: string | null,
+  ): boolean {
+    if (!canTransitionDeliveryStatus(expected, next)) {
+      throw new Error(`invalid_delivery_transition:${expected}->${next}`);
+    }
+    const delivery = this.db
+      .prepare(
+        `SELECT source_remote_role, source_remote_host, source_entry_id
+         FROM deliveries WHERE id = ? AND status = ?`,
+      )
+      .get(deliveryId, expected) as
+      | {
+          source_remote_role: PeerRemoteRole | null;
+          source_remote_host: string | null;
+          source_entry_id: string | null;
+        }
+      | undefined;
+    if (!delivery) return false;
+    const result =
+      next === "delivered"
+        ? this.db
+            .prepare(
+              `UPDATE deliveries
+               SET status = 'delivered', delivered_at = ?, failed_at = NULL,
+                   failure_reason = NULL
+               WHERE id = ? AND status = ?`,
+            )
+            .run(changedAt, deliveryId, expected)
+        : this.db
+            .prepare(
+              `UPDATE deliveries
+               SET status = 'failed', failed_at = ?, failure_reason = ?
+               WHERE id = ? AND status = ?`,
+            )
+            .run(changedAt, failureReason ?? "failed", deliveryId, expected);
+    if (result.changes !== 1) return false;
+    if (
+      delivery.source_remote_role !== null &&
+      delivery.source_remote_host !== null &&
+      delivery.source_entry_id !== null
+    ) {
+      this.enqueuePeerOutboxInTransaction({
+        entryId: randomUUID(),
+        remoteRole: delivery.source_remote_role,
+        remoteHost: delivery.source_remote_host,
+        category: "receipt",
+        dataJson: JSON.stringify({
+          originalEntryId: delivery.source_entry_id,
+          status: next,
+          ...(next === "failed"
+            ? { failureReason: failureReason ?? "failed" }
+            : {}),
+        }),
+        createdAt: changedAt,
+      });
+    }
+    return true;
+  }
+
   broadcastDeliveryStatus(ids: readonly string[]): void {
     if (ids.length === 0 || this.deliveryStatusObservers.length === 0) return;
     const changes: CollaborationDeliveryStatusChange[] = [];
@@ -2847,6 +3015,222 @@ export class Store {
     }
   }
 
+  enqueuePeerOutbox(input: {
+    id?: string;
+    remoteRole: PeerRemoteRole;
+    remoteHost: string;
+    category: PeerOutboxCategory;
+    data: unknown;
+    createdAt?: number;
+  }): PeerOutboxRow {
+    const dataJson = stringifyPeerData(input.data);
+    return this.db.transaction(() =>
+      this.enqueuePeerOutboxInTransaction({
+        entryId: input.id ?? randomUUID(),
+        remoteRole: input.remoteRole,
+        remoteHost: input.remoteHost,
+        category: input.category,
+        dataJson,
+        createdAt: input.createdAt ?? Date.now(),
+      }),
+    )();
+  }
+
+  applyPeerInboundOperation(input: {
+    remoteRole: PeerRemoteRole;
+    remoteHost: string;
+    entryId: string;
+    request: unknown;
+    execute: () => { status: number; body: unknown };
+  }): { replayed: boolean; status: number; body: unknown } {
+    const requestJson = stringifyPeerData(input.request);
+    return this.db.transaction(() => {
+      const existing = this.db
+        .prepare(
+          `SELECT * FROM peer_inbound_ops
+           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?`,
+        )
+        .get(input.remoteRole, input.remoteHost, input.entryId) as
+        PeerInboundOpRow | undefined;
+      if (existing) {
+        if (existing.request_json !== requestJson) {
+          throw new Error("peer_inbound_op_conflict");
+        }
+        return {
+          replayed: true,
+          status: existing.response_status,
+          body: JSON.parse(existing.response_json) as unknown,
+        };
+      }
+      const result = input.execute();
+      this.db
+        .prepare(
+          `INSERT INTO peer_inbound_ops
+             (remote_role, remote_host, entry_id, request_json,
+              response_status, response_json, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.remoteRole,
+          input.remoteHost,
+          input.entryId,
+          requestJson,
+          result.status,
+          stringifyPeerData(result.body),
+          Date.now(),
+        );
+      return { replayed: false, ...result };
+    })();
+  }
+
+  getPeerFeedApplied(remoteRole: PeerRemoteRole, remoteHost: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT applied_pos FROM peer_feed_progress
+         WHERE remote_role = ? AND remote_host = ?`,
+      )
+      .get(remoteRole, remoteHost) as { applied_pos: number } | undefined;
+    return row?.applied_pos ?? 0;
+  }
+
+  applyPeerFeedEntry(input: {
+    remoteRole: PeerRemoteRole;
+    remoteHost: string;
+    expectedApplied: number;
+    nextApplied: number;
+    apply: () => void;
+  }): boolean {
+    return this.db.transaction(() => {
+      const applied = this.getPeerFeedApplied(
+        input.remoteRole,
+        input.remoteHost,
+      );
+      if (applied !== input.expectedApplied) return false;
+      if (input.nextApplied <= applied) {
+        throw new Error("peer_feed_position_does_not_advance");
+      }
+      input.apply();
+      this.db
+        .prepare(
+          `INSERT INTO peer_feed_progress (remote_role, remote_host, applied_pos)
+           VALUES (?, ?, ?)
+           ON CONFLICT (remote_role, remote_host)
+           DO UPDATE SET applied_pos = excluded.applied_pos`,
+        )
+        .run(input.remoteRole, input.remoteHost, input.nextApplied);
+      return true;
+    })();
+  }
+
+  listPeerOutbox(
+    remoteRole: PeerRemoteRole,
+    remoteHost: string,
+    after = 0,
+    limit = 100,
+  ): PeerOutboxRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM peer_outbox
+         WHERE remote_role = ? AND remote_host = ? AND pos > ?
+         ORDER BY pos
+         LIMIT ?`,
+      )
+      .all(remoteRole, remoteHost, after, limit) as PeerOutboxRow[];
+  }
+
+  getPeerOutbox(entryId: string): PeerOutboxRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM peer_outbox WHERE entry_id = ?")
+      .get(entryId) as PeerOutboxRow | undefined;
+  }
+
+  applyPeerReceipt(input: {
+    remoteRole: PeerRemoteRole;
+    remoteHost: string;
+    entryId: string;
+    status: Exclude<CollaborationDeliveryStatus, "queued">;
+    failureReason?: string | null;
+  }): { known: boolean; changed: boolean } {
+    return this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          `SELECT * FROM peer_outbox
+           WHERE entry_id = ? AND remote_role = ? AND remote_host = ?
+             AND category <> 'receipt'`,
+        )
+        .get(input.entryId, input.remoteRole, input.remoteHost) as
+        PeerOutboxRow | undefined;
+      if (!row) return { known: false, changed: false };
+      if (!canTransitionDeliveryStatus(row.business_status, input.status)) {
+        return { known: true, changed: false };
+      }
+      const changed = this.db
+        .prepare(
+          `UPDATE peer_outbox
+           SET business_status = ?, failure_reason = ?
+           WHERE entry_id = ? AND business_status = ?`,
+        )
+        .run(
+          input.status,
+          input.status === "failed" ? (input.failureReason ?? "failed") : null,
+          row.entry_id,
+          row.business_status,
+        ).changes;
+      return { known: true, changed: changed === 1 };
+    })();
+  }
+
+  markPeerOutboxHandoff(
+    entryId: string,
+    expected: PeerOutboxHandoffStatus,
+    next: PeerOutboxHandoffStatus,
+  ): boolean {
+    if (expected !== "pending" || next === "pending") return false;
+    return (
+      this.db
+        .prepare(
+          `UPDATE peer_outbox
+           SET handoff_status = ?
+           WHERE entry_id = ? AND handoff_status = ?`,
+        )
+        .run(next, entryId, expected).changes === 1
+    );
+  }
+
+  private enqueuePeerOutboxInTransaction(input: {
+    entryId: string;
+    remoteRole: PeerRemoteRole;
+    remoteHost: string;
+    category: PeerOutboxCategory;
+    dataJson: string;
+    createdAt: number;
+  }): PeerOutboxRow {
+    const previous = this.db
+      .prepare(
+        `SELECT COALESCE(MAX(pos), 0) AS pos FROM peer_outbox
+         WHERE remote_role = ? AND remote_host = ?`,
+      )
+      .get(input.remoteRole, input.remoteHost) as { pos: number };
+    this.db
+      .prepare(
+        `INSERT INTO peer_outbox
+           (entry_id, remote_role, remote_host, prev, category, data_json,
+            business_status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.entryId,
+        input.remoteRole,
+        input.remoteHost,
+        previous.pos,
+        input.category,
+        input.dataJson,
+        input.category === "receipt" ? null : "queued",
+        input.createdAt,
+      );
+    return this.getPeerOutbox(input.entryId)!;
+  }
+
   /**
    * Persist one cross-task fact, its task-timeline projections, and the sole
    * target Delivery in one SQLite transaction. Delivery mechanics live above
@@ -2870,6 +3254,7 @@ export class Store {
       body: string;
       id?: string;
       deliveryId?: string;
+      inbound?: PeerInboundAssociation;
     },
     record?: (result: { messageId: string; deliveryId: string }) => void,
   ): { messageId: string; deliveryId: string } {
@@ -2887,6 +3272,7 @@ export class Store {
         body: input.body,
         idempotencyKey: `${messageId}:${input.targetTaskId}`,
         createdAt,
+        inbound: input.inbound,
       });
       record?.({ messageId, deliveryId });
     })();
@@ -2900,6 +3286,7 @@ export class Store {
     sourceTaskId: string;
     targetTaskId: string;
     body: string;
+    inbound?: PeerInboundAssociation;
   }): boolean {
     return this.db.transaction(() => {
       const duplicate = this.db
@@ -2918,6 +3305,7 @@ export class Store {
         body: input.body,
         idempotencyKey: input.idempotencyKey,
         createdAt: Date.now(),
+        inbound: input.inbound,
       });
       return true;
     })();
@@ -2971,15 +3359,16 @@ export class Store {
             )
             .get(input.id) as { id: string } | undefined;
           if (delivery) {
-            this.db
-              .prepare(
-                `UPDATE deliveries
-                 SET status = 'delivered', delivered_at = ?, failed_at = NULL,
-                     failure_reason = NULL
-                 WHERE id = ?`,
+            if (
+              this.transitionDeliveryStatusInTransaction(
+                delivery.id,
+                "queued",
+                "delivered",
+                createdAt,
               )
-              .run(createdAt, delivery.id);
-            acknowledged.deliveryId = delivery.id;
+            ) {
+              acknowledged.deliveryId = delivery.id;
+            }
           }
         }
       }
@@ -3019,15 +3408,24 @@ export class Store {
     messageId: string,
     deliveredAt = Date.now(),
   ): boolean {
-    const row = this.db
-      .prepare(
-        `UPDATE deliveries
-         SET status = 'delivered', delivered_at = ?, failed_at = NULL,
-             failure_reason = NULL
-         WHERE message_id = ? AND status = 'queued'`,
-      )
-      .run(deliveredAt, messageId);
-    if (row.changes === 0) {
+    const changed = this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          `SELECT id FROM deliveries
+           WHERE message_id = ? AND status = 'queued'
+           LIMIT 1`,
+        )
+        .get(messageId) as { id: string } | undefined;
+      return row
+        ? this.transitionDeliveryStatusInTransaction(
+            row.id,
+            "queued",
+            "delivered",
+            deliveredAt,
+          )
+        : false;
+    })();
+    if (!changed) {
       const exists = this.db
         .prepare("SELECT 1 FROM deliveries WHERE message_id = ? LIMIT 1")
         .get(messageId);
@@ -3222,6 +3620,7 @@ export class Store {
     body: string;
     idempotencyKey: string;
     createdAt: number;
+    inbound?: PeerInboundAssociation;
   }): void {
     this.db
       .prepare(
@@ -3247,8 +3646,9 @@ export class Store {
     this.db
       .prepare(
         `INSERT INTO deliveries
-           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
-           VALUES (?, ?, ?, ?, 'queued', ?)`,
+           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,
+            source_remote_role, source_remote_host, source_entry_id)
+           VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
       )
       .run(
         input.deliveryId,
@@ -3256,6 +3656,9 @@ export class Store {
         input.directTargetTaskId,
         input.idempotencyKey,
         input.createdAt,
+        input.inbound?.remoteRole ?? null,
+        input.inbound?.remoteHost ?? null,
+        input.inbound?.entryId ?? null,
       );
   }
 
@@ -3393,14 +3796,18 @@ export class Store {
            ORDER BY queued_at, rowid`,
         )
         .all(recipientTaskId) as Array<{ id: string }>;
-      const claim = this.db.prepare(
-        `UPDATE deliveries
-         SET status = 'delivered', delivered_at = ?
-         WHERE id = ? AND status = 'queued'`,
-      );
       const rows: CollaborationDeliveryRow[] = [];
       for (const { id } of ids) {
-        if (claim.run(deliveredAt, id).changes !== 1) continue;
+        if (
+          !this.transitionDeliveryStatusInTransaction(
+            id,
+            "queued",
+            "delivered",
+            deliveredAt,
+          )
+        ) {
+          continue;
+        }
         const delivery = this.getCollaborationDelivery(id);
         if (delivery) rows.push(delivery);
       }
@@ -3419,15 +3826,24 @@ export class Store {
     failureReason: string,
     failedAt = Date.now(),
   ): void {
-    const fail = this.db.prepare(
-      `UPDATE deliveries
-       SET status = 'failed', failed_at = ?, failure_reason = ?, delivered_at = NULL
-       WHERE id = ? AND status = 'delivered'`,
-    );
-    this.db.transaction(() => {
-      for (const id of ids) fail.run(failedAt, failureReason, id);
+    const changed = this.db.transaction(() => {
+      const changedIds: string[] = [];
+      for (const id of ids) {
+        if (
+          this.transitionDeliveryStatusInTransaction(
+            id,
+            "delivered",
+            "failed",
+            failedAt,
+            failureReason,
+          )
+        ) {
+          changedIds.push(id);
+        }
+      }
+      return changedIds;
     })();
-    this.broadcastDeliveryStatus(ids);
+    this.broadcastDeliveryStatus(changed);
   }
 
   /** Fail every Delivery still queued for one target; returns the failed rows. */
@@ -3444,14 +3860,19 @@ export class Store {
            ORDER BY queued_at, rowid`,
         )
         .all(recipientTaskId) as Array<{ id: string }>;
-      const fail = this.db.prepare(
-        `UPDATE deliveries
-         SET status = 'failed', failed_at = ?, failure_reason = ?
-         WHERE id = ? AND status = 'queued'`,
-      );
       const rows: CollaborationDeliveryRow[] = [];
       for (const { id } of ids) {
-        if (fail.run(failedAt, failureReason, id).changes !== 1) continue;
+        if (
+          !this.transitionDeliveryStatusInTransaction(
+            id,
+            "queued",
+            "failed",
+            failedAt,
+            failureReason,
+          )
+        ) {
+          continue;
+        }
         const delivery = this.getCollaborationDelivery(id);
         if (delivery) rows.push(delivery);
       }
@@ -3465,34 +3886,46 @@ export class Store {
     taskId: string,
   ): Array<{ id: string; messageId: string }> {
     const failedAt = Date.now();
-    const rows = this.db
-      .prepare(
-        `SELECT id, message_id FROM deliveries
-         WHERE recipient_task_id = ? AND status = 'queued'`,
-      )
-      .all(taskId) as Array<{ id: string; message_id: string }>;
-    const ids = rows.map((row) => row.id);
-    this.db
-      .prepare(
-        `UPDATE deliveries
-         SET status = 'failed', failed_at = ?,
-           failure_reason = 'cleared_before_delivery'
-         WHERE recipient_task_id = ? AND status = 'queued'`,
-      )
-      .run(failedAt, taskId);
+    const failed = this.db.transaction(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT id, message_id FROM deliveries
+           WHERE recipient_task_id = ? AND status = 'queued'`,
+        )
+        .all(taskId) as Array<{ id: string; message_id: string }>;
+      return rows.filter((row) =>
+        this.transitionDeliveryStatusInTransaction(
+          row.id,
+          "queued",
+          "failed",
+          failedAt,
+          "cleared_before_delivery",
+        ),
+      );
+    })();
+    const ids = failed.map((row) => row.id);
     this.broadcastDeliveryStatus(ids);
-    return rows.map((row) => ({ id: row.id, messageId: row.message_id }));
+    return failed.map((row) => ({ id: row.id, messageId: row.message_id }));
   }
 
   /** Preserve the fact while recording that a deleted target cannot receive it. */
   private failOutstandingDeliveriesForDeletedTask(taskId: string): void {
-    this.db
+    const failedAt = Date.now();
+    const ids = this.db
       .prepare(
-        `UPDATE deliveries
-         SET status = 'failed', failed_at = ?, failure_reason = 'target_deleted'
+        `SELECT id FROM deliveries
          WHERE recipient_task_id = ? AND status = 'queued'`,
       )
-      .run(Date.now(), taskId);
+      .all(taskId) as Array<{ id: string }>;
+    for (const { id } of ids) {
+      this.transitionDeliveryStatusInTransaction(
+        id,
+        "queued",
+        "failed",
+        failedAt,
+        "target_deleted",
+      );
+    }
   }
 
   /** Delivery ids a deletion failed, for the post-commit mark broadcast. */

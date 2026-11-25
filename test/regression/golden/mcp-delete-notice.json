@@ -614,13 +614,16 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
+              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            source_remote_role, source_remote_host, source_entry_id)\n           VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000008",
                 "00000000-0000-4000-8000-000000000007",
                 "00000000-0000-4000-8000-000000000005",
                 "00000000-0000-4000-8000-000000000007:00000000-0000-4000-8000-000000000005",
-                1789333200000
+                1789333200000,
+                null,
+                null,
+                null
               ]
             },
             {
@@ -687,8 +690,12 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "UPDATE deliveries\n         SET status = 'delivered', delivered_at = ?\n         WHERE id = ? AND status = 'queued'",
-              "args": [1789333200000, "00000000-0000-4000-8000-000000000008"]
+              "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+              "args": [
+                1789333200000,
+                "00000000-0000-4000-8000-000000000008",
+                "queued"
+              ]
             }
           ],
           [
@@ -732,7 +739,7 @@
             }
           ]
         ],
-        "reads": 71
+        "reads": 72
       }
     },
     {
@@ -1038,12 +1045,6 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "UPDATE deliveries\n         SET status = 'failed', failed_at = ?, failure_reason = 'target_deleted'\n         WHERE recipient_task_id = ? AND status = 'queued'",
-              "args": [1789333200000, "00000000-0000-4000-8000-000000000005"]
-            },
-            {
-              "kind": "write",
-              "method": "run",
               "sql": "DELETE FROM events WHERE task_id = ?",
               "args": ["00000000-0000-4000-8000-000000000005"]
             },
@@ -1156,13 +1157,16 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
+              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            source_remote_role, source_remote_host, source_entry_id)\n           VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000a",
                 "00000000-0000-4000-8000-000000000009",
                 "00000000-0000-4000-8000-000000000001",
                 "00000000-0000-4000-8000-000000000009:00000000-0000-4000-8000-000000000001",
-                1789333200000
+                1789333200000,
+                null,
+                null,
+                null
               ]
             }
           ],
@@ -1170,8 +1174,12 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "UPDATE deliveries\n         SET status = 'delivered', delivered_at = ?\n         WHERE id = ? AND status = 'queued'",
-              "args": [1789333200000, "00000000-0000-4000-8000-00000000000a"]
+              "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+              "args": [
+                1789333200000,
+                "00000000-0000-4000-8000-00000000000a",
+                "queued"
+              ]
             }
           ],
           [
@@ -1191,7 +1199,7 @@
             }
           ]
         ],
-        "reads": 52
+        "reads": 54
       }
     }
   ],
@@ -1355,7 +1363,10 @@
         "queued_at": 1789333200000,
         "delivered_at": 1789333200000,
         "failed_at": null,
-        "failure_reason": null
+        "failure_reason": null,
+        "source_remote_role": null,
+        "source_remote_host": null,
+        "source_entry_id": null
       },
       {
         "id": "00000000-0000-4000-8000-00000000000a",
@@ -1366,7 +1377,10 @@
         "queued_at": 1789333200000,
         "delivered_at": 1789333200000,
         "failed_at": null,
-        "failure_reason": null
+        "failure_reason": null,
+        "source_remote_role": null,
+        "source_remote_host": null,
+        "source_entry_id": null
       }
     ],
     "client_ops": [],
