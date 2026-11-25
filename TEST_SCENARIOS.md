@@ -25,7 +25,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - Local file viewer (arbitrary paths, signed bytes, slash picker, responsive viewer)
   - first cross-instance Task create slice (Host-scoped credentials, deferred ACP, durable links)
 
-### Multi-host create slice
+### Multi-host collaboration
 
 - `test/regression/scenarios/multi-host-create.ts` (two real runtimes, distinct agent directories)
   - REST and MCP both create `agent@host` Tasks through the same `TaskOps` command
@@ -34,10 +34,66 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - executor bindings remain empty (`no-execution:`) and no remote ACP process starts
 - `test/mcp-task-host.test.ts` and `test/host-connection.test.ts`
   - Core emits one structured `{agentId, host?}` target through one injected `TaskCreateHost` call
+  - MCP and REST carry bare `agent`/`agentId` plus separate `host`; combined
+    `agent@host` is rejected below the UI boundary
+  - MCP exposes `host` only when hosts are configured and lists their dynamic
+    names separately from configured agents
   - Host selector alone chooses LocalHost or RemoteHost; an owner Host request cannot redispatch on `@host`
   - one dispatch/no automatic retry, exact short-agent/parent payload, generation re-check, unknown outcome, local partial-success, and pre-dispatch config rejection
   - Host external parents are required as non-empty strings; owner relay and malformed coordinates are input errors, not transport outcomes
   - deferred owner creation has a same-transaction, non-broadcast creation anchor; aged tasks survive normal empty-task GC while ordinary empty tasks are still removed
+  - coalesced/split SSE frames, stale attempts, catch-up row validation, and
+    report replay that is independent of failed or stalled display reads
+  - mirror workflow/title/execution fields come only from their owning owner
+    fields and events
+  - an owner-local unarchive does not misclassify an external account, and a
+    duplicate queued report remains eligible for one drain
+  - only the target's linked external parent opens an external account; a
+    remote child's report into its hub parent opens none
+  - host SSE reconnects with the hub's parent ids, creates add a new parent to
+    the open connection, unknown/unlinked parents leak nothing, and each of two
+    hubs sees only its own parent-linked children
+  - local send and update records commit with their Host write; injected
+    failure leaves no delivery/report or closed account
+  - local create keeps the baseline post-persistence config/cleanup flow; the
+    caller-side created row is recorded after the Host returns and broadcast
+    before `config_option_update`
+  - remote create facts control the effective row, and a failed second write
+    rolls back the hub link while retaining the partial-success child id
+  - remote `task_created` facts persist bare `agentId` plus `host`; rendering
+    shows separate `agent:` and `host:` lines
+  - remote child labels resolve from the live mirror at projection time;
+    process-local labels exist only for an external parent's dispatch and are
+    cleared after projection or failure
+  - replayed `task_created` transcript rows display the reference without
+    teaching the client that the remote task currently exists
+- `test/regression/scenarios/multi-host-loop.ts`
+  - a remote child appears in `task_list` with mirrored fields; cold
+    `task_query` / `task_read` project owner history without starting ACP
+  - `task_send` reaches the owner, returns its generated message id, records
+    queued facts on both sides, and changes the hub row to delivered when the
+    owner's prompt audit arrives, including after hub restart; a permission request
+    in that delegated turn is auto-answered and leaves no pending permission
+  - owner restart drops the in-memory account but `task_update(done)` falls
+    back to the external parent; the owner writes no local collaboration
+    message, and the report wakes the hub parent exactly once
+  - a busy hub parent queues the report, observes the row as queued, restarts,
+    and catches up to exactly one delivered report after reconnect
+  - hub restart catch-up replays the same report event without duplicating its
+    delivery, while the duplicate row remains drainable if still queued; host
+    disconnect marks the mirror unreachable and send fails visibly; a wrong
+    external parent id cannot dispatch
+  - Core records a remote `Created task` row with separate agent and host fields; the
+    live row marks the child id present without browser navigation
+  - dispatch and report rows share the mirrored remote-child title; the owner
+    receiver row and prompt use the hub parent's carried title
+- `test/hosts-routes.test.ts` and `test/events.test.ts`
+  - an owner task list includes its external parent as an unknown remote entry
+    without a host/title, without an added SQL read
+  - a live `system_message(kind=task_created)` proves remote id existence to
+    reference marks without switching the viewed task
+- `test/sse-ticket-routes.test.ts`
+  - two real host-token/link pairs receive only events for their own Tasks
 
 ## Unit / Integration Scenarios
 
@@ -56,13 +112,18 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/multi-agent-mcp.test.ts` (production host + endpoint + real store/ledger; business calls go through real HTTP `tools/call`)
   - a caller that rotates while a `task_create` waits for the tree lock is refused before the task row is written
   - a caller that rotates while a `task_cancel` awaits the transport gets a refused tool result and no cancellation row
-  - a caller that rotates during a child's config inheritance is refused before the source transcript row is written; the already-committed child stays
+  - a caller that rotates during a child's config inheritance is refused
+    before the source transcript row is written; the committed child stays
   - an `initializing` capability completes the MCP handshake but every business tool returns `initializing`; after promotion the same token works
   - a request authenticated before a real rotation cannot write after it (the task-persist boundary re-checks after `newSession`), while a fresh token against the current generation succeeds; the rotated-away token is revoked
   - a token whose task moved to another agent is refused; a Root exit revokes the old Root's token
   - unknown/revoked tokens are refused before any protocol work; the caller principal is frozen and carries `(task, agent, generation)`
 
 - `test/multi-agent-mcp-create.test.ts` (production host + endpoint + real REST handler, one distinguishable transport per configured agent)
+  - REST validates `agentId` and `host` at entry before constructing the
+    typed create input, while MCP uses its own strict schema
+  - one create result carries effective `task` fields and optional `session`
+    fields without duplicating title/agent/cwd in both
   - `task_create(agent: …)` creates the child on the target: exactly one new session on B, none on the parent's A, the child's binding and session belong to B, a relative `cwd` still resolves against the parent's `cwd`, and exactly one five-field creation record (`Task ID`/`agent`/`cwd`/`model`/`thinking`) is written to the parent
   - the three argument forms resolve to three bindings: omitted (parent's A), explicit same agent (A), and a third configured agent (C, with B never started)
   - an explicit `model` the target accepts really applies: the row, the detail read, the target mock's session values, and the creation record all agree
@@ -301,6 +362,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
     reference exited clears that mark again (driven through `handleEvent`,
     the path every creation initiator now feeds)
   - rows rendered before the boot list read are re-evaluated when it arrives
+  - a remote child in the list read counts as existing for references (live
+    with a mirrored title, unknown without one) but never enters the local
+    task list (`test/hosts-routes.test.ts` covers the REST list appending a
+    listed parent's remote children)
   - `task_title_updated` refreshes a row that names a Task the client is not
     viewing, and applies to a row rendered after it; the current Task's header
     is untouched by another Task's rename

@@ -46,7 +46,8 @@ export default scenario<State>({
                     tool: "task_create",
                     arguments: {
                       title: "MCP remote child",
-                      agent: "owner-only@owner",
+                      agent: "owner-only",
+                      host: "owner",
                     },
                   },
                 ],
@@ -123,7 +124,8 @@ export default scenario<State>({
               "POST",
               "/api/v1/tasks",
               {
-                agentId: "owner-only@owner",
+                agentId: "owner-only",
+                host: "owner",
                 parentId: "external-parent",
                 title: "Attempted relay",
               },
@@ -156,7 +158,8 @@ export default scenario<State>({
         name: "rest-creates-remote-task",
         action: (client) =>
           client.instance("hub").rest("POST", "/api/v1/tasks", {
-            agentId: "owner-only@owner",
+            agentId: "owner-only",
+            host: "owner",
             parentId: state.hubParentId,
             title: "REST remote child",
           }),
@@ -192,13 +195,13 @@ export default scenario<State>({
             ),
             ownerLinks: readRows(
               state.ownerDb,
-              `SELECT local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash
-               FROM remote_task_links ORDER BY local_task_id`,
+              `SELECT local_task_id, remote_task_id, remote_role, remote_host
+               FROM remote_tasks ORDER BY local_task_id`,
             ),
             hubLinks: readRows(
               state.hubDb,
-              `SELECT local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash
-               FROM remote_task_links ORDER BY local_task_id`,
+              `SELECT local_task_id, remote_task_id, remote_role, remote_host
+               FROM remote_tasks ORDER BY local_task_id`,
             ),
             ownerBindings: readRows(
               state.ownerDb,

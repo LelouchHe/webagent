@@ -222,7 +222,7 @@ describe("createMcpEndpoint", () => {
   const caps = new CapabilityStore();
   const calls: Array<unknown> = [];
   const taskTools = {
-    list: (principal: { taskId: string }) => [
+    list: async (principal: { taskId: string }) => [
       {
         id: principal.taskId,
         title: "Current",
@@ -233,7 +233,7 @@ describe("createMcpEndpoint", () => {
         lastEventAt: "2026-01-01T00:00:00.000Z",
       },
     ],
-    query: (_principal: { taskId: string }, input: unknown) => {
+    query: async (_principal: { taskId: string }, input: unknown) => {
       calls.push({ kind: "query", input });
       return {
         task_id: "web-1",
@@ -241,7 +241,7 @@ describe("createMcpEndpoint", () => {
         rows: [],
       };
     },
-    read: (_principal: { taskId: string }, input: unknown) => {
+    read: async (_principal: { taskId: string }, input: unknown) => {
       calls.push({ kind: "read", input });
       return { task_id: "web-1", rows: [] };
     },
@@ -255,10 +255,28 @@ describe("createMcpEndpoint", () => {
     },
     create: async (...args: unknown[]) => {
       calls.push({ kind: "create", args });
-      return { taskId: "task-3" };
+      return {
+        task: {
+          id: "task-3",
+          title: "task-3",
+          agentId: "agent-a",
+          cwd: "/tmp",
+          model: null,
+          thinking: null,
+          parentId: "current",
+          workflowStatus: "idle" as const,
+          source: "agent",
+        },
+      };
     },
     send: async (...args: unknown[]) => {
       calls.push({ kind: "send", args });
+      return {
+        messageId: "message",
+        targetTaskId: "child",
+        targetLabel: "child",
+        sourceLabel: "current",
+      };
     },
     update: async (...args: unknown[]) => {
       calls.push({ kind: "update", args });
@@ -381,6 +399,7 @@ describe("createMcpEndpoint", () => {
     assert.equal(res.status, 401);
   });
 
+  // eslint-disable-next-line complexity -- one protocol matrix verifies all tool contracts together.
   it("serves the Task control-plane tools", async () => {
     const token = caps.mint("web-1", "agent-a", 1);
     live.add("web-1");
@@ -484,6 +503,7 @@ describe("createMcpEndpoint", () => {
       false,
       "MCP callers cannot choose task ids",
     );
+    assert.equal(toolHasProperty(tools, "task_create", "host"), false);
     assert.match(toolDescription(tools, "task_query"), /flat event index/);
     // Parameter meaning lives in the parameter description, not the tool text.
     assert.match(
@@ -611,6 +631,44 @@ describe("createMcpEndpoint", () => {
       auth(token),
     );
     assert.equal(create.status, 200);
+
+    const combined = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 61,
+        method: "tools/call",
+        params: {
+          name: "task_create",
+          arguments: { title: "invalid", agent: "pi@owner" },
+        },
+      },
+      auth(token),
+    );
+    const combinedBody = (await combined.json()) as {
+      result?: { isError?: boolean };
+      error?: unknown;
+    };
+    assert.ok(combinedBody.result?.isError ?? combinedBody.error);
+
+    const noHosts = await mcpPost(
+      "/mcp",
+      {
+        jsonrpc: "2.0",
+        id: 62,
+        method: "tools/call",
+        params: {
+          name: "task_create",
+          arguments: { title: "invalid-host", agent: "pi", host: "owner" },
+        },
+      },
+      auth(token),
+    );
+    const noHostsBody = (await noHosts.json()) as {
+      result?: { isError?: boolean };
+      error?: unknown;
+    };
+    assert.ok(noHostsBody.result?.isError ?? noHostsBody.error);
 
     const cancel = await mcpPost(
       "/mcp",

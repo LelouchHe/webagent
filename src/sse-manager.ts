@@ -25,6 +25,8 @@ export interface SseClient {
   taskId?: string; // undefined = global stream
   tokenName?: string; // bound at connect via SSE ticket; used for revoke detection
   receiveBusinessEvents?: boolean;
+  hostScoped?: boolean;
+  hostParentIds?: Set<string>;
 }
 
 /**
@@ -39,6 +41,7 @@ export class SseManager {
   private isTokenRevoked: ((tokenName: string) => boolean) | null = null;
   private attachmentSecret: Buffer | null = null;
   private getLabelMap: ((taskId: string) => LabelMap) | null = null;
+  private externalParentId: ((taskId: string) => string | null) | null = null;
 
   constructor(heartbeatMs = SSE_HEARTBEAT_INTERVAL_MS) {
     this.heartbeatInterval = heartbeatMs;
@@ -66,6 +69,14 @@ export class SseManager {
    */
   setLabelMapProvider(fn: (taskId: string) => LabelMap): void {
     this.getLabelMap = fn;
+  }
+
+  setHostEventParent(fn: (taskId: string) => string | null): void {
+    this.externalParentId = fn;
+  }
+
+  subscribeHost(connectionId: string, parentId: string): void {
+    this.clients.get(connectionId)?.hostParentIds?.add(parentId);
   }
 
   /** Install a revocation check called on every heartbeat. If it returns
@@ -182,15 +193,26 @@ export class SseManager {
    * Broadcast an event to all connected SSE clients.
    * Global clients get all events. Per-task clients only get events for their task.
    */
-  broadcast(event: AgentEvent): void {
+  broadcast(event: AgentEvent, persistedSeq?: number): void {
     const taskId = (event as Record<string, unknown>).taskId as
       string | undefined;
     const snapshot = [...this.clients.values()];
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
       if (client.receiveBusinessEvents === false) continue;
+      if (
+        client.hostScoped &&
+        (!taskId ||
+          !client.hostParentIds?.has(this.externalParentId?.(taskId) ?? ""))
+      ) {
+        continue;
+      }
       if (client.taskId && client.taskId !== taskId) continue;
-      this.sendEvent(client, event);
+      this.sendEvent(
+        client,
+        event,
+        client.hostScoped ? persistedSeq : undefined,
+      );
     }
   }
 
@@ -200,7 +222,25 @@ export class SseManager {
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
       if (client.receiveBusinessEvents === false) continue;
+      if (client.hostScoped) continue;
       this.sendEvent(client, event);
+    }
+  }
+
+  broadcastHost(event: AgentEvent, persistedSeq: number): void {
+    const taskId = (event as Record<string, unknown>).taskId as
+      string | undefined;
+    const snapshot = [...this.clients.values()];
+    for (const client of snapshot) {
+      if (
+        client.res.writableEnded ||
+        !client.hostScoped ||
+        !taskId ||
+        !client.hostParentIds?.has(this.externalParentId?.(taskId) ?? "")
+      ) {
+        continue;
+      }
+      this.sendEvent(client, event, persistedSeq);
     }
   }
 

@@ -107,9 +107,16 @@ test("@ paints the cached task list before its own read returns", async ({
   await gotoConnected(page);
   const childId = await createNewTask(page);
 
-  // Warm the display cache with one fully resolved open, then close.
+  // Warm the display cache with one fully resolved open, then close. The open
+  // may paint from a list an earlier read left behind while its own read is
+  // still in flight; wait for that read to finish, or the held open below
+  // joins it instead of issuing one the route can see.
   const menu = page.locator("#slash-menu.active");
+  const warmRead = page.waitForEvent("requestfinished", (request) =>
+    /\/api\/v1\/tasks$/.test(request.url()),
+  );
   await page.locator("#input").fill("@../");
+  await warmRead;
   await expect(menu).toContainText("e2e-child");
   await page.locator("#input").fill("");
   await expect(page.locator("#slash-menu.active")).toHaveCount(0);

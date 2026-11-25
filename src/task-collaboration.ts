@@ -32,9 +32,11 @@ export function isLocalCollaborationTarget(
 export function shouldArm(
   message: Pick<CollaborationMessageRow, "source_actor" | "source_task_id">,
   target: Pick<TaskRow, "parent_id">,
+  externalParentTaskId?: string,
 ): boolean {
   return (
     message.source_actor === "agent" &&
-    target.parent_id === message.source_task_id
+    (target.parent_id === message.source_task_id ||
+      externalParentTaskId === message.source_task_id)
   );
 }

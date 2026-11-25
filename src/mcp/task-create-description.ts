@@ -44,38 +44,34 @@ function compose(
  */
 export function buildTaskCreateDescription(
   agentIds: readonly string[],
-  hostIds: readonly string[] = [],
 ): string {
   const ids = [...new Set(agentIds.filter((id) => id.length > 0))];
-  const hosts = [...new Set(hostIds.filter((id) => id.length > 0))];
-  const hostNote =
-    hosts.length === 0
-      ? ""
-      : ` Use \`agent@host\` to target another configured instance; hosts: ${hosts.join(", ")}.`;
-  if (
-    ids.length <= 1 &&
-    BASE.length + hostNote.length <= TASK_CREATE_DESCRIPTION_BUDGET
-  ) {
-    return `${BASE}${hostNote}`;
-  }
-  if (ids.length <= 1) {
-    return `${BASE} Use \`agent@host\` to target another configured instance.`;
-  }
+  if (ids.length <= 1) return BASE;
 
   for (let shown = ids.length; shown >= 1; shown--) {
-    const text = `${compose(
+    const text = compose(
       BASE,
       ids.slice(0, shown),
       ids.length - shown,
       OMIT_NOTE,
-    )}${hostNote}`;
+    );
     if (text.length <= TASK_CREATE_DESCRIPTION_BUDGET) return text;
   }
 
   // Not even one complete id fits. Say how many exist rather than inventing a
   // shortened, plausible-looking id.
-  const overflow = `${BASE} ${ids.length} execution agents are configured; their ids are too long to list here. ${OMIT_NOTE}`;
-  return overflow.length + hostNote.length <= TASK_CREATE_DESCRIPTION_BUDGET
-    ? `${overflow}${hostNote}`
-    : `${overflow} Use \`agent@host\` to target another configured instance.`;
+  return `${BASE} ${ids.length} execution agents are configured; their ids are too long to list here. ${OMIT_NOTE}`;
+}
+
+export function buildTaskCreateHostDescription(
+  hostIds: readonly string[],
+): string {
+  const ids = [...new Set(hostIds.filter((id) => id.length > 0))];
+  const intro = "Configured Host; choose one of: ";
+  for (let shown = ids.length; shown >= 1; shown--) {
+    const more = shown < ids.length ? `… ${ids.length - shown} more` : "";
+    const text = `${intro}${ids.slice(0, shown).join(", ")}${more}. Omit or use null for local. A remote host requires an explicit bare agent id.`;
+    if (text.length <= TASK_CREATE_DESCRIPTION_BUDGET) return text;
+  }
+  return "Configured Host names are too long to list here. Omit or use null for local. A remote host requires an explicit bare agent id.";
 }

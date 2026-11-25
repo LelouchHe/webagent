@@ -114,14 +114,21 @@ prioritization policy. A sibling is not visible.
 ```ts
 type TaskListItem = {
   id: string;
-  title: string;
+  title?: string | null;
   relation: "self" | "parent" | "child";
-  workflowStatus: "running" | "idle" | "waiting" | "blocked" | "done";
-  executionState: "idle" | "agent" | "bash";
-  lastEventAt: string | null;
-  lastAgentActivityAt: string | null;
+  host?: string | null;
+  unreachable?: true;
+  workflowStatus?: "running" | "idle" | "waiting" | "blocked" | "done";
+  executionState?: "idle" | "agent" | "bash";
+  lastEventAt?: string | null;
+  lastAgentActivityAt?: string | null;
 };
 ```
+
+Remote entries carry `host`; local entries omit it. They come from the hub's
+in-memory owner mirror. Last-known values
+remain present with `unreachable: true` after disconnect; before the first
+snapshot, the entry has no invented Task fields.
 
 `workflowStatus` uses the same vocabulary as `task_list`: `running` while a turn runs, `idle` after it ended without a typed report, `waiting` when the Task says its work continues without the requester, and `blocked`/`done` when it handed the ball back. `task_query` returns only `task_id`, `max_seq`, and flat event rows.
 It is **per turn, not a lifecycle terminal**: a `done` Task can be woken by a
@@ -210,6 +217,10 @@ centered window always retains the complete match before allocating context.
 An unprojected search hit carries `unprojected: true` so the reason for the hit
 remains visible.
 
+For a remote visible child, the hub obtains the complete owner event history
+through the existing task events route and applies this same projector locally.
+The read does not start ACP on the owner.
+
 The serialized `{task_id, max_seq, rows}` response is subject to a 24 KiB
 implementation limit — one index page is a decision aid, not a corpus, so the
 cap sits just above the recommended 50-row window even when every row carries
@@ -291,7 +302,7 @@ How a cancelled turn affects an open account is defined in
 ### `task_create`
 
 Create a direct child Task immediately. The request includes a required `title`
-plus optional `agent`, `cwd`, `model`, and `thinking`.
+plus optional `agent`, `host`, `cwd`, `model`, and `thinking`.
 
 `agent` names the execution agent for the child. It is a free string, validated
 against the configured `[agents.*]` ids when the call runs: adding an agent is a
@@ -304,9 +315,14 @@ behaviour: the child inherits the current Task's agent. A deployment with a
 single configured agent advertises no list, because there is nothing to choose
 between.
 
-`agent@host` selects the short agent id on one of the configured Host names.
-The target remains `parentId`-authorized on the local instance, while cwd and
-agent selection are evaluated by the peer. Explicit `model` or `thinking`
+`agent` is always a bare id; a value containing `@` is invalid. When the
+deployment has configured hosts, the schema adds a separate `host` field whose
+description lists those host names. Omit `host` or pass null to create locally.
+Naming a remote `host` requires an explicit bare `agent` id; there is no
+inheritance across the host boundary.
+With no configured hosts, the field is absent from the schema. The target
+remains `parentId`-authorized on the local instance, while cwd and agent
+selection are evaluated by the peer. Explicit `model` or `thinking`
 overrides are refused for this first remote slice; local inheritance ids and
 saved execution configuration are not sent to the peer. Omitted cwd uses the
 peer's own default.
@@ -336,15 +352,17 @@ quotes a partial id:
 | caller's own execution replaced | the existing authority refusal (`execution_replaced`), independent of `agent`. |
 
 **Result and record.** The result contains the new Task ID. The parent's
-transcript gets exactly one `task_created` row with five fields — `Task ID`,
-`agent`, `cwd`, `model`, `thinking`. `model` and `thinking` show the values that
+transcript gets exactly one `task_created` row with fields — `Task ID`,
+`agent`, `cwd`, `model`, `thinking`, plus separate machine fields `agentId` and,
+for remote targets, `host`; readable output shows a separate `host:` line.
+`model` and `thinking` show the values that
 took effect: the explicit value, the value inherited from a same-agent source,
 or the target session's own current value. `inherited` appears only when a value
 genuinely cannot be determined, so a cross-agent child shows the target's
 defaults instead of claiming an inheritance that did not happen.
 
 For a remote target, the result still contains only the new Task id. A local
-`remote_task_links` row records it after the peer's `201`. Rejections are
+`remote_tasks` row records it after the peer's `201`. Rejections are
 definite tool errors; an ambiguous transport result is reported as
 `result is unknown`, and a remote success followed by a local link failure is
 reported as partial success. These calls are not retried.
@@ -352,9 +370,15 @@ reported as partial success. These calls are not retried.
 
 ### `task_send`
 
-The message is stored before the call returns, so it survives a restart, and is
-delivered in order with any other queued items. Whether it opens an account is
-defined in [Task Obligations](task-obligations.md#opening-an-account).
+The local message is stored before the call returns, so it survives a restart,
+and is delivered in order with any other queued items. A linked remote child is
+instead handed synchronously to the owner's existing message route. The owner
+returns its generated message id in `202`; the hub records that id as `queued`
+and changes it to `delivered` when the owner's prompt audit arrives over the
+host stream or reconnect catch-up. A rejection or transport failure is returned
+as a tool error.
+Whether delivery opens an account is defined in
+[Task Obligations](task-obligations.md#opening-an-account).
 
 ### `task_update`
 
@@ -363,6 +387,9 @@ task_update(status: "waiting" | "blocked" | "done", body: string)
 ```
 
 The call records one `task_update` event on the current Task and sets its
-`workflowStatus`. Routing, settlement, the `waiting` precondition, and the
-turn-end check are defined in [Task Obligations](task-obligations.md). A
-refused `waiting` is an MCP tool error and records nothing.
+`workflowStatus`. For a remotely created Task, `done`/`blocked` report through
+the external-parent link when the in-memory account was lost, including across
+owner restart. The owner does not create a local collaboration message in that
+case. Routing, settlement, the `waiting` precondition, and the turn-end check
+are defined in [Task Obligations](task-obligations.md). A refused `waiting` is
+an MCP tool error and records nothing.

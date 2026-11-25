@@ -6869,6 +6869,7 @@ describe("events", () => {
         title: "ghost",
         configOptions: [],
       });
+
       assert.equal(state.replayQueue.length, 1);
 
       // The stream dies before the replay settles: a new connection
@@ -6891,6 +6892,63 @@ describe("events", () => {
       const row = render.addSystemMessage({
         title: "Created task @ghost",
         taskRef: { kind: "task_created", taskId: "ghost", taskTitle: "ghost" },
+      });
+      assert.equal(
+        row.querySelector(".task-ref")?.getAttribute("data-ref-state"),
+        "exited",
+      );
+    });
+
+    it("learns remote existence from a live created row without switching", async () => {
+      const marks = await import("../public/js/task-ref-marks.ts");
+      marks.resetTaskRefMarks();
+      marks.applyTaskListSnapshot([{ id: "s1", title: null }]);
+      state.taskId = "s1";
+      events.handleEvent({
+        type: "system_message",
+        taskId: "s1",
+        kind: "task_created",
+        targetTaskId: "remote-child",
+        taskTitle: "Remote child",
+        title: 'Created task @"Remote child"',
+      });
+      const row = render.addSystemMessage({
+        title: 'Created task @"Remote child"',
+        taskRef: {
+          kind: "task_created",
+          taskId: "remote-child",
+          taskTitle: "Remote child",
+        },
+      });
+      assert.equal(
+        row.querySelector(".task-ref")?.getAttribute("data-ref-state"),
+        null,
+      );
+      assert.equal(state.taskId, "s1");
+    });
+
+    it("does not learn remote existence from a replayed created row", async () => {
+      const marks = await import("../public/js/task-ref-marks.ts");
+      marks.resetTaskRefMarks();
+      marks.applyTaskListSnapshot([{ id: "s1", title: null }]);
+      events.replayEvent(
+        "system_message",
+        {
+          kind: "task_created",
+          targetTaskId: "replayed-child",
+          taskTitle: "Replayed child",
+          title: 'Created task @"Replayed child"',
+        },
+        [{ task_id: "s1" } as never],
+        0,
+      );
+      const row = render.addSystemMessage({
+        title: 'Created task @"Replayed child"',
+        taskRef: {
+          kind: "task_created",
+          taskId: "replayed-child",
+          taskTitle: "Replayed child",
+        },
       });
       assert.equal(
         row.querySelector(".task-ref")?.getAttribute("data-ref-state"),

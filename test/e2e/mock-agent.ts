@@ -326,6 +326,19 @@ class MockAgent {
           action.calls,
           action.capability === "missing",
         );
+      } else if (action.type === "permission") {
+        const permission = await this.runPermissionStep(
+          params.sessionId,
+          action.title,
+          action.command,
+        );
+        recordRegression({
+          kind: "permission",
+          sessionId: params.sessionId,
+          title: action.title,
+          command: action.command,
+          outcome: permission.outcome,
+        });
       } else if (action.type === "fail") {
         throw new Error(action.message);
       } else {
@@ -981,6 +994,9 @@ class MockAgent {
       };
       this.sessions.set(params.sessionId, session);
     }
+    if (params.mcpServers.length > 0) {
+      this.mcpServersBySession.set(params.sessionId, params.mcpServers);
+    }
     if (WARM_ONLY_EXTRA) {
       // Only a restore reports these, so the test can prove the client learned
       // them from the completed warm-up rather than from earlier state.
@@ -1019,6 +1035,9 @@ class MockAgent {
         configOptions: createConfigOptions(),
       };
       this.sessions.set(params.sessionId, session);
+    }
+    if (params.mcpServers && params.mcpServers.length > 0) {
+      this.mcpServersBySession.set(params.sessionId, params.mcpServers);
     }
     await this.advertiseCommands(params.sessionId);
     return {

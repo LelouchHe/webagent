@@ -1,7 +1,10 @@
 import type { AgentCommandSnapshot, ConfigOption } from "../types.ts";
+import type {
+  TaskUpdateStatus,
+  WorkflowStatus,
+} from "../shared/workflow-status.ts";
 
-export type TaskWorkflowStatus =
-  "running" | "idle" | "waiting" | "blocked" | "done";
+export type TaskWorkflowStatus = WorkflowStatus;
 
 export interface TaskHistoryRow {
   seq: number;
@@ -17,26 +20,26 @@ export interface TaskHistoryRow {
 
 export interface TaskListItem {
   id: string;
-  title: string;
+  title?: string | null;
   relation: "self" | "parent" | "child";
   /**
    * Lifecycle status of the Task's last turn, matching `task_query`'s
    * `workflowStatus`. `done` is per turn, not a lifecycle terminal.
    */
-  workflowStatus: TaskWorkflowStatus;
+  workflowStatus?: TaskWorkflowStatus;
   /**
    * Live execution source from the runtime: `agent` while an ACP turn or
    * delivery is running, `bash` while a user shell command owns the task, and
    * `idle` otherwise. Distinct from `workflowStatus`, which is the last typed
    * report, not execution truth.
    */
-  executionState: "idle" | "agent" | "bash";
+  executionState?: "idle" | "agent" | "bash";
   /**
    * ISO-8601 time of the Task's latest qualifying agent-runtime event, or
    * null when none has been observed. Unlike `lastEventAt`, it ignores user
    * and system events, so it is a silence signal for a running turn.
    */
-  lastAgentActivityAt: string | null;
+  lastAgentActivityAt?: string | null;
   /**
    * `created_at` of the Task's most recent persisted event, any type — the
    * Task's own activity clock. Rendered as ISO-8601 UTC with an explicit `Z`,
@@ -44,7 +47,9 @@ export interface TaskListItem {
    * events yet. It is a lag signal, not proof of work: a long silent tool call
    * can look stale while the Task is still running.
    */
-  lastEventAt: string | null;
+  lastEventAt?: string | null;
+  host?: string | null;
+  unreachable?: true;
 }
 
 export interface TaskQueryInput {
@@ -83,6 +88,23 @@ export interface TaskCancelOutcome {
   status: "idle" | "cancelling" | "cancelled" | "superseded";
 }
 
+export interface TaskSendResult {
+  messageId: string;
+  deliveryId?: string;
+  targetTaskId: string;
+  targetLabel: string;
+  sourceLabel: string;
+}
+
+export interface TaskReport {
+  sourceTaskId: string;
+  targetTaskId: string;
+  status: Exclude<TaskUpdateStatus, "waiting">;
+  body: string;
+  sourceLabel: string;
+  targetLabel: string;
+}
+
 export type TaskCancelCommand =
   | {
       kind: "user";
@@ -98,7 +120,8 @@ export type TaskCancelCommand =
 export interface TaskCreateInput {
   title?: string;
   cwd?: string;
-  agentId?: unknown;
+  agentId?: string;
+  host?: string;
   model?: string;
   thinking?: string;
   parentId?: string;
@@ -111,7 +134,7 @@ export interface TaskCreateInput {
 export type TaskCreateCaller =
   | { kind: "user" }
   | { kind: "agent"; principal: TaskCaller }
-  | { kind: "host"; peerTokenHash: string };
+  | { kind: "host" };
 
 abstract class CreateError extends Error {}
 
@@ -123,14 +146,6 @@ export class TaskAgentNotConfiguredError extends CreateError {
     super("agent_not_configured");
     this.name = "TaskAgentNotConfiguredError";
     this.agentId = agentId;
-  }
-}
-
-export class TaskAgentIdTypeError extends CreateError {
-  readonly kind = "agent_id_type";
-  constructor() {
-    super("invalid_agent_id_type");
-    this.name = "TaskAgentIdTypeError";
   }
 }
 
@@ -186,16 +201,20 @@ export class TaskCreateConfigError extends CreateError {
 }
 
 export interface TaskCreateResult {
-  taskId: string;
-  activation?: {
-    cwd: string;
-    cwdDisplay: string;
+  task: {
+    id: string;
     title: string | null;
+    agentId: string;
+    cwd: string;
+    model: string | null;
+    thinking: string | null;
     parentId: string | null;
-    parentAgentId: string | null;
-    agentId: string | null;
     workflowStatus: TaskWorkflowStatus;
     source: string;
+  };
+  session?: {
+    cwdDisplay: string;
+    parentAgentId: string | null;
     configOptions: ConfigOption[];
     agentCommands: AgentCommandSnapshot;
   };
@@ -220,7 +239,6 @@ export interface TaskCreateHostCommand {
   target: TaskCreateTarget;
   parentId?: string;
   assertRemoteCaller: () => void;
-  completeRemote: (result: TaskCreateResult, host: string) => TaskCreateResult;
 }
 
 export interface TaskCreateHost {
@@ -326,7 +344,6 @@ export class TaskCreateInputError extends CreateError {
 }
 
 export type TaskCreateError =
-  | TaskAgentIdTypeError
   | TaskAgentNotConfiguredError
   | TaskAgentStartError
   | TaskCreateConfigError
@@ -370,9 +387,9 @@ export interface TaskCaller {
  * rotation that lands while a request is in flight cannot be written through.
  */
 export interface TaskOps {
-  list(principal: TaskCaller): TaskListItem[];
-  query(principal: TaskCaller, input: TaskQueryInput): TaskQueryResult;
-  read(principal: TaskCaller, input: TaskReadInput): TaskReadResult;
+  list(principal: TaskCaller): Promise<TaskListItem[]>;
+  query(principal: TaskCaller, input: TaskQueryInput): Promise<TaskQueryResult>;
+  read(principal: TaskCaller, input: TaskReadInput): Promise<TaskReadResult>;
   cancel(command: TaskCancelCommand): Promise<TaskCancelOutcome>;
   create(
     caller: TaskCreateCaller,
@@ -382,10 +399,12 @@ export interface TaskOps {
     principal: TaskCaller,
     targetTaskId: string,
     body: string,
-  ): Promise<void>;
+    record?: (result: TaskSendResult) => void,
+  ): Promise<TaskSendResult>;
   update(
     principal: TaskCaller,
-    status: "waiting" | "blocked" | "done",
+    status: TaskUpdateStatus,
     body: string,
+    recordReport?: (report: TaskReport) => void,
   ): Promise<{ note?: string }>;
 }

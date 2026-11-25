@@ -9,17 +9,27 @@ import { createTaskManager } from "../src/task-manager.ts";
 import {
   createLocalTaskOps,
   type TaskCancelNotice,
+  type TaskCreatedEvent,
 } from "../src/host/local/adapter.ts";
 import {
   TaskRemoteCreateConfigError,
   TaskRemoteCreatePartialSuccessError,
   TaskRemoteCreateUnknownError,
+  TaskHostNotConfiguredError,
+  TaskCreateInputError,
   type RemoteTaskCreateTransport,
   type TaskCreateHost,
 } from "../src/api/tasks.ts";
 import { createTaskOpsCore } from "../src/task-ops.ts";
-import { createTaskHost } from "../src/host/tasks.ts";
-import { projectTaskHistoryRow } from "../src/host/local/task-history.ts";
+import {
+  createRoutedTaskOps as createRemoteRoutedTaskOps,
+  createTaskHost,
+} from "../src/host/tasks.ts";
+import { HostRegistry } from "../src/host/remote/registry.ts";
+import { projectTaskHistoryRow } from "../src/task-history.ts";
+import { createRemoteReportHandler } from "../src/host/collaboration.ts";
+import { createHostCollaborationCommand } from "../src/host/local/collaboration.ts";
+import { HostExternalParentError } from "../src/api/collaboration.ts";
 import type { AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
 
@@ -116,7 +126,20 @@ describe("MCP Task tool host", () => {
     const host: TaskCreateHost = {
       async create(command) {
         targets.push(command.target);
-        return { taskId: "created-on-selected-host" };
+        const result = {
+          task: {
+            id: "created-on-selected-host",
+            title: command.input.title ?? null,
+            agentId: command.target.agentId ?? "inherited",
+            cwd: dir,
+            model: null,
+            thinking: null,
+            parentId: null,
+            workflowStatus: "idle" as const,
+            source: "agent",
+          },
+        };
+        return result;
       },
     };
     const create = createTaskOpsCore({ host, store, tasks });
@@ -124,7 +147,8 @@ describe("MCP Task tool host", () => {
     await create.create(
       { kind: "agent", principal: principal() },
       {
-        agentId: "copilot@mini",
+        agentId: "copilot",
+        host: "mini",
         parentId: "alpha",
         inheritFromTaskId: "alpha",
         title: "Remote",
@@ -167,7 +191,7 @@ describe("MCP Task tool host", () => {
     };
 
     const created = await routed.create(
-      { kind: "host", peerTokenHash: "peer-hash" },
+      { kind: "host" },
       {
         agentId: "test-agent",
         parentId: "external-parent",
@@ -175,22 +199,47 @@ describe("MCP Task tool host", () => {
         cwd: dir,
       },
     );
-    assert.ok(store.getTask(created.taskId));
+    assert.ok(store.getTask(created.task.id));
     assert.equal(remoteCalls, 0);
 
     await assert.rejects(
       routed.create(
-        { kind: "host", peerTokenHash: "peer-hash" },
+        { kind: "host" },
         {
-          agentId: "test-agent@another-host",
+          agentId: "test-agent",
+          host: "another-host",
           parentId: "external-parent",
           title: "Must not relay",
           cwd: dir,
         },
       ),
-      /invalid_remote_agent/,
+      /invalid_remote_host/,
     );
     assert.equal(remoteCalls, 0);
+  });
+
+  it("rejects a combined agent coordinate", async () => {
+    const create = createTaskOpsCore({
+      host: {
+        async create() {
+          assert.fail("invalid coordinate must not reach the Host");
+        },
+      },
+      store,
+      tasks,
+    });
+    await assert.rejects(
+      create.create(
+        { kind: "agent", principal: principal() },
+        {
+          agentId: "pi@mini",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Invalid coordinate",
+        },
+      ),
+      /invalid_agent/,
+    );
   });
 
   it("creates a deferred host task and external-parent link without ACP", async () => {
@@ -205,7 +254,7 @@ describe("MCP Task tool host", () => {
     const host = createLocalTaskOps({ store, tasks });
 
     const created = await host.create(
-      { kind: "host", peerTokenHash: "peer-hash" },
+      { kind: "host" },
       {
         agentId: "test-agent",
         parentId: "external-parent",
@@ -215,25 +264,17 @@ describe("MCP Task tool host", () => {
       },
     );
 
-    const task = store.getTask(created.taskId);
+    const task = store.getTask(created.task.id);
     assert.ok(task);
     assert.equal(task.parent_id, null);
     assert.equal(sessionsStarted, 0);
-    const binding = store.getCurrentExecutionBinding(created.taskId);
+    const binding = store.getCurrentExecutionBinding(created.task.id);
     assert.ok(binding);
     assert.equal(
-      isEmptyExecutionSlot(created.taskId, binding.agent_session_id),
+      isEmptyExecutionSlot(created.task.id, binding.agent_session_id),
       true,
     );
-    assert.deepEqual(store.getRemoteTaskLinks(created.taskId), [
-      {
-        local_task_id: created.taskId,
-        remote_task_id: "external-parent",
-        remote_role: "parent",
-        remote_host: null,
-        peer_token_hash: "peer-hash",
-      },
-    ]);
+    assert.equal(store.getExternalParentId(created.task.id), "external-parent");
   });
 
   it("does not reinterpret a local-id collision as a remote parent", async () => {
@@ -246,7 +287,7 @@ describe("MCP Task tool host", () => {
     );
     const host = createLocalTaskOps({ store, tasks });
     const created = await host.create(
-      { kind: "host", peerTokenHash: "peer-hash" },
+      { kind: "host" },
       {
         agentId: "test-agent",
         parentId: "external-parent",
@@ -255,18 +296,15 @@ describe("MCP Task tool host", () => {
       },
     );
 
-    assert.equal(store.getTask(created.taskId)?.parent_id, null);
-    assert.equal(
-      store.getRemoteTaskLinks(created.taskId)[0]?.remote_task_id,
-      "external-parent",
-    );
+    assert.equal(store.getTask(created.task.id)?.parent_id, null);
+    assert.equal(store.getExternalParentId(created.task.id), "external-parent");
   });
 
   it("validates the executor agent and cwd before committing", async () => {
     const host = createLocalTaskOps({ store, tasks });
     await assert.rejects(
       host.create(
-        { kind: "host", peerTokenHash: "peer-hash" },
+        { kind: "host" },
         {
           agentId: "missing",
           parentId: "external-parent",
@@ -279,7 +317,7 @@ describe("MCP Task tool host", () => {
     );
     await assert.rejects(
       host.create(
-        { kind: "host", peerTokenHash: "peer-hash" },
+        { kind: "host" },
         {
           agentId: "test-agent",
           parentId: "external-parent",
@@ -304,7 +342,7 @@ describe("MCP Task tool host", () => {
     for (const parentId of [undefined, "", "   ", 42]) {
       await assert.rejects(
         host.create(
-          { kind: "host", peerTokenHash: "peer-hash" },
+          { kind: "host" },
           {
             agentId: "test-agent",
             parentId: parentId as string | undefined,
@@ -316,13 +354,13 @@ describe("MCP Task tool host", () => {
       );
     }
     assert.equal(store.listTasks().length, before);
-    assert.deepEqual(store.getRemoteTaskLinks("alpha"), []);
+    assert.equal(store.getExternalParentId("alpha"), null);
   });
 
   it("keeps deferred remote tasks after empty-task cleanup", async () => {
     const host = createLocalTaskOps({ store, tasks });
     const remote = await host.create(
-      { kind: "host", peerTokenHash: "peer-hash" },
+      { kind: "host" },
       {
         agentId: "test-agent",
         parentId: "external-parent",
@@ -332,10 +370,10 @@ describe("MCP Task tool host", () => {
     );
     store["db"]
       .prepare("UPDATE tasks SET created_at = 0 WHERE id = ?")
-      .run(remote.taskId);
+      .run(remote.task.id);
     assert.deepEqual(store.deleteEmptyTasks(60), []);
-    assert.ok(store.getTask(remote.taskId));
-    const anchors = store.getEvents(remote.taskId);
+    assert.ok(store.getTask(remote.task.id));
+    const anchors = store.getEvents(remote.task.id);
     assert.equal(anchors.length, 1);
     assert.equal(anchors[0]?.type, "system_message");
     assert.equal(JSON.parse(anchors[0]?.data ?? "{}").kind, "task_created");
@@ -348,6 +386,342 @@ describe("MCP Task tool host", () => {
       store.deleteEmptyTasks(60).some((entry) => entry.id === "ordinary-empty"),
       true,
     );
+  });
+
+  it("settles an external account after owner-local unarchive", () => {
+    store.createDeferredRemoteTask({
+      id: "attached-remote-child",
+      cwd: dir,
+      source: "host",
+      agentId: "test-agent",
+      externalParentId: "external-parent",
+      title: "Attached remote child",
+      creationAnchor: { kind: "task_created" },
+    });
+
+    assert.equal(
+      store.unarchiveTask("attached-remote-child").status,
+      "unarchived",
+    );
+    const obligations = (
+      tasks as unknown as {
+        obligations: {
+          arm: (
+            sourceTaskId: string,
+            targetTaskId: string,
+            sourceKind: "local" | "external",
+          ) => void;
+        };
+      }
+    ).obligations;
+    obligations.arm("external-parent", "attached-remote-child", "external");
+
+    const settled = tasks.settleAgentUpdate(
+      "attached-remote-child",
+      "done",
+      "complete",
+    );
+    assert.equal(settled.accountTargetTaskId, "external-parent");
+    assert.equal(
+      JSON.parse(settled.event.data).targetTaskId,
+      "external-parent",
+    );
+  });
+
+  it("uses a restored local parent for a fallback report", async () => {
+    store.archiveTask("alpha-child");
+    assert.equal(store.unarchiveTask("alpha-child").status, "unarchived");
+    const local = createLocalTaskOps({ store, tasks });
+    const host = {
+      ...local,
+      ...createRemoteRoutedTaskOps({
+        local,
+        remote: new HostRegistry(
+          {},
+          { listLinks: () => [], onRemoteEvent: () => {} },
+        ),
+        store,
+        tasks,
+        broadcastCollaboration: () => {},
+      }),
+    };
+    await host.update(principal("alpha-child"), "done", "local completion");
+    const event = store.getEvents("alpha-child").at(-1);
+    assert.ok(event);
+    assert.match(event.data, /local completion/);
+    assert.equal(store.countQueuedDeliveries("alpha"), 1);
+    const matching = store["db"]
+      .prepare(
+        `SELECT m.source_task_id, m.direct_target_task_id, d.status
+         FROM messages m
+         JOIN deliveries d ON d.message_id = m.id
+         WHERE m.source_task_id = ? AND m.direct_target_task_id = ?`,
+      )
+      .all("alpha-child", "alpha") as Array<Record<string, unknown>>;
+    assert.deepEqual(matching, [
+      {
+        source_task_id: "alpha-child",
+        direct_target_task_id: "alpha",
+        status: "queued",
+      },
+    ]);
+  });
+
+  it("rolls back a local send when recording the source row fails", async () => {
+    const local = createLocalTaskOps({ store, tasks });
+    const routed = createRemoteRoutedTaskOps({
+      local,
+      remote: new HostRegistry(
+        {},
+        { listLinks: () => [], onRemoteEvent: () => {} },
+      ),
+      store,
+      tasks,
+      broadcastCollaboration: () => {},
+    });
+    const original = store.recordCallerSend.bind(store);
+    store.recordCallerSend = () => {
+      throw new Error("source record failed");
+    };
+    try {
+      await assert.rejects(
+        routed.send(principal(), "alpha-child", "atomic send"),
+        /source record failed/,
+      );
+    } finally {
+      store.recordCallerSend = original;
+    }
+    assert.equal(store.countQueuedDeliveries("alpha-child"), 0);
+    assert.deepEqual(
+      store["db"].prepare("SELECT COUNT(*) AS count FROM messages").get(),
+      { count: 0 },
+    );
+  });
+
+  it("rolls back a local update and leaves its account open on report failure", async () => {
+    (
+      tasks as unknown as {
+        obligations: {
+          arm(source: string, target: string, kind: "local"): void;
+        };
+      }
+    ).obligations.arm("alpha", "alpha-child", "local");
+    const local = createLocalTaskOps({ store, tasks });
+    const routed = createRemoteRoutedTaskOps({
+      local,
+      remote: new HostRegistry(
+        {},
+        { listLinks: () => [], onRemoteEvent: () => {} },
+      ),
+      store,
+      tasks,
+      broadcastCollaboration: () => {},
+    });
+    const original = store.recordCallerSend.bind(store);
+    store.recordCallerSend = () => {
+      throw new Error("report source failed");
+    };
+    try {
+      await assert.rejects(
+        routed.update(principal("alpha-child"), "done", "atomic report"),
+        /report source failed/,
+      );
+    } finally {
+      store.recordCallerSend = original;
+    }
+    assert.equal(store.getTask("alpha-child")?.workflow_status, "idle");
+    assert.equal(
+      store
+        .getEvents("alpha-child")
+        .some((event) => event.type === "task_update"),
+      false,
+    );
+    assert.equal(store.countQueuedDeliveries("alpha"), 0);
+    assert.equal(tasks.hasOpenObligation("alpha", "alpha-child"), true);
+  });
+
+  it("re-signals an existing queued remote report for replay drain", () => {
+    const input = {
+      id: "remote-report-message",
+      deliveryId: "remote-report-delivery",
+      idempotencyKey: "remote-report:owner:child:7",
+      sourceTaskId: "remote-child",
+      targetTaskId: "alpha",
+      body: "Task status: done\ncomplete",
+    };
+    assert.equal(store.enqueueReportDelivery(input), true);
+    assert.equal(store.enqueueReportDelivery(input), true);
+    assert.equal(store.countQueuedDeliveries("alpha"), 1);
+    assert.equal(store.claimQueuedDeliveries("alpha").length, 1);
+    assert.equal(store.claimQueuedDeliveries("alpha").length, 0);
+    assert.equal(store.enqueueReportDelivery(input), false);
+  });
+
+  it("tracks a remote dispatch from queued through owner prompt delivery after restart", () => {
+    const ownerDb = mkdtempSync(join(tmpdir(), "webagent-remote-delivery-"));
+    let reopened: Store | undefined;
+    try {
+      const messageId = "remote-shared-message";
+      const deliveryStore = new Store(ownerDb);
+      deliveryStore.createTask(
+        "parent",
+        ownerDb,
+        "auto",
+        "test-agent",
+        "parent-session",
+      );
+      deliveryStore.recordRemoteChild("parent", "remote-child", "owner");
+      deliveryStore.recordCallerSend({
+        id: messageId,
+        sourceTaskId: "parent",
+        directTargetTaskId: "remote-child",
+        sourceLabel: "parent",
+        targetLabel: "remote child",
+        body: "work",
+      });
+      assert.equal(
+        deliveryStore
+          .getCollaborationDeliveriesForMessages([messageId])
+          .get(messageId)?.status,
+        "queued",
+      );
+      const handler = createRemoteReportHandler({
+        store: deliveryStore,
+        enqueueReport: () => false,
+      });
+      handler("owner", "remote-child", {
+        seq: 7,
+        data: {
+          type: "collaboration_prompt",
+          taskId: "remote-child",
+          messageIds: [messageId],
+        },
+      });
+      assert.equal(
+        deliveryStore
+          .getCollaborationDeliveriesForMessages([messageId])
+          .get(messageId)?.status,
+        "delivered",
+      );
+      deliveryStore.close();
+      reopened = new Store(ownerDb);
+      assert.equal(
+        reopened
+          .getCollaborationDeliveriesForMessages([messageId])
+          .get(messageId)?.status,
+        "delivered",
+      );
+    } finally {
+      reopened?.close();
+      rmSync(ownerDb, { recursive: true, force: true });
+    }
+  });
+
+  it("applies an owner delivery acknowledgment before the queued write", () => {
+    const messageId = "early-ack-message";
+    assert.equal(store.markDeliveryDeliveredByMessage(messageId), false);
+    store.recordCallerSend({
+      id: messageId,
+      sourceTaskId: "alpha",
+      directTargetTaskId: "remote-child",
+      sourceLabel: "Alpha",
+      targetLabel: "Remote child",
+      body: "work",
+    });
+    assert.equal(
+      store.getCollaborationDeliveriesForMessages([messageId]).get(messageId)
+        ?.status,
+      "delivered",
+    );
+  });
+
+  it("opens an account for an external parent's dispatch but not for a remote child's report", () => {
+    const armDelivered = (taskId: string, messageId: string): void => {
+      const message = store.getCollaborationMessage(messageId);
+      assert.ok(message);
+      (
+        tasks as unknown as {
+          armDelivered(taskId: string, messages: unknown[]): void;
+        }
+      ).armDelivered(taskId, [message]);
+    };
+
+    // Hub side: a remote child's report arrives in the local parent.
+    store.enqueueReportDelivery({
+      id: "hub-report",
+      deliveryId: "hub-report-delivery",
+      idempotencyKey: "remote-report:owner:remote-child:3",
+      sourceTaskId: "remote-child",
+      targetTaskId: "alpha",
+      body: "Task status: done\ncomplete",
+    });
+
+    armDelivered("alpha", "hub-report");
+    assert.equal(tasks.hasOpenObligation("remote-child", "alpha"), false);
+
+    // Owner side: the linked external parent dispatches to its child.
+    store.createDeferredRemoteTask({
+      id: "owned-remote-child",
+      cwd: dir,
+      source: "host",
+      agentId: "test-agent",
+      externalParentId: "external-parent",
+      title: "Owned remote child",
+      creationAnchor: { kind: "task_created" },
+    });
+    store.enqueueTargetCollaboration({
+      id: "owner-dispatch",
+      deliveryId: "owner-dispatch-delivery",
+      sourceTaskId: "external-parent",
+      targetTaskId: "owned-remote-child",
+      body: "do the work",
+    });
+    armDelivered("owned-remote-child", "owner-dispatch");
+    assert.equal(
+      tasks.hasOpenObligation("external-parent", "owned-remote-child"),
+      true,
+    );
+  });
+
+  it("refuses a host dispatch from a source other than the external parent", () => {
+    store.createDeferredRemoteTask({
+      id: "owned-child",
+      cwd: dir,
+      source: "host",
+      agentId: "test-agent",
+      externalParentId: "right-parent",
+      title: "Owned child",
+      creationAnchor: {},
+    });
+    const command = createHostCollaborationCommand({ store, tasks });
+    assert.throws(
+      () =>
+        command.receive({
+          sourceTaskId: "wrong-parent",
+          targetTaskId: "owned-child",
+          body: "work",
+        }),
+      HostExternalParentError,
+    );
+  });
+
+  it("accepts a maximum-length valid task title as remote source label", () => {
+    store.createDeferredRemoteTask({
+      id: "long-label-child",
+      cwd: dir,
+      source: "host",
+      agentId: "test-agent",
+      externalParentId: "long-label-parent",
+      title: "Owned child",
+      creationAnchor: {},
+    });
+    const received = createHostCollaborationCommand({ store, tasks }).receive({
+      sourceTaskId: "long-label-parent",
+      targetTaskId: "long-label-child",
+      sourceLabel: "x".repeat(256),
+      body: "work",
+    });
+    assert.equal(typeof received.messageId, "string");
   });
 
   it("checks a stale agent caller before resolving Host configuration", async () => {
@@ -376,7 +750,8 @@ describe("MCP Task tool host", () => {
       routed.create(
         { kind: "agent", principal: oldPrincipal },
         {
-          agentId: "test-agent@mini",
+          agentId: "test-agent",
+          host: "mini",
           parentId: "alpha",
           inheritFromTaskId: "alpha",
           title: "Stale remote child",
@@ -413,28 +788,32 @@ describe("MCP Task tool host", () => {
     await assert.rejects(
       host.create(
         { kind: "user" },
-        { agentId: "test-agent@mini", parentId: "" },
+        { agentId: "test-agent", host: "mini", parentId: "" },
       ),
       { message: "parent_not_found" },
     );
   });
 
-  it("dispatches agent@host once without leaking local inheritance data", async () => {
+  it("dispatches separate agent and host once without leaking inheritance data", async () => {
     const calls: unknown[] = [];
     const host = createRoutedTaskOps({
       async create(remoteHost, input) {
         calls.push({ remoteHost, input });
         return {
-          taskId: "remote-child",
-          activation: {
-            cwd: dir,
-            cwdDisplay: dir,
+          task: {
+            id: "remote-child",
             title: "Remote child",
-            parentId: null,
-            parentAgentId: null,
             agentId: "test-agent",
-            workflowStatus: "idle",
+            cwd: dir,
+            model: null,
+            thinking: null,
+            parentId: null,
+            workflowStatus: "idle" as const,
             source: "agent",
+          },
+          session: {
+            cwdDisplay: dir,
+            parentAgentId: null,
             configOptions: [],
             agentCommands: {
               epoch: "remote",
@@ -449,7 +828,8 @@ describe("MCP Task tool host", () => {
     const created = await host.create(
       { kind: "agent", principal: principal() },
       {
-        agentId: "test-agent@mini",
+        agentId: "test-agent",
+        host: "mini",
         parentId: "alpha",
         inheritFromTaskId: "alpha",
         title: "Remote child",
@@ -458,7 +838,7 @@ describe("MCP Task tool host", () => {
       },
     );
 
-    assert.equal(created.taskId, "remote-child");
+    assert.equal(created.task.id, "remote-child");
     assert.deepEqual(calls, [
       {
         remoteHost: "mini",
@@ -471,16 +851,57 @@ describe("MCP Task tool host", () => {
         },
       },
     ]);
-    assert.deepEqual(store.getRemoteTaskLinks("alpha"), [
+    assert.deepEqual(store.listRemoteChildren(), [
       {
         local_task_id: "alpha",
         remote_task_id: "remote-child",
-        remote_role: "child",
         remote_host: "mini",
-        peer_token_hash: null,
       },
     ]);
     assert.equal(store.getTask("remote-child"), undefined);
+  });
+
+  it("reports an unknown separate host as not configured", async () => {
+    const host = createRoutedTaskOps({
+      async create(remoteHost) {
+        throw new TaskHostNotConfiguredError(remoteHost);
+      },
+    });
+    await assert.rejects(
+      host.create(
+        { kind: "agent", principal: principal() },
+        {
+          agentId: "test-agent",
+          host: "missing",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Remote child",
+        },
+      ),
+      TaskHostNotConfiguredError,
+    );
+  });
+
+  it("requires agent when host is named", async () => {
+    const host = createRoutedTaskOps({
+      async create() {
+        assert.fail("invalid remote target must not dispatch");
+      },
+    });
+    await assert.rejects(
+      host.create(
+        { kind: "agent", principal: principal() },
+        {
+          host: "mini",
+          parentId: "alpha",
+          inheritFromTaskId: "alpha",
+          title: "Missing agent",
+        },
+      ),
+      (error) =>
+        error instanceof TaskCreateInputError &&
+        error.clientMessage === "A remote target requires an explicit agent",
+    );
   });
 
   it("reports remote creation as partial when the generation changes", async () => {
@@ -494,16 +915,20 @@ describe("MCP Task tool host", () => {
           "session-alpha-replaced",
         );
         return {
-          taskId: "remote-child",
-          activation: {
-            cwd: dir,
-            cwdDisplay: dir,
+          task: {
+            id: "remote-child",
             title: null,
-            parentId: null,
-            parentAgentId: null,
             agentId: "test-agent",
-            workflowStatus: "idle",
+            cwd: dir,
+            model: null,
+            thinking: null,
+            parentId: null,
+            workflowStatus: "idle" as const,
             source: "agent",
+          },
+          session: {
+            cwdDisplay: dir,
+            parentAgentId: null,
             configOptions: [],
             agentCommands: {
               epoch: "remote",
@@ -519,7 +944,8 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "agent", principal: principal() },
         {
-          agentId: "test-agent@mini",
+          agentId: "test-agent",
+          host: "mini",
           parentId: "alpha",
           inheritFromTaskId: "alpha",
           title: "Remote child",
@@ -530,7 +956,183 @@ describe("MCP Task tool host", () => {
         error.remoteTaskId === "remote-child",
     );
     assert.equal(calls, 1);
-    assert.deepEqual(store.getRemoteTaskLinks("alpha"), []);
+    assert.deepEqual(store.listRemoteChildren(), []);
+  });
+
+  it("does not route a partial remote create without a durable link", async () => {
+    const registry = new HostRegistry(
+      { owner: { url: "http://owner.example", token: "wat_hub" } },
+      {
+        listLinks: () => [],
+        onRemoteEvent: () => {},
+        fetch: async (input) => {
+          const url =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.href
+                : input.url;
+          if (url.endsWith("/api/v1/tasks")) {
+            return Response.json(
+              {
+                id: "partial-remote-child",
+                cwd: dir,
+                cwdDisplay: dir,
+                parentId: null,
+                parentAgentId: null,
+                agentId: "test-agent",
+                title: "Partial child",
+                model: null,
+                thinking: null,
+                workflowStatus: "idle",
+                source: "agent",
+                configOptions: [],
+                agentCommands: {
+                  epoch: "remote",
+                  revision: 0,
+                  commands: [],
+                },
+              },
+              { status: 201 },
+            );
+          }
+          throw new Error(`unexpected fetch ${url}`);
+        },
+      },
+    );
+    const local = createLocalTaskOps({ store, tasks });
+    const core = createTaskOpsCore({
+      host: createTaskHost({ local, remote: registry }),
+      store,
+      tasks,
+    });
+
+    const original = store.saveEvent.bind(store);
+    store.saveEvent = (taskId, type, data, options) => {
+      if (taskId === "alpha" && type === "system_message") {
+        throw new Error("write-back failed");
+      }
+      return original(taskId, type, data, options);
+    };
+    try {
+      await assert.rejects(
+        core.create(
+          { kind: "agent", principal: principal() },
+          {
+            title: "Partial child",
+            agentId: "test-agent",
+            host: "owner",
+            parentId: "alpha",
+            inheritFromTaskId: "alpha",
+          },
+        ),
+        TaskRemoteCreatePartialSuccessError,
+      );
+      assert.equal(store.listRemoteChildren().length, 0);
+      assert.equal(
+        store
+          .getEvents("alpha")
+          .some((event) => event.type === "system_message"),
+        false,
+      );
+      const routed = {
+        ...local,
+        ...core,
+        ...createRemoteRoutedTaskOps({
+          local,
+          remote: registry,
+          store,
+          tasks,
+          broadcastCollaboration: () => {},
+        }),
+      };
+      await assert.rejects(
+        routed.query(principal(), { taskId: "partial-remote-child" }),
+        /target_not_allowed/,
+      );
+      await assert.rejects(
+        routed.read(principal(), {
+          taskId: "partial-remote-child",
+          seqs: [1],
+        }),
+        /target_not_allowed/,
+      );
+      await assert.rejects(
+        routed.send(principal(), "partial-remote-child", "hello"),
+        /task_not_found|target_not_allowed/,
+      );
+    } finally {
+      store.saveEvent = original;
+      registry.stopAll();
+    }
+  });
+
+  it("records a remote create from the Host result in Core", async () => {
+    const broadcasts: TaskCreatedEvent[] = [];
+    const local = createLocalTaskOps({ store, tasks });
+    const core = createTaskOpsCore({
+      host: createTaskHost({
+        local,
+        remote: {
+          create: async () => ({
+            task: {
+              id: "remote-created",
+              title: "Effective remote child",
+              agentId: "owner-agent",
+              cwd: "/remote",
+              model: null,
+              thinking: null,
+              parentId: null,
+              workflowStatus: "idle" as const,
+              source: "agent",
+            },
+            session: {
+              cwdDisplay: "/remote",
+              parentAgentId: null,
+              configOptions: [],
+              agentCommands: { epoch: "remote", revision: 0, commands: [] },
+            },
+          }),
+        },
+      }),
+      store,
+      tasks,
+      broadcastTaskCreated: (event) => broadcasts.push(event),
+    });
+    await core.create(
+      { kind: "agent", principal: principal() },
+      {
+        title: "Remote child",
+        agentId: "owner-agent",
+        host: "owner",
+        parentId: "alpha",
+        inheritFromTaskId: "alpha",
+      },
+    );
+    const rows = store
+      .getEvents("alpha")
+      .filter(
+        (event) =>
+          event.type === "system_message" &&
+          JSON.parse(event.data).kind === "task_created",
+      );
+    assert.equal(rows.length, 1);
+    const data = JSON.parse(rows[0].data) as Record<string, unknown>;
+    assert.equal(data.agentId, "owner-agent");
+    assert.equal(data.host, "owner");
+    assert.match(String(data.body), /agent: owner-agent\nhost: owner/);
+    assert.equal(data.taskTitle, "Effective remote child");
+    assert.equal(data.cwd, "/remote");
+    const read = await local.read(principal(), {
+      taskId: "alpha",
+      seqs: [rows[0].seq],
+    });
+    assert.equal((read.rows[0].data as Record<string, unknown>).host, "owner");
+    assert.equal(broadcasts.length, 1);
+    assert.equal(
+      broadcasts[0].body.includes("agent: owner-agent\nhost: owner"),
+      true,
+    );
   });
 
   it("does not retry unknown remote outcomes", async () => {
@@ -545,7 +1147,8 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "agent", principal: principal() },
         {
-          agentId: "test-agent@mini",
+          agentId: "test-agent",
+          host: "mini",
           parentId: "alpha",
           inheritFromTaskId: "alpha",
           title: "Remote child",
@@ -568,7 +1171,8 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "agent", principal: principal() },
         {
-          agentId: "test-agent@mini",
+          agentId: "test-agent",
+          host: "mini",
           parentId: "alpha",
           inheritFromTaskId: "alpha",
           title: "Remote child",
@@ -580,10 +1184,10 @@ describe("MCP Task tool host", () => {
     assert.equal(calls, 0);
   });
 
-  it("lists an archived tree from one of its tasks", () => {
+  it("lists an archived tree from one of its tasks", async () => {
     store.archiveTask("alpha");
     const host = createLocalTaskOps({ store, tasks });
-    const listed = host.list(principal("alpha"));
+    const listed = await host.list(principal("alpha"));
     // Self must survive: a task inside an archived tree still needs its own
     // row, and its local child remains reachable. Root and beta are outside
     // the tree and must not appear.
@@ -596,7 +1200,7 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("lists the family with relation and status", () => {
+  it("lists the family with relation and status", async () => {
     store.updateTaskWorkflowStatus(store.rootTaskId, "done");
     store.updateTaskWorkflowStatus("alpha", "running");
     store.updateTaskWorkflowStatus("alpha-child", "blocked");
@@ -613,7 +1217,7 @@ describe("MCP Task tool host", () => {
         .run(stamp, id);
     }
     const host = createLocalTaskOps({ store, tasks });
-    const listed = host.list(principal());
+    const listed = await host.list(principal());
     assert.deepEqual(
       listed.map(({ id, relation }) => ({ id, relation })),
       [
@@ -635,7 +1239,7 @@ describe("MCP Task tool host", () => {
     // the live runtime source while a turn is active.
     tasks.activePrompts.add("alpha-child");
     assert.equal(
-      host.list(principal()).find((item) => item.id === "alpha-child")
+      (await host.list(principal())).find((item) => item.id === "alpha-child")
         ?.executionState,
       "agent",
     );
@@ -652,7 +1256,7 @@ describe("MCP Task tool host", () => {
       /Z$/,
     );
     tasks.noteAgentActivity("alpha");
-    const afterActivity = host.list(principal());
+    const afterActivity = await host.list(principal());
     assert.match(
       afterActivity.find((item) => item.id === "alpha")?.lastAgentActivityAt ??
         "",
@@ -660,7 +1264,7 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("indexes every event including thinking and exposes search context", () => {
+  it("indexes every event including thinking and exposes search context", async () => {
     store.saveEvent(
       "alpha",
       "thinking",
@@ -699,7 +1303,7 @@ describe("MCP Task tool host", () => {
       { from_ref: "agent" },
     );
     const host = createLocalTaskOps({ store, tasks });
-    const all = host.query(principal(), {});
+    const all = await host.query(principal(), {});
     assert.deepEqual(
       all.rows.map((row) => row.seq),
       [1, 2, 3, 4],
@@ -707,13 +1311,13 @@ describe("MCP Task tool host", () => {
     assert.equal(all.rows[0].type, "thinking");
     assert.equal(all.rows[1].group, "tool-1");
     assert.equal(all.rows[3].group, "tool-1");
-    const found = host.query(principal(), { text: "needle" });
+    const found = await host.query(principal(), { text: "needle" });
     assert.equal(found.rows.length, 1);
     assert.equal(found.rows[0].field, "rawInput.path");
     assert.match(found.rows[0].text ?? "", /needle/i);
   });
 
-  it("normalizes negative ranges, reverse ranges, and clamps endpoints", () => {
+  it("normalizes negative ranges, reverse ranges, and clamps endpoints", async () => {
     for (let i = 0; i < 30; i++) {
       store.saveEvent(
         "alpha",
@@ -724,20 +1328,24 @@ describe("MCP Task tool host", () => {
     }
     const host = createLocalTaskOps({ store, tasks });
     assert.deepEqual(
-      host.query(principal(), { range: [-20, -1] }).rows.map((r) => r.seq),
+      (await host.query(principal(), { range: [-20, -1] })).rows.map(
+        (r) => r.seq,
+      ),
       Array.from({ length: 20 }, (_, i) => i + 11),
     );
     assert.deepEqual(
-      host.query(principal(), { range: [20, 10] }).rows.map((r) => r.seq),
+      (await host.query(principal(), { range: [20, 10] })).rows.map(
+        (r) => r.seq,
+      ),
       Array.from({ length: 11 }, (_, i) => i + 10),
     );
     assert.deepEqual(
-      host.query(principal(), { range: [1, 0] }).rows.map((r) => r.seq),
+      (await host.query(principal(), { range: [1, 0] })).rows.map((r) => r.seq),
       [1],
     );
   });
 
-  it("pushes a bounded range down to Store.getEvents", () => {
+  it("pushes a bounded range down to Store.getEvents", async () => {
     for (let i = 0; i < 30; i++) {
       store.saveEvent(
         "alpha",
@@ -761,9 +1369,9 @@ describe("MCP Task tool host", () => {
         tasks,
       });
       assert.deepEqual(
-        host
-          .query(principal(), { range: [-20, -1] })
-          .rows.map((row) => row.seq),
+        (await host.query(principal(), { range: [-20, -1] })).rows.map(
+          (row) => row.seq,
+        ),
         Array.from({ length: 20 }, (_, i) => i + 11),
       );
       assert.deepEqual(observed, { afterSeq: 10, beforeSeq: 31 });
@@ -772,7 +1380,7 @@ describe("MCP Task tool host", () => {
     }
   });
 
-  it("truncates projections and keeps centered search windows visible", () => {
+  it("truncates projections and keeps centered search windows visible", async () => {
     const long = "a".repeat(150) + "Needle" + "b".repeat(150);
     const maxNeedle = "N".repeat(128);
     store.saveEvent(
@@ -800,18 +1408,19 @@ describe("MCP Task tool host", () => {
       { from_ref: "agent" },
     );
     const host = createLocalTaskOps({ store, tasks });
-    const rows = host.query(principal(), {}).rows;
+    const rows = (await host.query(principal(), {})).rows;
     assert.equal(Array.from(rows[0].text ?? "").length, 200);
     assert.match(rows[0].text ?? "", /…$/);
     assert.equal((rows[2].text ?? "").includes("…"), false);
-    const found = host.query(principal(), { text: "needle" }).rows;
+    const found = (await host.query(principal(), { text: "needle" })).rows;
     assert.equal(found.length, 2);
     const projected = found.find((row) => row.type === "assistant_message")!;
     assert.match(projected.text ?? "", /Needle/);
     assert.match(projected.text ?? "", /^…/);
     assert.match(projected.text ?? "", /…$/);
     assert.ok(Array.from(projected.text ?? "").length <= 200);
-    const maxFound = host.query(principal(), { text: maxNeedle }).rows[0];
+    const maxFound = (await host.query(principal(), { text: maxNeedle }))
+      .rows[0];
     assert.match(maxFound.text ?? "", new RegExp(maxNeedle));
     assert.ok(Array.from(maxFound.text ?? "").length <= 200);
     const unprojected = found.find((row) => row.type === "plan")!;
@@ -820,13 +1429,13 @@ describe("MCP Task tool host", () => {
     assert.match(unprojected.text ?? "", /Needle/);
   });
 
-  it("reads original structured data in one batch, including thinking", () => {
+  it("reads original structured data in one batch, including thinking", async () => {
     const original = { text: "hello", nested: ["x", { value: 2 }] };
     const event = store.saveEvent("alpha", "thinking", original, {
       from_ref: "agent",
     });
     const host = createLocalTaskOps({ store, tasks });
-    const result = host.read(principal(), {
+    const result = await host.read(principal(), {
       taskId: "alpha",
       seqs: [event.seq, event.seq],
     });
@@ -841,7 +1450,7 @@ describe("MCP Task tool host", () => {
     ]);
   });
 
-  it("reads own history when the target is omitted", () => {
+  it("reads own history when the target is omitted", async () => {
     const event = store.saveEvent(
       "alpha",
       "assistant_message",
@@ -851,27 +1460,30 @@ describe("MCP Task tool host", () => {
       },
     );
     const host = createLocalTaskOps({ store, tasks });
-    const explicit = host.read(principal(), {
+    const explicit = await host.read(principal(), {
       taskId: "alpha",
       seqs: [event.seq],
     });
     // A waking Task does not know its own id, so reading its own history must
     // not require one: omitting the target is the same call as naming self.
-    assert.deepEqual(host.read(principal(), { seqs: [event.seq] }), explicit);
+    assert.deepEqual(
+      await host.read(principal(), { seqs: [event.seq] }),
+      explicit,
+    );
   });
 
-  it("rejects unknown and out-of-family targets identically", () => {
+  it("rejects unknown and out-of-family targets identically", async () => {
     const host = createLocalTaskOps({ store, tasks });
-    assert.throws(
-      () => host.query(principal(), { taskId: "missing" }),
+    await assert.rejects(
+      host.query(principal(), { taskId: "missing" }),
       /target_not_allowed/,
     );
-    assert.throws(
-      () => host.read(principal(), { taskId: "missing", seqs: [1] }),
+    await assert.rejects(
+      host.read(principal(), { taskId: "missing", seqs: [1] }),
       /target_not_allowed/,
     );
-    assert.throws(
-      () => host.query(principal(), { taskId: "unrelated" }),
+    await assert.rejects(
+      host.query(principal(), { taskId: "unrelated" }),
       /target_not_allowed/,
     );
     store.createTask(
@@ -890,13 +1502,13 @@ describe("MCP Task tool host", () => {
       "other-parent",
       { title: "Unrelated" },
     );
-    assert.throws(
-      () => host.query(principal(), { taskId: "unrelated" }),
+    await assert.rejects(
+      host.query(principal(), { taskId: "unrelated" }),
       /target_not_allowed/,
     );
   });
 
-  it("rejects missing seqs without partial rows", () => {
+  it("rejects missing seqs without partial rows", async () => {
     store.saveEvent(
       "alpha",
       "user_message",
@@ -904,19 +1516,19 @@ describe("MCP Task tool host", () => {
       { from_ref: "user" },
     );
     const host = createLocalTaskOps({ store, tasks });
-    assert.throws(
-      () => host.read(principal(), { taskId: "alpha", seqs: [1, 99] }),
+    await assert.rejects(
+      host.read(principal(), { taskId: "alpha", seqs: [1, 99] }),
       /unknown_seq/,
     );
   });
 
-  it("reads a large single payload under the single-row response limit", () => {
+  it("reads a large single payload under the single-row response limit", async () => {
     const payload = { text: "payload-" + "x".repeat(258_000) };
     const event = store.saveEvent("alpha", "assistant_message", payload, {
       from_ref: "agent",
     });
     const host = createLocalTaskOps({ store, tasks });
-    const result = host.read(principal(), {
+    const result = await host.read(principal(), {
       taskId: "alpha",
       seqs: [event.seq],
     });
@@ -927,7 +1539,7 @@ describe("MCP Task tool host", () => {
     assert.ok(bytes < 1024 * 1024);
   });
 
-  it("keeps one legitimate event readable while refusing that row in a batch", () => {
+  it("keeps one legitimate event readable while refusing that row in a batch", async () => {
     const payload = { text: "x".repeat(258_000) };
     const big = store.saveEvent("alpha", "assistant_message", payload, {
       from_ref: "agent",
@@ -940,12 +1552,15 @@ describe("MCP Task tool host", () => {
     );
     const host = createLocalTaskOps({ store, tasks });
     assert.deepEqual(
-      host.read(principal(), { taskId: "alpha", seqs: [big.seq] }).rows[0].data,
+      (await host.read(principal(), { taskId: "alpha", seqs: [big.seq] }))
+        .rows[0].data,
       payload,
     );
-    assert.throws(
-      () =>
-        host.read(principal(), { taskId: "alpha", seqs: [big.seq, small.seq] }),
+    await assert.rejects(
+      host.read(principal(), {
+        taskId: "alpha",
+        seqs: [big.seq, small.seq],
+      }),
       (error: unknown) => {
         const parsed = JSON.parse(String((error as Error).message)) as {
           error: string;
@@ -960,7 +1575,7 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("never refuses the recommended tail window on a dense task", () => {
+  it("never refuses the recommended tail window on a dense task", async () => {
     for (let i = 0; i < 400; i++) {
       store.saveEvent(
         "alpha",
@@ -970,21 +1585,21 @@ describe("MCP Task tool host", () => {
       );
     }
     const host = createLocalTaskOps({ store, tasks });
-    const page = host.query(principal(), { range: [-50, -1] });
+    const page = await host.query(principal(), { range: [-50, -1] });
     assert.equal(page.rows.length, 50);
     const bytes = Buffer.byteLength(JSON.stringify(page), "utf8");
     // The documented opening window must fit even with maximal row text.
     assert.ok(bytes < 24 * 1024, `recommended window is ${bytes} bytes`);
   });
 
-  it("rejects an over-limit response with exact required_bytes and no partial rows", () => {
+  it("rejects an over-limit response with exact required_bytes and no partial rows", async () => {
     const data = { text: "x".repeat(2 * 1024 * 1024) };
     const event = store.saveEvent("alpha", "assistant_message", data, {
       from_ref: "agent",
     });
     const host = createLocalTaskOps({ store, tasks });
-    assert.throws(
-      () => host.read(principal(), { taskId: "alpha", seqs: [event.seq] }),
+    await assert.rejects(
+      host.read(principal(), { taskId: "alpha", seqs: [event.seq] }),
       (error: unknown) => {
         const parsed = JSON.parse(String((error as Error).message)) as Record<
           string,
@@ -1016,42 +1631,39 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("rejects an over-limit query without returning a partial page", () => {
+  it("rejects an over-limit query without returning a partial page", async () => {
     for (let i = 0; i < 6_000; i++) {
       store.saveEvent("alpha", "future_event", {}, { from_ref: "system" });
     }
     const host = createLocalTaskOps({ store, tasks });
-    assert.throws(
-      () => host.query(principal(), {}),
-      (error: unknown) => {
-        const parsed = JSON.parse(String((error as Error).message)) as {
-          error: string;
-          required_bytes: number;
-          limit_bytes: number;
-          max_seq: number;
-          hint: { range: [number, number] };
-        };
-        assert.equal(parsed.error, "response_too_large");
-        assert.equal(parsed.limit_bytes, 24 * 1024);
-        assert.equal(parsed.max_seq, 6_000);
-        assert.deepEqual(parsed.hint.range, [-50, -1]);
-        // Exact, not estimated: rebuild the refused response and compare.
-        assert.equal(
-          parsed.required_bytes,
-          Buffer.byteLength(
-            JSON.stringify({
-              task_id: "alpha",
-              max_seq: 6_000,
-              rows: store
-                .getEvents("alpha")
-                .map((event) => projectTaskHistoryRow(event)),
-            }),
-            "utf8",
-          ),
-        );
-        return true;
-      },
-    );
+    await assert.rejects(host.query(principal(), {}), (error: unknown) => {
+      const parsed = JSON.parse(String((error as Error).message)) as {
+        error: string;
+        required_bytes: number;
+        limit_bytes: number;
+        max_seq: number;
+        hint: { range: [number, number] };
+      };
+      assert.equal(parsed.error, "response_too_large");
+      assert.equal(parsed.limit_bytes, 24 * 1024);
+      assert.equal(parsed.max_seq, 6_000);
+      assert.deepEqual(parsed.hint.range, [-50, -1]);
+      // Exact, not estimated: rebuild the refused response and compare.
+      assert.equal(
+        parsed.required_bytes,
+        Buffer.byteLength(
+          JSON.stringify({
+            task_id: "alpha",
+            max_seq: 6_000,
+            rows: store
+              .getEvents("alpha")
+              .map((event) => projectTaskHistoryRow(event)),
+          }),
+          "utf8",
+        ),
+      );
+      return true;
+    });
   });
 
   it("cancels only a direct child and records the reason", async () => {
@@ -1240,12 +1852,49 @@ describe("MCP Task tool host", () => {
         options: Record<string, unknown>,
       ) => {
         createCall = { cwd, inheritFromTaskId, source, options };
-        return { taskId: "created-child", configOptions: [] };
+        const facts = {
+          taskId: "created-child",
+          title: options.title as string,
+          agentId: "test-agent",
+          cwd,
+          parentId: inheritFromTaskId,
+          workflowStatus: "idle" as const,
+          source,
+          model: options.model as string,
+          thinking: options.thinking as string,
+        };
+        return {
+          taskId: facts.taskId,
+          configOptions: [],
+          facts,
+        };
       },
     } as unknown as TaskManager;
-    const host = createLocalTaskOps({
+    const local = createLocalTaskOps({
       store,
       tasks: fakeTasks,
+    });
+    const host = createTaskOpsCore({
+      host: createTaskHost({
+        local,
+        remote: {
+          create: async () => ({
+            task: {
+              id: "unexpected",
+              title: null,
+              agentId: "unexpected",
+              cwd: dir,
+              model: null,
+              thinking: null,
+              parentId: null,
+              workflowStatus: "idle" as const,
+              source: "agent",
+            },
+          }),
+        },
+      }),
+      store,
+      tasks,
     });
     assert.deepEqual(
       (
@@ -1261,7 +1910,7 @@ describe("MCP Task tool host", () => {
             source: "agent",
           },
         )
-      ).taskId,
+      ).task.id,
       "created-child",
     );
     assert.ok(createCall);
@@ -1325,7 +1974,7 @@ describe("MCP Task tool host", () => {
       );
       assert.equal(announced.length, 1);
       const event = announced[0];
-      assert.equal(event.taskId, created.taskId);
+      assert.equal(event.taskId, created.task.id);
       // `noteTaskCreated(taskId, title)` needs both, or the client can only
       // prove existence and has to leave the reference unknown.
       assert.equal(event.title, "Agent child");
@@ -1343,18 +1992,31 @@ describe("MCP Task tool host", () => {
       () => host.send(principal(), "beta", "hello sibling"),
       /target_not_allowed/,
     );
-    assert.throws(
-      () => host.query(principal(), { taskId: "beta" }),
+    await assert.rejects(
+      host.query(principal(), { taskId: "beta" }),
       /target_not_allowed/,
     );
-    assert.throws(
-      () => host.read(principal(), { taskId: "beta", seqs: [1] }),
+    await assert.rejects(
+      host.read(principal(), { taskId: "beta", seqs: [1] }),
       /target_not_allowed/,
     );
   });
 
   it("queues an agent message without returning delivery metadata", async () => {
-    const host = createLocalTaskOps({ store, tasks });
+    const local = createLocalTaskOps({ store, tasks });
+    const host = {
+      ...local,
+      ...createRemoteRoutedTaskOps({
+        local,
+        remote: new HostRegistry(
+          {},
+          { listLinks: () => [], onRemoteEvent: () => {} },
+        ),
+        store,
+        tasks,
+        broadcastCollaboration: () => {},
+      }),
+    };
     await host.send(principal(), "alpha-child", "hello child");
     const messages = store
       .getEvents("alpha")

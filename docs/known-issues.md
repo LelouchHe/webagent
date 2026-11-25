@@ -12,6 +12,47 @@ How to add an entry: open it when you knowingly leave a defect or a soft edge
 behind, with the symptom, where it lives, and why deferring was right at the
 time. An entry without a "closing condition" is a wish, not an issue.
 
+## Cross-instance collaboration
+
+- **A committed remote create can outlive a failed post-commit read/broadcast.**
+  The durable owner task and hub link are already complete; only follow-up
+  display refresh may fail. *Closing:* require presentation to be retriable
+  without weakening the durable write.
+- **Owner enqueue and replay-cache handoff retain a crash window.** A process
+  loss after owner dispatch commit but before replay publication can delay the
+  first `collaboration_prompt` acknowledgment until reconnect catch-up.
+  *Closing:* make replay publication restart-recoverable with the enqueue fact.
+
+- **Remote report catch-up is whole-history and cursorless.** Every host
+  connect cold-reads each linked child's full event log and relies on the
+  idempotency key to discard already-seen `task_update` reports. *Closing:* add
+  a persisted or server-owned incremental cursor/ACK protocol without changing
+  Task facts.
+- **Remote text search fetches the full owner history.** The owner exposes no
+  server-side search endpoint, so the hub applies the shared projector after a
+  full task-events read. *Closing:* add a bounded history-search route and
+  preserve the MCP shapes and limits.
+- **Owner-to-external-source inactivity/removal notices are not forwarded.**
+  `done` and `blocked` reports close the implemented loop; owner `no_update`,
+  `no_activity`, and `target_removed` notices still require a cross-instance
+  delivery path. *Closing:* add the corresponding event-to-collaboration
+  translation and end-to-end regression coverage.
+- **Remote browser routing and lifecycle commands remain local-only.** Cancel,
+  rename, archive, and delete do not yet cross hosts, and the browser does not
+  address remote Task entries. *Closing:* implement the later host lifecycle
+  slices with matching authorization and restart semantics.
+- **An owner-side delete does not reach the hub.** The owner's `parent` link
+  cascades with the deleted Task before `task_deleted` is broadcast, so the
+  host filter drops the event; the hub learns only on reconnect, when the
+  child's history read returns 404 and the entry is marked unreachable. Until
+  then the hub still lists the child, and a reference to it reads as existing.
+  *Closing:* the remote archive/delete rules step decides what each side does
+  with its link and forwards the deletion.
+- **The remote-child mirror retains stale addresses until process restart.**
+  Deleted-parent entries and failed-create write-back orphans are display-cache
+  facts, so they are not decisions. *Closing:* evict on link deletion when the
+  remote lifecycle step lands.
+
 ## Permission and turn lifecycle
 
 - **A pending permission has no turn-boundary cleanup.** `bridge.cancel` /

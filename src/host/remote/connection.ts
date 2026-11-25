@@ -1,6 +1,10 @@
 import { hashToken } from "../../auth.ts";
 import { isScope } from "../../auth-store.ts";
 import { z } from "zod";
+import {
+  WORKFLOW_STATUSES,
+  type WorkflowStatus,
+} from "../../shared/workflow-status.ts";
 import { HTTP_STATUS } from "../../http-status.ts";
 import {
   StreamSupervisor,
@@ -12,14 +16,20 @@ import type { HostConfig } from "../../config.ts";
 import { errorMessage } from "../../types.ts";
 import { resolveHostToken, TokenCommandError } from "./credentials.ts";
 import {
-  HOST_PROTOCOL_VERSION,
   type HostConnectionState,
   type HostUnreachableReason,
 } from "./state.ts";
 import type {
   RemoteTaskCreateInput,
+  TaskReadInput,
+  TaskReadResult,
   TaskCreateResult,
 } from "../../api/tasks.ts";
+import type { CanonicalTaskHistoryEvent } from "../../task-history.ts";
+import {
+  buildTaskHistoryRead,
+  uniqueTaskHistorySeqs,
+} from "../../task-history.ts";
 
 const REQUEST_TIMEOUT_MS = 8_000;
 
@@ -49,9 +59,11 @@ const TaskCreateResponseSchema = z.object({
   cwdDisplay: z.string(),
   parentId: z.string().nullable(),
   parentAgentId: z.string().nullable(),
-  agentId: z.string().nullable(),
+  agentId: z.string().min(1),
   title: z.string().nullable(),
-  workflowStatus: z.enum(["running", "idle", "waiting", "blocked", "done"]),
+  model: z.string().nullable(),
+  thinking: z.string().nullable(),
+  workflowStatus: z.enum(WORKFLOW_STATUSES),
   source: z.string(),
   configOptions: z.array(ConfigOptionSchema),
   agentCommands: z.object({
@@ -67,11 +79,74 @@ const TaskCreateResponseSchema = z.object({
   }),
 });
 
+const TaskEventSchema = z
+  .object({
+    task_id: z.string().min(1),
+    seq: z.number().int().positive(),
+    type: z.string(),
+    created_at: z.string(),
+    from_ref: z.string(),
+    data: z.string(),
+  })
+  .passthrough();
+
+export interface RemoteTaskDetail {
+  id: string;
+  title: string | null;
+  workflowStatus: WorkflowStatus;
+}
+
+export interface OwnerTaskHistoryEvent extends CanonicalTaskHistoryEvent {
+  parsedData: Record<string, unknown>;
+}
+
+export function decodeOwnerTaskEvents(
+  raw: unknown,
+  taskId: string,
+): OwnerTaskHistoryEvent[] {
+  const parsed = z.object({ events: z.array(z.unknown()) }).safeParse(raw);
+  if (!parsed.success) {
+    throw new HostConnectionFailure("invalid_response");
+  }
+  return parsed.data.events.map((event) => {
+    const row = TaskEventSchema.safeParse(event);
+    if (!row.success || row.data.task_id !== taskId) {
+      throw new HostConnectionFailure("invalid_response");
+    }
+    let parsedData: unknown;
+    try {
+      parsedData = JSON.parse(row.data.data) as unknown;
+    } catch {
+      throw new HostConnectionFailure("invalid_response");
+    }
+    if (
+      !parsedData ||
+      typeof parsedData !== "object" ||
+      Array.isArray(parsedData)
+    ) {
+      throw new HostConnectionFailure("invalid_response");
+    }
+    return {
+      ...row.data,
+      parsedData: parsedData as Record<string, unknown>,
+    };
+  });
+}
+
 export type HostTaskCreateAttempt =
-  | { kind: "success"; result: TaskCreateResult }
+  | {
+      kind: "success";
+      result: TaskCreateResult;
+      connectionId: string | null;
+    }
   | { kind: "rejected"; status: number; reason: string }
   | { kind: "unknown"; reason: string }
   | { kind: "not_sent"; reason: string };
+
+export type HostTaskSendAttempt =
+  | { kind: "accepted"; messageId: string }
+  | { kind: "rejected"; status: number; reason: string }
+  | { kind: "unknown"; reason: string };
 
 export interface HostConnectionOptions {
   fetch?: typeof globalThis.fetch;
@@ -81,14 +156,21 @@ export interface HostConnectionOptions {
     state: HostConnectionState,
     reason?: HostUnreachableReason,
   ) => void;
-  onConnected?: () => void;
+  onConnected?: (isCurrent: () => boolean) => Promise<void> | void;
+  onEvent?: (event: HostStreamEvent) => void | Promise<void>;
+  subscriptionParentIds?: () => string[];
+}
+
+export interface HostStreamEvent {
+  seq?: number;
+  data: Record<string, unknown>;
 }
 
 class HostConnectionFailure extends Error {
   readonly reason: HostUnreachableReason;
 
-  constructor(reason: HostUnreachableReason) {
-    super(reason);
+  constructor(reason: HostUnreachableReason, options?: ErrorOptions) {
+    super(reason, options);
     this.name = "HostConnectionFailure";
     this.reason = reason;
   }
@@ -96,6 +178,22 @@ class HostConnectionFailure extends Error {
 
 function endpoint(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${path}`;
+}
+
+async function responseBody(response: Response): Promise<unknown> {
+  try {
+    return (await response.json()) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function responseError(body: unknown, status: number): string {
+  return body &&
+    typeof body === "object" &&
+    typeof (body as { error?: unknown }).error === "string"
+    ? (body as { error: string }).error
+    : `HTTP ${status}`;
 }
 
 interface HostFetchOptions {
@@ -114,6 +212,7 @@ export class HostConnection {
   private readonly options: HostConnectionOptions;
   private readonly supervisor: StreamSupervisor;
   private tokenCommand: Promise<string> | null = null;
+  private connectionId: string | null = null;
 
   constructor(config: HostConfig, options: HostConnectionOptions) {
     this.config = config;
@@ -141,9 +240,18 @@ export class HostConnection {
     this.supervisor.stop();
   }
 
+  get currentConnectionId(): string | null {
+    return this.connectionId;
+  }
+
+  reconnect(): void {
+    this.supervisor.reconnect();
+  }
+
   async createTask(
     input: RemoteTaskCreateInput,
   ): Promise<HostTaskCreateAttempt> {
+    const connectionId = this.connectionId;
     let token: string;
     try {
       token = await this.resolveToken();
@@ -157,6 +265,9 @@ export class HostConnection {
         token,
         method: "POST",
         body: input,
+        headers: connectionId
+          ? { "X-Host-Connection-Id": connectionId }
+          : undefined,
         redirect: "error",
       });
     } catch (error) {
@@ -166,19 +277,9 @@ export class HostConnection {
       };
     }
 
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      body = null;
-    }
+    const body = await responseBody(response);
     if (!response.ok) {
-      const reason =
-        body &&
-        typeof body === "object" &&
-        typeof (body as { error?: unknown }).error === "string"
-          ? (body as { error: string }).error
-          : `HTTP ${response.status}`;
+      const reason = responseError(body, response.status);
       return response.status >= HTTP_STATUS.BAD_REQUEST &&
         response.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
         ? { kind: "rejected", status: response.status, reason }
@@ -200,11 +301,133 @@ export class HostConnection {
     const activation = parsed.data;
     return {
       kind: "success",
+      connectionId,
       result: {
-        taskId: activation.id,
-        activation,
+        task: {
+          id: activation.id,
+          title: activation.title,
+          agentId: activation.agentId,
+          cwd: activation.cwd,
+          model: activation.model,
+          thinking: activation.thinking,
+          parentId: activation.parentId,
+          workflowStatus: activation.workflowStatus,
+          source: activation.source,
+        },
+        session: {
+          cwdDisplay: activation.cwdDisplay,
+          parentAgentId: activation.parentAgentId,
+          configOptions: activation.configOptions,
+          agentCommands: activation.agentCommands,
+        },
       },
     };
+  }
+
+  async getJson(path: string): Promise<unknown> {
+    const token = await this.resolveToken();
+    const response = await this.fetchResponse(path, {
+      token,
+      redirect: "error",
+    });
+    if (!response.ok) {
+      throw new HostRequestError(path, response.status);
+    }
+    try {
+      return (await response.json()) as unknown;
+    } catch (error) {
+      throw new HostConnectionFailure("invalid_response", { cause: error });
+    }
+  }
+
+  async readTaskDetail(taskId: string): Promise<RemoteTaskDetail> {
+    const raw = await this.getJson(
+      `/api/v1/tasks/${encodeURIComponent(taskId)}`,
+    );
+    const parsed = z
+      .object({
+        id: z.literal(taskId),
+        title: z.string().nullable(),
+        workflowStatus: z.enum(WORKFLOW_STATUSES),
+      })
+      .passthrough()
+      .safeParse(raw);
+    if (!parsed.success) {
+      throw new HostConnectionFailure("invalid_response");
+    }
+    return parsed.data;
+  }
+
+  async readTaskEvents(taskId: string): Promise<OwnerTaskHistoryEvent[]> {
+    const raw = await this.getJson(
+      `/api/v1/tasks/${encodeURIComponent(taskId)}/events`,
+    );
+    return decodeOwnerTaskEvents(raw, taskId);
+  }
+
+  async readTaskHistory(
+    taskId: string,
+    input: TaskReadInput,
+  ): Promise<TaskReadResult> {
+    uniqueTaskHistorySeqs(input.seqs);
+    return buildTaskHistoryRead({
+      taskId,
+      events: await this.readTaskEvents(taskId),
+      seqs: input.seqs,
+    });
+  }
+
+  async sendTaskMessage(input: {
+    sourceTaskId: string;
+    targetTaskId: string;
+    body: string;
+    clientOpId: string;
+    sourceLabel: string;
+  }): Promise<HostTaskSendAttempt> {
+    let token: string;
+    try {
+      token = await this.resolveToken();
+    } catch (error) {
+      return { kind: "unknown", reason: errorMessage(error) };
+    }
+    let response: Response;
+    try {
+      response = await this.fetchResponse(
+        `/api/v1/tasks/${encodeURIComponent(input.sourceTaskId)}/messages`,
+        {
+          token,
+          method: "POST",
+          body: {
+            targetTaskId: input.targetTaskId,
+            body: input.body,
+            sourceLabel: input.sourceLabel,
+          },
+          headers: { "X-Client-Op-Id": input.clientOpId },
+          redirect: "error",
+        },
+      );
+    } catch (error) {
+      return { kind: "unknown", reason: errorMessage(error) };
+    }
+    const body = await responseBody(response);
+    if (response.status === HTTP_STATUS.ACCEPTED) {
+      if (
+        body &&
+        typeof body === "object" &&
+        typeof (body as { messageId?: unknown }).messageId === "string"
+      ) {
+        return {
+          kind: "accepted",
+          messageId: (body as { messageId: string }).messageId,
+        };
+      }
+      return { kind: "unknown", reason: "Owner returned no message id" };
+    }
+    const reason = responseError(body, response.status);
+    return response.status >= HTTP_STATUS.BAD_REQUEST &&
+      response.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
+      ? { kind: "rejected", status: response.status, reason }
+      : { kind: "unknown", reason };
   }
 
   private async runAttempt(attempt: StreamAttempt): Promise<void> {
@@ -212,47 +435,50 @@ export class HostConnection {
     const token = await this.resolveToken(attempt);
     if (!attempt.isCurrent()) return;
     this.supervisor.beginHandshake(attempt);
-    const version = await this.request(attempt.signal, "/api/v1/version");
-    if (
-      !version ||
-      typeof version !== "object" ||
-      (version as { hostProtocol?: unknown }).hostProtocol !==
-        HOST_PROTOCOL_VERSION
-    ) {
-      throw new HostConnectionFailure("protocol_mismatch");
-    }
     const caller = await this.request(
       attempt.signal,
       "/api/v1/auth/verify",
       token,
     );
     if (!caller || typeof caller !== "object") {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
     const identity = caller as { hash?: unknown; scope?: unknown };
     if (identity.hash !== hashToken(token) || !isScope(identity.scope)) {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
-    const ticketBody = await this.request(
-      attempt.signal,
-      "/api/v1/sse-ticket",
+    const ticketResponse = await this.fetchResponse("/api/v1/sse-ticket", {
+      signal: attempt.signal,
       token,
-      "POST",
-    );
+      method: "POST",
+      body: { parentIds: this.options.subscriptionParentIds?.() ?? [] },
+    });
+    if (!ticketResponse.ok) throw this.httpFailure(ticketResponse.status);
+    let ticketBody: unknown;
+    try {
+      ticketBody = await ticketResponse.json();
+    } catch {
+      throw new HostConnectionFailure("invalid_response");
+    }
     const ticket =
       ticketBody && typeof ticketBody === "object"
         ? (ticketBody as { ticket?: unknown }).ticket
         : undefined;
     if (typeof ticket !== "string" || !ticket) {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
     const response = await this.fetchResponse(
       `/api/v1/events/stream?ticket=${encodeURIComponent(ticket)}`,
       { signal: attempt.signal, timeoutMs: null },
     );
     if (!response.ok) throw this.httpFailure(response.status);
-    if (!response.body) throw new HostConnectionFailure("protocol_mismatch");
-    await this.consume(response.body, attempt);
+    if (!response.body) throw new HostConnectionFailure("invalid_response");
+    this.connectionId = response.headers.get("X-Host-Connection-Id");
+    try {
+      await this.consume(response.body, attempt);
+    } finally {
+      this.connectionId = null;
+    }
   }
 
   static failureReason(error: unknown): HostUnreachableReason {
@@ -309,7 +535,7 @@ export class HostConnection {
     try {
       return (await response.json()) as unknown;
     } catch {
-      throw new HostConnectionFailure("protocol_mismatch");
+      throw new HostConnectionFailure("invalid_response");
     }
   }
 
@@ -351,6 +577,7 @@ export class HostConnection {
     );
   }
 
+  // eslint-disable-next-line complexity -- one framed-stream parser owns handshake, heartbeat, and event delivery.
   private async consume(
     body: ReadableStream<Uint8Array>,
     attempt: StreamAttempt,
@@ -359,6 +586,8 @@ export class HostConnection {
     const decoder = new TextDecoder();
     let buffer = "";
     let connected = false;
+    let refreshPromise: Promise<void> | null = null;
+    let bufferedEvents: HostStreamEvent[] = [];
     try {
       while (attempt.isCurrent()) {
         const result = await reader.read();
@@ -384,25 +613,101 @@ export class HostConnection {
             try {
               parsed = JSON.parse(data) as { type?: unknown };
             } catch {
-              throw new HostConnectionFailure("protocol_mismatch");
+              throw new HostConnectionFailure("invalid_response");
             }
             if (parsed.type === "connected") {
               if (!attempt.isCurrent()) return;
               connected = true;
               this.supervisor.connected(attempt);
               if (!attempt.isCurrent()) return;
-              this.options.onState?.("connected");
-              if (attempt.isCurrent()) void this.options.onConnected?.();
+              refreshPromise = Promise.resolve(
+                this.options.onConnected?.(() => attempt.isCurrent()),
+              );
+              const ownedRefresh = refreshPromise;
+              void ownedRefresh.then(
+                async () => {
+                  if (!attempt.isCurrent() || refreshPromise !== ownedRefresh)
+                    return;
+                  try {
+                    while (bufferedEvents.length > 0) {
+                      const pending = bufferedEvents;
+                      bufferedEvents = [];
+                      for (const pendingEvent of pending) {
+                        if (!attempt.isCurrent()) return;
+                        await this.options.onEvent?.(pendingEvent);
+                      }
+                    }
+                    if (
+                      attempt.isCurrent() &&
+                      refreshPromise === ownedRefresh
+                    ) {
+                      refreshPromise = null;
+                      this.options.onState?.("connected");
+                    }
+                  } catch {
+                    if (attempt.isCurrent()) this.supervisor.reconnect(attempt);
+                  }
+                },
+                () => {
+                  if (attempt.isCurrent() && refreshPromise === ownedRefresh) {
+                    this.supervisor.reconnect(attempt);
+                  }
+                },
+              );
+              boundary = buffer.indexOf("\n\n");
+              continue;
+            }
+          }
+          if (connected && event !== "heartbeat" && data) {
+            let payload: unknown;
+            try {
+              payload = JSON.parse(data) as unknown;
+            } catch {
+              throw new HostConnectionFailure("invalid_response");
+            }
+            if (
+              payload &&
+              typeof payload === "object" &&
+              !Array.isArray(payload)
+            ) {
+              const id = frame
+                .split(/\r?\n/)
+                .find((line) => line.startsWith("id:"))
+                ?.slice(3)
+                .trim();
+              const seq = id === undefined ? NaN : Number(id);
+              const streamEvent: HostStreamEvent = {
+                ...(Number.isInteger(seq) ? { seq } : {}),
+                data: payload as Record<string, unknown>,
+              };
+              if (refreshPromise) {
+                bufferedEvents.push(streamEvent);
+              } else {
+                await this.options.onEvent?.(streamEvent);
+              }
             }
           }
           if (connected && event === "heartbeat") {
             this.supervisor.noteActivity(attempt);
           }
+
           boundary = buffer.indexOf("\n\n");
         }
       }
     } finally {
       reader.releaseLock();
     }
+  }
+}
+
+export class HostRequestError extends Error {
+  readonly path: string;
+  readonly status: number;
+
+  constructor(path: string, status: number) {
+    super(`Remote request failed with HTTP ${status}`);
+    this.name = "HostRequestError";
+    this.path = path;
+    this.status = status;
   }
 }

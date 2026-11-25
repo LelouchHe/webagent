@@ -604,22 +604,32 @@
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "sql": "INSERT INTO message_projections\n         (message_id, task_id, role, created_at)\n         VALUES (?, ?, 'target', ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000007",
-                "00000000-0000-4000-8000-000000000001",
-                "source",
+                "00000000-0000-4000-8000-000000000005",
                 1789333200000
               ]
             },
             {
               "kind": "write",
               "method": "run",
-              "sql": "INSERT INTO message_projections (message_id, task_id, role, created_at)\n       VALUES (?, ?, ?, ?)",
+              "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n           VALUES (?, ?, ?, ?, 'queued', ?)",
               "args": [
+                "00000000-0000-4000-8000-000000000008",
                 "00000000-0000-4000-8000-000000000007",
                 "00000000-0000-4000-8000-000000000005",
-                "target",
+                "00000000-0000-4000-8000-000000000007:00000000-0000-4000-8000-000000000005",
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
+              "args": [
+                "00000000-0000-4000-8000-000000000007",
+                "00000000-0000-4000-8000-000000000001",
                 1789333200000
               ]
             },
@@ -633,18 +643,6 @@
                 "system_message",
                 "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000005\",\"targetLabel\":\"Cancelable child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Cancelable child\\\"\",\"body\":\"park until cancelled\"}",
                 "msg:00000000-0000-4000-8000-000000000007",
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO deliveries\n         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n         VALUES (?, ?, ?, ?, 'queued', ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000008",
-                "00000000-0000-4000-8000-000000000007",
-                "00000000-0000-4000-8000-000000000005",
-                "00000000-0000-4000-8000-000000000007:00000000-0000-4000-8000-000000000005",
                 1789333200000
               ]
             }
@@ -734,7 +732,7 @@
             }
           ]
         ],
-        "reads": 76
+        "reads": 71
       }
     },
     {
@@ -1538,14 +1536,14 @@
     "message_projections": [
       {
         "message_id": "00000000-0000-4000-8000-000000000007",
-        "task_id": "00000000-0000-4000-8000-000000000001",
-        "role": "source",
+        "task_id": "00000000-0000-4000-8000-000000000005",
+        "role": "target",
         "created_at": 1789333200000
       },
       {
         "message_id": "00000000-0000-4000-8000-000000000007",
-        "task_id": "00000000-0000-4000-8000-000000000005",
-        "role": "target",
+        "task_id": "00000000-0000-4000-8000-000000000001",
+        "role": "source",
         "created_at": 1789333200000
       }
     ],

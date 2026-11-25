@@ -165,13 +165,24 @@ export function createTask(
      * "inherit".
      */
     agentId?: string | null;
+    host?: string | null;
   },
   clientOpId?: string,
 ): Promise<Record<string, unknown>> {
   // An empty `agentId` throws before the request is built.
+  let agent = opts?.agentId;
+  let host = opts?.host;
+  if (agent?.includes("@")) {
+    const coordinate = agent.split("@");
+    if (coordinate.length !== 2 || !coordinate[0] || !coordinate[1]) {
+      throw new InvalidRequestError("createTask: invalid agent@host");
+    }
+    [agent, host] = coordinate;
+  }
   const body: Record<string, unknown> = {
-    ...agentIdField(opts?.agentId, "createTask"),
+    ...agentIdField(agent, "createTask"),
   };
+  if (host) body.host = host;
   if (opts?.cwd) body.cwd = opts.cwd;
   if (opts?.inheritFromTaskId) body.inheritFromTaskId = opts.inheritFromTaskId;
   if (opts?.parentId) body.parentId = opts.parentId;
@@ -289,9 +300,39 @@ export function sendCollaborationMessage(
   );
 }
 
-/** Active tree by default; `archived` selects archived trees only. */
-export function listTasks(archived = false): Promise<TaskSummary[]> {
-  return request(archived ? "/api/v1/tasks?archived=true" : "/api/v1/tasks");
+/** A remote child in a list read; it follows its local parent. */
+export interface RemoteTaskSummary {
+  id: string;
+  host: string | null;
+  parent_id: string | null;
+  title: string | null;
+  workflow_status?: string;
+  unreachable?: true;
+}
+
+/** Local tasks plus the remote children of the listed parents. */
+export async function listTaskTree(archived = false): Promise<{
+  tasks: TaskSummary[];
+  remote: RemoteTaskSummary[];
+}> {
+  const entries = await request<Array<TaskSummary | RemoteTaskSummary>>(
+    archived ? "/api/v1/tasks?archived=true" : "/api/v1/tasks",
+  );
+  const tasks: TaskSummary[] = [];
+  const remote: RemoteTaskSummary[] = [];
+  for (const entry of entries) {
+    if ("host" in entry) remote.push(entry);
+    else tasks.push(entry);
+  }
+  return { tasks, remote };
+}
+
+/**
+ * Active tree by default; `archived` selects archived trees only. Local tasks
+ * only: the browser cannot open a remote child yet.
+ */
+export async function listTasks(archived = false): Promise<TaskSummary[]> {
+  return (await listTaskTree(archived)).tasks;
 }
 
 export function getConfig(): Promise<{

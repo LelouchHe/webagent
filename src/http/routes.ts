@@ -42,9 +42,18 @@ import {
   buildCollaborationBroadcast,
 } from "../collaboration-message.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
-import { validateTaskTitle } from "../shared/task-title.ts";
-import type { TaskOps } from "../api/tasks.ts";
+import { taskDisplayLabel, validateTaskTitle } from "../shared/task-title.ts";
+import type { TaskListItem, TaskOps } from "../api/tasks.ts";
+import {
+  HostExternalParentError,
+  type HostCollaborationCommand,
+} from "../api/collaboration.ts";
 import { isTaskCreateError } from "../api/tasks.ts";
+import { z } from "zod";
+
+const TaskCreateCoordinateSchema = z
+  .object({ agentId: z.string().optional(), host: z.string().optional() })
+  .passthrough();
 
 const rlog = log.scope("routes");
 const plog = rlog.scope("prompt");
@@ -162,11 +171,6 @@ import {
 } from "../attachments.ts";
 import { readImageInfo } from "../image-info.ts";
 import { HTTP_STATUS } from "../http-status.ts";
-// FIXME(a3-http-boundaries): HTTP still serves the legacy host protocol
-// version directly from remote state. Move this protocol fact to a neutral
-// host contract when the host status route is migrated.
-// eslint-disable-next-line no-restricted-imports
-import { HOST_PROTOCOL_VERSION } from "../host/remote/state.ts";
 
 const IS_WIN = process.platform === "win32";
 
@@ -243,12 +247,16 @@ interface HostStatusRegistry {
     reason?: string | null;
     since: number;
   }>;
+  listRemoteChildrenOf(
+    parentTaskIds: ReadonlySet<string>,
+  ): Array<TaskListItem & { parentTaskId: string }>;
 }
 
 export interface RequestHandlerDeps {
   store: Store;
   tasks?: TaskManager;
   taskOps?: TaskOps;
+  hostCollaboration?: HostCollaborationCommand;
   sseManager: SseManager;
   clientRegistry?: ClientRegistry;
   publicDir: string;
@@ -312,6 +320,38 @@ function readBodyRaw(req: IncomingMessage): Promise<string> {
     });
     req.on("error", reject);
   });
+}
+
+function parseCollaborationBody(body: string): {
+  targetTaskId: string;
+  body: string;
+  sourceLabel?: string;
+} {
+  const raw = JSON.parse(body) as unknown;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("invalid_collaboration_body");
+  }
+  const value = raw as {
+    targetTaskId?: unknown;
+    body?: unknown;
+    sourceLabel?: unknown;
+  };
+  if (
+    typeof value.targetTaskId !== "string" ||
+    typeof value.body !== "string" ||
+    !value.body.trim()
+  ) {
+    throw new Error("invalid_collaboration_body");
+  }
+  const sourceLabel =
+    typeof value.sourceLabel === "string"
+      ? taskDisplayLabel(value.sourceLabel)
+      : undefined;
+  return {
+    targetTaskId: value.targetTaskId,
+    body: value.body,
+    ...(sourceLabel ? { sourceLabel } : {}),
+  };
 }
 
 /**
@@ -882,36 +922,67 @@ export function createRequestHandler(
           }
         }
         const archivedIds = store.listArchivedTaskIds();
-        const publicTasks = store
-          .listTasks({
-            ...(source ? { source } : {}),
-            ...(agentFilter !== undefined ? { agentId: agentFilter } : {}),
-            archived: archivedFilter,
-          })
-          .map((task) => {
-            const {
-              pending_compact_summary: _pendingCompactSummary,
-              has_user_input: hasUserInput,
-              ...publicTask
-            } = task;
-            // Home-abbreviated display form for menus and lists; the raw cwd
-            // stays the canonical round-trip value. Every timestamp field is
-            // rendered ISO-8601 at egress (DB rows hold integer millis).
-            return {
-              ...publicTask,
-              agentId: store.getBindingAgent(task.id) ?? null,
-              created_at: isoFromMillis(task.created_at),
-              last_active_at: isoFromMillis(task.last_active_at),
-              deleted_at: isoFromMillisOrNull(task.deleted_at),
-              cwdDisplay: abbreviateHomePath(task.cwd),
-              hasUserInput: Boolean(hasUserInput),
-              isRoot: store.isRootTaskId(task.id),
-              // Egress fact, not a column: clients keep the full topology and
-              // decide which reads (`/switch`, path roots) exclude these.
-              archived: archivedIds.has(task.id),
-            };
-          });
-        res.end(JSON.stringify(publicTasks));
+        const listedTasks = store.listTasks({
+          ...(source ? { source } : {}),
+          ...(agentFilter !== undefined ? { agentId: agentFilter } : {}),
+          archived: archivedFilter,
+        });
+        const publicTasks = listedTasks.map((task) => {
+          const {
+            pending_compact_summary: _pendingCompactSummary,
+            has_user_input: hasUserInput,
+            remote_parent_id: remoteParentId,
+            ...publicTask
+          } = task;
+          // Home-abbreviated display form for menus and lists; the raw cwd
+          // stays the canonical round-trip value. Every timestamp field is
+          // rendered ISO-8601 at egress (DB rows hold integer millis).
+          return {
+            ...publicTask,
+            agentId: store.getBindingAgent(task.id) ?? null,
+            created_at: isoFromMillis(task.created_at),
+            last_active_at: isoFromMillis(task.last_active_at),
+            deleted_at: isoFromMillisOrNull(task.deleted_at),
+            cwdDisplay: abbreviateHomePath(task.cwd),
+            hasUserInput: Boolean(hasUserInput),
+            isRoot: store.isRootTaskId(task.id),
+            // Egress fact, not a column: clients keep the full topology and
+            // decide which reads (`/switch`, path roots) exclude these.
+            archived: archivedIds.has(task.id),
+          };
+        });
+        // Remote children follow their local parent into the same read, so
+        // a client sees the tree MCP `task_list` sees. Display-only mirror
+        // values; an unknown title is null.
+        const externalParents = [
+          ...new Set(
+            listedTasks
+              .filter((task) => task.remote_parent_id)
+              .map((task) => task.remote_parent_id) as string[],
+          ),
+        ].map((id) => ({
+          id,
+          host: null,
+          parent_id: null,
+          title: null,
+        }));
+        const remoteTasks = (
+          deps.hostRegistry?.listRemoteChildrenOf(
+            new Set(publicTasks.map((task) => task.id)),
+          ) ?? []
+        ).map((item) => ({
+          id: item.id,
+          host: item.host,
+          parent_id: item.parentTaskId,
+          title: item.title ?? null,
+          ...(item.workflowStatus !== undefined
+            ? { workflow_status: item.workflowStatus }
+            : {}),
+          ...(item.unreachable ? { unreachable: true } : {}),
+        }));
+        res.end(
+          JSON.stringify([...publicTasks, ...remoteTasks, ...externalParents]),
+        );
         return;
       }
 
@@ -959,7 +1030,6 @@ export function createRequestHandler(
         json(res, HTTP_STATUS.OK, {
           server: deps.serverVersion ?? "unknown",
           agent: tasks?.agentInfoFor(tasks.defaultAgentId) ?? null,
-          hostProtocol: HOST_PROTOCOL_VERSION,
         });
         return;
       }
@@ -993,9 +1063,36 @@ export function createRequestHandler(
           });
           return;
         }
+        let parentIds: string[] | undefined;
+        if (principal.scope === "host") {
+          const raw = await readBody(req);
+          let body: unknown;
+          try {
+            body = JSON.parse(raw) as unknown;
+          } catch {
+            json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+            return;
+          }
+          if (
+            !body ||
+            typeof body !== "object" ||
+            !Array.isArray((body as { parentIds?: unknown }).parentIds) ||
+            !(body as { parentIds: unknown[] }).parentIds.every(
+              (id) => typeof id === "string",
+            )
+          ) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "parentIds must be an array of strings",
+            });
+            return;
+          }
+          parentIds = (body as { parentIds: string[] }).parentIds;
+        }
         const ticket = deps.ticketStore.mint({
           tokenName: principal.name,
           scope: principal.scope,
+          hash: principal.hash,
+          ...(parentIds === undefined ? {} : { parentIds }),
         });
         json(res, HTTP_STATUS.OK, { ticket, expiresIn: 60 });
         return;
@@ -1333,7 +1430,11 @@ export function createRequestHandler(
       if (statusMatch && req.method === "GET") {
         const taskId = decodeURIComponent(statusMatch[1]);
         const task = store.getTask(taskId);
-        if (!task) {
+        if (
+          !task ||
+          (principalByRequest.get(req)?.scope === "host" &&
+            store.getExternalParentId(taskId) === null)
+        ) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
@@ -1409,15 +1510,75 @@ export function createRequestHandler(
       );
       if (collaborationMessageMatch && req.method === "POST") {
         const sourceTaskId = decodeURIComponent(collaborationMessageMatch[1]);
-        const sourceTask = store.getTask(sourceTaskId);
-        if (!sourceTask) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Source task not found" });
-          return;
-        }
+        const requestPrincipal = principalByRequest.get(req);
         if (!tasks) {
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task manager not available",
           });
+          return;
+        }
+        let body: {
+          targetTaskId: string;
+          body: string;
+          sourceLabel?: string;
+        };
+        try {
+          body = parseCollaborationBody(await readBody(req));
+        } catch {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "targetTaskId and non-empty body are required",
+          });
+          return;
+        }
+        if (requestPrincipal?.scope === "host") {
+          if (!deps.hostCollaboration) {
+            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+              error: "Host collaboration is not configured",
+            });
+            return;
+          }
+          const { opId, replayed } = tryReplayClientOp(
+            req,
+            res,
+            store,
+            sourceTaskId,
+          );
+          if (replayed) return;
+          let accepted;
+          try {
+            accepted = deps.hostCollaboration.receive({
+              sourceTaskId,
+              targetTaskId: body.targetTaskId,
+              body: body.body,
+              ...(body.sourceLabel === undefined
+                ? {}
+                : { sourceLabel: body.sourceLabel }),
+            });
+          } catch (error) {
+            if (!(error instanceof HostExternalParentError)) throw error;
+            json(res, HTTP_STATUS.FORBIDDEN, {
+              error: "Host is not the target's external parent",
+            });
+            return;
+          }
+          const result = {
+            ...accepted,
+            status: "queued",
+            clientOpId: opId ?? undefined,
+          };
+          saveClientOpResult(
+            store,
+            opId,
+            sourceTaskId,
+            HTTP_STATUS.ACCEPTED,
+            result,
+          );
+          json(res, HTTP_STATUS.ACCEPTED, result, req);
+          return;
+        }
+        const sourceTask = store.getTask(sourceTaskId);
+        if (!sourceTask) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Source task not found" });
           return;
         }
         const { opId, replayed } = tryReplayClientOp(
@@ -1427,23 +1588,6 @@ export function createRequestHandler(
           sourceTaskId,
         );
         if (replayed) return;
-        let body: { targetTaskId?: unknown; body?: unknown };
-        try {
-          body = JSON.parse(await readBody(req)) as typeof body;
-        } catch {
-          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
-          return;
-        }
-        if (
-          typeof body.targetTaskId !== "string" ||
-          typeof body.body !== "string" ||
-          !body.body.trim()
-        ) {
-          json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "targetTaskId and non-empty body are required",
-          });
-          return;
-        }
         const targetTask = store.getTask(body.targetTaskId);
         if (!targetTask) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Target task not found" });
@@ -2840,7 +2984,11 @@ export function createRequestHandler(
         if (req.method === "GET") {
           const warm = requestParams.get("warm") === "1";
           const task = store.getTask(taskId);
-          if (!task) {
+          if (
+            !task ||
+            (principalByRequest.get(req)?.scope === "host" &&
+              store.getExternalParentId(taskId) === null)
+          ) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
             return;
           }
@@ -2866,6 +3014,7 @@ export function createRequestHandler(
               source: freshTask.source,
               model: freshTask.model,
               mode: freshTask.mode,
+              workflowStatus: freshTask.workflow_status,
               archived: store.isArchivedTask(freshTask.id),
               configOptions,
             },
@@ -3010,10 +3159,20 @@ export function createRequestHandler(
           source?: string;
           parentId?: string;
           title?: string;
-          agentId?: unknown;
+          agentId?: string;
+          host?: string;
         };
         try {
-          body = JSON.parse(await readBody(req)) as typeof body;
+          const raw = JSON.parse(await readBody(req)) as unknown;
+          const parsed = TaskCreateCoordinateSchema.safeParse(raw);
+          if (!parsed.success) {
+            const field = parsed.error.issues[0]?.path[0];
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: `${field === "host" ? "host" : "agentId"} must be a string`,
+            });
+            return;
+          }
+          body = raw as typeof body;
         } catch {
           json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
           return;
@@ -3035,10 +3194,7 @@ export function createRequestHandler(
         try {
           const created = await taskOps.create(
             requestPrincipal?.scope === "host"
-              ? {
-                  kind: "host",
-                  peerTokenHash: requestPrincipal.hash,
-                }
+              ? { kind: "host" }
               : { kind: "user" },
             {
               cwd: body.cwd,
@@ -3048,23 +3204,36 @@ export function createRequestHandler(
               title: title ?? undefined,
               workflowStatus: title ? "idle" : undefined,
               agentId: body.agentId,
+              host: body.host,
               clientOpId: clientOpId ?? undefined,
             },
           );
-          const activation = created.activation;
-          if (!activation) throw new Error("missing_create_activation");
+          if (requestPrincipal?.scope === "host" && body.parentId) {
+            const connectionId = req.headers["x-host-connection-id"];
+            if (typeof connectionId === "string") {
+              sseManager.subscribeHost(connectionId, body.parentId);
+            }
+          }
+          const session = created.session;
+          if (!session) throw new Error("missing_create_session");
           json(res, HTTP_STATUS.CREATED, {
-            id: created.taskId,
-            cwd: activation.cwd,
-            cwdDisplay: activation.cwdDisplay,
-            parentId: activation.parentId,
-            parentAgentId: activation.parentAgentId,
-            agentId: activation.agentId,
-            title: activation.title,
-            workflowStatus: activation.workflowStatus,
-            source: activation.source,
-            configOptions: activation.configOptions,
-            agentCommands: activation.agentCommands,
+            id: created.task.id,
+            cwd: created.task.cwd,
+            cwdDisplay: session.cwdDisplay,
+            parentId: created.task.parentId,
+            parentAgentId: session.parentAgentId,
+            agentId: created.task.agentId,
+            title: created.task.title,
+            ...(requestPrincipal?.scope === "host"
+              ? {
+                  model: created.task.model,
+                  thinking: created.task.thinking,
+                }
+              : {}),
+            workflowStatus: created.task.workflowStatus,
+            source: created.task.source,
+            configOptions: session.configOptions,
+            agentCommands: session.agentCommands,
             clientOpId: clientOpId ?? undefined,
           });
         } catch (err) {
@@ -3072,11 +3241,6 @@ export function createRequestHandler(
           if (isTaskCreateError(err)) {
             const classified = err;
             switch (classified.kind) {
-              case "agent_id_type":
-                json(res, HTTP_STATUS.BAD_REQUEST, {
-                  error: "agentId must be a string",
-                });
-                return;
               case "input":
                 json(res, HTTP_STATUS.BAD_REQUEST, {
                   error: classified.clientMessage,
@@ -3184,7 +3348,11 @@ export function createRequestHandler(
             ? Math.max(1, Math.min(10000, Number(limitRaw)))
             : undefined;
         const task = store.getTask(taskId);
-        if (!task) {
+        if (
+          !task ||
+          (principalByRequest.get(req)?.scope === "host" &&
+            store.getExternalParentId(taskId) === null)
+        ) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
         }
@@ -3298,7 +3466,9 @@ export function createRequestHandler(
         // When authStore is configured, every SSE connection MUST present a
         // valid single-use ticket from POST /api/v1/sse-ticket.
         let tokenName: string | undefined;
-        let receiveBusinessEvents = true;
+        let hostScope = false;
+        let hostParentIds: string[] = [];
+        const receiveBusinessEvents = true;
         if (deps.authStore) {
           const ticket =
             new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
@@ -3310,7 +3480,8 @@ export function createRequestHandler(
             return;
           }
           tokenName = principal.tokenName;
-          receiveBusinessEvents = principal.scope !== "host";
+          hostScope = principal.scope === "host";
+          hostParentIds = principal.parentIds ?? [];
         }
 
         const clientId = sseManager.generateClientId();
@@ -3319,6 +3490,7 @@ export function createRequestHandler(
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
+          "X-Host-Connection-Id": clientId,
         });
 
         const client: import("../sse-manager.ts").SseClient = {
@@ -3326,6 +3498,12 @@ export function createRequestHandler(
           res,
           tokenName,
           receiveBusinessEvents,
+          ...(hostScope
+            ? {
+                hostScoped: true,
+                hostParentIds: new Set(hostParentIds),
+              }
+            : {}),
         };
         sseManager.add(client);
 
@@ -3334,7 +3512,7 @@ export function createRequestHandler(
         sseManager.sendEvent(client, {
           type: "connected",
           clientId,
-          ...(receiveBusinessEvents
+          ...(!hostScope
             ? {
                 debugLevel: deps.debugLevel ?? "off",
                 pendingCount,
@@ -3385,6 +3563,7 @@ export function createRequestHandler(
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
+          "X-Host-Connection-Id": clientId,
         });
 
         const client: import("../sse-manager.ts").SseClient = {

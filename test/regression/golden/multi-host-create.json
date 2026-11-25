@@ -11,7 +11,7 @@
             "scope": "host"
           }
         },
-        "hubParentId": "00000000-0000-4000-8000-000000000001",
+        "hubParentId": "00000000-0000-4000-8001-000000000001",
         "ownerDb": "<INSTANCE:owner>/data/webagent.db",
         "hubDb": "<INSTANCE:hub>/data/webagent.db"
       },
@@ -45,11 +45,11 @@
               ]
             },
             {
-              "taskId": "00000000-0000-4000-8000-000000000001",
+              "taskId": "00000000-0000-4000-8001-000000000001",
               "events": [
                 {
                   "type": "task_created",
-                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
                   "cwd": "/",
                   "cwdDisplay": "/",
                   "title": "root",
@@ -58,7 +58,7 @@
                   "agentId": "mock",
                   "configOptions": [],
                   "agentCommands": {
-                    "epoch": "00000000-0000-4000-8000-000000000003",
+                    "epoch": "00000000-0000-4000-8001-000000000003",
                     "revision": 1,
                     "commands": [
                       {
@@ -89,12 +89,12 @@
               ]
             },
             {
-              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "sessionId": "00000000-0000-4000-8001-000000000001",
               "calls": [
                 {
                   "kind": "acp",
                   "method": "session/new",
-                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
                   "cwd": "/"
                 }
               ]
@@ -109,8 +109,8 @@
                   "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
                   "args": [
                     "mock",
-                    "00000000-0000-4000-8000-000000000001",
-                    "00000000-0000-4000-8000-000000000001",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8001-000000000001",
                     1789333200000
                   ]
                 }
@@ -120,17 +120,17 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ?",
-                  "args": ["00000000-0000-4000-8000-000000000001"]
+                  "args": ["00000000-0000-4000-8001-000000000001"]
                 },
                 {
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
-                  "args": ["00000000-0000-4000-8000-000000000001"]
+                  "args": ["00000000-0000-4000-8001-000000000001"]
                 }
               ]
             ],
-            "reads": 27
+            "reads": 29
           }
         }
       ]
@@ -191,8 +191,8 @@
         {
           "status": 400,
           "body": {
-            "error": "Host credentials cannot relay an agent@host target",
-            "code": "invalid_remote_agent"
+            "error": "Host credentials cannot relay a remote target",
+            "code": "invalid_remote_host"
           }
         }
       ],
@@ -223,22 +223,22 @@
         {
           "status": 400,
           "body": {
-            "error": "Invalid agent@host target",
-            "code": "invalid_remote_agent"
+            "error": "agentId must be a bare agent id",
+            "code": "invalid_agent"
           }
         },
         {
           "status": 400,
           "body": {
-            "error": "Invalid agent@host target",
-            "code": "invalid_remote_agent"
+            "error": "agentId must be a bare agent id",
+            "code": "invalid_agent"
           }
         },
         {
           "status": 400,
           "body": {
-            "error": "Invalid agent@host target",
-            "code": "invalid_remote_agent"
+            "error": "agentId must be a bare agent id",
+            "code": "invalid_agent"
           }
         }
       ],
@@ -271,7 +271,7 @@
           "id": "00000000-0000-4000-8000-000000000002",
           "cwd": "/",
           "cwdDisplay": "/",
-          "parentId": "00000000-0000-4000-8000-000000000001",
+          "parentId": "00000000-0000-4000-8001-000000000001",
           "parentAgentId": "mock",
           "agentId": "owner-only",
           "title": "REST remote child",
@@ -321,11 +321,10 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO remote_task_links\n             (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n             VALUES (?, ?, 'parent', NULL, ?)",
+                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', NULL)",
                   "args": [
                     "00000000-0000-4000-8000-000000000002",
-                    "00000000-0000-4000-8000-000000000001",
-                    "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+                    "00000000-0000-4000-8001-000000000001"
                   ]
                 },
                 {
@@ -343,12 +342,30 @@
                 }
               ]
             ],
-            "reads": 8
+            "reads": 20
           }
         },
         {
           "name": "hub",
-          "sse": [],
+          "sse": [
+            {
+              "taskId": "00000000-0000-4000-8001-000000000001",
+              "events": [
+                {
+                  "type": "system_message",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "kind": "task_created",
+                  "messageId": "00000000-0000-4000-8001-000000000004",
+                  "sourceTaskId": "00000000-0000-4000-8001-000000000001",
+                  "targetTaskId": "00000000-0000-4000-8000-000000000002",
+                  "taskTitle": "REST remote child",
+                  "role": "source",
+                  "title": "Created task @\"REST remote child\"",
+                  "body": "Task ID: 00000000-0000-4000-8000-000000000002\nagent: owner-only\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
+                }
+              ]
+            }
+          ],
           "mock": [],
           "sql": {
             "writes": [
@@ -356,16 +373,29 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO remote_task_links\n         (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n         VALUES (?, ?, 'child', ?, NULL)",
+                  "sql": "INSERT INTO remote_tasks\n           (local_task_id, remote_task_id, remote_role, remote_host)\n           VALUES (?, ?, 'child', ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000001",
+                    "00000000-0000-4000-8001-000000000001",
                     "00000000-0000-4000-8000-000000000002",
                     "owner"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    1,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "user",
+                    1789333200000
                   ]
                 }
               ]
             ],
-            "reads": 3
+            "reads": 6
           }
         }
       ]
@@ -414,11 +444,10 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO remote_task_links\n             (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n             VALUES (?, ?, 'parent', NULL, ?)",
+                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', NULL)",
                   "args": [
                     "00000000-0000-4000-8000-000000000003",
-                    "00000000-0000-4000-8000-000000000001",
-                    "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+                    "00000000-0000-4000-8001-000000000001"
                   ]
                 },
                 {
@@ -436,24 +465,24 @@
                 }
               ]
             ],
-            "reads": 8
+            "reads": 20
           }
         },
         {
           "name": "hub",
           "sse": [
             {
-              "taskId": "00000000-0000-4000-8000-000000000001",
+              "taskId": "00000000-0000-4000-8001-000000000001",
               "events": [
                 {
                   "type": "user_message",
-                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
                   "text": "create remote mcp",
-                  "clientOpId": "00000000-0000-4000-8000-000000000004"
+                  "clientOpId": "00000000-0000-4000-8001-000000000005"
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
                   "seq": 1,
                   "patch": {
                     "runtime": {
@@ -467,8 +496,20 @@
                   }
                 },
                 {
+                  "type": "system_message",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "kind": "task_created",
+                  "messageId": "00000000-0000-4000-8001-000000000006",
+                  "sourceTaskId": "00000000-0000-4000-8001-000000000001",
+                  "targetTaskId": "00000000-0000-4000-8000-000000000003",
+                  "taskTitle": "MCP remote child",
+                  "role": "source",
+                  "title": "Created task @\"MCP remote child\"",
+                  "body": "Task ID: 00000000-0000-4000-8000-000000000003\nagent: owner-only\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
+                },
+                {
                   "type": "state_patch",
-                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
                   "seq": 2,
                   "patch": {
                     "runtime": {
@@ -481,12 +522,12 @@
                 },
                 {
                   "type": "message_chunk",
-                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
                   "text": "Remote MCP child created."
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
                   "seq": 3,
                   "patch": {
                     "runtime": {
@@ -496,7 +537,7 @@
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
                   "seq": 4,
                   "patch": {
                     "runtime": {
@@ -509,7 +550,7 @@
                 },
                 {
                   "type": "prompt_done",
-                  "taskId": "00000000-0000-4000-8000-000000000001",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
                   "stopReason": "end_turn",
                   "promptId": "prompt-1"
                 }
@@ -518,18 +559,18 @@
           ],
           "mock": [
             {
-              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "sessionId": "00000000-0000-4000-8001-000000000001",
               "calls": [
                 {
                   "kind": "acp",
                   "method": "session/prompt",
-                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
                   "text": "create remote mcp"
                 },
                 {
                   "kind": "mcp",
                   "method": "initialize",
-                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
                   "status": 200,
                   "result": {
                     "result": {
@@ -552,17 +593,18 @@
                 {
                   "kind": "mcp",
                   "method": "notifications/initialized",
-                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
                   "status": 202,
                   "result": null
                 },
                 {
                   "kind": "mcp",
-                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
                   "tool": "task_create",
                   "arguments": {
                     "title": "MCP remote child",
-                    "agent": "owner-only@owner"
+                    "agent": "owner-only",
+                    "host": "owner"
                   },
                   "status": 200,
                   "result": {
@@ -589,10 +631,10 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000001",
-                    1,
+                    "00000000-0000-4000-8001-000000000001",
+                    2,
                     "user_message",
-                    "{\"text\":\"create remote mcp\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+                    "{\"text\":\"create remote mcp\",\"clientOpId\":\"00000000-0000-4000-8001-000000000005\"}",
                     "user",
                     1789333200000
                   ]
@@ -604,8 +646,8 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000001",
-                    2,
+                    "00000000-0000-4000-8001-000000000001",
+                    4,
                     "assistant_message",
                     "{\"text\":\"Remote MCP child created.\"}",
                     "agent",
@@ -619,8 +661,8 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000001",
-                    3,
+                    "00000000-0000-4000-8001-000000000001",
+                    5,
                     "prompt_done",
                     "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
                     "agent",
@@ -640,11 +682,24 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO remote_task_links\n         (local_task_id, remote_task_id, remote_role, remote_host, peer_token_hash)\n         VALUES (?, ?, 'child', ?, NULL)",
+                  "sql": "INSERT INTO remote_tasks\n           (local_task_id, remote_task_id, remote_role, remote_host)\n           VALUES (?, ?, 'child', ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000001",
+                    "00000000-0000-4000-8001-000000000001",
                     "00000000-0000-4000-8000-000000000003",
                     "owner"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    3,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "agent",
+                    1789333200000
                   ]
                 }
               ],
@@ -655,12 +710,12 @@
                   "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
                   "args": [
                     1789333200000,
-                    "00000000-0000-4000-8000-000000000001"
+                    "00000000-0000-4000-8001-000000000001"
                   ]
                 }
               ]
             ],
-            "reads": 22
+            "reads": 25
           }
         }
       ]
@@ -687,7 +742,7 @@
         ],
         "hubTasks": [
           {
-            "id": "00000000-0000-4000-8000-000000000001",
+            "id": "00000000-0000-4000-8001-000000000001",
             "parent_id": null,
             "source": "root"
           }
@@ -695,33 +750,29 @@
         "ownerLinks": [
           {
             "local_task_id": "00000000-0000-4000-8000-000000000002",
-            "remote_task_id": "00000000-0000-4000-8000-000000000001",
+            "remote_task_id": "00000000-0000-4000-8001-000000000001",
             "remote_role": "parent",
-            "remote_host": null,
-            "peer_token_hash": "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+            "remote_host": null
           },
           {
             "local_task_id": "00000000-0000-4000-8000-000000000003",
-            "remote_task_id": "00000000-0000-4000-8000-000000000001",
+            "remote_task_id": "00000000-0000-4000-8001-000000000001",
             "remote_role": "parent",
-            "remote_host": null,
-            "peer_token_hash": "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
+            "remote_host": null
           }
         ],
         "hubLinks": [
           {
-            "local_task_id": "00000000-0000-4000-8000-000000000001",
+            "local_task_id": "00000000-0000-4000-8001-000000000001",
             "remote_task_id": "00000000-0000-4000-8000-000000000002",
             "remote_role": "child",
-            "remote_host": "owner",
-            "peer_token_hash": null
+            "remote_host": "owner"
           },
           {
-            "local_task_id": "00000000-0000-4000-8000-000000000001",
+            "local_task_id": "00000000-0000-4000-8001-000000000001",
             "remote_task_id": "00000000-0000-4000-8000-000000000003",
             "remote_role": "child",
-            "remote_host": "owner",
-            "peer_token_hash": null
+            "remote_host": "owner"
           }
         ],
         "ownerBindings": [
@@ -779,7 +830,7 @@
                 }
               ]
             ],
-            "reads": 46
+            "reads": 96
           }
         },
         {
@@ -801,17 +852,17 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ?",
-                  "args": ["00000000-0000-4000-8000-000000000001"]
+                  "args": ["00000000-0000-4000-8001-000000000001"]
                 },
                 {
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
-                  "args": ["00000000-0000-4000-8000-000000000001"]
+                  "args": ["00000000-0000-4000-8001-000000000001"]
                 }
               ]
             ],
-            "reads": 48
+            "reads": 56
           }
         }
       ]
@@ -914,7 +965,7 @@
       "snapshot": {
         "tasks": [
           {
-            "id": "00000000-0000-4000-8000-000000000001",
+            "id": "00000000-0000-4000-8001-000000000001",
             "cwd": "/",
             "title": "root",
             "workflow_status": "idle",
@@ -932,34 +983,52 @@
         "agent_sessions": [
           {
             "agent_key": "mock",
-            "agent_session_id": "00000000-0000-4000-8000-000000000001",
-            "task_id": "00000000-0000-4000-8000-000000000001",
+            "agent_session_id": "00000000-0000-4000-8001-000000000001",
+            "task_id": "00000000-0000-4000-8001-000000000001",
             "created_at": 1789333200000
           }
         ],
         "events": [
           {
             "id": 1,
-            "task_id": "00000000-0000-4000-8000-000000000001",
+            "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 1,
-            "type": "user_message",
-            "data": "{\"text\":\"create remote mcp\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+            "type": "system_message",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000002\",\"taskTitle\":\"REST remote child\",\"agentId\":\"owner-only\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"REST remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000002\\nagent: owner-only\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
             "created_at": 1789333200000,
             "from_ref": "user"
           },
           {
             "id": 2,
-            "task_id": "00000000-0000-4000-8000-000000000001",
+            "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 2,
+            "type": "user_message",
+            "data": "{\"text\":\"create remote mcp\",\"clientOpId\":\"00000000-0000-4000-8001-000000000005\"}",
+            "created_at": 1789333200000,
+            "from_ref": "user"
+          },
+          {
+            "id": 3,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 3,
+            "type": "system_message",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000003\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000003\\nagent: owner-only\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 4,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 4,
             "type": "assistant_message",
             "data": "{\"text\":\"Remote MCP child created.\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
           {
-            "id": 3,
-            "task_id": "00000000-0000-4000-8000-000000000001",
-            "seq": 3,
+            "id": 5,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 5,
             "type": "prompt_done",
             "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
             "created_at": 1789333200000,

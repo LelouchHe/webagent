@@ -10,17 +10,20 @@ import { SseManager } from "../src/sse-manager.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createTaskOpsCore } from "../src/task-ops.ts";
+import { createTaskHost } from "../src/host/tasks.ts";
 import { buildCollaborationBroadcast } from "../src/collaboration-message.ts";
 import {
   buildTaskCreatedBroadcast,
   buildTaskCreatedSystemMessage,
 } from "../src/task-created-message.ts";
 import { mockBridgeStubs, waitFor } from "./fixtures.ts";
+import type { ConfigOption } from "../src/types.ts";
 
 function request(
   port: number,
   path: string,
-  body: Record<string, unknown>,
+  body: unknown,
   method = "POST",
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   return new Promise((resolve, reject) => {
@@ -78,7 +81,10 @@ describe("S3 collaboration write routes", () => {
   let tmpDir: string;
   let port: number;
   let bridge: ReturnType<typeof mockBridgeStubs> & {
-    newSession(): Promise<{ sessionId: string; configOptions: never[] }>;
+    newSession(): Promise<{
+      sessionId: string;
+      configOptions: ConfigOption[];
+    }>;
     prompt(taskId: string, text: string): Promise<void>;
   };
   const broadcasts: Array<Record<string, unknown>> = [];
@@ -111,15 +117,21 @@ describe("S3 collaboration write routes", () => {
       },
     };
     tasks.attachExecutionBridge(bridge);
-    const handler = createRequestHandler({
-      sseManager: Object.assign(new SseManager(), {
-        broadcast(event: { type: string; taskId?: string }) {
-          broadcasts.push(event);
-        },
-      }),
+    const localTaskOps = createLocalTaskOps({
       store,
       tasks,
-      taskOps: createLocalTaskOps({
+    });
+    const taskOps = {
+      ...localTaskOps,
+      ...createTaskOpsCore({
+        host: createTaskHost({
+          local: localTaskOps,
+          remote: {
+            create: async () => {
+              throw new Error("unexpected remote create");
+            },
+          },
+        }),
         store,
         tasks,
         broadcastTaskCreated: (event) => {
@@ -129,6 +141,16 @@ describe("S3 collaboration write routes", () => {
           broadcasts.push(event);
         },
       }),
+    };
+    const handler = createRequestHandler({
+      sseManager: Object.assign(new SseManager(), {
+        broadcast(event: { type: string; taskId?: string }) {
+          broadcasts.push(event);
+        },
+      }),
+      store,
+      tasks,
+      taskOps,
       publicDir,
       dataDir: tmpDir,
       limits: { bash_output: 1_048_576, image_upload: 10_485_760 },
@@ -200,6 +222,20 @@ describe("S3 collaboration write routes", () => {
   });
 
   it("records the created child on the source task the same way the agent tool does", async () => {
+    let configuredSession = 0;
+    bridge.newSession = async () => ({
+      sessionId: `configured-session-${++configuredSession}`,
+      configOptions: [
+        {
+          type: "select" as const,
+          id: "model",
+          name: "Model",
+          category: "model",
+          currentValue: "inherited",
+          options: [{ value: "inherited", name: "inherited" }],
+        },
+      ],
+    });
     const response = await request(port, "/api/v1/tasks", {
       parentId: "parent",
       cwd: tmpDir,
@@ -226,10 +262,45 @@ describe("S3 collaboration write routes", () => {
       1,
       "the created row must be announced live, not only stored",
     );
+    const createdRowIndex = broadcasts.findIndex(
+      (event) =>
+        event.type === "system_message" && event.kind === "task_created",
+    );
+    const configIndex = broadcasts.findIndex(
+      (event) =>
+        event.type === "config_option_update" && event.taskId === userTaskId,
+    );
+    assert.ok(
+      configIndex > createdRowIndex,
+      "the row broadcasts before config",
+    );
+    assert.equal(userData.cwd, tmpDir);
 
     // The agent path writes into the same stream through the same builder, so
     // both initiators produce one identical row shape.
-    const host = createLocalTaskOps({
+    const localHost = createLocalTaskOps({
+      store,
+      tasks,
+    });
+    const host = createTaskOpsCore({
+      host: createTaskHost({
+        local: localHost,
+        remote: {
+          create: async () => ({
+            task: {
+              id: "unexpected",
+              title: null,
+              agentId: "unexpected",
+              cwd: tmpDir,
+              model: null,
+              thinking: null,
+              parentId: null,
+              workflowStatus: "idle" as const,
+              source: "agent",
+            },
+          }),
+        },
+      }),
       store,
       tasks,
       broadcastTaskCreated: (event) =>
@@ -265,6 +336,7 @@ describe("S3 collaboration write routes", () => {
         taskTitle: "agent-child",
         agentId: "test-agent",
         cwd: tmpDir,
+        model: "inherited",
       }).data,
       "the agent row must be exactly what the shared builder produces",
     );
@@ -275,6 +347,7 @@ describe("S3 collaboration write routes", () => {
         taskTitle: "usr-child",
         agentId: "test-agent",
         cwd: tmpDir,
+        model: "inherited",
       }).data,
       "the user row must be exactly what the shared builder produces",
     );
@@ -460,6 +533,20 @@ describe("S3 collaboration write routes", () => {
       ],
       "both projections must announce the labels their title was built from",
     );
+  });
+
+  it("rejects a null collaboration body without a server error", async () => {
+    const response = await request(port, "/api/v1/tasks/parent/messages", null);
+    assert.equal(response.status, 400);
+  });
+
+  it("does not reject a maximum-length task title used as a source label", async () => {
+    const response = await request(port, "/api/v1/tasks/parent/messages", {
+      targetTaskId: "sibling",
+      body: "valid title label",
+      sourceLabel: "x".repeat(256),
+    });
+    assert.equal(response.status, 202);
   });
 
   it("rejects renaming a task to a live sibling title", async () => {

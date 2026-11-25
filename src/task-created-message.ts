@@ -13,6 +13,7 @@ export interface TaskCreatedMessageInput {
    * have been omitted) ended up.
    */
   agentId: string;
+  host?: string;
   cwd: string;
   /**
    * The **effective** model / thinking value, not the request: an explicit
@@ -43,6 +44,7 @@ export function buildTaskCreatedSystemMessage(
   const body = formatFieldBlock([
     { label: "Task ID", value: input.taskId },
     { label: "agent", value: input.agentId },
+    ...(input.host ? [{ label: "host", value: input.host }] : []),
     { label: "cwd", value: input.cwd },
     { label: "model", value: input.model ?? "", fallback: "inherited" },
     { label: "thinking", value: input.thinking ?? "", fallback: "inherited" },
@@ -55,6 +57,7 @@ export function buildTaskCreatedSystemMessage(
       taskId: input.taskId,
       taskTitle: input.taskTitle,
       agentId: input.agentId,
+      ...(input.host ? { host: input.host } : {}),
       cwd: input.cwd,
       model: input.model ?? null,
       thinking: input.thinking ?? null,

@@ -109,6 +109,10 @@ import {
   clearMarkdownImageReferenceScope,
 } from "./markdown-image-references.ts";
 import { clearMarkdownImageHosts } from "./markdown-stream.ts";
+import {
+  isCollaborationDeliveryStatus,
+  type CollaborationDeliveryState,
+} from "../../src/shared/delivery-status.ts";
 
 const orphanToolUpdates = new OrphanToolUpdateCache({
   // An entry expiring without its host ever appearing is the one genuinely
@@ -1447,17 +1451,11 @@ function renderMessageCard(msg: AgentEvent & { type: "message" }) {
 }
 
 /** Read the egress-attached delivery state from one stored system row. */
-function deliveryStateFrom(d: Record<string, unknown>):
-  | {
-      status: "queued" | "delivered" | "failed";
-      deliveredAt?: string;
-      failureReason?: string;
-    }
-  | undefined {
+function deliveryStateFrom(
+  d: Record<string, unknown>,
+): CollaborationDeliveryState | undefined {
   const status = d.deliveryStatus;
-  if (status !== "queued" && status !== "delivered" && status !== "failed") {
-    return undefined;
-  }
+  if (!isCollaborationDeliveryStatus(status)) return undefined;
   return {
     status,
     ...(typeof d.deliveredAt === "string"
@@ -2109,6 +2107,12 @@ export function handleEvent(msg: AgentEvent) {
   if (msg.type === "task_created") {
     observeTaskCreated(msg.taskId, msg.agentId ?? null);
     noteTaskCreated(msg.taskId, msg.title ?? null);
+  } else if (
+    msg.type === "system_message" &&
+    msg.kind === "task_created" &&
+    msg.targetTaskId
+  ) {
+    noteTaskCreated(msg.targetTaskId, msg.taskTitle ?? null);
   } else if (msg.type === "task_deleted") {
     observeTaskDeleted(msg.taskId);
     // Before the "is this the current task" branch below: a deleted task is

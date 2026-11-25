@@ -181,7 +181,6 @@ describe("TaskManager", () => {
       // (none) instead of being delivered to the parent the task left.
       const result = sm.settleAgentUpdate("child", "done", "finished");
       assert.equal(result.accountTargetTaskId, null);
-      assert.equal(result.collaborationMessageId, null);
     });
 
     it("keeps a handed-over delivery delivered across archive", async () => {
@@ -774,10 +773,8 @@ describe("TaskManager", () => {
     it("deletes the failed task before releasing its creation claim", async () => {
       // A model override that the agent refuses must roll the task back. The
       // rollback runs while the creation claim is still standing, because
-      // releasing it first projects busy→idle, which schedules the
-      // unfinished-work recovery: a recovery that claims this task's prompt
-      // slot in that gap makes the delete refuse as busy, so the failed task
-      // survives with a prompt already submitted into it.
+      // releasing it first projects busy→idle, which schedules unfinished
+      // recovery that could prompt the failed task before deletion.
       store.ensureRootTask(tmpDir);
       sm.cachedConfigOptions = [
         {
@@ -809,8 +806,6 @@ describe("TaskManager", () => {
           };
         },
         async setConfigOption() {
-          // The task row already exists by now, which is exactly the window a
-          // client can read and a peer task can queue work into.
           createdTaskId =
             store.listTasks().find((task) => task.id !== store.rootTaskId)
               ?.id ?? null;
@@ -838,9 +833,6 @@ describe("TaskManager", () => {
 
       await inOverride;
       assert.ok(createdTaskId);
-      // A read lands here and projects the creation claim; a peer task queues
-      // work for the task. Releasing the claim is then a busy→idle edge that
-      // retries that work.
       sm.syncBusy(createdTaskId);
       store.createCollaborationMessage({
         id: "collab-1",

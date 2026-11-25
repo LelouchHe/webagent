@@ -26,7 +26,7 @@
           "mock": [],
           "sql": {
             "writes": [],
-            "reads": 0
+            "reads": 2
           }
         }
       ]
@@ -47,8 +47,7 @@
           "status": 200,
           "body": {
             "server": "0.13.1",
-            "agent": null,
-            "hostProtocol": 1
+            "agent": null
           }
         },
         {
@@ -120,7 +119,7 @@
       "snapshot": {
         "tasks": [
           {
-            "id": "00000000-0000-4000-8000-000000000001",
+            "id": "00000000-0000-4000-8001-000000000001",
             "cwd": "/",
             "title": "root",
             "workflow_status": "idle",

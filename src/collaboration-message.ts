@@ -1,6 +1,6 @@
 import { formatTaskReference } from "./shared/task-reference.ts";
 import { isoFromMillis } from "./shared/time.ts";
-import type { CollaborationDeliveryStatus } from "./store.ts";
+import type { CollaborationDeliveryStatus } from "./shared/delivery-status.ts";
 import type { AgentEvent } from "./types.ts";
 
 export type CollaborationRole = "source" | "target";

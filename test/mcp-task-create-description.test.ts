@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   TASK_CREATE_DESCRIPTION_BUDGET,
   buildTaskCreateDescription,
+  buildTaskCreateHostDescription,
 } from "../src/mcp/task-create-description.ts";
 
 /**
@@ -47,10 +48,10 @@ describe("task_create description", () => {
     assert.ok(description.length <= TASK_CREATE_DESCRIPTION_BUDGET);
   });
 
-  it("advertises configured remote hosts without changing the input schema", () => {
-    const description = buildTaskCreateDescription(["mock"], ["owner"]);
-    assert.match(description, /agent@host/);
-    assert.match(description, /owner/);
+  it("describes configured remote hosts separately", () => {
+    const description = buildTaskCreateHostDescription(["owner", "mini"]);
+    assert.match(description, /owner, mini/);
+    assert.match(description, /Omit or use null for local/);
     assert.ok(description.length <= TASK_CREATE_DESCRIPTION_BUDGET);
   });
 

@@ -7,13 +7,16 @@ const fixedNow = Number(
 );
 const require = createRequire(import.meta.url);
 
+const uuidSpace = Number(process.env.WEBAGENT_REGRESSION_UUID_SPACE ?? 0)
+  .toString(16)
+  .padStart(3, "0");
 let uuidCounter = 0;
 let byteCounter = 0;
 const crypto: typeof import("node:crypto") = require("node:crypto");
 crypto.randomUUID = () => {
   uuidCounter += 1;
   const hex = uuidCounter.toString(16).padStart(12, "0");
-  return `00000000-0000-4000-8000-${hex}`;
+  return `00000000-0000-4000-8${uuidSpace}-${hex}`;
 };
 crypto.randomBytes = ((
   size: number,

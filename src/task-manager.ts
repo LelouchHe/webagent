@@ -62,6 +62,7 @@ import { buildTaskCreatedSystemMessage } from "./task-created-message.ts";
 import { canonicalCwd } from "./cwd-path.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
 import { log } from "./log.ts";
+import type { TaskUpdateStatus } from "./shared/workflow-status.ts";
 import { TaskTreeLock, type TaskTreeLockRelease } from "./task-tree-lock.ts";
 
 const slog = log.scope("task");
@@ -681,6 +682,9 @@ export class TaskManager implements ObligationHost {
   readonly activePrompts: Set<string> = new TurnSlotSet(this.openTurns);
   /** One microtask recovery per task while an unfinished-work retry is active. */
   private readonly pendingWorkRecoveries = new Set<string>();
+  private readonly collaborationSourceLabels = new Map<string, string>();
+  private remoteCollaborationTitle:
+    ((taskId: string) => string | undefined) | undefined;
   /** Latest qualifying agent-runtime activity per task, epoch ms. */
   private readonly lastAgentActivityAt = new Map<string, number>();
   /**
@@ -705,6 +709,13 @@ export class TaskManager implements ObligationHost {
   private deliveryStatusBroadcast:
     | ((event: Extract<AgentEvent, { type: "collaboration_delivery" }>) => void)
     | null = null;
+  private collaborationPromptBroadcast:
+    | ((
+        event: Extract<AgentEvent, { type: "collaboration_prompt" }>,
+        seq: number,
+      ) => void)
+    | null = null;
+  private remoteChildWakeSource: ((taskId: string) => boolean) | null = null;
   /**
    * SSE broadcast hook for a task that just became live. Every creation that
    * goes through `createTask` (HTTP, quick prompt, message consume, agent
@@ -863,9 +874,34 @@ export class TaskManager implements ObligationHost {
   ): void {
     const target = this.store.getTaskIncludingDeleted(recipientTaskId);
     if (!target) return;
+    // The external parent comes from the target's own `parent` link, never
+    // from the message: a remote child's report reaches its hub parent with
+    // the same agent/no-source-projection shape as an external dispatch.
+    let externalParentTaskId: string | undefined | null = null;
     for (const message of messages) {
-      if (!shouldArm(message, target)) continue;
-      this.obligations.arm(message.source_task_id, recipientTaskId);
+      if (
+        externalParentTaskId === null &&
+        message.source_actor === "agent" &&
+        !message.has_source_projection
+      ) {
+        externalParentTaskId =
+          this.store.getExternalParentId(recipientTaskId) ?? undefined;
+      }
+      const external = externalParentTaskId === message.source_task_id;
+      if (
+        !shouldArm(
+          message,
+          target,
+          external ? message.source_task_id : undefined,
+        )
+      ) {
+        continue;
+      }
+      this.obligations.arm(
+        message.source_task_id,
+        recipientTaskId,
+        external ? "external" : "local",
+      );
     }
   }
 
@@ -1518,7 +1554,7 @@ export class TaskManager implements ObligationHost {
        */
       announce?: boolean;
     },
-  ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+  ) {
     const agentId = this.attachExecutionBridge(bridge);
     if (opts?.agentId !== undefined && opts.agentId !== agentId) {
       // The declared target and the resolved transport must be the same agent,
@@ -1575,7 +1611,6 @@ export class TaskManager implements ObligationHost {
     cwd?: string;
     source: string;
     externalParentId: string;
-    peerTokenHash: string;
     title?: string;
     workflowStatus?: WorkflowStatus;
   }): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
@@ -1607,7 +1642,6 @@ export class TaskManager implements ObligationHost {
       source: input.source,
       agentId: input.agentId,
       externalParentId: input.externalParentId,
-      peerTokenHash: input.peerTokenHash,
       title: input.title,
       workflowStatus: input.workflowStatus,
       creationAnchor,
@@ -1734,7 +1768,7 @@ export class TaskManager implements ObligationHost {
       agentId?: string;
       assertCaller?: () => void;
     },
-  ): Promise<{ taskId: string; configOptions: ConfigOption[] }> {
+  ) {
     const taskCwd = this.resolveTaskCwd(cwd, this.defaultCwd);
     const agentId = this.bridgeAgentId(bridge);
     try {
@@ -1854,9 +1888,23 @@ export class TaskManager implements ObligationHost {
       }
 
       const task = this.store.getTask(taskId);
+      if (!task) throw new Error("task persistence returned no task");
+      const finalConfig = this.applyStoredConfig(configOptions, task);
       return {
         taskId: taskId,
-        configOptions: task ? this.applyStoredConfig(configOptions, task) : [],
+        configOptions: finalConfig,
+        facts: {
+          title: task.title,
+          agentId,
+          cwd: task.cwd,
+          parentId: task.parent_id,
+          workflowStatus: task.workflow_status,
+          source: task.source,
+          model: reportedExecutionConfig(finalConfig).model ?? task.model,
+          thinking:
+            reportedExecutionConfig(finalConfig).reasoning_effort ??
+            task.reasoning_effort,
+        },
       };
     } finally {
       this.endCreatingClaim(taskId);
@@ -3902,6 +3950,29 @@ export class TaskManager implements ObligationHost {
     this.deliveryStatusBroadcast = broadcast;
   }
 
+  setCollaborationPromptBroadcast(
+    broadcast: (
+      event: Extract<AgentEvent, { type: "collaboration_prompt" }>,
+      seq: number,
+    ) => void,
+  ): void {
+    this.collaborationPromptBroadcast = broadcast;
+  }
+
+  setRemoteChildWakeSource(check: (taskId: string) => boolean): void {
+    this.remoteChildWakeSource = check;
+  }
+
+  rememberCollaborationSourceLabel(messageId: string, label: string): void {
+    this.collaborationSourceLabels.set(messageId, label);
+  }
+
+  setRemoteCollaborationTitle(
+    resolve: (taskId: string) => string | undefined,
+  ): void {
+    this.remoteCollaborationTitle = resolve;
+  }
+
   /**
    * Install the SSE broadcast hook for a newly created task. Every creation
    * entry point (HTTP create, quick prompt, agent `task_create`) announces
@@ -3955,13 +4026,18 @@ export class TaskManager implements ObligationHost {
    * back to the current parent when none is open) and are delivered there.
    * The account closes only after the update transaction commits.
    */
+  // eslint-disable-next-line complexity -- one settlement selects local/account/external report ownership.
   settleAgentUpdate(
     targetTaskId: string,
-    status: "waiting" | "blocked" | "done",
+    status: TaskUpdateStatus,
     body: string,
+    recordReport?: (report: {
+      targetTaskId: string;
+      targetIsLocal: boolean;
+    }) => void,
   ): {
-    collaborationMessageId: string | null;
     accountTargetTaskId: string | null;
+    event: ReturnType<Store["recordAgentWorkflowUpdate"]>["event"];
     /**
      * For `waiting` with nothing visible to wake the task while it owes an
      * account: the silence window after which the requester is notified.
@@ -3969,7 +4045,7 @@ export class TaskManager implements ObligationHost {
     silenceWatchMs?: number;
   } {
     if (status === "waiting") {
-      this.store.recordAgentWorkflowUpdate(
+      const { event } = this.store.recordAgentWorkflowUpdate(
         targetTaskId,
         status,
         body,
@@ -3983,30 +4059,53 @@ export class TaskManager implements ObligationHost {
       const wakeSourceVisible =
         this.obligations.hasOpenAsSource(targetTaskId) ||
         this.store.countQueuedDeliveries(targetTaskId) > 0 ||
-        this.store.hasQueuedDispatchToChild(targetTaskId);
+        this.store.hasQueuedDispatchToChild(targetTaskId) ||
+        this.remoteChildWakeSource?.(targetTaskId) === true;
       const watched =
         !wakeSourceVisible &&
         this.obligations.noteUnwatchedWaiting(targetTaskId);
       return {
-        collaborationMessageId: null,
         accountTargetTaskId: null,
+        event,
         ...(watched ? { silenceWatchMs: this.obligations.silenceMs } : {}),
       };
     }
-    const accountSource = this.obligations.peekSource(targetTaskId);
+    const account = this.obligations.peekSource(targetTaskId);
+    const accountSource = account?.sourceTaskId;
+    const task =
+      accountSource === undefined ? this.store.getTask(targetTaskId) : null;
+    const localParentTaskId = task?.parent_id ?? null;
+    const externalParentTaskId =
+      account?.sourceKind === "external"
+        ? account.sourceTaskId
+        : account === undefined && localParentTaskId === null
+          ? (task?.remote_parent_id ?? null)
+          : null;
     const accountTargetTaskId =
-      accountSource ?? this.store.getTask(targetTaskId)?.parent_id ?? null;
-    const { collaborationMessageId } = this.store.recordAgentWorkflowUpdate(
+      accountSource ?? localParentTaskId ?? externalParentTaskId;
+    const { event } = this.store.recordAgentWorkflowUpdate(
       targetTaskId,
       status,
       body,
       accountTargetTaskId,
       accountSource === undefined ? "fallback" : "settled",
+      () => {
+        if (!accountTargetTaskId) return;
+        recordReport?.({
+          targetTaskId: accountTargetTaskId,
+          targetIsLocal:
+            account?.sourceKind === "local" ||
+            (account === undefined && localParentTaskId !== null),
+        });
+      },
     );
     // A failed transaction above leaves both the account and the marker alone.
     this.obligations.noteUpdate(targetTaskId);
     if (accountSource !== undefined) this.obligations.close(targetTaskId);
-    return { collaborationMessageId, accountTargetTaskId };
+    return {
+      accountTargetTaskId,
+      event,
+    };
   }
 
   /**
@@ -4015,11 +4114,12 @@ export class TaskManager implements ObligationHost {
    * closes with the report. User and runtime messages report nothing.
    */
   private onDeliveryFailed(change: CollaborationDeliveryStatusChange): void {
+    this.collaborationSourceLabels.delete(change.messageId);
     const message = this.store.getCollaborationMessage(change.messageId);
     if (message?.source_actor !== "agent") return;
     const text = `A message to the target was not delivered (${change.failureReason ?? "unknown"}).`;
     if (
-      this.obligations.peekSource(change.recipientTaskId) ===
+      this.obligations.peekSource(change.recipientTaskId)?.sourceTaskId ===
       message.source_task_id
     ) {
       this.obligations.noteTargetUnavailable(change.recipientTaskId, text);
@@ -4122,10 +4222,17 @@ export class TaskManager implements ObligationHost {
     // id stays the only thing presented as a precise handle. The body is
     // fenced verbatim between scissor lines so the agent never reads metadata
     // as instruction and the forwarding layer never rewrites the content.
-    const sourceName =
+    const sourceName = this.collaborationSourceLabel(message);
+    return `From ${JSON.stringify(sourceName)} (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
+  }
+
+  private collaborationSourceLabel(message: CollaborationMessageRow): string {
+    return (
+      this.collaborationSourceLabels.get(message.id) ??
       this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
-      message.source_task_id.slice(0, 8);
-    return `From "${sourceName}" (task id ${message.source_task_id}):\n---8<---\n${message.body}\n---8<---`;
+      this.remoteCollaborationTitle?.(message.source_task_id) ??
+      message.source_task_id.slice(0, 8)
+    );
   }
 
   /** Write the recipient's one visible row for a just-drained message. */
@@ -4155,9 +4262,7 @@ export class TaskManager implements ObligationHost {
       }
       runtimeMessage = recorded;
     }
-    const sourceLabel =
-      this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
-      message.source_task_id.slice(0, 8);
+    const sourceLabel = this.collaborationSourceLabel(message);
     this.store.saveEvent(
       taskId,
       "system_message",
@@ -4205,11 +4310,15 @@ export class TaskManager implements ObligationHost {
       const bounded = truncated
         ? `${text.slice(0, MAX_COLLABORATION_PROMPT_AUDIT - 2)}\n…`
         : text;
-      this.store.saveEvent(
+      const saved = this.store.saveEvent(
         taskId,
         "collaboration_prompt",
         { messageIds, text: bounded, truncated, rawSize },
         { from_ref: "system" },
+      );
+      this.collaborationPromptBroadcast?.(
+        { type: "collaboration_prompt", taskId, messageIds },
+        saved.seq,
       );
     } catch (error) {
       slog.warn("collaboration prompt audit failed", {
@@ -4346,6 +4455,7 @@ export class TaskManager implements ObligationHost {
         this.store.getTaskIncludingDeleted(taskId)?.title ?? taskId.slice(0, 8);
       for (const { message } of claimed) {
         this.projectDeliveredMessage(taskId, message, targetLabel);
+        this.collaborationSourceLabels.delete(message.id);
       }
       this.persistCollaborationPromptAudit(
         taskId,

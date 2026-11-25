@@ -549,8 +549,6 @@ describe("mcp authority over the production host", () => {
     const children = store.getDescendantTaskIds(source.taskId);
     assert.equal(children.length, 1, "the child task is kept");
     assert.ok(store.getTask(children[0]));
-    // No source transcript row and no broadcast for a request that lost its
-    // authority before that write.
     assert.equal(
       store
         .getEvents(source.taskId)

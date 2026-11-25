@@ -5,7 +5,11 @@ import {
   type TaskCaller,
   type TaskOps,
 } from "../api/tasks.ts";
-import { buildTaskCreateDescription } from "./task-create-description.ts";
+import {
+  buildTaskCreateDescription,
+  buildTaskCreateHostDescription,
+} from "./task-create-description.ts";
+import { TASK_UPDATE_STATUSES } from "../shared/workflow-status.ts";
 import {
   agentStartError,
   configOverrideError,
@@ -69,6 +73,7 @@ export function registerMcpTools(
     {
       description:
         "List the current Task, its parent, and its direct children. " +
+        "Remote children carry host and optional unreachable. " +
         "workflowStatus is the last typed update or the runtime turn status " +
         "(`running`, `idle`); it is not a lifecycle terminal. executionState is " +
         "the live runtime (`agent`, `bash`, or `idle`). lastEventAt is the " +
@@ -79,7 +84,7 @@ export function registerMcpTools(
     },
     async () => {
       guard();
-      return jsonContent({ tasks: host!.list(principal) });
+      return jsonContent({ tasks: await host!.list(principal) });
     },
   );
 
@@ -132,7 +137,7 @@ export function registerMcpTools(
     async ({ task_id, text, range }) => {
       guard();
       return jsonContent(
-        host!.query(principal, {
+        await host!.query(principal, {
           taskId: task_id ?? undefined,
           text: text ?? undefined,
           range: range ?? undefined,
@@ -163,7 +168,7 @@ export function registerMcpTools(
     async ({ task_id, seqs }) => {
       guard();
       return jsonContent(
-        host!.read(principal, { taskId: task_id ?? undefined, seqs }),
+        await host!.read(principal, { taskId: task_id ?? undefined, seqs }),
       );
     },
   );
@@ -171,11 +176,8 @@ export function registerMcpTools(
   server.registerTool(
     "task_create",
     {
-      description: buildTaskCreateDescription(
-        options.configuredAgentIds ?? [],
-        options.configuredHostIds ?? [],
-      ),
-      inputSchema: {
+      description: buildTaskCreateDescription(options.configuredAgentIds ?? []),
+      inputSchema: z.strictObject({
         title: z
           .string()
           .trim()
@@ -197,11 +199,27 @@ export function registerMcpTools(
           .string()
           .trim()
           .min(1)
+          .refine((value) => !value.includes("@"), "agent must be a bare id")
           .nullable()
           .optional()
           .describe(
             "Execution agent; null or omission inherits the current Task's agent",
           ),
+        ...((options.configuredHostIds?.length ?? 0) > 0
+          ? {
+              host: z
+                .string()
+                .trim()
+                .min(1)
+                .nullable()
+                .optional()
+                .describe(
+                  buildTaskCreateHostDescription(
+                    options.configuredHostIds ?? [],
+                  ),
+                ),
+            }
+          : {}),
         model: z
           .string()
           .trim()
@@ -222,9 +240,9 @@ export function registerMcpTools(
           .describe(
             "Thinking level override; null or omission inherits the current Task",
           ),
-      },
+      }),
     },
-    async ({ title, cwd, agent, model, thinking }) => {
+    async ({ title, cwd, agent, host: remoteHost, model, thinking }) => {
       guard();
       try {
         return jsonContent({
@@ -235,6 +253,7 @@ export function registerMcpTools(
                 title,
                 cwd: cwd ?? undefined,
                 agentId: agent ?? undefined,
+                ...(remoteHost == null ? {} : { host: remoteHost as string }),
                 model: model ?? undefined,
                 thinking: thinking ?? undefined,
                 parentId: principal.taskId,
@@ -242,14 +261,12 @@ export function registerMcpTools(
                 source: "agent",
               },
             )
-          ).taskId,
+          ).task.id,
         });
       } catch (error) {
         if (isTaskCreateError(error)) {
           const classified = error;
           switch (classified.kind) {
-            case "agent_id_type":
-              throw new Error("agentId must be a string", { cause: error });
             case "agent_not_configured":
               throw new Error(unconfiguredAgentError(classified.agentId), {
                 cause: error,
@@ -328,7 +345,7 @@ export function registerMcpTools(
     "task_send",
     {
       description:
-        "Queue a durable message to a visible Task. " +
+        "Queue a durable message to a visible Task, or hand it synchronously to a linked remote owner. " +
         "It is delivered at the recipient's next turn boundary and wakes it. " +
         "An agent's message to its direct child opens or keeps open the account for that edge once it is delivered.",
       inputSchema: {
@@ -353,7 +370,7 @@ export function registerMcpTools(
         "Any update satisfies the current turn's account check. The Task is not deleted or closed.",
       inputSchema: {
         status: z
-          .enum(["waiting", "blocked", "done"])
+          .enum(TASK_UPDATE_STATUSES)
           .describe(
             "`done`: the work is complete. `blocked`: progress needs the requester, a human, an external event, missing information, or permission. `waiting`: work continues without the requester, and a Task this one dispatched or its own background work will wake it.",
           ),

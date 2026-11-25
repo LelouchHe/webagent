@@ -201,6 +201,24 @@ describe("Store", () => {
       }
     });
 
+    it("derives workflow and delivery CHECK literals from shared lists", () => {
+      const sqlite = store["db"];
+      const tasksSql = sqlite
+        .prepare("SELECT sql FROM sqlite_master WHERE name = 'tasks'")
+        .get() as { sql: string };
+      const deliveriesSql = sqlite
+        .prepare("SELECT sql FROM sqlite_master WHERE name = 'deliveries'")
+        .get() as { sql: string };
+      assert.match(
+        tasksSql.sql,
+        /workflow_status IN \('running', 'idle', 'waiting', 'blocked', 'done'\)/,
+      );
+      assert.match(
+        deliveriesSql.sql,
+        /status IN \('queued', 'delivered', 'failed'\)/,
+      );
+    });
+
     it("refuses a deliveries table whose status CHECK still has draining", () => {
       const legacyDir = mkdtempSync(join(tmpdir(), "webagent-old-delivery-"));
       new Store(legacyDir).close();

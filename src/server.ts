@@ -13,7 +13,13 @@ import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
 import { createLocalTaskOps } from "./host/local/adapter.ts";
-import { createTaskHost } from "./host/tasks.ts";
+import {
+  createRemoteReportEnqueuer,
+  createRoutedTaskOps,
+  createTaskHost,
+} from "./host/tasks.ts";
+import { createRemoteReportHandler } from "./host/collaboration.ts";
+import { createHostCollaborationCommand } from "./host/local/collaboration.ts";
 import { createTaskOpsCore } from "./task-ops.ts";
 import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
 import {
@@ -182,7 +188,22 @@ sseManager.startHeartbeat();
 
 const authStore = new AuthStore(pathJoin(config.data_dir, "auth.json"));
 const ticketStore = new TicketStore();
-const hostRegistry = new HostRegistry(config.hosts);
+const receiveRemoteReport = createRemoteReportHandler({
+  store,
+  enqueueReport: createRemoteReportEnqueuer({ store, tasks }),
+});
+const hostRegistry = new HostRegistry(config.hosts, {
+  listLinks: () =>
+    store.listRemoteChildren().map((link) => ({
+      localTaskId: link.local_task_id,
+      remoteTaskId: link.remote_task_id,
+      host: link.remote_host,
+    })),
+  onRemoteEvent: receiveRemoteReport,
+});
+tasks.setRemoteCollaborationTitle((taskId) =>
+  hostRegistry.remoteTitleForTaskId(taskId),
+);
 // In-memory image signing secret; regenerated on every restart so previously
 // leaked URLs become invalid the moment the server is bounced.
 const attachmentSecret = randomBytes(32);
@@ -193,6 +214,7 @@ sseManager.setRevocationCheck(
 );
 sseManager.setAttachmentSecret(attachmentSecret);
 sseManager.setLabelMapProvider((taskId) => tasks.getLabelMap(taskId));
+sseManager.setHostEventParent((taskId) => store.getExternalParentId(taskId));
 
 // Broadcast runtime state patches to all SSE clients interested in the task.
 tasks.state.onPatch((event) => {
@@ -203,6 +225,9 @@ const broadcastCollaboration = (input: CollaborationBroadcastRequest): void => {
   sseManager.broadcast(buildCollaborationBroadcast(input));
 };
 tasks.setCollaborationBroadcast(broadcastCollaboration);
+tasks.setCollaborationPromptBroadcast((event, seq) => {
+  sseManager.broadcastHost(event, seq);
+});
 tasks.setDeliveryStatusBroadcast((event) => {
   sseManager.broadcast(event);
 });
@@ -220,17 +245,19 @@ const localTaskOps = createLocalTaskOps({
   store,
   tasks,
   cancelTimeoutMs: config.limits.cancel_timeout,
-  broadcastCollaboration,
-  broadcastTaskCreated: (event) => {
-    sseManager.broadcast(buildTaskCreatedBroadcast(event));
-  },
-  broadcastConfigUpdate: (event) => {
-    sseManager.broadcast(event);
-  },
   broadcastTaskCancelNotice: (event) => {
     // One record, one frame: the transcript row is the whole cancellation and
     // rides the generic system-message path.
     sseManager.broadcast(event);
+  },
+  broadcastTaskUpdate: ({ taskId, seq, data }) => {
+    sseManager.broadcastHost(
+      { type: "task_update", taskId, ...data } as Extract<
+        AgentEvent,
+        { type: "task_update" }
+      >,
+      seq,
+    );
   },
 });
 const taskOps = createTaskOpsCore({
@@ -240,8 +267,25 @@ const taskOps = createTaskOpsCore({
   }),
   store,
   tasks,
+  broadcastTaskCreated: (event) => {
+    sseManager.broadcast(buildTaskCreatedBroadcast(event));
+  },
+  broadcastConfigUpdate: (event) => {
+    sseManager.broadcast(event);
+  },
 });
-const routedTaskOps: TaskOps = { ...localTaskOps, ...taskOps };
+const routedTaskOps: TaskOps = {
+  ...localTaskOps,
+  ...taskOps,
+  ...createRoutedTaskOps({
+    local: localTaskOps,
+    remote: hostRegistry,
+    store,
+    tasks,
+    broadcastCollaboration,
+  }),
+};
+tasks.setRemoteChildWakeSource((taskId) => hostRegistry.hasRemoteChild(taskId));
 const messageCleanup: CleanupHandle = startMessageCleanup(
   store,
   config.messages.unprocessed_ttl_days,
@@ -257,6 +301,7 @@ const requestHandler = createRequestHandler({
   store,
   tasks,
   taskOps: routedTaskOps,
+  hostCollaboration: createHostCollaborationCommand({ store, tasks }),
   sseManager,
   clientRegistry,
   publicDir: PUBLIC_DIR,

@@ -13,7 +13,7 @@ routing seam for that caller.
 | `GET /api/v1/version`, `GET /api/v1/auth/verify` | Remote host handshake protocol and caller hash/scope validation | `multi-host-connect`, `multi-host-unauthorized` |
 | `task_query` | `TaskOps.query` -> bounded history index | `mcp-list`, `mcp-lifecycle`, `mcp-authorization-tree`, `mcp-cold-family`; shape/range limits remain in `test/mcp-task-host.test.ts` |
 | `task_read` | `TaskOps.read` -> selected persisted rows | `mcp-list`, `mcp-authorization-tree`, `mcp-cold-family`; byte limits and structured rows remain in `test/mcp-task-host.test.ts` |
-| `task_create` | `TaskOps.create` -> local manager creation or one-shot `agent@host` transport | `mcp-lifecycle`, `mcp-collaboration`, `mcp-create-errors`, `multi-host-create` |
+| `task_create` | `TaskOps.create` -> local manager creation or one-shot `agentId` + `host` transport | `mcp-lifecycle`, `mcp-collaboration`, `mcp-create-errors`, `multi-host-create` |
 | `task_cancel` | `TaskOps.cancel` -> execution cancellation and audits | `mcp-lifecycle` |
 | `task_send` | `TaskOps.send` -> Store message/delivery creation and kick | `mcp-lifecycle`, `mcp-collaboration`, `mcp-authorization-tree` |
 | `task_update` | `TaskOps.update` -> settle typed update and side effects | `mcp-collaboration`, `mcp-update-status` |

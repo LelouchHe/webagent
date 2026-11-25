@@ -15,6 +15,8 @@ import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createTaskHost } from "../src/host/tasks.ts";
+import { createTaskOpsCore } from "../src/task-ops.ts";
 import { buildTaskCreatedBroadcast } from "../src/task-created-message.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
@@ -143,11 +145,18 @@ describe("Task REST API", () => {
     bodyReadStarted = new Promise<string>((resolve) => {
       markBodyReadStarted = resolve;
     });
-
-    const handler = createRequestHandler({
-      store,
-      tasks,
-      taskOps: createLocalTaskOps({
+    const localTaskOps = createLocalTaskOps({ store, tasks });
+    const taskOps = {
+      ...localTaskOps,
+      ...createTaskOpsCore({
+        host: createTaskHost({
+          local: localTaskOps,
+          remote: {
+            async create() {
+              throw new Error("unexpected remote create");
+            },
+          },
+        }),
         store,
         tasks,
         broadcastTaskCreated: (event) => {
@@ -157,6 +166,12 @@ describe("Task REST API", () => {
           broadcastEvents.push(event);
         },
       }),
+    };
+
+    const handler = createRequestHandler({
+      store,
+      tasks,
+      taskOps,
       onRequestBodyReadStart: (url) => {
         markBodyReadStarted(url);
       },
@@ -504,6 +519,38 @@ describe("Task REST API", () => {
       const body = JSON.parse(res.body);
       assert.equal(store.getTask(body.id)?.parent_id, rootId);
       assert.equal(body.parentId, rootId);
+    });
+
+    it("rejects an agent@host string at the REST create boundary", async () => {
+      const rootId = store.ensureRootTask(tmpDir).id;
+      const res = await makeRequest(
+        port,
+        "POST",
+        "/api/v1/tasks",
+        JSON.stringify({
+          parentId: rootId,
+          agentId: "test-agent@owner",
+        }),
+      );
+      assert.equal(res.status, 400);
+      assert.match(res.body, /bare agent id/);
+    });
+
+    it("validates create agent and host as strings at REST entry", async () => {
+      const rootId = store.ensureRootTask(tmpDir).id;
+      for (const [field, value] of [
+        ["agentId", 42],
+        ["host", 42],
+      ] as const) {
+        const res = await makeRequest(
+          port,
+          "POST",
+          "/api/v1/tasks",
+          JSON.stringify({ parentId: rootId, [field]: value }),
+        );
+        assert.equal(res.status, 400);
+        assert.match(res.body, new RegExp(`${field} must be a string`));
+      }
     });
 
     it("rejects an unknown parent task with 400", async () => {

@@ -5,6 +5,15 @@ import {
   buildCollaborationSystemMessage,
   collaborationTitle,
 } from "../src/collaboration-message.ts";
+import { taskDisplayLabel } from "../src/shared/task-title.ts";
+
+describe("collaboration source labels", () => {
+  it("uses task-title validity and omits multiline labels", () => {
+    assert.equal(taskDisplayLabel('Parent "quoted"'), 'Parent "quoted"');
+    assert.equal(taskDisplayLabel("Parent\nInjected"), undefined);
+    assert.equal(taskDisplayLabel("x".repeat(256)), "x".repeat(256));
+  });
+});
 
 /**
  * One row, three consumers: the Store persists a copy per projection, and each

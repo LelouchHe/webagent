@@ -55,6 +55,7 @@ describe("formatFieldBlock", () => {
     // `data` keeps its own `?? null` semantics, independent of the fallback.
     assert.equal(full.data.model, "gpt-5");
     assert.equal(full.data.thinking, "high");
+    assert.equal("host" in full.data, false);
   });
 
   it("renders an empty model and thinking as inherited", () => {
@@ -80,5 +81,28 @@ describe("formatFieldBlock", () => {
     // substitutes the fallback.
     assert.equal(inherited.data.model, "");
     assert.equal(inherited.data.thinking, null);
+  });
+
+  it("renders remote create agent and host as separate lines", () => {
+    const created = buildTaskCreatedSystemMessage({
+      taskId: "t1",
+      taskTitle: "Child",
+      agentId: "pi",
+      host: "webagent2",
+      cwd: "/tmp/child",
+    });
+    assert.equal(created.data.agentId, "pi");
+    assert.equal(created.data.host, "webagent2");
+    assert.equal(
+      created.body,
+      [
+        "Task ID: t1",
+        "agent: pi",
+        "host: webagent2",
+        "cwd: /tmp/child",
+        "model: inherited",
+        "thinking: inherited",
+      ].join("\n"),
+    );
   });
 });

@@ -9,6 +9,7 @@ import type {
   TaskRefRowInput,
   TaskRefTarget,
 } from "./task-ref-marks.ts";
+import type { CollaborationDeliveryState } from "../../src/shared/delivery-status.ts";
 
 // Pure DOM helpers live in render-event.ts (single source for both main app
 // and share viewer). Re-exported here for callers that want them via render.ts.
@@ -45,11 +46,7 @@ export function addMessage(role: string, text: string): HTMLDivElement {
   return el;
 }
 
-export interface DeliveryState {
-  status: "queued" | "delivered" | "failed";
-  deliveredAt?: string;
-  failureReason?: string;
-}
+export type DeliveryState = CollaborationDeliveryState;
 
 export interface SystemMessageOptions {
   title: string;

@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { Writable, Readable } from "node:stream";
 import { EventEmitter } from "node:events";
 import * as acp from "@agentclientprotocol/sdk";
@@ -1130,7 +1131,7 @@ export class AgentBridge extends EventEmitter {
     if (!taskId) {
       return Promise.resolve({ outcome: { outcome: "cancelled" } });
     }
-    const requestId = crypto.randomUUID();
+    const requestId = randomUUID();
     const toolCall = params.toolCall;
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- toolCall may be undefined in practice
     const title = toolCall?.title ?? "Permission requested";

@@ -66,7 +66,10 @@ describe("ObligationController", () => {
     assert.equal(h.controller.hasOpen("parent", "child"), true);
 
     // One close removes the single account.
-    assert.equal(h.controller.peekSource("child"), "parent");
+    assert.deepEqual(h.controller.peekSource("child"), {
+      sourceTaskId: "parent",
+      sourceKind: "local",
+    });
     h.controller.close("child");
     assert.equal(h.controller.hasOpen("parent", "child"), false);
     assert.equal(h.controller.peekSource("child"), undefined);
@@ -80,7 +83,10 @@ describe("ObligationController", () => {
     assert.deepEqual(h.reminders, ["child"]);
 
     // A late done still settles; no turn identity is required.
-    assert.equal(h.controller.peekSource("child"), "parent");
+    assert.deepEqual(h.controller.peekSource("child"), {
+      sourceTaskId: "parent",
+      sourceKind: "local",
+    });
     h.controller.close("child");
     assert.equal(h.reminders.length, 1);
   });

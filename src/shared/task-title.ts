@@ -11,3 +11,9 @@ export function validateTaskTitle(title: unknown): string | null {
   }
   return trimmed;
 }
+
+export function taskDisplayLabel(value: unknown): string | undefined {
+  const title = validateTaskTitle(value);
+  if (title === null || /[\r\n\u2028\u2029]/.test(title)) return undefined;
+  return title;
+}
