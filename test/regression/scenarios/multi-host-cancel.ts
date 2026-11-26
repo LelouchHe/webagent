@@ -162,25 +162,40 @@ export default scenario<State>({
   },
   steps: () => [
     {
-      name: "create remote worker and start long turn",
+      name: "create remote worker",
       async action(client, state) {
         const hub = client.instance("hub");
-        await hub.rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
-          text: "create remote worker",
-        });
+        const res = await hub.rest(
+          "POST",
+          `/api/v1/tasks/${state.parentId}/prompt`,
+          {
+            text: "create remote worker",
+          },
+        );
         await waitForRows(
           state.ownerDb,
           `SELECT id FROM tasks WHERE title = 'Cancel Worker'`,
         );
         state.remoteChildId = readTaskId(state.ownerDb, "Cancel Worker");
-        await hub.rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
-          text: "dispatch work to worker",
-        });
+        return { status: res.status, remoteCreated: true };
+      },
+    },
+    {
+      name: "dispatch work to remote worker",
+      async action(client, state) {
+        const hub = client.instance("hub");
+        const res = await hub.rest(
+          "POST",
+          `/api/v1/tasks/${state.parentId}/prompt`,
+          {
+            text: "dispatch work to worker",
+          },
+        );
         await waitForRows(
           state.ownerDb,
           `SELECT id FROM deliveries WHERE recipient_task_id = '${state.remoteChildId}' AND status = 'delivered'`,
         );
-        return { remoteCreated: true };
+        return { status: res.status, dispatched: true };
       },
     },
     {

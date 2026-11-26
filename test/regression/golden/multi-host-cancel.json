@@ -396,9 +396,329 @@
       ]
     },
     {
-      "name": "create remote worker and start long turn",
+      "name": "create remote worker",
       "response": {
+        "status": 202,
         "remoteCreated": true
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+                  "args": [
+                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "/",
+                    "agent",
+                    "Cancel Worker",
+                    "idle",
+                    1789333200000,
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "mock",
+                    "no-execution:68982ec8-1159-5422-9468-8588310c17c6",
+                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', ?)",
+                  "args": [
+                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "00000000-0000-4000-8001-000000000004",
+                    "hub-connection"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    1,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"taskTitle\":\"Cancel Worker\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Cancel Worker\\\"\",\"body\":\"Task ID: 68982ec8-1159-5422-9468-8588310c17c6\\nagent: mock\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ]
+            ],
+            "reads": 8
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [
+            {
+              "taskId": "00000000-0000-4000-8001-000000000004",
+              "events": [
+                {
+                  "type": "user_message",
+                  "taskId": "00000000-0000-4000-8001-000000000004",
+                  "text": "create remote worker",
+                  "clientOpId": "00000000-0000-4000-8001-000000000006"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000004",
+                  "seq": 1,
+                  "patch": {
+                    "runtime": {
+                      "busy": {
+                        "kind": "agent",
+                        "since": "2026-09-13T21:00:00.000Z",
+                        "promptId": "prompt-1",
+                        "cancelStatus": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "system_message",
+                  "taskId": "00000000-0000-4000-8001-000000000004",
+                  "kind": "task_created",
+                  "messageId": "00000000-0000-4000-8001-000000000008",
+                  "sourceTaskId": "00000000-0000-4000-8001-000000000004",
+                  "targetTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskTitle": "Cancel Worker",
+                  "role": "source",
+                  "title": "Created task @\"Cancel Worker\"",
+                  "body": "Task ID: 68982ec8-1159-5422-9468-8588310c17c6\nagent: mock\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000004",
+                  "seq": 2,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": true,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "message_chunk",
+                  "taskId": "00000000-0000-4000-8001-000000000004",
+                  "text": "Created remote worker."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000004",
+                  "seq": 3,
+                  "patch": {
+                    "runtime": {
+                      "busy": null
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000004",
+                  "seq": 4,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": false,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "prompt_done",
+                  "taskId": "00000000-0000-4000-8001-000000000004",
+                  "stopReason": "end_turn",
+                  "promptId": "prompt-1"
+                }
+              ]
+            }
+          ],
+          "mock": [
+            {
+              "sessionId": "00000000-0000-4000-8001-000000000002",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8001-000000000002",
+                  "text": "create remote worker"
+                },
+                {
+                  "kind": "mcp",
+                  "method": "initialize",
+                  "sessionId": "00000000-0000-4000-8001-000000000002",
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "protocolVersion": "2025-06-18",
+                      "capabilities": {
+                        "tools": {
+                          "listChanged": true
+                        }
+                      },
+                      "serverInfo": {
+                        "name": "lelouchhe_webagent",
+                        "version": "0.1.0"
+                      },
+                      "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 1
+                  }
+                },
+                {
+                  "kind": "mcp",
+                  "method": "notifications/initialized",
+                  "sessionId": "00000000-0000-4000-8001-000000000002",
+                  "status": 202,
+                  "result": null
+                },
+                {
+                  "kind": "mcp",
+                  "sessionId": "00000000-0000-4000-8001-000000000002",
+                  "tool": "task_create",
+                  "arguments": {
+                    "title": "Cancel Worker",
+                    "agent": "mock",
+                    "host": "owner"
+                  },
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "{\"taskId\":\"68982ec8-1159-5422-9468-8588310c17c6\"}"
+                        }
+                      ]
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 2
+                  }
+                }
+              ]
+            }
+          ],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000004",
+                    1,
+                    "user_message",
+                    "{\"text\":\"create remote worker\",\"clientOpId\":\"00000000-0000-4000-8001-000000000006\"}",
+                    "user",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000004",
+                    3,
+                    "assistant_message",
+                    "{\"text\":\"Created remote worker.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000004",
+                    4,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+                  "args": ["/", 1789333200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO remote_tasks\n           (local_task_id, remote_task_id, remote_role, remote_host)\n           VALUES (?, ?, 'child', ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000004",
+                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "owner"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000004",
+                    2,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"taskTitle\":\"Cancel Worker\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Cancel Worker\\\"\",\"body\":\"Task ID: 68982ec8-1159-5422-9468-8588310c17c6\\nagent: mock\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8001-000000000004"
+                  ]
+                }
+              ]
+            ],
+            "reads": 25
+          }
+        }
+      ]
+    },
+    {
+      "name": "dispatch work to remote worker",
+      "response": {
+        "status": 202,
+        "dispatched": true
       },
       "instances": [
         {
@@ -600,56 +920,6 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
-                  "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "/",
-                    "agent",
-                    "Cancel Worker",
-                    "idle",
-                    1789333200000,
-                    1789333200000
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-                  "args": [
-                    "mock",
-                    "no-execution:68982ec8-1159-5422-9468-8588310c17c6",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    1789333200000
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', ?)",
-                  "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "00000000-0000-4000-8001-000000000004",
-                    "hub-connection"
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    1,
-                    "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"taskTitle\":\"Cancel Worker\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Cancel Worker\\\"\",\"body\":\"Task ID: 68982ec8-1159-5422-9468-8588310c17c6\\nagent: mock\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
-                    "system",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
                   "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
                   "args": [
                     1789333200000,
@@ -731,7 +1001,7 @@
                 }
               ]
             ],
-            "reads": 53
+            "reads": 45
           }
         },
         {
@@ -740,86 +1010,6 @@
             {
               "taskId": "00000000-0000-4000-8001-000000000004",
               "events": [
-                {
-                  "type": "user_message",
-                  "taskId": "00000000-0000-4000-8001-000000000004",
-                  "text": "create remote worker",
-                  "clientOpId": "00000000-0000-4000-8001-000000000006"
-                },
-                {
-                  "type": "state_patch",
-                  "taskId": "00000000-0000-4000-8001-000000000004",
-                  "seq": 1,
-                  "patch": {
-                    "runtime": {
-                      "busy": {
-                        "kind": "agent",
-                        "since": "2026-09-13T21:00:00.000Z",
-                        "promptId": "prompt-1",
-                        "cancelStatus": null
-                      }
-                    }
-                  }
-                },
-                {
-                  "type": "system_message",
-                  "taskId": "00000000-0000-4000-8001-000000000004",
-                  "kind": "task_created",
-                  "messageId": "00000000-0000-4000-8001-000000000008",
-                  "sourceTaskId": "00000000-0000-4000-8001-000000000004",
-                  "targetTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
-                  "taskTitle": "Cancel Worker",
-                  "role": "source",
-                  "title": "Created task @\"Cancel Worker\"",
-                  "body": "Task ID: 68982ec8-1159-5422-9468-8588310c17c6\nagent: mock\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
-                },
-                {
-                  "type": "state_patch",
-                  "taskId": "00000000-0000-4000-8001-000000000004",
-                  "seq": 2,
-                  "patch": {
-                    "runtime": {
-                      "streaming": {
-                        "assistant": true,
-                        "thinking": false
-                      }
-                    }
-                  }
-                },
-                {
-                  "type": "message_chunk",
-                  "taskId": "00000000-0000-4000-8001-000000000004",
-                  "text": "Created remote worker."
-                },
-                {
-                  "type": "state_patch",
-                  "taskId": "00000000-0000-4000-8001-000000000004",
-                  "seq": 3,
-                  "patch": {
-                    "runtime": {
-                      "busy": null
-                    }
-                  }
-                },
-                {
-                  "type": "state_patch",
-                  "taskId": "00000000-0000-4000-8001-000000000004",
-                  "seq": 4,
-                  "patch": {
-                    "runtime": {
-                      "streaming": {
-                        "assistant": false,
-                        "thinking": false
-                      }
-                    }
-                  }
-                },
-                {
-                  "type": "prompt_done",
-                  "taskId": "00000000-0000-4000-8001-000000000004",
-                  "stopReason": "end_turn",
-                  "promptId": "prompt-1"
-                },
                 {
                   "type": "user_message",
                   "taskId": "00000000-0000-4000-8001-000000000004",
@@ -920,65 +1110,6 @@
                   "kind": "acp",
                   "method": "session/prompt",
                   "sessionId": "00000000-0000-4000-8001-000000000002",
-                  "text": "create remote worker"
-                },
-                {
-                  "kind": "mcp",
-                  "method": "initialize",
-                  "sessionId": "00000000-0000-4000-8001-000000000002",
-                  "status": 200,
-                  "result": {
-                    "result": {
-                      "protocolVersion": "2025-06-18",
-                      "capabilities": {
-                        "tools": {
-                          "listChanged": true
-                        }
-                      },
-                      "serverInfo": {
-                        "name": "lelouchhe_webagent",
-                        "version": "0.1.0"
-                      },
-                      "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
-                    },
-                    "jsonrpc": "2.0",
-                    "id": 1
-                  }
-                },
-                {
-                  "kind": "mcp",
-                  "method": "notifications/initialized",
-                  "sessionId": "00000000-0000-4000-8001-000000000002",
-                  "status": 202,
-                  "result": null
-                },
-                {
-                  "kind": "mcp",
-                  "sessionId": "00000000-0000-4000-8001-000000000002",
-                  "tool": "task_create",
-                  "arguments": {
-                    "title": "Cancel Worker",
-                    "agent": "mock",
-                    "host": "owner"
-                  },
-                  "status": 200,
-                  "result": {
-                    "result": {
-                      "content": [
-                        {
-                          "type": "text",
-                          "text": "{\"taskId\":\"68982ec8-1159-5422-9468-8588310c17c6\"}"
-                        }
-                      ]
-                    },
-                    "jsonrpc": "2.0",
-                    "id": 2
-                  }
-                },
-                {
-                  "kind": "acp",
-                  "method": "session/prompt",
-                  "sessionId": "00000000-0000-4000-8001-000000000002",
                   "text": "dispatch work to worker"
                 },
                 {
@@ -1044,51 +1175,6 @@
                   "method": "get",
                   "sql": "INSERT INTO outbox_cursors\n           (remote_role, remote_host, applied_pos, pushed_pos)\n         VALUES (?, ?, 0, ?)\n         ON CONFLICT (remote_role, remote_host)\n         DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n         RETURNING pushed_pos",
                   "args": ["child", "owner", 1]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000004",
-                    1,
-                    "user_message",
-                    "{\"text\":\"create remote worker\",\"clientOpId\":\"00000000-0000-4000-8001-000000000006\"}",
-                    "user",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000004",
-                    3,
-                    "assistant_message",
-                    "{\"text\":\"Created remote worker.\"}",
-                    "agent",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000004",
-                    4,
-                    "prompt_done",
-                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
-                    "agent",
-                    1789333200000
-                  ]
                 }
               ],
               [
@@ -1223,39 +1309,6 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
-                  "args": ["/", 1789333200000]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO remote_tasks\n           (local_task_id, remote_task_id, remote_role, remote_host)\n           VALUES (?, ?, 'child', ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000004",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "owner"
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000004",
-                    2,
-                    "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"taskTitle\":\"Cancel Worker\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Cancel Worker\\\"\",\"body\":\"Task ID: 68982ec8-1159-5422-9468-8588310c17c6\\nagent: mock\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
-                    "agent",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
                   "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
                   "args": [
                     1789333200000,
@@ -1280,20 +1333,9 @@
                     "00000000-0000-4000-8001-000000000004"
                   ]
                 }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
-                  "args": [
-                    1789333200000,
-                    "00000000-0000-4000-8001-000000000004"
-                  ]
-                }
               ]
             ],
-            "reads": 70
+            "reads": 45
           }
         }
       ]
