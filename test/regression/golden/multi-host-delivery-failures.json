@@ -1,0 +1,3978 @@
+{
+  "steps": [
+    {
+      "name": "setup",
+      "response": {
+        "parentId": "00000000-0000-4000-8001-000000000001",
+        "ownerDb": "<INSTANCE:owner>/data/webagent.db",
+        "hubDb": "<INSTANCE:hub>/data/webagent.db"
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [],
+            "reads": 1
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [
+            {
+              "taskId": "*",
+              "events": [
+                {
+                  "type": "connected",
+                  "agent": {
+                    "name": "mock-agent",
+                    "version": "0.1.0"
+                  },
+                  "agentId": "mock",
+                  "configOptions": [],
+                  "cancelTimeout": 10000,
+                  "recentPathsLimit": 10
+                }
+              ]
+            },
+            {
+              "taskId": "00000000-0000-4000-8001-000000000001",
+              "events": [
+                {
+                  "type": "task_created",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "cwd": "/",
+                  "cwdDisplay": "/",
+                  "title": "root",
+                  "parentId": null,
+                  "parentAgentId": null,
+                  "agentId": "mock",
+                  "configOptions": [],
+                  "agentCommands": {
+                    "epoch": "00000000-0000-4000-8001-000000000003",
+                    "revision": 1,
+                    "commands": [
+                      {
+                        "name": "context",
+                        "description": "Show context usage"
+                      },
+                      {
+                        "name": "compact",
+                        "description": "Compact conversation",
+                        "input": {
+                          "hint": "focus instructions"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "mock": [
+            {
+              "sessionId": "*",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "initialize"
+                }
+              ]
+            },
+            {
+              "sessionId": "00000000-0000-4000-8001-000000000001",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "session/new",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "cwd": "/"
+                }
+              ]
+            }
+          ],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "mock",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8001-000000000001",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ?",
+                  "args": ["00000000-0000-4000-8001-000000000001"]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
+                  "args": ["00000000-0000-4000-8001-000000000001"]
+                }
+              ]
+            ],
+            "reads": 28
+          }
+        }
+      ]
+    },
+    {
+      "name": "create-child",
+      "response": {
+        "status": 202,
+        "body": {
+          "status": "accepted"
+        }
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [],
+          "mock": [],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "/",
+                    "agent",
+                    "Clear Child",
+                    "idle",
+                    1789333200000,
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "broken",
+                    "no-execution:a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "00000000-0000-4000-8001-000000000001",
+                    "hub-connection"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    1,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"taskTitle\":\"Clear Child\",\"agentId\":\"broken\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Clear Child\\\"\",\"body\":\"Task ID: a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\\nagent: broken\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ]
+            ],
+            "reads": 8
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [
+            {
+              "taskId": "00000000-0000-4000-8001-000000000001",
+              "events": [
+                {
+                  "type": "user_message",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "text": "create clear child",
+                  "clientOpId": "00000000-0000-4000-8001-000000000004"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 1,
+                  "patch": {
+                    "runtime": {
+                      "busy": {
+                        "kind": "agent",
+                        "since": "2026-09-13T21:00:00.000Z",
+                        "promptId": "prompt-1",
+                        "cancelStatus": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "system_message",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "kind": "task_created",
+                  "messageId": "00000000-0000-4000-8001-000000000006",
+                  "sourceTaskId": "00000000-0000-4000-8001-000000000001",
+                  "targetTaskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "taskTitle": "Clear Child",
+                  "role": "source",
+                  "title": "Created task @\"Clear Child\"",
+                  "body": "Task ID: a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\nagent: broken\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 2,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": true,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "message_chunk",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "text": "Created clear child."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 3,
+                  "patch": {
+                    "runtime": {
+                      "busy": null
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 4,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": false,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "prompt_done",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "stopReason": "end_turn",
+                  "promptId": "prompt-1"
+                }
+              ]
+            }
+          ],
+          "mock": [
+            {
+              "sessionId": "00000000-0000-4000-8001-000000000001",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "text": "create clear child"
+                },
+                {
+                  "kind": "mcp",
+                  "method": "initialize",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "protocolVersion": "2025-06-18",
+                      "capabilities": {
+                        "tools": {
+                          "listChanged": true
+                        }
+                      },
+                      "serverInfo": {
+                        "name": "lelouchhe_webagent",
+                        "version": "0.1.0"
+                      },
+                      "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 1
+                  }
+                },
+                {
+                  "kind": "mcp",
+                  "method": "notifications/initialized",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "status": 202,
+                  "result": null
+                },
+                {
+                  "kind": "mcp",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "tool": "task_create",
+                  "arguments": {
+                    "title": "Clear Child",
+                    "agent": "broken",
+                    "host": "owner"
+                  },
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "{\"taskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\"}"
+                        }
+                      ]
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 2
+                  }
+                }
+              ]
+            }
+          ],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    1,
+                    "user_message",
+                    "{\"text\":\"create clear child\",\"clientOpId\":\"00000000-0000-4000-8001-000000000004\"}",
+                    "user",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    3,
+                    "assistant_message",
+                    "{\"text\":\"Created clear child.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    4,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+                  "args": ["/", 1789333200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO remote_tasks\n           (local_task_id, remote_task_id, remote_role, remote_host)\n           VALUES (?, ?, 'child', ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "owner"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    2,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"taskTitle\":\"Clear Child\",\"agentId\":\"broken\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Clear Child\\\"\",\"body\":\"Task ID: a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\\nagent: broken\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8001-000000000001"
+                  ]
+                }
+              ]
+            ],
+            "reads": 25
+          }
+        }
+      ]
+    },
+    {
+      "name": "s1-p-to-r1-clear-notifies-p-once-and-owner-zero-notices",
+      "response": {
+        "clearStatus": 200,
+        "ownerReceipts": [
+          {
+            "status": "failed",
+            "failureReason": "cleared_before_delivery"
+          }
+        ],
+        "ownerOutboxNotices": [
+          {
+            "count": 0
+          }
+        ],
+        "ownerChildNotices": [
+          {
+            "count": 0
+          }
+        ],
+        "hubParentNotices": [
+          {
+            "reason": "target_removed",
+            "message": "A message to the target was not delivered (cleared_before_delivery)."
+          }
+        ]
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [
+            {
+              "taskId": "*",
+              "events": [
+                {
+                  "type": "agent_disconnected",
+                  "agentId": "broken"
+                },
+                {
+                  "type": "connected",
+                  "agent": {
+                    "name": "mock-agent",
+                    "version": "0.1.0"
+                  },
+                  "agentId": "mock",
+                  "configOptions": [],
+                  "cancelTimeout": 10000,
+                  "recentPathsLimit": 10
+                }
+              ]
+            },
+            {
+              "taskId": "00000000-0000-4000-8001-000000000001",
+              "events": [
+                {
+                  "type": "collaboration_delivery",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "messageId": "00000000-0000-4000-8001-000000000008",
+                  "status": "failed",
+                  "failureReason": "cleared_before_delivery"
+                }
+              ]
+            },
+            {
+              "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+              "events": [
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 1,
+                  "patch": {
+                    "runtime": {
+                      "busy": {
+                        "kind": "agent",
+                        "since": "2026-09-13T21:00:00.000Z",
+                        "promptId": "prompt-1",
+                        "cancelStatus": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "available_commands_update",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "commands": [
+                    {
+                      "name": "context",
+                      "description": "Show context usage"
+                    },
+                    {
+                      "name": "compact",
+                      "description": "Compact conversation",
+                      "input": {
+                        "hint": "focus instructions"
+                      }
+                    }
+                  ],
+                  "epoch": "00000000-0000-4000-8000-000000000006",
+                  "revision": 1
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 2,
+                  "patch": {
+                    "runtime": {
+                      "busy": null,
+                      "pendingPermissions": [],
+                      "streaming": {
+                        "assistant": false,
+                        "thinking": false
+                      },
+                      "plan": null,
+                      "contextUsage": null
+                    }
+                  }
+                },
+                {
+                  "type": "task_created",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "cwd": "/",
+                  "cwdDisplay": "/",
+                  "parentId": null,
+                  "parentAgentId": null,
+                  "agentId": "mock",
+                  "title": "Clear Child",
+                  "configOptions": [
+                    {
+                      "type": "select",
+                      "id": "model",
+                      "name": "Model",
+                      "category": "model",
+                      "currentValue": "mock-model",
+                      "options": [
+                        {
+                          "value": "mock-model",
+                          "name": "Mock Model"
+                        },
+                        {
+                          "value": "mock-model-2",
+                          "name": "Mock Model 2"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "select",
+                      "id": "mode",
+                      "name": "Mode",
+                      "category": "mode",
+                      "currentValue": "agent",
+                      "options": [
+                        {
+                          "value": "agent",
+                          "name": "Agent"
+                        },
+                        {
+                          "value": "chat#plan",
+                          "name": "Plan"
+                        },
+                        {
+                          "value": "chat#autopilot",
+                          "name": "Autopilot"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "select",
+                      "id": "reasoning_effort",
+                      "name": "Reasoning",
+                      "category": "thought_level",
+                      "currentValue": "medium",
+                      "options": [
+                        {
+                          "value": "low",
+                          "name": "Low"
+                        },
+                        {
+                          "value": "medium",
+                          "name": "Medium"
+                        },
+                        {
+                          "value": "high",
+                          "name": "High"
+                        }
+                      ]
+                    }
+                  ],
+                  "agentCommands": {
+                    "epoch": "00000000-0000-4000-8000-000000000006",
+                    "revision": 0,
+                    "commands": []
+                  }
+                }
+              ]
+            }
+          ],
+          "mock": [
+            {
+              "sessionId": "*",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "initialize"
+                }
+              ]
+            },
+            {
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "session/new",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "cwd": "/"
+                }
+              ]
+            }
+          ],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    2,
+                    "system_message",
+                    "{\"kind\":\"agent_rotation\",\"title\":\"Execution replaced\",\"body\":\"The task's ACP execution was explicitly cleared. Its task id, history and outstanding work are unchanged.\",\"reason\":\"explicit_clear\",\"fromAgent\":\"broken\",\"toAgent\":\"mock\"}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000008",
+                    "00000000-0000-4000-8001-000000000001",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "agent",
+                    "queued forward message for owner clear",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000008",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "target",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000008",
+                    "00000000-0000-4000-8001-000000000008",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "00000000-0000-4000-8001-000000000008:a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    "parent",
+                    "hub-connection",
+                    "00000000-0000-4000-8001-000000000008",
+                    "root",
+                    "message"
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'failed', delivered_at = NULL,\n                   failed_at = ?, failure_reason = ?\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "cleared_before_delivery",
+                    "00000000-0000-4000-8001-000000000008",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000007",
+                    "parent",
+                    "hub-connection",
+                    0,
+                    "receipt",
+                    "{\"originalEntryId\":\"00000000-0000-4000-8001-000000000008\",\"status\":\"failed\",\"failureReason\":\"cleared_before_delivery\"}",
+                    null,
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET cwd = ? WHERE id = ?",
+                  "args": ["/", "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "DELETE FROM agent_sessions WHERE task_id = ?",
+                  "args": ["a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "mock",
+                    "00000000-0000-4000-8000-000000000001",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+                  "args": ["agent", "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+                  "args": [null, "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+                  "args": ["mock-model", "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+                  "args": [null, "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET pending_compact_summary = NULL WHERE id = ?",
+                  "args": ["a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+                  "args": ["medium", "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+                  "args": [null, "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["idle", "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                }
+              ]
+            ],
+            "reads": 46
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [
+            {
+              "taskId": "00000000-0000-4000-8001-000000000001",
+              "events": [
+                {
+                  "type": "user_message",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "text": "dispatch queued for owner clear",
+                  "clientOpId": "00000000-0000-4000-8001-000000000007"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 5,
+                  "patch": {
+                    "runtime": {
+                      "busy": {
+                        "kind": "agent",
+                        "since": "2026-09-13T21:00:00.000Z",
+                        "promptId": "prompt-2",
+                        "cancelStatus": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "system_message",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "kind": "collaboration",
+                  "messageId": "00000000-0000-4000-8001-000000000008",
+                  "sourceTaskId": "00000000-0000-4000-8001-000000000001",
+                  "sourceLabel": "root",
+                  "targetTaskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "targetLabel": "Clear Child",
+                  "role": "source",
+                  "title": "@root sent @\"Clear Child\"",
+                  "body": "queued forward message for owner clear",
+                  "deliveryStatus": "queued"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 6,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": true,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "message_chunk",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "text": "Queued forward message."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 7,
+                  "patch": {
+                    "runtime": {
+                      "busy": null
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 8,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": false,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "prompt_done",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "stopReason": "end_turn",
+                  "promptId": "prompt-2"
+                },
+                {
+                  "type": "collaboration_delivery",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "messageId": "00000000-0000-4000-8001-000000000008",
+                  "status": "failed",
+                  "failureReason": "cleared_before_delivery"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 9,
+                  "patch": {
+                    "runtime": {
+                      "busy": {
+                        "kind": "agent",
+                        "since": "2026-09-13T21:00:00.000Z",
+                        "promptId": "prompt-3",
+                        "cancelStatus": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "system_message",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "kind": "task_outcome_notice",
+                  "messageId": "00000000-0000-4000-8001-00000000000a",
+                  "targetTaskId": "00000000-0000-4000-8001-000000000001",
+                  "targetLabel": "root",
+                  "role": "target",
+                  "title": "Task handoff notice",
+                  "body": "target: Clear Child (a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b)\nmessage: A message to the target was not delivered (cleared_before_delivery)."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 10,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": true,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "message_chunk",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "text": "Hub parent saw notice."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 11,
+                  "patch": {
+                    "runtime": {
+                      "busy": null
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 12,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": false,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "prompt_done",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "stopReason": "end_turn",
+                  "promptId": "prompt-3"
+                }
+              ]
+            }
+          ],
+          "mock": [
+            {
+              "sessionId": "00000000-0000-4000-8001-000000000001",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "text": "dispatch queued for owner clear"
+                },
+                {
+                  "kind": "mcp",
+                  "method": "initialize",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "protocolVersion": "2025-06-18",
+                      "capabilities": {
+                        "tools": {
+                          "listChanged": true
+                        }
+                      },
+                      "serverInfo": {
+                        "name": "lelouchhe_webagent",
+                        "version": "0.1.0"
+                      },
+                      "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 1
+                  }
+                },
+                {
+                  "kind": "mcp",
+                  "method": "notifications/initialized",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "status": 202,
+                  "result": null
+                },
+                {
+                  "kind": "mcp",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "tool": "task_send",
+                  "arguments": {
+                    "target": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "body": "queued forward message for owner clear"
+                  },
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "{\"accepted\":true}"
+                        }
+                      ]
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 2
+                  }
+                },
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "text": "Runtime message:\n---8<---\ntarget: Clear Child (a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b)\nmessage: A message to the target was not delivered (cleared_before_delivery).\n---8<---"
+                }
+              ]
+            }
+          ],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 1]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    10,
+                    "system_message",
+                    "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-00000000000a\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Clear Child (a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b)\\nmessage: A message to the target was not delivered (cleared_before_delivery).\"}",
+                    "msg:00000000-0000-4000-8001-00000000000a",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    11,
+                    "collaboration_prompt",
+                    "{\"messageIds\":[\"00000000-0000-4000-8001-00000000000a\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Clear Child (a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b)\\nmessage: A message to the target was not delivered (cleared_before_delivery).\\n---8<---\",\"truncated\":false,\"rawSize\":171}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    12,
+                    "assistant_message",
+                    "{\"text\":\"Hub parent saw notice.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    13,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    5,
+                    "user_message",
+                    "{\"text\":\"dispatch queued for owner clear\",\"clientOpId\":\"00000000-0000-4000-8001-000000000007\"}",
+                    "user",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    7,
+                    "assistant_message",
+                    "{\"text\":\"Queued forward message.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    8,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000008",
+                    "00000000-0000-4000-8001-000000000001",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "agent",
+                    "queued forward message for owner clear",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000008",
+                    "00000000-0000-4000-8001-000000000001",
+                    "source",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000009",
+                    "00000000-0000-4000-8001-000000000008",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "00000000-0000-4000-8001-000000000008:a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    6,
+                    "system_message",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000008\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetLabel\":\"Clear Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Clear Child\\\"\",\"body\":\"queued forward message for owner clear\",\"deliveryStatus\":\"queued\"}",
+                    "msg:00000000-0000-4000-8001-000000000008",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000008",
+                    "child",
+                    "owner",
+                    0,
+                    "message",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"sourceLabel\":\"root\",\"body\":\"queued forward message for owner clear\"}",
+                    "00000000-0000-4000-8001-000000000009",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+                  "args": ["/", 1789333200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8001-00000000000b",
+                    "queued"
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'failed', delivered_at = NULL,\n                   failed_at = ?, failure_reason = ?\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "cleared_before_delivery",
+                    "00000000-0000-4000-8001-000000000009",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 1]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    9,
+                    "task_outcome_notice",
+                    "{\"messageId\":\"00000000-0000-4000-8001-00000000000a\",\"reason\":\"target_removed\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"message\":\"A message to the target was not delivered (cleared_before_delivery).\"}",
+                    "system",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-00000000000a",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "00000000-0000-4000-8001-000000000001",
+                    "system",
+                    "target: Clear Child (a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b)\nmessage: A message to the target was not delivered (cleared_before_delivery).",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-00000000000a",
+                    "00000000-0000-4000-8001-000000000001",
+                    "target",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-00000000000b",
+                    "00000000-0000-4000-8001-00000000000a",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8001-00000000000a:00000000-0000-4000-8001-000000000001",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, ?, 0)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET applied_pos = excluded.applied_pos",
+                  "args": ["child", "owner", 1]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8001-000000000001"
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["idle", "00000000-0000-4000-8001-000000000001"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["running", "00000000-0000-4000-8001-000000000001"]
+                }
+              ]
+            ],
+            "reads": 83
+          }
+        }
+      ]
+    },
+    {
+      "name": "s4-r1-to-p-clear-notifies-r1-once-and-hub-zero-notices",
+      "response": {
+        "clearStatus": 200,
+        "hubReceipts": [
+          {
+            "status": "delivered",
+            "failureReason": null
+          },
+          {
+            "status": "failed",
+            "failureReason": "cleared_before_delivery"
+          }
+        ],
+        "hubParentNoticeCount": [
+          {
+            "count": 1
+          }
+        ],
+        "ownerChildNotices": [
+          {
+            "reason": "target_removed",
+            "message": "A message to the target was not delivered (cleared_before_delivery)."
+          }
+        ]
+      },
+      "instances": [
+        {
+          "name": "owner",
+          "sse": [
+            {
+              "taskId": "00000000-0000-4000-8001-000000000001",
+              "events": [
+                {
+                  "type": "collaboration_delivery",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "messageId": "00000000-0000-4000-8001-00000000000d",
+                  "status": "delivered",
+                  "deliveredAt": "2026-09-13T21:00:00.000Z"
+                }
+              ]
+            },
+            {
+              "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+              "events": [
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 3,
+                  "patch": {
+                    "runtime": {
+                      "busy": {
+                        "kind": "agent",
+                        "since": "2026-09-13T21:00:00.000Z",
+                        "promptId": "prompt-2",
+                        "cancelStatus": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "system_message",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "kind": "collaboration",
+                  "messageId": "00000000-0000-4000-8001-00000000000d",
+                  "sourceTaskId": "00000000-0000-4000-8001-000000000001",
+                  "sourceLabel": "root",
+                  "targetTaskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "targetLabel": "Clear Child",
+                  "role": "target",
+                  "title": "@root sent @\"Clear Child\"",
+                  "body": "learn parent id"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 4,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": true,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "message_chunk",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "text": "Learned parent."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 5,
+                  "patch": {
+                    "runtime": {
+                      "busy": null
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 6,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": false,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "prompt_done",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "stopReason": "end_turn",
+                  "promptId": "prompt-2"
+                },
+                {
+                  "type": "collaboration_delivery",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "messageId": "00000000-0000-4000-8000-000000000009",
+                  "status": "delivered",
+                  "deliveredAt": "2026-09-13T21:00:00.000Z"
+                },
+                {
+                  "type": "user_message",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "text": "send reverse for hub clear",
+                  "clientOpId": "00000000-0000-4000-8000-00000000000b"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 7,
+                  "patch": {
+                    "runtime": {
+                      "busy": {
+                        "kind": "agent",
+                        "since": "2026-09-13T21:00:00.000Z",
+                        "promptId": "prompt-3",
+                        "cancelStatus": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "system_message",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "kind": "collaboration",
+                  "messageId": "00000000-0000-4000-8000-00000000000c",
+                  "sourceTaskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "sourceLabel": "Clear Child",
+                  "targetTaskId": "00000000-0000-4000-8001-000000000001",
+                  "targetLabel": "root",
+                  "role": "source",
+                  "title": "@\"Clear Child\" sent @root",
+                  "body": "queued reverse message for hub clear",
+                  "deliveryStatus": "queued"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 8,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": true,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "message_chunk",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "text": "Reverse message sent."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 9,
+                  "patch": {
+                    "runtime": {
+                      "busy": null
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 10,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": false,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "prompt_done",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "stopReason": "end_turn",
+                  "promptId": "prompt-3"
+                },
+                {
+                  "type": "collaboration_delivery",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "messageId": "00000000-0000-4000-8000-00000000000c",
+                  "status": "failed",
+                  "failureReason": "cleared_before_delivery"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 11,
+                  "patch": {
+                    "runtime": {
+                      "busy": {
+                        "kind": "agent",
+                        "since": "2026-09-13T21:00:00.000Z",
+                        "promptId": "prompt-4",
+                        "cancelStatus": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "system_message",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "kind": "task_outcome_notice",
+                  "messageId": "00000000-0000-4000-8000-00000000000e",
+                  "targetTaskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "targetLabel": "Clear Child",
+                  "role": "target",
+                  "title": "Task handoff notice",
+                  "body": "target: root (00000000-0000-4000-8001-000000000001)\nmessage: A message to the target was not delivered (cleared_before_delivery)."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 12,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": true,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "message_chunk",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "text": "Owner child saw notice."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 13,
+                  "patch": {
+                    "runtime": {
+                      "busy": null
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "seq": 14,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": false,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "prompt_done",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "stopReason": "end_turn",
+                  "promptId": "prompt-4"
+                }
+              ]
+            }
+          ],
+          "mock": [
+            {
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "text": "From \"root\" (task id 00000000-0000-4000-8001-000000000001):\n---8<---\nlearn parent id\n---8<---"
+                },
+                {
+                  "kind": "mcp",
+                  "method": "initialize",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "protocolVersion": "2025-06-18",
+                      "capabilities": {
+                        "tools": {
+                          "listChanged": true
+                        }
+                      },
+                      "serverInfo": {
+                        "name": "lelouchhe_webagent",
+                        "version": "0.1.0"
+                      },
+                      "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 1
+                  }
+                },
+                {
+                  "kind": "mcp",
+                  "method": "notifications/initialized",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "status": 202,
+                  "result": null
+                },
+                {
+                  "kind": "mcp",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "tool": "task_update",
+                  "arguments": {
+                    "status": "done",
+                    "body": "Parent id learned."
+                  },
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "{\"accepted\":true}"
+                        }
+                      ]
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 2
+                  }
+                },
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "text": "send reverse for hub clear"
+                },
+                {
+                  "kind": "mcp",
+                  "method": "initialize",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "protocolVersion": "2025-06-18",
+                      "capabilities": {
+                        "tools": {
+                          "listChanged": true
+                        }
+                      },
+                      "serverInfo": {
+                        "name": "lelouchhe_webagent",
+                        "version": "0.1.0"
+                      },
+                      "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 1
+                  }
+                },
+                {
+                  "kind": "mcp",
+                  "method": "notifications/initialized",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "status": 202,
+                  "result": null
+                },
+                {
+                  "kind": "mcp",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "tool": "task_send",
+                  "arguments": {
+                    "target": "00000000-0000-4000-8001-000000000001",
+                    "body": "queued reverse message for hub clear"
+                  },
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "{\"accepted\":true}"
+                        }
+                      ]
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 2
+                  }
+                },
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "text": "Runtime message:\n---8<---\ntarget: root (00000000-0000-4000-8001-000000000001)\nmessage: A message to the target was not delivered (cleared_before_delivery).\n---8<---"
+                }
+              ]
+            }
+          ],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    10,
+                    "assistant_message",
+                    "{\"text\":\"Reverse message sent.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    11,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    13,
+                    "system_message",
+                    "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"targetTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetLabel\":\"Clear Child\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: root (00000000-0000-4000-8001-000000000001)\\nmessage: A message to the target was not delivered (cleared_before_delivery).\"}",
+                    "msg:00000000-0000-4000-8000-00000000000e",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    14,
+                    "collaboration_prompt",
+                    "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000e\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: root (00000000-0000-4000-8001-000000000001)\\nmessage: A message to the target was not delivered (cleared_before_delivery).\\n---8<---\",\"truncated\":false,\"rawSize\":164}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    15,
+                    "assistant_message",
+                    "{\"text\":\"Owner child saw notice.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    16,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    3,
+                    "system_message",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000000d\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetLabel\":\"Clear Child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Clear Child\\\"\",\"body\":\"learn parent id\"}",
+                    "msg:00000000-0000-4000-8001-00000000000d",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    4,
+                    "collaboration_prompt",
+                    "{\"messageIds\":[\"00000000-0000-4000-8001-00000000000d\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\nlearn parent id\\n---8<---\",\"truncated\":false,\"rawSize\":93}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    6,
+                    "assistant_message",
+                    "{\"text\":\"Learned parent.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    7,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    8,
+                    "user_message",
+                    "{\"text\":\"send reverse for hub clear\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000b\"}",
+                    "user",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-00000000000c",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "00000000-0000-4000-8001-000000000001",
+                    "agent",
+                    "queued reverse message for hub clear",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-00000000000c",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "source",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-00000000000d",
+                    "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8001-000000000001",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    9,
+                    "system_message",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"sourceLabel\":\"Clear Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Clear Child\\\" sent @root\",\"body\":\"queued reverse message for hub clear\",\"deliveryStatus\":\"queued\"}",
+                    "msg:00000000-0000-4000-8000-00000000000c",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-00000000000c",
+                    "parent",
+                    "hub-connection",
+                    3,
+                    "message",
+                    "{\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"Clear Child\",\"body\":\"queued reverse message for hub clear\"}",
+                    "00000000-0000-4000-8000-00000000000d",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-00000000000d",
+                    "00000000-0000-4000-8001-000000000001",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "agent",
+                    "learn parent id",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-00000000000d",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "target",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-00000000000d",
+                    "00000000-0000-4000-8001-00000000000d",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "00000000-0000-4000-8001-00000000000d:a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    "parent",
+                    "hub-connection",
+                    "00000000-0000-4000-8001-00000000000d",
+                    "root",
+                    "message"
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+                  "args": ["/", 1789333200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8000-00000000000a",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["parent", "hub-connection", 3]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8000-00000000000f",
+                    "queued"
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8001-00000000000d",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000008",
+                    "parent",
+                    "hub-connection",
+                    1,
+                    "receipt",
+                    "{\"originalEntryId\":\"00000000-0000-4000-8001-00000000000d\",\"status\":\"delivered\"}",
+                    null,
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'failed', delivered_at = NULL,\n                   failed_at = ?, failure_reason = ?\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "cleared_before_delivery",
+                    "00000000-0000-4000-8000-00000000000d",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["parent", "hub-connection", 4]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    12,
+                    "task_outcome_notice",
+                    "{\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"reason\":\"target_removed\",\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"message\":\"A message to the target was not delivered (cleared_before_delivery).\"}",
+                    "system",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-00000000000e",
+                    "00000000-0000-4000-8001-000000000001",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "system",
+                    "target: root (00000000-0000-4000-8001-000000000001)\nmessage: A message to the target was not delivered (cleared_before_delivery).",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-00000000000e",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "target",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-00000000000f",
+                    "00000000-0000-4000-8000-00000000000e",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "00000000-0000-4000-8000-00000000000e:a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+                  "args": [
+                    1789333200000,
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["done", "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    5,
+                    "task_update",
+                    "{\"status\":\"done\",\"body\":\"Parent id learned.\",\"reason\":\"settled\",\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000009",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "00000000-0000-4000-8001-000000000001",
+                    "agent",
+                    "Task status: done\nParent id learned.",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000009",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "source",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-00000000000a",
+                    "00000000-0000-4000-8000-000000000009",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-000000000009:00000000-0000-4000-8001-000000000001",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000009",
+                    "parent",
+                    "hub-connection",
+                    2,
+                    "report",
+                    "{\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"Clear Child\",\"body\":\"Task status: done\\nParent id learned.\"}",
+                    "00000000-0000-4000-8000-00000000000a",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["idle", "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["running", "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["running", "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b"]
+                }
+              ]
+            ],
+            "reads": 139
+          }
+        },
+        {
+          "name": "hub",
+          "sse": [
+            {
+              "taskId": "00000000-0000-4000-8001-000000000001",
+              "events": [
+                {
+                  "type": "user_message",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "text": "dispatch learn parent",
+                  "clientOpId": "00000000-0000-4000-8001-00000000000c"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 13,
+                  "patch": {
+                    "runtime": {
+                      "busy": {
+                        "kind": "agent",
+                        "since": "2026-09-13T21:00:00.000Z",
+                        "promptId": "prompt-4",
+                        "cancelStatus": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "system_message",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "kind": "collaboration",
+                  "messageId": "00000000-0000-4000-8001-00000000000d",
+                  "sourceTaskId": "00000000-0000-4000-8001-000000000001",
+                  "sourceLabel": "root",
+                  "targetTaskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "targetLabel": "Clear Child",
+                  "role": "source",
+                  "title": "@root sent @\"Clear Child\"",
+                  "body": "learn parent id",
+                  "deliveryStatus": "queued"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 14,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": true,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "message_chunk",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "text": "Sent learn parent."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 15,
+                  "patch": {
+                    "runtime": {
+                      "busy": null
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 16,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": false,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "prompt_done",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "stopReason": "end_turn",
+                  "promptId": "prompt-4"
+                },
+                {
+                  "type": "collaboration_delivery",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "messageId": "00000000-0000-4000-8001-00000000000d",
+                  "status": "delivered",
+                  "deliveredAt": "2026-09-13T21:00:00.000Z"
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 17,
+                  "patch": {
+                    "runtime": {
+                      "busy": {
+                        "kind": "agent",
+                        "since": "2026-09-13T21:00:00.000Z",
+                        "promptId": "prompt-5",
+                        "cancelStatus": null
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "system_message",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "kind": "collaboration",
+                  "messageId": "00000000-0000-4000-8000-000000000009",
+                  "sourceTaskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "sourceLabel": "Clear Child",
+                  "targetTaskId": "00000000-0000-4000-8001-000000000001",
+                  "targetLabel": "root",
+                  "role": "target",
+                  "title": "@\"Clear Child\" sent @root",
+                  "body": "Task status: done\nParent id learned."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 18,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": true,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "message_chunk",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "text": "Parent saw report."
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 19,
+                  "patch": {
+                    "runtime": {
+                      "busy": null
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "seq": 20,
+                  "patch": {
+                    "runtime": {
+                      "streaming": {
+                        "assistant": false,
+                        "thinking": false
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "prompt_done",
+                  "taskId": "00000000-0000-4000-8001-000000000001",
+                  "stopReason": "end_turn",
+                  "promptId": "prompt-5"
+                }
+              ]
+            },
+            {
+              "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+              "events": [
+                {
+                  "type": "collaboration_delivery",
+                  "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                  "messageId": "00000000-0000-4000-8000-000000000009",
+                  "status": "delivered",
+                  "deliveredAt": "2026-09-13T21:00:00.000Z"
+                }
+              ]
+            }
+          ],
+          "mock": [
+            {
+              "sessionId": "*",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "initialize"
+                }
+              ]
+            },
+            {
+              "sessionId": "00000000-0000-4000-8001-000000000001",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "text": "dispatch learn parent"
+                },
+                {
+                  "kind": "mcp",
+                  "method": "initialize",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "protocolVersion": "2025-06-18",
+                      "capabilities": {
+                        "tools": {
+                          "listChanged": true
+                        }
+                      },
+                      "serverInfo": {
+                        "name": "lelouchhe_webagent",
+                        "version": "0.1.0"
+                      },
+                      "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 1
+                  }
+                },
+                {
+                  "kind": "mcp",
+                  "method": "notifications/initialized",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "status": 202,
+                  "result": null
+                },
+                {
+                  "kind": "mcp",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "tool": "task_send",
+                  "arguments": {
+                    "target": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "body": "learn parent id"
+                  },
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "{\"accepted\":true}"
+                        }
+                      ]
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 2
+                  }
+                },
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "text": "From \"Clear Child\" (task id a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b):\n---8<---\nTask status: done\nParent id learned.\n---8<---"
+                }
+              ]
+            },
+            {
+              "sessionId": "00000000-0000-4000-8001-0000000003e9",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "session/new",
+                  "sessionId": "00000000-0000-4000-8001-0000000003e9",
+                  "cwd": "/"
+                }
+              ]
+            }
+          ],
+          "sql": {
+            "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 2]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 3]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 4]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "DELETE FROM inbox_messages WHERE created_at < ?",
+                  "args": [1786741200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    14,
+                    "user_message",
+                    "{\"text\":\"dispatch learn parent\",\"clientOpId\":\"00000000-0000-4000-8001-00000000000c\"}",
+                    "user",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    16,
+                    "assistant_message",
+                    "{\"text\":\"Sent learn parent.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    17,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    18,
+                    "system_message",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000009\",\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"sourceLabel\":\"Clear Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Clear Child\\\" sent @root\",\"body\":\"Task status: done\\nParent id learned.\"}",
+                    "msg:00000000-0000-4000-8000-000000000009",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    19,
+                    "collaboration_prompt",
+                    "{\"messageIds\":[\"00000000-0000-4000-8000-000000000009\"],\"text\":\"From \\\"Clear Child\\\" (task id a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b):\\n---8<---\\nTask status: done\\nParent id learned.\\n---8<---\",\"truncated\":false,\"rawSize\":121}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    20,
+                    "assistant_message",
+                    "{\"text\":\"Parent saw report.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    21,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-5\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    22,
+                    "system_message",
+                    "{\"kind\":\"agent_rotation\",\"title\":\"Execution replaced\",\"body\":\"The task's ACP execution was explicitly cleared. Its task id, history and outstanding work are unchanged.\",\"reason\":\"explicit_clear\",\"fromAgent\":\"broken\",\"toAgent\":\"mock\"}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000009",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "00000000-0000-4000-8001-000000000001",
+                    "agent",
+                    "Task status: done\nParent id learned.",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000009",
+                    "00000000-0000-4000-8001-000000000001",
+                    "target",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000009",
+                    "00000000-0000-4000-8000-000000000009",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-000000000009:00000000-0000-4000-8001-000000000001",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    "child",
+                    "owner",
+                    "00000000-0000-4000-8000-000000000009",
+                    "Clear Child",
+                    "report"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, ?, 0)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET applied_pos = excluded.applied_pos",
+                  "args": ["child", "owner", 3]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-00000000000c",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "00000000-0000-4000-8001-000000000001",
+                    "agent",
+                    "queued reverse message for hub clear",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8001-000000000001",
+                    "target",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8001-000000000001",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    "child",
+                    "owner",
+                    "00000000-0000-4000-8000-00000000000c",
+                    "Clear Child",
+                    "message"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, ?, 0)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET applied_pos = excluded.applied_pos",
+                  "args": ["child", "owner", 4]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-00000000000d",
+                    "00000000-0000-4000-8001-000000000001",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "agent",
+                    "learn parent id",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-00000000000d",
+                    "00000000-0000-4000-8001-000000000001",
+                    "source",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-00000000000e",
+                    "00000000-0000-4000-8001-00000000000d",
+                    "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "00000000-0000-4000-8001-00000000000d:a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    15,
+                    "system_message",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000000d\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetLabel\":\"Clear Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Clear Child\\\"\",\"body\":\"learn parent id\",\"deliveryStatus\":\"queued\"}",
+                    "msg:00000000-0000-4000-8001-00000000000d",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-00000000000d",
+                    "child",
+                    "owner",
+                    1,
+                    "message",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"sourceLabel\":\"root\",\"body\":\"learn parent id\"}",
+                    "00000000-0000-4000-8001-00000000000e",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+                  "args": ["/", 1789333200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8000-000000000009",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-00000000000f",
+                    "child",
+                    "owner",
+                    2,
+                    "receipt",
+                    "{\"originalEntryId\":\"00000000-0000-4000-8000-000000000009\",\"status\":\"delivered\"}",
+                    null,
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8001-00000000000e",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 2]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, ?, 0)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET applied_pos = excluded.applied_pos",
+                  "args": ["child", "owner", 2]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'failed', delivered_at = NULL,\n                   failed_at = ?, failure_reason = ?\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "cleared_before_delivery",
+                    "00000000-0000-4000-8000-00000000000c",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000003ee",
+                    "child",
+                    "owner",
+                    3,
+                    "receipt",
+                    "{\"originalEntryId\":\"00000000-0000-4000-8000-00000000000c\",\"status\":\"failed\",\"failureReason\":\"cleared_before_delivery\"}",
+                    null,
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET cwd = ? WHERE id = ?",
+                  "args": ["/", "00000000-0000-4000-8001-000000000001"]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "DELETE FROM agent_sessions WHERE task_id = ?",
+                  "args": ["00000000-0000-4000-8001-000000000001"]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "mock",
+                    "00000000-0000-4000-8001-0000000003e9",
+                    "00000000-0000-4000-8001-000000000001",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8001-000000000001"
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+                  "args": ["agent", "00000000-0000-4000-8001-000000000001"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
+                  "args": [null, "00000000-0000-4000-8001-000000000001"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+                  "args": ["mock-model", "00000000-0000-4000-8001-000000000001"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET model = ? WHERE id = ?",
+                  "args": [null, "00000000-0000-4000-8001-000000000001"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ?",
+                  "args": ["00000000-0000-4000-8001-000000000001"]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
+                  "args": ["00000000-0000-4000-8001-000000000001"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET pending_compact_summary = NULL WHERE id = ?",
+                  "args": ["00000000-0000-4000-8001-000000000001"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+                  "args": ["medium", "00000000-0000-4000-8001-000000000001"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
+                  "args": [null, "00000000-0000-4000-8001-000000000001"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["idle", "00000000-0000-4000-8001-000000000001"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["idle", "00000000-0000-4000-8001-000000000001"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["running", "00000000-0000-4000-8001-000000000001"]
+                }
+              ]
+            ],
+            "reads": 183
+          }
+        }
+      ]
+    }
+  ],
+  "snapshot": [
+    {
+      "name": "owner",
+      "snapshot": {
+        "tasks": [
+          {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "cwd": "/",
+            "title": "root",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "pending_compact_summary": null,
+            "model": null,
+            "mode": null,
+            "reasoning_effort": null,
+            "source": "root",
+            "deleted_at": null,
+            "created_at": 1789333200000,
+            "last_active_at": 1789333200000
+          },
+          {
+            "id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "cwd": "/",
+            "title": "Clear Child",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "pending_compact_summary": null,
+            "model": "mock-model",
+            "mode": "agent",
+            "reasoning_effort": "medium",
+            "source": "agent",
+            "deleted_at": null,
+            "created_at": 1789333200000,
+            "last_active_at": 1789333200000
+          }
+        ],
+        "agent_sessions": [
+          {
+            "agent_key": "mock",
+            "agent_session_id": "00000000-0000-4000-8000-000000000001",
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "created_at": 1789333200000
+          }
+        ],
+        "events": [
+          {
+            "id": 1,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 1,
+            "type": "system_message",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"taskTitle\":\"Clear Child\",\"agentId\":\"broken\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Clear Child\\\"\",\"body\":\"Task ID: a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\\nagent: broken\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 2,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 2,
+            "type": "system_message",
+            "data": "{\"kind\":\"agent_rotation\",\"title\":\"Execution replaced\",\"body\":\"The task's ACP execution was explicitly cleared. Its task id, history and outstanding work are unchanged.\",\"reason\":\"explicit_clear\",\"fromAgent\":\"broken\",\"toAgent\":\"mock\"}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 3,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 3,
+            "type": "system_message",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000000d\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetLabel\":\"Clear Child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Clear Child\\\"\",\"body\":\"learn parent id\"}",
+            "created_at": 1789333200000,
+            "from_ref": "msg:00000000-0000-4000-8001-00000000000d"
+          },
+          {
+            "id": 4,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 4,
+            "type": "collaboration_prompt",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-00000000000d\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\nlearn parent id\\n---8<---\",\"truncated\":false,\"rawSize\":93}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 5,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 5,
+            "type": "task_update",
+            "data": "{\"status\":\"done\",\"body\":\"Parent id learned.\",\"reason\":\"settled\",\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 6,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 6,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Learned parent.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 7,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 7,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 8,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 8,
+            "type": "user_message",
+            "data": "{\"text\":\"send reverse for hub clear\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000b\"}",
+            "created_at": 1789333200000,
+            "from_ref": "user"
+          },
+          {
+            "id": 9,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 9,
+            "type": "system_message",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"sourceLabel\":\"Clear Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Clear Child\\\" sent @root\",\"body\":\"queued reverse message for hub clear\",\"deliveryStatus\":\"queued\"}",
+            "created_at": 1789333200000,
+            "from_ref": "msg:00000000-0000-4000-8000-00000000000c"
+          },
+          {
+            "id": 10,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 10,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Reverse message sent.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 11,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 11,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 12,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 12,
+            "type": "task_outcome_notice",
+            "data": "{\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"reason\":\"target_removed\",\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"message\":\"A message to the target was not delivered (cleared_before_delivery).\"}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 13,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 13,
+            "type": "system_message",
+            "data": "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"targetTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetLabel\":\"Clear Child\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: root (00000000-0000-4000-8001-000000000001)\\nmessage: A message to the target was not delivered (cleared_before_delivery).\"}",
+            "created_at": 1789333200000,
+            "from_ref": "msg:00000000-0000-4000-8000-00000000000e"
+          },
+          {
+            "id": 14,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 14,
+            "type": "collaboration_prompt",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000e\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: root (00000000-0000-4000-8001-000000000001)\\nmessage: A message to the target was not delivered (cleared_before_delivery).\\n---8<---\",\"truncated\":false,\"rawSize\":164}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 15,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 15,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Owner child saw notice.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 16,
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "seq": 16,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          }
+        ],
+        "messages": [
+          {
+            "id": "00000000-0000-4000-8001-000000000008",
+            "source_task_id": "00000000-0000-4000-8001-000000000001",
+            "direct_target_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "source_actor": "agent",
+            "body": "queued forward message for owner clear",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8001-00000000000d",
+            "source_task_id": "00000000-0000-4000-8001-000000000001",
+            "direct_target_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "source_actor": "agent",
+            "body": "learn parent id",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000009",
+            "source_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
+            "source_actor": "agent",
+            "body": "Task status: done\nParent id learned.",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8000-00000000000c",
+            "source_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
+            "source_actor": "agent",
+            "body": "queued reverse message for hub clear",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8000-00000000000e",
+            "source_task_id": "00000000-0000-4000-8001-000000000001",
+            "direct_target_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "source_actor": "system",
+            "body": "target: root (00000000-0000-4000-8001-000000000001)\nmessage: A message to the target was not delivered (cleared_before_delivery).",
+            "created_at": 1789333200000
+          }
+        ],
+        "message_projections": [
+          {
+            "message_id": "00000000-0000-4000-8001-000000000008",
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "role": "target",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8001-00000000000d",
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "role": "target",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8000-000000000009",
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "role": "source",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8000-00000000000c",
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "role": "source",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8000-00000000000e",
+            "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "role": "target",
+            "created_at": 1789333200000
+          }
+        ],
+        "deliveries": [
+          {
+            "id": "00000000-0000-4000-8001-000000000008",
+            "message_id": "00000000-0000-4000-8001-000000000008",
+            "recipient_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "idempotency_key": "00000000-0000-4000-8001-000000000008:a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "status": "failed",
+            "queued_at": 1789333200000,
+            "delivered_at": null,
+            "failed_at": 1789333200000,
+            "failure_reason": "cleared_before_delivery",
+            "source_remote_role": "parent",
+            "source_remote_host": "hub-connection",
+            "source_entry_id": "00000000-0000-4000-8001-000000000008",
+            "source_label": "root",
+            "source_category": "message"
+          },
+          {
+            "id": "00000000-0000-4000-8001-00000000000d",
+            "message_id": "00000000-0000-4000-8001-00000000000d",
+            "recipient_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "idempotency_key": "00000000-0000-4000-8001-00000000000d:a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": "parent",
+            "source_remote_host": "hub-connection",
+            "source_entry_id": "00000000-0000-4000-8001-00000000000d",
+            "source_label": "root",
+            "source_category": "message"
+          },
+          {
+            "id": "00000000-0000-4000-8000-00000000000a",
+            "message_id": "00000000-0000-4000-8000-000000000009",
+            "recipient_task_id": "00000000-0000-4000-8001-000000000001",
+            "idempotency_key": "00000000-0000-4000-8000-000000000009:00000000-0000-4000-8001-000000000001",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": null,
+            "source_remote_host": null,
+            "source_entry_id": null,
+            "source_label": null,
+            "source_category": null
+          },
+          {
+            "id": "00000000-0000-4000-8000-00000000000d",
+            "message_id": "00000000-0000-4000-8000-00000000000c",
+            "recipient_task_id": "00000000-0000-4000-8001-000000000001",
+            "idempotency_key": "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8001-000000000001",
+            "status": "failed",
+            "queued_at": 1789333200000,
+            "delivered_at": null,
+            "failed_at": 1789333200000,
+            "failure_reason": "cleared_before_delivery",
+            "source_remote_role": null,
+            "source_remote_host": null,
+            "source_entry_id": null,
+            "source_label": null,
+            "source_category": null
+          },
+          {
+            "id": "00000000-0000-4000-8000-00000000000f",
+            "message_id": "00000000-0000-4000-8000-00000000000e",
+            "recipient_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "idempotency_key": "00000000-0000-4000-8000-00000000000e:a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": null,
+            "source_remote_host": null,
+            "source_entry_id": null,
+            "source_label": null,
+            "source_category": null
+          }
+        ],
+        "client_ops": [],
+        "recent_paths": [
+          {
+            "cwd": "/",
+            "last_used_at": 1789333200000
+          }
+        ]
+      }
+    },
+    {
+      "name": "hub",
+      "snapshot": {
+        "tasks": [
+          {
+            "id": "00000000-0000-4000-8001-000000000001",
+            "cwd": "/",
+            "title": "root",
+            "workflow_status": "idle",
+            "parent_id": null,
+            "pending_compact_summary": null,
+            "model": "mock-model",
+            "mode": "agent",
+            "reasoning_effort": "medium",
+            "source": "root",
+            "deleted_at": null,
+            "created_at": 1789333200000,
+            "last_active_at": 1789333200000
+          }
+        ],
+        "agent_sessions": [
+          {
+            "agent_key": "mock",
+            "agent_session_id": "00000000-0000-4000-8001-0000000003e9",
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "created_at": 1789333200000
+          }
+        ],
+        "events": [
+          {
+            "id": 1,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 1,
+            "type": "user_message",
+            "data": "{\"text\":\"create clear child\",\"clientOpId\":\"00000000-0000-4000-8001-000000000004\"}",
+            "created_at": 1789333200000,
+            "from_ref": "user"
+          },
+          {
+            "id": 2,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 2,
+            "type": "system_message",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"taskTitle\":\"Clear Child\",\"agentId\":\"broken\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Clear Child\\\"\",\"body\":\"Task ID: a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\\nagent: broken\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 3,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 3,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Created clear child.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 4,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 4,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 5,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 5,
+            "type": "user_message",
+            "data": "{\"text\":\"dispatch queued for owner clear\",\"clientOpId\":\"00000000-0000-4000-8001-000000000007\"}",
+            "created_at": 1789333200000,
+            "from_ref": "user"
+          },
+          {
+            "id": 6,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 6,
+            "type": "system_message",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000008\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetLabel\":\"Clear Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Clear Child\\\"\",\"body\":\"queued forward message for owner clear\",\"deliveryStatus\":\"queued\"}",
+            "created_at": 1789333200000,
+            "from_ref": "msg:00000000-0000-4000-8001-000000000008"
+          },
+          {
+            "id": 7,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 7,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Queued forward message.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 8,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 8,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 9,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 9,
+            "type": "task_outcome_notice",
+            "data": "{\"messageId\":\"00000000-0000-4000-8001-00000000000a\",\"reason\":\"target_removed\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"message\":\"A message to the target was not delivered (cleared_before_delivery).\"}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 10,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 10,
+            "type": "system_message",
+            "data": "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-00000000000a\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Clear Child (a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b)\\nmessage: A message to the target was not delivered (cleared_before_delivery).\"}",
+            "created_at": 1789333200000,
+            "from_ref": "msg:00000000-0000-4000-8001-00000000000a"
+          },
+          {
+            "id": 11,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 11,
+            "type": "collaboration_prompt",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-00000000000a\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Clear Child (a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b)\\nmessage: A message to the target was not delivered (cleared_before_delivery).\\n---8<---\",\"truncated\":false,\"rawSize\":171}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 12,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 12,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Hub parent saw notice.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 13,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 13,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 14,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 14,
+            "type": "user_message",
+            "data": "{\"text\":\"dispatch learn parent\",\"clientOpId\":\"00000000-0000-4000-8001-00000000000c\"}",
+            "created_at": 1789333200000,
+            "from_ref": "user"
+          },
+          {
+            "id": 15,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 15,
+            "type": "system_message",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000000d\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetLabel\":\"Clear Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Clear Child\\\"\",\"body\":\"learn parent id\",\"deliveryStatus\":\"queued\"}",
+            "created_at": 1789333200000,
+            "from_ref": "msg:00000000-0000-4000-8001-00000000000d"
+          },
+          {
+            "id": 16,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 16,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Sent learn parent.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 17,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 17,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 18,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 18,
+            "type": "system_message",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000009\",\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"sourceLabel\":\"Clear Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Clear Child\\\" sent @root\",\"body\":\"Task status: done\\nParent id learned.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "msg:00000000-0000-4000-8000-000000000009"
+          },
+          {
+            "id": 19,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 19,
+            "type": "collaboration_prompt",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000009\"],\"text\":\"From \\\"Clear Child\\\" (task id a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b):\\n---8<---\\nTask status: done\\nParent id learned.\\n---8<---\",\"truncated\":false,\"rawSize\":121}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 20,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 20,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Parent saw report.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 21,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 21,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-5\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 22,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 22,
+            "type": "system_message",
+            "data": "{\"kind\":\"agent_rotation\",\"title\":\"Execution replaced\",\"body\":\"The task's ACP execution was explicitly cleared. Its task id, history and outstanding work are unchanged.\",\"reason\":\"explicit_clear\",\"fromAgent\":\"broken\",\"toAgent\":\"mock\"}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          }
+        ],
+        "messages": [
+          {
+            "id": "00000000-0000-4000-8001-000000000008",
+            "source_task_id": "00000000-0000-4000-8001-000000000001",
+            "direct_target_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "source_actor": "agent",
+            "body": "queued forward message for owner clear",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8001-00000000000a",
+            "source_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
+            "source_actor": "system",
+            "body": "target: Clear Child (a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b)\nmessage: A message to the target was not delivered (cleared_before_delivery).",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8001-00000000000d",
+            "source_task_id": "00000000-0000-4000-8001-000000000001",
+            "direct_target_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "source_actor": "agent",
+            "body": "learn parent id",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000009",
+            "source_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
+            "source_actor": "agent",
+            "body": "Task status: done\nParent id learned.",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8000-00000000000c",
+            "source_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
+            "source_actor": "agent",
+            "body": "queued reverse message for hub clear",
+            "created_at": 1789333200000
+          }
+        ],
+        "message_projections": [
+          {
+            "message_id": "00000000-0000-4000-8001-000000000008",
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "role": "source",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8001-00000000000a",
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "role": "target",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8001-00000000000d",
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "role": "source",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8000-000000000009",
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "role": "target",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8000-00000000000c",
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "role": "target",
+            "created_at": 1789333200000
+          }
+        ],
+        "deliveries": [
+          {
+            "id": "00000000-0000-4000-8001-000000000009",
+            "message_id": "00000000-0000-4000-8001-000000000008",
+            "recipient_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "idempotency_key": "00000000-0000-4000-8001-000000000008:a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "status": "failed",
+            "queued_at": 1789333200000,
+            "delivered_at": null,
+            "failed_at": 1789333200000,
+            "failure_reason": "cleared_before_delivery",
+            "source_remote_role": null,
+            "source_remote_host": null,
+            "source_entry_id": null,
+            "source_label": null,
+            "source_category": null
+          },
+          {
+            "id": "00000000-0000-4000-8001-00000000000b",
+            "message_id": "00000000-0000-4000-8001-00000000000a",
+            "recipient_task_id": "00000000-0000-4000-8001-000000000001",
+            "idempotency_key": "00000000-0000-4000-8001-00000000000a:00000000-0000-4000-8001-000000000001",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": null,
+            "source_remote_host": null,
+            "source_entry_id": null,
+            "source_label": null,
+            "source_category": null
+          },
+          {
+            "id": "00000000-0000-4000-8001-00000000000e",
+            "message_id": "00000000-0000-4000-8001-00000000000d",
+            "recipient_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "idempotency_key": "00000000-0000-4000-8001-00000000000d:a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": null,
+            "source_remote_host": null,
+            "source_entry_id": null,
+            "source_label": null,
+            "source_category": null
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000009",
+            "message_id": "00000000-0000-4000-8000-000000000009",
+            "recipient_task_id": "00000000-0000-4000-8001-000000000001",
+            "idempotency_key": "00000000-0000-4000-8000-000000000009:00000000-0000-4000-8001-000000000001",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": "child",
+            "source_remote_host": "owner",
+            "source_entry_id": "00000000-0000-4000-8000-000000000009",
+            "source_label": "Clear Child",
+            "source_category": "report"
+          },
+          {
+            "id": "00000000-0000-4000-8000-00000000000c",
+            "message_id": "00000000-0000-4000-8000-00000000000c",
+            "recipient_task_id": "00000000-0000-4000-8001-000000000001",
+            "idempotency_key": "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8001-000000000001",
+            "status": "failed",
+            "queued_at": 1789333200000,
+            "delivered_at": null,
+            "failed_at": 1789333200000,
+            "failure_reason": "cleared_before_delivery",
+            "source_remote_role": "child",
+            "source_remote_host": "owner",
+            "source_entry_id": "00000000-0000-4000-8000-00000000000c",
+            "source_label": "Clear Child",
+            "source_category": "message"
+          }
+        ],
+        "client_ops": [],
+        "recent_paths": [
+          {
+            "cwd": "/",
+            "last_used_at": 1789333200000
+          }
+        ]
+      }
+    }
+  ]
+}
