@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -678,6 +678,246 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       );
     } finally {
       await hubServer?.close();
+      await ownerServer?.close();
+      hub.store.close();
+      owner.store.close();
+      rmSync(hubDir, { recursive: true, force: true });
+      rmSync(ownerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fences agent cancel after credential resolution so a rotated lease sends zero POSTs", async () => {
+    const ownerDir = mkdtempSync(join(tmpdir(), "webagent-fence-owner-"));
+    const hubDir = mkdtempSync(join(tmpdir(), "webagent-fence-hub-"));
+    const owner = await createTestHost(ownerDir);
+    const hub = await createTestHost(hubDir);
+    try {
+      hub.store.createTask("p1", hubDir, "auto", "pi", "s-p1", hub.root.id, {
+        title: "Fence Parent",
+      });
+      hub.store.recordRemoteChild("p1", "r1", "owner-1");
+
+      const readyFile = join(hubDir, "cred-ready");
+      const goFile = join(hubDir, "cred-go");
+      const tokenCmd = `!node -e "const fs=require('fs');fs.writeFileSync(process.argv[1],'1');const iv=setInterval(()=>{if(fs.existsSync(process.argv[2])){clearInterval(iv);console.log(process.argv[3]);}},10);" ${JSON.stringify(readyFile)} ${JSON.stringify(goFile)} ${JSON.stringify(owner.hostToken)}`;
+
+      const stats = { posts: 0 };
+      const hubRegistry = new HostRegistry(
+        {
+          "owner-1": {
+            url: "http://127.0.0.1:1",
+            token: tokenCmd,
+          },
+        },
+        {
+          fetch: async () => {
+            stats.posts += 1;
+            return new Response(JSON.stringify({ ok: true, status: "idle" }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          },
+          listLinks: () =>
+            hub.store.listRemoteChildren().map((row) => ({
+              localTaskId: row.local_task_id,
+              remoteTaskId: row.remote_task_id,
+              host: row.remote_host,
+            })),
+        },
+      );
+      const hubLocalOps = createLocalTaskOps({
+        store: hub.store,
+        tasks: hub.tasks,
+      });
+      const hubTaskOps = {
+        ...hubLocalOps,
+        ...createRoutedTaskOps({
+          local: hubLocalOps,
+          remote: hubRegistry,
+          store: hub.store,
+          tasks: hub.tasks,
+          broadcastCollaboration: () => {},
+        }),
+      };
+
+      const lease = hub.tasks.authority.leaseFor("p1")!;
+      const pendingCancel = hubTaskOps.cancel({
+        kind: "agent",
+        principal: {
+          taskId: "p1",
+          agentId: "pi",
+          generation: lease.generation,
+          initializing: false,
+        },
+        targetTaskId: "r1",
+        reason: "rotated while resolving token",
+      });
+
+      const deadline = Date.now() + 5_000;
+      while (!existsSync(readyFile) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(existsSync(readyFile), true);
+
+      // Rotate P's lease while credential resolution is in flight, then release it.
+      hub.store.replaceAgentSession("p1", "pi", "s-p1-v2");
+      writeFileSync(goFile, "1");
+
+      await assert.rejects(() => pendingCancel, /execution_replaced/);
+      assert.equal(stats.posts, 0);
+    } finally {
+      hub.store.close();
+      owner.store.close();
+      rmSync(hubDir, { recursive: true, force: true });
+      rmSync(ownerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds outgoing sourceLabel to 256 chars and rejects mismatched HTTP/body cancel status pairs", async () => {
+    const ownerDir = mkdtempSync(join(tmpdir(), "webagent-label-owner-"));
+    const hubDir = mkdtempSync(join(tmpdir(), "webagent-label-hub-"));
+    const owner = await createTestHost(ownerDir);
+    const hub = await createTestHost(hubDir);
+    let ownerServer: Awaited<ReturnType<typeof startTestServer>> | undefined;
+    try {
+      const longTitle = "A".repeat(257);
+      hub.store.createTask("p1", hubDir, "auto", "pi", "s-p1", hub.root.id, {
+        title: longTitle,
+      });
+      owner.store.createDeferredRemoteTask({
+        id: "r1",
+        cwd: ownerDir,
+        source: "agent",
+        agentId: "pi",
+        externalParentId: "p1",
+        remoteHost: "hub-a",
+        title: "Remote Worker",
+        creationAnchor: { kind: "task_created", taskId: "r1" },
+      });
+      const ownerLocalOps = createLocalTaskOps({
+        store: owner.store,
+        tasks: owner.tasks,
+        broadcastTaskCancelNotice: (ev) => owner.cancelNotices.push(ev),
+      });
+      const ownerTaskOps = {
+        ...ownerLocalOps,
+        ...createRoutedTaskOps({
+          local: ownerLocalOps,
+          remote: new HostRegistry({}, { listLinks: () => [] }),
+          store: owner.store,
+          tasks: owner.tasks,
+          broadcastCollaboration: () => {},
+          broadcastTaskCancelNotice: (ev) => owner.cancelNotices.push(ev),
+        }),
+      };
+      ownerServer = await startTestServer(
+        createRequestHandler({
+          store: owner.store,
+          tasks: owner.tasks,
+          taskOps: ownerTaskOps,
+          sseManager: Object.assign(new SseManager(), { broadcast() {} }),
+          publicDir: ownerDir,
+          dataDir: ownerDir,
+          limits: { bash_output: 1024, image_upload: 1024 },
+          authStore: owner.authStore,
+        }),
+      );
+
+      let overrideResponse: { status: number; body: unknown } | null = null;
+      const stats = { posts: 0 };
+      hub.store.recordRemoteChild("p1", "r1", "owner-1");
+      const hubRegistry = new HostRegistry(
+        {
+          "owner-1": {
+            url: ownerServer.origin,
+            token: owner.hostToken,
+          },
+        },
+        {
+          fetch: async (input, init) => {
+            stats.posts += 1;
+            if (overrideResponse) {
+              const current = overrideResponse;
+              overrideResponse = null;
+              return new Response(JSON.stringify(current.body), {
+                status: current.status,
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+            return globalThis.fetch(input, init);
+          },
+          listLinks: () =>
+            hub.store.listRemoteChildren().map((row) => ({
+              localTaskId: row.local_task_id,
+              remoteTaskId: row.remote_task_id,
+              host: row.remote_host,
+            })),
+        },
+      );
+      const hubLocalOps = createLocalTaskOps({
+        store: hub.store,
+        tasks: hub.tasks,
+        broadcastTaskCancelNotice: (ev) => hub.cancelNotices.push(ev),
+      });
+      const hubTaskOps = {
+        ...hubLocalOps,
+        ...createRoutedTaskOps({
+          local: hubLocalOps,
+          remote: hubRegistry,
+          store: hub.store,
+          tasks: hub.tasks,
+          broadcastCollaboration: () => {},
+          broadcastTaskCancelNotice: (ev) => hub.cancelNotices.push(ev),
+        }),
+      };
+
+      const lease = hub.tasks.authority.leaseFor("p1")!;
+      // Fix 2: 257-character title is bounded to 256 chars and succeeds (not 400).
+      const ok = await hubTaskOps.cancel({
+        kind: "agent",
+        principal: {
+          taskId: "p1",
+          agentId: "pi",
+          generation: lease.generation,
+          initializing: false,
+        },
+        targetTaskId: "r1",
+        reason: "long title test",
+      });
+      assert.equal(ok.status, "idle");
+      assert.equal(owner.cancelNotices.length, 1);
+      assert.equal(owner.cancelNotices[0]?.sourceLabel?.length, 256);
+      assert.equal(hub.cancelNotices.length, 1);
+      assert.equal(hub.cancelNotices[0]?.sourceLabel?.length, 256);
+
+      // Fix 3: 202 with "idle" and 200 with "cancelling" are treated as unknown (no retry, no source row).
+      const hubCount = () => hub.cancelNotices.length;
+      for (const bad of [
+        { status: 202, body: { ok: true, status: "idle" } },
+        { status: 200, body: { ok: true, status: "cancelling" } },
+      ]) {
+        const postsBefore = stats.posts;
+        const hubCountBefore = hubCount();
+        overrideResponse = bad;
+        await assert.rejects(
+          () =>
+            hubTaskOps.cancel({
+              kind: "agent",
+              principal: {
+                taskId: "p1",
+                agentId: "pi",
+                generation: lease.generation,
+                initializing: false,
+              },
+              targetTaskId: "r1",
+              reason: "mismatched status pair",
+            }),
+          TaskRemoteCancelUnknownError,
+        );
+        assert.equal(stats.posts, postsBefore + 1);
+        assert.equal(hubCount(), hubCountBefore);
+      }
+    } finally {
       await ownerServer?.close();
       hub.store.close();
       owner.store.close();

@@ -223,9 +223,36 @@ export default scenario<State>({
       },
     },
     {
-      name: "agent task_cancel cancels remote worker and writes one record on each side",
+      name: "dispatch second waiting turn for agent cancel",
       async action(client, state) {
         const hub = client.instance("hub");
+        const owner = client.instance("owner");
+        const res = await hub.rest(
+          "POST",
+          `/api/v1/tasks/${state.parentId}/prompt`,
+          {
+            text: "dispatch work to worker",
+          },
+        );
+        await waitForRows(
+          state.ownerDb,
+          `SELECT COUNT(*) AS n FROM deliveries WHERE recipient_task_id = '${state.remoteChildId}' AND status = 'delivered' HAVING n = 2`,
+        );
+        const ownerStatus = await owner.rest(
+          "GET",
+          `/api/v1/tasks/${state.remoteChildId}/status`,
+        );
+        return {
+          status: res.status,
+          ownerBusyBeforeCancel: (ownerStatus.body as JsonObject).busy,
+        };
+      },
+    },
+    {
+      name: "agent task_cancel cancels active remote worker and writes one record on each side",
+      async action(client, state) {
+        const hub = client.instance("hub");
+        const owner = client.instance("owner");
         await hub.rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
           text: "agent cancel worker",
         });
@@ -233,15 +260,26 @@ export default scenario<State>({
           state.hubDb,
           `SELECT seq FROM events WHERE task_id = '${state.parentId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel'`,
         );
+        const deadline = performance.now() + 10_000;
+        let ownerBusyAfterCancel: Json = true;
+        while (performance.now() < deadline) {
+          const ownerStatus = await owner.rest(
+            "GET",
+            `/api/v1/tasks/${state.remoteChildId}/status`,
+          );
+          ownerBusyAfterCancel = (ownerStatus.body as JsonObject).busy;
+          if (ownerBusyAfterCancel === false) break;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
         const hubRows = readRows(
           state.hubDb,
-          `SELECT json_extract(data, '$.role') AS role, json_extract(data, '$.reason') AS reason FROM events WHERE task_id = '${state.parentId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel'`,
+          `SELECT json_extract(data, '$.role') AS role, json_extract(data, '$.reason') AS reason, json_extract(data, '$.status') AS status FROM events WHERE task_id = '${state.parentId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel'`,
         );
         const ownerRows = readRows(
           state.ownerDb,
-          `SELECT json_extract(data, '$.role') AS role, json_extract(data, '$.reason') AS reason FROM events WHERE task_id = '${state.remoteChildId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel'`,
+          `SELECT json_extract(data, '$.role') AS role, json_extract(data, '$.reason') AS reason, json_extract(data, '$.status') AS status FROM events WHERE task_id = '${state.remoteChildId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel'`,
         );
-        return { hubRows, ownerRows };
+        return { ownerBusyAfterCancel, hubRows, ownerRows };
       },
     },
     {

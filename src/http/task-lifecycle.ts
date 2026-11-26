@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 import {
+  cancelHttpStatus,
+  MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH,
   TaskRemoteCancelRejectedError,
   TaskRemoteCancelUnknownError,
   type TaskOps,
@@ -20,7 +22,7 @@ const HostCancelBodySchema = z.union([
     .object({
       kind: z.literal("agent"),
       reason: z.string().max(65_536),
-      sourceLabel: z.string().min(1).max(256),
+      sourceLabel: z.string().min(1).max(MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH),
     })
     .strict(),
 ]);
@@ -129,10 +131,7 @@ async function handleHostCancelRoute(
     }
     throw error;
   }
-  const status =
-    result.status === "cancelling" || result.status === "superseded"
-      ? HTTP_STATUS.ACCEPTED
-      : HTTP_STATUS.OK;
+  const status = cancelHttpStatus(result.status);
   json(res, status, { ok: true, status: result.status });
 }
 

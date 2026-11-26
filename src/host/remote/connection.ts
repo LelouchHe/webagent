@@ -12,11 +12,12 @@ import type { HostConfig } from "../../config.ts";
 import { errorMessage } from "../../types.ts";
 import { resolveHostToken, TokenCommandError } from "./credentials.ts";
 import type { HostUnreachableReason } from "./state.ts";
-import type {
-  RemoteTaskCreateInput,
-  TaskReadInput,
-  TaskReadResult,
-  TaskCreateResult,
+import {
+  cancelHttpStatus,
+  type RemoteTaskCreateInput,
+  type TaskReadInput,
+  type TaskReadResult,
+  type TaskCreateResult,
 } from "../../api/tasks.ts";
 import type { CanonicalTaskHistoryEvent } from "../../task-history.ts";
 import {
@@ -344,6 +345,7 @@ export class HostConnection {
   async cancelTask(
     taskId: string,
     input: HostTaskCancelRequest,
+    beforeSend?: () => void,
   ): Promise<HostTaskCancelAttempt> {
     let token: string;
     try {
@@ -351,6 +353,7 @@ export class HostConnection {
     } catch {
       return { kind: "unknown", reason: "Host credential is unavailable" };
     }
+    beforeSend?.();
     const outcome = await sendSyncRequest({
       opId: null,
       request: {
@@ -374,20 +377,17 @@ export class HostConnection {
         reason: responseError(outcome.body, outcome.status),
       };
     }
-    if (
-      outcome.status !== HTTP_STATUS.OK &&
-      outcome.status !== HTTP_STATUS.ACCEPTED
-    ) {
-      return {
-        kind: "unknown",
-        reason: `Unexpected HTTP ${outcome.status}`,
-      };
-    }
     const parsed = TaskCancelResponseSchema.safeParse(outcome.body);
     if (!parsed.success) {
       return {
         kind: "unknown",
         reason: "Remote returned an incomplete task-cancel response",
+      };
+    }
+    if (outcome.status !== cancelHttpStatus(parsed.data.status)) {
+      return {
+        kind: "unknown",
+        reason: `Unexpected HTTP ${outcome.status} for cancel status ${parsed.data.status}`,
       };
     }
     return { kind: "success", status: parsed.data.status };

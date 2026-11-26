@@ -16,6 +16,7 @@ import type {
   TaskListItem,
 } from "../api/tasks.ts";
 import {
+  MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH,
   TaskCreateInputError,
   TaskRemoteCreateConfigError,
 } from "../api/tasks.ts";
@@ -156,12 +157,23 @@ export function createRoutedTaskOps(deps: {
       const sourceTaskId = command.principal.taskId;
       const sourceTask = store.getTask(sourceTaskId);
       if (!sourceTask) throw new Error("execution_replaced");
-      const sourceLabel = sourceTask.title ?? sourceTaskId.slice(0, 8);
-      const status = await remote.cancelRemote(route.target, {
-        kind: "agent",
-        reason: command.reason,
-        sourceLabel,
-      });
+      const trimmedTitle = sourceTask.title?.trim();
+      const sourceLabel = (
+        trimmedTitle && trimmedTitle.length > 0
+          ? trimmedTitle
+          : sourceTaskId.slice(0, 8)
+      ).slice(0, MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH);
+      const status = await remote.cancelRemote(
+        route.target,
+        {
+          kind: "agent",
+          reason: command.reason,
+          sourceLabel,
+        },
+        () => {
+          authorize(command.principal);
+        },
+      );
       authorize(command.principal);
       const targetLabel =
         store.getRemoteChildTitle(sourceTaskId, route.target.taskId) ??

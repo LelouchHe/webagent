@@ -1,3 +1,4 @@
+import { HTTP_STATUS } from "../http-status.ts";
 import type { AgentCommandSnapshot, ConfigOption } from "../types.ts";
 import type {
   TaskUpdateStatus,
@@ -80,6 +81,14 @@ export interface TaskReadRow {
 export interface TaskReadResult {
   task_id: string;
   rows: TaskReadRow[];
+}
+
+export const MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH = 256;
+
+export function cancelHttpStatus(status: TaskCancelOutcome["status"]): number {
+  return status === "cancelling" || status === "superseded"
+    ? HTTP_STATUS.ACCEPTED
+    : HTTP_STATUS.OK;
 }
 
 export interface TaskCancelOutcome {

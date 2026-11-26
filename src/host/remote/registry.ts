@@ -213,8 +213,13 @@ export class HostRegistry implements RemoteTaskCreateTransport {
   async cancelRemote(
     target: RemoteTaskTarget,
     input: HostTaskCancelRequest,
+    beforeSend?: () => void,
   ): Promise<"idle" | "cancelling" | "cancelled" | "superseded"> {
-    const attempt = await target.connection.cancelTask(target.taskId, input);
+    const attempt = await target.connection.cancelTask(
+      target.taskId,
+      input,
+      beforeSend,
+    );
     switch (attempt.kind) {
       case "success":
         return attempt.status;
