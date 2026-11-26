@@ -147,10 +147,39 @@ before any of this on every launch path, and
 | --- | --- |
 | `src/task-manager.ts` | Live task runtime: creation (one entry point for REST create, quick prompt, inbox consume, and `task_create`), prompt submission slots, chunk buffers, collaboration delivery drain, bash processes, compaction and clear rotation, deletion and Root replacement. Broadcasts through callbacks injected by `server.ts`. |
 | `src/store.ts` | SQLite persistence: tasks, bindings, raw ACP events, messages and deliveries, attachments, shares, push subscriptions, client op results, recent paths. See [Database Schema](../schema.md). |
+| `src/store/` | Store collaborators for multi-host persistence: `remote-relations.ts` (`remote_tasks`), `link-outbox.ts` (`outbox`, `outbox_cursors`, push cursor), `link-apply.ts` (inbound apply, receipts, notices, rejection and timeout failures), and `internal.ts` (the `StoreInternal` handle they share). See [Multi-host](./multi-host.md). |
 | `src/execution-authority.ts` | Which execution may still write to a task: the binding, the per-task generation (not persisted), and the lease validated at the write boundaries. |
 | `src/task-state.ts` | Per-task runtime state (busy, streaming, pending permissions, plan): a snapshot on connect plus incremental `state_patch` events. |
 | `src/obligation-controller.ts`, `src/task-collaboration.ts`, `src/collaboration-message.ts` | Directed-dispatch accounts, reminders, and notices; the arming policy; runtime message titles. See [Task Obligations](../task-obligations.md). |
 | `src/task-tree-lock.ts` | In-process hierarchical lock for structural tree mutations. |
+
+`Store` is the only persistence entry point. It constructs the multi-host
+collaborators once and keeps thin delegates, so callers never import
+`src/store/`. The collaborators reach Store internals only through
+`StoreInternal` and run on the same database handle inside the caller's
+transaction:
+
+```text
+ TaskManager, host/, http/, link-sync
+        │  store.<method>(…)
+        ▼
+ ┌─────────────────────────────────────────────────────────────────────┐
+ │ Store (store.ts)  tasks, bindings, events, messages and deliveries,  │
+ │                   attachments, shares …; writeOutbox / outbox flush; │
+ │                   thin delegates for the link and relation API        │
+ └──────┬──────────────────────────┬──────────────────────────┬─────────┘
+        │ StoreInternal            │ StoreInternal            │ StoreInternal
+        ▼                          ▼                          ▼
+ RemoteRelationsStore       LinkOutboxStore  ◄────────  LinkApplyStore
+ remote-relations.ts        link-outbox.ts              link-apply.ts
+ remote_tasks rows,         outbox, outbox_cursors,     push / feed apply, receipts,
+ parent / child lookups     enqueue, read, cursor       notices, rejection and
+        ▲                   advance + absorption         timeout failures
+        │                          ▲                          │
+        └──────────────────────────┼──────────────────────────┘
+                                   │
+ Store.transitionDeliveryStatusInTransaction ── receipt enqueue (same tx)
+```
 
 Behavior that spans these modules:
 

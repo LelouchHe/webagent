@@ -26,13 +26,14 @@ import type {
   WorkflowStatus,
 } from "./shared/workflow-status.ts";
 import { WORKFLOW_STATUSES } from "./shared/workflow-status.ts";
-import {
-  type LinkEnvelope,
-  type LinkMessageData,
-  type LinkNoticeData,
-  type LinkReceiptData,
-  LinkProtocolError,
-} from "./shared/link-envelope.ts";
+import type { LinkNoticeData } from "./shared/link-envelope.ts";
+import type {
+  InsertDeliveryMessageInput,
+  StoreInternal,
+} from "./store/internal.ts";
+import { LinkApplyStore } from "./store/link-apply.ts";
+import { LinkOutboxStore } from "./store/link-outbox.ts";
+import { RemoteRelationsStore } from "./store/remote-relations.ts";
 
 /** Namespace WebAgent reserves for the per-task empty execution slot. */
 const EMPTY_EXECUTION_PREFIX = "no-execution:";
@@ -323,23 +324,6 @@ function canTransitionDeliveryStatus(
   return current === "delivered" && next === "failed";
 }
 
-function stringifyLinkData(data: unknown): string {
-  const encoded: unknown = JSON.stringify(data);
-  if (typeof encoded !== "string") {
-    throw new Error("link_outbox_data_not_serializable");
-  }
-  return encoded;
-}
-
-function emptyLinkApplyEffects(): LinkApplyEffects {
-  return {
-    drainTaskIds: [],
-    deliveryStatusIds: [],
-    outboxEntryIds: [],
-    pushCursorPos: [],
-  };
-}
-
 export interface CollaborationDeliveryStatusChange {
   deliveryId: string;
   messageId: string;
@@ -512,7 +496,9 @@ export class Store {
   private readonly dataDir: string;
   /** This database's Root; it changes only when an exit replaces the Root. */
   private rootId = "";
-  private hasExternalParents = false;
+  private readonly remoteRelations: RemoteRelationsStore;
+  private readonly linkOutbox: LinkOutboxStore;
+  private readonly linkApply: LinkApplyStore;
   private readonly deliveryStatusObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
   > = [];
@@ -552,6 +538,59 @@ export class Store {
     assertNotLegacyDatabase(dataDir);
     mkdirSync(dataDir, { recursive: true });
     this.db = new Database(join(dataDir, "webagent.db"));
+    const internal: StoreInternal = {
+      db: this.db,
+      getRootTaskId: () => this.rootTaskId,
+      isRootTaskId: (taskId) => this.isRootTaskId(taskId),
+      writeBindings: (fn) => this.writeBindings(fn),
+      writeOutbox: (fn) => this.writeOutbox(fn),
+      recordPendingOutboxEntry: (row) => {
+        this.pendingOutboxEntries.push(row);
+      },
+      getTask: (id) => this.getTask(id),
+      getTaskIncludingDeleted: (id) => this.getTaskIncludingDeleted(id),
+      requireLiveTask: (taskId) => this.requireLiveTask(taskId),
+      insertRootRow: (cwd) => {
+        this.insertRootRow(cwd);
+      },
+      insertBindingRow: (taskId, agentId, agentSessionId) => {
+        this.insertBindingRow(taskId, agentId, agentSessionId);
+      },
+      collectBindingChange: (taskId, before) => {
+        this.collectBindingChange(taskId, before);
+      },
+      saveEvent: (taskId, type, data, opts) =>
+        this.saveEvent(taskId, type, data, opts),
+      createSystemDelivery: (input) => this.createSystemDelivery(input),
+      insertDeliveryMessage: (input) => {
+        this.insertDeliveryMessage(input);
+      },
+      enqueueTargetCollaboration: (input, record) =>
+        this.enqueueTargetCollaboration(input, record),
+      getCollaborationDelivery: (id) => this.getCollaborationDelivery(id),
+      getCollaborationMessage: (id) => this.getCollaborationMessage(id),
+      transitionDeliveryStatusInTransaction: (
+        deliveryId,
+        expected,
+        next,
+        changedAt,
+        failureReason,
+      ) =>
+        this.transitionDeliveryStatusInTransaction(
+          deliveryId,
+          expected,
+          next,
+          changedAt,
+          failureReason,
+        ),
+    };
+    this.remoteRelations = new RemoteRelationsStore(internal);
+    this.linkOutbox = new LinkOutboxStore(internal);
+    this.linkApply = new LinkApplyStore(
+      internal,
+      this.linkOutbox,
+      this.remoteRelations,
+    );
     try {
       this.db.pragma("journal_mode = WAL");
       this.db.pragma("foreign_keys = ON");
@@ -583,10 +622,12 @@ export class Store {
       )
       .get() as { id: string; has_external_parents: number } | undefined;
     if (stored) {
-      this.hasExternalParents = stored.has_external_parents === 1;
+      this.remoteRelations.setHasExternalParents(
+        stored.has_external_parents === 1,
+      );
       return stored.id;
     }
-    this.hasExternalParents = false;
+    this.remoteRelations.setHasExternalParents(false);
     const rootTaskId = randomUUID();
     this.db
       .prepare("INSERT INTO workspace (id, root_task_id) VALUES (1, ?)")
@@ -1338,225 +1379,45 @@ export class Store {
     });
   }
 
-  createDeferredRemoteTask(input: {
-    id: string;
-    cwd: string;
-    source: string;
-    agentId: string;
-    externalParentId: string;
-    remoteHost: string;
-    title?: string;
-    workflowStatus?: WorkflowStatus;
-    creationAnchor: Record<string, unknown>;
-  }): TaskRow {
-    if (this.isRootTaskId(input.id)) {
-      throw new Error(
-        `Reserved Root id cannot be created as an ordinary task: ${input.id}`,
-      );
-    }
-    if (!input.externalParentId.trim()) {
-      throw new Error("invalid_external_parent");
-    }
-    const created = this.writeBindings(() => {
-      if (!this.getTaskIncludingDeleted(this.rootTaskId)) {
-        this.insertRootRow(input.cwd);
-      }
-      const now = Date.now();
-      this.db
-        .prepare(
-          `INSERT INTO tasks
-           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)
-           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)`,
-        )
-        .run(
-          input.id,
-          canonicalCwd(input.cwd),
-          input.source,
-          input.title ?? input.id,
-          input.workflowStatus ?? "idle",
-          now,
-          now,
-        );
-      this.insertBindingRow(
-        input.id,
-        input.agentId,
-        emptyExecutionSlot(input.id),
-      );
-      this.collectBindingChange(input.id, null);
-      this.db
-        .prepare(
-          `INSERT INTO remote_tasks
-             (local_task_id, remote_task_id, remote_role, remote_host)
-             VALUES (?, ?, 'parent', ?)`,
-        )
-        .run(input.id, input.externalParentId, input.remoteHost);
-      this.saveEvent(input.id, "system_message", input.creationAnchor, {
-        from_ref: "system",
-      });
-      return this.db
-        .prepare("SELECT * FROM tasks WHERE id = ?")
-        .get(input.id) as TaskRow;
-    });
-    this.hasExternalParents = true;
-    return created;
+  createDeferredRemoteTask(
+    ...args: Parameters<RemoteRelationsStore["createDeferredRemoteTask"]>
+  ) {
+    return this.remoteRelations.createDeferredRemoteTask(...args);
   }
 
-  listRemoteChildren(): Array<{
-    local_task_id: string;
-    remote_task_id: string;
-    remote_host: string;
-  }> {
-    return this.db
-      .prepare(
-        `SELECT local_task_id, remote_task_id, remote_host
-           FROM remote_tasks
-           WHERE remote_role = 'child'`,
-      )
-      .all() as Array<{
-      local_task_id: string;
-      remote_task_id: string;
-      remote_host: string;
-    }>;
+  listRemoteChildren() {
+    return this.remoteRelations.listRemoteChildren();
   }
 
-  getRemoteChild(
-    remoteHost: string,
-    remoteTaskId: string,
-  ):
-    | {
-        local_task_id: string;
-        remote_task_id: string;
-        remote_host: string;
-      }
-    | undefined {
-    return this.db
-      .prepare(
-        `SELECT local_task_id, remote_task_id, remote_host
-           FROM remote_tasks
-           WHERE remote_role = 'child' AND remote_host = ? AND remote_task_id = ?`,
-      )
-      .get(remoteHost, remoteTaskId) as
-      | {
-          local_task_id: string;
-          remote_task_id: string;
-          remote_host: string;
-        }
-      | undefined;
+  getRemoteChild(...args: Parameters<RemoteRelationsStore["getRemoteChild"]>) {
+    return this.remoteRelations.getRemoteChild(...args);
   }
 
-  getExternalParentId(taskId: string): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT remote_task_id FROM remote_tasks
-         WHERE local_task_id = ? AND remote_role = 'parent'
-         LIMIT 1`,
-      )
-      .get(taskId) as { remote_task_id: string } | undefined;
-    return row?.remote_task_id ?? null;
+  getExternalParentId(taskId: string) {
+    return this.remoteRelations.getExternalParentId(taskId);
   }
 
-  getExternalParentLink(taskId: string):
-    | {
-        remote_task_id: string;
-        remote_host: string;
-      }
-    | undefined {
-    if (!this.hasExternalParents) return undefined;
-    return this.db
-      .prepare(
-        `SELECT remote_task_id, remote_host FROM remote_tasks
-         WHERE local_task_id = ? AND remote_role = 'parent'
-         LIMIT 1`,
-      )
-      .get(taskId) as
-      | {
-          remote_task_id: string;
-          remote_host: string;
-        }
-      | undefined;
+  getExternalParentLink(taskId: string) {
+    return this.remoteRelations.getExternalParentLink(taskId);
   }
 
   getLatestInboundSourceLabel(
-    recipientTaskId: string,
-    sourceTaskId: string,
-    remoteRole: LinkRemoteRole,
-    remoteHost: string,
-  ): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT d.source_label
-         FROM deliveries d
-         JOIN messages m ON m.id = d.message_id
-         WHERE d.recipient_task_id = ?
-           AND m.source_task_id = ?
-           AND d.source_remote_role = ?
-           AND d.source_remote_host = ?
-         ORDER BY d.rowid DESC
-         LIMIT 1`,
-      )
-      .get(recipientTaskId, sourceTaskId, remoteRole, remoteHost) as
-      { source_label: string | null } | undefined;
-    const trimmed = row?.source_label?.trim();
-    return trimmed && trimmed.length > 0 ? trimmed : null;
+    ...args: Parameters<RemoteRelationsStore["getLatestInboundSourceLabel"]>
+  ) {
+    return this.remoteRelations.getLatestInboundSourceLabel(...args);
   }
 
-  getRemoteChildTitle(
-    localParentTaskId: string,
-    remoteTaskId: string,
-  ): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT json_extract(data, '$.taskTitle') AS title
-         FROM events
-         WHERE task_id = ? AND type = 'system_message'
-           AND json_extract(data, '$.kind') = 'task_created'
-           AND json_extract(data, '$.taskId') = ?
-         ORDER BY seq DESC
-         LIMIT 1`,
-      )
-      .get(localParentTaskId, remoteTaskId) as { title: unknown } | undefined;
-    return typeof row?.title === "string" && row.title.trim().length > 0
-      ? row.title
-      : null;
+  getRemoteChildTitle(localParentTaskId: string, remoteTaskId: string) {
+    return this.remoteRelations.getRemoteChildTitle(
+      localParentTaskId,
+      remoteTaskId,
+    );
   }
 
   recordRemoteChild(
-    localParentTaskId: string,
-    remoteTaskId: string,
-    remoteHost: string,
-    creation?: { data: Record<string, unknown>; fromRef: string },
-  ): boolean {
-    return this.db.transaction(() => {
-      const existing = this.db
-        .prepare(
-          `SELECT local_task_id, remote_host FROM remote_tasks
-           WHERE remote_role = 'child' AND remote_task_id = ?`,
-        )
-        .get(remoteTaskId) as
-        { local_task_id: string; remote_host: string } | undefined;
-      if (existing) {
-        if (
-          existing.local_task_id === localParentTaskId &&
-          existing.remote_host === remoteHost
-        ) {
-          return false;
-        }
-        throw new Error("remote_child_link_conflict");
-      }
-      this.db
-        .prepare(
-          `INSERT INTO remote_tasks
-           (local_task_id, remote_task_id, remote_role, remote_host)
-           VALUES (?, ?, 'child', ?)`,
-        )
-        .run(localParentTaskId, remoteTaskId, remoteHost);
-      if (creation) {
-        this.saveEvent(localParentTaskId, "system_message", creation.data, {
-          from_ref: creation.fromRef,
-        });
-      }
-      return true;
-    })();
+    ...args: Parameters<RemoteRelationsStore["recordRemoteChild"]>
+  ) {
+    return this.remoteRelations.recordRemoteChild(...args);
   }
 
   /**
@@ -3166,7 +3027,7 @@ export class Store {
       delivery.source_remote_host !== null &&
       delivery.source_entry_id !== null
     ) {
-      this.enqueueOutboxInTransaction({
+      this.linkOutbox.enqueueOutboxInTransaction({
         entryId: randomUUID(),
         remoteRole: delivery.source_remote_role,
         remoteHost: delivery.source_remote_host,
@@ -3231,894 +3092,74 @@ export class Store {
     }
   }
 
-  enqueueOutbox(
-    input: OutboxInput & {
-      id?: string;
-      remoteRole: LinkRemoteRole;
-      remoteHost: string;
-      createdAt?: number;
-    },
-  ): OutboxRow {
-    const withoutDelivery =
-      input.category === "receipt" || input.category === "notice";
-    if (withoutDelivery && "deliveryId" in input) {
-      throw new Error(`link_${input.category}_has_delivery`);
-    }
-    const dataJson = stringifyLinkData(input.data);
-    return this.writeOutbox(() =>
-      this.enqueueOutboxInTransaction({
-        entryId: input.id ?? randomUUID(),
-        remoteRole: input.remoteRole,
-        remoteHost: input.remoteHost,
-        category: input.category,
-        dataJson,
-        deliveryId: withoutDelivery ? null : input.deliveryId,
-        createdAt: input.createdAt ?? Date.now(),
-      }),
-    );
+  enqueueOutbox(...args: Parameters<LinkOutboxStore["enqueueOutbox"]>) {
+    return this.linkOutbox.enqueueOutbox(...args);
   }
 
-  applyLinkPushOperation(input: {
-    remoteRole: LinkRemoteRole;
-    remoteHost: string;
-    envelope: LinkEnvelope;
-  }): LinkApplyEffects {
-    if (input.envelope.category === "notice") {
-      throw new LinkProtocolError("notice_not_allowed_on_push");
-    }
-    return this.writeOutbox(() => {
-      if (input.envelope.category !== "receipt") {
-        const existing = this.getInboundLinkDelivery(
-          input.remoteRole,
-          input.remoteHost,
-          input.envelope.id,
-        );
-        if (existing) {
-          const replayed: LinkEnvelope = {
-            id: existing.source_entry_id!,
-            category: existing.source_category!,
-            data: {
-              sourceTaskId: existing.source_task_id,
-              targetTaskId: existing.recipient_task_id,
-              sourceLabel: existing.source_label ?? "",
-              body: existing.body,
-            },
-          };
-          if (
-            stringifyLinkData(replayed) !== stringifyLinkData(input.envelope)
-          ) {
-            throw new Error("link_inbound_op_conflict");
-          }
-          return {
-            ...emptyLinkApplyEffects(),
-          };
-        }
-      }
-      const effects = this.applyLinkEnvelopeInTransaction(
-        input.remoteRole,
-        input.remoteHost,
-        input.envelope,
-      );
-      return effects;
-    });
+  applyLinkPushOperation(
+    ...args: Parameters<LinkApplyStore["applyLinkPushOperation"]>
+  ) {
+    return this.linkApply.applyLinkPushOperation(...args);
   }
 
-  enqueueLinkMessage(input: {
-    id?: string;
-    deliveryId?: string;
-    remoteRole: LinkRemoteRole;
-    remoteHost: string;
-    sourceTaskId: string;
-    targetTaskId: string;
-    sourceLabel: string;
-    targetLabel: string;
-    body: string;
-    createdAt?: number;
-  }): OutboxRow {
-    const entryId = input.id ?? randomUUID();
-    const deliveryId = input.deliveryId ?? randomUUID();
-    const createdAt = input.createdAt ?? Date.now();
-    return this.writeOutbox(() => {
-      this.requireLiveTask(input.sourceTaskId);
-      const envelope: LinkEnvelope = {
-        id: entryId,
-        category: "message",
-        data: {
-          sourceTaskId: input.sourceTaskId,
-          targetTaskId: input.targetTaskId,
-          sourceLabel: input.sourceLabel,
-          body: input.body,
-        },
-      };
-      this.insertDeliveryMessage({
-        id: entryId,
-        deliveryId,
-        sourceTaskId: input.sourceTaskId,
-        recipientTaskId: input.targetTaskId,
-        sourceActor: "agent",
-        body: input.body,
-        idempotencyKey: `${entryId}:${input.targetTaskId}`,
-        createdAt,
-        status: "queued",
-        projection: "source",
-      });
-      this.saveEvent(
-        input.sourceTaskId,
-        "system_message",
-        {
-          ...buildCollaborationSystemMessage({
-            messageId: entryId,
-            sourceTaskId: input.sourceTaskId,
-            sourceLabel: input.sourceLabel,
-            targetTaskId: input.targetTaskId,
-            targetLabel: input.targetLabel,
-            role: "source",
-            body: input.body,
-          }),
-          deliveryStatus: "queued",
-        },
-        { from_ref: `msg:${entryId}` },
-      );
-      return this.enqueueOutboxInTransaction({
-        entryId,
-        remoteRole: input.remoteRole,
-        remoteHost: input.remoteHost,
-        category: "message",
-        dataJson: stringifyLinkData(envelope.data),
-        deliveryId,
-        createdAt,
-      });
-    });
+  enqueueLinkMessage(
+    ...args: Parameters<LinkOutboxStore["enqueueLinkMessage"]>
+  ) {
+    return this.linkOutbox.enqueueLinkMessage(...args);
   }
 
-  enqueueLinkReport(input: {
-    id?: string;
-    deliveryId?: string;
-    remoteRole: LinkRemoteRole;
-    remoteHost: string;
-    sourceTaskId: string;
-    targetTaskId: string;
-    sourceLabel: string;
-    body: string;
-    createdAt?: number;
-  }): OutboxRow {
-    const entryId = input.id ?? randomUUID();
-    const deliveryId = input.deliveryId ?? randomUUID();
-    const createdAt = input.createdAt ?? Date.now();
-    return this.writeOutbox(() => {
-      this.requireLiveTask(input.sourceTaskId);
-      const envelope: LinkEnvelope = {
-        id: entryId,
-        category: "report",
-        data: {
-          sourceTaskId: input.sourceTaskId,
-          targetTaskId: input.targetTaskId,
-          sourceLabel: input.sourceLabel,
-          body: input.body,
-        },
-      };
-      this.insertDeliveryMessage({
-        id: entryId,
-        deliveryId,
-        sourceTaskId: input.sourceTaskId,
-        recipientTaskId: input.targetTaskId,
-        sourceActor: "agent",
-        body: input.body,
-        idempotencyKey: `${entryId}:${input.targetTaskId}`,
-        createdAt,
-        status: "queued",
-        projection: "source",
-      });
-      return this.enqueueOutboxInTransaction({
-        entryId,
-        remoteRole: input.remoteRole,
-        remoteHost: input.remoteHost,
-        category: "report",
-        dataJson: stringifyLinkData(envelope.data),
-        deliveryId,
-        createdAt,
-      });
-    });
+  enqueueLinkReport(...args: Parameters<LinkOutboxStore["enqueueLinkReport"]>) {
+    return this.linkOutbox.enqueueLinkReport(...args);
   }
 
-  getOutboxCursor(remoteRole: LinkRemoteRole, remoteHost: string): number {
-    const row = this.db
-      .prepare(
-        `SELECT applied_pos FROM outbox_cursors
-         WHERE remote_role = ? AND remote_host = ?`,
-      )
-      .get(remoteRole, remoteHost) as { applied_pos: number } | undefined;
-    return row?.applied_pos ?? 0;
+  getOutboxCursor(...args: Parameters<LinkOutboxStore["getOutboxCursor"]>) {
+    return this.linkOutbox.getOutboxCursor(...args);
   }
 
-  applyLinkFeedOperation(input: {
-    remoteRole: LinkRemoteRole;
-    remoteHost: string;
-    expectedApplied: number;
-    nextApplied: number;
-    envelope: LinkEnvelope;
-  }): { committed: boolean; effects: LinkApplyEffects } {
-    return this.writeOutbox(() => {
-      const applied = this.getOutboxCursor(input.remoteRole, input.remoteHost);
-      if (applied !== input.expectedApplied) {
-        return { committed: false, effects: emptyLinkApplyEffects() };
-      }
-      if (input.nextApplied <= applied) {
-        throw new Error("outbox_cursor_does_not_advance");
-      }
-      const effects = this.applyLinkEnvelopeInTransaction(
-        input.remoteRole,
-        input.remoteHost,
-        input.envelope,
-      );
-      this.db
-        .prepare(
-          `INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)
-           VALUES (?, ?, ?, 0)
-           ON CONFLICT (remote_role, remote_host)
-           DO UPDATE SET applied_pos = excluded.applied_pos`,
-        )
-        .run(input.remoteRole, input.remoteHost, input.nextApplied);
-      return { committed: true, effects };
-    });
+  applyLinkFeedOperation(
+    ...args: Parameters<LinkApplyStore["applyLinkFeedOperation"]>
+  ) {
+    return this.linkApply.applyLinkFeedOperation(...args);
   }
 
-  listOutbox(
-    remoteRole: LinkRemoteRole,
-    remoteHost: string,
-    after = 0,
-    limit = 100,
-  ): OutboxRow[] {
-    return this.db
-      .prepare(
-        `SELECT * FROM outbox
-         WHERE remote_role = ? AND remote_host = ? AND pos > ?
-         ORDER BY pos
-         LIMIT ?`,
-      )
-      .all(remoteRole, remoteHost, after, limit) as OutboxRow[];
+  listOutbox(...args: Parameters<LinkOutboxStore["listOutbox"]>) {
+    return this.linkOutbox.listOutbox(...args);
   }
 
-  getOutbox(entryId: string): OutboxRow | undefined {
-    return this.db
-      .prepare("SELECT * FROM outbox WHERE entry_id = ?")
-      .get(entryId) as OutboxRow | undefined;
+  getOutbox(entryId: string) {
+    return this.linkOutbox.getOutbox(entryId);
   }
 
-  getOutboxPushCursor(remoteRole: LinkRemoteRole, remoteHost: string): number {
-    const row = this.db
-      .prepare(
-        `SELECT pushed_pos FROM outbox_cursors
-         WHERE remote_role = ? AND remote_host = ?`,
-      )
-      .get(remoteRole, remoteHost) as { pushed_pos: number } | undefined;
-    return row?.pushed_pos ?? 0;
+  getOutboxPushCursor(
+    ...args: Parameters<LinkOutboxStore["getOutboxPushCursor"]>
+  ) {
+    return this.linkOutbox.getOutboxPushCursor(...args);
   }
 
   advanceOutboxPushCursor(
-    remoteRole: LinkRemoteRole,
-    remoteHost: string,
-    entryId: string,
-  ): number | null {
-    return this.db.transaction(() => {
-      const row = this.db
-        .prepare(
-          `SELECT pos FROM outbox
-           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?`,
-        )
-        .get(remoteRole, remoteHost, entryId) as { pos: number } | undefined;
-      if (!row) throw new Error("outbox_entry_not_found");
-      return this.advanceOutboxPushCursorPosInTransaction(
-        remoteRole,
-        remoteHost,
-        row.pos,
-      );
-    })();
+    ...args: Parameters<LinkOutboxStore["advanceOutboxPushCursor"]>
+  ) {
+    return this.linkOutbox.advanceOutboxPushCursor(...args);
   }
 
-  private advanceOutboxPushCursorPosInTransaction(
-    remoteRole: LinkRemoteRole,
-    remoteHost: string,
-    targetPos: number,
-  ): number | null {
-    const previous =
-      (
-        this.db
-          .prepare(
-            `SELECT pushed_pos FROM outbox_cursors
-             WHERE remote_role = ? AND remote_host = ?`,
-          )
-          .get(remoteRole, remoteHost) as { pushed_pos: number } | undefined
-      )?.pushed_pos ?? 0;
-    let finalPos = Math.max(previous, targetPos);
-    const stmt = this.db.prepare(
-      `SELECT o.pos, o.category, d.status AS delivery_status
-       FROM outbox o
-       LEFT JOIN deliveries d ON d.id = o.delivery_id
-       WHERE o.remote_role = ? AND o.remote_host = ? AND o.pos > ?
-       ORDER BY o.pos ASC`,
-    );
-    for (const row of stmt.iterate(
-      remoteRole,
-      remoteHost,
-      finalPos,
-    ) as Iterable<{
-      pos: number;
-      category: OutboxCategory;
-      delivery_status: CollaborationDeliveryStatus | null;
-    }>) {
-      if (row.category === "message" && row.delivery_status === "failed") {
-        finalPos = row.pos;
-        continue;
-      }
-      break;
-    }
-    if (finalPos <= previous) return null;
-    const result = this.db
-      .prepare(
-        `INSERT INTO outbox_cursors
-           (remote_role, remote_host, applied_pos, pushed_pos)
-         VALUES (?, ?, 0, ?)
-         ON CONFLICT (remote_role, remote_host)
-         DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)
-         RETURNING pushed_pos`,
-      )
-      .get(remoteRole, remoteHost, finalPos) as { pushed_pos: number };
-    return previous < result.pushed_pos ? result.pushed_pos : null;
-  }
-
-  rejectOutboxHead(
-    remoteRole: LinkRemoteRole,
-    remoteHost: string,
-    entryId: string,
-    failureReason: string,
-  ): LinkApplyEffects {
-    return this.db.transaction(() => {
-      const row = this.db
-        .prepare(
-          `SELECT entry_id, pos, category, delivery_id FROM outbox
-           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?`,
-        )
-        .get(remoteRole, remoteHost, entryId) as
-        | {
-            entry_id: string;
-            pos: number;
-            category: OutboxCategory;
-            delivery_id: string | null;
-          }
-        | undefined;
-      if (!row) throw new Error("outbox_entry_not_found");
-      if (row.category === "receipt" || row.category === "notice") {
-        throw new Error(`${row.category}_rejected_link_fault`);
-      }
-      if (!row.delivery_id) throw new Error("link_entry_missing_delivery_id");
-      const changed = this.transitionDeliveryStatusInTransaction(
-        row.delivery_id,
-        "queued",
-        "failed",
-        Date.now(),
-        failureReason,
-      );
-      const drainTaskIds: string[] = [];
-      if (changed) {
-        const drainTaskId = this.writeOutboundFailureNoticeInTransaction(
-          row.delivery_id,
-          failureReason,
-        );
-        if (drainTaskId) drainTaskIds.push(drainTaskId);
-      }
-      const pushedPos = this.advanceOutboxPushCursor(
-        remoteRole,
-        remoteHost,
-        entryId,
-      );
-      return {
-        drainTaskIds,
-        deliveryStatusIds: changed ? [row.delivery_id] : [],
-        outboxEntryIds: [],
-        pushCursorPos: pushedPos === null ? [] : [pushedPos],
-      };
-    })();
+  rejectOutboxHead(...args: Parameters<LinkApplyStore["rejectOutboxHead"]>) {
+    return this.linkApply.rejectOutboxHead(...args);
   }
 
   getPendingOutboxTimeoutState(
-    remoteRole: LinkRemoteRole,
-    remoteHost: string,
-  ): {
-    hasPendingWork: boolean;
-    earliest:
-      | {
-          pos: number;
-          entry_id: string;
-          delivery_id: string;
-          queued_at: number;
-        }
-      | undefined;
-  } {
-    const row = this.db
-      .prepare(
-        `SELECT
-           EXISTS(
-             SELECT 1 FROM outbox o
-             WHERE o.remote_role = ? AND o.remote_host = ?
-               AND o.pos > COALESCE(
-                 (SELECT pushed_pos FROM outbox_cursors
-                  WHERE remote_role = ? AND remote_host = ?),
-                 0
-               )
-           ) AS has_pending,
-           m.pos,
-           m.entry_id,
-           m.delivery_id,
-           m.queued_at
-         FROM (SELECT 1) _
-         LEFT JOIN (
-           SELECT o.pos, o.entry_id, o.delivery_id, d.queued_at
-           FROM outbox o
-           JOIN deliveries d ON d.id = o.delivery_id
-           WHERE o.remote_role = ? AND o.remote_host = ?
-             AND o.pos > COALESCE(
-               (SELECT pushed_pos FROM outbox_cursors
-                WHERE remote_role = ? AND remote_host = ?),
-               0
-             )
-             AND o.category = 'message'
-             AND d.status = 'queued'
-           ORDER BY d.queued_at ASC, o.pos ASC
-           LIMIT 1
-         ) m ON 1 = 1`,
-      )
-      .get(
-        remoteRole,
-        remoteHost,
-        remoteRole,
-        remoteHost,
-        remoteRole,
-        remoteHost,
-        remoteRole,
-        remoteHost,
-      ) as {
-      has_pending: number;
-      pos: number | null;
-      entry_id: string | null;
-      delivery_id: string | null;
-      queued_at: number | null;
-    };
-    return {
-      hasPendingWork: row.has_pending === 1,
-      earliest:
-        row.pos !== null &&
-        row.entry_id !== null &&
-        row.delivery_id !== null &&
-        row.queued_at !== null
-          ? {
-              pos: row.pos,
-              entry_id: row.entry_id,
-              delivery_id: row.delivery_id,
-              queued_at: row.queued_at,
-            }
-          : undefined,
-    };
+    ...args: Parameters<LinkOutboxStore["getPendingOutboxTimeoutState"]>
+  ) {
+    return this.linkOutbox.getPendingOutboxTimeoutState(...args);
   }
 
-  getOutboxHead(
-    remoteRole: LinkRemoteRole,
-    remoteHost: string,
-  ): OutboxRow | undefined {
-    return this.db
-      .prepare(
-        `SELECT * FROM outbox
-         WHERE remote_role = ? AND remote_host = ?
-           AND pos > COALESCE(
-             (SELECT pushed_pos FROM outbox_cursors
-              WHERE remote_role = ? AND remote_host = ?),
-             0
-           )
-         ORDER BY pos ASC
-         LIMIT 1`,
-      )
-      .get(remoteRole, remoteHost, remoteRole, remoteHost) as
-      OutboxRow | undefined;
+  getOutboxHead(...args: Parameters<LinkOutboxStore["getOutboxHead"]>) {
+    return this.linkOutbox.getOutboxHead(...args);
   }
 
   failOutboxMessageOnTimeout(
-    remoteRole: LinkRemoteRole,
-    remoteHost: string,
-    entryId: string,
-    now: number,
-  ): { failed: boolean; pos: number | null; effects: LinkApplyEffects } {
-    return this.db.transaction(() => {
-      const pushed = this.getOutboxPushCursor(remoteRole, remoteHost);
-      const row = this.db
-        .prepare(
-          `SELECT pos, delivery_id FROM outbox
-           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?
-             AND category = 'message' AND pos > ?`,
-        )
-        .get(remoteRole, remoteHost, entryId, pushed) as
-        { pos: number; delivery_id: string | null } | undefined;
-      if (!row?.delivery_id) {
-        return { failed: false, pos: null, effects: emptyLinkApplyEffects() };
-      }
-      const changed = this.transitionDeliveryStatusInTransaction(
-        row.delivery_id,
-        "queued",
-        "failed",
-        now,
-        "remote_handoff_timeout",
-      );
-      if (!changed) {
-        return {
-          failed: false,
-          pos: row.pos,
-          effects: emptyLinkApplyEffects(),
-        };
-      }
-      const effects = emptyLinkApplyEffects();
-      effects.deliveryStatusIds.push(row.delivery_id);
-      const drainTaskId = this.writeOutboundFailureNoticeInTransaction(
-        row.delivery_id,
-        "remote_handoff_timeout",
-        "Handoff to the remote peer was not confirmed before the timeout.",
-      );
-      if (drainTaskId) effects.drainTaskIds.push(drainTaskId);
-      const hasEarlierPending = this.db
-        .prepare(
-          `SELECT 1 FROM outbox
-           WHERE remote_role = ? AND remote_host = ? AND pos > ? AND pos < ?
-           LIMIT 1`,
-        )
-        .get(remoteRole, remoteHost, pushed, row.pos);
-      if (!hasEarlierPending) {
-        const committedPos = this.advanceOutboxPushCursorPosInTransaction(
-          remoteRole,
-          remoteHost,
-          row.pos,
-        );
-        if (committedPos !== null) effects.pushCursorPos.push(committedPos);
-      }
-      return { failed: true, pos: row.pos, effects };
-    })();
-  }
-
-  private getInboundLinkDelivery(
-    remoteRole: LinkRemoteRole,
-    remoteHost: string,
-    entryId: string,
-  ):
-    | (CollaborationDeliveryRow & {
-        body: string;
-        source_task_id: string;
-      })
-    | undefined {
-    return this.db
-      .prepare(
-        `SELECT d.*, m.source_task_id, m.body
-         FROM deliveries d
-         JOIN messages m ON m.id = d.message_id
-         WHERE d.source_remote_role = ?
-           AND d.source_remote_host = ?
-           AND d.source_entry_id = ?`,
-      )
-      .get(remoteRole, remoteHost, entryId) as
-      | (CollaborationDeliveryRow & {
-          body: string;
-          source_task_id: string;
-        })
-      | undefined;
-  }
-
-  private applyLinkEnvelopeInTransaction(
-    remoteRole: LinkRemoteRole,
-    remoteHost: string,
-    envelope: LinkEnvelope,
-  ): LinkApplyEffects {
-    if (envelope.category === "receipt") {
-      const receipt = this.applyLinkReceiptInTransaction({
-        remoteRole,
-        remoteHost,
-        entryId: envelope.data.originalEntryId,
-        status: envelope.data.status,
-        failureReason:
-          envelope.data.status === "failed"
-            ? envelope.data.failureReason
-            : null,
-      });
-      if (!receipt.known) throw new LinkProtocolError("unknown_link_receipt");
-      return receipt.effects;
-    }
-    if (envelope.category === "notice") {
-      if (remoteRole !== "child") {
-        throw new LinkProtocolError("notice_not_allowed_on_push");
-      }
-      return this.applyLinkNoticeInTransaction(remoteHost, envelope.data);
-    }
-    return this.applyLinkDeliveryInTransaction(
-      remoteRole,
-      remoteHost,
-      envelope.id,
-      envelope.data,
-      envelope.category,
-    );
-  }
-
-  private applyLinkNoticeInTransaction(
-    remoteHost: string,
-    notice: LinkNoticeData,
-  ): LinkApplyEffects {
-    const effects = emptyLinkApplyEffects();
-    const source = this.getTask(notice.sourceTaskId);
-    const relation = this.getRemoteChild(remoteHost, notice.targetTaskId);
-    if (!source || relation?.local_task_id !== notice.sourceTaskId) {
-      return effects;
-    }
-    const drainTaskId = this.writeOutcomeNoticeInTransaction({
-      sourceTaskId: notice.sourceTaskId,
-      targetTaskId: notice.targetTaskId,
-      reason: notice.reason,
-      message: notice.message,
-      targetLabel: notice.targetLabel,
-    });
-    if (drainTaskId) effects.drainTaskIds.push(drainTaskId);
-    return effects;
-  }
-
-  private applyLinkDeliveryInTransaction(
-    remoteRole: LinkRemoteRole,
-    remoteHost: string,
-    entryId: string,
-    message: LinkMessageData,
-    category: "message" | "report",
-  ): LinkApplyEffects {
-    const effects = emptyLinkApplyEffects();
-    const target = this.getTask(message.targetTaskId);
-    const relationMatches =
-      target !== undefined &&
-      (remoteRole === "parent"
-        ? (() => {
-            const relation = this.getExternalParentLink(message.targetTaskId);
-            return (
-              relation?.remote_host === remoteHost &&
-              relation.remote_task_id === message.sourceTaskId
-            );
-          })()
-        : this.getRemoteChild(remoteHost, message.sourceTaskId)
-            ?.local_task_id === message.targetTaskId);
-    if (!target || !relationMatches) {
-      const failureReason = !target ? "target_deleted" : "link_mismatch";
-      const deliveryId = entryId;
-      this.insertDeliveryMessage({
-        id: entryId,
-        deliveryId,
-        sourceTaskId: message.sourceTaskId,
-        recipientTaskId: message.targetTaskId,
-        sourceActor: "agent",
-        body: message.body,
-        sourceLabel: message.sourceLabel,
-        idempotencyKey: `${entryId}:${message.targetTaskId}`,
-        createdAt: Date.now(),
-        status: "failed",
-        failureReason,
-        inbound: { remoteRole, remoteHost, entryId, category },
-        projection: null,
-      });
-      const receiptId = randomUUID();
-      this.enqueueOutboxInTransaction({
-        entryId: receiptId,
-        remoteRole,
-        remoteHost,
-        category: "receipt",
-        dataJson: stringifyLinkData({
-          originalEntryId: entryId,
-          status: "failed",
-          failureReason,
-        } satisfies LinkReceiptData),
-        deliveryId: null,
-        createdAt: Date.now(),
-      });
-      effects.outboxEntryIds.push(receiptId);
-      return effects;
-    }
-    this.enqueueTargetCollaboration({
-      id: entryId,
-      deliveryId: entryId,
-      sourceTaskId: message.sourceTaskId,
-      targetTaskId: message.targetTaskId,
-      body: message.body,
-      sourceLabel: message.sourceLabel,
-      inbound: { remoteRole, remoteHost, entryId, category },
-    });
-    effects.drainTaskIds.push(message.targetTaskId);
-    return effects;
-  }
-
-  private applyLinkReceiptInTransaction(input: {
-    remoteRole: LinkRemoteRole;
-    remoteHost: string;
-    entryId: string;
-    status: Exclude<CollaborationDeliveryStatus, "queued">;
-    failureReason?: string | null;
-  }): { known: boolean; changed: boolean; effects: LinkApplyEffects } {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM outbox
-         WHERE entry_id = ? AND remote_role = ? AND remote_host = ?
-           AND category IN ('message', 'report')`,
-      )
-      .get(input.entryId, input.remoteRole, input.remoteHost) as
-      OutboxRow | undefined;
-    const effects = emptyLinkApplyEffects();
-    if (!row) return { known: false, changed: false, effects };
-    if (!row.delivery_id) {
-      throw new Error("link_entry_missing_delivery_id");
-    }
-    const delivery = this.getCollaborationDelivery(row.delivery_id);
-    if (!delivery) throw new Error("link_delivery_missing");
-    const previous = delivery.status;
-    const changed =
-      previous === "queued" &&
-      this.transitionDeliveryStatusInTransaction(
-        row.delivery_id,
-        "queued",
-        input.status,
-        Date.now(),
-        input.failureReason,
-      );
-    const terminal =
-      previous === "delivered" &&
-      input.status === "failed" &&
-      this.transitionDeliveryStatusInTransaction(
-        row.delivery_id,
-        "delivered",
-        "failed",
-        Date.now(),
-        input.failureReason,
-      );
-    // Owner keeps writing pushed_pos symmetrically; harmless because only hub reads it.
-    const pushedPos = this.advanceOutboxPushCursor(
-      row.remote_role,
-      row.remote_host,
-      row.entry_id,
-    );
-    if (pushedPos !== null) effects.pushCursorPos.push(pushedPos);
-    if (changed || terminal) {
-      effects.deliveryStatusIds.push(row.delivery_id);
-      if (input.status === "failed") {
-        const drainTaskId = this.writeOutboundFailureNoticeInTransaction(
-          row.delivery_id,
-          input.failureReason,
-        );
-        if (drainTaskId) effects.drainTaskIds.push(drainTaskId);
-      }
-      return { known: true, changed: true, effects };
-    }
-    return { known: true, changed: false, effects };
-  }
-
-  protected writeOutcomeNoticeInTransaction(input: {
-    sourceTaskId: string;
-    targetTaskId: string;
-    reason: "no_update" | "no_activity" | "target_removed";
-    message: string;
-    targetLabel?: string | null;
-  }): string | null {
-    if (!this.getTask(input.sourceTaskId)) return null;
-    const trimmedLabel = input.targetLabel?.trim();
-    const explicitLabel =
-      trimmedLabel && trimmedLabel.length > 0 ? trimmedLabel : null;
-    const externalParent = this.getExternalParentLink(input.sourceTaskId);
-    const targetLabel =
-      explicitLabel ??
-      this.getTaskIncludingDeleted(input.targetTaskId)?.title ??
-      this.getRemoteChildTitle(input.sourceTaskId, input.targetTaskId) ??
-      (externalParent?.remote_task_id === input.targetTaskId
-        ? this.getLatestInboundSourceLabel(
-            input.sourceTaskId,
-            input.targetTaskId,
-            "parent",
-            externalParent.remote_host,
-          )
-        : null);
-    const messageId = randomUUID();
-    this.saveEvent(
-      input.sourceTaskId,
-      "task_outcome_notice",
-      {
-        messageId,
-        reason: input.reason,
-        sourceTaskId: input.sourceTaskId,
-        targetTaskId: input.targetTaskId,
-        message: input.message,
-      },
-      { from_ref: "system" },
-    );
-    const body = formatFieldBlock([
-      {
-        label: "target",
-        value: targetLabel
-          ? `${targetLabel} (${input.targetTaskId})`
-          : input.targetTaskId,
-      },
-      { label: "message", value: input.message },
-    ]);
-    this.createSystemDelivery({
-      messageId,
-      deliveryId: randomUUID(),
-      fromTaskId: input.targetTaskId,
-      recipientTaskId: input.sourceTaskId,
-      body,
-    });
-    return input.sourceTaskId;
-  }
-
-  protected writeOutboundFailureNoticeInTransaction(
-    deliveryId: string,
-    failureReason: string | null | undefined,
-    customMessage?: string,
-  ): string | null {
-    const delivery = this.getCollaborationDelivery(deliveryId);
-    if (!delivery) return null;
-    const message = this.getCollaborationMessage(delivery.message_id);
-    if (message?.source_actor !== "agent") return null;
-    const text =
-      customMessage ??
-      `A message to the target was not delivered (${failureReason ?? "unknown"}).`;
-    return this.writeOutcomeNoticeInTransaction({
-      sourceTaskId: message.source_task_id,
-      targetTaskId: delivery.recipient_task_id,
-      reason: "target_removed",
-      message: text,
-    });
-  }
-
-  private enqueueOutboxInTransaction(input: {
-    entryId: string;
-    remoteRole: LinkRemoteRole;
-    remoteHost: string;
-    category: OutboxCategory;
-    dataJson: string;
-    deliveryId: string | null;
-    createdAt: number;
-  }): OutboxRow {
-    const withoutDelivery =
-      input.category === "receipt" || input.category === "notice";
-    if (withoutDelivery && input.deliveryId !== null) {
-      throw new Error(`link_${input.category}_has_delivery`);
-    }
-    if (!withoutDelivery) {
-      if (!input.deliveryId) throw new Error("link_entry_missing_delivery");
-      const delivery = this.getCollaborationDelivery(input.deliveryId);
-      if (!delivery) throw new Error("link_delivery_missing");
-      if (delivery.source_entry_id !== null) {
-        throw new Error("link_inbound_delivery_cannot_be_outbound");
-      }
-    }
-    const previous = this.db
-      .prepare(
-        `SELECT COALESCE(MAX(pos), 0) AS pos FROM outbox
-         WHERE remote_role = ? AND remote_host = ?`,
-      )
-      .get(input.remoteRole, input.remoteHost) as { pos: number };
-    this.db
-      .prepare(
-        `INSERT INTO outbox
-           (entry_id, remote_role, remote_host, prev, category, data_json,
-            delivery_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.entryId,
-        input.remoteRole,
-        input.remoteHost,
-        previous.pos,
-        input.category,
-        input.dataJson,
-        input.deliveryId,
-        input.createdAt,
-      );
-    const row = this.getOutbox(input.entryId)!;
-    this.pendingOutboxEntries.push(row);
-    return row;
+    ...args: Parameters<LinkApplyStore["failOutboxMessageOnTimeout"]>
+  ) {
+    return this.linkApply.failOutboxMessageOnTimeout(...args);
   }
 
   /**
@@ -4466,21 +3507,7 @@ export class Store {
     });
   }
 
-  private insertDeliveryMessage(input: {
-    id: string;
-    deliveryId: string;
-    sourceTaskId: string;
-    recipientTaskId: string;
-    sourceActor: "agent" | "system";
-    body: string;
-    sourceLabel?: string;
-    idempotencyKey: string;
-    createdAt: number;
-    status: "queued" | "failed";
-    failureReason?: string;
-    inbound?: LinkInboundAssociation;
-    projection: "source" | "target" | null;
-  }): void {
+  private insertDeliveryMessage(input: InsertDeliveryMessageInput): void {
     this.db
       .prepare(
         `INSERT INTO messages

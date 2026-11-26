@@ -26,6 +26,15 @@ npm run test:e2e      # Playwright browser E2E
 
 - `TEST_SCENARIOS.md` is the scenario-level coverage map for the current suite.
 
+### File length ratchet
+
+`npm run lint` enforces `max-lines` on code lines (blank lines and comments do
+not count): 800 for `src/`, `public/js/`, and `scripts/`; 1500 for `test/` and
+`bench/`. Files that were already longer are pinned at their size in
+`eslint.config.js`: they may shrink but never grow. A change that shrinks a
+pinned file lowers its pin in the same commit, and removes it once the file is
+under the global cap. Do not raise a pin to land a change; split the file.
+
 ### External behavior regression tests
 
 `npm run test:regression` starts an isolated real server and deterministic ACP
