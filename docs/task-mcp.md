@@ -125,10 +125,13 @@ type TaskListItem = {
 };
 ```
 
-Remote entries carry `host`; local entries omit it. They come from the hub's
-in-memory owner mirror. Last-known values
-remain present with `unreachable: true` after disconnect; before the first
-snapshot, the entry has no invented Task fields.
+Remote entries carry `host`; local entries omit it. Each remote child's fields
+are read in parallel from its owner's `GET /api/v1/tasks/:id/status` within a
+short (~2 s) deadline covering credential resolution and response parsing. A
+failed or timed-out status read produces `{id, relation: "child", host,
+unreachable: true}` with no invented Task fields; when the status read succeeds
+while the link watch is offline, the returned status fields are preserved
+alongside `unreachable: true`.
 
 `workflowStatus` uses the same vocabulary as `task_list`: `running` while a turn runs, `idle` after it ended without a typed report, `waiting` when the Task says its work continues without the requester, and `blocked`/`done` when it handed the ball back. `task_query` returns only `task_id`, `max_seq`, and flat event rows.
 It is **per turn, not a lifecycle terminal**: a `done` Task can be woken by a
@@ -370,13 +373,13 @@ reported as partial success. These calls are not retried.
 
 ### `task_send`
 
-The local message is stored before the call returns, so it survives a restart,
-and is delivered in order with any other queued items. A linked remote child is
-instead handed synchronously to the owner's existing message route. The owner
-returns its generated message id in `202`; the hub records that id as `queued`
-and changes it to `delivered` when the owner's prompt audit arrives over the
-host stream or reconnect catch-up. A rejection or transport failure is returned
-as a tool error.
+The message is stored durably before the call returns, so it survives a restart.
+For a local target, it is queued and delivered in order with any other queued
+items. For a linked remote child, `{ "accepted": true }` means the message, its
+sender-side `deliveries` row (`queued`), and its `outbox` entry have been
+durably committed on the hub; the hub's link outbox pump delivers it to the
+owner over `POST /api/v1/link/entries`, and owner-side delivery outcomes return
+as receipts that update the hub delivery to `delivered` or `failed`.
 Whether delivery opens an account is defined in
 [Task Obligations](task-obligations.md#opening-an-account).
 
@@ -388,8 +391,9 @@ task_update(status: "waiting" | "blocked" | "done", body: string)
 
 The call records one `task_update` event on the current Task and sets its
 `workflowStatus`. For a remotely created Task, `done`/`blocked` report through
-the external-parent link when the in-memory account was lost, including across
-owner restart. The owner does not create a local collaboration message in that
-case. Routing, settlement, the `waiting` precondition, and the turn-end check
-are defined in [Task Obligations](task-obligations.md). A refused `waiting` is
-an MCP tool error and records nothing.
+the external-parent link (appending a `report` entry and sender-side delivery to
+the link outbox in the same transaction as the update), including across owner
+restart when the in-memory account was lost. Routing, settlement, the `waiting`
+precondition, and the turn-end check are defined in
+[Task Obligations](task-obligations.md). A refused `waiting` is an MCP tool
+error and records nothing.

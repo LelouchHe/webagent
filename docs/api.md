@@ -178,10 +178,13 @@ When hosts are configured, each listed task's linked remote children follow it
 into the same response, after the local entries, so a client sees the tree that
 MCP `task_list` sees. A remote entry is
 `{id, host, parent_id, title, workflow_status?, unreachable?}`:
-`parent_id` is the local parent, the other values come from the hub's
-best-effort mirror, and `title` is `null` until the owner has been read. The
-browser uses remote entries only to know that a referenced task exists; it does
-not open them yet.
+`parent_id` is the local parent, and the remaining fields are read in parallel
+from each owner's `GET /api/v1/tasks/:id/status` within a short (~2 s) deadline
+covering credential resolution and response parsing. A failed/timed-out status
+read returns `{id, host, parent_id, title: null, unreachable: true}`. When the
+status read succeeds while the link watch is offline, the returned status fields
+are preserved alongside `unreachable: true`. The browser uses remote entries
+only to know that a referenced task exists; it does not open them yet.
 
 ```json
 [
@@ -280,16 +283,28 @@ same row for local and remote creates. After a successful create, Core writes
 the initiator's `task_created` row and link. Stored facts and rendered prose
 keep `agent` and `host` as separate fields.
 
-Remote creation does not retry. A 4xx rejection is returned as `502` with its
-`remoteStatus`; a lost or incomplete response reports `outcome: "unknown"`; and
-a peer success followed by a local link failure reports
-`outcome: "partial_success"` with the remote task id. Explicit model/thinking
-overrides are rejected before dispatch because this create slice does not copy
-execution configuration between hosts. Local inheritance defaults are not
-forwarded; the remote task starts with the peer agent's own environment.
+For a `host`-scoped request carrying `X-Client-Op-Id`, the owner derives the
+task id deterministically via `opIdentity(ownerRootId, tokenName, opId)`
+(RFC 4122 UUIDv5). Replaying the same `X-Client-Op-Id` with matching parent
+link and key inputs rebuilds and returns the original `201` without creating a
+second task; mismatched inputs or parent link return `409` (`create_op_conflict`);
+and a soft-deleted task returns `404` (`target_deleted`).
+
+The hub routes remote creation through `shared/sync/request` with a single
+`X-Client-Op-Id` and performs bounded retries on `unknown` outcomes (network
+error, timeout, `5xx`). A `4xx` rejection is never retried and is returned as
+`502` with its `remoteStatus`; an `unknown` outcome that persists after retries
+reports `outcome: "unknown"`; and a peer success followed by a local link
+failure reports `outcome: "partial_success"` with the remote task id. Explicit
+model/thinking overrides are rejected before dispatch because this create slice
+does not copy execution configuration between hosts. Local inheritance defaults
+are not forwarded; the remote task starts with the peer agent's own
+environment.
 
 **Errors:** `400` (directory doesn't exist, `agentId` not configured or not a
-string; Host config error), `502` (remote rejection, unknown result, or partial
+string; Host config error), `404` (`target_deleted` on host create replay of a
+soft-deleted task), `409` (`create_op_conflict` on host create replay with
+mismatched parameters), `502` (remote rejection, unknown result, or partial
 success), `503` (the target agent could not be started, or the remote request
 was not sent; the body carries `error` plus `agentId` for a local agent)
 
@@ -331,7 +346,6 @@ text and ignores client-supplied routing metadata.
 |---|---|---|---|
 | `targetTaskId` | string | Yes | Stable target task ID selected by the client |
 | `body` | string | Yes | Non-empty collaboration message body |
-| `sourceLabel` | string | Host caller only | Current label of the external parent Task; kept in owner memory until handoff |
 
 The server verifies only that the target task exists, is live, and differs from
 the source; it does not check a relationship, so a cross-branch or
@@ -340,16 +354,8 @@ source and target projections, and a queued Delivery. The sender's projection
 is written and shown at send time; the receiver's is written when the pending
 deliveries are handed to its agent.
 
-For a `host`-scoped request, `sourceTaskId` may instead be an external Task id.
-The owner accepts it only when the local target's `parent` link names that id.
-The message is agent-authored and has
-only the target projection plus its delivery; no source projection is created.
-This is the synchronous peer dispatch used by remote `task_send`.
-
-The hub always supplies `sourceLabel` for a remote dispatch. The owner uses it
-for the receiver-side row and `From "…"` envelope during that delivery; if it
-is absent, the owner falls back to the external id prefix. The label is not
-persisted and is not a table or task fact.
+`host`-scoped tokens are rejected (`403`) on this route; cross-host messages
+travel over `POST /api/v1/link/entries`.
 
 `GET /api/v1/tasks` also appends remote external-parent entries for listed
 owner Tasks. These entries have the external id, `host: null`, `parent_id:
@@ -766,9 +772,13 @@ holds that title), `404` (unknown task)
 
 #### `GET /api/v1/tasks/:id/status`
 
-Get the busy state and pending permissions for a task. The pending entries
-carry only what a client can act on: the request's own execution provenance
-(source agent and lease) stays internal.
+Get the live status, busy state, and pending permissions for a task. The pending
+entries carry only what a client can act on: the request's own execution
+provenance (source agent and lease) stays internal.
+
+For a `host`-scoped caller, this route (like `GET /api/v1/tasks/:id` and
+`GET /api/v1/tasks/:id/events`) checks that the task's external-parent link
+matches the authenticated host token's name, returning `404` otherwise.
 
 **Response** `200`:
 
@@ -785,9 +795,17 @@ carry only what a client can act on: the request's own execution provenance
         { "optionId": "deny", "label": "Deny" }
       ]
     }
-  ]
+  ],
+  "title": "Remote child",
+  "workflowStatus": "running",
+  "executionState": "agent",
+  "lastEventAt": "2026-11-25T12:00:00.000Z",
+  "lastAgentActivityAt": "2026-11-25T12:00:00.000Z"
 }
 ```
+
+`lastAgentActivityAt` is an owner process-local timestamp and may be `null`
+after a cold start.
 
 ---
 
@@ -1226,6 +1244,51 @@ include a stable machine-readable `reason`, currently
 `since` is the start of the current state in ISO-8601 UTC form. The response
 never contains credentials or token command output.
 
+#### `GET /api/v1/link/outbox`
+
+Read a bounded page of committed outbox entries for the authenticated `host`
+token's link (`(parent, principal.name)`). Non-`host` tokens receive `403`.
+
+**Query parameters:** `after` (non-negative integer, default `0`), `limit`
+(positive integer, capped at `100`, default `100`).
+
+**Response** `200`: `{ "entries": [{ "pos": 1, "prev": 0, "data": { "id": "…", "category": "report" | "receipt" | "message", "data": { … } } }] }`.
+
+#### `GET /api/v1/link/watch`
+
+Open the link's live SSE feed with Bearer authentication (`Authorization: Bearer
+<host-token>`). Non-`host` tokens receive `403`. Registers the subscription
+before paging committed entries after `after` (default `0`), then streams
+subsequent committed entries without a gap.
+
+- Initial frame: `event: connected` with `data: {}`.
+- Entry frame: `event: entry`, `id: <pos>`, `data: <SyncFeedEntry JSON>`.
+- Heartbeat frame: `event: heartbeat`, `data: {}`. Every heartbeat re-checks
+  that the opening credential's hash is still active in `auth.json`; if revoked
+  (even if a new token was issued with the same name), the stream is closed.
+  Reconnecting with a same-named replacement token continues the same link.
+
+#### `POST /api/v1/link/entries`
+
+Push one immutable link envelope (`{ id, category, data }`) onto the owner for
+the authenticated `host` token's link (`(parent, principal.name)`). Non-`host`
+tokens receive `403`.
+
+Implements the durable operation contract keyed by `(link, id)`:
+1. Authenticate host token and parse/canonicalize the envelope (`400` on invalid
+   envelope).
+2. Look up the persisted fact for `(link, id)`:
+   - For `message` / `report`: check the inbound `deliveries` row by
+     `(source_remote_role, source_remote_host, source_entry_id)`. Identical
+     canonical content replays `202 { "accepted": true }` (even if the target
+     was later deleted); different content returns `409 { "error": "link_op_conflict" }`.
+   - For `receipt`: idempotent CAS on the referenced outbound delivery,
+     returning `202 { "accepted": true }` (unknown original entry returns `400`).
+3. When no prior fact exists, apply in one transaction. A missing target is a
+   definite failure: the owner persists a `failed` inbound delivery plus a
+   `failed` receipt in the same transaction and returns a replayable `202`.
+   A link/relationship mismatch returns `400 { "error": "link_mismatch" }`.
+
 ---
 
 ### Auth
@@ -1251,7 +1314,7 @@ This endpoint **always requires** a valid `Authorization: Bearer <token>` header
 | ------- | ------- | ---------------------------------------------------- |
 | `ok`    | boolean | Always `true` on success                             |
 | `name`  | string  | Token's human-readable name (e.g. `"laptop"`)        |
-| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"host"` (host connection, allowed task reads/create/dispatch) |
+| `scope` | string  | `"admin"` (full access), `"api"` (everything except `/tokens/**`), or `"host"` (link transport `/api/v1/link/*`, task create, and link-scoped task reads) |
 | `hash`  | string  | SHA-256 hex digest of the presented token, matching its stored `hash` |
 
 **Response** `401`:
@@ -1274,13 +1337,10 @@ Tickets:
 - are **single-use** (consumed when the SSE handshake reads them)
 - are kept only in server memory (not persisted)
 
-For a `host`-scope ticket, the request body is
-`{ "parentIds": [...] }`: the local parent ids for which this hub owns remote
-children on the owner. The owner stores that set only on the resulting
-connection. The SSE response header `X-Host-Connection-Id` returns the
-connection id for a subsequent create request.
-
-Requires a valid `Authorization: Bearer <token>` header. Returns `401` otherwise.
+Requires a valid `Authorization: Bearer <token>` header with `api` or `admin`
+scope (`host`-scoped tokens are rejected with `403`; host links use
+`GET /api/v1/link/watch` directly with Bearer auth). Returns `401` if
+unauthenticated.
 
 **Response** `200`:
 
@@ -1297,17 +1357,6 @@ Requires a valid `Authorization: Bearer <token>` header. Returns `401` otherwise
 | `expiresIn` | number | Seconds until the ticket expires (always `60`) |
 
 The SSE stream re-checks the bound token on every heartbeat (≤15 s). If the token is revoked mid-stream, the connection is closed within one heartbeat interval; the client must mint a fresh ticket and reconnect.
-
-A `host`-scoped ticket is limited to the global Host connection channel. It
-receives `connected`, heartbeat frames, and business events only for Tasks whose
-external-parent id is in that connection's `parentIds`. Its `connected` payload omits
-the normal `debugLevel` and pending-inbox count. A Host ticket is rejected on a
-per-task stream.
-
-`POST /api/v1/tasks` from a host may carry
-`X-Host-Connection-Id`. After creation, the owner adds that parent id to the
-still-open connection's set; the next reconnect's `parentIds` rebuilds it and
-covers creates made while disconnected.
 
 ---
 
