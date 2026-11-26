@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { formatFieldBlock } from "../shared/field-block.ts";
 import type { CollaborationDeliveryStatus } from "../shared/delivery-status.ts";
 import {
+  isDeliveryLinkCategory,
   type LinkEnvelope,
   type LinkMessageData,
   type LinkNoticeData,
@@ -43,11 +44,16 @@ export class LinkApplyStore {
     remoteHost: string;
     envelope: LinkEnvelope;
   }): LinkApplyEffects {
-    if (input.envelope.category === "notice") {
-      throw new LinkProtocolError("notice_not_allowed_on_push");
+    if (
+      input.envelope.category === "notice" ||
+      input.envelope.category === "relation"
+    ) {
+      throw new LinkProtocolError(
+        `${input.envelope.category}_not_allowed_on_push`,
+      );
     }
     return this.store.writeOutbox(() => {
-      if (input.envelope.category !== "receipt") {
+      if (isDeliveryLinkCategory(input.envelope.category)) {
         const existing = this.getInboundLinkDelivery(
           input.remoteRole,
           input.remoteHost,
@@ -139,7 +145,7 @@ export class LinkApplyStore {
           }
         | undefined;
       if (!row) throw new Error("outbox_entry_not_found");
-      if (row.category === "receipt" || row.category === "notice") {
+      if (!isDeliveryLinkCategory(row.category)) {
         throw new Error(`${row.category}_rejected_link_fault`);
       }
       if (!row.delivery_id) throw new Error("link_entry_missing_delivery_id");
@@ -284,6 +290,12 @@ export class LinkApplyStore {
         throw new LinkProtocolError("notice_not_allowed_on_push");
       }
       return this.applyLinkNoticeInTransaction(remoteHost, envelope.data);
+    }
+    if (envelope.category === "relation") {
+      if (remoteRole !== "child") {
+        throw new LinkProtocolError("relation_not_allowed_on_push");
+      }
+      return emptyLinkApplyEffects();
     }
     return this.applyLinkDeliveryInTransaction(
       remoteRole,

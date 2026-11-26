@@ -26,7 +26,10 @@ import type {
   WorkflowStatus,
 } from "./shared/workflow-status.ts";
 import { WORKFLOW_STATUSES } from "./shared/workflow-status.ts";
-import type { LinkNoticeData } from "./shared/link-envelope.ts";
+import type {
+  LinkNoticeData,
+  LinkRelationData,
+} from "./shared/link-envelope.ts";
 import type {
   InsertDeliveryMessageInput,
   StoreInternal,
@@ -274,7 +277,8 @@ export interface CollaborationDeliveryRow {
 }
 
 export type LinkRemoteRole = "parent" | "child";
-export type OutboxCategory = "message" | "report" | "receipt" | "notice";
+export type OutboxCategory =
+  "message" | "report" | "receipt" | "notice" | "relation";
 export interface OutboxRow {
   pos: number;
   entry_id: string;
@@ -295,19 +299,10 @@ export interface LinkApplyEffects {
 }
 
 export type OutboxInput =
-  | {
-      category: "message" | "report";
-      deliveryId: string;
-      data: unknown;
-    }
-  | {
-      category: "receipt";
-      data: unknown;
-    }
-  | {
-      category: "notice";
-      data: LinkNoticeData;
-    };
+  | { category: "message" | "report"; deliveryId: string; data: unknown }
+  | { category: "receipt"; data: unknown }
+  | { category: "notice"; data: LinkNoticeData }
+  | { category: "relation"; data: LinkRelationData };
 
 export interface LinkInboundAssociation {
   remoteRole: LinkRemoteRole;
@@ -1055,14 +1050,14 @@ export class Store {
         remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
         remote_host TEXT NOT NULL,
         prev INTEGER NOT NULL,
-        category TEXT NOT NULL CHECK (category IN ('message', 'report', 'receipt', 'notice')),
+        category TEXT NOT NULL,
         data_json TEXT NOT NULL,
         delivery_id TEXT REFERENCES deliveries(id),
         created_at INTEGER NOT NULL
         CHECK (
           (category IN ('message', 'report') AND delivery_id IS NOT NULL)
           OR
-          (category IN ('receipt', 'notice') AND delivery_id IS NULL)
+          (category NOT IN ('message', 'report') AND delivery_id IS NULL)
         )
       );
       CREATE INDEX IF NOT EXISTS idx_outbox_link_pos

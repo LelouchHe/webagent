@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { buildCollaborationSystemMessage } from "../collaboration-message.ts";
 import type { CollaborationDeliveryStatus } from "../shared/delivery-status.ts";
-import type { LinkEnvelope } from "../shared/link-envelope.ts";
+import {
+  isDeliveryLinkCategory,
+  type LinkEnvelope,
+} from "../shared/link-envelope.ts";
 import type {
   LinkRemoteRole,
   OutboxCategory,
@@ -25,9 +28,11 @@ export class LinkOutboxStore {
       createdAt?: number;
     },
   ): OutboxRow {
-    const withoutDelivery =
-      input.category === "receipt" || input.category === "notice";
-    if (withoutDelivery && "deliveryId" in input) {
+    const deliveryId =
+      input.category === "message" || input.category === "report"
+        ? input.deliveryId
+        : null;
+    if (deliveryId === null && "deliveryId" in input) {
       throw new Error(`link_${input.category}_has_delivery`);
     }
     const dataJson = stringifyLinkData(input.data);
@@ -38,7 +43,7 @@ export class LinkOutboxStore {
         remoteHost: input.remoteHost,
         category: input.category,
         dataJson,
-        deliveryId: withoutDelivery ? null : input.deliveryId,
+        deliveryId,
         createdAt: input.createdAt ?? Date.now(),
       }),
     );
@@ -385,12 +390,11 @@ export class LinkOutboxStore {
     deliveryId: string | null;
     createdAt: number;
   }): OutboxRow {
-    const withoutDelivery =
-      input.category === "receipt" || input.category === "notice";
-    if (withoutDelivery && input.deliveryId !== null) {
+    const hasDelivery = isDeliveryLinkCategory(input.category);
+    if (!hasDelivery && input.deliveryId !== null) {
       throw new Error(`link_${input.category}_has_delivery`);
     }
-    if (!withoutDelivery) {
+    if (hasDelivery) {
       if (!input.deliveryId) throw new Error("link_entry_missing_delivery");
       const delivery = this.store.getCollaborationDelivery(input.deliveryId);
       if (!delivery) throw new Error("link_delivery_missing");
