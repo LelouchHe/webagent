@@ -620,6 +620,29 @@ live local task when present, otherwise a linked remote child whose hub parent
 is live; an agent caller (`task_cancel`) may cancel only its own direct child,
 local or remote.
 
+```text
+ caller (P agent or user)   hub                                     owner                      R1
+   │ cancel(R1)              │                                         │                          │
+   ├────────────────────────►│ resolveCancelTarget                     │                          │
+   │                         │ resolve credential                      │                          │
+   │                         │ agent: generation fence                 │                          │
+   │                         ├── POST /tasks/R1/cancel ───────────────►│ read + parse body        │
+   │                         │   user: {}                              │ then, with no await:     │
+   │                         │   agent: {reason, sourceLabel}          │  R1 live? parent row     │
+   │                         │                                         │  link = token name?      │
+   │                         │                                         │  no → 404                │
+   │                         │                                         │  yes → local cancel ────►│ turn stops
+   │                         │                                         │ agent: R1 target row     │
+   │                         │◄─────────── 200 idle | cancelled ───────┤                          │
+   │                         │             202 cancelling | superseded │                          │
+   │                         │ HTTP code must match the body status    │                          │
+   │                         │ agent: generation fence, P source row   │                          │
+   │◄── status ──────────────┤                                         │                          │
+   │                         │                                         │                          │
+   │  404 → not found · other 4xx → rejected                                                        │
+   │  timeout · 5xx · mismatched pair → unknown: no retry, no P source row                          │
+```
+
 On the owner, `POST /api/v1/tasks/:id/cancel` is in host scope and runs an
 owner-local branch that never forwards to another host and never reads or writes
 `client_ops`. The owner parses and validates the strict request body first (a
