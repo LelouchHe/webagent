@@ -99,7 +99,7 @@ const HOST_SCOPE_PATHS: readonly WhitelistEntry[] = [
   {
     method: "GET",
     test: (p) =>
-      /^\/api\/v1\/tasks\/[A-Za-z0-9_-]+(?:\/(?:events|status))?$/.test(p),
+      /^\/api\/v1\/tasks\/[A-Za-z0-9_-]+\/(?:events|status)$/.test(p),
   },
   { method: "GET", test: (p) => p === "/api/v1/link/outbox" },
   { method: "GET", test: (p) => p === "/api/v1/link/watch" },

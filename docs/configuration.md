@@ -159,7 +159,7 @@ The command form resolves a fresh value on every connection attempt. A failed
 or empty command, rejected token, network failure, or incompatible protocol
 makes only that host unreachable; it does not prevent WebAgent from starting.
 The resolved token and its hash stay in memory. See
-[Multi-host connections](architecture/multi-host.md#connections) and the
+[Multi-host addresses and relation facts](architecture/multi-host.md#addresses-and-relation-facts) and the
 [`/api/v1/hosts`](api.md#hosts) status endpoint.
 
 ## Pre-1.0 storage reset

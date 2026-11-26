@@ -255,8 +255,6 @@ export interface LinkSyncHubPusherOptions {
   timeoutMs?: number;
   retryDelay: (attempt: number, result: SyncRequestResult<unknown>) => number;
   timer?: SyncTimer;
-  onAuthFailure?: () => void;
-  onLinkFault?: (result: SyncRequestResult<unknown>) => void;
 }
 
 const DEFAULT_SYNC_TIMER: SyncTimer = {
@@ -355,7 +353,6 @@ export class LinkSyncHubPusher {
         host: this.options.host,
         status: result.status,
       });
-      this.options.onAuthFailure?.();
       return false;
     }
     const code =
@@ -373,7 +370,6 @@ export class LinkSyncHubPusher {
         category: entry.request.category,
         ...(code ? { code } : {}),
       });
-      this.options.onLinkFault?.(result);
       return false;
     }
     const reason =

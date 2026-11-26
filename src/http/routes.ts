@@ -3068,16 +3068,7 @@ export function createRequestHandler(
         if (req.method === "GET") {
           const warm = requestParams.get("warm") === "1";
           const task = store.getTask(taskId);
-          const principal = principalByRequest.get(req);
-          const externalParent =
-            principal?.scope === "host"
-              ? store.getExternalParentLink(taskId)
-              : null;
-          if (
-            !task ||
-            (principal?.scope === "host" &&
-              externalParent?.remote_host !== principal.name)
-          ) {
+          if (!task) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
             return;
           }

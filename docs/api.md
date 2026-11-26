@@ -779,8 +779,8 @@ Get the live status, busy state, and pending permissions for a task. The pending
 entries carry only what a client can act on: the request's own execution
 provenance (source agent and lease) stays internal.
 
-For a `host`-scoped caller, this route (like `GET /api/v1/tasks/:id` and
-`GET /api/v1/tasks/:id/events`) checks that the task's external-parent link
+For a `host`-scoped caller, this route (like `GET /api/v1/tasks/:id/events`;
+host scope cannot read `GET /api/v1/tasks/:id`) checks that the task's external-parent link
 matches the authenticated host token's name, returning `404` otherwise.
 
 **Response** `200`:

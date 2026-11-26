@@ -311,9 +311,7 @@ contract. `src/api/tasks.ts` is neutral; `src/host/local/` and
 Store or TaskManager. `src/host/tasks.ts` is the Host selector; it depends only
 on the neutral contracts and injected Local/Remote create executors. The rules
 cover nested paths and static value, type, and
-re-export imports. See
-[Multi-host](multi-host.md#directories-and-dependencies) for the exact scope of
-the rules.
+re-export imports. See `eslint.config.js` for the exact scope of the rules.
 
 ## Where the server is not yet neutral
 

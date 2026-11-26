@@ -522,19 +522,11 @@ describe("dormant link sync handlers", () => {
         body: { error: "unknown_link_receipt", code: "link_protocol_error" },
       },
     ];
-    let authFailures = 0;
-    let linkFaults = 0;
     const sentIds: string[] = [];
     const pusher = new LinkSyncHubPusher({
       host: "owner",
       store,
       retryDelay: () => 5,
-      onAuthFailure: () => {
-        authFailures += 1;
-      },
-      onLinkFault: () => {
-        linkFaults += 1;
-      },
       transport: {
         send: async (opId) => {
           sentIds.push(opId!);
@@ -544,13 +536,14 @@ describe("dormant link sync handlers", () => {
     });
     pusher.start();
     try {
-      await waitUntil(() => linkFaults >= 1);
-      assert.equal(authFailures, 1);
+      // The rejected receipt is a link fault: it stays at the head and is retried.
+      await waitUntil(() => sentIds.length >= 5);
       // first was retried after 401, then advanced on 202; second failed & advanced; receipt stayed at head.
       assert.equal(sentIds[0], first.entry_id);
       assert.equal(sentIds[1], first.entry_id);
       assert.equal(sentIds[2], second.entry_id);
       assert.equal(sentIds[3], receipt.entry_id);
+      assert.equal(sentIds[4], receipt.entry_id);
       assert.equal(store.getOutboxPushCursor("child", "owner"), second.pos);
       assert.equal(
         store

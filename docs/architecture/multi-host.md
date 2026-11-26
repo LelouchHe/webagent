@@ -28,7 +28,7 @@ and never becomes a Task fact; there is no remote-child mirror.
 
 Every host call authenticates with an owner-issued `host`-scoped token. Host
 scope reaches only `auth/verify`, the three link routes, task create, and the
-per-Task detail, status, and events reads; it has no task list, no browser SSE,
+per-Task status and events reads; it has no task list, no browser SSE,
 and no `/tasks/:id/messages`. Per-Task reads are further limited to Tasks whose
 `parent` row names the authenticated token.
 
