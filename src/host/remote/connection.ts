@@ -14,7 +14,9 @@ import { resolveHostToken, TokenCommandError } from "./credentials.ts";
 import type { HostUnreachableReason } from "./state.ts";
 import {
   cancelHttpStatus,
+  TaskRemoteCancelError,
   type RemoteTaskCreateInput,
+  type TaskCancelOutcome,
   type TaskReadInput,
   type TaskReadResult,
   type TaskCreateResult,
@@ -102,14 +104,6 @@ export type RemoteTaskStatus = z.infer<typeof RemoteTaskStatusSchema>;
 
 export type HostTaskCancelRequest =
   { kind: "user" } | { kind: "agent"; reason: string; sourceLabel: string };
-
-export type HostTaskCancelAttempt =
-  | {
-      kind: "success";
-      status: "idle" | "cancelling" | "cancelled" | "superseded";
-    }
-  | { kind: "rejected"; status: number; reason: string }
-  | { kind: "unknown"; reason: string };
 
 const FeedEntrySchema = z.object({
   pos: z.number().int().positive(),
@@ -343,15 +337,19 @@ export class HostConnection {
   }
 
   async cancelTask(
+    host: string,
     taskId: string,
     input: HostTaskCancelRequest,
     beforeSend?: () => void,
-  ): Promise<HostTaskCancelAttempt> {
+  ): Promise<TaskCancelOutcome["status"]> {
     let token: string;
     try {
       token = await this.resolveToken();
     } catch {
-      return { kind: "unknown", reason: "Host credential is unavailable" };
+      throw new TaskRemoteCancelError(host, {
+        kind: "unknown",
+        reason: "Host credential is unavailable",
+      });
     }
     beforeSend?.();
     const outcome = await sendSyncRequest({
@@ -368,29 +366,32 @@ export class HostConnection {
       timer: this.timer,
     });
     if (outcome.kind === "unknown") {
-      return { kind: "unknown", reason: errorMessage(outcome.error) };
+      throw new TaskRemoteCancelError(host, {
+        kind: "unknown",
+        reason: errorMessage(outcome.error),
+      });
     }
     if (outcome.kind === "rejected") {
-      return {
+      throw new TaskRemoteCancelError(host, {
         kind: "rejected",
         status: outcome.status,
         reason: responseError(outcome.body, outcome.status),
-      };
+      });
     }
     const parsed = TaskCancelResponseSchema.safeParse(outcome.body);
     if (!parsed.success) {
-      return {
+      throw new TaskRemoteCancelError(host, {
         kind: "unknown",
         reason: "Remote returned an incomplete task-cancel response",
-      };
+      });
     }
     if (outcome.status !== cancelHttpStatus(parsed.data.status)) {
-      return {
+      throw new TaskRemoteCancelError(host, {
         kind: "unknown",
         reason: `Unexpected HTTP ${outcome.status} for cancel status ${parsed.data.status}`,
-      };
+      });
     }
-    return { kind: "success", status: parsed.data.status };
+    return parsed.data.status;
   }
 
   async getJson(path: string): Promise<unknown> {

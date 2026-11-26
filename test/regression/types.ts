@@ -1,3 +1,5 @@
+import type { RegressionForwarderChannel } from "./forwarder.ts";
+
 export type Json = null | boolean | number | string | Json[] | JsonObject;
 export type JsonObject = { [key: string]: Json };
 
@@ -18,14 +20,12 @@ export interface RegressionClient {
   forwarder(name: string): RegressionForwarderControl;
 }
 
-export type ForwarderChannel = "post" | "watch" | "cancel" | "delete";
-
 export interface RegressionForwarderControl {
-  connect(channel: ForwarderChannel): void;
-  disconnect(channel: ForwarderChannel): void;
-  dropNextResponse(channel: ForwarderChannel): void;
-  holdNextResponse(channel: ForwarderChannel): Promise<void>;
-  release(channel: ForwarderChannel): void;
+  connect(channel: RegressionForwarderChannel): void;
+  disconnect(channel: RegressionForwarderChannel): void;
+  dropNextResponse(channel: RegressionForwarderChannel): void;
+  holdNextResponse(channel: RegressionForwarderChannel): Promise<void>;
+  release(channel: RegressionForwarderChannel): void;
 }
 
 export interface RegressionInstanceClient {

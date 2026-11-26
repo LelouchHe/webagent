@@ -3,8 +3,8 @@ import { z } from "zod";
 import {
   cancelHttpStatus,
   MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH,
-  TaskRemoteCancelRejectedError,
-  TaskRemoteCancelUnknownError,
+  TaskRemoteCancelError,
+  type TaskCancelCommand,
   type TaskOps,
 } from "../api/tasks.ts";
 import type { TokenRecord } from "../auth-store.ts";
@@ -81,170 +81,133 @@ export interface CancelTaskRouteContext {
   ) => void;
 }
 
-async function handleHostCancelRoute(
+interface ResolvedCancelEntry {
+  command: TaskCancelCommand;
+  opId: string | null;
+}
+
+async function resolveCancelEntry(
   ctx: CancelTaskRouteContext,
-  hostName: string,
-): Promise<void> {
-  const { req, res, taskId, store, tasks, taskOps, readBody, json } = ctx;
-  const raw = await readBody(req);
-  const body = parseHostCancelBody(raw);
-  if (!body) {
-    json(res, HTTP_STATUS.BAD_REQUEST, {
-      error: "Invalid cancel request body",
-    });
-    return;
+): Promise<ResolvedCancelEntry | null> {
+  const {
+    req,
+    res,
+    taskId,
+    principal,
+    store,
+    tasks,
+    taskOps,
+    hostRegistry,
+    readBody,
+    json,
+    tryReplayClientOp,
+    saveClientOpResult,
+  } = ctx;
+
+  if (principal?.scope === "host") {
+    const body = parseHostCancelBody(await readBody(req));
+    if (!body) {
+      json(res, HTTP_STATUS.BAD_REQUEST, {
+        error: "Invalid cancel request body",
+      });
+      return null;
+    }
+    const task = store.getTask(taskId);
+    const externalParent = store.getExternalParentLink(taskId);
+    if (!task || externalParent?.remote_host !== principal.name) {
+      json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+      return null;
+    }
+    if (!tasks) {
+      json(res, HTTP_STATUS.OK, { ok: true, status: "idle" });
+      return null;
+    }
+    return {
+      opId: null,
+      command: {
+        kind: "host",
+        taskId,
+        actor:
+          body.kind === "agent"
+            ? {
+                kind: "agent",
+                sourceTaskId: externalParent.remote_task_id,
+                sourceLabel: body.sourceLabel,
+                reason: body.reason,
+              }
+            : { kind: "user" },
+      },
+    };
   }
-  const task = store.getTask(taskId);
-  const externalParent = store.getExternalParentLink(taskId);
-  if (!task || externalParent?.remote_host !== hostName) {
+
+  if (store.getTask(taskId)) {
+    const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
+    if (replayed) return null;
+    if (!tasks) {
+      const idleBody = { ok: true, status: "idle" };
+      saveClientOpResult(store, opId, taskId, HTTP_STATUS.OK, idleBody);
+      json(res, HTTP_STATUS.OK, idleBody);
+      return null;
+    }
+    return { opId, command: { kind: "user", taskId } };
+  }
+
+  if (!tasks || !taskOps || !hostRegistry || hostRegistry.list().length === 0) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
-    return;
+    return null;
   }
-  if (!tasks) {
-    json(res, HTTP_STATUS.OK, { ok: true, status: "idle" });
-    return;
-  }
+  return { opId: null, command: { kind: "user", taskId } };
+}
+
+export async function handleCancelTaskRoute(
+  ctx: CancelTaskRouteContext,
+): Promise<void> {
+  const entry = await resolveCancelEntry(ctx);
+  if (!entry) return;
+  const { res, taskId, store, taskOps, json, saveClientOpResult } = ctx;
   if (!taskOps) {
     throw new Error("Task operations are not configured");
   }
   let result;
   try {
-    result = await taskOps.cancel({
-      kind: "host",
-      taskId,
-      actor:
-        body.kind === "agent"
-          ? {
-              kind: "agent",
-              sourceTaskId: externalParent.remote_task_id,
-              sourceLabel: body.sourceLabel,
-              reason: body.reason,
-            }
-          : { kind: "user" },
-    });
+    result = await taskOps.cancel(entry.command);
   } catch (error) {
     if (error instanceof AgentNotReadyError) {
       json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
         error: "Agent not ready yet",
+      });
+      return;
+    }
+    if (error instanceof TaskNotFoundError) {
+      json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+      return;
+    }
+    if (error instanceof TaskRemoteCancelError) {
+      if (error.detail.kind === "rejected") {
+        if (error.detail.status === HTTP_STATUS.NOT_FOUND) {
+          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+          return;
+        }
+        json(res, error.detail.status, {
+          error: error.detail.reason,
+          host: error.host,
+          remoteStatus: error.detail.status,
+          outcome: "rejected",
+        });
+        return;
+      }
+      json(res, HTTP_STATUS.BAD_GATEWAY, {
+        error: "Remote task cancel result is unknown",
+        reason: error.detail.reason,
+        host: error.host,
+        outcome: "unknown",
       });
       return;
     }
     throw error;
   }
   const status = cancelHttpStatus(result.status);
-  json(res, status, { ok: true, status: result.status });
-}
-
-async function handleLocalUserCancelRoute(
-  ctx: CancelTaskRouteContext,
-): Promise<void> {
-  const {
-    req,
-    res,
-    taskId,
-    store,
-    tasks,
-    taskOps,
-    json,
-    tryReplayClientOp,
-    saveClientOpResult,
-  } = ctx;
-  const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
-  if (replayed) return;
-
-  if (!tasks) {
-    const idleBody = { ok: true, status: "idle" };
-    saveClientOpResult(store, opId, taskId, HTTP_STATUS.OK, idleBody);
-    json(res, HTTP_STATUS.OK, idleBody);
-    return;
-  }
-  if (!taskOps) {
-    throw new Error("Task operations are not configured");
-  }
-  let result;
-  try {
-    result = await taskOps.cancel({ kind: "user", taskId });
-  } catch (error) {
-    if (error instanceof AgentNotReadyError) {
-      json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-        error: "Agent not ready yet",
-      });
-      return;
-    }
-    throw error;
-  }
-  const status =
-    result.status === "cancelling" || result.status === "superseded"
-      ? HTTP_STATUS.ACCEPTED
-      : HTTP_STATUS.OK;
   const okBody = { ok: true, status: result.status };
-  saveClientOpResult(store, opId, taskId, status, okBody);
+  saveClientOpResult(store, entry.opId, taskId, status, okBody);
   json(res, status, okBody);
-}
-
-async function handleRemoteUserCancelRoute(
-  ctx: CancelTaskRouteContext,
-): Promise<void> {
-  const { res, taskId, tasks, taskOps, hostRegistry, json } = ctx;
-  if (!tasks || !taskOps || !hostRegistry || hostRegistry.list().length === 0) {
-    json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
-    return;
-  }
-  let result;
-  try {
-    result = await taskOps.cancel({ kind: "user", taskId });
-  } catch (error) {
-    if (error instanceof TaskNotFoundError) {
-      json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
-      return;
-    }
-    if (error instanceof TaskRemoteCancelRejectedError) {
-      if (error.status === HTTP_STATUS.NOT_FOUND) {
-        json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
-        return;
-      }
-      json(res, error.status, {
-        error: error.reason,
-        host: error.host,
-        remoteStatus: error.status,
-        outcome: "rejected",
-      });
-      return;
-    }
-    if (error instanceof TaskRemoteCancelUnknownError) {
-      json(res, HTTP_STATUS.BAD_GATEWAY, {
-        error: "Remote task cancel result is unknown",
-        reason: error.reason,
-        host: error.host,
-        outcome: "unknown",
-      });
-      return;
-    }
-    if (error instanceof AgentNotReadyError) {
-      json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-        error: "Agent not ready yet",
-      });
-      return;
-    }
-    throw error;
-  }
-  const status =
-    result.status === "cancelling" || result.status === "superseded"
-      ? HTTP_STATUS.ACCEPTED
-      : HTTP_STATUS.OK;
-  json(res, status, { ok: true, status: result.status });
-}
-
-export async function handleCancelTaskRoute(
-  ctx: CancelTaskRouteContext,
-): Promise<void> {
-  if (ctx.principal?.scope === "host") {
-    await handleHostCancelRoute(ctx, ctx.principal.name);
-    return;
-  }
-  if (ctx.store.getTask(ctx.taskId)) {
-    await handleLocalUserCancelRoute(ctx);
-    return;
-  }
-  await handleRemoteUserCancelRoute(ctx);
 }

@@ -6,7 +6,7 @@ import {
   type ServerResponse,
 } from "node:http";
 
-export type RegressionForwarderChannel = "post" | "watch" | "cancel" | "delete";
+export type RegressionForwarderChannel = "post" | "watch" | "cancel";
 
 export interface RegressionForwarderRoutes {
   post: string;
@@ -41,7 +41,6 @@ export class RegressionForwarder {
       post: createChannelState(),
       watch: createChannelState(),
       cancel: createChannelState(),
-      delete: createChannelState(),
     };
   private readonly server = createServer((request, response) => {
     void this.forward(request, response);
@@ -114,7 +113,7 @@ export class RegressionForwarder {
   }
 
   async close(): Promise<void> {
-    for (const channel of ["post", "watch", "cancel", "delete"] as const) {
+    for (const channel of ["post", "watch", "cancel"] as const) {
       for (const exchange of this.channels[channel].active) {
         destroyExchange(exchange);
       }
@@ -208,9 +207,6 @@ function classifyChannel(
   if (method === "GET" && path === routes.watch) return "watch";
   if (method === "POST" && /^\/api\/v1\/tasks\/[^/]+\/cancel\/?$/.test(path)) {
     return "cancel";
-  }
-  if (method === "DELETE" && /^\/api\/v1\/tasks\/[^/]+\/?$/.test(path)) {
-    return "delete";
   }
   return null;
 }

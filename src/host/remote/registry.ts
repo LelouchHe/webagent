@@ -12,8 +12,6 @@ import type {
 import { buildTaskHistoryQuery } from "../../task-history.ts";
 import {
   TaskHostNotConfiguredError,
-  TaskRemoteCancelRejectedError,
-  TaskRemoteCancelUnknownError,
   TaskRemoteCreateNotSentError,
   TaskRemoteCreateRejectedError,
   TaskRemoteCreateUnknownError,
@@ -170,35 +168,11 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     return this.linksForParent(localParentTaskId).length > 0;
   }
 
-  resolveRemoteChild(
-    localParentTaskId: string,
-    remoteTaskId: string,
+  private resolveLink(
+    predicate: (candidate: RemoteTask) => boolean,
   ): RemoteTaskTarget | undefined {
     if (this.connections.size === 0) return undefined;
-    const link = this.linksForParent(localParentTaskId).find(
-      (candidate) => candidate.remoteTaskId === remoteTaskId,
-    );
-    if (!link) return undefined;
-    const connection = this.connections.get(link.host);
-    if (!connection) return undefined;
-    return {
-      host: link.host,
-      taskId: remoteTaskId,
-      parentTaskId: localParentTaskId,
-      connection,
-    };
-  }
-
-  resolveRemoteChildByTaskId(
-    remoteTaskId: string,
-    isLiveParent: (localTaskId: string) => boolean,
-  ): RemoteTaskTarget | undefined {
-    if (this.connections.size === 0) return undefined;
-    const link = (this.options?.listLinks() ?? []).find(
-      (candidate) =>
-        candidate.remoteTaskId === remoteTaskId &&
-        isLiveParent(candidate.localTaskId),
-    );
+    const link = (this.options?.listLinks() ?? []).find(predicate);
     if (!link) return undefined;
     const connection = this.connections.get(link.host);
     if (!connection) return undefined;
@@ -210,28 +184,39 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     };
   }
 
-  async cancelRemote(
+  resolveRemoteChild(
+    localParentTaskId: string,
+    remoteTaskId: string,
+  ): RemoteTaskTarget | undefined {
+    return this.resolveLink(
+      (candidate) =>
+        candidate.localTaskId === localParentTaskId &&
+        candidate.remoteTaskId === remoteTaskId,
+    );
+  }
+
+  resolveRemoteChildByTaskId(
+    remoteTaskId: string,
+    isLiveParent: (localTaskId: string) => boolean,
+  ): RemoteTaskTarget | undefined {
+    return this.resolveLink(
+      (candidate) =>
+        candidate.remoteTaskId === remoteTaskId &&
+        isLiveParent(candidate.localTaskId),
+    );
+  }
+
+  cancelRemote(
     target: RemoteTaskTarget,
     input: HostTaskCancelRequest,
     beforeSend?: () => void,
   ): Promise<"idle" | "cancelling" | "cancelled" | "superseded"> {
-    const attempt = await target.connection.cancelTask(
+    return target.connection.cancelTask(
+      target.host,
       target.taskId,
       input,
       beforeSend,
     );
-    switch (attempt.kind) {
-      case "success":
-        return attempt.status;
-      case "rejected":
-        throw new TaskRemoteCancelRejectedError(
-          target.host,
-          attempt.status,
-          attempt.reason,
-        );
-      case "unknown":
-        throw new TaskRemoteCancelUnknownError(target.host, attempt.reason);
-    }
   }
 
   async queryRemote(

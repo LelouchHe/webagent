@@ -137,6 +137,7 @@ export function createRoutedTaskOps(deps: {
   };
   return {
     async cancel(command) {
+      if (command.kind === "host") return local.cancel(command);
       if (command.kind === "agent") authorize(command.principal);
       const route = resolveCancelTarget(command, store, remote);
       if (route.kind === "not_found") {
@@ -150,9 +151,6 @@ export function createRoutedTaskOps(deps: {
           kind: "user",
         });
         return { accepted: true, taskId: route.target.taskId, status };
-      }
-      if (command.kind !== "agent") {
-        return local.cancel(command);
       }
       const sourceTaskId = command.principal.taskId;
       const sourceTask = store.getTask(sourceTaskId);
@@ -181,7 +179,6 @@ export function createRoutedTaskOps(deps: {
       recordTaskCancelEvent({
         store,
         broadcastTaskCancelNotice,
-        taskId: sourceTaskId,
         role: "source",
         sourceTaskId,
         sourceLabel,

@@ -5,10 +5,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import {
-  TaskRemoteCancelRejectedError,
-  TaskRemoteCancelUnknownError,
-} from "../src/api/tasks.ts";
+import { TaskRemoteCancelError } from "../src/api/tasks.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { isHostScopeAllowedPath } from "../src/auth-middleware.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
@@ -651,13 +648,14 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
             targetTaskId: "r1",
             reason: "response dropped",
           }),
-        TaskRemoteCancelUnknownError,
+        (err: unknown) =>
+          err instanceof TaskRemoteCancelError && err.detail.kind === "unknown",
       );
       assert.equal(stats.cancelPosts, postsBeforeDrop + 1);
       assert.equal(hubNoticeCount(), hubNoticesBeforeDrop);
       assert.equal(ownerNoticeCount(), ownerNoticesBeforeDrop + 1);
 
-      // 10. Deleted R1 on owner -> user REST cancel returns 404, TaskOps throws TaskRemoteCancelRejectedError(404)
+      // 10. Deleted R1 on owner -> user REST cancel returns 404, TaskOps throws TaskRemoteCancelError(rejected, 404)
       owner.store.deleteTask("r1");
       const deletedRes = await fetch(
         `${hubServer.origin}/api/v1/tasks/r1/cancel`,
@@ -670,7 +668,9 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       await assert.rejects(
         () => hubTaskOps.cancel({ kind: "user", taskId: "r1" }),
         (err: unknown) =>
-          err instanceof TaskRemoteCancelRejectedError && err.status === 404,
+          err instanceof TaskRemoteCancelError &&
+          err.detail.kind === "rejected" &&
+          err.detail.status === 404,
       );
       await assert.rejects(
         () => hubTaskOps.cancel({ kind: "user", taskId: "never-existed" }),
@@ -912,7 +912,9 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
               targetTaskId: "r1",
               reason: "mismatched status pair",
             }),
-          TaskRemoteCancelUnknownError,
+          (err: unknown) =>
+            err instanceof TaskRemoteCancelError &&
+            err.detail.kind === "unknown",
         );
         assert.equal(stats.posts, postsBefore + 1);
         assert.equal(hubCount(), hubCountBefore);

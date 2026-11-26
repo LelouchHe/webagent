@@ -557,29 +557,18 @@ export function createLocalTaskOps(deps: {
     },
 
     async cancel(command) {
-      if (command.kind === "user") {
+      if (command.kind !== "agent") {
         const result = await cancelExecution(command.taskId);
-        return {
-          accepted: true,
-          taskId: command.taskId,
-          status: result.status,
-        };
-      }
-
-      if (command.kind === "host") {
-        const result = await cancelExecution(command.taskId);
-        if (command.actor.kind === "agent") {
+        if (command.kind === "host" && command.actor.kind === "agent") {
           const targetTask = store.getTaskIncludingDeleted(command.taskId);
-          const targetLabel = targetTask?.title ?? command.taskId.slice(0, 8);
           recordTaskCancelEvent({
             store,
             broadcastTaskCancelNotice,
-            taskId: command.taskId,
             role: "target",
             sourceTaskId: command.actor.sourceTaskId,
             sourceLabel: command.actor.sourceLabel,
             targetTaskId: command.taskId,
-            targetLabel,
+            targetLabel: targetTask?.title ?? command.taskId.slice(0, 8),
             reason: command.actor.reason,
             status: result.status,
           });
@@ -602,15 +591,11 @@ export function createLocalTaskOps(deps: {
       const targetTask = store.getTaskIncludingDeleted(target.id);
       const sourceLabel = sourceTask?.title ?? sourceTaskId.slice(0, 8);
       const targetLabel = targetTask?.title ?? target.id.slice(0, 8);
-      for (const side of [
-        { taskId: sourceTaskId, role: "source" as const },
-        { taskId: target.id, role: "target" as const },
-      ]) {
+      for (const role of ["source", "target"] as const) {
         recordTaskCancelEvent({
           store,
           broadcastTaskCancelNotice,
-          taskId: side.taskId,
-          role: side.role,
+          role,
           sourceTaskId,
           sourceLabel,
           targetTaskId: target.id,

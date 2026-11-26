@@ -139,36 +139,28 @@ export type TaskCancelCommand =
           };
     };
 
-export class TaskRemoteCancelRejectedError extends Error {
-  readonly kind = "rejected";
+export type TaskRemoteCancelErrorDetail =
+  | { kind: "rejected"; status: number; reason: string }
+  | { kind: "unknown"; reason: string };
+
+export class TaskRemoteCancelError extends Error {
   readonly host: string;
-  readonly status: number;
-  readonly reason: string;
+  readonly detail: TaskRemoteCancelErrorDetail;
 
   constructor(
     host: string,
-    status: number,
-    reason: string,
+    detail: TaskRemoteCancelErrorDetail,
     options?: ErrorOptions,
   ) {
-    super("remote_task_cancel_rejected", options);
-    this.name = "TaskRemoteCancelRejectedError";
+    super(
+      detail.kind === "rejected"
+        ? `Remote task cancel rejected by ${host}: ${detail.reason}`
+        : `Remote task cancel result is unknown for ${host}: ${detail.reason}`,
+      options,
+    );
+    this.name = "TaskRemoteCancelError";
     this.host = host;
-    this.status = status;
-    this.reason = reason;
-  }
-}
-
-export class TaskRemoteCancelUnknownError extends Error {
-  readonly kind = "unknown";
-  readonly host: string;
-  readonly reason: string;
-
-  constructor(host: string, reason: string, options?: ErrorOptions) {
-    super("remote_task_cancel_result_unknown", options);
-    this.name = "TaskRemoteCancelUnknownError";
-    this.host = host;
-    this.reason = reason;
+    this.detail = detail;
   }
 }
 

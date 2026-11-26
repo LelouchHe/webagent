@@ -44,14 +44,6 @@ export class LinkApplyStore {
     remoteHost: string;
     envelope: LinkEnvelope;
   }): LinkApplyEffects {
-    if (
-      input.envelope.category === "notice" ||
-      input.envelope.category === "relation"
-    ) {
-      throw new LinkProtocolError(
-        `${input.envelope.category}_not_allowed_on_push`,
-      );
-    }
     return this.store.writeOutbox(() => {
       if (isDeliveryLinkCategory(input.envelope.category)) {
         const existing = this.getInboundLinkDelivery(
