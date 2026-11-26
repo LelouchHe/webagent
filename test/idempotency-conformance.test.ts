@@ -13,7 +13,7 @@ import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { createTaskHost } from "../src/host/tasks.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import { opIdentity } from "../src/shared/sync/index.ts";
+import { opIdentity } from "../src/op-identity.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
 import { TaskManager } from "../src/task-manager.ts";

@@ -1,0 +1,25 @@
+// Deterministic ids for idempotent operations: the id of the fact an
+// operation creates is derived from who asked and the op id they sent, so a
+// replay finds the same row instead of creating a second one.
+
+import { createHash } from "node:crypto";
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** RFC 4122 UUIDv5 of `${caller}\0${opId}` in the `namespace` UUID. */
+export function opIdentity(
+  namespace: string,
+  caller: string,
+  opId: string,
+): string {
+  if (!UUID_PATTERN.test(namespace)) throw new Error("invalid_uuid_namespace");
+  const digest = createHash("sha1")
+    .update(Buffer.from(namespace.replace(/-/g, ""), "hex"))
+    .update(`${caller}\0${opId}`, "utf8")
+    .digest();
+  digest[6] = (digest[6] & 0x0f) | 0x50;
+  digest[8] = (digest[8] & 0x3f) | 0x80;
+  const hex = digest.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}

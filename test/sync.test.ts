@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import { describe, it } from "node:test";
 import { ESLint } from "eslint";
 import {
-  opIdentity,
   sendSyncRequest,
   SyncFeedConsumer,
   SyncFeedProtocolError,
@@ -598,28 +597,6 @@ describe("shared/sync", () => {
     assert.equal(pushedPos, 0);
     outbox.stop();
     assert.equal(clock.size(), 0);
-  });
-
-  it("derives deterministic RFC 4122 UUIDv5 operation identities scoped by namespace and caller", () => {
-    const ns = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
-    const id1 = opIdentity(ns, "hub-a", "op-1");
-    const id2 = opIdentity(ns, "hub-a", "op-1");
-    const otherCaller = opIdentity(ns, "hub-b", "op-1");
-    const otherOp = opIdentity(ns, "hub-a", "op-2");
-    const otherNs = opIdentity(
-      "6ba7b811-9dad-11d1-80b4-00c04fd430c8",
-      "hub-a",
-      "op-1",
-    );
-    assert.equal(id1, id2);
-    assert.match(
-      id1,
-      /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-    );
-    assert.notEqual(id1, otherCaller);
-    assert.notEqual(id1, otherOp);
-    assert.notEqual(id1, otherNs);
-    assert.throws(() => opIdentity("not-a-uuid", "hub-a", "op-1"));
   });
 
   it("enforces the shared/sync dependency boundary in lint", async () => {

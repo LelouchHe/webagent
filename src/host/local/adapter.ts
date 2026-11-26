@@ -36,7 +36,7 @@ import {
   TaskCreateInputError,
   TaskCreateConfigError,
 } from "../../api/tasks.ts";
-import { opIdentity } from "../../shared/sync/index.ts";
+import { opIdentity } from "../../op-identity.ts";
 import {
   buildTaskHistoryQuery,
   buildTaskHistoryRead,
