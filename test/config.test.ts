@@ -96,6 +96,7 @@ recent_paths_ttl = 60
       file_upload: 52_428_800,
       cancel_timeout: 5000,
       silence_timeout: 15,
+      remote_delivery_timeout: 10,
       recent_paths: 20,
       recent_paths_ttl: 60,
     });
@@ -289,5 +290,29 @@ recent_paths_ttl = 60
       writeConfig(`${MINIMAL}\n[auth]\nfirst_run_bootstrap = false\n`),
     );
     assert.equal(config.auth.first_run_bootstrap, false);
+  });
+
+  it("[limits] remote_delivery_timeout defaults to 10 and enforces 1..1440 integer bounds", () => {
+    const defaults = load(writeConfig(MINIMAL));
+    assert.equal(defaults.limits.remote_delivery_timeout, 10);
+
+    for (const valid of [1, 10, 1440]) {
+      const parsed = ConfigSchema.safeParse({
+        default_agent: "copilot",
+        agents: { copilot: { cmd: "copilot --acp" } },
+        limits: { remote_delivery_timeout: valid },
+      });
+      assert.equal(parsed.success, true);
+      assert.equal(parsed.data.limits.remote_delivery_timeout, valid);
+    }
+
+    for (const invalid of [0, -1, 1441, 1.5]) {
+      const parsed = ConfigSchema.safeParse({
+        default_agent: "copilot",
+        agents: { copilot: { cmd: "copilot --acp" } },
+        limits: { remote_delivery_timeout: invalid },
+      });
+      assert.equal(parsed.success, false);
+    }
   });
 });

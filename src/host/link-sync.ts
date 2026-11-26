@@ -253,10 +253,15 @@ export interface LinkSyncHubPusherOptions {
   store: Store;
   transport: SyncRequestTransport<LinkEnvelope, unknown>;
   timeoutMs?: number;
+  handoffTimeoutMs?: number;
   retryDelay: (attempt: number, result: SyncRequestResult<unknown>) => number;
   timer?: SyncTimer;
+  epochClock?: { now(): number };
   effects?: LinkSyncEffectCallbacks;
 }
+
+const DEFAULT_HANDOFF_TIMEOUT_MS = 10 * 60_000;
+const TIMEOUT_RETRY_DELAY_MS = 1_000;
 
 const DEFAULT_SYNC_TIMER: SyncTimer = {
   setTimeout: (callback, ms) => {
@@ -272,49 +277,192 @@ const DEFAULT_SYNC_TIMER: SyncTimer = {
 export class LinkSyncHubPusher {
   private readonly options: LinkSyncHubPusherOptions;
   private readonly outbox: SyncOutbox<LinkEnvelope, unknown>;
+  private readonly timer: SyncTimer;
+  private readonly epochClock: { now(): number };
+  private readonly handoffTimeoutMs: number;
+  private started = false;
+  private watchOnline = false;
+  private offlineSince: number | null = null;
+  private timeoutTimer: unknown = null;
 
   constructor(options: LinkSyncHubPusherOptions) {
     this.options = options;
+    this.timer = options.timer ?? DEFAULT_SYNC_TIMER;
+    this.epochClock = options.epochClock ?? { now: () => Date.now() };
+    this.handoffTimeoutMs =
+      options.handoffTimeoutMs ?? DEFAULT_HANDOFF_TIMEOUT_MS;
     this.outbox = new SyncOutbox({
       port: {
         next: () => this.next(),
         finish: (entry, result) => this.finish(entry, result),
       },
       transport: options.transport,
-      timer: options.timer ?? DEFAULT_SYNC_TIMER,
+      timer: this.timer,
       timeoutMs: options.timeoutMs ?? 8_000,
       retryDelay: options.retryDelay,
     });
   }
 
   start(): void {
+    this.started = true;
     this.outbox.start();
+    this.scheduleTimeout();
   }
 
   stop(): void {
+    this.started = false;
+    this.clearTimeoutTimer();
     this.outbox.stop();
   }
 
   wake(): void {
     this.outbox.wake();
+    this.scheduleTimeout();
   }
 
   handedOffPosition(position: number): void {
     this.outbox.handedOffPosition(position);
+    this.scheduleTimeout();
   }
 
-  private next() {
+  setWatchOnline(online: boolean): void {
+    if (online) {
+      if (this.watchOnline) return;
+      this.watchOnline = true;
+      this.offlineSince = null;
+      this.clearTimeoutTimer();
+      return;
+    }
+    if (!this.watchOnline) return;
+    this.watchOnline = false;
+    this.scheduleTimeout();
+  }
+
+  private clearTimeoutTimer(): void {
+    if (this.timeoutTimer !== null) {
+      this.timer.clearTimeout(this.timeoutTimer);
+      this.timeoutTimer = null;
+    }
+  }
+
+  private scheduleTimeout(): void {
+    this.clearTimeoutTimer();
+    if (!this.started || this.watchOnline) return;
     const pushed = this.options.store.getOutboxPushCursor(
       "child",
       this.options.host,
     );
-    const rows = this.options.store.listOutbox(
+    const hasPendingWork =
+      this.options.store.listOutbox("child", this.options.host, pushed, 1)
+        .length > 0;
+    if (!hasPendingWork) {
+      this.offlineSince = null;
+      return;
+    }
+    this.offlineSince ??= this.epochClock.now();
+    const earliest = this.options.store.getEarliestPendingOutboxMessage(
+      "child",
+      this.options.host,
+    );
+    if (!earliest) return;
+    const deadline =
+      Math.max(earliest.queued_at, this.offlineSince) + this.handoffTimeoutMs;
+    const delay = Math.max(0, deadline - this.epochClock.now());
+    this.timeoutTimer = this.timer.setTimeout(() => {
+      this.timeoutTimer = null;
+      this.onTimeout();
+    }, delay);
+  }
+
+  private onTimeout(): void {
+    if (!this.started || this.watchOnline || this.offlineSince === null) return;
+    const earliest = this.options.store.getEarliestPendingOutboxMessage(
+      "child",
+      this.options.host,
+    );
+    if (!earliest) {
+      this.scheduleTimeout();
+      return;
+    }
+    const now = this.epochClock.now();
+    const deadline =
+      Math.max(earliest.queued_at, this.offlineSince) + this.handoffTimeoutMs;
+    if (now < deadline) {
+      this.scheduleTimeout();
+      return;
+    }
+    let outcome: ReturnType<Store["failOutboxMessageOnTimeout"]>;
+    try {
+      outcome = this.options.store.failOutboxMessageOnTimeout(
+        "child",
+        this.options.host,
+        earliest.entry_id,
+        now,
+      );
+    } catch (error) {
+      log.scope("hosts").warn("link handoff timeout persistence failed", {
+        host: this.options.host,
+        entryId: earliest.entry_id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.timeoutTimer = this.timer.setTimeout(() => {
+        this.timeoutTimer = null;
+        this.onTimeout();
+      }, TIMEOUT_RETRY_DELAY_MS);
+      return;
+    }
+    if (outcome.failed) {
+      executeLinkEffects(
+        this.options.store,
+        outcome.effects,
+        this.options.effects,
+      );
+      const skippedPos = this.options.store.skipFailedOutboxMessagePrefix(
+        "child",
+        this.options.host,
+      );
+      if (skippedPos !== null) {
+        this.outbox.handedOffPosition(skippedPos);
+        this.outbox.wake();
+      }
+    }
+    this.scheduleTimeout();
+  }
+
+  private next() {
+    let pushed = this.options.store.getOutboxPushCursor(
+      "child",
+      this.options.host,
+    );
+    let rows = this.options.store.listOutbox(
       "child",
       this.options.host,
       pushed,
       1,
     );
     if (rows.length === 0) return undefined;
+    if (
+      rows[0].category === "message" &&
+      rows[0].delivery_id !== null &&
+      this.options.store.getCollaborationDelivery(rows[0].delivery_id)
+        ?.status === "failed"
+    ) {
+      this.options.store.skipFailedOutboxMessagePrefix(
+        "child",
+        this.options.host,
+      );
+      pushed = this.options.store.getOutboxPushCursor(
+        "child",
+        this.options.host,
+      );
+      rows = this.options.store.listOutbox(
+        "child",
+        this.options.host,
+        pushed,
+        1,
+      );
+      if (rows.length === 0) return undefined;
+    }
     const row = rows[0];
     return {
       id: row.entry_id,
@@ -344,6 +492,7 @@ export class LinkSyncHubPusher {
         this.options.host,
         entry.id,
       );
+      this.scheduleTimeout();
       return true;
     }
     if (
@@ -396,6 +545,7 @@ export class LinkSyncHubPusher {
       return false;
     }
     executeLinkEffects(this.options.store, effects, this.options.effects);
+    this.scheduleTimeout();
     return true;
   }
 }

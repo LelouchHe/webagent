@@ -3583,6 +3583,117 @@ export class Store {
     })();
   }
 
+  getEarliestPendingOutboxMessage(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+  ):
+    | { pos: number; entry_id: string; delivery_id: string; queued_at: number }
+    | undefined {
+    const pushed = this.getOutboxPushCursor(remoteRole, remoteHost);
+    return this.db
+      .prepare(
+        `SELECT o.pos, o.entry_id, o.delivery_id, d.queued_at
+         FROM outbox o
+         JOIN deliveries d ON d.id = o.delivery_id
+         WHERE o.remote_role = ? AND o.remote_host = ?
+           AND o.category = 'message'
+           AND o.pos > ?
+           AND d.status = 'queued'
+         ORDER BY d.queued_at ASC, o.pos ASC
+         LIMIT 1`,
+      )
+      .get(remoteRole, remoteHost, pushed) as
+      | {
+          pos: number;
+          entry_id: string;
+          delivery_id: string;
+          queued_at: number;
+        }
+      | undefined;
+  }
+
+  failOutboxMessageOnTimeout(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    entryId: string,
+    now: number,
+  ): { failed: boolean; pos: number | null; effects: LinkApplyEffects } {
+    return this.db.transaction(() => {
+      const pushed = this.getOutboxPushCursor(remoteRole, remoteHost);
+      const row = this.db
+        .prepare(
+          `SELECT pos, delivery_id FROM outbox
+           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?
+             AND category = 'message' AND pos > ?`,
+        )
+        .get(remoteRole, remoteHost, entryId, pushed) as
+        { pos: number; delivery_id: string | null } | undefined;
+      if (!row?.delivery_id) {
+        return { failed: false, pos: null, effects: emptyLinkApplyEffects() };
+      }
+      const changed = this.transitionDeliveryStatusInTransaction(
+        row.delivery_id,
+        "queued",
+        "failed",
+        now,
+        "remote_handoff_timeout",
+      );
+      if (!changed) {
+        return {
+          failed: false,
+          pos: row.pos,
+          effects: emptyLinkApplyEffects(),
+        };
+      }
+      const effects = emptyLinkApplyEffects();
+      effects.deliveryStatusIds.push(row.delivery_id);
+      const drainTaskId = this.writeOutboundFailureNoticeInTransaction(
+        row.delivery_id,
+        "remote_handoff_timeout",
+        "Handoff to the remote peer was not confirmed before the timeout.",
+      );
+      if (drainTaskId) effects.drainTaskIds.push(drainTaskId);
+      return { failed: true, pos: row.pos, effects };
+    })();
+  }
+
+  skipFailedOutboxMessagePrefix(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+  ): number | null {
+    return this.db.transaction(() => {
+      const pushed = this.getOutboxPushCursor(remoteRole, remoteHost);
+      const rows = this.db
+        .prepare(
+          `SELECT o.pos, o.entry_id, o.category, d.status AS delivery_status
+           FROM outbox o
+           LEFT JOIN deliveries d ON d.id = o.delivery_id
+           WHERE o.remote_role = ? AND o.remote_host = ? AND o.pos > ?
+           ORDER BY o.pos ASC`,
+        )
+        .all(remoteRole, remoteHost, pushed) as Array<{
+        pos: number;
+        entry_id: string;
+        category: OutboxCategory;
+        delivery_status: CollaborationDeliveryStatus | null;
+      }>;
+      let lastFailedEntryId: string | null = null;
+      for (const row of rows) {
+        if (row.category === "message" && row.delivery_status === "failed") {
+          lastFailedEntryId = row.entry_id;
+          continue;
+        }
+        break;
+      }
+      if (!lastFailedEntryId) return null;
+      return this.advanceOutboxPushCursor(
+        remoteRole,
+        remoteHost,
+        lastFailedEntryId,
+      );
+    })();
+  }
+
   private getInboundLinkDelivery(
     remoteRole: LinkRemoteRole,
     remoteHost: string,

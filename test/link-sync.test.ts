@@ -1123,7 +1123,311 @@ describe("dormant link sync handlers", () => {
       consumer.stop();
     }
   });
+
+  it("computes T deadline from max(queued_at, offlineSince), ignores redials, clears on handshake, and does not time out while online", () => {
+    store.createTask("parent", dir, "auto", "mock", "p");
+    store.recordRemoteChild("parent", "remote", "owner");
+
+    const clock = new FakeClock(1_000_000);
+    const drained: string[] = [];
+    const sent: string[] = [];
+    const pusher = new LinkSyncHubPusher({
+      host: "owner",
+      store,
+      handoffTimeoutMs: 60_000,
+      timer: clock.timer,
+      epochClock: clock,
+      retryDelay: () => 500_000,
+      effects: { drainTask: (taskId) => drained.push(taskId) },
+      transport: {
+        send: async (_opId, request) => {
+          sent.push(request.id);
+          return { status: 503, body: { error: "offline" } };
+        },
+      },
+    });
+    pusher.start();
+    try {
+      // Enqueue while offline at t=1_000_000 -> offlineSince=1_000_000, deadline=1_060_000
+      const m1 = store.enqueueLinkMessage({
+        remoteRole: "child",
+        remoteHost: "owner",
+        sourceTaskId: "parent",
+        targetTaskId: "remote",
+        sourceLabel: "Parent",
+        targetLabel: "Remote",
+        body: "first",
+        createdAt: clock.now(),
+      });
+      pusher.wake();
+
+      // Repeated redials must NOT reset offlineSince.
+      clock.advance(30_000);
+      pusher.setWatchOnline(false);
+      clock.advance(29_999);
+      assert.equal(
+        store.getCollaborationDelivery(m1.delivery_id!)?.status,
+        "queued",
+      );
+
+      // Handshake clears offlineSince and cancels pending deadline.
+      pusher.setWatchOnline(true);
+      clock.advance(120_000);
+      assert.equal(
+        store.getCollaborationDelivery(m1.delivery_id!)?.status,
+        "queued",
+      );
+
+      // Enqueue m2 while online at t=1_179_999; go offline at t=1_180_000 -> offlineSince > queued_at.
+      clock.advance(1);
+      pusher.setWatchOnline(false);
+      clock.advance(59_999);
+      assert.equal(
+        store.getCollaborationDelivery(m1.delivery_id!)?.status,
+        "queued",
+      );
+      clock.advance(1);
+      assert.equal(
+        store.getCollaborationDelivery(m1.delivery_id!)?.status,
+        "failed",
+      );
+      assert.equal(
+        store.getCollaborationDelivery(m1.delivery_id!)?.failure_reason,
+        "remote_handoff_timeout",
+      );
+      assert.equal(store.getOutboxPushCursor("child", "owner"), m1.pos);
+      const notices = store
+        .getEvents("parent")
+        .filter((e) => e.type === "task_outcome_notice");
+      assert.equal(notices.length, 1);
+      const payload = JSON.parse(notices[0].data) as Record<string, unknown>;
+      assert.equal(
+        payload.message,
+        "Handoff to the remote peer was not confirmed before the timeout.",
+      );
+      assert.doesNotMatch(String(payload.message), /not delivered/i);
+      assert.deepEqual(drained, ["parent"]);
+
+      // Late receipt after T must be consumed without flipping status or adding a second notice.
+      store.applyLinkFeedOperation({
+        remoteRole: "child",
+        remoteHost: "owner",
+        expectedApplied: 0,
+        nextApplied: 1,
+        envelope: {
+          id: randomUUID(),
+          category: "receipt",
+          data: { originalEntryId: m1.entry_id, status: "delivered" },
+        },
+      });
+      assert.equal(
+        store.getCollaborationDelivery(m1.delivery_id!)?.status,
+        "failed",
+      );
+      assert.equal(
+        store
+          .getEvents("parent")
+          .filter((e) => e.type === "task_outcome_notice").length,
+        1,
+      );
+    } finally {
+      pusher.stop();
+    }
+  });
+
+  it("invalidates an in-flight push when T expires, never skips a receipt head, and retries T after transient persistence error", async () => {
+    store.createTask("parent", dir, "auto", "mock", "p");
+    store.recordRemoteChild("parent", "remote", "owner");
+
+    // Part A (8a-3): In-flight attempt resolves after T expires; old result must not advance past skipped head.
+    const clock = new FakeClock(2_000_000);
+    let resolveInFlight:
+      ((value: { status: number; body: unknown }) => void) | undefined;
+    const sentIds: string[] = [];
+    const pusher = new LinkSyncHubPusher({
+      host: "owner",
+      store,
+      handoffTimeoutMs: 10_000,
+      timeoutMs: 60_000,
+      timer: clock.timer,
+      epochClock: clock,
+      retryDelay: () => 50_000,
+      transport: {
+        send: (_opId, request) => {
+          sentIds.push(request.id);
+          if (sentIds.length === 1) {
+            return new Promise((resolve) => {
+              resolveInFlight = resolve;
+            });
+          }
+          return Promise.resolve({ status: 202, body: { accepted: true } });
+        },
+      },
+    });
+    const m1 = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "in-flight",
+      createdAt: clock.now(),
+    });
+    pusher.start();
+    try {
+      await waitUntil(() => sentIds.length === 1);
+      // Advance fake clock past T while first POST is still in-flight.
+      clock.advance(10_000);
+      assert.equal(
+        store.getCollaborationDelivery(m1.delivery_id!)?.status,
+        "failed",
+      );
+      assert.equal(store.getOutboxPushCursor("child", "owner"), m1.pos);
+      // Old in-flight response arrives later: must not flip status or alter cursor.
+      resolveInFlight?.({ status: 202, body: { accepted: true } });
+      await new Promise((r) => setTimeout(r, 10));
+      assert.equal(
+        store.getCollaborationDelivery(m1.delivery_id!)?.status,
+        "failed",
+      );
+      assert.equal(store.getOutboxPushCursor("child", "owner"), m1.pos);
+    } finally {
+      pusher.stop();
+    }
+
+    // Part B: Receipt at head must never be skipped when a later message times out;
+    // once receipt is pushed (202), next() strips the failed message behind it.
+    const clock2 = new FakeClock(3_000_000);
+    let allowPush = false;
+    const pushed2: string[] = [];
+    const pusher2 = new LinkSyncHubPusher({
+      host: "owner",
+      store,
+      handoffTimeoutMs: 10_000,
+      timer: clock2.timer,
+      epochClock: clock2,
+      retryDelay: () => 50_000,
+      transport: {
+        send: async (_opId, request) => {
+          if (!allowPush) return { status: 503, body: { error: "down" } };
+          pushed2.push(request.id);
+          return { status: 202, body: { accepted: true } };
+        },
+      },
+    });
+    const rHead = store.enqueueOutbox({
+      remoteRole: "child",
+      remoteHost: "owner",
+      category: "receipt",
+      data: { originalEntryId: randomUUID(), status: "delivered" },
+      createdAt: clock2.now(),
+    });
+    const mBehind = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "behind receipt",
+      createdAt: clock2.now(),
+    });
+    const mAfter = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "after failed",
+      createdAt: clock2.now() + 20_000,
+    });
+    // Inject one transient DB error on T commit -> rollback + reschedule with floor delay.
+    const origCreateSystemDelivery = store.createSystemDelivery.bind(store);
+    let failOnce = true;
+    store.createSystemDelivery = (input) => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error("injected_t_db_error");
+      }
+      return origCreateSystemDelivery(input);
+    };
+    pusher2.start();
+    try {
+      clock2.advance(10_000);
+      // Rolled back cleanly: still queued, cursor untouched.
+      assert.equal(
+        store.getCollaborationDelivery(mBehind.delivery_id!)?.status,
+        "queued",
+      );
+      assert.equal(store.getOutboxPushCursor("child", "owner"), m1.pos);
+      // Advance past retry floor delay (1000ms): T commits, does NOT skip rHead!
+      clock2.advance(1_000);
+      assert.equal(
+        store.getCollaborationDelivery(mBehind.delivery_id!)?.status,
+        "failed",
+      );
+      assert.equal(store.getOutboxPushCursor("child", "owner"), m1.pos);
+
+      // Reconnect & allow push: rHead is pushed, mBehind is skipped, mAfter is pushed.
+      allowPush = true;
+      pusher2.setWatchOnline(true);
+      clock2.advance(50_000);
+      await waitUntil(() => pushed2.length === 2);
+      assert.deepEqual(pushed2, [rHead.entry_id, mAfter.entry_id]);
+      assert.equal(store.getOutboxPushCursor("child", "owner"), mAfter.pos);
+    } finally {
+      pusher2.stop();
+      store.createSystemDelivery = origCreateSystemDelivery;
+    }
+  });
 });
+
+class FakeClock {
+  private current: number;
+  private nextId = 1;
+  private readonly timers = new Map<
+    number,
+    { at: number; callback: () => void }
+  >();
+
+  constructor(startMs: number) {
+    this.current = startMs;
+  }
+
+  now(): number {
+    return this.current;
+  }
+
+  readonly timer = {
+    setTimeout: (callback: () => void, ms: number): number => {
+      const id = this.nextId++;
+      this.timers.set(id, { at: this.current + Math.max(0, ms), callback });
+      return id;
+    },
+    clearTimeout: (handle: unknown): void => {
+      this.timers.delete(handle as number);
+    },
+  };
+
+  advance(ms: number): void {
+    const target = this.current + ms;
+    for (;;) {
+      let next: { id: number; at: number; callback: () => void } | undefined;
+      for (const [id, entry] of this.timers) {
+        if (entry.at <= target && (!next || entry.at < next.at)) {
+          next = { id, ...entry };
+        }
+      }
+      if (!next) break;
+      this.timers.delete(next.id);
+      this.current = next.at;
+      next.callback();
+    }
+    this.current = target;
+  }
+}
 
 class CapturedFeedTransport implements SyncFeedTransport {
   watchInput: Parameters<SyncFeedTransport["watch"]>[0] | undefined;
