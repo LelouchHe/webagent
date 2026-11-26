@@ -29,6 +29,7 @@ import { WORKFLOW_STATUSES } from "./shared/workflow-status.ts";
 import {
   type LinkEnvelope,
   type LinkMessageData,
+  type LinkNoticeData,
   type LinkReceiptData,
   LinkProtocolError,
 } from "./shared/link-envelope.ts";
@@ -82,6 +83,13 @@ function assertStorableExecutionId(
   }
 }
 
+/** External parent metadata captured before a hard delete cascades remote_tasks. */
+export interface DeletedExternalParent {
+  remoteHost: string;
+  remoteTaskId: string;
+  title: string | null;
+}
+
 /** One task removed by a delete (the requested id or a cascaded descendant). */
 export interface TaskDelete {
   id: string;
@@ -95,6 +103,8 @@ export interface TaskDelete {
    * returning the same session id are still two different executions.
    */
   agentId: string | null;
+  /** Captured before hard delete removes remote_tasks so purge can route notice. */
+  externalParent?: DeletedExternalParent;
 }
 
 export type { WorkflowStatus } from "./shared/workflow-status.ts";
@@ -263,7 +273,7 @@ export interface CollaborationDeliveryRow {
 }
 
 export type LinkRemoteRole = "parent" | "child";
-export type OutboxCategory = "message" | "report" | "receipt";
+export type OutboxCategory = "message" | "report" | "receipt" | "notice";
 export interface OutboxRow {
   pos: number;
   entry_id: string;
@@ -292,6 +302,10 @@ export type OutboxInput =
   | {
       category: "receipt";
       data: unknown;
+    }
+  | {
+      category: "notice";
+      data: LinkNoticeData;
     };
 
 export interface LinkInboundAssociation {
@@ -2349,13 +2363,27 @@ export class Store {
     this.db
       .prepare("DELETE FROM shares WHERE task_id = ? AND shared_at IS NULL")
       .run(id);
-    const activeShareCount = (
-      this.db
-        .prepare(
-          "SELECT COUNT(*) AS n FROM shares WHERE task_id = ? AND shared_at IS NOT NULL",
-        )
-        .get(id) as { n: number }
-    ).n;
+    const taskDeleteInfo = this.db
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM shares WHERE task_id = ? AND shared_at IS NOT NULL) AS active_shares,
+           t.title,
+           r.remote_host,
+           r.remote_task_id
+         FROM tasks t
+         LEFT JOIN remote_tasks r
+           ON r.local_task_id = t.id AND r.remote_role = 'parent'
+         WHERE t.id = ?`,
+      )
+      .get(id, id) as
+      | {
+          active_shares: number;
+          title: string | null;
+          remote_host: string | null;
+          remote_task_id: string | null;
+        }
+      | undefined;
+    const activeShareCount = taskDeleteInfo?.active_shares ?? 0;
     this.db.prepare("DELETE FROM client_ops WHERE task_id = ?").run(id);
     if (activeShareCount > 0) {
       // Soft-delete: keep events + tasks row so public share viewers
@@ -2376,7 +2404,16 @@ export class Store {
       return { mode: "soft", affected };
     }
     // Hard delete: re-parent any survivor (share-tombstoned descendants)
-    // under Root, then drop events and the row (agent_sessions cascades).
+    // under Root, capture external parent metadata before tasks/remote_tasks
+    // cascade away, then drop events and the row (agent_sessions cascades).
+    const externalParent: DeletedExternalParent | undefined =
+      taskDeleteInfo?.remote_host && taskDeleteInfo.remote_task_id
+        ? {
+            remoteHost: taskDeleteInfo.remote_host,
+            remoteTaskId: taskDeleteInfo.remote_task_id,
+            title: taskDeleteInfo.title,
+          }
+        : undefined;
     this.reparentChildrenToRoot(id);
     this.failOutstandingDeliveriesForDeletedTask(id);
     this.db.prepare("DELETE FROM events WHERE task_id = ?").run(id);
@@ -2387,6 +2424,7 @@ export class Store {
       mode: "hard",
       agentSessionId: binding?.agent_session_id ?? null,
       agentId: binding?.agent_key ?? null,
+      ...(externalParent ? { externalParent } : {}),
     });
     return { mode: "hard", affected };
   }
@@ -3165,8 +3203,10 @@ export class Store {
       createdAt?: number;
     },
   ): OutboxRow {
-    if (input.category === "receipt" && "deliveryId" in input) {
-      throw new Error("link_receipt_has_delivery");
+    const withoutDelivery =
+      input.category === "receipt" || input.category === "notice";
+    if (withoutDelivery && "deliveryId" in input) {
+      throw new Error(`link_${input.category}_has_delivery`);
     }
     const dataJson = stringifyLinkData(input.data);
     return this.writeOutbox(() =>
@@ -3176,7 +3216,7 @@ export class Store {
         remoteHost: input.remoteHost,
         category: input.category,
         dataJson,
-        deliveryId: input.category === "receipt" ? null : input.deliveryId,
+        deliveryId: withoutDelivery ? null : input.deliveryId,
         createdAt: input.createdAt ?? Date.now(),
       }),
     );
@@ -3187,6 +3227,9 @@ export class Store {
     remoteHost: string;
     envelope: LinkEnvelope;
   }): LinkApplyEffects {
+    if (input.envelope.category === "notice") {
+      throw new LinkProtocolError("notice_not_allowed_on_push");
+    }
     return this.writeOutbox(() => {
       if (input.envelope.category !== "receipt") {
         const existing = this.getInboundLinkDelivery(
@@ -3470,8 +3513,8 @@ export class Store {
           }
         | undefined;
       if (!row) throw new Error("outbox_entry_not_found");
-      if (row.category === "receipt") {
-        throw new Error("receipt_rejected_link_fault");
+      if (row.category === "receipt" || row.category === "notice") {
+        throw new Error(`${row.category}_rejected_link_fault`);
       }
       if (!row.delivery_id) throw new Error("link_entry_missing_delivery_id");
       const changed = this.transitionDeliveryStatusInTransaction(
@@ -3549,6 +3592,12 @@ export class Store {
       if (!receipt.known) throw new LinkProtocolError("unknown_link_receipt");
       return receipt.effects;
     }
+    if (envelope.category === "notice") {
+      if (remoteRole !== "child") {
+        throw new LinkProtocolError("notice_not_allowed_on_push");
+      }
+      return this.applyLinkNoticeInTransaction(remoteHost, envelope.data);
+    }
     return this.applyLinkDeliveryInTransaction(
       remoteRole,
       remoteHost,
@@ -3556,6 +3605,27 @@ export class Store {
       envelope.data,
       envelope.category,
     );
+  }
+
+  private applyLinkNoticeInTransaction(
+    remoteHost: string,
+    notice: LinkNoticeData,
+  ): LinkApplyEffects {
+    const effects = emptyLinkApplyEffects();
+    const source = this.getTask(notice.sourceTaskId);
+    const relation = this.getRemoteChild(remoteHost, notice.targetTaskId);
+    if (!source || relation?.local_task_id !== notice.sourceTaskId) {
+      return effects;
+    }
+    const drainTaskId = this.writeOutcomeNoticeInTransaction({
+      sourceTaskId: notice.sourceTaskId,
+      targetTaskId: notice.targetTaskId,
+      reason: notice.reason,
+      message: notice.message,
+      targetLabel: notice.targetLabel,
+    });
+    if (drainTaskId) effects.drainTaskIds.push(drainTaskId);
+    return effects;
   }
 
   private applyLinkDeliveryInTransaction(
@@ -3638,7 +3708,7 @@ export class Store {
       .prepare(
         `SELECT * FROM outbox
          WHERE entry_id = ? AND remote_role = ? AND remote_host = ?
-           AND category <> 'receipt'`,
+           AND category IN ('message', 'report')`,
       )
       .get(input.entryId, input.remoteRole, input.remoteHost) as
       OutboxRow | undefined;
@@ -3766,10 +3836,12 @@ export class Store {
     deliveryId: string | null;
     createdAt: number;
   }): OutboxRow {
-    if (input.category === "receipt" && input.deliveryId !== null) {
-      throw new Error("link_receipt_has_delivery");
+    const withoutDelivery =
+      input.category === "receipt" || input.category === "notice";
+    if (withoutDelivery && input.deliveryId !== null) {
+      throw new Error(`link_${input.category}_has_delivery`);
     }
-    if (input.category !== "receipt") {
+    if (!withoutDelivery) {
       if (!input.deliveryId) throw new Error("link_entry_missing_delivery");
       const delivery = this.getCollaborationDelivery(input.deliveryId);
       if (!delivery) throw new Error("link_delivery_missing");

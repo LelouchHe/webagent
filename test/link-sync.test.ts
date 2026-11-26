@@ -976,6 +976,153 @@ describe("dormant link sync handlers", () => {
       store.createSystemDelivery = origCreateSystemDelivery;
     }
   });
+
+  it("rejects notice on owner push and handles live, missing, mismatch, and replay on hub feed apply", async () => {
+    const owner = new LinkSyncOwner(store);
+    const pushRes = owner.push("hub-a", {
+      id: randomUUID(),
+      category: "notice",
+      data: {
+        sourceTaskId: "parent",
+        targetTaskId: "child",
+        reason: "no_update",
+        message: "Child stopped without updating.",
+        targetLabel: "Child",
+      },
+    });
+    assert.equal(pushRes.status, 400);
+    assert.deepEqual(pushRes.body, {
+      error: "notice_not_allowed_on_push",
+      code: "link_protocol_error",
+    });
+
+    // Hub feed apply: live matching child -> audit (5 fields) + system delivery without inbound source + no receipt.
+    store.createTask("parent-a", dir, "auto", "mock", "p-a");
+    store.recordRemoteChild("parent-a", "remote-1", "owner");
+    store.createTask("parent-b", dir, "auto", "mock", "p-b");
+    store.recordRemoteChild("parent-b", "remote-2", "owner");
+
+    const drained: string[] = [];
+    const transport = new CapturedFeedTransport();
+    const consumer = new LinkSyncHubConsumer({
+      store,
+      host: "owner",
+      transport,
+      retryDelay: () => 0,
+      effects: { drainTask: (taskId) => drained.push(taskId) },
+    });
+    consumer.start();
+    try {
+      await waitUntil(() => transport.watchInput !== undefined);
+      const noticeEntry = {
+        pos: 1,
+        prev: 0,
+        data: {
+          id: randomUUID(),
+          category: "notice",
+          data: {
+            sourceTaskId: "parent-a",
+            targetTaskId: "remote-1",
+            reason: "no_update",
+            message: "The target stopped without updating.",
+            targetLabel: "Worker One",
+          },
+        },
+      };
+      await transport.deliver(noticeEntry);
+      // Replay of same pos produces no second side effect.
+      await transport.deliver(noticeEntry);
+
+      assert.equal(store.getOutboxCursor("child", "owner"), 1);
+      const notices = store
+        .getEvents("parent-a")
+        .filter((e) => e.type === "task_outcome_notice");
+      assert.equal(notices.length, 1);
+      const payload = JSON.parse(notices[0].data) as Record<string, unknown>;
+      assert.deepEqual(Object.keys(payload).sort(), [
+        "message",
+        "messageId",
+        "reason",
+        "sourceTaskId",
+        "targetTaskId",
+      ]);
+      assert.equal(payload.reason, "no_update");
+      assert.equal(payload.sourceTaskId, "parent-a");
+      assert.equal(payload.targetTaskId, "remote-1");
+      assert.equal(payload.message, "The target stopped without updating.");
+      assert.deepEqual(drained, ["parent-a"]);
+      const delivery = store
+        .getCollaborationDeliveriesForMessages([String(payload.messageId)])
+        .get(String(payload.messageId));
+      assert.ok(delivery);
+      assert.equal(delivery.source_remote_role, null);
+      assert.equal(delivery.source_entry_id, null);
+      const msg = store.getCollaborationMessage(delivery.message_id);
+      assert.ok(msg?.body.includes("target: Worker One (remote-1)"));
+      assert.ok(
+        msg?.body.includes("message: The target stopped without updating."),
+      );
+      // Notice never produces a receipt.
+      assert.equal(store.listOutbox("child", "owner").length, 0);
+
+      // Deleted source P and mismatched relation are skipped while advancing applied_pos.
+      await transport.deliver({
+        pos: 2,
+        prev: 1,
+        data: {
+          id: randomUUID(),
+          category: "notice",
+          data: {
+            sourceTaskId: "deleted-parent",
+            targetTaskId: "remote-1",
+            reason: "target_removed",
+            message: "Gone.",
+            targetLabel: "Worker One",
+          },
+        },
+      });
+      await transport.deliver({
+        pos: 3,
+        prev: 2,
+        data: {
+          id: randomUUID(),
+          category: "notice",
+          data: {
+            sourceTaskId: "parent-b",
+            targetTaskId: "remote-1",
+            reason: "no_activity",
+            message: "Silent.",
+            targetLabel: "Worker One",
+          },
+        },
+      });
+      assert.equal(store.getOutboxCursor("child", "owner"), 3);
+      assert.equal(store.listOutbox("child", "owner").length, 0);
+      assert.equal(store.countQueuedDeliveries("parent-b"), 0);
+
+      // Subsequent valid notice for parent-b still applies.
+      await transport.deliver({
+        pos: 4,
+        prev: 3,
+        data: {
+          id: randomUUID(),
+          category: "notice",
+          data: {
+            sourceTaskId: "parent-b",
+            targetTaskId: "remote-2",
+            reason: "no_activity",
+            message: "Worker Two is silent.",
+            targetLabel: "Worker Two",
+          },
+        },
+      });
+      assert.equal(store.getOutboxCursor("child", "owner"), 4);
+      assert.equal(store.countQueuedDeliveries("parent-b"), 1);
+      assert.deepEqual(drained, ["parent-a", "parent-b"]);
+    } finally {
+      consumer.stop();
+    }
+  });
 });
 
 class CapturedFeedTransport implements SyncFeedTransport {
