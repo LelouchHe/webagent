@@ -1,4 +1,5 @@
 import { HTTP_STATUS } from "../http-status.ts";
+import { log } from "../log.ts";
 import {
   parseLinkEnvelope,
   LinkProtocolError,
@@ -120,7 +121,7 @@ export class LinkSyncOwner {
       ) {
         return {
           status: HTTP_STATUS.CONFLICT,
-          body: { error: "link_op_conflict" },
+          body: { error: "link_op_conflict", code: "link_op_conflict" },
         };
       }
       return protocolResponse(error);
@@ -350,10 +351,28 @@ export class LinkSyncHubPusher {
         result.status === HTTP_STATUS.UNAUTHORIZED ||
         result.status === HTTP_STATUS.FORBIDDEN
       ) {
+        log.scope("hosts").warn("link push credential rejected", {
+          host: this.options.host,
+          status: result.status,
+        });
         this.options.onAuthFailure?.();
         return false;
       }
-      if (entry.request.category === "receipt") {
+      const code =
+        result.body &&
+        typeof result.body === "object" &&
+        typeof (result.body as { code?: unknown }).code === "string"
+          ? (result.body as { code: string }).code
+          : null;
+      const isProtocolRejection =
+        code === "link_op_conflict" || code === "link_protocol_error";
+      if (!isProtocolRejection || entry.request.category === "receipt") {
+        log.scope("hosts").warn("link push fault", {
+          host: this.options.host,
+          status: result.status,
+          category: entry.request.category,
+          ...(code ? { code } : {}),
+        });
         this.options.onLinkFault?.(result);
         return false;
       }
@@ -362,7 +381,7 @@ export class LinkSyncHubPusher {
         typeof result.body === "object" &&
         typeof (result.body as { error?: unknown }).error === "string"
           ? (result.body as { error: string }).error
-          : `http_${result.status}`;
+          : code;
       const effects = this.options.store.rejectOutboxHead(
         "child",
         this.options.host,
@@ -411,7 +430,7 @@ function protocolResponse(error: unknown): LinkPushResponse {
   if (error instanceof LinkProtocolError) {
     return {
       status: HTTP_STATUS.BAD_REQUEST,
-      body: { error: error.message },
+      body: { error: error.message, code: "link_protocol_error" },
     };
   }
   throw error;

@@ -228,6 +228,54 @@ describe("host connection helpers", () => {
     assert.equal(recovered.kind, "success");
     assert.equal(retryOpIds.length, 2);
     assert.equal(retryOpIds[0], retryOpIds[1]);
+
+    // Body read error (broken stream) is classified as unknown and retried with the same op id.
+    let bodyReadAttempts = 0;
+    const bodyErrorConnection = new HostConnection(
+      { url: "http://owner.example", token: "wat_host" },
+      {
+        fetch: async () => {
+          bodyReadAttempts += 1;
+          if (bodyReadAttempts === 1) {
+            return new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.error(new Error("stream reset mid-body"));
+                },
+              }),
+              { status: 400 },
+            );
+          }
+          return Response.json(
+            {
+              id: "remote-child-after-stream-reset",
+              cwd: "/work",
+              cwdDisplay: "~/work",
+              parentId: null,
+              parentAgentId: null,
+              agentId: "copilot",
+              title: "Child",
+              model: null,
+              thinking: null,
+              workflowStatus: "idle",
+              source: "agent",
+              configOptions: [],
+              agentCommands: { epoch: "remote", revision: 0, commands: [] },
+            },
+            { status: 201 },
+          );
+        },
+      },
+    );
+    const afterStreamReset = await bodyErrorConnection.createTask({
+      opId: "op-body-reset",
+      agentId: "copilot",
+      parentId: "parent",
+      title: "Child",
+      source: "agent",
+    });
+    assert.equal(afterStreamReset.kind, "success");
+    assert.equal(bodyReadAttempts, 2);
   });
 
   it("keeps literal credentials unchanged", async () => {

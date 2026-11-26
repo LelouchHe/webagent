@@ -280,7 +280,7 @@ describe("dormant link sync handlers", () => {
     );
   });
 
-  it("rejects a new push whose task relationship belongs to another link", () => {
+  it("records a push whose task relationship belongs to another link as definite failure with replayable 202", () => {
     store.createDeferredRemoteTask({
       id: "owned-child",
       cwd: dir,
@@ -291,12 +291,22 @@ describe("dormant link sync handlers", () => {
       title: "Owned child",
       creationAnchor: {},
     });
-    const result = new LinkSyncOwner(store).push("hub-a", {
-      id: randomUUID(),
+    const entryId = randomUUID();
+    const owner = new LinkSyncOwner(store);
+    const result = owner.push("hub-a", {
+      id: entryId,
       category: "message",
       data: linkMessageData("parent-task", "owned-child", "work"),
     });
-    assert.equal(result.status, 400);
+    assert.equal(result.status, 202);
+    assert.equal(store.countQueuedDeliveries("owned-child"), 0);
+    const receipts = store.listOutbox("parent", "hub-a", 0, 10);
+    assert.equal(receipts.length, 1);
+    assert.deepEqual(JSON.parse(receipts[0].data_json), {
+      originalEntryId: entryId,
+      status: "failed",
+      failureReason: "link_mismatch",
+    });
   });
 
   it("publishes a repeated push receipt only once", () => {
@@ -432,7 +442,7 @@ describe("dormant link sync handlers", () => {
     consumer.stop();
   });
 
-  it("hub consumer records a missing target and stops a relationship protocol error", async () => {
+  it("hub consumer records a missing target and stops on an invalid envelope protocol error", async () => {
     const transport = new CapturedFeedTransport();
     const errors: Error[] = [];
     const consumer = new LinkSyncHubConsumer({
@@ -458,18 +468,17 @@ describe("dormant link sync handlers", () => {
     assert.equal(store.getOutboxCursor("child", "owner"), 1);
     assert.equal(store.listOutbox("child", "owner").length, 1);
 
-    store.createTask("live", dir, "auto", "mock", "live-session");
     await transport.deliver({
       pos: 2,
       prev: 1,
       data: {
-        id: randomUUID(),
-        category: "report",
-        data: linkMessageData("wrong-child", "live", "done", "Wrong child"),
+        id: "not-a-uuid",
+        category: "unknown_category",
+        data: {},
       },
     });
     assert.equal(store.getOutboxCursor("child", "owner"), 1);
-    assert.match(errors[0].message, /link_mismatch/);
+    assert.match(errors[0].message, /invalid_link_envelope/);
     consumer.stop();
   });
 
@@ -504,8 +513,14 @@ describe("dormant link sync handlers", () => {
     const responses: Array<{ status: number; body: unknown }> = [
       { status: 401, body: { error: "Unauthorized" } },
       { status: 202, body: { accepted: true } },
-      { status: 400, body: { error: "link_mismatch" } },
-      { status: 400, body: { error: "unknown_link_receipt" } },
+      {
+        status: 400,
+        body: { error: "invalid_link_envelope", code: "link_protocol_error" },
+      },
+      {
+        status: 400,
+        body: { error: "unknown_link_receipt", code: "link_protocol_error" },
+      },
     ];
     let authFailures = 0;
     let linkFaults = 0;
@@ -615,6 +630,97 @@ describe("dormant link sync handlers", () => {
         .get(row.entry_id)?.status,
       "delivered",
     );
+  });
+
+  it("treats relationship mismatch as definite failure (advances applied, emits failed receipt, does not stop link)", async () => {
+    const transport = new CapturedFeedTransport();
+    const errors: Error[] = [];
+    const consumer = new LinkSyncHubConsumer({
+      store,
+      host: "owner",
+      transport,
+      retryDelay: () => 0,
+      onProtocolError: (error) => errors.push(error),
+    });
+    consumer.start();
+    await waitUntil(() => transport.watchInput !== undefined);
+
+    store.createTask("live", dir, "auto", "mock", "live-session");
+    const unlinkedId = randomUUID();
+    await transport.deliver({
+      pos: 1,
+      prev: 0,
+      data: {
+        id: unlinkedId,
+        category: "report",
+        data: linkMessageData("unlinked-child", "live", "orphan report"),
+      },
+    });
+    assert.deepEqual(errors, []);
+    assert.equal(store.getOutboxCursor("child", "owner"), 1);
+    const receipts = store.listOutbox("child", "owner", 0, 10);
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0]?.category, "receipt");
+    assert.deepEqual(JSON.parse(receipts[0].data_json), {
+      originalEntryId: unlinkedId,
+      status: "failed",
+      failureReason: "link_mismatch",
+    });
+
+    // Link keeps running and applies the next valid entry.
+    store.recordRemoteChild("live", "linked-child", "owner");
+    await transport.deliver({
+      pos: 2,
+      prev: 1,
+      data: {
+        id: randomUUID(),
+        category: "report",
+        data: linkMessageData("linked-child", "live", "valid report"),
+      },
+    });
+    assert.equal(store.getOutboxCursor("child", "owner"), 2);
+    assert.equal(store.countQueuedDeliveries("live"), 1);
+    consumer.stop();
+  });
+
+  it("treats non-protocol 4xx (e.g. proxy 404 without link code) as link fault without advancing cursor or failing delivery", async () => {
+    store.createTask("parent", dir, "auto", "mock", "parent-session");
+    store.recordRemoteChild("parent", "remote", "owner");
+    const entry = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "must stay queued on proxy 404",
+    });
+
+    let attempts = 0;
+    const pusher = new LinkSyncHubPusher({
+      host: "owner",
+      store,
+      retryDelay: () => 5,
+      transport: {
+        send: async () => {
+          attempts += 1;
+          return { status: 404, body: { error: "Not Found" } };
+        },
+      },
+    });
+    pusher.start();
+    try {
+      await waitUntil(() => attempts >= 2);
+      assert.equal(store.getOutboxPushCursor("child", "owner"), 0);
+      assert.equal(
+        store
+          .getCollaborationDeliveriesForMessages([entry.entry_id])
+          .get(entry.entry_id)?.status,
+        "queued",
+      );
+    } finally {
+      pusher.stop();
+    }
   });
 });
 

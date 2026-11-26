@@ -133,7 +133,7 @@ export interface TaskCreateInput {
 }
 
 export type TaskCreateCaller =
-  | { kind: "user" }
+  | { kind: "user"; tokenName?: string }
   | { kind: "agent"; principal: TaskCaller }
   | { kind: "host"; name: string };
 

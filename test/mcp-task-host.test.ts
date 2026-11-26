@@ -1920,4 +1920,32 @@ describe("MCP Task tool host", () => {
     assert.equal(messages.length, 1);
     assert.match(messages[0].data, /hello child/);
   });
+
+  it("E3: remote child suppresses no-visible-wake-source note when owing an account, and removing it produces the note", async () => {
+    (
+      tasks as unknown as {
+        obligations: {
+          arm(source: string, target: string, kind: "local"): void;
+        };
+      }
+    ).obligations.arm("root", "alpha", "local");
+    let hasRemote = true;
+    tasks.setRemoteChildWakeSource((taskId) => taskId === "alpha" && hasRemote);
+    const local = createLocalTaskOps({ store, tasks });
+
+    const withRemote = await local.update(
+      principal("alpha"),
+      "waiting",
+      "waiting on remote child",
+    );
+    assert.equal(withRemote.note, undefined);
+
+    hasRemote = false;
+    const withoutRemote = await local.update(
+      principal("alpha"),
+      "waiting",
+      "waiting with no wake source",
+    );
+    assert.match(withoutRemote.note ?? "", /No visible wake source/);
+  });
 });

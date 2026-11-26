@@ -3284,7 +3284,7 @@ export function createRequestHandler(
           const created = await taskOps.create(
             requestPrincipal?.scope === "host"
               ? { kind: "host", name: requestPrincipal.name }
-              : { kind: "user" },
+              : { kind: "user", tokenName: requestPrincipal?.name },
             {
               cwd: body.cwd,
               inheritFromTaskId: body.inheritFromTaskId,

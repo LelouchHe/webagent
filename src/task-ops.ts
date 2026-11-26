@@ -144,6 +144,7 @@ export function createTaskOpsCore(deps: {
           });
         }
       };
+      let announceCreated = true;
       if (target.host !== undefined) {
         const remoteHost = target.host;
         if (localParentId === undefined) throw new Error("parent_not_found");
@@ -153,14 +154,21 @@ export function createTaskOpsCore(deps: {
             throw new Error("parent_not_found");
           }
           prepareRecord();
-          if (taskCreated) {
-            store.recordRemoteChild(localParentId, result.task.id, remoteHost, {
-              data: taskCreated.data,
-              fromRef: caller.kind === "agent" ? "agent" : "user",
-            });
-          } else {
-            store.recordRemoteChild(localParentId, result.task.id, remoteHost);
-          }
+          announceCreated = taskCreated
+            ? store.recordRemoteChild(
+                localParentId,
+                result.task.id,
+                remoteHost,
+                {
+                  data: taskCreated.data,
+                  fromRef: caller.kind === "agent" ? "agent" : "user",
+                },
+              )
+            : store.recordRemoteChild(
+                localParentId,
+                result.task.id,
+                remoteHost,
+              );
         } catch (error) {
           throw new TaskRemoteCreatePartialSuccessError(
             remoteHost,
@@ -172,7 +180,7 @@ export function createTaskOpsCore(deps: {
         assertCaller();
         prepareRecord();
       }
-      if (taskCreated && taskTitle && localParentId) {
+      if (announceCreated && taskCreated && taskTitle && localParentId) {
         deps.broadcastTaskCreated?.({
           messageId: randomUUID(),
           sourceTaskId: localParentId,

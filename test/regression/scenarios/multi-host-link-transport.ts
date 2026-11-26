@@ -568,7 +568,7 @@ export default scenario<State>({
             });
           const secondArrivedBeforeRelease = await waitForRows(
             state.ownerDb,
-            `SELECT COUNT(*) AS count FROM messages
+            `SELECT id FROM messages
              WHERE body = 'second after receipt'`,
           );
           link.release("post");

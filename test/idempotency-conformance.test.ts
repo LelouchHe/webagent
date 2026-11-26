@@ -164,7 +164,7 @@ describe("structural idempotency conformance", () => {
 
   it("enforces deterministic idempotency on owner POST /api/v1/tasks (host create)", async () => {
     const opId = randomUUID();
-    const expectedId = opIdentity(store.rootTaskId, "hub-a", opId);
+    const expectedId = opIdentity(store.rootTaskId, "host:hub-a", opId);
     const snapshot = () => ({
       tasks: store.listTasks().length,
       events: store.getEvents(expectedId).length,
@@ -193,14 +193,33 @@ describe("structural idempotency conformance", () => {
           hostToken,
           {
             agentId: "mock",
-            parentId: "ext-parent-1",
-            title: "Different title",
+            parentId: "ext-parent-different",
+            title: "Deterministic child",
           },
           id,
         ),
     });
 
     assert.equal((first.body as { id: string }).id, expectedId);
+
+    // Mutating a mutable field (title) on the persisted task still replays with current state (#4).
+    store.updateTaskTitle(expectedId, "Renamed child");
+    const afterRename = await postJson(
+      port,
+      "/api/v1/tasks",
+      hostToken,
+      {
+        agentId: "mock",
+        parentId: "ext-parent-1",
+        title: "Deterministic child",
+      },
+      opId,
+    );
+    assert.equal(afterRename.status, 201);
+    assert.equal(
+      (afterRename.body as { title: string }).title,
+      "Renamed child",
+    );
 
     // Same opId from a different caller derives a distinct task id (scoped by caller).
     const other = await postJson(
@@ -217,9 +236,23 @@ describe("structural idempotency conformance", () => {
     assert.equal(other.status, 201);
     assert.equal(
       (other.body as { id: string }).id,
-      opIdentity(store.rootTaskId, "hub-b", opId),
+      opIdentity(store.rootTaskId, "host:hub-b", opId),
     );
     assert.notEqual((other.body as { id: string }).id, expectedId);
+
+    // Hub recordRemoteChild is idempotent for the same edge and conflicts on a different parent (#3).
+    assert.equal(
+      store.recordRemoteChild(store.rootTaskId, "remote-edge-1", "owner"),
+      true,
+    );
+    assert.equal(
+      store.recordRemoteChild(store.rootTaskId, "remote-edge-1", "owner"),
+      false,
+    );
+    assert.throws(
+      () => store.recordRemoteChild(expectedId, "remote-edge-1", "owner"),
+      /remote_child_link_conflict/,
+    );
 
     // Soft-deleted task replay returns explicit 404 target_deleted rather than recreating.
     store.insertSharePreview({
@@ -246,7 +279,7 @@ describe("structural idempotency conformance", () => {
 
   it("enforces deterministic idempotency on local POST /api/v1/tasks and creates two tasks when opId is null", async () => {
     const opId = randomUUID();
-    const expectedId = opIdentity(store.rootTaskId, "user", opId);
+    const expectedId = opIdentity(store.rootTaskId, "token:browser", opId);
     const snapshot = () => ({
       tasks: store.listTasks().length,
       parentEvents: store.getEvents(store.rootTaskId).length,
@@ -274,9 +307,9 @@ describe("structural idempotency conformance", () => {
           "/api/v1/tasks",
           apiToken,
           {
-            agentId: "mock",
+            agentId: "other-agent",
             parentId: store.rootTaskId,
-            title: "Mutated local title",
+            title: "Local deterministic child",
           },
           id,
         ),
@@ -299,6 +332,31 @@ describe("structural idempotency conformance", () => {
     assert.notEqual(
       (a.body as { id: string }).id,
       (b.body as { id: string }).id,
+    );
+
+    // Concurrent duplicate create colliding on PK must not revoke the winner's capability token.
+    const winnerId = (a.body as { id: string }).id;
+    const caps = (tasks as unknown as { capabilities: CapabilityStore })
+      .capabilities;
+    const winnerToken = caps.mint(winnerId, "mock", 1);
+    const bridge = {
+      ...mockBridgeStubs(),
+      agentId: "mock",
+      isAlive: true,
+      async newSession() {
+        return { sessionId: `sess-dup-${randomUUID()}`, configOptions: [] };
+      },
+    };
+    await assert.rejects(() =>
+      tasks.createTask(bridge, dir, undefined, "auto", {
+        id: winnerId,
+        parentId: store.rootTaskId,
+        title: "Duplicate",
+      }),
+    );
+    assert.ok(
+      caps.resolve(winnerToken),
+      "winner capability token must survive a colliding duplicate create",
     );
   });
 

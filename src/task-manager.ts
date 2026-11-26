@@ -1807,6 +1807,7 @@ export class TaskManager implements ObligationHost {
         taskId,
         taskCwd,
         this.buildNewTaskOptions(mcpServers),
+        execution?.token,
       );
     let configOptions = createdConfigOptions;
     const parentId = opts?.parentId ?? null;
@@ -1834,7 +1835,7 @@ export class TaskManager implements ObligationHost {
       });
       bridge.discardUnboundSession?.(agentSessionId);
       this.endCreatingClaim(taskId);
-      this.capabilities?.revokeByTask(taskId);
+      if (execution?.token) this.capabilities?.revoke(execution.token);
       throw err;
     }
     try {

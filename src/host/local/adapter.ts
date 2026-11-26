@@ -310,17 +310,10 @@ export function createLocalTaskOps(deps: {
           }
           const link = store.getExternalParentLink(existing.id);
           const existingAgent = store.getBindingAgent(existing.id);
-          const expectedCwd =
-            input.cwd === undefined
-              ? existing.cwd
-              : tasks.resolveTaskCwd(input.cwd);
           if (
             link?.remote_host !== caller.name ||
             link.remote_task_id !== input.parentId ||
-            existingAgent !== requestedAgent ||
-            existing.title !== (input.title ?? null) ||
-            existing.source !== effectiveSource ||
-            existing.cwd !== expectedCwd
+            existingAgent !== requestedAgent
           ) {
             throw new TaskCreateConflictError();
           }
@@ -328,7 +321,7 @@ export function createLocalTaskOps(deps: {
         };
         const deterministicId =
           input.opId !== null
-            ? opIdentity(store.rootTaskId, caller.name, input.opId)
+            ? opIdentity(store.rootTaskId, `host:${caller.name}`, input.opId)
             : undefined;
         if (deterministicId) {
           const existing = store.getTaskIncludingDeleted(deterministicId);
@@ -372,9 +365,10 @@ export function createLocalTaskOps(deps: {
           throw new Error("parent_not_found");
         }
       }
-      const localCallerScope = agentCaller
-        ? `agent:${agentCaller.taskId}`
-        : "user";
+      const localCallerScope =
+        caller.kind === "agent"
+          ? `agent:${caller.principal.taskId}`
+          : `token:${caller.tokenName ?? "anonymous"}`;
       const localDeterministicId =
         input.opId !== null
           ? opIdentity(store.rootTaskId, localCallerScope, input.opId)
@@ -390,23 +384,9 @@ export function createLocalTaskOps(deps: {
         }
         const existingAgent =
           store.getBindingAgent(existing.id) ?? tasks.defaultAgentId;
-        const expectedCwd =
-          input.cwd === undefined
-            ? existing.cwd
-            : source && agentCaller
-              ? (() => {
-                  const requestedCwd = expandHomePath(input.cwd);
-                  return isAbsolute(requestedCwd)
-                    ? requestedCwd
-                    : resolve(source.cwd, requestedCwd);
-                })()
-              : tasks.resolveTaskCwd(input.cwd);
         if (
           existing.parent_id !== expectedLocalParentId ||
-          (input.agentId !== undefined && existingAgent !== input.agentId) ||
-          (input.title !== undefined && existing.title !== input.title) ||
-          existing.source !== effectiveLocalSource ||
-          existing.cwd !== expectedCwd
+          (input.agentId !== undefined && existingAgent !== input.agentId)
         ) {
           throw new TaskCreateConflictError();
         }

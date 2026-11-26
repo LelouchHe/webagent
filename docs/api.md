@@ -284,11 +284,14 @@ the initiator's `task_created` row and link. Stored facts and rendered prose
 keep `agent` and `host` as separate fields.
 
 For a `host`-scoped request carrying `X-Client-Op-Id`, the owner derives the
-task id deterministically via `opIdentity(ownerRootId, tokenName, opId)`
-(RFC 4122 UUIDv5). Replaying the same `X-Client-Op-Id` with matching parent
-link and key inputs rebuilds and returns the original `201` without creating a
-second task; mismatched inputs or parent link return `409` (`create_op_conflict`);
-and a soft-deleted task returns `404` (`target_deleted`).
+task id deterministically via `opIdentity(ownerRootId, "host:" + tokenName, opId)`
+(RFC 4122 UUIDv5). Local requests with `X-Client-Op-Id` derive their task id via
+`opIdentity(rootId, "token:" + tokenName, opId)` (or `"agent:" + parentId` for
+MCP `task_create`). Replaying the same `X-Client-Op-Id` compares only immutable
+creation facts (parent / external-parent link and agent) and returns the task's
+current state in `201` without creating a second task; mismatched immutable
+facts return `409` (`create_op_conflict`); and a soft-deleted task returns `404`
+(`target_deleted`).
 
 The hub routes remote creation through `shared/sync/request` with a single
 `X-Client-Op-Id` and performs bounded retries on `unknown` outcomes (network
@@ -1281,13 +1284,19 @@ Implements the durable operation contract keyed by `(link, id)`:
    - For `message` / `report`: check the inbound `deliveries` row by
      `(source_remote_role, source_remote_host, source_entry_id)`. Identical
      canonical content replays `202 { "accepted": true }` (even if the target
-     was later deleted); different content returns `409 { "error": "link_op_conflict" }`.
+     was later deleted); different content returns
+     `409 { "error": "link_op_conflict", "code": "link_op_conflict" }`.
    - For `receipt`: idempotent CAS on the referenced outbound delivery,
-     returning `202 { "accepted": true }` (unknown original entry returns `400`).
-3. When no prior fact exists, apply in one transaction. A missing target is a
-   definite failure: the owner persists a `failed` inbound delivery plus a
+     returning `202 { "accepted": true }` (unknown original entry returns
+     `400 { "error": "unknown_link_receipt", "code": "link_protocol_error" }`).
+3. When no prior fact exists, apply in one transaction. A missing target
+   (`target_deleted`) or missing/mismatched task relationship (`link_mismatch`)
+   is a definite failure: the owner persists a `failed` inbound delivery plus a
    `failed` receipt in the same transaction and returns a replayable `202`.
-   A link/relationship mismatch returns `400 { "error": "link_mismatch" }`.
+   Only `4xx` responses carrying a link protocol `code` (`link_op_conflict` or
+   `link_protocol_error`) count as entry rejections on the hub pusher; other
+   `4xx` responses (e.g. `401`/`403` or proxy `404`) are treated as link faults
+   without advancing `pushed_pos` or failing the delivery.
 
 ---
 

@@ -18,6 +18,9 @@ time. An entry without a "closing condition" is a wish, not an issue.
   The durable owner task and hub link are already complete; only follow-up
   display refresh may fail. *Closing:* require presentation to be retriable
   without weakening the durable write.
+- **Hub and owner must be upgraded together.** Pre-1.0 has no cross-version
+  multi-host wire compatibility; mixing a new hub with an older owner is
+  unsupported. *Closing:* introduce protocol versioning at 1.0 if needed.
 - **A hard-deleted remote child can be recreated if a create retry lands after
   deletion.** Remote `POST /api/v1/tasks` derives its task id from
   `opIdentity(ownerRootId, callerLinkName, opId)`. A soft-deleted (shared) task

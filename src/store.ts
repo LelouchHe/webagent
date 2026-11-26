@@ -1474,8 +1474,24 @@ export class Store {
     remoteTaskId: string,
     remoteHost: string,
     creation?: { data: Record<string, unknown>; fromRef: string },
-  ): void {
-    this.db.transaction(() => {
+  ): boolean {
+    return this.db.transaction(() => {
+      const existing = this.db
+        .prepare(
+          `SELECT local_task_id, remote_host FROM remote_tasks
+           WHERE remote_role = 'child' AND remote_task_id = ?`,
+        )
+        .get(remoteTaskId) as
+        { local_task_id: string; remote_host: string } | undefined;
+      if (existing) {
+        if (
+          existing.local_task_id === localParentTaskId &&
+          existing.remote_host === remoteHost
+        ) {
+          return false;
+        }
+        throw new Error("remote_child_link_conflict");
+      }
       this.db
         .prepare(
           `INSERT INTO remote_tasks
@@ -1488,6 +1504,7 @@ export class Store {
           from_ref: creation.fromRef,
         });
       }
+      return true;
     })();
   }
 
@@ -3539,7 +3556,20 @@ export class Store {
   ): LinkApplyEffects {
     const effects = emptyLinkApplyEffects();
     const target = this.getTask(message.targetTaskId);
-    if (!target) {
+    const relationMatches =
+      target !== undefined &&
+      (remoteRole === "parent"
+        ? (() => {
+            const relation = this.getExternalParentLink(message.targetTaskId);
+            return (
+              relation?.remote_host === remoteHost &&
+              relation.remote_task_id === message.sourceTaskId
+            );
+          })()
+        : this.getRemoteChild(remoteHost, message.sourceTaskId)
+            ?.local_task_id === message.targetTaskId);
+    if (!target || !relationMatches) {
+      const failureReason = !target ? "target_deleted" : "link_mismatch";
       const deliveryId = entryId;
       this.insertDeliveryMessage({
         id: entryId,
@@ -3552,7 +3582,7 @@ export class Store {
         idempotencyKey: `${entryId}:${message.targetTaskId}`,
         createdAt: Date.now(),
         status: "failed",
-        failureReason: "target_deleted",
+        failureReason,
         inbound: { remoteRole, remoteHost, entryId, category },
         projection: null,
       });
@@ -3565,27 +3595,13 @@ export class Store {
         dataJson: stringifyLinkData({
           originalEntryId: entryId,
           status: "failed",
-          failureReason: "target_deleted",
+          failureReason,
         } satisfies LinkReceiptData),
         deliveryId: null,
         createdAt: Date.now(),
       });
       effects.outboxEntryIds.push(receiptId);
       return effects;
-    }
-    const relationMatches =
-      remoteRole === "parent"
-        ? (() => {
-            const relation = this.getExternalParentLink(message.targetTaskId);
-            return (
-              relation?.remote_host === remoteHost &&
-              relation.remote_task_id === message.sourceTaskId
-            );
-          })()
-        : this.getRemoteChild(remoteHost, message.sourceTaskId)
-            ?.local_task_id === message.targetTaskId;
-    if (!relationMatches) {
-      throw new LinkProtocolError("link_mismatch");
     }
     this.enqueueTargetCollaboration({
       id: entryId,

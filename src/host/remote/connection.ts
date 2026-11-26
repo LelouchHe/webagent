@@ -185,8 +185,10 @@ function endpoint(baseUrl: string, path: string): string {
 }
 
 async function responseBody(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text.trim()) return null;
   try {
-    return (await response.json()) as unknown;
+    return JSON.parse(text) as unknown;
   } catch {
     return null;
   }

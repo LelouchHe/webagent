@@ -515,13 +515,13 @@ export default scenario<State>({
             "POST",
             "/api/v1/link/entries",
             {
-              id: "22222222-2222-4222-8222-222222222222",
+              id: "not-a-uuid",
               category: "message",
               data: {
                 sourceTaskId: "not-the-external-parent",
                 targetTaskId: readRemoteId(state),
                 sourceLabel: "root",
-                body: "wrong source dispatch",
+                body: "invalid envelope",
               },
             },
             state.hostToken,

@@ -215,12 +215,6 @@ const hostRegistry = new HostRegistry(config.hosts, {
       store,
       transport: connection.pushTransport(),
       retryDelay: (attempt) => retryDelay(attempt),
-      onAuthFailure: () => {
-        onState("unreachable", "unauthorized");
-      },
-      onLinkFault: () => {
-        onState("unreachable", "invalid_response");
-      },
     });
     const consumer = new LinkSyncHubConsumer({
       host,
