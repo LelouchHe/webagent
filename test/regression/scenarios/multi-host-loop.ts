@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { scenario, type Json, type JsonObject } from "../types.ts";
 import {
   EMPTY_MOCK,
-  hubHostConfig,
+  hostTokenPath,
   provisionHostToken,
   readHostToken,
   waitForHost,
@@ -72,6 +72,13 @@ async function waitLinkSettled(state: State): Promise<void> {
 
 export default scenario<State>({
   mock: EMPTY_MOCK,
+  forwarders: {
+    link: {
+      target: "owner",
+      postPath: "/api/v1/link/entries",
+      watchPath: "/api/v1/link/watch",
+    },
+  },
   instances: {
     owner: {
       mock: {
@@ -281,7 +288,11 @@ export default scenario<State>({
           },
         ],
       },
-      extraConfig: hubHostConfig,
+      extraConfig: (instances) => [
+        "[hosts.owner]",
+        `url = ${JSON.stringify(instances.hub.forwarders.link)}`,
+        `token = ${JSON.stringify(`!cat ${hostTokenPath(instances)}`)}`,
+      ],
     },
   },
   async setup(context) {
@@ -558,6 +569,11 @@ export default scenario<State>({
       {
         name: "unreachable-list-and-send",
         async action(client) {
+          const link = client.forwarder("link");
+          // Hold POST closed across owner restart so watch always reconnects
+          // before the offline-queued push lands on owner, eliminating the
+          // watch-vs-pusher backoff race.
+          link.disconnect("post");
           const restart = await client.restart("owner", async () => {
             await waitForHost(client, "hub", "owner", "unreachable");
             const prompt = await client
@@ -573,6 +589,7 @@ export default scenario<State>({
             "owner",
             "connected",
           );
+          link.connect("post");
           // Wait for the offline-queued dispatch to hand off, complete on owner,
           // deliver its report back to hub, and push the reverse receipt back to
           // owner so both instances have settled before the step ends.

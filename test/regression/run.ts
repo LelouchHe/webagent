@@ -218,7 +218,7 @@ async function runOnce(
             name: instance.name,
             snapshot: databaseSnapshot(instance),
           }));
-    return normalize({ steps, snapshot }, instances) as Json;
+    return normalize({ steps, snapshot }, instances, forwarders) as Json;
   } catch (error) {
     throw new Error(
       `${error instanceof Error ? error.message : String(error)}\nmock:\n${[
@@ -830,7 +830,11 @@ function databaseSnapshot(instance: Instance): JsonObject {
   }
 }
 
-function normalize(value: unknown, instances: Map<string, Instance>): unknown {
+function normalize(
+  value: unknown,
+  instances: Map<string, Instance>,
+  forwarders: Map<string, RegressionForwarder>,
+): unknown {
   if (typeof value === "string") {
     let normalized = value.replaceAll(ROOT, "<REPOSITORY>");
     for (const instance of instances.values()) {
@@ -842,15 +846,21 @@ function normalize(value: unknown, instances: Map<string, Instance>): unknown {
         .replaceAll(instance.root, rootToken)
         .replaceAll(`127.0.0.1:${instance.port}`, originToken);
     }
+    for (const [name, forwarder] of forwarders) {
+      normalized = normalized.replaceAll(
+        forwarder.origin.replace(/^https?:\/\//, ""),
+        `<FORWARDER:${name}>`,
+      );
+    }
     return normalized;
   }
   if (Array.isArray(value))
-    return value.map((item) => normalize(item, instances));
+    return value.map((item) => normalize(item, instances, forwarders));
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
         key,
-        normalize(item, instances),
+        normalize(item, instances, forwarders),
       ]),
     );
   }

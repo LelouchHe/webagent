@@ -1860,7 +1860,7 @@
           "whileStopped": [
             {
               "name": "owner",
-              "url": "http://<ORIGIN:owner>",
+              "url": "http://<FORWARDER:link>",
               "state": "unreachable",
               "reason": "network",
               "since": "2026-09-13T21:00:00.000Z"
@@ -1870,7 +1870,7 @@
         "connected": [
           {
             "name": "owner",
-            "url": "http://<ORIGIN:owner>",
+            "url": "http://<FORWARDER:link>",
             "state": "connected",
             "since": "2026-09-13T21:00:00.000Z"
           }
@@ -1894,7 +1894,7 @@
         "reconnected": [
           {
             "name": "owner",
-            "url": "http://<ORIGIN:owner>",
+            "url": "http://<FORWARDER:link>",
             "state": "connected",
             "since": "2026-09-13T21:00:00.000Z"
           }
@@ -3280,7 +3280,7 @@
         "connected": [
           {
             "name": "owner",
-            "url": "http://<ORIGIN:owner>",
+            "url": "http://<FORWARDER:link>",
             "state": "connected",
             "since": "2026-09-13T21:00:00.000Z"
           }
