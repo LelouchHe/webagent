@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { WORKFLOW_STATUSES } from "../../shared/workflow-status.ts";
 import { HTTP_STATUS } from "../../http-status.ts";
-import type {
-  SyncFeedEntry,
-  SyncFeedTransport,
-  SyncRequestTransport,
+import {
+  sendSyncRequest,
+  type SyncFeedEntry,
+  type SyncFeedTransport,
+  type SyncRequestTransport,
+  type SyncTimer,
 } from "../../shared/sync/index.ts";
 import type { HostConfig } from "../../config.ts";
 import { errorMessage } from "../../types.ts";
@@ -141,9 +143,30 @@ export type HostTaskCreateAttempt =
   | { kind: "unknown"; reason: string }
   | { kind: "not_sent"; reason: string };
 
+export interface HostHttpRequest {
+  method: "GET" | "POST";
+  path: string;
+  body?: unknown;
+  token?: string;
+  redirect?: RequestRedirect;
+}
+
 export interface HostConnectionOptions {
   fetch?: typeof globalThis.fetch;
+  requestTransport?: SyncRequestTransport<HostHttpRequest, unknown>;
+  timer?: SyncTimer;
 }
+
+const DEFAULT_TIMER: SyncTimer = {
+  setTimeout: (callback, ms) => {
+    const handle = setTimeout(callback, ms);
+    handle.unref();
+    return handle;
+  },
+  clearTimeout: (handle) => {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
+};
 
 export class HostConnectionFailure extends Error {
   readonly reason: HostUnreachableReason;
@@ -188,11 +211,35 @@ interface HostFetchOptions {
 export class HostConnection {
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly config: HostConfig;
+  private readonly requestTransport: SyncRequestTransport<
+    HostHttpRequest,
+    unknown
+  >;
+  private readonly timer: SyncTimer;
   private tokenCommand: Promise<string> | null = null;
+  private requestSeq = 0;
 
   constructor(config: HostConfig, options: HostConnectionOptions = {}) {
     this.config = config;
     this.fetchImpl = options.fetch ?? globalThis.fetch;
+    this.timer = options.timer ?? DEFAULT_TIMER;
+    this.requestTransport = options.requestTransport ?? {
+      send: async (_operationId, request, signal) => {
+        const token = request.token ?? (await this.resolveToken(signal));
+        const response = await this.fetchResponse(request.path, {
+          token,
+          method: request.method,
+          body: request.body,
+          redirect: request.redirect,
+          signal,
+          timeoutMs: null,
+        });
+        return {
+          status: response.status,
+          body: await responseBody(response),
+        };
+      },
+    };
   }
 
   async createTask(
@@ -205,36 +252,36 @@ export class HostConnection {
       return { kind: "not_sent", reason: "Host credential is unavailable" };
     }
 
-    let response: Response;
-    try {
-      response = await this.fetchResponse("/api/v1/tasks", {
-        token,
+    const outcome = await sendSyncRequest({
+      operationId: `create-${++this.requestSeq}`,
+      request: {
         method: "POST",
+        path: "/api/v1/tasks",
         body: input,
+        token,
         redirect: "error",
-      });
-    } catch (error) {
+      },
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      transport: this.requestTransport,
+      timer: this.timer,
+    });
+    if (outcome.kind === "unknown") {
+      return { kind: "unknown", reason: errorMessage(outcome.error) };
+    }
+    if (outcome.kind === "rejected") {
       return {
-        kind: "unknown",
-        reason: errorMessage(error),
+        kind: "rejected",
+        status: outcome.status,
+        reason: responseError(outcome.body, outcome.status),
       };
     }
-
-    const body = await responseBody(response);
-    if (!response.ok) {
-      const reason = responseError(body, response.status);
-      return response.status >= HTTP_STATUS.BAD_REQUEST &&
-        response.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
-        ? { kind: "rejected", status: response.status, reason }
-        : { kind: "unknown", reason };
-    }
-    if (response.status !== HTTP_STATUS.CREATED) {
+    if (outcome.status !== HTTP_STATUS.CREATED) {
       return {
         kind: "unknown",
-        reason: `Unexpected HTTP ${response.status}`,
+        reason: `Unexpected HTTP ${outcome.status}`,
       };
     }
-    const parsed = TaskCreateResponseSchema.safeParse(body);
+    const parsed = TaskCreateResponseSchema.safeParse(outcome.body);
     if (!parsed.success) {
       return {
         kind: "unknown",
@@ -266,70 +313,49 @@ export class HostConnection {
     };
   }
 
-  async getJson(path: string, signal?: AbortSignal): Promise<unknown> {
-    const token = await this.resolveToken(signal);
-    const response = await this.fetchResponse(path, {
-      token,
-      signal,
-      redirect: "error",
+  async getJson(path: string): Promise<unknown> {
+    const outcome = await sendSyncRequest({
+      operationId: `read-${++this.requestSeq}`,
+      request: { method: "GET", path, redirect: "error" },
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      transport: this.requestTransport,
+      timer: this.timer,
     });
-    if (!response.ok) {
-      throw new HostRequestError(path, response.status);
+    if (outcome.kind === "rejected") {
+      throw new HostRequestError(path, outcome.status);
     }
-    try {
-      return (await response.json()) as unknown;
-    } catch (error) {
-      throw new HostConnectionFailure("invalid_response", { cause: error });
+    if (outcome.kind === "unknown") {
+      throw new HostConnectionFailure("network", { cause: outcome.error });
     }
+    if (outcome.body === null) {
+      throw new HostConnectionFailure("invalid_response");
+    }
+    return outcome.body;
   }
 
   async readTaskStatus(
     taskId: string,
     timeoutMs = REMOTE_STATUS_TIMEOUT_MS,
   ): Promise<RemoteTaskStatus> {
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(new HostConnectionFailure("network"));
-      }, timeoutMs);
+    const path = `/api/v1/tasks/${encodeURIComponent(taskId)}/status`;
+    const outcome = await sendSyncRequest({
+      operationId: `status-${++this.requestSeq}`,
+      request: { method: "GET", path, redirect: "error" },
+      timeoutMs,
+      transport: this.requestTransport,
+      timer: this.timer,
     });
-    try {
-      return await Promise.race([
-        (async () => {
-          const token = await this.resolveToken(controller.signal);
-          const response = await this.fetchResponse(
-            `/api/v1/tasks/${encodeURIComponent(taskId)}/status`,
-            {
-              token,
-              signal: controller.signal,
-              timeoutMs: null,
-              redirect: "error",
-            },
-          );
-          if (!response.ok) {
-            throw new HostRequestError("status", response.status);
-          }
-          let raw: unknown;
-          try {
-            raw = (await response.json()) as unknown;
-          } catch (error) {
-            throw new HostConnectionFailure("invalid_response", {
-              cause: error,
-            });
-          }
-          const parsed = RemoteTaskStatusSchema.safeParse(raw);
-          if (!parsed.success) {
-            throw new HostConnectionFailure("invalid_response");
-          }
-          return parsed.data;
-        })(),
-        timeout,
-      ]);
-    } finally {
-      clearTimeout(timer);
+    if (outcome.kind === "rejected") {
+      throw new HostRequestError(path, outcome.status);
     }
+    if (outcome.kind === "unknown") {
+      throw new HostConnectionFailure("network", { cause: outcome.error });
+    }
+    const parsed = RemoteTaskStatusSchema.safeParse(outcome.body);
+    if (!parsed.success) {
+      throw new HostConnectionFailure("invalid_response");
+    }
+    return parsed.data;
   }
 
   async readTaskEvents(taskId: string): Promise<OwnerTaskHistoryEvent[]> {

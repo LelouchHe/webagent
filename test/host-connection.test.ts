@@ -7,6 +7,8 @@ import {
 import { retryDelay } from "../src/host/remote/state.ts";
 import {
   HostConnection,
+  HostConnectionFailure,
+  HostRequestError,
   decodeOwnerTaskEvents,
 } from "../src/host/remote/connection.ts";
 import { HostRegistry } from "../src/host/remote/registry.ts";
@@ -443,6 +445,90 @@ describe("host connection helpers", () => {
     assert.deepEqual(items, [
       { id: "child-1", relation: "child", host: "owner", unreachable: true },
     ]);
+  });
+
+  it("routes create, status, and event reads through SyncRequestTransport with three-way classification", async () => {
+    const seen: Array<{ opId: string; method: string; path: string }> = [];
+    const responses: Array<
+      { status: number; body: unknown } | { error: Error } | { hang: true }
+    > = [
+      { status: 400, body: { error: "bad_create" } },
+      { status: 503, body: { error: "unavailable" } },
+      { status: 404, body: { error: "not_found" } },
+      { hang: true },
+      { status: 403, body: { error: "forbidden" } },
+      { error: new Error("socket reset") },
+    ];
+    const connection = new HostConnection(
+      { url: "http://owner.example", token: "wat_host" },
+      {
+        requestTransport: {
+          send: async (opId, req, signal) => {
+            seen.push({ opId, method: req.method, path: req.path });
+            const next = responses.shift()!;
+            if ("error" in next) throw next.error;
+            if ("hang" in next) {
+              return new Promise((_resolve, reject) => {
+                signal.addEventListener("abort", () => {
+                  reject(new Error("aborted"));
+                });
+              });
+            }
+            return next;
+          },
+        },
+      },
+    );
+
+    // createTask: rejected (4xx) and unknown (5xx), no retries
+    assert.deepEqual(
+      await connection.createTask({
+        agentId: "mock",
+        parentId: "p",
+        source: "agent",
+      }),
+      { kind: "rejected", status: 400, reason: "bad_create" },
+    );
+    const unknownCreate = await connection.createTask({
+      agentId: "mock",
+      parentId: "p",
+      source: "agent",
+    });
+    assert.equal(unknownCreate.kind, "unknown");
+
+    // readTaskStatus: rejected (404 -> HostRequestError) and unknown (timeout -> HostConnectionFailure)
+    await assert.rejects(
+      connection.readTaskStatus("child-1", 50),
+      (err) => err instanceof HostRequestError && err.status === 404,
+    );
+    await assert.rejects(
+      connection.readTaskStatus("child-1", 30),
+      (err) => err instanceof HostConnectionFailure && err.reason === "network",
+    );
+
+    // readTaskEvents: rejected (403 -> HostRequestError) and unknown (network -> HostConnectionFailure)
+    await assert.rejects(
+      connection.readTaskEvents("child-1"),
+      (err) => err instanceof HostRequestError && err.status === 403,
+    );
+    await assert.rejects(
+      connection.readTaskEvents("child-1"),
+      (err) => err instanceof HostConnectionFailure && err.reason === "network",
+    );
+
+    assert.equal(seen.length, 6);
+    assert.ok(seen.every((entry) => entry.opId.length > 0));
+    assert.deepEqual(
+      seen.map((entry) => `${entry.method} ${entry.path}`),
+      [
+        "POST /api/v1/tasks",
+        "POST /api/v1/tasks",
+        "GET /api/v1/tasks/child-1/status",
+        "GET /api/v1/tasks/child-1/status",
+        "GET /api/v1/tasks/child-1/events",
+        "GET /api/v1/tasks/child-1/events",
+      ],
+    );
   });
 
   it("computes capped exponential reconnect delays", () => {
