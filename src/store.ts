@@ -29,6 +29,7 @@ import { WORKFLOW_STATUSES } from "./shared/workflow-status.ts";
 import {
   type LinkEnvelope,
   type LinkMessageData,
+  type LinkNoticeData,
   type LinkReceiptData,
   LinkProtocolError,
 } from "./shared/link-envelope.ts";
@@ -82,6 +83,13 @@ function assertStorableExecutionId(
   }
 }
 
+/** External parent metadata captured before a hard delete cascades remote_tasks. */
+export interface DeletedExternalParent {
+  remoteHost: string;
+  remoteTaskId: string;
+  title: string | null;
+}
+
 /** One task removed by a delete (the requested id or a cascaded descendant). */
 export interface TaskDelete {
   id: string;
@@ -95,6 +103,8 @@ export interface TaskDelete {
    * returning the same session id are still two different executions.
    */
   agentId: string | null;
+  /** Captured before hard delete removes remote_tasks so purge can route notice. */
+  externalParent?: DeletedExternalParent;
 }
 
 export type { WorkflowStatus } from "./shared/workflow-status.ts";
@@ -263,7 +273,7 @@ export interface CollaborationDeliveryRow {
 }
 
 export type LinkRemoteRole = "parent" | "child";
-export type OutboxCategory = "message" | "report" | "receipt";
+export type OutboxCategory = "message" | "report" | "receipt" | "notice";
 export interface OutboxRow {
   pos: number;
   entry_id: string;
@@ -292,6 +302,10 @@ export type OutboxInput =
   | {
       category: "receipt";
       data: unknown;
+    }
+  | {
+      category: "notice";
+      data: LinkNoticeData;
     };
 
 export interface LinkInboundAssociation {
@@ -335,6 +349,7 @@ export interface CollaborationDeliveryStatusChange {
   deliveredAt: number | null;
   failureReason: string | null;
   suppressFailureNotice: boolean;
+  sourceRemoteRole: LinkRemoteRole | null;
 }
 
 export interface SystemDeliveryInput {
@@ -497,6 +512,7 @@ export class Store {
   private readonly dataDir: string;
   /** This database's Root; it changes only when an exit replaces the Root. */
   private rootId = "";
+  private hasExternalParents = false;
   private readonly deliveryStatusObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
   > = [];
@@ -560,9 +576,17 @@ export class Store {
    */
   private resolveRootIdentity(): string {
     const stored = this.db
-      .prepare("SELECT root_task_id AS id FROM workspace WHERE id = 1")
-      .get() as { id: string } | undefined;
-    if (stored) return stored.id;
+      .prepare(
+        `SELECT root_task_id AS id,
+                EXISTS(SELECT 1 FROM remote_tasks WHERE remote_role = 'parent') AS has_external_parents
+         FROM workspace WHERE id = 1`,
+      )
+      .get() as { id: string; has_external_parents: number } | undefined;
+    if (stored) {
+      this.hasExternalParents = stored.has_external_parents === 1;
+      return stored.id;
+    }
+    this.hasExternalParents = false;
     const rootTaskId = randomUUID();
     this.db
       .prepare("INSERT INTO workspace (id, root_task_id) VALUES (1, ?)")
@@ -990,14 +1014,14 @@ export class Store {
         remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
         remote_host TEXT NOT NULL,
         prev INTEGER NOT NULL,
-        category TEXT NOT NULL CHECK (category IN ('message', 'report', 'receipt')),
+        category TEXT NOT NULL CHECK (category IN ('message', 'report', 'receipt', 'notice')),
         data_json TEXT NOT NULL,
         delivery_id TEXT REFERENCES deliveries(id),
         created_at INTEGER NOT NULL
         CHECK (
           (category IN ('message', 'report') AND delivery_id IS NOT NULL)
           OR
-          (category = 'receipt' AND delivery_id IS NULL)
+          (category IN ('receipt', 'notice') AND delivery_id IS NULL)
         )
       );
       CREATE INDEX IF NOT EXISTS idx_outbox_link_pos
@@ -1333,7 +1357,7 @@ export class Store {
     if (!input.externalParentId.trim()) {
       throw new Error("invalid_external_parent");
     }
-    return this.writeBindings(() => {
+    const created = this.writeBindings(() => {
       if (!this.getTaskIncludingDeleted(this.rootTaskId)) {
         this.insertRootRow(input.cwd);
       }
@@ -1373,6 +1397,8 @@ export class Store {
         .prepare("SELECT * FROM tasks WHERE id = ?")
         .get(input.id) as TaskRow;
     });
+    this.hasExternalParents = true;
+    return created;
   }
 
   listRemoteChildren(): Array<{
@@ -1435,6 +1461,7 @@ export class Store {
         remote_host: string;
       }
     | undefined {
+    if (!this.hasExternalParents) return undefined;
     return this.db
       .prepare(
         `SELECT remote_task_id, remote_host FROM remote_tasks
@@ -1447,6 +1474,30 @@ export class Store {
           remote_host: string;
         }
       | undefined;
+  }
+
+  getLatestInboundSourceLabel(
+    recipientTaskId: string,
+    sourceTaskId: string,
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+  ): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT d.source_label
+         FROM deliveries d
+         JOIN messages m ON m.id = d.message_id
+         WHERE d.recipient_task_id = ?
+           AND m.source_task_id = ?
+           AND d.source_remote_role = ?
+           AND d.source_remote_host = ?
+         ORDER BY d.rowid DESC
+         LIMIT 1`,
+      )
+      .get(recipientTaskId, sourceTaskId, remoteRole, remoteHost) as
+      { source_label: string | null } | undefined;
+    const trimmed = row?.source_label?.trim();
+    return trimmed && trimmed.length > 0 ? trimmed : null;
   }
 
   getRemoteChildTitle(
@@ -2348,13 +2399,27 @@ export class Store {
     this.db
       .prepare("DELETE FROM shares WHERE task_id = ? AND shared_at IS NULL")
       .run(id);
-    const activeShareCount = (
-      this.db
-        .prepare(
-          "SELECT COUNT(*) AS n FROM shares WHERE task_id = ? AND shared_at IS NOT NULL",
-        )
-        .get(id) as { n: number }
-    ).n;
+    const taskDeleteInfo = this.db
+      .prepare(
+        `SELECT
+           (SELECT COUNT(*) FROM shares WHERE task_id = ? AND shared_at IS NOT NULL) AS active_shares,
+           t.title,
+           r.remote_host,
+           r.remote_task_id
+         FROM tasks t
+         LEFT JOIN remote_tasks r
+           ON r.local_task_id = t.id AND r.remote_role = 'parent'
+         WHERE t.id = ?`,
+      )
+      .get(id, id) as
+      | {
+          active_shares: number;
+          title: string | null;
+          remote_host: string | null;
+          remote_task_id: string | null;
+        }
+      | undefined;
+    const activeShareCount = taskDeleteInfo?.active_shares ?? 0;
     this.db.prepare("DELETE FROM client_ops WHERE task_id = ?").run(id);
     if (activeShareCount > 0) {
       // Soft-delete: keep events + tasks row so public share viewers
@@ -2375,7 +2440,16 @@ export class Store {
       return { mode: "soft", affected };
     }
     // Hard delete: re-parent any survivor (share-tombstoned descendants)
-    // under Root, then drop events and the row (agent_sessions cascades).
+    // under Root, capture external parent metadata before tasks/remote_tasks
+    // cascade away, then drop events and the row (agent_sessions cascades).
+    const externalParent: DeletedExternalParent | undefined =
+      taskDeleteInfo?.remote_host && taskDeleteInfo.remote_task_id
+        ? {
+            remoteHost: taskDeleteInfo.remote_host,
+            remoteTaskId: taskDeleteInfo.remote_task_id,
+            title: taskDeleteInfo.title,
+          }
+        : undefined;
     this.reparentChildrenToRoot(id);
     this.failOutstandingDeliveriesForDeletedTask(id);
     this.db.prepare("DELETE FROM events WHERE task_id = ?").run(id);
@@ -2386,6 +2460,7 @@ export class Store {
       mode: "hard",
       agentSessionId: binding?.agent_session_id ?? null,
       agentId: binding?.agent_key ?? null,
+      ...(externalParent ? { externalParent } : {}),
     });
     return { mode: "hard", affected };
   }
@@ -3123,7 +3198,7 @@ export class Store {
         .prepare(
           `SELECT d.id AS delivery_id, d.message_id, d.recipient_task_id,
                   d.status, d.delivered_at, d.failure_reason,
-                  m.source_task_id
+                  d.source_remote_role, m.source_task_id
            FROM deliveries d JOIN messages m ON m.id = d.message_id
            WHERE d.id IN (${placeholders}) AND m.source_actor <> 'system'`,
         )
@@ -3134,6 +3209,7 @@ export class Store {
         status: CollaborationDeliveryStatus;
         delivered_at: number | null;
         failure_reason: string | null;
+        source_remote_role: LinkRemoteRole | null;
         source_task_id: string;
       }>;
       for (const row of rows) {
@@ -3146,6 +3222,7 @@ export class Store {
           deliveredAt: row.delivered_at,
           failureReason: row.failure_reason,
           suppressFailureNotice: options.suppressFailureNotice === true,
+          sourceRemoteRole: row.source_remote_role,
         });
       }
     }
@@ -3162,8 +3239,10 @@ export class Store {
       createdAt?: number;
     },
   ): OutboxRow {
-    if (input.category === "receipt" && "deliveryId" in input) {
-      throw new Error("link_receipt_has_delivery");
+    const withoutDelivery =
+      input.category === "receipt" || input.category === "notice";
+    if (withoutDelivery && "deliveryId" in input) {
+      throw new Error(`link_${input.category}_has_delivery`);
     }
     const dataJson = stringifyLinkData(input.data);
     return this.writeOutbox(() =>
@@ -3173,7 +3252,7 @@ export class Store {
         remoteHost: input.remoteHost,
         category: input.category,
         dataJson,
-        deliveryId: input.category === "receipt" ? null : input.deliveryId,
+        deliveryId: withoutDelivery ? null : input.deliveryId,
         createdAt: input.createdAt ?? Date.now(),
       }),
     );
@@ -3184,6 +3263,9 @@ export class Store {
     remoteHost: string;
     envelope: LinkEnvelope;
   }): LinkApplyEffects {
+    if (input.envelope.category === "notice") {
+      throw new LinkProtocolError("notice_not_allowed_on_push");
+    }
     return this.writeOutbox(() => {
       if (input.envelope.category !== "receipt") {
         const existing = this.getInboundLinkDelivery(
@@ -3426,24 +3508,63 @@ export class Store {
         )
         .get(remoteRole, remoteHost, entryId) as { pos: number } | undefined;
       if (!row) throw new Error("outbox_entry_not_found");
-      const previous = this.db
-        .prepare(
-          `SELECT pushed_pos FROM outbox_cursors
-           WHERE remote_role = ? AND remote_host = ?`,
-        )
-        .get(remoteRole, remoteHost) as { pushed_pos: number } | undefined;
-      const result = this.db
-        .prepare(
-          `INSERT INTO outbox_cursors
-             (remote_role, remote_host, applied_pos, pushed_pos)
-           VALUES (?, ?, 0, ?)
-           ON CONFLICT (remote_role, remote_host)
-           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)
-           RETURNING pushed_pos`,
-        )
-        .get(remoteRole, remoteHost, row.pos) as { pushed_pos: number };
-      return (previous?.pushed_pos ?? 0) < result.pushed_pos ? row.pos : null;
+      return this.advanceOutboxPushCursorPosInTransaction(
+        remoteRole,
+        remoteHost,
+        row.pos,
+      );
     })();
+  }
+
+  private advanceOutboxPushCursorPosInTransaction(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    targetPos: number,
+  ): number | null {
+    const previous =
+      (
+        this.db
+          .prepare(
+            `SELECT pushed_pos FROM outbox_cursors
+             WHERE remote_role = ? AND remote_host = ?`,
+          )
+          .get(remoteRole, remoteHost) as { pushed_pos: number } | undefined
+      )?.pushed_pos ?? 0;
+    let finalPos = Math.max(previous, targetPos);
+    const stmt = this.db.prepare(
+      `SELECT o.pos, o.category, d.status AS delivery_status
+       FROM outbox o
+       LEFT JOIN deliveries d ON d.id = o.delivery_id
+       WHERE o.remote_role = ? AND o.remote_host = ? AND o.pos > ?
+       ORDER BY o.pos ASC`,
+    );
+    for (const row of stmt.iterate(
+      remoteRole,
+      remoteHost,
+      finalPos,
+    ) as Iterable<{
+      pos: number;
+      category: OutboxCategory;
+      delivery_status: CollaborationDeliveryStatus | null;
+    }>) {
+      if (row.category === "message" && row.delivery_status === "failed") {
+        finalPos = row.pos;
+        continue;
+      }
+      break;
+    }
+    if (finalPos <= previous) return null;
+    const result = this.db
+      .prepare(
+        `INSERT INTO outbox_cursors
+           (remote_role, remote_host, applied_pos, pushed_pos)
+         VALUES (?, ?, 0, ?)
+         ON CONFLICT (remote_role, remote_host)
+         DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)
+         RETURNING pushed_pos`,
+      )
+      .get(remoteRole, remoteHost, finalPos) as { pushed_pos: number };
+    return previous < result.pushed_pos ? result.pushed_pos : null;
   }
 
   rejectOutboxHead(
@@ -3467,8 +3588,8 @@ export class Store {
           }
         | undefined;
       if (!row) throw new Error("outbox_entry_not_found");
-      if (row.category === "receipt") {
-        throw new Error("receipt_rejected_link_fault");
+      if (row.category === "receipt" || row.category === "notice") {
+        throw new Error(`${row.category}_rejected_link_fault`);
       }
       if (!row.delivery_id) throw new Error("link_entry_missing_delivery_id");
       const changed = this.transitionDeliveryStatusInTransaction(
@@ -3478,17 +3599,185 @@ export class Store {
         Date.now(),
         failureReason,
       );
+      const drainTaskIds: string[] = [];
+      if (changed) {
+        const drainTaskId = this.writeOutboundFailureNoticeInTransaction(
+          row.delivery_id,
+          failureReason,
+        );
+        if (drainTaskId) drainTaskIds.push(drainTaskId);
+      }
       const pushedPos = this.advanceOutboxPushCursor(
         remoteRole,
         remoteHost,
         entryId,
       );
       return {
-        drainTaskIds: [],
+        drainTaskIds,
         deliveryStatusIds: changed ? [row.delivery_id] : [],
         outboxEntryIds: [],
         pushCursorPos: pushedPos === null ? [] : [pushedPos],
       };
+    })();
+  }
+
+  getPendingOutboxTimeoutState(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+  ): {
+    hasPendingWork: boolean;
+    earliest:
+      | {
+          pos: number;
+          entry_id: string;
+          delivery_id: string;
+          queued_at: number;
+        }
+      | undefined;
+  } {
+    const row = this.db
+      .prepare(
+        `SELECT
+           EXISTS(
+             SELECT 1 FROM outbox o
+             WHERE o.remote_role = ? AND o.remote_host = ?
+               AND o.pos > COALESCE(
+                 (SELECT pushed_pos FROM outbox_cursors
+                  WHERE remote_role = ? AND remote_host = ?),
+                 0
+               )
+           ) AS has_pending,
+           m.pos,
+           m.entry_id,
+           m.delivery_id,
+           m.queued_at
+         FROM (SELECT 1) _
+         LEFT JOIN (
+           SELECT o.pos, o.entry_id, o.delivery_id, d.queued_at
+           FROM outbox o
+           JOIN deliveries d ON d.id = o.delivery_id
+           WHERE o.remote_role = ? AND o.remote_host = ?
+             AND o.pos > COALESCE(
+               (SELECT pushed_pos FROM outbox_cursors
+                WHERE remote_role = ? AND remote_host = ?),
+               0
+             )
+             AND o.category = 'message'
+             AND d.status = 'queued'
+           ORDER BY d.queued_at ASC, o.pos ASC
+           LIMIT 1
+         ) m ON 1 = 1`,
+      )
+      .get(
+        remoteRole,
+        remoteHost,
+        remoteRole,
+        remoteHost,
+        remoteRole,
+        remoteHost,
+        remoteRole,
+        remoteHost,
+      ) as {
+      has_pending: number;
+      pos: number | null;
+      entry_id: string | null;
+      delivery_id: string | null;
+      queued_at: number | null;
+    };
+    return {
+      hasPendingWork: row.has_pending === 1,
+      earliest:
+        row.pos !== null &&
+        row.entry_id !== null &&
+        row.delivery_id !== null &&
+        row.queued_at !== null
+          ? {
+              pos: row.pos,
+              entry_id: row.entry_id,
+              delivery_id: row.delivery_id,
+              queued_at: row.queued_at,
+            }
+          : undefined,
+    };
+  }
+
+  getOutboxHead(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+  ): OutboxRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM outbox
+         WHERE remote_role = ? AND remote_host = ?
+           AND pos > COALESCE(
+             (SELECT pushed_pos FROM outbox_cursors
+              WHERE remote_role = ? AND remote_host = ?),
+             0
+           )
+         ORDER BY pos ASC
+         LIMIT 1`,
+      )
+      .get(remoteRole, remoteHost, remoteRole, remoteHost) as
+      OutboxRow | undefined;
+  }
+
+  failOutboxMessageOnTimeout(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    entryId: string,
+    now: number,
+  ): { failed: boolean; pos: number | null; effects: LinkApplyEffects } {
+    return this.db.transaction(() => {
+      const pushed = this.getOutboxPushCursor(remoteRole, remoteHost);
+      const row = this.db
+        .prepare(
+          `SELECT pos, delivery_id FROM outbox
+           WHERE remote_role = ? AND remote_host = ? AND entry_id = ?
+             AND category = 'message' AND pos > ?`,
+        )
+        .get(remoteRole, remoteHost, entryId, pushed) as
+        { pos: number; delivery_id: string | null } | undefined;
+      if (!row?.delivery_id) {
+        return { failed: false, pos: null, effects: emptyLinkApplyEffects() };
+      }
+      const changed = this.transitionDeliveryStatusInTransaction(
+        row.delivery_id,
+        "queued",
+        "failed",
+        now,
+        "remote_handoff_timeout",
+      );
+      if (!changed) {
+        return {
+          failed: false,
+          pos: row.pos,
+          effects: emptyLinkApplyEffects(),
+        };
+      }
+      const effects = emptyLinkApplyEffects();
+      effects.deliveryStatusIds.push(row.delivery_id);
+      const drainTaskId = this.writeOutboundFailureNoticeInTransaction(
+        row.delivery_id,
+        "remote_handoff_timeout",
+        "Handoff to the remote peer was not confirmed before the timeout.",
+      );
+      if (drainTaskId) effects.drainTaskIds.push(drainTaskId);
+      const hasEarlierPending = this.db
+        .prepare(
+          `SELECT 1 FROM outbox
+           WHERE remote_role = ? AND remote_host = ? AND pos > ? AND pos < ?
+           LIMIT 1`,
+        )
+        .get(remoteRole, remoteHost, pushed, row.pos);
+      if (!hasEarlierPending) {
+        const committedPos = this.advanceOutboxPushCursorPosInTransaction(
+          remoteRole,
+          remoteHost,
+          row.pos,
+        );
+        if (committedPos !== null) effects.pushCursorPos.push(committedPos);
+      }
+      return { failed: true, pos: row.pos, effects };
     })();
   }
 
@@ -3538,6 +3827,12 @@ export class Store {
       if (!receipt.known) throw new LinkProtocolError("unknown_link_receipt");
       return receipt.effects;
     }
+    if (envelope.category === "notice") {
+      if (remoteRole !== "child") {
+        throw new LinkProtocolError("notice_not_allowed_on_push");
+      }
+      return this.applyLinkNoticeInTransaction(remoteHost, envelope.data);
+    }
     return this.applyLinkDeliveryInTransaction(
       remoteRole,
       remoteHost,
@@ -3545,6 +3840,27 @@ export class Store {
       envelope.data,
       envelope.category,
     );
+  }
+
+  private applyLinkNoticeInTransaction(
+    remoteHost: string,
+    notice: LinkNoticeData,
+  ): LinkApplyEffects {
+    const effects = emptyLinkApplyEffects();
+    const source = this.getTask(notice.sourceTaskId);
+    const relation = this.getRemoteChild(remoteHost, notice.targetTaskId);
+    if (!source || relation?.local_task_id !== notice.sourceTaskId) {
+      return effects;
+    }
+    const drainTaskId = this.writeOutcomeNoticeInTransaction({
+      sourceTaskId: notice.sourceTaskId,
+      targetTaskId: notice.targetTaskId,
+      reason: notice.reason,
+      message: notice.message,
+      targetLabel: notice.targetLabel,
+    });
+    if (drainTaskId) effects.drainTaskIds.push(drainTaskId);
+    return effects;
   }
 
   private applyLinkDeliveryInTransaction(
@@ -3627,7 +3943,7 @@ export class Store {
       .prepare(
         `SELECT * FROM outbox
          WHERE entry_id = ? AND remote_role = ? AND remote_host = ?
-           AND category <> 'receipt'`,
+           AND category IN ('message', 'report')`,
       )
       .get(input.entryId, input.remoteRole, input.remoteHost) as
       OutboxRow | undefined;
@@ -3658,6 +3974,7 @@ export class Store {
         Date.now(),
         input.failureReason,
       );
+    // Owner keeps writing pushed_pos symmetrically; harmless because only hub reads it.
     const pushedPos = this.advanceOutboxPushCursor(
       row.remote_role,
       row.remote_host,
@@ -3666,9 +3983,92 @@ export class Store {
     if (pushedPos !== null) effects.pushCursorPos.push(pushedPos);
     if (changed || terminal) {
       effects.deliveryStatusIds.push(row.delivery_id);
+      if (input.status === "failed") {
+        const drainTaskId = this.writeOutboundFailureNoticeInTransaction(
+          row.delivery_id,
+          input.failureReason,
+        );
+        if (drainTaskId) effects.drainTaskIds.push(drainTaskId);
+      }
       return { known: true, changed: true, effects };
     }
     return { known: true, changed: false, effects };
+  }
+
+  protected writeOutcomeNoticeInTransaction(input: {
+    sourceTaskId: string;
+    targetTaskId: string;
+    reason: "no_update" | "no_activity" | "target_removed";
+    message: string;
+    targetLabel?: string | null;
+  }): string | null {
+    if (!this.getTask(input.sourceTaskId)) return null;
+    const trimmedLabel = input.targetLabel?.trim();
+    const explicitLabel =
+      trimmedLabel && trimmedLabel.length > 0 ? trimmedLabel : null;
+    const externalParent = this.getExternalParentLink(input.sourceTaskId);
+    const targetLabel =
+      explicitLabel ??
+      this.getTaskIncludingDeleted(input.targetTaskId)?.title ??
+      this.getRemoteChildTitle(input.sourceTaskId, input.targetTaskId) ??
+      (externalParent?.remote_task_id === input.targetTaskId
+        ? this.getLatestInboundSourceLabel(
+            input.sourceTaskId,
+            input.targetTaskId,
+            "parent",
+            externalParent.remote_host,
+          )
+        : null);
+    const messageId = randomUUID();
+    this.saveEvent(
+      input.sourceTaskId,
+      "task_outcome_notice",
+      {
+        messageId,
+        reason: input.reason,
+        sourceTaskId: input.sourceTaskId,
+        targetTaskId: input.targetTaskId,
+        message: input.message,
+      },
+      { from_ref: "system" },
+    );
+    const body = formatFieldBlock([
+      {
+        label: "target",
+        value: targetLabel
+          ? `${targetLabel} (${input.targetTaskId})`
+          : input.targetTaskId,
+      },
+      { label: "message", value: input.message },
+    ]);
+    this.createSystemDelivery({
+      messageId,
+      deliveryId: randomUUID(),
+      fromTaskId: input.targetTaskId,
+      recipientTaskId: input.sourceTaskId,
+      body,
+    });
+    return input.sourceTaskId;
+  }
+
+  protected writeOutboundFailureNoticeInTransaction(
+    deliveryId: string,
+    failureReason: string | null | undefined,
+    customMessage?: string,
+  ): string | null {
+    const delivery = this.getCollaborationDelivery(deliveryId);
+    if (!delivery) return null;
+    const message = this.getCollaborationMessage(delivery.message_id);
+    if (message?.source_actor !== "agent") return null;
+    const text =
+      customMessage ??
+      `A message to the target was not delivered (${failureReason ?? "unknown"}).`;
+    return this.writeOutcomeNoticeInTransaction({
+      sourceTaskId: message.source_task_id,
+      targetTaskId: delivery.recipient_task_id,
+      reason: "target_removed",
+      message: text,
+    });
   }
 
   private enqueueOutboxInTransaction(input: {
@@ -3680,10 +4080,12 @@ export class Store {
     deliveryId: string | null;
     createdAt: number;
   }): OutboxRow {
-    if (input.category === "receipt" && input.deliveryId !== null) {
-      throw new Error("link_receipt_has_delivery");
+    const withoutDelivery =
+      input.category === "receipt" || input.category === "notice";
+    if (withoutDelivery && input.deliveryId !== null) {
+      throw new Error(`link_${input.category}_has_delivery`);
     }
-    if (input.category !== "receipt") {
+    if (!withoutDelivery) {
       if (!input.deliveryId) throw new Error("link_entry_missing_delivery");
       const delivery = this.getCollaborationDelivery(input.deliveryId);
       if (!delivery) throw new Error("link_delivery_missing");

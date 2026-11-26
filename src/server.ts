@@ -214,7 +214,13 @@ const hostRegistry = new HostRegistry(config.hosts, {
       host,
       store,
       transport: connection.pushTransport(),
+      handoffTimeoutMs: config.limits.remote_delivery_timeout * 60_000,
       retryDelay: (attempt) => retryDelay(attempt),
+      effects: {
+        drainTask: (taskId) => {
+          void tasks.drainCollaborationDeliveries(taskId);
+        },
+      },
     });
     const consumer = new LinkSyncHubConsumer({
       host,
@@ -225,18 +231,22 @@ const hostRegistry = new HostRegistry(config.hosts, {
       clock: { now: () => performance.now() },
       onConnecting: () => {
         onState("connecting");
+        pusher.setWatchOnline(false);
       },
       onConnected: () => {
         onState("connected");
+        pusher.setWatchOnline(true);
         pusher.wake();
       },
       onFailure: ({ kind, error }) => {
+        pusher.setWatchOnline(false);
         onState(
           "unreachable",
           kind === "stalled" ? "network" : HostConnection.failureReason(error),
         );
       },
       onProtocolError: () => {
+        pusher.setWatchOnline(false);
         onState("unreachable", "invalid_response");
       },
       effects: {

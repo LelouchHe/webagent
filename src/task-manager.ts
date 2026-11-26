@@ -11,6 +11,7 @@ import {
   type ArchiveTaskResult,
   type CollaborationDeliveryStatusChange,
   type CollaborationMessageRow,
+  type DeletedExternalParent,
   type TaskDelete,
   type TaskRow,
   type Store,
@@ -666,6 +667,10 @@ export class TaskManager implements ObligationHost {
   readonly restoringTasks = new Set<string>();
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
+  private readonly deletedExternalParents = new Map<
+    string,
+    DeletedExternalParent
+  >();
   /**
    * Per-turn metadata of the slot. Declared before `activePrompts` because the
    * membership set writes through it.
@@ -3248,7 +3253,7 @@ export class TaskManager implements ObligationHost {
       result = this.store.replaceRoot(oldRootId);
       for (const entry of result.affected) {
         this.retireExecution(entry.id, entry.agentId, entry.agentSessionId);
-        this.releaseTaskRuntime(entry.id, entry.mode);
+        this.releaseTaskRuntime(entry.id, entry.mode, entry.externalParent);
       }
     } finally {
       release();
@@ -3347,7 +3352,7 @@ export class TaskManager implements ObligationHost {
       const result = this.store.deleteTask(taskId);
       for (const entry of result.affected) {
         this.retireExecution(entry.id, entry.agentId, entry.agentSessionId);
-        this.releaseTaskRuntime(entry.id, entry.mode);
+        this.releaseTaskRuntime(entry.id, entry.mode, entry.externalParent);
       }
       return result;
     } finally {
@@ -3356,7 +3361,11 @@ export class TaskManager implements ObligationHost {
   }
 
   /** Drop in-memory state owned by a task that no longer exists. */
-  private releaseTaskRuntime(id: string, mode: "hard" | "soft"): void {
+  private releaseTaskRuntime(
+    id: string,
+    mode: "hard" | "soft",
+    externalParent?: DeletedExternalParent,
+  ): void {
     this.capabilities?.revokeByTask(id);
     this.publishedWarmIdentity.delete(id);
     this.liveTasks.delete(id);
@@ -3372,7 +3381,12 @@ export class TaskManager implements ObligationHost {
     this.store.broadcastDeliveryStatus(
       this.store.failedDeliveryIdsForRecipient(id, "target_deleted"),
     );
-    this.obligations.purgeTask(id);
+    if (externalParent) this.deletedExternalParents.set(id, externalParent);
+    try {
+      this.obligations.purgeTask(id);
+    } finally {
+      this.deletedExternalParents.delete(id);
+    }
     this.compactingTasks.delete(id);
     this.rotatingTasks.delete(id);
     const pendingSubmission = this.pendingPromptSubmissions.get(id);
@@ -4102,10 +4116,20 @@ export class TaskManager implements ObligationHost {
     this.collaborationSourceLabels.delete(change.messageId);
     const message = this.store.getCollaborationMessage(change.messageId);
     if (message?.source_actor !== "agent") return;
+    const open = this.obligations.peekSource(change.recipientTaskId);
+    if (change.sourceRemoteRole !== null) {
+      if (
+        open?.sourceKind === "external" &&
+        open.sourceTaskId === message.source_task_id
+      ) {
+        this.obligations.close(change.recipientTaskId);
+      }
+      return;
+    }
     const text = `A message to the target was not delivered (${change.failureReason ?? "unknown"}).`;
     if (
-      this.obligations.peekSource(change.recipientTaskId)?.sourceTaskId ===
-      message.source_task_id
+      open?.sourceKind === "local" &&
+      open.sourceTaskId === message.source_task_id
     ) {
       this.obligations.noteTargetUnavailable(change.recipientTaskId, text);
       return;
@@ -4156,7 +4180,45 @@ export class TaskManager implements ObligationHost {
    * delivered body also names the target so two children stay distinguishable.
    */
   emitObligationNotice(notice: ObligationNotice): void {
-    if (!this.store.getTask(notice.sourceTaskId)) return;
+    if (!this.store.getTask(notice.sourceTaskId)) {
+      const liveLink = this.store.getExternalParentLink(notice.targetTaskId);
+      const deleted = this.deletedExternalParents.get(notice.targetTaskId);
+      const remoteHost =
+        liveLink?.remote_task_id === notice.sourceTaskId
+          ? liveLink.remote_host
+          : deleted?.remoteTaskId === notice.sourceTaskId
+            ? deleted.remoteHost
+            : null;
+      if (!remoteHost) return;
+      const targetLabel =
+        deleted?.title ??
+        this.store.getTaskIncludingDeleted(notice.targetTaskId)?.title ??
+        "";
+      try {
+        this.store.enqueueOutbox({
+          remoteRole: "parent",
+          remoteHost,
+          category: "notice",
+          data: {
+            sourceTaskId: notice.sourceTaskId,
+            targetTaskId: notice.targetTaskId,
+            reason: notice.reason,
+            message: notice.message,
+            targetLabel,
+          },
+        });
+      } catch (error) {
+        log
+          .scope("tasks")
+          .warn("failed to enqueue external obligation notice", {
+            sourceTaskId: notice.sourceTaskId,
+            targetTaskId: notice.targetTaskId,
+            reason: notice.reason,
+            error: errorMessage(error),
+          });
+      }
+      return;
+    }
     const target = this.store.getTaskIncludingDeleted(notice.targetTaskId);
     const messageId = randomUUID();
     const payload = {

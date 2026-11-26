@@ -17,6 +17,7 @@ export interface LegacyDatabaseReport {
   hasRoot: boolean;
   pathLikeAgentKeys: string[];
   outdatedRemoteTasks: boolean;
+  outdatedOutbox: boolean;
 }
 
 export class LegacyDatabaseError extends Error {
@@ -31,7 +32,13 @@ export class LegacyDatabaseError extends Error {
             "cannot be used by this version; nothing in it was changed. " +
             "Back up the data directory, then remove webagent.db (or the " +
             "whole data directory) and restart to create a new one."
-        : "This database was created by an older WebAgent and cannot be used " +
+        : report.outdatedOutbox
+          ? "This database uses an older WebAgent outbox schema and cannot " +
+            "be used by this version; nothing in it was changed. Run the " +
+            "offline outbox migration, or back up the data directory, " +
+            "remove webagent.db (or the whole data directory), and restart " +
+            "to create a new one."
+          : "This database was created by an older WebAgent and cannot be used " +
             "by this version; nothing in it was changed. Back up the data " +
             "directory, then remove webagent.db (or the whole data " +
             "directory) and restart to create a new one.",
@@ -45,26 +52,26 @@ export class LegacyDatabaseError extends Error {
 export function detectLegacyDatabase(
   db: Database.Database,
 ): LegacyDatabaseReport | null {
-  const tables = new Set(
+  const tableSql = new Map(
     (
       db
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
-        .all() as Array<{ name: string }>
-    ).map((row) => row.name),
+        .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table'")
+        .all() as Array<{ name: string; sql: string | null }>
+    ).map((row) => [row.name, row.sql ?? ""]),
   );
-  if (!tables.has("tasks")) return null;
+  if (!tableSql.has("tasks")) return null;
 
   const { taskCount } = db
     .prepare("SELECT COUNT(*) AS taskCount FROM tasks")
     .get() as { taskCount: number };
   const hasRoot =
-    tables.has("workspace") &&
+    tableSql.has("workspace") &&
     db
       .prepare(
         "SELECT 1 AS present FROM workspace w JOIN tasks t ON t.id = w.root_task_id WHERE w.id = 1",
       )
       .get() !== undefined;
-  const pathLikeAgentKeys = tables.has("agent_sessions")
+  const pathLikeAgentKeys = tableSql.has("agent_sessions")
     ? (
         db
           .prepare(
@@ -75,7 +82,7 @@ export function detectLegacyDatabase(
         .map((row) => row.value)
         .filter((key) => !AGENT_ID_PATTERN.test(key))
     : [];
-  const remoteHostColumn = tables.has("remote_tasks")
+  const remoteHostColumn = tableSql.has("remote_tasks")
     ? (
         db.prepare("PRAGMA table_info(remote_tasks)").all() as Array<{
           name: string;
@@ -84,15 +91,27 @@ export function detectLegacyDatabase(
       ).find((column) => column.name === "remote_host")
     : undefined;
   const outdatedRemoteTasks =
-    tables.has("remote_tasks") && remoteHostColumn?.notnull !== 1;
+    tableSql.has("remote_tasks") && remoteHostColumn?.notnull !== 1;
+  const outboxSql = tableSql.get("outbox") ?? "";
+  const outdatedOutbox =
+    tableSql.has("outbox") &&
+    !(
+      /category\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*category\s+IN\s*\([^)]*'notice'[^)]*\)\s*\)/i.test(
+        outboxSql,
+      ) &&
+      /category\s+IN\s*\([^)]*'notice'[^)]*\)\s+AND\s+delivery_id\s+IS\s+NULL/i.test(
+        outboxSql,
+      )
+    );
 
   const report = {
     taskCount,
     hasRoot,
     pathLikeAgentKeys,
     outdatedRemoteTasks,
+    outdatedOutbox,
   };
-  if (outdatedRemoteTasks) return report;
+  if (outdatedRemoteTasks || outdatedOutbox) return report;
   if (report.taskCount === 0 || report.hasRoot) {
     return report.pathLikeAgentKeys.length > 0 ? report : null;
   }

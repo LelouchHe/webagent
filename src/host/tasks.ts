@@ -119,28 +119,51 @@ export function createRoutedTaskOps(deps: {
     async send(principal, targetTaskId, body) {
       authorize(principal);
       const target = remote.resolveRemoteChild(principal.taskId, targetTaskId);
-      if (target) {
+      const externalParent = target
+        ? undefined
+        : store.getExternalParentLink(principal.taskId);
+      const remoteLink = target
+        ? {
+            remoteRole: "child" as const,
+            remoteHost: target.host,
+            targetTaskId: target.taskId,
+            targetLabel:
+              store.getRemoteChildTitle(principal.taskId, target.taskId) ??
+              target.taskId.slice(0, 8),
+          }
+        : externalParent?.remote_task_id === targetTaskId
+          ? {
+              remoteRole: "parent" as const,
+              remoteHost: externalParent.remote_host,
+              targetTaskId: externalParent.remote_task_id,
+              targetLabel:
+                store.getLatestInboundSourceLabel(
+                  principal.taskId,
+                  externalParent.remote_task_id,
+                  "parent",
+                  externalParent.remote_host,
+                ) ?? externalParent.remote_task_id.slice(0, 8),
+            }
+          : undefined;
+      if (remoteLink) {
         const source = store.getTask(principal.taskId);
         if (!source) throw new Error("execution_replaced");
         const sourceLabel = source.title ?? principal.taskId.slice(0, 8);
-        const targetLabel =
-          store.getRemoteChildTitle(principal.taskId, target.taskId) ??
-          target.taskId.slice(0, 8);
         const row = store.enqueueLinkMessage({
-          remoteRole: "child",
-          remoteHost: target.host,
+          remoteRole: remoteLink.remoteRole,
+          remoteHost: remoteLink.remoteHost,
           sourceTaskId: principal.taskId,
-          targetTaskId: target.taskId,
+          targetTaskId: remoteLink.targetTaskId,
           sourceLabel,
-          targetLabel,
+          targetLabel: remoteLink.targetLabel,
           body,
         });
         broadcastCollaboration({
           messageId: row.entry_id,
           sourceTaskId: principal.taskId,
-          targetTaskId: target.taskId,
+          targetTaskId: remoteLink.targetTaskId,
           sourceLabel,
-          targetLabel,
+          targetLabel: remoteLink.targetLabel,
           body,
           taskId: principal.taskId,
           role: "source",
@@ -149,8 +172,8 @@ export function createRoutedTaskOps(deps: {
         return {
           messageId: row.entry_id,
           deliveryId: row.delivery_id ?? undefined,
-          targetTaskId: target.taskId,
-          targetLabel,
+          targetTaskId: remoteLink.targetTaskId,
+          targetLabel: remoteLink.targetLabel,
           sourceLabel,
         };
       }

@@ -164,16 +164,16 @@ after insert. Business state lives on the referenced delivery.
 | `remote_role` | TEXT NOT NULL | Link direction: `parent` or `child` |
 | `remote_host` | TEXT NOT NULL | Link name in that direction |
 | `prev` | INTEGER NOT NULL | Previous `pos` in the same link; first entry is `0` |
-| `category` | TEXT NOT NULL | `message`, `report`, or `receipt` |
+| `category` | TEXT NOT NULL | `message`, `report`, `receipt`, or `notice` |
 | `data_json` | TEXT NOT NULL | Immutable wire data |
-| `delivery_id` | TEXT NULL FK | Required for `message` / `report`; identifies the sender's durable delivery business state; null for receipts |
+| `delivery_id` | TEXT NULL FK | Required for `message` / `report`; identifies the sender's durable delivery business state; null for `receipt` and `notice` |
 | `created_at` | INTEGER NOT NULL | Local enqueue time |
 
 Index `idx_outbox_link_pos` supports ordered `(remote_role,
 remote_host)` reads.
 Index `idx_outbox_delivery` uniquely associates a message/report outbox entry with
 its sender-side delivery. The table CHECK requires the pairing
-(`message`/`report` with a non-null delivery id; `receipt` with null), and the
+(`message`/`report` with a non-null delivery id; `receipt`/`notice` with null), and the
 foreign key refuses dangling delivery references.
 
 The table has no Task or `remote_tasks` foreign key. Task and link deletion
@@ -209,19 +209,19 @@ How the link tables relate, within one instance and across a link:
 ### `outbox_cursors`
 
 The durable progress for each `(remote_role, remote_host)`. `applied_pos` is
-how far this instance has consumed the peer's outbox; `pushed_pos` is how far
-the peer has durably accepted this instance's outbox. Feed apply advances
-`applied_pos` in the same transaction as its business fact. Push advances
-`pushed_pos` monotonically after an exact `202`, a current-head receipt, or an
-authenticated rejection. It has no foreign key, so task or `remote_tasks`
-deletion does not erase transfer progress.
+how far this instance has consumed the peer's outbox; `pushed_pos` is the
+processed push prefix in this instance's outbox (`202`, a receipt for the head,
+an authenticated rejection, or a local skip after offline handoff timeout).
+Feed apply advances `applied_pos` in the same transaction as its business fact.
+It has no foreign key, so task or `remote_tasks` deletion does not erase
+transfer progress.
 
 | Column | Type | Notes |
 |---|---|---|
 | `remote_role` | TEXT NOT NULL | Link direction |
 | `remote_host` | TEXT NOT NULL | Link name |
 | `applied_pos` | INTEGER NOT NULL | Last durably applied outbox position |
-| `pushed_pos` | INTEGER NOT NULL | Last durably accepted position in this instance's outbox |
+| `pushed_pos` | INTEGER NOT NULL | Processed push prefix in this instance's outbox (`202`, receipt, authenticated rejection, or local skip) |
 
 ### `events`
 
@@ -665,6 +665,12 @@ for both `parent` and `child` rows. The read-only preflight rejects the old
 nullable-parent CHECK even when the old database contains zero `remote_tasks`
 rows; it leaves the database bytes unchanged. Backup the data directory, remove
 the old database (or the whole data directory), and restart.
+
+The contract-04 `outbox` CHECK relaxation (allowing `notice` with a null
+`delivery_id`) uses the same read-only preflight: a database whose `outbox`
+table still carries the 3-category CHECK is refused before any write, even when
+`outbox` is empty, leaving the file byte-identical. Migrate the database with
+the offline migration script or back up and reset.
 
 ---
 

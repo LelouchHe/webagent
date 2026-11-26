@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -1019,5 +1020,233 @@ describe("TaskManager collaboration delivery drain", () => {
       false,
     );
     assert.equal(tasks.hasOpenObligation("parent", "child"), true);
+  });
+
+  it("silently closes matching external account on inbound failure without emitting notice or touching local accounts", () => {
+    store.createDeferredRemoteTask({
+      id: "ext-child",
+      cwd: tmpDir,
+      source: "auto",
+      agentId: "test-agent",
+      externalParentId: "ext-parent",
+      remoteHost: "hub-a",
+      title: "Ext Child",
+      creationAnchor: { kind: "task_created", title: "Ext Child" },
+    });
+    const entryId = randomUUID();
+    store.applyLinkPushOperation({
+      remoteRole: "parent",
+      remoteHost: "hub-a",
+      envelope: {
+        id: entryId,
+        category: "message",
+        data: {
+          sourceTaskId: "ext-parent",
+          targetTaskId: "ext-child",
+          sourceLabel: "External Parent",
+          body: "do work",
+        },
+      },
+    });
+    // Open the external account (as drain would on handover), then fail the
+    // inbound delivery via clear/prompt failure.
+    (
+      tasks as unknown as {
+        obligations: {
+          arm: (s: string, t: string, k: "local" | "external") => void;
+        };
+      }
+    ).obligations.arm("ext-parent", "ext-child", "external");
+    assert.equal(tasks.hasOpenObligation("ext-parent", "ext-child"), true);
+    store.failQueuedDeliveries("ext-child", "clear");
+    assert.equal(tasks.hasOpenObligation("ext-parent", "ext-child"), false);
+    assert.equal(
+      store
+        .getEvents("ext-child")
+        .filter((e) => e.type === "task_outcome_notice").length,
+      0,
+    );
+
+    // On hub side: a local parent→child account on P is NOT closed when an
+    // inbound child→parent message from remote child fails on P.
+    seedDispatchFamily();
+    armDeliveredDispatch();
+    store.recordRemoteChild("child", "remote-grandchild", "owner-b");
+    const revId = randomUUID();
+    store.applyLinkFeedOperation({
+      remoteRole: "child",
+      remoteHost: "owner-b",
+      expectedApplied: 0,
+      nextApplied: 1,
+      envelope: {
+        id: revId,
+        category: "message",
+        data: {
+          sourceTaskId: "remote-grandchild",
+          targetTaskId: "child",
+          sourceLabel: "Remote Grandchild",
+          body: "hello",
+        },
+      },
+    });
+    store.failQueuedDeliveries("child", "clear");
+    // Local account parent→child must still be open, and no notice emitted.
+    assert.equal(tasks.hasOpenObligation("parent", "child"), true);
+    assert.equal(
+      store.getEvents("child").filter((e) => e.type === "task_outcome_notice")
+        .length,
+      0,
+    );
+  });
+
+  it("routes emitObligationNotice to local, external parent outbox, or drops unknown source", () => {
+    // 1. Local source -> local audit + delivery
+    seedDispatchFamily();
+    tasks.emitObligationNotice({
+      reason: "no_update",
+      sourceTaskId: "parent",
+      targetTaskId: "child",
+      message: "Local child did not update.",
+    });
+    const localAudit = store
+      .getEvents("parent")
+      .filter((e) => e.type === "task_outcome_notice");
+    assert.equal(localAudit.length, 1);
+
+    // 2. External parent source -> parent outbox notice with real title
+    store.createDeferredRemoteTask({
+      id: "ext-r1",
+      cwd: tmpDir,
+      source: "auto",
+      agentId: "test-agent",
+      externalParentId: "hub-p1",
+      remoteHost: "hub-a",
+      title: "Real Worker Title",
+      creationAnchor: { kind: "task_created", title: "Real Worker Title" },
+    });
+    tasks.emitObligationNotice({
+      reason: "no_activity",
+      sourceTaskId: "hub-p1",
+      targetTaskId: "ext-r1",
+      message: "Silent worker.",
+    });
+    const outbox = store.listOutbox("parent", "hub-a");
+    assert.equal(outbox.length, 1);
+    assert.equal(outbox[0].category, "notice");
+    assert.equal(outbox[0].delivery_id, null);
+    assert.deepEqual(JSON.parse(outbox[0].data_json), {
+      sourceTaskId: "hub-p1",
+      targetTaskId: "ext-r1",
+      reason: "no_activity",
+      message: "Silent worker.",
+      targetLabel: "Real Worker Title",
+    });
+
+    // 3. Unknown source -> dropped
+    tasks.emitObligationNotice({
+      reason: "no_update",
+      sourceTaskId: "stranger",
+      targetTaskId: "ext-r1",
+      message: "Should drop.",
+    });
+    assert.equal(store.listOutbox("parent", "hub-a").length, 1);
+  });
+
+  it("emits target_removed notice with real title on hard delete and Root exit, and suppresses A3 when A1 already failed a queued inbound message", async () => {
+    const obligations = (
+      tasks as unknown as {
+        obligations: {
+          arm: (s: string, t: string, k: "local" | "external") => void;
+        };
+      }
+    ).obligations;
+
+    // Case A: Hard delete with open external account and no queued inbound message -> A3 notice with real title.
+    store.createDeferredRemoteTask({
+      id: "r-del",
+      cwd: tmpDir,
+      source: "auto",
+      agentId: "test-agent",
+      externalParentId: "hub-p",
+      remoteHost: "hub-a",
+      title: "Deleted Worker",
+      creationAnchor: { kind: "task_created", title: "Deleted Worker" },
+    });
+    obligations.arm("hub-p", "r-del", "external");
+    await tasks.deleteTask(undefined, "r-del");
+    const afterDel = store.listOutbox("parent", "hub-a");
+    assert.equal(afterDel.length, 1);
+    assert.equal(afterDel[0].category, "notice");
+    assert.deepEqual(JSON.parse(afterDel[0].data_json), {
+      sourceTaskId: "hub-p",
+      targetTaskId: "r-del",
+      reason: "target_removed",
+      message:
+        "The target left this edge (deleted or archived); the account is gone.",
+      targetLabel: "Deleted Worker",
+    });
+
+    // Case 6a: Open external account + queued inbound message on same edge -> delete fails delivery (receipt for A1) and closes account silently (no A3 notice).
+    store.createDeferredRemoteTask({
+      id: "r-queued",
+      cwd: tmpDir,
+      source: "auto",
+      agentId: "test-agent",
+      externalParentId: "hub-p",
+      remoteHost: "hub-a",
+      title: "Queued Worker",
+      creationAnchor: { kind: "task_created", title: "Queued Worker" },
+    });
+    const inboundId = randomUUID();
+    store.applyLinkPushOperation({
+      remoteRole: "parent",
+      remoteHost: "hub-a",
+      envelope: {
+        id: inboundId,
+        category: "message",
+        data: {
+          sourceTaskId: "hub-p",
+          targetTaskId: "r-queued",
+          sourceLabel: "Hub Parent",
+          body: "queued work",
+        },
+      },
+    });
+    obligations.arm("hub-p", "r-queued", "external");
+    await tasks.deleteTask(undefined, "r-queued");
+    const after6a = store.listOutbox("parent", "hub-a", afterDel[0].pos, 10);
+    assert.equal(after6a.length, 1);
+    assert.equal(after6a[0].category, "receipt");
+    assert.deepEqual(JSON.parse(after6a[0].data_json), {
+      originalEntryId: inboundId,
+      status: "failed",
+      failureReason: "target_deleted",
+    });
+
+    // Case 6c: Unarchived R1 attached to Root, deleted recursively by Root exit -> A3 notice with real title.
+    store.createDeferredRemoteTask({
+      id: "r-root",
+      cwd: tmpDir,
+      source: "auto",
+      agentId: "test-agent",
+      externalParentId: "hub-p",
+      remoteHost: "hub-a",
+      title: "Unarchived Worker",
+      creationAnchor: { kind: "task_created", title: "Unarchived Worker" },
+    });
+    store.unarchiveTask("r-root");
+    obligations.arm("hub-p", "r-root", "external");
+    await tasks.exitRoot(mockBridgeStubs());
+    const afterRoot = store.listOutbox("parent", "hub-a", after6a[0].pos, 10);
+    assert.equal(afterRoot.length, 1);
+    assert.equal(afterRoot[0].category, "notice");
+    assert.deepEqual(JSON.parse(afterRoot[0].data_json), {
+      sourceTaskId: "hub-p",
+      targetTaskId: "r-root",
+      reason: "target_removed",
+      message:
+        "The target left this edge (deleted or archived); the account is gone.",
+      targetLabel: "Unarchived Worker",
+    });
   });
 });

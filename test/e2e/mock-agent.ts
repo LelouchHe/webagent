@@ -294,6 +294,7 @@ class MockAgent {
   private regressionLastCreatedTaskId: string | null = null;
   private regressionTaskIds = new Map<string, string>();
   private regressionRelations = new Map<string, Map<string, string>>();
+  private regressionPromptSourceIds = new Map<string, string>();
 
   constructor(connection: AgentContext) {
     this.connection = connection;
@@ -303,6 +304,13 @@ class MockAgent {
     params: PromptRequest,
     declared: PromptBehavior,
   ): Promise<PromptResponse> {
+    const promptText = params.prompt
+      .map((block) => (block.type === "text" ? block.text : ""))
+      .join("\n");
+    const sourceMatch = /\(task id ([^)\s]+)\):/.exec(promptText);
+    if (sourceMatch) {
+      this.regressionPromptSourceIds.set(params.sessionId, sourceMatch[1]);
+    }
     for (const action of declared.actions) {
       if (action.type === "reply") {
         await regressionTimed(
@@ -496,6 +504,9 @@ class MockAgent {
     }
     if (value === "$parentTaskId") {
       return this.regressionRelations.get(sessionId)?.get("parent") ?? null;
+    }
+    if (value === "$promptSourceTaskId") {
+      return this.regressionPromptSourceIds.get(sessionId) ?? null;
     }
     if (typeof value === "string" && value.startsWith("$task:")) {
       return this.regressionTaskIds.get(value.slice("$task:".length)) ?? null;

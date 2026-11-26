@@ -67,6 +67,11 @@ cancel_timeout = 10_000
 # wake source the runtime can see.
 silence_timeout = 15
 
+# Offline remote message handoff timeout (minutes, default 10, max 1440). While a
+# hub link has no active watch, queued outbound messages not yet handed off to the
+# peer fail after this duration and notify the sender.
+remote_delivery_timeout = 10
+
 # Max recent paths shown in the /new and + path pickers (default 10, 0 = show all)
 recent_paths = 10
 

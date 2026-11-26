@@ -40,6 +40,17 @@ time. An entry without a "closing condition" is a wish, not an issue.
 - **Owner entries stay queued indefinitely if a hub never reconnects.** The
   pull-side outbox does not expire entries when a hub stops dialing. *Closing:*
   add an explicit host/link removal operation.
+- **Owner-to-hub messages have no offline handoff timeout.** Timeout T runs
+  only on the hub pusher. While the hub is offline, an R1 → P `task_send` stays
+  queued on the owner with no failure notice to R1, unlike P → R1 (sync-model
+  exception E1). The owner cannot time out honestly: the pull side has no
+  handoff signal (the hub does not acknowledge its `applied` position), and a
+  missing receipt only means P has not drained the message yet, so timing out
+  on receipts would report failure for messages P later receives. *Closing:*
+  when a real workflow needs R1 to learn that the hub is gone, have the hub
+  report `applied` to the owner and apply the same `max(queued_at,
+  offlineSince) + T` rule and failed-run absorption on the owner's pull-side
+  cursor.
 - **A temporary apply failure on one link blocks later entries on that link.**
   Feed application is strictly serial per link; a transient error retries in
   place rather than skipping ahead. *Closing:* accepted trade-off until
@@ -60,11 +71,39 @@ time. An entry without a "closing condition" is a wish, not an issue.
   server-side search endpoint, so the hub applies the shared projector after a
   full task-events read. *Closing:* add a bounded history-search route and
   preserve the MCP shapes and limits.
-- **Owner-to-external-source inactivity/removal notices are not forwarded.**
-  `done` and `blocked` reports close the implemented loop; owner `no_update`,
-  `no_activity`, and `target_removed` notices still require a cross-instance
-  delivery path. *Closing:* add the corresponding event-to-collaboration
-  translation and end-to-end regression coverage.
+- **A timed-out hub push whose earlier attempt had an unknown result may still
+  have been accepted by the owner.** Offline handoff timeout T reports that
+  handoff was not confirmed before the deadline, without revoking work the
+  owner already committed; a late receipt is consumed without flipping status.
+  *Closing:* accepted residual of at-least-once handoff; do not add a rollback
+  or cancel protocol for it.
+- **Open obligation accounts are in-memory on both local and remote tasks.**
+  An owner restart drops open accounts, so subsequent `no_update` /
+  `no_activity` notices for pre-restart dispatches are not emitted; `done` and
+  `blocked` reports still reach the external parent via the persisted
+  `remote_tasks` fallback. *Closing:* accepted parity with local tasks; no
+  obligation persistence planned.
+- **Soft-deleting a shared remote child with both an open external account and
+  a queued inbound message can emit two notices to the hub parent.** Soft delete
+  leaves the inbound row untouched while keeping the tombstone, and purges the
+  in-memory account (emitting an A3 `target_removed` notice); the second notice
+  happens only if the last share is later revoked and its failed receipt reaches
+  the hub (emitting an A1 notice).
+  *Closing:* fail outstanding inbound rows in the soft-delete transaction so
+  the existing status-before-purge ordering deduplicates them.
+- **`SyncOutbox.wake()` during an empty `pump()` is dropped.** While
+  `SyncOutbox.pump()` is awaiting `port.next()` on an empty snapshot, an
+  intervening `wake()` returns early because `pumping` is still `true`; under
+  offline timeout `T`, a message fails without any POST only if no later wake
+  revives the pump first. *Closing:* latch a pending wake during `pumping` and
+  recheck once when `pump()` completes empty.
+- **A transient SQLite `SELECT` error in the pusher's `next()` escapes the
+  fire-and-forget pump.** `SyncOutbox.pump()` invokes `port.next()` without a
+  catch handler (`src/shared/sync/outbox.ts`), so a transient head-read error
+  becomes an unhandled promise rejection: under Node's default handling it
+  terminates the process, and otherwise it leaves the pump idle until a
+  subsequent wake. *Closing:* the adapter catches
+  head-read errors and schedules a pump retry.
 - **Remote browser routing and lifecycle commands remain local-only.** Cancel,
   rename, archive, and delete do not yet cross hosts, and the browser does not
   address remote Task entries. *Closing:* implement the later host lifecycle

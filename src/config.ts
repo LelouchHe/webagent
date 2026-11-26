@@ -106,6 +106,12 @@ export const ConfigSchema = z
         file_upload: z.number().int().positive().default(52_428_800), // 50 MB — non-image attachments
         cancel_timeout: z.number().int().nonnegative().default(10_000), // 10s; 0 disables
         silence_timeout: z.number().int().positive().default(15), // minutes without agent activity while an account is open
+        remote_delivery_timeout: z
+          .number()
+          .int()
+          .positive()
+          .max(1440)
+          .default(10), // minutes before an unhanded-off remote message times out while offline
         recent_paths: z.number().int().nonnegative().default(10), // /new + path-picker display limit; 0 = show all
         recent_paths_ttl: z.number().int().nonnegative().default(30), // days before auto-cleanup; 0 = keep forever
       })
@@ -115,6 +121,7 @@ export const ConfigSchema = z
         file_upload: 52_428_800,
         cancel_timeout: 10_000,
         silence_timeout: 15,
+        remote_delivery_timeout: 10,
         recent_paths: 10,
         recent_paths_ttl: 30,
       }),

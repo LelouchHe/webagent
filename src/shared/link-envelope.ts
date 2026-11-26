@@ -19,6 +19,14 @@ const receiptDataSchema = z.discriminatedUnion("status", [
   }),
 ]);
 
+const noticeDataSchema = z.object({
+  sourceTaskId: z.string(),
+  targetTaskId: z.string(),
+  reason: z.enum(["no_update", "no_activity", "target_removed"]),
+  message: z.string(),
+  targetLabel: z.string(),
+});
+
 export const linkEnvelopeSchema = z.discriminatedUnion("category", [
   z.object({
     id: z.uuid(),
@@ -35,11 +43,17 @@ export const linkEnvelopeSchema = z.discriminatedUnion("category", [
     category: z.literal("receipt"),
     data: receiptDataSchema,
   }),
+  z.object({
+    id: z.uuid(),
+    category: z.literal("notice"),
+    data: noticeDataSchema,
+  }),
 ]);
 
 export type LinkEnvelope = z.infer<typeof linkEnvelopeSchema>;
 export type LinkMessageData = z.infer<typeof messageDataSchema>;
 export type LinkReceiptData = z.infer<typeof receiptDataSchema>;
+export type LinkNoticeData = z.infer<typeof noticeDataSchema>;
 
 export class LinkProtocolError extends Error {
   constructor(message: string) {
