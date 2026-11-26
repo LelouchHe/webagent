@@ -40,6 +40,17 @@ time. An entry without a "closing condition" is a wish, not an issue.
 - **Owner entries stay queued indefinitely if a hub never reconnects.** The
   pull-side outbox does not expire entries when a hub stops dialing. *Closing:*
   add an explicit host/link removal operation.
+- **Owner-to-hub messages have no offline handoff timeout.** Timeout T runs
+  only on the hub pusher. While the hub is offline, an R1 → P `task_send` stays
+  queued on the owner with no failure notice to R1, unlike P → R1 (sync-model
+  exception E1). The owner cannot time out honestly: the pull side has no
+  handoff signal (the hub does not acknowledge its `applied` position), and a
+  missing receipt only means P has not drained the message yet, so timing out
+  on receipts would report failure for messages P later receives. *Closing:*
+  when a real workflow needs R1 to learn that the hub is gone, have the hub
+  report `applied` to the owner and apply the same `max(queued_at,
+  offlineSince) + T` rule and failed-run absorption on the owner's pull-side
+  cursor.
 - **A temporary apply failure on one link blocks later entries on that link.**
   Feed application is strictly serial per link; a transient error retries in
   place rather than skipping ahead. *Closing:* accepted trade-off until
