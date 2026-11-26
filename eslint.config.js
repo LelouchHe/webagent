@@ -8,6 +8,10 @@ import tseslint from "typescript-eslint";
 import prettier from "eslint-config-prettier";
 import globals from "globals";
 
+function maxLines(max) {
+  return { max, skipBlankLines: true, skipComments: true };
+}
+
 const hostImplementationPatterns = [
   {
     group: ["**/host/**"],
@@ -461,6 +465,41 @@ export default tseslint.config(
     ],
     rules: { "no-console": "off" },
   },
+
+  // File length: a ratchet. Global caps count code lines only. Files already
+  // over a cap are pinned at their current size below; they may shrink, never
+  // grow. When a split shrinks one, lower its pin in the same change; delete
+  // the pin once the file is under the global cap.
+  {
+    files: ["src/**/*.ts", "public/js/**/*.ts", "scripts/**/*.ts"],
+    rules: { "max-lines": ["error", maxLines(800)] },
+  },
+  {
+    files: ["test/**/*.ts", "bench/**/*.ts"],
+    rules: { "max-lines": ["error", maxLines(1500)] },
+  },
+  ...Object.entries({
+    "src/store.ts": 4337,
+    "src/http/routes.ts": 3753,
+    "src/task-manager.ts": 3279,
+    "public/js/events.ts": 2323,
+    "src/bridge.ts": 1046,
+    "public/js/slash-commands.ts": 1020,
+    "src/share/routes.ts": 975,
+    "public/js/markdown-stream.ts": 965,
+    "public/js/state.ts": 884,
+    "public/js/task-command.ts": 854,
+    "test/events.test.ts": 7026,
+    "test/task-manager.test.ts": 2741,
+    "test/link-sync.test.ts": 2210,
+    "test/tasks.test.ts": 1972,
+    "test/mcp-task-host.test.ts": 1953,
+    "test/store.test.ts": 1888,
+    "test/e2e/mock-agent.ts": 1678,
+  }).map(([file, max]) => ({
+    files: [file],
+    rules: { "max-lines": ["error", maxLines(max)] },
+  })),
 
   // Final: turn off rules that conflict with prettier (formatting)
   prettier,
