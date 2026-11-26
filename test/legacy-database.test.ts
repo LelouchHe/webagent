@@ -94,6 +94,35 @@ function makeOldRemoteTasksDb(dir: string): string {
   return dbPath;
 }
 
+function makeOldOutboxDb(dir: string): string {
+  const store = new Store(dir);
+  store.ensureRootTask("/tmp/root");
+  store.close();
+  const dbPath = join(dir, "webagent.db");
+  const db = new Database(dbPath);
+  db.exec(`
+    DROP TABLE outbox;
+    CREATE TABLE outbox (
+      pos INTEGER PRIMARY KEY,
+      entry_id TEXT NOT NULL UNIQUE,
+      remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
+      remote_host TEXT NOT NULL,
+      prev INTEGER NOT NULL,
+      category TEXT NOT NULL CHECK (category IN ('message', 'report', 'receipt')),
+      data_json TEXT NOT NULL,
+      delivery_id TEXT REFERENCES deliveries(id),
+      created_at INTEGER NOT NULL
+      CHECK (
+        (category IN ('message', 'report') AND delivery_id IS NOT NULL)
+        OR
+        (category = 'receipt' AND delivery_id IS NULL)
+      )
+    );
+  `);
+  db.close();
+  return dbPath;
+}
+
 describe("legacy database refusal", () => {
   it("detects tasks without a Root and command-path agent keys", () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-detect-"));
@@ -216,6 +245,34 @@ describe("legacy database refusal", () => {
         (error: unknown) => {
           assert.ok(error instanceof LegacyDatabaseError);
           assert.match(error.message, /remote_tasks link schema/);
+          assert.match(error.message, /nothing in it was changed/);
+          return true;
+        },
+      );
+      assert.equal(sha256(dbPath), beforeHash);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses the old 3-category outbox CHECK even with an empty outbox and leaves bytes unchanged", () => {
+    const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-outbox-"));
+    try {
+      const dbPath = makeOldOutboxDb(dir);
+      const beforeHash = sha256(dbPath);
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const report = detectLegacyDatabase(db);
+        assert.ok(report);
+        assert.equal(report.outdatedOutbox, true);
+      } finally {
+        db.close();
+      }
+      assert.throws(
+        () => new Store(dir),
+        (error: unknown) => {
+          assert.ok(error instanceof LegacyDatabaseError);
+          assert.match(error.message, /outbox schema/);
           assert.match(error.message, /nothing in it was changed/);
           return true;
         },

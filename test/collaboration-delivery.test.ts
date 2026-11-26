@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -1019,5 +1020,82 @@ describe("TaskManager collaboration delivery drain", () => {
       false,
     );
     assert.equal(tasks.hasOpenObligation("parent", "child"), true);
+  });
+
+  it("silently closes matching external account on inbound failure without emitting notice or touching local accounts", () => {
+    store.createDeferredRemoteTask({
+      id: "ext-child",
+      cwd: tmpDir,
+      source: "auto",
+      agentId: "test-agent",
+      externalParentId: "ext-parent",
+      remoteHost: "hub-a",
+      title: "Ext Child",
+      creationAnchor: { kind: "task_created", title: "Ext Child" },
+    });
+    const entryId = randomUUID();
+    store.applyLinkPushOperation({
+      remoteRole: "parent",
+      remoteHost: "hub-a",
+      envelope: {
+        id: entryId,
+        category: "message",
+        data: {
+          sourceTaskId: "ext-parent",
+          targetTaskId: "ext-child",
+          sourceLabel: "External Parent",
+          body: "do work",
+        },
+      },
+    });
+    // Open the external account (as drain would on handover), then fail the
+    // inbound delivery via clear/prompt failure.
+    (
+      tasks as unknown as {
+        obligations: {
+          arm: (s: string, t: string, k: "local" | "external") => void;
+        };
+      }
+    ).obligations.arm("ext-parent", "ext-child", "external");
+    assert.equal(tasks.hasOpenObligation("ext-parent", "ext-child"), true);
+    store.failQueuedDeliveries("ext-child", "clear");
+    assert.equal(tasks.hasOpenObligation("ext-parent", "ext-child"), false);
+    assert.equal(
+      store
+        .getEvents("ext-child")
+        .filter((e) => e.type === "task_outcome_notice").length,
+      0,
+    );
+
+    // On hub side: a local parent→child account on P is NOT closed when an
+    // inbound child→parent message from remote child fails on P.
+    seedDispatchFamily();
+    armDeliveredDispatch();
+    store.recordRemoteChild("child", "remote-grandchild", "owner-b");
+    const revId = randomUUID();
+    store.applyLinkFeedOperation({
+      remoteRole: "child",
+      remoteHost: "owner-b",
+      expectedApplied: 0,
+      nextApplied: 1,
+      envelope: {
+        id: revId,
+        category: "message",
+        data: {
+          sourceTaskId: "remote-grandchild",
+          targetTaskId: "child",
+          sourceLabel: "Remote Grandchild",
+          body: "hello",
+        },
+      },
+    });
+    store.failQueuedDeliveries("child", "clear");
+    // Local account parent→child must still be open, and no notice emitted.
+    assert.equal(tasks.hasOpenObligation("parent", "child"), true);
+    assert.equal(
+      store.getEvents("child").filter((e) => e.type === "task_outcome_notice")
+        .length,
+      0,
+    );
   });
 });

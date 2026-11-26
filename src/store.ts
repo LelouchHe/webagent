@@ -335,6 +335,7 @@ export interface CollaborationDeliveryStatusChange {
   deliveredAt: number | null;
   failureReason: string | null;
   suppressFailureNotice: boolean;
+  sourceRemoteRole: LinkRemoteRole | null;
 }
 
 export interface SystemDeliveryInput {
@@ -990,14 +991,14 @@ export class Store {
         remote_role TEXT NOT NULL CHECK (remote_role IN ('parent', 'child')),
         remote_host TEXT NOT NULL,
         prev INTEGER NOT NULL,
-        category TEXT NOT NULL CHECK (category IN ('message', 'report', 'receipt')),
+        category TEXT NOT NULL CHECK (category IN ('message', 'report', 'receipt', 'notice')),
         data_json TEXT NOT NULL,
         delivery_id TEXT REFERENCES deliveries(id),
         created_at INTEGER NOT NULL
         CHECK (
           (category IN ('message', 'report') AND delivery_id IS NOT NULL)
           OR
-          (category = 'receipt' AND delivery_id IS NULL)
+          (category IN ('receipt', 'notice') AND delivery_id IS NULL)
         )
       );
       CREATE INDEX IF NOT EXISTS idx_outbox_link_pos
@@ -3123,7 +3124,7 @@ export class Store {
         .prepare(
           `SELECT d.id AS delivery_id, d.message_id, d.recipient_task_id,
                   d.status, d.delivered_at, d.failure_reason,
-                  m.source_task_id
+                  d.source_remote_role, m.source_task_id
            FROM deliveries d JOIN messages m ON m.id = d.message_id
            WHERE d.id IN (${placeholders}) AND m.source_actor <> 'system'`,
         )
@@ -3134,6 +3135,7 @@ export class Store {
         status: CollaborationDeliveryStatus;
         delivered_at: number | null;
         failure_reason: string | null;
+        source_remote_role: LinkRemoteRole | null;
         source_task_id: string;
       }>;
       for (const row of rows) {
@@ -3146,6 +3148,7 @@ export class Store {
           deliveredAt: row.delivered_at,
           failureReason: row.failure_reason,
           suppressFailureNotice: options.suppressFailureNotice === true,
+          sourceRemoteRole: row.source_remote_role,
         });
       }
     }
@@ -3478,13 +3481,21 @@ export class Store {
         Date.now(),
         failureReason,
       );
+      const drainTaskIds: string[] = [];
+      if (changed) {
+        const drainTaskId = this.writeOutboundFailureNoticeInTransaction(
+          row.delivery_id,
+          failureReason,
+        );
+        if (drainTaskId) drainTaskIds.push(drainTaskId);
+      }
       const pushedPos = this.advanceOutboxPushCursor(
         remoteRole,
         remoteHost,
         entryId,
       );
       return {
-        drainTaskIds: [],
+        drainTaskIds,
         deliveryStatusIds: changed ? [row.delivery_id] : [],
         outboxEntryIds: [],
         pushCursorPos: pushedPos === null ? [] : [pushedPos],
@@ -3658,6 +3669,7 @@ export class Store {
         Date.now(),
         input.failureReason,
       );
+    // Owner keeps writing pushed_pos symmetrically; harmless because only hub reads it.
     const pushedPos = this.advanceOutboxPushCursor(
       row.remote_role,
       row.remote_host,
@@ -3666,9 +3678,83 @@ export class Store {
     if (pushedPos !== null) effects.pushCursorPos.push(pushedPos);
     if (changed || terminal) {
       effects.deliveryStatusIds.push(row.delivery_id);
+      if (input.status === "failed") {
+        const drainTaskId = this.writeOutboundFailureNoticeInTransaction(
+          row.delivery_id,
+          input.failureReason,
+        );
+        if (drainTaskId) effects.drainTaskIds.push(drainTaskId);
+      }
       return { known: true, changed: true, effects };
     }
     return { known: true, changed: false, effects };
+  }
+
+  protected writeOutcomeNoticeInTransaction(input: {
+    sourceTaskId: string;
+    targetTaskId: string;
+    reason: "no_update" | "no_activity" | "target_removed";
+    message: string;
+    targetLabel?: string | null;
+  }): string | null {
+    if (!this.getTask(input.sourceTaskId)) return null;
+    const trimmedLabel = input.targetLabel?.trim();
+    const explicitLabel =
+      trimmedLabel && trimmedLabel.length > 0 ? trimmedLabel : null;
+    const targetLabel =
+      explicitLabel ??
+      this.getTaskIncludingDeleted(input.targetTaskId)?.title ??
+      this.getRemoteChildTitle(input.sourceTaskId, input.targetTaskId);
+    const messageId = randomUUID();
+    this.saveEvent(
+      input.sourceTaskId,
+      "task_outcome_notice",
+      {
+        messageId,
+        reason: input.reason,
+        sourceTaskId: input.sourceTaskId,
+        targetTaskId: input.targetTaskId,
+        message: input.message,
+      },
+      { from_ref: "system" },
+    );
+    const body = formatFieldBlock([
+      {
+        label: "target",
+        value: targetLabel
+          ? `${targetLabel} (${input.targetTaskId})`
+          : input.targetTaskId,
+      },
+      { label: "message", value: input.message },
+    ]);
+    this.createSystemDelivery({
+      messageId,
+      deliveryId: randomUUID(),
+      fromTaskId: input.targetTaskId,
+      recipientTaskId: input.sourceTaskId,
+      body,
+    });
+    return input.sourceTaskId;
+  }
+
+  protected writeOutboundFailureNoticeInTransaction(
+    deliveryId: string,
+    failureReason: string | null | undefined,
+    customMessage?: string,
+  ): string | null {
+    const delivery = this.getCollaborationDelivery(deliveryId);
+    if (!delivery) return null;
+    const message = this.getCollaborationMessage(delivery.message_id);
+    if (message?.source_actor !== "agent") return null;
+    const text =
+      customMessage ??
+      `A message to the target was not delivered (${failureReason ?? "unknown"}).`;
+    return this.writeOutcomeNoticeInTransaction({
+      sourceTaskId: message.source_task_id,
+      targetTaskId: delivery.recipient_task_id,
+      reason: "target_removed",
+      message: text,
+    });
   }
 
   private enqueueOutboxInTransaction(input: {

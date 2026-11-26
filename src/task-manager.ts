@@ -4102,10 +4102,20 @@ export class TaskManager implements ObligationHost {
     this.collaborationSourceLabels.delete(change.messageId);
     const message = this.store.getCollaborationMessage(change.messageId);
     if (message?.source_actor !== "agent") return;
+    const open = this.obligations.peekSource(change.recipientTaskId);
+    if (change.sourceRemoteRole !== null) {
+      if (
+        open?.sourceKind === "external" &&
+        open.sourceTaskId === message.source_task_id
+      ) {
+        this.obligations.close(change.recipientTaskId);
+      }
+      return;
+    }
     const text = `A message to the target was not delivered (${change.failureReason ?? "unknown"}).`;
     if (
-      this.obligations.peekSource(change.recipientTaskId)?.sourceTaskId ===
-      message.source_task_id
+      open?.sourceKind === "local" &&
+      open.sourceTaskId === message.source_task_id
     ) {
       this.obligations.noteTargetUnavailable(change.recipientTaskId, text);
       return;

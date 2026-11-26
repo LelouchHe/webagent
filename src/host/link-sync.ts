@@ -255,6 +255,7 @@ export interface LinkSyncHubPusherOptions {
   timeoutMs?: number;
   retryDelay: (attempt: number, result: SyncRequestResult<unknown>) => number;
   timer?: SyncTimer;
+  effects?: LinkSyncEffectCallbacks;
 }
 
 const DEFAULT_SYNC_TIMER: SyncTimer = {
@@ -378,15 +379,23 @@ export class LinkSyncHubPusher {
       typeof (result.body as { error?: unknown }).error === "string"
         ? (result.body as { error: string }).error
         : code;
-    const effects = this.options.store.rejectOutboxHead(
-      "child",
-      this.options.host,
-      entry.id,
-      reason,
-    );
-    this.options.store.broadcastDeliveryStatus(effects.deliveryStatusIds, {
-      suppressFailureNotice: true,
-    });
+    let effects: LinkApplyEffects;
+    try {
+      effects = this.options.store.rejectOutboxHead(
+        "child",
+        this.options.host,
+        entry.id,
+        reason,
+      );
+    } catch (error) {
+      log.scope("hosts").warn("link push reject persistence failed", {
+        host: this.options.host,
+        entryId: entry.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+    executeLinkEffects(this.options.store, effects, this.options.effects);
     return true;
   }
 }

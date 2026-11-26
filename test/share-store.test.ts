@@ -378,6 +378,7 @@ describe("shares store", () => {
           deliveredAt: null,
           failureReason: "target_deleted",
           suppressFailureNotice: false,
+          sourceRemoteRole: null,
         },
       ]);
     });

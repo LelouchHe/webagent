@@ -215,6 +215,11 @@ const hostRegistry = new HostRegistry(config.hosts, {
       store,
       transport: connection.pushTransport(),
       retryDelay: (attempt) => retryDelay(attempt),
+      effects: {
+        drainTask: (taskId) => {
+          void tasks.drainCollaborationDeliveries(taskId);
+        },
+      },
     });
     const consumer = new LinkSyncHubConsumer({
       host,

@@ -715,6 +715,267 @@ describe("dormant link sync handlers", () => {
       pusher.stop();
     }
   });
+  it("emits exactly one sender failure notice across receipt, reject, and late receipts", async () => {
+    store.createTask("parent", dir, "auto", "mock", "parent-session");
+    store.recordRemoteChild("parent", "remote", "owner");
+    const entry = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "work",
+    });
+
+    const drained: string[] = [];
+    const transport = new CapturedFeedTransport();
+    const consumer = new LinkSyncHubConsumer({
+      store,
+      host: "owner",
+      transport,
+      retryDelay: () => 0,
+      effects: { drainTask: (taskId) => drained.push(taskId) },
+    });
+    consumer.start();
+    try {
+      await waitUntil(() => transport.watchInput !== undefined);
+      await transport.deliver({
+        pos: 1,
+        prev: 0,
+        data: {
+          id: randomUUID(),
+          category: "receipt",
+          data: {
+            originalEntryId: entry.entry_id,
+            status: "failed",
+            failureReason: "target_deleted",
+          },
+        },
+      });
+      // Late duplicate failed receipt must be consumed without a second notice.
+      await transport.deliver({
+        pos: 2,
+        prev: 1,
+        data: {
+          id: randomUUID(),
+          category: "receipt",
+          data: {
+            originalEntryId: entry.entry_id,
+            status: "failed",
+            failureReason: "clear",
+          },
+        },
+      });
+      assert.equal(store.getOutboxCursor("child", "owner"), 2);
+      const notices = store
+        .getEvents("parent")
+        .filter((event) => event.type === "task_outcome_notice");
+      assert.equal(notices.length, 1);
+      const payload = JSON.parse(notices[0].data) as Record<string, unknown>;
+      assert.equal(payload.reason, "target_removed");
+      assert.equal(payload.sourceTaskId, "parent");
+      assert.equal(payload.targetTaskId, "remote");
+      assert.equal(
+        payload.message,
+        "A message to the target was not delivered (target_deleted).",
+      );
+      assert.equal(typeof payload.messageId, "string");
+      assert.equal(store.countQueuedDeliveries("parent"), 1);
+      assert.deepEqual(drained, ["parent"]);
+    } finally {
+      consumer.stop();
+    }
+  });
+
+  it("rolls back completely and retries cleanly on transient notice-delivery failure across push, pull, and reject boundaries", async () => {
+    // 1. Push apply boundary (owner receives failed receipt for R1's outbound report)
+    store.createTask("child", dir, "auto", "mock", "child-session");
+    const report = store.enqueueLinkReport({
+      remoteRole: "parent",
+      remoteHost: "hub-a",
+      sourceTaskId: "child",
+      targetTaskId: "parent-a",
+      sourceLabel: "Child",
+      body: "done",
+    });
+    const pushDrained: string[] = [];
+    const owner = new LinkSyncOwner(store, {
+      drainTask: (taskId) => pushDrained.push(taskId),
+    });
+    const origCreateSystemDelivery = store.createSystemDelivery.bind(store);
+    let failOnce = true;
+    store.createSystemDelivery = (input) => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error("injected_transient_db_error");
+      }
+      return origCreateSystemDelivery(input);
+    };
+
+    const receiptEnvelope = {
+      id: randomUUID(),
+      category: "receipt" as const,
+      data: {
+        originalEntryId: report.entry_id,
+        status: "failed" as const,
+        failureReason: "target_deleted",
+      },
+    };
+    assert.throws(
+      () => owner.push("hub-a", receiptEnvelope),
+      /injected_transient_db_error/,
+    );
+    assert.equal(
+      store.getCollaborationDelivery(report.delivery_id!)?.status,
+      "queued",
+    );
+    assert.equal(
+      store.getEvents("child").filter((e) => e.type === "task_outcome_notice")
+        .length,
+      0,
+    );
+    assert.equal(store.countQueuedDeliveries("child"), 0);
+    assert.deepEqual(pushDrained, []);
+
+    const retryRes = owner.push("hub-a", receiptEnvelope);
+    assert.equal(retryRes.status, 202);
+    assert.equal(
+      store.getCollaborationDelivery(report.delivery_id!)?.status,
+      "failed",
+    );
+    assert.equal(
+      store.getEvents("child").filter((e) => e.type === "task_outcome_notice")
+        .length,
+      1,
+    );
+    assert.equal(store.countQueuedDeliveries("child"), 1);
+    assert.deepEqual(pushDrained, ["child"]);
+
+    // 2. Pull apply boundary (hub receives failed receipt on feed)
+    store.createTask("parent", dir, "auto", "mock", "parent-session");
+    store.recordRemoteChild("parent", "remote", "owner");
+    const outbound = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "hi",
+    });
+    failOnce = true;
+    const pullDrained: string[] = [];
+    const pullReceipt = {
+      id: randomUUID(),
+      category: "receipt" as const,
+      data: {
+        originalEntryId: outbound.entry_id,
+        status: "failed" as const,
+        failureReason: "clear",
+      },
+    };
+    assert.throws(
+      () =>
+        store.applyLinkFeedOperation({
+          remoteRole: "child",
+          remoteHost: "owner",
+          expectedApplied: 0,
+          nextApplied: 1,
+          envelope: pullReceipt,
+        }),
+      /injected_transient_db_error/,
+    );
+    assert.equal(store.getOutboxCursor("child", "owner"), 0);
+    assert.equal(
+      store.getCollaborationDelivery(outbound.delivery_id!)?.status,
+      "queued",
+    );
+    assert.equal(
+      store.getEvents("parent").filter((e) => e.type === "task_outcome_notice")
+        .length,
+      0,
+    );
+
+    const transport = new CapturedFeedTransport();
+    const consumer = new LinkSyncHubConsumer({
+      store,
+      host: "owner",
+      transport,
+      retryDelay: () => 0,
+      effects: { drainTask: (taskId) => pullDrained.push(taskId) },
+    });
+    consumer.start();
+    try {
+      await waitUntil(() => transport.watchInput !== undefined);
+      await transport.deliver({ pos: 1, prev: 0, data: pullReceipt });
+      assert.equal(store.getOutboxCursor("child", "owner"), 1);
+      assert.equal(
+        store.getCollaborationDelivery(outbound.delivery_id!)?.status,
+        "failed",
+      );
+      assert.equal(
+        store
+          .getEvents("parent")
+          .filter((e) => e.type === "task_outcome_notice").length,
+        1,
+      );
+      assert.deepEqual(pullDrained, ["parent"]);
+    } finally {
+      consumer.stop();
+    }
+
+    // 3. Reject boundary (hub pusher retries rejectOutboxHead on transient persistence error)
+    const rejectedEntry = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "conflict",
+    });
+    failOnce = true;
+    let pushAttempts = 0;
+    const rejectDrained: string[] = [];
+    const pusher = new LinkSyncHubPusher({
+      host: "owner",
+      store,
+      retryDelay: () => 5,
+      effects: { drainTask: (taskId) => rejectDrained.push(taskId) },
+      transport: {
+        send: async () => {
+          pushAttempts += 1;
+          return {
+            status: 409,
+            body: { error: "link_op_conflict", code: "link_op_conflict" },
+          };
+        },
+      },
+    });
+    pusher.start();
+    try {
+      await waitUntil(() => pushAttempts >= 2 && rejectDrained.length === 1);
+      assert.equal(
+        store.getCollaborationDelivery(rejectedEntry.delivery_id!)?.status,
+        "failed",
+      );
+      assert.equal(
+        store.getOutboxPushCursor("child", "owner"),
+        rejectedEntry.pos,
+      );
+      assert.equal(
+        store
+          .getEvents("parent")
+          .filter((e) => e.type === "task_outcome_notice").length,
+        2,
+      );
+      assert.deepEqual(rejectDrained, ["parent"]);
+    } finally {
+      pusher.stop();
+      store.createSystemDelivery = origCreateSystemDelivery;
+    }
+  });
 });
 
 class CapturedFeedTransport implements SyncFeedTransport {
