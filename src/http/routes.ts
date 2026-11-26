@@ -1502,12 +1502,12 @@ export function createRequestHandler(
       const cancelMatch = url.match(/^\/api\/v1\/tasks\/([^/]+)\/cancel\/?$/);
       if (cancelMatch && req.method === "POST") {
         await handleCancelTaskRoute({
+          ...deps,
           req,
           res,
           taskId: decodeURIComponent(cancelMatch[1]),
-          store,
-          tasks,
-          taskOps: deps.taskOps,
+          principal: principalByRequest.get(req),
+          readBody,
           json,
           tryReplayClientOp,
           saveClientOpResult,

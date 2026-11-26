@@ -92,7 +92,23 @@ const RemoteTaskStatusSchema = z.object({
   lastAgentActivityAt: z.string().nullable(),
 });
 
+const TaskCancelResponseSchema = z.object({
+  ok: z.literal(true),
+  status: z.enum(["idle", "cancelling", "cancelled", "superseded"]),
+});
+
 export type RemoteTaskStatus = z.infer<typeof RemoteTaskStatusSchema>;
+
+export type HostTaskCancelRequest =
+  { kind: "user" } | { kind: "agent"; reason: string; sourceLabel: string };
+
+export type HostTaskCancelAttempt =
+  | {
+      kind: "success";
+      status: "idle" | "cancelling" | "cancelled" | "superseded";
+    }
+  | { kind: "rejected"; status: number; reason: string }
+  | { kind: "unknown"; reason: string };
 
 const FeedEntrySchema = z.object({
   pos: z.number().int().positive(),
@@ -323,6 +339,58 @@ export class HostConnection {
         },
       },
     };
+  }
+
+  async cancelTask(
+    taskId: string,
+    input: HostTaskCancelRequest,
+  ): Promise<HostTaskCancelAttempt> {
+    let token: string;
+    try {
+      token = await this.resolveToken();
+    } catch {
+      return { kind: "unknown", reason: "Host credential is unavailable" };
+    }
+    const outcome = await sendSyncRequest({
+      opId: null,
+      request: {
+        method: "POST",
+        path: `/api/v1/tasks/${encodeURIComponent(taskId)}/cancel`,
+        body: input,
+        token,
+        redirect: "error",
+      },
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      transport: this.requestTransport,
+      timer: this.timer,
+    });
+    if (outcome.kind === "unknown") {
+      return { kind: "unknown", reason: errorMessage(outcome.error) };
+    }
+    if (outcome.kind === "rejected") {
+      return {
+        kind: "rejected",
+        status: outcome.status,
+        reason: responseError(outcome.body, outcome.status),
+      };
+    }
+    if (
+      outcome.status !== HTTP_STATUS.OK &&
+      outcome.status !== HTTP_STATUS.ACCEPTED
+    ) {
+      return {
+        kind: "unknown",
+        reason: `Unexpected HTTP ${outcome.status}`,
+      };
+    }
+    const parsed = TaskCancelResponseSchema.safeParse(outcome.body);
+    if (!parsed.success) {
+      return {
+        kind: "unknown",
+        reason: "Remote returned an incomplete task-cancel response",
+      };
+    }
+    return { kind: "success", status: parsed.data.status };
   }
 
   async getJson(path: string): Promise<unknown> {

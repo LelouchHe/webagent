@@ -12,12 +12,18 @@ import type {
 import { buildTaskHistoryQuery } from "../../task-history.ts";
 import {
   TaskHostNotConfiguredError,
+  TaskRemoteCancelRejectedError,
+  TaskRemoteCancelUnknownError,
   TaskRemoteCreateNotSentError,
   TaskRemoteCreateRejectedError,
   TaskRemoteCreateUnknownError,
 } from "../../api/tasks.ts";
 import { log } from "../../log.ts";
-import { HostConnection, REMOTE_STATUS_TIMEOUT_MS } from "./connection.ts";
+import {
+  HostConnection,
+  REMOTE_STATUS_TIMEOUT_MS,
+  type HostTaskCancelRequest,
+} from "./connection.ts";
 import type {
   HostRuntimeState,
   HostConnectionState,
@@ -155,6 +161,10 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     );
   }
 
+  hasConnections(): boolean {
+    return this.connections.size > 0;
+  }
+
   hasRemoteChild(localParentTaskId: string): boolean {
     if (this.connections.size === 0) return false;
     return this.linksForParent(localParentTaskId).length > 0;
@@ -177,6 +187,46 @@ export class HostRegistry implements RemoteTaskCreateTransport {
       parentTaskId: localParentTaskId,
       connection,
     };
+  }
+
+  resolveRemoteChildByTaskId(
+    remoteTaskId: string,
+    isLiveParent: (localTaskId: string) => boolean,
+  ): RemoteTaskTarget | undefined {
+    if (this.connections.size === 0) return undefined;
+    const link = (this.options?.listLinks() ?? []).find(
+      (candidate) =>
+        candidate.remoteTaskId === remoteTaskId &&
+        isLiveParent(candidate.localTaskId),
+    );
+    if (!link) return undefined;
+    const connection = this.connections.get(link.host);
+    if (!connection) return undefined;
+    return {
+      host: link.host,
+      taskId: link.remoteTaskId,
+      parentTaskId: link.localTaskId,
+      connection,
+    };
+  }
+
+  async cancelRemote(
+    target: RemoteTaskTarget,
+    input: HostTaskCancelRequest,
+  ): Promise<"idle" | "cancelling" | "cancelled" | "superseded"> {
+    const attempt = await target.connection.cancelTask(target.taskId, input);
+    switch (attempt.kind) {
+      case "success":
+        return attempt.status;
+      case "rejected":
+        throw new TaskRemoteCancelRejectedError(
+          target.host,
+          attempt.status,
+          attempt.reason,
+        );
+      case "unknown":
+        throw new TaskRemoteCancelUnknownError(target.host, attempt.reason);
+    }
   }
 
   async queryRemote(

@@ -348,6 +348,9 @@ const routedTaskOps: TaskOps = {
     store,
     tasks,
     broadcastCollaboration,
+    broadcastTaskCancelNotice: (event) => {
+      sseManager.broadcast(event);
+    },
   }),
 };
 tasks.setRemoteChildWakeSource((taskId) => hostRegistry.hasRemoteChild(taskId));

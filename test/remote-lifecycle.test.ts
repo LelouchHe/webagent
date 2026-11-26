@@ -1,15 +1,35 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import {
+  TaskRemoteCancelRejectedError,
+  TaskRemoteCancelUnknownError,
+} from "../src/api/tasks.ts";
+import { AuthStore } from "../src/auth-store.ts";
+import { isHostScopeAllowedPath } from "../src/auth-middleware.ts";
+import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { HostRegistry } from "../src/host/remote/registry.ts";
+import { createRoutedTaskOps, resolveCancelTarget } from "../src/host/tasks.ts";
+import { createRequestHandler } from "../src/http/routes.ts";
 import {
   isDeliveryLinkCategory,
   LinkProtocolError,
   parseLinkEnvelope,
 } from "../src/shared/link-envelope.ts";
+import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
+import {
+  SingleAgentEnvironment,
+  TaskManager,
+  TaskNotFoundError,
+} from "../src/task-manager.ts";
+import { ExecutionAuthority } from "../src/execution-authority.ts";
+import { TaskStateManager } from "../src/task-state.ts";
+import type { TaskCancelNoticeEvent } from "../src/task-cancel-record.ts";
 
 describe("remote lifecycle: relation envelope and outbox schema", () => {
   it("parses valid relation(child_left) envelopes and rejects malformed ones", () => {
@@ -127,6 +147,542 @@ describe("remote lifecycle: relation envelope and outbox schema", () => {
     } finally {
       store.close();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+async function createTestHost(dir: string) {
+  const store = new Store(dir);
+  const root = store.ensureRootTask(dir);
+  const authority = new ExecutionAuthority();
+  const tasks = new TaskManager({
+    store,
+    defaultCwd: dir,
+    dataDir: dir,
+    state: new TaskStateManager(),
+    authority,
+    agents: new SingleAgentEnvironment("pi"),
+  });
+  const authStore = new AuthStore(join(dir, "tokens.json"));
+  await authStore.load();
+  const userToken = (await authStore.addToken("user-token", "admin")).token;
+  const hostToken = (await authStore.addToken("hub-a", "host")).token;
+  const wrongHostToken = (await authStore.addToken("hub-other", "host")).token;
+  const cancelNotices: TaskCancelNoticeEvent[] = [];
+  return {
+    store,
+    root,
+    tasks,
+    authority,
+    authStore,
+    userToken,
+    hostToken,
+    wrongHostToken,
+    cancelNotices,
+  };
+}
+
+async function startTestServer(
+  handler: ReturnType<typeof createRequestHandler>,
+): Promise<{ origin: string; close: () => Promise<void> }> {
+  const server = createServer((req, res) => {
+    void handler(req, res);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("server failed to bind");
+  }
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+        server.closeAllConnections();
+      }),
+  };
+}
+
+describe("remote lifecycle: cancel resolver, auth, and routing", () => {
+  it("allows POST /api/v1/tasks/:id/cancel in host scope", () => {
+    assert.equal(
+      isHostScopeAllowedPath("POST", "/api/v1/tasks/task-1/cancel"),
+      true,
+    );
+    assert.equal(
+      isHostScopeAllowedPath("GET", "/api/v1/tasks/task-1/cancel"),
+      false,
+    );
+  });
+
+  it("resolves user, agent, and host cancel routes with live-parent check", () => {
+    const dir = mkdtempSync(join(tmpdir(), "webagent-cancel-resolve-"));
+    const store = new Store(dir);
+    try {
+      const root = store.ensureRootTask(dir);
+      store.createTask("p1", dir, "auto", "pi", "s-p1", root.id, {
+        title: "Parent 1",
+      });
+      store.createTask("p-soft", dir, "auto", "pi", "s-ps", root.id, {
+        title: "Soft Parent",
+      });
+      store.recordRemoteChild("p1", "r1", "owner-1");
+      store.recordRemoteChild("p-soft", "r-soft", "owner-1");
+      // Tombstone p-soft via active share + soft delete
+      store.insertSharePreview({
+        token: "token-soft",
+        taskId: "p-soft",
+        snapshotSeq: 0,
+      });
+      store.activateShare("token-soft", {});
+      store.deleteTask("p-soft");
+
+      const registry = new HostRegistry(
+        {
+          "owner-1": {
+            url: "http://127.0.0.1:9999",
+            token: "tok",
+          },
+        },
+        {
+          listLinks: () =>
+            store.listRemoteChildren().map((row) => ({
+              localTaskId: row.local_task_id,
+              remoteTaskId: row.remote_task_id,
+              host: row.remote_host,
+            })),
+        },
+      );
+
+      // Behavior proof: user cancel resolves local task first, then live-parent remote child, then not_found
+      assert.equal(
+        resolveCancelTarget({ kind: "user", taskId: "p1" }, store, registry)
+          .kind,
+        "local",
+      );
+      const remoteRoute = resolveCancelTarget(
+        { kind: "user", taskId: "r1" },
+        store,
+        registry,
+      );
+      assert.equal(remoteRoute.kind, "remote");
+      assert.equal(remoteRoute.target.host, "owner-1");
+      assert.equal(
+        resolveCancelTarget({ kind: "user", taskId: "r-soft" }, store, registry)
+          .kind,
+        "not_found",
+      );
+      assert.equal(
+        resolveCancelTarget(
+          { kind: "user", taskId: "missing" },
+          store,
+          registry,
+        ).kind,
+        "not_found",
+      );
+
+      // Behavior proof: agent cancel resolves only its own remote child
+      const agentRoute = resolveCancelTarget(
+        {
+          kind: "agent",
+          principal: {
+            taskId: "p1",
+            agentId: "pi",
+            generation: 1,
+            initializing: false,
+          },
+          targetTaskId: "r1",
+          reason: "stop",
+        },
+        store,
+        registry,
+      );
+      assert.equal(agentRoute.kind, "remote");
+      assert.equal(
+        resolveCancelTarget(
+          {
+            kind: "agent",
+            principal: {
+              taskId: root.id,
+              agentId: "pi",
+              generation: 1,
+              initializing: false,
+            },
+            targetTaskId: "r1",
+            reason: "stop",
+          },
+          store,
+          registry,
+        ).kind,
+        "local",
+      );
+
+      // Regression guard: host cancel never forwards
+      assert.equal(
+        resolveCancelTarget(
+          { kind: "host", taskId: "r1", actor: { kind: "user" } },
+          store,
+          registry,
+        ).kind,
+        "local",
+      );
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("enforces owner host-scope auth, strict body parsing, no client_ops, and hub/owner cancel records", async () => {
+    const ownerDir = mkdtempSync(join(tmpdir(), "webagent-cancel-owner-"));
+    const hubDir = mkdtempSync(join(tmpdir(), "webagent-cancel-hub-"));
+    const owner = await createTestHost(ownerDir);
+    const hub = await createTestHost(hubDir);
+    let ownerServer: Awaited<ReturnType<typeof startTestServer>> | undefined;
+    let hubServer: Awaited<ReturnType<typeof startTestServer>> | undefined;
+    try {
+      hub.store.createTask("p1", hubDir, "auto", "pi", "s-p1", hub.root.id, {
+        title: "Hub Parent",
+      });
+      hub.store.createTask("p2", hubDir, "auto", "pi", "s-p2", hub.root.id, {
+        title: "Other Hub Parent",
+      });
+      hub.store.saveEvent(
+        "p1",
+        "system_message",
+        { kind: "task_created", taskId: "r1", taskTitle: "Remote Worker" },
+        { from_ref: "agent" },
+      );
+      owner.store.createDeferredRemoteTask({
+        id: "r1",
+        cwd: ownerDir,
+        source: "agent",
+        agentId: "pi",
+        externalParentId: "p1",
+        remoteHost: "hub-a",
+        title: "Remote Worker",
+        creationAnchor: { kind: "task_created", taskId: "r1" },
+      });
+
+      const ownerLocalOps = createLocalTaskOps({
+        store: owner.store,
+        tasks: owner.tasks,
+        broadcastTaskCancelNotice: (ev) => owner.cancelNotices.push(ev),
+      });
+      const ownerRemote = new HostRegistry({}, { listLinks: () => [] });
+      const ownerTaskOps = {
+        ...ownerLocalOps,
+        ...createRoutedTaskOps({
+          local: ownerLocalOps,
+          remote: ownerRemote,
+          store: owner.store,
+          tasks: owner.tasks,
+          broadcastCollaboration: () => {},
+          broadcastTaskCancelNotice: (ev) => owner.cancelNotices.push(ev),
+        }),
+      };
+      ownerServer = await startTestServer(
+        createRequestHandler({
+          store: owner.store,
+          tasks: owner.tasks,
+          taskOps: ownerTaskOps,
+          sseManager: Object.assign(new SseManager(), { broadcast() {} }),
+          publicDir: ownerDir,
+          dataDir: ownerDir,
+          limits: { bash_output: 1024, image_upload: 1024 },
+          authStore: owner.authStore,
+        }),
+      );
+
+      const stats = { cancelPosts: 0 };
+      let dropNextCancelResponse = false;
+      let onBeforeRemoteCancel: (() => void) | undefined;
+      const customFetch: typeof globalThis.fetch = async (input, init) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        if (url.endsWith("/cancel")) {
+          stats.cancelPosts += 1;
+          onBeforeRemoteCancel?.();
+          const res = await globalThis.fetch(input, init);
+          if (dropNextCancelResponse) {
+            dropNextCancelResponse = false;
+            throw new TypeError("simulated response drop");
+          }
+          return res;
+        }
+        return globalThis.fetch(input, init);
+      };
+
+      hub.store.recordRemoteChild("p1", "r1", "owner-1");
+      const hubRegistry = new HostRegistry(
+        {
+          "owner-1": {
+            url: ownerServer.origin,
+            token: owner.hostToken,
+          },
+        },
+        {
+          fetch: customFetch,
+          listLinks: () =>
+            hub.store.listRemoteChildren().map((row) => ({
+              localTaskId: row.local_task_id,
+              remoteTaskId: row.remote_task_id,
+              host: row.remote_host,
+            })),
+        },
+      );
+      const hubLocalOps = createLocalTaskOps({
+        store: hub.store,
+        tasks: hub.tasks,
+        broadcastTaskCancelNotice: (ev) => hub.cancelNotices.push(ev),
+      });
+      const hubTaskOps = {
+        ...hubLocalOps,
+        ...createRoutedTaskOps({
+          local: hubLocalOps,
+          remote: hubRegistry,
+          store: hub.store,
+          tasks: hub.tasks,
+          broadcastCollaboration: () => {},
+          broadcastTaskCancelNotice: (ev) => hub.cancelNotices.push(ev),
+        }),
+      };
+      hubServer = await startTestServer(
+        createRequestHandler({
+          store: hub.store,
+          tasks: hub.tasks,
+          taskOps: hubTaskOps,
+          hostRegistry: hubRegistry,
+          sseManager: Object.assign(new SseManager(), { broadcast() {} }),
+          publicDir: hubDir,
+          dataDir: hubDir,
+          limits: { bash_output: 1024, image_upload: 1024 },
+          authStore: hub.authStore,
+        }),
+      );
+
+      // Seed a cached client_op on owner for r1 to verify host path ignores client_ops
+      owner.store.saveClientOp("r1", "cached-op-1", {
+        status: 200,
+        body: { ok: true, status: "cancelled" },
+      });
+
+      // 1. Wrong host token with cached op id -> 404 (not replayed!)
+      const wrongRes = await fetch(
+        `${ownerServer.origin}/api/v1/tasks/r1/cancel`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${owner.wrongHostToken}`,
+            "Content-Type": "application/json",
+            "X-Client-Op-Id": "cached-op-1",
+          },
+          body: JSON.stringify({ kind: "user" }),
+        },
+      );
+      assert.equal(wrongRes.status, 404);
+
+      // 2. Valid host token with cached op id -> executes live (status "idle"), NOT cached "cancelled"
+      const liveHostRes = await fetch(
+        `${ownerServer.origin}/api/v1/tasks/r1/cancel`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${owner.hostToken}`,
+            "Content-Type": "application/json",
+            "X-Client-Op-Id": "cached-op-1",
+          },
+          body: JSON.stringify({ kind: "user" }),
+        },
+      );
+      assert.equal(liveHostRes.status, 200);
+      assert.deepEqual(await liveHostRes.json(), { ok: true, status: "idle" });
+
+      // 3. Invalid body on host route -> 400 (including forged sourceTaskId)
+      const badBodyRes = await fetch(
+        `${ownerServer.origin}/api/v1/tasks/r1/cancel`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${owner.hostToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            kind: "agent",
+            reason: "stop",
+            sourceLabel: "Hub Parent",
+            sourceTaskId: "forged-parent",
+          }),
+        },
+      );
+      assert.equal(badBodyRes.status, 400);
+
+      // 4. User cancel via hub REST -> 200 idle, NO task_cancel rows on either side
+      const userRemoteRes = await fetch(
+        `${hubServer.origin}/api/v1/tasks/r1/cancel`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${hub.userToken}` },
+        },
+      );
+      assert.equal(userRemoteRes.status, 200);
+      assert.deepEqual(await userRemoteRes.json(), {
+        ok: true,
+        status: "idle",
+      });
+      const hubNoticeCount = () => hub.cancelNotices.length;
+      const ownerNoticeCount = () => owner.cancelNotices.length;
+      assert.equal(hubNoticeCount(), 0);
+      assert.equal(ownerNoticeCount(), 0);
+
+      // 5. Agent cancel via hub TaskOps -> 1 source row on hub P, 1 target row on owner R1
+      const p1Lease = hub.tasks.authority.leaseFor("p1")!;
+      const p2Lease = hub.tasks.authority.leaseFor("p2")!;
+      const agentRes = await hubTaskOps.cancel({
+        kind: "agent",
+        principal: {
+          taskId: "p1",
+          agentId: "pi",
+          generation: p1Lease.generation,
+          initializing: false,
+        },
+        targetTaskId: "r1",
+        reason: "no longer needed",
+      });
+      assert.deepEqual(agentRes, {
+        accepted: true,
+        taskId: "r1",
+        status: "idle",
+      });
+      assert.equal(hubNoticeCount(), 1);
+      assert.equal(hub.cancelNotices[0]?.role, "source");
+      assert.equal(hub.cancelNotices[0]?.sourceTaskId, "p1");
+      assert.equal(hub.cancelNotices[0]?.targetTaskId, "r1");
+      assert.equal(ownerNoticeCount(), 1);
+      assert.equal(owner.cancelNotices[0]?.role, "target");
+      assert.equal(owner.cancelNotices[0]?.sourceTaskId, "p1");
+      assert.equal(owner.cancelNotices[0]?.targetTaskId, "r1");
+
+      // 6. Non-child agent cancel rejected without hitting owner
+      const postsBeforeNonChild = stats.cancelPosts;
+      await assert.rejects(
+        () =>
+          hubTaskOps.cancel({
+            kind: "agent",
+            principal: {
+              taskId: "p2",
+              agentId: "pi",
+              generation: p2Lease.generation,
+              initializing: false,
+            },
+            targetTaskId: "r1",
+            reason: "not my child",
+          }),
+        /task_not_found/,
+      );
+      assert.equal(stats.cancelPosts, postsBeforeNonChild);
+
+      // 7. Stale generation before call rejected without hitting owner
+      const staleGen = p1Lease.generation;
+      hub.store.replaceAgentSession("p1", "pi", "s-p1-v2");
+      const freshLease = hub.tasks.authority.leaseFor("p1")!;
+      await assert.rejects(
+        () =>
+          hubTaskOps.cancel({
+            kind: "agent",
+            principal: {
+              taskId: "p1",
+              agentId: "pi",
+              generation: staleGen,
+              initializing: false,
+            },
+            targetTaskId: "r1",
+            reason: "stale before",
+          }),
+        /execution_replaced/,
+      );
+      assert.equal(stats.cancelPosts, postsBeforeNonChild);
+
+      // 8. Generation rotated during call -> rejected AFTER remote call, NO source row written
+      const hubNoticesBeforeRotate = hubNoticeCount();
+      onBeforeRemoteCancel = () => {
+        hub.store.replaceAgentSession("p1", "pi", "s-p1-v3");
+        onBeforeRemoteCancel = undefined;
+      };
+      await assert.rejects(
+        () =>
+          hubTaskOps.cancel({
+            kind: "agent",
+            principal: {
+              taskId: "p1",
+              agentId: "pi",
+              generation: freshLease.generation,
+              initializing: false,
+            },
+            targetTaskId: "r1",
+            reason: "rotated mid-flight",
+          }),
+        /execution_replaced/,
+      );
+      assert.equal(hubNoticeCount(), hubNoticesBeforeRotate);
+
+      // 9. Response dropped after owner commits -> TaskRemoteCancelUnknownError, no retry, no source row, owner target row present
+      const activeLease = hub.tasks.authority.leaseFor("p1")!;
+      const postsBeforeDrop = stats.cancelPosts;
+      const hubNoticesBeforeDrop = hubNoticeCount();
+      const ownerNoticesBeforeDrop = ownerNoticeCount();
+      dropNextCancelResponse = true;
+      await assert.rejects(
+        () =>
+          hubTaskOps.cancel({
+            kind: "agent",
+            principal: {
+              taskId: "p1",
+              agentId: "pi",
+              generation: activeLease.generation,
+              initializing: false,
+            },
+            targetTaskId: "r1",
+            reason: "response dropped",
+          }),
+        TaskRemoteCancelUnknownError,
+      );
+      assert.equal(stats.cancelPosts, postsBeforeDrop + 1);
+      assert.equal(hubNoticeCount(), hubNoticesBeforeDrop);
+      assert.equal(ownerNoticeCount(), ownerNoticesBeforeDrop + 1);
+
+      // 10. Deleted R1 on owner -> user REST cancel returns 404, TaskOps throws TaskRemoteCancelRejectedError(404)
+      owner.store.deleteTask("r1");
+      const deletedRes = await fetch(
+        `${hubServer.origin}/api/v1/tasks/r1/cancel`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${hub.userToken}` },
+        },
+      );
+      assert.equal(deletedRes.status, 404);
+      await assert.rejects(
+        () => hubTaskOps.cancel({ kind: "user", taskId: "r1" }),
+        (err: unknown) =>
+          err instanceof TaskRemoteCancelRejectedError && err.status === 404,
+      );
+      await assert.rejects(
+        () => hubTaskOps.cancel({ kind: "user", taskId: "never-existed" }),
+        TaskNotFoundError,
+      );
+    } finally {
+      await hubServer?.close();
+      await ownerServer?.close();
+      hub.store.close();
+      owner.store.close();
+      rmSync(hubDir, { recursive: true, force: true });
+      rmSync(ownerDir, { recursive: true, force: true });
     }
   });
 });

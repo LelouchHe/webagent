@@ -3,6 +3,8 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   isTaskCreateError,
+  TaskRemoteCancelRejectedError,
+  TaskRemoteCancelUnknownError,
   type TaskCaller,
   type TaskOps,
 } from "../api/tasks.ts";
@@ -335,14 +337,30 @@ export function registerMcpTools(
     },
     async ({ target, reason }) => {
       guard();
-      return jsonContent(
-        await host!.cancel({
-          kind: "agent",
-          principal,
-          targetTaskId: target,
-          reason,
-        }),
-      );
+      try {
+        return jsonContent(
+          await host!.cancel({
+            kind: "agent",
+            principal,
+            targetTaskId: target,
+            reason,
+          }),
+        );
+      } catch (error) {
+        if (error instanceof TaskRemoteCancelRejectedError) {
+          throw new Error(
+            `Remote task cancel rejected by ${error.host}: ${error.reason}`,
+            { cause: error },
+          );
+        }
+        if (error instanceof TaskRemoteCancelUnknownError) {
+          throw new Error(
+            `Remote task cancel result is unknown for ${error.host}: ${error.reason}`,
+            { cause: error },
+          );
+        }
+        throw error;
+      }
     },
   );
 

@@ -18,12 +18,14 @@ export interface RegressionClient {
   forwarder(name: string): RegressionForwarderControl;
 }
 
+export type ForwarderChannel = "post" | "watch" | "cancel" | "delete";
+
 export interface RegressionForwarderControl {
-  connect(channel: "post" | "watch"): void;
-  disconnect(channel: "post" | "watch"): void;
-  dropNextResponse(channel: "post" | "watch"): void;
-  holdNextResponse(channel: "post" | "watch"): Promise<void>;
-  release(channel: "post" | "watch"): void;
+  connect(channel: ForwarderChannel): void;
+  disconnect(channel: ForwarderChannel): void;
+  dropNextResponse(channel: ForwarderChannel): void;
+  holdNextResponse(channel: ForwarderChannel): Promise<void>;
+  release(channel: ForwarderChannel): void;
 }
 
 export interface RegressionInstanceClient {

@@ -229,7 +229,7 @@ describe("auth-middleware", () => {
       );
       assert.equal(
         isHostScopeAllowedPath("POST", "/api/v1/tasks/abc/cancel"),
-        false,
+        true,
       );
     });
   });

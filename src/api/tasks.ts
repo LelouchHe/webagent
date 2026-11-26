@@ -116,7 +116,52 @@ export type TaskCancelCommand =
       principal: TaskCaller;
       targetTaskId: string;
       reason: string;
+    }
+  | {
+      kind: "host";
+      taskId: string;
+      actor:
+        | { kind: "user" }
+        | {
+            kind: "agent";
+            sourceTaskId: string;
+            sourceLabel: string;
+            reason: string;
+          };
     };
+
+export class TaskRemoteCancelRejectedError extends Error {
+  readonly kind = "rejected";
+  readonly host: string;
+  readonly status: number;
+  readonly reason: string;
+
+  constructor(
+    host: string,
+    status: number,
+    reason: string,
+    options?: ErrorOptions,
+  ) {
+    super("remote_task_cancel_rejected", options);
+    this.name = "TaskRemoteCancelRejectedError";
+    this.host = host;
+    this.status = status;
+    this.reason = reason;
+  }
+}
+
+export class TaskRemoteCancelUnknownError extends Error {
+  readonly kind = "unknown";
+  readonly host: string;
+  readonly reason: string;
+
+  constructor(host: string, reason: string, options?: ErrorOptions) {
+    super("remote_task_cancel_result_unknown", options);
+    this.name = "TaskRemoteCancelUnknownError";
+    this.host = host;
+    this.reason = reason;
+  }
+}
 
 export interface TaskCreateInput {
   title?: string;
