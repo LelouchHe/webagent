@@ -285,7 +285,6 @@ export class LinkSyncHubPusher {
   private offlineSince: number | null = null;
   private timeoutTimer: unknown = null;
   private retryNotBefore = 0;
-  private pendingHeadSkip = false;
 
   constructor(options: LinkSyncHubPusherOptions) {
     this.options = options;
@@ -332,11 +331,7 @@ export class LinkSyncHubPusher {
       if (this.watchOnline) return;
       this.watchOnline = true;
       this.offlineSince = null;
-      if (!this.pendingHeadSkip) {
-        this.clearTimeoutTimer();
-      } else {
-        this.scheduleTimeout();
-      }
+      this.clearTimeoutTimer();
       return;
     }
     if (!this.watchOnline) return;
@@ -363,56 +358,31 @@ export class LinkSyncHubPusher {
     }
   }
 
-  private armTimer(delay: number): void {
+  private armTimer(delay: number, callback: () => void): void {
     this.clearTimeoutTimer();
     if (!this.started) return;
     this.timeoutTimer = this.timer.setTimeout(
       () => {
         this.timeoutTimer = null;
-        this.onTimeout();
+        callback();
       },
       Math.max(0, delay),
     );
   }
 
-  private armRetryFloor(): void {
+  private armRetryFloor(callback: () => void): void {
     const now = this.epochClock.now();
     this.retryNotBefore = Math.max(
       this.retryNotBefore,
       now + TIMEOUT_RETRY_DELAY_MS,
     );
-    this.armTimer(this.retryNotBefore - now);
-  }
-
-  private trySkipFailedHead(): boolean {
-    try {
-      const skippedPos = this.options.store.skipFailedOutboxMessagePrefix(
-        "child",
-        this.options.host,
-      );
-      this.pendingHeadSkip = false;
-      if (skippedPos !== null) {
-        this.outbox.handedOffPosition(skippedPos);
-        this.outbox.wake();
-      }
-      return true;
-    } catch (error) {
-      this.pendingHeadSkip = true;
-      this.warn("link failed head skip persistence failed", error);
-      this.armRetryFloor();
-      return false;
-    }
+    this.armTimer(this.retryNotBefore - now, callback);
   }
 
   private scheduleTimeout(): void {
     this.clearTimeoutTimer();
-    if (!this.started) return;
+    if (!this.started || this.watchOnline) return;
     const now = this.epochClock.now();
-    if (this.pendingHeadSkip) {
-      this.armTimer(this.retryNotBefore - now);
-      return;
-    }
-    if (this.watchOnline) return;
     let pending: ReturnType<Store["getPendingOutboxTimeoutState"]>;
     try {
       pending = this.options.store.getPendingOutboxTimeoutState(
@@ -421,7 +391,9 @@ export class LinkSyncHubPusher {
       );
     } catch (error) {
       this.warn("link handoff timeout schedule read failed", error);
-      this.armRetryFloor();
+      this.armRetryFloor(() => {
+        this.scheduleTimeout();
+      });
       return;
     }
     if (!pending.hasPendingWork) {
@@ -433,16 +405,13 @@ export class LinkSyncHubPusher {
     const deadline =
       Math.max(pending.earliest.queued_at, this.offlineSince) +
       this.handoffTimeoutMs;
-    this.armTimer(Math.max(deadline, this.retryNotBefore) - now);
+    this.armTimer(Math.max(deadline, this.retryNotBefore) - now, () => {
+      this.onTimeout();
+    });
   }
 
   private onTimeout(): void {
-    if (!this.started) return;
-    if (this.pendingHeadSkip) {
-      if (this.trySkipFailedHead()) this.scheduleTimeout();
-      return;
-    }
-    if (this.watchOnline || this.offlineSince === null) return;
+    if (!this.started || this.watchOnline || this.offlineSince === null) return;
     let pending: ReturnType<Store["getPendingOutboxTimeoutState"]>;
     try {
       pending = this.options.store.getPendingOutboxTimeoutState(
@@ -451,7 +420,9 @@ export class LinkSyncHubPusher {
       );
     } catch (error) {
       this.warn("link handoff timeout read failed", error);
-      this.armRetryFloor();
+      this.armRetryFloor(() => {
+        this.scheduleTimeout();
+      });
       return;
     }
     if (!pending.earliest) {
@@ -478,44 +449,28 @@ export class LinkSyncHubPusher {
       this.warn("link handoff timeout persistence failed", error, {
         entryId: pending.earliest.entry_id,
       });
-      this.armRetryFloor();
+      this.armRetryFloor(() => {
+        this.scheduleTimeout();
+      });
       return;
     }
     if (outcome.failed) {
-      try {
-        executeLinkEffects(
-          this.options.store,
-          outcome.effects,
-          this.options.effects,
-        );
-      } catch (error) {
-        this.warn("link handoff timeout post-commit publish failed", error, {
-          entryId: pending.earliest.entry_id,
-        });
-      }
-      if (!this.trySkipFailedHead()) {
-        if (outcome.pos !== null) this.outbox.handedOffPosition(outcome.pos);
-        return;
+      executeLinkEffects(
+        this.options.store,
+        outcome.effects,
+        this.options.effects,
+      );
+      for (const committedPos of outcome.effects.pushCursorPos) {
+        this.outbox.handedOffPosition(committedPos);
+        this.outbox.wake();
       }
     }
     this.scheduleTimeout();
   }
 
   private next() {
-    if (this.pendingHeadSkip) return undefined;
-    let row = this.options.store.getOutboxHeadWithStatus(
-      "child",
-      this.options.host,
-    );
+    const row = this.options.store.getOutboxHead("child", this.options.host);
     if (!row) return undefined;
-    if (row.category === "message" && row.delivery_status === "failed") {
-      if (!this.trySkipFailedHead()) return undefined;
-      row = this.options.store.getOutboxHeadWithStatus(
-        "child",
-        this.options.host,
-      );
-      if (!row) return undefined;
-    }
     return {
       id: row.entry_id,
       position: row.pos,
@@ -609,13 +564,7 @@ export class LinkSyncHubPusher {
       this.warn("link push reject persistence failed", error, { entryId });
       return false;
     }
-    try {
-      executeLinkEffects(this.options.store, effects, this.options.effects);
-    } catch (error) {
-      this.warn("link push reject post-commit publish failed", error, {
-        entryId,
-      });
-    }
+    executeLinkEffects(this.options.store, effects, this.options.effects);
     this.scheduleTimeout();
     return true;
   }
@@ -626,15 +575,44 @@ function executeLinkEffects(
   effects: LinkApplyEffects,
   callbacks: LinkSyncEffectCallbacks | undefined,
 ): void {
-  store.broadcastDeliveryStatus(effects.deliveryStatusIds, {
-    suppressFailureNotice: true,
-  });
-  for (const taskId of effects.drainTaskIds) callbacks?.drainTask?.(taskId);
+  try {
+    store.broadcastDeliveryStatus(effects.deliveryStatusIds, {
+      suppressFailureNotice: true,
+    });
+  } catch (error) {
+    log.scope("hosts").warn("link post-commit status broadcast failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  for (const taskId of effects.drainTaskIds) {
+    try {
+      callbacks?.drainTask?.(taskId);
+    } catch (error) {
+      log.scope("hosts").warn("link post-commit drain failed", {
+        taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   for (const entryId of effects.outboxEntryIds) {
-    callbacks?.outboxChanged?.(entryId);
+    try {
+      callbacks?.outboxChanged?.(entryId);
+    } catch (error) {
+      log.scope("hosts").warn("link post-commit outbox notify failed", {
+        entryId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   for (const position of effects.pushCursorPos) {
-    callbacks?.pushed?.(position);
+    try {
+      callbacks?.pushed?.(position);
+    } catch (error) {
+      log.scope("hosts").warn("link post-commit push cursor notify failed", {
+        position,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
 

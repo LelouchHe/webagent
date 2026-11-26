@@ -1099,7 +1099,7 @@
                 {
                   "kind": "write",
                   "method": "get",
-                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "sql": "INSERT INTO outbox_cursors\n           (remote_role, remote_host, applied_pos, pushed_pos)\n         VALUES (?, ?, 0, ?)\n         ON CONFLICT (remote_role, remote_host)\n         DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n         RETURNING pushed_pos",
                   "args": ["child", "owner", 1]
                 }
               ],
@@ -1317,12 +1317,6 @@
                 },
                 {
                   "kind": "write",
-                  "method": "get",
-                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
-                  "args": ["child", "owner", 1]
-                },
-                {
-                  "kind": "write",
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
@@ -1414,7 +1408,7 @@
                 }
               ]
             ],
-            "reads": 83
+            "reads": 85
           }
         }
       ]
@@ -2151,7 +2145,7 @@
                 {
                   "kind": "write",
                   "method": "get",
-                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "sql": "INSERT INTO outbox_cursors\n           (remote_role, remote_host, applied_pos, pushed_pos)\n         VALUES (?, ?, 0, ?)\n         ON CONFLICT (remote_role, remote_host)\n         DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n         RETURNING pushed_pos",
                   "args": ["parent", "hub-connection", 3]
                 }
               ],
@@ -2209,7 +2203,7 @@
                 {
                   "kind": "write",
                   "method": "get",
-                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "sql": "INSERT INTO outbox_cursors\n           (remote_role, remote_host, applied_pos, pushed_pos)\n         VALUES (?, ?, 0, ?)\n         ON CONFLICT (remote_role, remote_host)\n         DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n         RETURNING pushed_pos",
                   "args": ["parent", "hub-connection", 4]
                 },
                 {
@@ -2388,7 +2382,7 @@
                 }
               ]
             ],
-            "reads": 139
+            "reads": 141
           }
         },
         {
@@ -2673,7 +2667,7 @@
                 {
                   "kind": "write",
                   "method": "get",
-                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "sql": "INSERT INTO outbox_cursors\n           (remote_role, remote_host, applied_pos, pushed_pos)\n         VALUES (?, ?, 0, ?)\n         ON CONFLICT (remote_role, remote_host)\n         DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n         RETURNING pushed_pos",
                   "args": ["child", "owner", 2]
                 }
               ],
@@ -2681,7 +2675,7 @@
                 {
                   "kind": "write",
                   "method": "get",
-                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "sql": "INSERT INTO outbox_cursors\n           (remote_role, remote_host, applied_pos, pushed_pos)\n         VALUES (?, ?, 0, ?)\n         ON CONFLICT (remote_role, remote_host)\n         DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n         RETURNING pushed_pos",
                   "args": ["child", "owner", 3]
                 }
               ],
@@ -2689,7 +2683,7 @@
                 {
                   "kind": "write",
                   "method": "get",
-                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "sql": "INSERT INTO outbox_cursors\n           (remote_role, remote_host, applied_pos, pushed_pos)\n         VALUES (?, ?, 0, ?)\n         ON CONFLICT (remote_role, remote_host)\n         DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n         RETURNING pushed_pos",
                   "args": ["child", "owner", 4]
                 }
               ],
@@ -3050,12 +3044,6 @@
                 },
                 {
                   "kind": "write",
-                  "method": "get",
-                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
-                  "args": ["child", "owner", 2]
-                },
-                {
-                  "kind": "write",
                   "method": "run",
                   "sql": "INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, ?, 0)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET applied_pos = excluded.applied_pos",
                   "args": ["child", "owner", 2]
@@ -3220,7 +3208,7 @@
                 }
               ]
             ],
-            "reads": 183
+            "reads": 187
           }
         }
       ]

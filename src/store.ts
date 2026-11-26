@@ -3508,24 +3508,63 @@ export class Store {
         )
         .get(remoteRole, remoteHost, entryId) as { pos: number } | undefined;
       if (!row) throw new Error("outbox_entry_not_found");
-      const previous = this.db
-        .prepare(
-          `SELECT pushed_pos FROM outbox_cursors
-           WHERE remote_role = ? AND remote_host = ?`,
-        )
-        .get(remoteRole, remoteHost) as { pushed_pos: number } | undefined;
-      const result = this.db
-        .prepare(
-          `INSERT INTO outbox_cursors
-             (remote_role, remote_host, applied_pos, pushed_pos)
-           VALUES (?, ?, 0, ?)
-           ON CONFLICT (remote_role, remote_host)
-           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)
-           RETURNING pushed_pos`,
-        )
-        .get(remoteRole, remoteHost, row.pos) as { pushed_pos: number };
-      return (previous?.pushed_pos ?? 0) < result.pushed_pos ? row.pos : null;
+      return this.advanceOutboxPushCursorPosInTransaction(
+        remoteRole,
+        remoteHost,
+        row.pos,
+      );
     })();
+  }
+
+  private advanceOutboxPushCursorPosInTransaction(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+    targetPos: number,
+  ): number | null {
+    const previous =
+      (
+        this.db
+          .prepare(
+            `SELECT pushed_pos FROM outbox_cursors
+             WHERE remote_role = ? AND remote_host = ?`,
+          )
+          .get(remoteRole, remoteHost) as { pushed_pos: number } | undefined
+      )?.pushed_pos ?? 0;
+    let finalPos = Math.max(previous, targetPos);
+    const stmt = this.db.prepare(
+      `SELECT o.pos, o.category, d.status AS delivery_status
+       FROM outbox o
+       LEFT JOIN deliveries d ON d.id = o.delivery_id
+       WHERE o.remote_role = ? AND o.remote_host = ? AND o.pos > ?
+       ORDER BY o.pos ASC`,
+    );
+    for (const row of stmt.iterate(
+      remoteRole,
+      remoteHost,
+      finalPos,
+    ) as Iterable<{
+      pos: number;
+      category: OutboxCategory;
+      delivery_status: CollaborationDeliveryStatus | null;
+    }>) {
+      if (row.category === "message" && row.delivery_status === "failed") {
+        finalPos = row.pos;
+        continue;
+      }
+      break;
+    }
+    if (finalPos <= previous) return null;
+    const result = this.db
+      .prepare(
+        `INSERT INTO outbox_cursors
+           (remote_role, remote_host, applied_pos, pushed_pos)
+         VALUES (?, ?, 0, ?)
+         ON CONFLICT (remote_role, remote_host)
+         DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)
+         RETURNING pushed_pos`,
+      )
+      .get(remoteRole, remoteHost, finalPos) as { pushed_pos: number };
+    return previous < result.pushed_pos ? result.pushed_pos : null;
   }
 
   rejectOutboxHead(
@@ -3598,17 +3637,15 @@ export class Store {
   } {
     const row = this.db
       .prepare(
-        `WITH cur AS (
-           SELECT COALESCE(
-             (SELECT pushed_pos FROM outbox_cursors
-              WHERE remote_role = ? AND remote_host = ?),
-             0
-           ) AS pushed_pos
-         )
-         SELECT
+        `SELECT
            EXISTS(
-             SELECT 1 FROM outbox o, cur
-             WHERE o.remote_role = ? AND o.remote_host = ? AND o.pos > cur.pushed_pos
+             SELECT 1 FROM outbox o
+             WHERE o.remote_role = ? AND o.remote_host = ?
+               AND o.pos > COALESCE(
+                 (SELECT pushed_pos FROM outbox_cursors
+                  WHERE remote_role = ? AND remote_host = ?),
+                 0
+               )
            ) AS has_pending,
            m.pos,
            m.entry_id,
@@ -3619,8 +3656,12 @@ export class Store {
            SELECT o.pos, o.entry_id, o.delivery_id, d.queued_at
            FROM outbox o
            JOIN deliveries d ON d.id = o.delivery_id
-           JOIN cur ON o.pos > cur.pushed_pos
            WHERE o.remote_role = ? AND o.remote_host = ?
+             AND o.pos > COALESCE(
+               (SELECT pushed_pos FROM outbox_cursors
+                WHERE remote_role = ? AND remote_host = ?),
+               0
+             )
              AND o.category = 'message'
              AND d.status = 'queued'
            ORDER BY d.queued_at ASC, o.pos ASC
@@ -3628,6 +3669,8 @@ export class Store {
          ) m ON 1 = 1`,
       )
       .get(
+        remoteRole,
+        remoteHost,
         remoteRole,
         remoteHost,
         remoteRole,
@@ -3658,29 +3701,24 @@ export class Store {
     };
   }
 
-  getOutboxHeadWithStatus(
+  getOutboxHead(
     remoteRole: LinkRemoteRole,
     remoteHost: string,
-  ):
-    | (OutboxRow & { delivery_status: CollaborationDeliveryStatus | null })
-    | undefined {
+  ): OutboxRow | undefined {
     return this.db
       .prepare(
-        `SELECT o.*, d.status AS delivery_status
-         FROM outbox o
-         LEFT JOIN deliveries d ON d.id = o.delivery_id
-         WHERE o.remote_role = ? AND o.remote_host = ?
-           AND o.pos > COALESCE(
+        `SELECT * FROM outbox
+         WHERE remote_role = ? AND remote_host = ?
+           AND pos > COALESCE(
              (SELECT pushed_pos FROM outbox_cursors
               WHERE remote_role = ? AND remote_host = ?),
              0
            )
-         ORDER BY o.pos ASC
+         ORDER BY pos ASC
          LIMIT 1`,
       )
       .get(remoteRole, remoteHost, remoteRole, remoteHost) as
-      | (OutboxRow & { delivery_status: CollaborationDeliveryStatus | null })
-      | undefined;
+      OutboxRow | undefined;
   }
 
   failOutboxMessageOnTimeout(
@@ -3724,46 +3762,22 @@ export class Store {
         "Handoff to the remote peer was not confirmed before the timeout.",
       );
       if (drainTaskId) effects.drainTaskIds.push(drainTaskId);
-      return { failed: true, pos: row.pos, effects };
-    })();
-  }
-
-  skipFailedOutboxMessagePrefix(
-    remoteRole: LinkRemoteRole,
-    remoteHost: string,
-  ): number | null {
-    return this.db.transaction(() => {
-      const pushed = this.getOutboxPushCursor(remoteRole, remoteHost);
-      const stmt = this.db.prepare(
-        `SELECT o.pos, o.entry_id, o.category, d.status AS delivery_status
-         FROM outbox o
-         LEFT JOIN deliveries d ON d.id = o.delivery_id
-         WHERE o.remote_role = ? AND o.remote_host = ? AND o.pos > ?
-         ORDER BY o.pos ASC`,
-      );
-      let lastFailedEntryId: string | null = null;
-      for (const row of stmt.iterate(
-        remoteRole,
-        remoteHost,
-        pushed,
-      ) as Iterable<{
-        pos: number;
-        entry_id: string;
-        category: OutboxCategory;
-        delivery_status: CollaborationDeliveryStatus | null;
-      }>) {
-        if (row.category === "message" && row.delivery_status === "failed") {
-          lastFailedEntryId = row.entry_id;
-          continue;
-        }
-        break;
+      const hasEarlierPending = this.db
+        .prepare(
+          `SELECT 1 FROM outbox
+           WHERE remote_role = ? AND remote_host = ? AND pos > ? AND pos < ?
+           LIMIT 1`,
+        )
+        .get(remoteRole, remoteHost, pushed, row.pos);
+      if (!hasEarlierPending) {
+        const committedPos = this.advanceOutboxPushCursorPosInTransaction(
+          remoteRole,
+          remoteHost,
+          row.pos,
+        );
+        if (committedPos !== null) effects.pushCursorPos.push(committedPos);
       }
-      if (!lastFailedEntryId) return null;
-      return this.advanceOutboxPushCursor(
-        remoteRole,
-        remoteHost,
-        lastFailedEntryId,
-      );
+      return { failed: true, pos: row.pos, effects };
     })();
   }
 

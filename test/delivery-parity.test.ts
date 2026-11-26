@@ -25,6 +25,7 @@ import {
 } from "../src/task-manager.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { TaskStateManager } from "../src/task-state.ts";
+import { mockBridgeStubs } from "./fixtures.ts";
 
 interface NormalizedNotice {
   reason: unknown;
@@ -364,8 +365,26 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
     };
   }
 
-  it("Scenario 1 & 4: delivered->failed (ACP rejection) produces identical single sender notice and silent account closure in both directions", async () => {
-    // Direction 1 (P -> child): claim -> failRejectedDeliveries("prompt_failed")
+  it("Scenario 1 & 4: real TaskManager drain + rejecting bridge produces identical single sender notice, silent account closure, and two-receipt sequence in both directions", async () => {
+    const rejectingBridge = {
+      ...mockBridgeStubs(),
+      async prompt() {
+        throw new Error("rejected");
+      },
+    };
+    const resolvingBridge = {
+      ...mockBridgeStubs(),
+      async prompt(taskId: string) {
+        if (taskId === "p-local") localTasks.endTurn(taskId, { sync: false });
+        if (taskId === "p-hub") hubTasks.endTurn(taskId, { sync: false });
+        if (taskId === "c-owner") ownerTasks.endTurn(taskId, { sync: false });
+      },
+    };
+    localTasks.attachExecutionBridge(resolvingBridge);
+    hubTasks.attachExecutionBridge(resolvingBridge);
+    ownerTasks.attachExecutionBridge(rejectingBridge);
+
+    // Direction 1 (P -> child): real drain with rejecting bridge -> claim (delivered) -> dispatchRejected -> failRejectedDeliveries("prompt_failed")
     const localDispatchId = randomUUID();
     const localDispatch = localStore.createCollaborationMessage({
       id: localDispatchId,
@@ -375,13 +394,14 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
       body: "work",
       sourceActor: "agent",
     });
-    localStore.claimQueuedDeliveries("c-local");
-    (
-      localTasks as unknown as { obligations: ObligationController }
-    ).obligations.arm("p-local", "c-local", "local");
-    localStore.failRejectedDeliveries(
-      [localDispatch.delivery.id],
-      "prompt_failed",
+    assert.equal(
+      await localTasks.drainCollaborationDeliveries("c-local", rejectingBridge),
+      true,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(
+      localStore.getCollaborationDelivery(localDispatch.delivery.id)?.status,
+      "failed",
     );
 
     const hubOut = hubStore.enqueueLinkMessage({
@@ -394,16 +414,14 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
       body: "work",
     });
     await wire.settle();
-    const ownerClaimed = ownerStore.claimQueuedDeliveries("c-owner");
-    assert.equal(ownerClaimed.length, 1);
-    (
-      ownerTasks as unknown as { obligations: ObligationController }
-    ).obligations.arm("p-hub", "c-owner", "external");
-    ownerStore.failRejectedDeliveries(
-      ownerClaimed.map((d) => d.id),
+    assert.equal(
+      hubStore.getCollaborationDelivery(hubOut.delivery_id!)?.status,
+      "failed",
+    );
+    assert.equal(
+      hubStore.getCollaborationDelivery(hubOut.delivery_id!)?.failure_reason,
       "prompt_failed",
     );
-    await wire.settle();
 
     // Verify receipt sequence on owner outbox: delivered then failed(prompt_failed)
     const receipts = ownerStore
@@ -427,13 +445,20 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
         .filter((r) => r.category === "notice").length,
       0,
     );
-    assert.deepEqual(snapshot().remote, snapshot().local);
+    const afterDir1 = snapshot();
+    assert.equal(afterDir1.remote.parentNotices.length, 1);
+    assert.equal(afterDir1.remote.parentNotices[0]?.reason, "target_removed");
+    assert.equal(afterDir1.remote.childNotices.length, 0);
+    assert.equal(afterDir1.remote.openAccountOnChild, false);
+    assert.deepEqual(afterDir1.remote, afterDir1.local);
 
-    // Drain/claim Direction 1's system notice on P before Direction 4.
-    localStore.claimQueuedDeliveries("p-local");
-    hubStore.claimQueuedDeliveries("p-hub");
+    // Direction 4 (child -> P ordinary send): real drain on P with rejecting bridge -> failRejectedDeliveries("prompt_failed")
+    ownerTasks.attachExecutionBridge(resolvingBridge);
+    hubTasks.attachExecutionBridge(rejectingBridge);
+    await new Promise((r) => setTimeout(r, 20));
+    localTasks.endTurn("p-local", { sync: false });
+    hubTasks.endTurn("p-hub", { sync: false });
 
-    // Direction 4 (child -> P ordinary send): claim -> failRejectedDeliveries("prompt_failed")
     const localRevId = randomUUID();
     const localRev = localStore.createCollaborationMessage({
       id: localRevId,
@@ -443,8 +468,15 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
       body: "reverse",
       sourceActor: "agent",
     });
-    localStore.claimQueuedDeliveries("p-local");
-    localStore.failRejectedDeliveries([localRev.delivery.id], "prompt_failed");
+    assert.equal(
+      await localTasks.drainCollaborationDeliveries("p-local", rejectingBridge),
+      true,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(
+      localStore.getCollaborationDelivery(localRev.delivery.id)?.status,
+      "failed",
+    );
 
     const ownerLocalOps = createLocalTaskOps({
       store: ownerStore,
@@ -468,22 +500,40 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
       "reverse",
     );
     await wire.settle();
-    const hubClaimed = hubStore.claimQueuedDeliveries("p-hub");
-    assert.equal(hubClaimed.length, 1);
-    hubStore.failRejectedDeliveries(
-      hubClaimed.map((d) => d.id),
-      "prompt_failed",
-    );
-    await wire.settle();
 
     assert.equal(
       ownerStore.getCollaborationDelivery(revOut.deliveryId!)?.status,
       "failed",
     );
-    assert.deepEqual(snapshot().remote, snapshot().local);
+    assert.equal(
+      ownerStore.getCollaborationDelivery(revOut.deliveryId!)?.failure_reason,
+      "prompt_failed",
+    );
+    const afterDir4 = snapshot();
+    assert.equal(afterDir4.remote.childNotices.length, 1);
+    assert.equal(afterDir4.remote.childNotices[0]?.reason, "target_removed");
+    assert.equal(afterDir4.remote.parentNotices.length, 1);
+    assert.deepEqual(afterDir4.remote, afterDir4.local);
   });
 
-  it("Scenario 3: child -> P ordinary send delivers identically with no account opened", async () => {
+  it("Scenario 3: child -> P ordinary send drains via real bridge with identical prompt projection and no account opened", async () => {
+    const localPrompts: string[] = [];
+    const hubPrompts: string[] = [];
+    const localBridge = {
+      ...mockBridgeStubs(),
+      async prompt(_taskId: string, text: string) {
+        localPrompts.push(text);
+      },
+    };
+    const hubBridge = {
+      ...mockBridgeStubs(),
+      async prompt(_taskId: string, text: string) {
+        hubPrompts.push(text);
+      },
+    };
+    localTasks.attachExecutionBridge(localBridge);
+    hubTasks.attachExecutionBridge(hubBridge);
+
     const localOps = createLocalTaskOps({
       store: localStore,
       tasks: localTasks,
@@ -498,7 +548,10 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
       "p-local",
       "hello parent",
     );
-    localStore.claimQueuedDeliveries("p-local");
+    assert.equal(
+      await localTasks.drainCollaborationDeliveries("p-local", localBridge),
+      true,
+    );
 
     const ownerLocalOps = createLocalTaskOps({
       store: ownerStore,
@@ -522,17 +575,42 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
       "hello parent",
     );
     await wire.settle();
-    hubStore.claimQueuedDeliveries("p-hub");
-    await wire.settle();
 
     assert.equal(
       ownerStore.getCollaborationDelivery(sent.deliveryId!)?.status,
       "delivered",
     );
+    assert.equal(localPrompts.length, 1);
+    assert.equal(hubPrompts.length, 1);
+    assert.equal(
+      normalizeBody(hubPrompts[0], "p-hub", "c-owner"),
+      normalizeBody(localPrompts[0], "p-local", "c-local"),
+    );
+    assert.equal(localTasks.hasOpenObligation("c-local", "p-local"), false);
+    assert.equal(hubTasks.hasOpenObligation("c-owner", "p-hub"), false);
     assert.deepEqual(snapshot().remote, snapshot().local);
   });
 
-  it("Scenario 6: no_update, no_activity (injected clock), and hard-delete target_removed produce identical projections on P", async () => {
+  it("Scenario 6: no_update, no_activity (injected clock), and hard-delete target_removed produce identical projections and drained notices on P", async () => {
+    const localPrompts: string[] = [];
+    const hubPrompts: string[] = [];
+    const localBridge = {
+      ...mockBridgeStubs(),
+      async prompt(taskId: string, text: string) {
+        if (taskId === "p-local") localPrompts.push(text);
+        localTasks.endTurn(taskId, { sync: false });
+      },
+    };
+    const hubBridge = {
+      ...mockBridgeStubs(),
+      async prompt(taskId: string, text: string) {
+        if (taskId === "p-hub") hubPrompts.push(text);
+        hubTasks.endTurn(taskId, { sync: false });
+      },
+    };
+    localTasks.attachExecutionBridge(localBridge);
+    hubTasks.attachExecutionBridge(hubBridge);
+
     const localOb = (
       localTasks as unknown as { obligations: ObligationController }
     ).obligations;
@@ -553,6 +631,8 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
     ownerOb.beginTurn("c-owner");
     ownerOb.onTargetTurnEnded("c-owner");
     await wire.settle();
+    assert.equal(snapshot().remote.parentNotices.length, 1);
+    assert.equal(snapshot().remote.parentNotices[0]?.reason, "no_update");
     assert.deepEqual(snapshot().remote, snapshot().local);
 
     // 2. no_activity via injected ObligationController clock
@@ -562,6 +642,8 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
     ownerOb.noteUnwatchedWaiting("c-owner");
     advanceObligationClock(5_000);
     await wire.settle();
+    assert.equal(snapshot().remote.parentNotices.length, 2);
+    assert.equal(snapshot().remote.parentNotices[1]?.reason, "no_activity");
     assert.deepEqual(snapshot().remote, snapshot().local);
 
     // 3. hard-delete target_removed: remote carries pre-delete real title (E7),
@@ -571,6 +653,15 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
     await wire.settle();
     const after = snapshot();
     assert.equal(after.remote.parentNotices.length, 3);
+    assert.equal(after.remote.parentNotices[2]?.reason, "target_removed");
+    assert.equal(localPrompts.length, 3);
+    assert.equal(hubPrompts.length, 3);
+    assert.deepEqual(
+      hubPrompts.slice(0, 2).map((t) => normalizeBody(t, "p-hub", "c-owner")),
+      localPrompts
+        .slice(0, 2)
+        .map((t) => normalizeBody(t, "p-local", "c-local")),
+    );
     // Exact parity on no_update and no_activity (indices 0 and 1), including target title.
     assert.deepEqual(
       after.remote.parentNotices.slice(0, 2),
