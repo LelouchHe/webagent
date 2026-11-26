@@ -512,6 +512,7 @@ export class Store {
   private readonly dataDir: string;
   /** This database's Root; it changes only when an exit replaces the Root. */
   private rootId = "";
+  private hasExternalParents = false;
   private readonly deliveryStatusObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
   > = [];
@@ -575,9 +576,17 @@ export class Store {
    */
   private resolveRootIdentity(): string {
     const stored = this.db
-      .prepare("SELECT root_task_id AS id FROM workspace WHERE id = 1")
-      .get() as { id: string } | undefined;
-    if (stored) return stored.id;
+      .prepare(
+        `SELECT root_task_id AS id,
+                EXISTS(SELECT 1 FROM remote_tasks WHERE remote_role = 'parent') AS has_external_parents
+         FROM workspace WHERE id = 1`,
+      )
+      .get() as { id: string; has_external_parents: number } | undefined;
+    if (stored) {
+      this.hasExternalParents = stored.has_external_parents === 1;
+      return stored.id;
+    }
+    this.hasExternalParents = false;
     const rootTaskId = randomUUID();
     this.db
       .prepare("INSERT INTO workspace (id, root_task_id) VALUES (1, ?)")
@@ -1348,7 +1357,7 @@ export class Store {
     if (!input.externalParentId.trim()) {
       throw new Error("invalid_external_parent");
     }
-    return this.writeBindings(() => {
+    const created = this.writeBindings(() => {
       if (!this.getTaskIncludingDeleted(this.rootTaskId)) {
         this.insertRootRow(input.cwd);
       }
@@ -1388,6 +1397,8 @@ export class Store {
         .prepare("SELECT * FROM tasks WHERE id = ?")
         .get(input.id) as TaskRow;
     });
+    this.hasExternalParents = true;
+    return created;
   }
 
   listRemoteChildren(): Array<{
@@ -1450,6 +1461,7 @@ export class Store {
         remote_host: string;
       }
     | undefined {
+    if (!this.hasExternalParents) return undefined;
     return this.db
       .prepare(
         `SELECT remote_task_id, remote_host FROM remote_tasks
@@ -1462,6 +1474,31 @@ export class Store {
           remote_host: string;
         }
       | undefined;
+  }
+
+  getLatestInboundSourceLabel(
+    recipientTaskId: string,
+    sourceTaskId: string,
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+  ): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT d.source_label
+         FROM deliveries d
+         JOIN messages m ON m.id = d.message_id
+         WHERE d.recipient_task_id = ?
+           AND m.source_task_id = ?
+           AND d.source_remote_role = ?
+           AND d.source_remote_host = ?
+           AND d.source_label IS NOT NULL
+           AND TRIM(d.source_label) <> ''
+         ORDER BY d.rowid DESC
+         LIMIT 1`,
+      )
+      .get(recipientTaskId, sourceTaskId, remoteRole, remoteHost) as
+      { source_label: string } | undefined;
+    return row ? row.source_label.trim() : null;
   }
 
   getRemoteChildTitle(
@@ -3771,10 +3808,19 @@ export class Store {
     const trimmedLabel = input.targetLabel?.trim();
     const explicitLabel =
       trimmedLabel && trimmedLabel.length > 0 ? trimmedLabel : null;
+    const externalParent = this.getExternalParentLink(input.sourceTaskId);
     const targetLabel =
       explicitLabel ??
       this.getTaskIncludingDeleted(input.targetTaskId)?.title ??
-      this.getRemoteChildTitle(input.sourceTaskId, input.targetTaskId);
+      this.getRemoteChildTitle(input.sourceTaskId, input.targetTaskId) ??
+      (externalParent?.remote_task_id === input.targetTaskId
+        ? this.getLatestInboundSourceLabel(
+            input.sourceTaskId,
+            input.targetTaskId,
+            "parent",
+            externalParent.remote_host,
+          )
+        : null);
     const messageId = randomUUID();
     this.saveEvent(
       input.sourceTaskId,

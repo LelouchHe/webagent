@@ -350,8 +350,8 @@ export function registerMcpTools(
     "task_send",
     {
       description:
-        "Queue a durable message to a visible Task (local or linked remote child). " +
-        "Accepted means the message is durably queued locally; a linked remote child receives it via the link outbox. " +
+        "Queue a durable message to a visible Task (local, linked remote child, or this Task's external parent). " +
+        "Accepted means the message is durably queued locally; a linked remote peer receives it via the link outbox. " +
         "It is delivered at the recipient's next turn boundary and wakes it. " +
         "An agent's message to its direct child opens or keeps open the account for that edge once it is delivered.",
       inputSchema: {

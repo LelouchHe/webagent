@@ -540,6 +540,119 @@ describe("MCP Task tool host", () => {
     assert.equal(tasks.hasOpenObligation("alpha", "alpha-child"), true);
   });
 
+  it("routes R1->P ordinary send over the parent link with latest inbound sourceLabel and enforces authorization", async () => {
+    const extParentId = "external-parent-12345678";
+    store.createDeferredRemoteTask({
+      id: "r1",
+      cwd: dir,
+      source: "host",
+      agentId: "test-agent",
+      externalParentId: extParentId,
+      remoteHost: "hub-a",
+      title: "Worker R1",
+      creationAnchor: { kind: "task_created", title: "Worker R1" },
+    });
+    store.replaceAgentSession("r1", "test-agent", "session-r1");
+    store.createDeferredRemoteTask({
+      id: "r2",
+      cwd: dir,
+      source: "host",
+      agentId: "test-agent",
+      externalParentId: "other-ext-parent",
+      remoteHost: "hub-a",
+      title: "Worker R2",
+      creationAnchor: { kind: "task_created", title: "Worker R2" },
+    });
+    store.replaceAgentSession("r2", "test-agent", "session-r2");
+
+    const broadcasts: Array<Record<string, unknown>> = [];
+    const local = createLocalTaskOps({ store, tasks });
+    const routed = createRemoteRoutedTaskOps({
+      local,
+      remote: new HostRegistry({}, { listLinks: () => [] }),
+      store,
+      tasks,
+      broadcastCollaboration: (event) => {
+        broadcasts.push(event as unknown as Record<string, unknown>);
+      },
+    });
+    const r1Principal = () => principal("r1");
+
+    // Without prior inbound messages, targetLabel falls back to short id.
+    const first = await routed.send(r1Principal(), extParentId, "ping 1");
+    assert.equal(first.targetTaskId, extParentId);
+    assert.equal(first.targetLabel, extParentId.slice(0, 8));
+    assert.equal(first.sourceLabel, "Worker R1");
+    assert.equal(broadcasts.length, 1);
+    assert.equal(broadcasts[0]?.deliveryStatus, "queued");
+
+    // After two inbound messages, targetLabel uses the latest inbound sourceLabel by commit order.
+    store.applyLinkPushOperation({
+      remoteRole: "parent",
+      remoteHost: "hub-a",
+      envelope: {
+        id: "11111111-1111-4111-8111-111111111111",
+        category: "message",
+        data: {
+          sourceTaskId: extParentId,
+          targetTaskId: "r1",
+          sourceLabel: "Parent V1",
+          body: "hello 1",
+        },
+      },
+    });
+    store.applyLinkPushOperation({
+      remoteRole: "parent",
+      remoteHost: "hub-a",
+      envelope: {
+        id: "22222222-2222-4222-8222-222222222222",
+        category: "message",
+        data: {
+          sourceTaskId: extParentId,
+          targetTaskId: "r1",
+          sourceLabel: "Parent V2",
+          body: "hello 2",
+        },
+      },
+    });
+    const second = await routed.send(r1Principal(), extParentId, "ping 2");
+    assert.equal(second.targetLabel, "Parent V2");
+    const outbox = store.listOutbox("parent", "hub-a");
+    assert.equal(outbox.length, 2);
+    assert.equal(outbox[1]?.category, "message");
+    assert.equal(tasks.hasOpenObligation("r1", extParentId), false);
+
+    // E9: R1 still cannot list, query, or read its external parent.
+    assert.equal(
+      (await routed.list(r1Principal())).some((row) => row.id === extParentId),
+      false,
+    );
+    await assert.rejects(
+      routed.query(r1Principal(), { taskId: extParentId }),
+      /target_not_allowed/,
+    );
+    await assert.rejects(
+      routed.read(r1Principal(), { taskId: extParentId, seqs: [1] }),
+      /target_not_allowed/,
+    );
+
+    // Negative: sending to another task's external parent is rejected with zero outbox rows.
+    await assert.rejects(
+      routed.send(r1Principal(), "other-ext-parent", "forbidden"),
+      /target_not_allowed|task_not_found/,
+    );
+    assert.equal(store.listOutbox("parent", "hub-a").length, 2);
+
+    // Negative: stale generation is rejected with zero outbox rows.
+    const stale = r1Principal();
+    store.replaceAgentSession("r1", "test-agent", "session-r1-next");
+    await assert.rejects(
+      routed.send(stale, extParentId, "stale"),
+      /execution_replaced/,
+    );
+    assert.equal(store.listOutbox("parent", "hub-a").length, 2);
+  });
+
   it("re-signals an existing queued remote report for replay drain", () => {
     const input = {
       id: "remote-report-message",

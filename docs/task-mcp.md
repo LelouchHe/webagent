@@ -379,7 +379,11 @@ items. For a linked remote child, `{ "accepted": true }` means the message, its
 sender-side `deliveries` row (`queued`), and its `outbox` entry have been
 durably committed on the hub; the hub's link outbox pump delivers it to the
 owner over `POST /api/v1/link/entries`, and owner-side delivery outcomes return
-as receipts that update the hub delivery to `delivered` or `failed`.
+as receipts that update the hub delivery to `delivered` or `failed`. A remotely
+created Task can also send an ordinary message to its own external parent
+through the parent link outbox (pulled by the hub watch); it does not open an
+account, and `task_list`, `task_query`, and `task_read` still do not expose the
+external parent.
 Whether delivery opens an account is defined in
 [Task Obligations](task-obligations.md#opening-an-account).
 
