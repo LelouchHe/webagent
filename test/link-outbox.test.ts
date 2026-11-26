@@ -159,7 +159,7 @@ describe("link outbox", () => {
       },
       transport: {
         send: async (operationId) => {
-          sent.push(operationId);
+          sent.push(operationId!);
           return { status: 202, body: { accepted: true } };
         },
       },

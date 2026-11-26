@@ -144,6 +144,7 @@ describe("MCP Task tool host", () => {
     await create.create(
       { kind: "agent", principal: principal() },
       {
+        opId: null,
         agentId: "copilot",
         host: "mini",
         parentId: "alpha",
@@ -154,6 +155,7 @@ describe("MCP Task tool host", () => {
     await create.create(
       { kind: "agent", principal: principal() },
       {
+        opId: null,
         agentId: "copilot",
         parentId: "alpha",
         inheritFromTaskId: "alpha",
@@ -190,6 +192,7 @@ describe("MCP Task tool host", () => {
     const created = await routed.create(
       { kind: "host", name: "peer" },
       {
+        opId: null,
         agentId: "test-agent",
         parentId: "external-parent",
         title: "Owner child",
@@ -203,6 +206,7 @@ describe("MCP Task tool host", () => {
       routed.create(
         { kind: "host", name: "peer" },
         {
+          opId: null,
           agentId: "test-agent",
           host: "another-host",
           parentId: "external-parent",
@@ -229,6 +233,7 @@ describe("MCP Task tool host", () => {
       create.create(
         { kind: "agent", principal: principal() },
         {
+          opId: null,
           agentId: "pi@mini",
           parentId: "alpha",
           inheritFromTaskId: "alpha",
@@ -253,6 +258,7 @@ describe("MCP Task tool host", () => {
     const created = await host.create(
       { kind: "host", name: "peer" },
       {
+        opId: null,
         agentId: "test-agent",
         parentId: "external-parent",
         title: "Remote child",
@@ -286,6 +292,7 @@ describe("MCP Task tool host", () => {
     const created = await host.create(
       { kind: "host", name: "peer" },
       {
+        opId: null,
         agentId: "test-agent",
         parentId: "external-parent",
         title: "Remote child",
@@ -303,6 +310,7 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "host", name: "peer" },
         {
+          opId: null,
           agentId: "missing",
           parentId: "external-parent",
           title: "Remote child",
@@ -316,6 +324,7 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "host", name: "peer" },
         {
+          opId: null,
           agentId: "test-agent",
           parentId: "external-parent",
           title: "Remote child",
@@ -341,6 +350,7 @@ describe("MCP Task tool host", () => {
         host.create(
           { kind: "host", name: "peer" },
           {
+            opId: null,
             agentId: "test-agent",
             parentId: parentId as string | undefined,
             title: "Rejected remote child",
@@ -359,6 +369,7 @@ describe("MCP Task tool host", () => {
     const remote = await host.create(
       { kind: "host", name: "peer" },
       {
+        opId: null,
         agentId: "test-agent",
         parentId: "external-parent",
         title: "Anchored remote child",
@@ -621,6 +632,7 @@ describe("MCP Task tool host", () => {
       routed.create(
         { kind: "agent", principal: oldPrincipal },
         {
+          opId: null,
           agentId: "test-agent",
           host: "mini",
           parentId: "alpha",
@@ -640,6 +652,7 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "user" },
         {
+          opId: null,
           agentId: "test-agent",
           parentId: "external-parent",
           title: "Rejected child",
@@ -659,7 +672,12 @@ describe("MCP Task tool host", () => {
     await assert.rejects(
       host.create(
         { kind: "user" },
-        { agentId: "test-agent", host: "mini", parentId: "" },
+        {
+          opId: null,
+          agentId: "test-agent",
+          host: "mini",
+          parentId: "",
+        },
       ),
       { message: "parent_not_found" },
     );
@@ -699,6 +717,7 @@ describe("MCP Task tool host", () => {
     const created = await host.create(
       { kind: "agent", principal: principal() },
       {
+        opId: null,
         agentId: "test-agent",
         host: "mini",
         parentId: "alpha",
@@ -714,6 +733,7 @@ describe("MCP Task tool host", () => {
       {
         remoteHost: "mini",
         input: {
+          opId: null,
           agentId: "test-agent",
           parentId: "alpha",
           title: "Remote child",
@@ -742,6 +762,7 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "agent", principal: principal() },
         {
+          opId: null,
           agentId: "test-agent",
           host: "missing",
           parentId: "alpha",
@@ -763,6 +784,7 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "agent", principal: principal() },
         {
+          opId: null,
           host: "mini",
           parentId: "alpha",
           inheritFromTaskId: "alpha",
@@ -815,6 +837,7 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "agent", principal: principal() },
         {
+          opId: null,
           agentId: "test-agent",
           host: "mini",
           parentId: "alpha",
@@ -889,6 +912,7 @@ describe("MCP Task tool host", () => {
         core.create(
           { kind: "agent", principal: principal() },
           {
+            opId: null,
             title: "Partial child",
             agentId: "test-agent",
             host: "owner",
@@ -972,6 +996,7 @@ describe("MCP Task tool host", () => {
     await core.create(
       { kind: "agent", principal: principal() },
       {
+        opId: null,
         title: "Remote child",
         agentId: "owner-agent",
         host: "owner",
@@ -1017,6 +1042,7 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "agent", principal: principal() },
         {
+          opId: null,
           agentId: "test-agent",
           host: "mini",
           parentId: "alpha",
@@ -1041,6 +1067,7 @@ describe("MCP Task tool host", () => {
       host.create(
         { kind: "agent", principal: principal() },
         {
+          opId: null,
           agentId: "test-agent",
           host: "mini",
           parentId: "alpha",
@@ -1771,6 +1798,7 @@ describe("MCP Task tool host", () => {
         await host.create(
           { kind: "agent", principal: principal() },
           {
+            opId: null,
             title: "New child",
             cwd: "subdir",
             model: "m",
@@ -1833,6 +1861,7 @@ describe("MCP Task tool host", () => {
       const created = await host.create(
         { kind: "agent", principal: principal() },
         {
+          opId: null,
           title: "Agent child",
           parentId: "alpha",
           inheritFromTaskId: "alpha",

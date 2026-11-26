@@ -31,9 +31,12 @@ import type {
 import {
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
+  TaskCreateConflictError,
+  TaskCreateDeletedError,
   TaskCreateInputError,
   TaskCreateConfigError,
 } from "../../api/tasks.ts";
+import { opIdentity } from "../../shared/sync/index.ts";
 import {
   buildTaskHistoryQuery,
   buildTaskHistoryRead,
@@ -281,19 +284,10 @@ export function createLocalTaskOps(deps: {
             "Host task creation requires a non-empty parentId",
           );
         }
-        const created = await tasks.createDeferredRemoteTask({
-          agentId: requestedAgent,
-          cwd: input.cwd,
-          source: input.source ?? "host",
-          externalParentId: input.parentId,
-          remoteHost: caller.name,
-          title: input.title,
-          workflowStatus: input.workflowStatus,
-        });
-        const task = requireTask(created.taskId);
-        return {
+        const effectiveSource = input.source ?? "host";
+        const buildHostResult = (task: TaskRow): TaskCreateResult => ({
           task: {
-            id: created.taskId,
+            id: task.id,
             title: task.title,
             agentId: requestedAgent,
             cwd: task.cwd,
@@ -307,9 +301,60 @@ export function createLocalTaskOps(deps: {
             cwdDisplay: abbreviateHomePath(task.cwd),
             parentAgentId: null,
             configOptions: [],
-            agentCommands: tasks.getAgentCommands(created.taskId),
+            agentCommands: tasks.getAgentCommands(task.id),
           },
+        });
+        const verifyReplay = (existing: TaskRow): TaskCreateResult => {
+          if (existing.deleted_at !== null) {
+            throw new TaskCreateDeletedError();
+          }
+          const link = store.getExternalParentLink(existing.id);
+          const existingAgent = store.getBindingAgent(existing.id);
+          const expectedCwd =
+            input.cwd === undefined
+              ? existing.cwd
+              : tasks.resolveTaskCwd(input.cwd);
+          if (
+            link?.remote_host !== caller.name ||
+            link.remote_task_id !== input.parentId ||
+            existingAgent !== requestedAgent ||
+            existing.title !== (input.title ?? null) ||
+            existing.source !== effectiveSource ||
+            existing.cwd !== expectedCwd
+          ) {
+            throw new TaskCreateConflictError();
+          }
+          return buildHostResult(existing);
         };
+        const deterministicId =
+          input.opId !== null
+            ? opIdentity(store.rootTaskId, caller.name, input.opId)
+            : undefined;
+        if (deterministicId) {
+          const existing = store.getTaskIncludingDeleted(deterministicId);
+          if (existing) {
+            return { ...verifyReplay(existing), replayed: true };
+          }
+        }
+        try {
+          const created = await tasks.createDeferredRemoteTask({
+            id: deterministicId,
+            agentId: requestedAgent,
+            cwd: input.cwd,
+            source: effectiveSource,
+            externalParentId: input.parentId,
+            remoteHost: caller.name,
+            title: input.title,
+            workflowStatus: input.workflowStatus,
+          });
+          return buildHostResult(requireTask(created.taskId));
+        } catch (error) {
+          if (deterministicId) {
+            const raced = store.getTaskIncludingDeleted(deterministicId);
+            if (raced) return { ...verifyReplay(raced), replayed: true };
+          }
+          throw error;
+        }
       }
       const agentCaller = caller.kind === "agent" ? caller.principal : null;
       const source =
@@ -326,6 +371,73 @@ export function createLocalTaskOps(deps: {
         if (input.parentId && !store.getParentTask(input.parentId)) {
           throw new Error("parent_not_found");
         }
+      }
+      const localCallerScope = agentCaller
+        ? `agent:${agentCaller.taskId}`
+        : "user";
+      const localDeterministicId =
+        input.opId !== null
+          ? opIdentity(store.rootTaskId, localCallerScope, input.opId)
+          : undefined;
+      const expectedLocalParentId = agentCaller
+        ? (input.parentId ?? agentCaller.taskId)
+        : (effectiveParentId ?? null);
+      const effectiveLocalSource =
+        input.source ?? (agentCaller ? "agent" : "auto");
+      const verifyLocalReplay = (existing: TaskRow): TaskCreateResult => {
+        if (existing.deleted_at !== null) {
+          throw new TaskCreateDeletedError();
+        }
+        const existingAgent =
+          store.getBindingAgent(existing.id) ?? tasks.defaultAgentId;
+        const expectedCwd =
+          input.cwd === undefined
+            ? existing.cwd
+            : source && agentCaller
+              ? (() => {
+                  const requestedCwd = expandHomePath(input.cwd);
+                  return isAbsolute(requestedCwd)
+                    ? requestedCwd
+                    : resolve(source.cwd, requestedCwd);
+                })()
+              : tasks.resolveTaskCwd(input.cwd);
+        if (
+          existing.parent_id !== expectedLocalParentId ||
+          (input.agentId !== undefined && existingAgent !== input.agentId) ||
+          (input.title !== undefined && existing.title !== input.title) ||
+          existing.source !== effectiveLocalSource ||
+          existing.cwd !== expectedCwd
+        ) {
+          throw new TaskCreateConflictError();
+        }
+        const parentAgentId =
+          existing.parent_id !== null
+            ? (store.getBindingAgent(existing.parent_id) ?? null)
+            : null;
+        return {
+          replayed: true,
+          task: {
+            id: existing.id,
+            title: existing.title,
+            agentId: existingAgent,
+            cwd: existing.cwd,
+            model: existing.model,
+            thinking: existing.reasoning_effort,
+            parentId: existing.parent_id,
+            workflowStatus: existing.workflow_status,
+            source: existing.source,
+          },
+          session: {
+            cwdDisplay: abbreviateHomePath(existing.cwd),
+            parentAgentId,
+            configOptions: tasks.configOptionsForTask(existing.id),
+            agentCommands: tasks.getAgentCommands(existing.id),
+          },
+        };
+      };
+      if (localDeterministicId) {
+        const existing = store.getTaskIncludingDeleted(localDeterministicId);
+        if (existing) return verifyLocalReplay(existing);
       }
       const requestedAgent = input.agentId;
       let targetAgentId: string;
@@ -390,8 +502,11 @@ export function createLocalTaskOps(deps: {
           targetBridge,
           cwd,
           input.inheritFromTaskId,
-          input.source ?? (agentCaller ? "agent" : "auto"),
+          effectiveLocalSource,
           {
+            ...(localDeterministicId === undefined
+              ? {}
+              : { id: localDeterministicId }),
             parentId: input.parentId,
             title: input.title,
             model: input.model,
@@ -413,12 +528,14 @@ export function createLocalTaskOps(deps: {
                   },
                 }
               : {}),
-            ...(input.clientOpId === undefined
-              ? {}
-              : { clientOpId: input.clientOpId }),
+            ...(input.opId === null ? {} : { clientOpId: input.opId }),
           },
         );
       } catch (error) {
+        if (localDeterministicId) {
+          const raced = store.getTaskIncludingDeleted(localDeterministicId);
+          if (raced) return verifyLocalReplay(raced);
+        }
         // The target's own schema refused a requested value. The candidates
         // must be this session's, so they travel on the error rather than
         // being looked up in the agent-level cache after the fact.

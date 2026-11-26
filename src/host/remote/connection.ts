@@ -148,6 +148,7 @@ export interface HostHttpRequest {
   path: string;
   body?: unknown;
   token?: string;
+  headers?: Record<string, string>;
   redirect?: RequestRedirect;
 }
 
@@ -155,6 +156,7 @@ export interface HostConnectionOptions {
   fetch?: typeof globalThis.fetch;
   requestTransport?: SyncRequestTransport<HostHttpRequest, unknown>;
   timer?: SyncTimer;
+  createRetries?: number;
 }
 
 const DEFAULT_TIMER: SyncTimer = {
@@ -216,20 +218,26 @@ export class HostConnection {
     unknown
   >;
   private readonly timer: SyncTimer;
+  private readonly createRetries: number;
   private tokenCommand: Promise<string> | null = null;
-  private requestSeq = 0;
 
   constructor(config: HostConfig, options: HostConnectionOptions = {}) {
     this.config = config;
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.timer = options.timer ?? DEFAULT_TIMER;
+    this.createRetries = Math.max(0, options.createRetries ?? 2);
     this.requestTransport = options.requestTransport ?? {
-      send: async (_operationId, request, signal) => {
+      send: async (opId, request, signal) => {
         const token = request.token ?? (await this.resolveToken(signal));
+        const headers =
+          opId !== null
+            ? { ...(request.headers ?? {}), "X-Client-Op-Id": opId }
+            : request.headers;
         const response = await this.fetchResponse(request.path, {
           token,
           method: request.method,
           body: request.body,
+          headers,
           redirect: request.redirect,
           signal,
           timeoutMs: null,
@@ -252,18 +260,20 @@ export class HostConnection {
       return { kind: "not_sent", reason: "Host credential is unavailable" };
     }
 
+    const { opId, ...payload } = input;
     const outcome = await sendSyncRequest({
-      operationId: `create-${++this.requestSeq}`,
+      opId,
       request: {
         method: "POST",
         path: "/api/v1/tasks",
-        body: input,
+        body: payload,
         token,
         redirect: "error",
       },
       timeoutMs: REQUEST_TIMEOUT_MS,
       transport: this.requestTransport,
       timer: this.timer,
+      retries: this.createRetries,
     });
     if (outcome.kind === "unknown") {
       return { kind: "unknown", reason: errorMessage(outcome.error) };
@@ -315,7 +325,7 @@ export class HostConnection {
 
   async getJson(path: string): Promise<unknown> {
     const outcome = await sendSyncRequest({
-      operationId: `read-${++this.requestSeq}`,
+      opId: null,
       request: { method: "GET", path, redirect: "error" },
       timeoutMs: REQUEST_TIMEOUT_MS,
       transport: this.requestTransport,
@@ -339,7 +349,7 @@ export class HostConnection {
   ): Promise<RemoteTaskStatus> {
     const path = `/api/v1/tasks/${encodeURIComponent(taskId)}/status`;
     const outcome = await sendSyncRequest({
-      operationId: `status-${++this.requestSeq}`,
+      opId: null,
       request: { method: "GET", path, redirect: "error" },
       timeoutMs,
       transport: this.requestTransport,
@@ -386,13 +396,13 @@ export class HostConnection {
 
   pushTransport(): SyncRequestTransport<unknown, unknown> {
     return {
-      send: async (operationId, request, signal) => {
+      send: async (opId, request, signal) => {
         const token = await this.resolveToken(signal);
         const response = await this.fetchResponse("/api/v1/link/entries", {
           token,
           method: "POST",
           body: request,
-          headers: { "X-Client-Op-Id": operationId },
+          headers: opId !== null ? { "X-Client-Op-Id": opId } : undefined,
           signal,
           timeoutMs: null,
           redirect: "error",

@@ -522,7 +522,7 @@ describe("dormant link sync handlers", () => {
       },
       transport: {
         send: async (opId) => {
-          sentIds.push(opId);
+          sentIds.push(opId!);
           return responses.shift() ?? { status: 400, body: { error: "fault" } };
         },
       },

@@ -5,8 +5,8 @@
       "response": {
         "rootId": "00000000-0000-4000-8000-000000000001",
         "fallbackChildId": "00000000-0000-4000-8000-000000000004",
-        "waitingChildId": "00000000-0000-4000-8000-000000000011",
-        "wakeTargetId": "00000000-0000-4000-8000-000000000015"
+        "waitingChildId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
+        "wakeTargetId": "5c53177b-c144-5559-ba46-d30028da090b"
       },
       "sse": [
         {
@@ -924,11 +924,11 @@
               "kind": "task_created",
               "messageId": "00000000-0000-4000-8000-00000000000b",
               "sourceTaskId": "00000000-0000-4000-8000-000000000001",
-              "targetTaskId": "00000000-0000-4000-8000-00000000000a",
+              "targetTaskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "taskTitle": "Blocked child",
               "role": "source",
               "title": "Created task @\"Blocked child\"",
-              "body": "Task ID: 00000000-0000-4000-8000-00000000000a\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
+              "body": "Task ID: 7573c7dc-2950-5334-bacb-52ebf934e4d9\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
             },
             {
               "type": "system_message",
@@ -937,7 +937,7 @@
               "messageId": "00000000-0000-4000-8000-00000000000c",
               "sourceTaskId": "00000000-0000-4000-8000-000000000001",
               "sourceLabel": "root",
-              "targetTaskId": "00000000-0000-4000-8000-00000000000a",
+              "targetTaskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "targetLabel": "Blocked child",
               "role": "source",
               "title": "@root sent @\"Blocked child\"",
@@ -1018,7 +1018,7 @@
               "taskId": "00000000-0000-4000-8000-000000000001",
               "kind": "collaboration",
               "messageId": "00000000-0000-4000-8000-00000000000e",
-              "sourceTaskId": "00000000-0000-4000-8000-00000000000a",
+              "sourceTaskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "sourceLabel": "Blocked child",
               "targetTaskId": "00000000-0000-4000-8000-000000000001",
               "targetLabel": "root",
@@ -1076,11 +1076,11 @@
           ]
         },
         {
-          "taskId": "00000000-0000-4000-8000-00000000000a",
+          "taskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
           "events": [
             {
               "type": "available_commands_update",
-              "taskId": "00000000-0000-4000-8000-00000000000a",
+              "taskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "commands": [
                 {
                   "name": "context",
@@ -1099,7 +1099,7 @@
             },
             {
               "type": "task_created",
-              "taskId": "00000000-0000-4000-8000-00000000000a",
+              "taskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "agentId": "mock",
               "cwd": "/",
               "cwdDisplay": "/",
@@ -1183,11 +1183,12 @@
                     }
                   }
                 ]
-              }
+              },
+              "clientOpId": "00000000-0000-4000-8000-00000000000a"
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-00000000000a",
+              "taskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "seq": 1,
               "patch": {
                 "runtime": {
@@ -1202,12 +1203,12 @@
             },
             {
               "type": "system_message",
-              "taskId": "00000000-0000-4000-8000-00000000000a",
+              "taskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "kind": "collaboration",
               "messageId": "00000000-0000-4000-8000-00000000000c",
               "sourceTaskId": "00000000-0000-4000-8000-000000000001",
               "sourceLabel": "root",
-              "targetTaskId": "00000000-0000-4000-8000-00000000000a",
+              "targetTaskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "targetLabel": "Blocked child",
               "role": "target",
               "title": "@root sent @\"Blocked child\"",
@@ -1215,10 +1216,10 @@
             },
             {
               "type": "system_message",
-              "taskId": "00000000-0000-4000-8000-00000000000a",
+              "taskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "kind": "collaboration",
               "messageId": "00000000-0000-4000-8000-00000000000e",
-              "sourceTaskId": "00000000-0000-4000-8000-00000000000a",
+              "sourceTaskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "sourceLabel": "Blocked child",
               "targetTaskId": "00000000-0000-4000-8000-000000000001",
               "targetLabel": "root",
@@ -1229,14 +1230,14 @@
             },
             {
               "type": "collaboration_delivery",
-              "taskId": "00000000-0000-4000-8000-00000000000a",
+              "taskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "messageId": "00000000-0000-4000-8000-00000000000e",
               "status": "delivered",
               "deliveredAt": "2026-09-13T21:00:00.000Z"
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-00000000000a",
+              "taskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "seq": 2,
               "patch": {
                 "runtime": {
@@ -1249,12 +1250,12 @@
             },
             {
               "type": "message_chunk",
-              "taskId": "00000000-0000-4000-8000-00000000000a",
+              "taskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "text": "Blocked result sent."
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-00000000000a",
+              "taskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "seq": 3,
               "patch": {
                 "runtime": {
@@ -1264,7 +1265,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-00000000000a",
+              "taskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "seq": 4,
               "patch": {
                 "runtime": {
@@ -1277,7 +1278,7 @@
             },
             {
               "type": "prompt_done",
-              "taskId": "00000000-0000-4000-8000-00000000000a",
+              "taskId": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
               "stopReason": "end_turn",
               "promptId": "prompt-4"
             }
@@ -1338,7 +1339,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"taskId\":\"00000000-0000-4000-8000-00000000000a\"}"
+                      "text": "{\"taskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\"}"
                     }
                   ]
                 },
@@ -1351,7 +1352,7 @@
               "sessionId": "00000000-0000-4000-8000-000000000001",
               "tool": "task_send",
               "arguments": {
-                "target": "00000000-0000-4000-8000-00000000000a",
+                "target": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 "body": "report blocked"
               },
               "status": 200,
@@ -1372,7 +1373,7 @@
               "kind": "acp",
               "method": "session/prompt",
               "sessionId": "00000000-0000-4000-8000-000000000001",
-              "text": "From \"Blocked child\" (task id 00000000-0000-4000-8000-00000000000a):\n---8<---\nTask status: blocked\nNeed parent input.\n---8<---"
+              "text": "From \"Blocked child\" (task id 7573c7dc-2950-5334-bacb-52ebf934e4d9):\n---8<---\nTask status: blocked\nNeed parent input.\n---8<---"
             }
           ]
         },
@@ -1472,7 +1473,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 11,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceLabel\":\"Blocked child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Blocked child\\\" sent @root\",\"body\":\"Task status: blocked\\nNeed parent input.\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\",\"sourceLabel\":\"Blocked child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Blocked child\\\" sent @root\",\"body\":\"Task status: blocked\\nNeed parent input.\"}",
                 "msg:00000000-0000-4000-8000-00000000000e",
                 1789333200000
               ]
@@ -1487,7 +1488,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 12,
                 "collaboration_prompt",
-                "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000e\"],\"text\":\"From \\\"Blocked child\\\" (task id 00000000-0000-4000-8000-00000000000a):\\n---8<---\\nTask status: blocked\\nNeed parent input.\\n---8<---\",\"truncated\":false,\"rawSize\":126}",
+                "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000e\"],\"text\":\"From \\\"Blocked child\\\" (task id 7573c7dc-2950-5334-bacb-52ebf934e4d9):\\n---8<---\\nTask status: blocked\\nNeed parent input.\\n---8<---\",\"truncated\":false,\"rawSize\":126}",
                 "system",
                 1789333200000
               ]
@@ -1547,7 +1548,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 7,
                 "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-00000000000a\",\"taskTitle\":\"Blocked child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Blocked child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-00000000000a\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "{\"kind\":\"task_created\",\"taskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\",\"taskTitle\":\"Blocked child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Blocked child\\\"\",\"body\":\"Task ID: 7573c7dc-2950-5334-bacb-52ebf934e4d9\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
                 "agent",
                 1789333200000
               ]
@@ -1574,10 +1575,10 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 1,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"targetLabel\":\"Blocked child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Blocked child\\\"\",\"body\":\"report blocked\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\",\"targetLabel\":\"Blocked child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Blocked child\\\"\",\"body\":\"report blocked\"}",
                 "msg:00000000-0000-4000-8000-00000000000c",
                 1789333200000
               ]
@@ -1589,7 +1590,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 2,
                 "collaboration_prompt",
                 "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000c\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8000-000000000001):\\n---8<---\\nreport blocked\\n---8<---\",\"truncated\":false,\"rawSize\":92}",
@@ -1604,7 +1605,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 5,
                 "assistant_message",
                 "{\"text\":\"Blocked result sent.\"}",
@@ -1619,7 +1620,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 6,
                 "prompt_done",
                 "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
@@ -1636,7 +1637,7 @@
               "args": [
                 "00000000-0000-4000-8000-00000000000c",
                 "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 "agent",
                 "report blocked",
                 1789333200000
@@ -1648,7 +1649,7 @@
               "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000c",
-                "00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 "target",
                 1789333200000
               ]
@@ -1660,8 +1661,8 @@
               "args": [
                 "00000000-0000-4000-8000-00000000000d",
                 "00000000-0000-4000-8000-00000000000c",
-                "00000000-0000-4000-8000-00000000000a",
-                "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
+                "00000000-0000-4000-8000-00000000000c:7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 "queued",
                 1789333200000,
                 null,
@@ -1692,7 +1693,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 8,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"targetLabel\":\"Blocked child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Blocked child\\\"\",\"body\":\"report blocked\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\",\"targetLabel\":\"Blocked child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Blocked child\\\"\",\"body\":\"report blocked\"}",
                 "msg:00000000-0000-4000-8000-00000000000c",
                 1789333200000
               ]
@@ -1712,7 +1713,7 @@
               "method": "run",
               "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 "/",
                 "agent",
                 "00000000-0000-4000-8000-000000000001",
@@ -1729,7 +1730,7 @@
               "args": [
                 "mock",
                 "00000000-0000-4000-8000-000000000003",
-                "00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 1789333200000
               ]
             }
@@ -1771,7 +1772,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-00000000000a"]
+              "args": ["agent", "7573c7dc-2950-5334-bacb-52ebf934e4d9"]
             }
           ],
           [
@@ -1779,7 +1780,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-00000000000a"]
+              "args": ["mock-model", "7573c7dc-2950-5334-bacb-52ebf934e4d9"]
             }
           ],
           [
@@ -1787,7 +1788,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-00000000000a"]
+              "args": ["medium", "7573c7dc-2950-5334-bacb-52ebf934e4d9"]
             }
           ],
           [
@@ -1795,17 +1796,17 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-              "args": ["blocked", "00000000-0000-4000-8000-00000000000a"]
+              "args": ["blocked", "7573c7dc-2950-5334-bacb-52ebf934e4d9"]
             },
             {
               "kind": "write",
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 3,
                 "task_update",
-                "{\"status\":\"blocked\",\"body\":\"Need parent input.\",\"reason\":\"settled\",\"sourceTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
+                "{\"status\":\"blocked\",\"body\":\"Need parent input.\",\"reason\":\"settled\",\"sourceTaskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
                 "agent",
                 1789333200000
               ]
@@ -1816,7 +1817,7 @@
               "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000e",
-                "00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 "00000000-0000-4000-8000-000000000001",
                 "agent",
                 "Task status: blocked\nNeed parent input.",
@@ -1861,7 +1862,7 @@
               "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000e",
-                "00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 1789333200000
               ]
             },
@@ -1870,10 +1871,10 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-00000000000a",
+                "7573c7dc-2950-5334-bacb-52ebf934e4d9",
                 4,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceLabel\":\"Blocked child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Blocked child\\\" sent @root\",\"body\":\"Task status: blocked\\nNeed parent input.\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\",\"sourceLabel\":\"Blocked child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Blocked child\\\" sent @root\",\"body\":\"Task status: blocked\\nNeed parent input.\"}",
                 "msg:00000000-0000-4000-8000-00000000000e",
                 1789333200000
               ]
@@ -1900,11 +1901,11 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-              "args": ["running", "00000000-0000-4000-8000-00000000000a"]
+              "args": ["running", "7573c7dc-2950-5334-bacb-52ebf934e4d9"]
             }
           ]
         ],
-        "reads": 125
+        "reads": 126
       }
     },
     {
@@ -1946,11 +1947,11 @@
               "kind": "task_created",
               "messageId": "00000000-0000-4000-8000-000000000012",
               "sourceTaskId": "00000000-0000-4000-8000-000000000001",
-              "targetTaskId": "00000000-0000-4000-8000-000000000011",
+              "targetTaskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "taskTitle": "Waiting child",
               "role": "source",
               "title": "Created task @\"Waiting child\"",
-              "body": "Task ID: 00000000-0000-4000-8000-000000000011\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
+              "body": "Task ID: 48220e94-2462-5581-8a27-c4e1f5b8360b\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
             },
             {
               "type": "system_message",
@@ -1959,7 +1960,7 @@
               "messageId": "00000000-0000-4000-8000-000000000013",
               "sourceTaskId": "00000000-0000-4000-8000-000000000001",
               "sourceLabel": "root",
-              "targetTaskId": "00000000-0000-4000-8000-000000000011",
+              "targetTaskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "targetLabel": "Waiting child",
               "role": "source",
               "title": "@root sent @\"Waiting child\"",
@@ -2023,11 +2024,11 @@
           ]
         },
         {
-          "taskId": "00000000-0000-4000-8000-000000000011",
+          "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
           "events": [
             {
               "type": "available_commands_update",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "commands": [
                 {
                   "name": "context",
@@ -2046,7 +2047,7 @@
             },
             {
               "type": "task_created",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "agentId": "mock",
               "cwd": "/",
               "cwdDisplay": "/",
@@ -2130,11 +2131,12 @@
                     }
                   }
                 ]
-              }
+              },
+              "clientOpId": "00000000-0000-4000-8000-000000000011"
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "seq": 1,
               "patch": {
                 "runtime": {
@@ -2149,12 +2151,12 @@
             },
             {
               "type": "system_message",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "kind": "collaboration",
               "messageId": "00000000-0000-4000-8000-000000000013",
               "sourceTaskId": "00000000-0000-4000-8000-000000000001",
               "sourceLabel": "root",
-              "targetTaskId": "00000000-0000-4000-8000-000000000011",
+              "targetTaskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "targetLabel": "Waiting child",
               "role": "target",
               "title": "@root sent @\"Waiting child\"",
@@ -2162,19 +2164,19 @@
             },
             {
               "type": "system_message",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "kind": "task_created",
               "messageId": "00000000-0000-4000-8000-000000000016",
-              "sourceTaskId": "00000000-0000-4000-8000-000000000011",
-              "targetTaskId": "00000000-0000-4000-8000-000000000015",
+              "sourceTaskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
+              "targetTaskId": "5c53177b-c144-5559-ba46-d30028da090b",
               "taskTitle": "Wake target",
               "role": "source",
               "title": "Created task @\"Wake target\"",
-              "body": "Task ID: 00000000-0000-4000-8000-000000000015\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
+              "body": "Task ID: 5c53177b-c144-5559-ba46-d30028da090b\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "seq": 2,
               "patch": {
                 "runtime": {
@@ -2187,12 +2189,12 @@
             },
             {
               "type": "message_chunk",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "text": "Wake target created."
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "seq": 3,
               "patch": {
                 "runtime": {
@@ -2202,7 +2204,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "seq": 4,
               "patch": {
                 "runtime": {
@@ -2215,18 +2217,18 @@
             },
             {
               "type": "prompt_done",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "stopReason": "end_turn",
               "promptId": "prompt-7"
             }
           ]
         },
         {
-          "taskId": "00000000-0000-4000-8000-000000000015",
+          "taskId": "5c53177b-c144-5559-ba46-d30028da090b",
           "events": [
             {
               "type": "available_commands_update",
-              "taskId": "00000000-0000-4000-8000-000000000015",
+              "taskId": "5c53177b-c144-5559-ba46-d30028da090b",
               "commands": [
                 {
                   "name": "context",
@@ -2245,12 +2247,12 @@
             },
             {
               "type": "task_created",
-              "taskId": "00000000-0000-4000-8000-000000000015",
+              "taskId": "5c53177b-c144-5559-ba46-d30028da090b",
               "agentId": "mock",
               "cwd": "/",
               "cwdDisplay": "/",
               "title": "Wake target",
-              "parentId": "00000000-0000-4000-8000-000000000011",
+              "parentId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "parentAgentId": "mock",
               "configOptions": [
                 {
@@ -2329,7 +2331,8 @@
                     }
                   }
                 ]
-              }
+              },
+              "clientOpId": "00000000-0000-4000-8000-000000000015"
             }
           ]
         }
@@ -2388,7 +2391,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"taskId\":\"00000000-0000-4000-8000-000000000011\"}"
+                      "text": "{\"taskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\"}"
                     }
                   ]
                 },
@@ -2401,7 +2404,7 @@
               "sessionId": "00000000-0000-4000-8000-000000000001",
               "tool": "task_send",
               "arguments": {
-                "target": "00000000-0000-4000-8000-000000000011",
+                "target": "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 "body": "build wake target"
               },
               "status": 200,
@@ -2479,7 +2482,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"taskId\":\"00000000-0000-4000-8000-000000000015\"}"
+                      "text": "{\"taskId\":\"5c53177b-c144-5559-ba46-d30028da090b\"}"
                     }
                   ]
                 },
@@ -2549,7 +2552,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 16,
                 "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000011\",\"taskTitle\":\"Waiting child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Waiting child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000011\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "{\"kind\":\"task_created\",\"taskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\",\"taskTitle\":\"Waiting child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Waiting child\\\"\",\"body\":\"Task ID: 48220e94-2462-5581-8a27-c4e1f5b8360b\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
                 "agent",
                 1789333200000
               ]
@@ -2591,10 +2594,10 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 1,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000011\",\"targetLabel\":\"Waiting child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Waiting child\\\"\",\"body\":\"build wake target\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\",\"targetLabel\":\"Waiting child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Waiting child\\\"\",\"body\":\"build wake target\"}",
                 "msg:00000000-0000-4000-8000-000000000013",
                 1789333200000
               ]
@@ -2606,7 +2609,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 2,
                 "collaboration_prompt",
                 "{\"messageIds\":[\"00000000-0000-4000-8000-000000000013\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8000-000000000001):\\n---8<---\\nbuild wake target\\n---8<---\",\"truncated\":false,\"rawSize\":95}",
@@ -2621,10 +2624,10 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 3,
                 "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000015\",\"taskTitle\":\"Wake target\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Wake target\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000015\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "{\"kind\":\"task_created\",\"taskId\":\"5c53177b-c144-5559-ba46-d30028da090b\",\"taskTitle\":\"Wake target\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Wake target\\\"\",\"body\":\"Task ID: 5c53177b-c144-5559-ba46-d30028da090b\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
                 "agent",
                 1789333200000
               ]
@@ -2636,7 +2639,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 5,
                 "assistant_message",
                 "{\"text\":\"Wake target created.\"}",
@@ -2651,7 +2654,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 6,
                 "prompt_done",
                 "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-7\"}",
@@ -2668,7 +2671,7 @@
               "args": [
                 "00000000-0000-4000-8000-000000000013",
                 "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 "agent",
                 "build wake target",
                 1789333200000
@@ -2680,7 +2683,7 @@
               "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000013",
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 "target",
                 1789333200000
               ]
@@ -2692,8 +2695,8 @@
               "args": [
                 "00000000-0000-4000-8000-000000000014",
                 "00000000-0000-4000-8000-000000000013",
-                "00000000-0000-4000-8000-000000000011",
-                "00000000-0000-4000-8000-000000000013:00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
+                "00000000-0000-4000-8000-000000000013:48220e94-2462-5581-8a27-c4e1f5b8360b",
                 "queued",
                 1789333200000,
                 null,
@@ -2724,7 +2727,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 17,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000011\",\"targetLabel\":\"Waiting child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Waiting child\\\"\",\"body\":\"build wake target\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\",\"targetLabel\":\"Waiting child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Waiting child\\\"\",\"body\":\"build wake target\"}",
                 "msg:00000000-0000-4000-8000-000000000013",
                 1789333200000
               ]
@@ -2744,7 +2747,7 @@
               "method": "run",
               "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 "/",
                 "agent",
                 "00000000-0000-4000-8000-000000000001",
@@ -2761,7 +2764,7 @@
               "args": [
                 "mock",
                 "00000000-0000-4000-8000-000000000004",
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 1789333200000
               ]
             }
@@ -2772,10 +2775,10 @@
               "method": "run",
               "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000015",
+                "5c53177b-c144-5559-ba46-d30028da090b",
                 "/",
                 "agent",
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 "Wake target",
                 "idle",
                 1789333200000,
@@ -2789,7 +2792,7 @@
               "args": [
                 "mock",
                 "00000000-0000-4000-8000-000000000005",
-                "00000000-0000-4000-8000-000000000015",
+                "5c53177b-c144-5559-ba46-d30028da090b",
                 1789333200000
               ]
             }
@@ -2819,7 +2822,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000011"]
+              "args": ["agent", "48220e94-2462-5581-8a27-c4e1f5b8360b"]
             }
           ],
           [
@@ -2827,7 +2830,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000015"]
+              "args": ["agent", "5c53177b-c144-5559-ba46-d30028da090b"]
             }
           ],
           [
@@ -2835,7 +2838,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000015"]
+              "args": ["agent", "5c53177b-c144-5559-ba46-d30028da090b"]
             }
           ],
           [
@@ -2843,7 +2846,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000015"]
+              "args": ["agent", "5c53177b-c144-5559-ba46-d30028da090b"]
             }
           ],
           [
@@ -2851,7 +2854,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-000000000011"]
+              "args": ["mock-model", "48220e94-2462-5581-8a27-c4e1f5b8360b"]
             }
           ],
           [
@@ -2859,7 +2862,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-000000000015"]
+              "args": ["mock-model", "5c53177b-c144-5559-ba46-d30028da090b"]
             }
           ],
           [
@@ -2867,7 +2870,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-000000000015"]
+              "args": ["mock-model", "5c53177b-c144-5559-ba46-d30028da090b"]
             }
           ],
           [
@@ -2875,7 +2878,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-000000000015"]
+              "args": ["mock-model", "5c53177b-c144-5559-ba46-d30028da090b"]
             }
           ],
           [
@@ -2883,7 +2886,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000011"]
+              "args": ["medium", "48220e94-2462-5581-8a27-c4e1f5b8360b"]
             }
           ],
           [
@@ -2891,7 +2894,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000015"]
+              "args": ["medium", "5c53177b-c144-5559-ba46-d30028da090b"]
             }
           ],
           [
@@ -2899,7 +2902,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000015"]
+              "args": ["medium", "5c53177b-c144-5559-ba46-d30028da090b"]
             }
           ],
           [
@@ -2907,7 +2910,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000015"]
+              "args": ["medium", "5c53177b-c144-5559-ba46-d30028da090b"]
             }
           ],
           [
@@ -2915,7 +2918,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-              "args": ["running", "00000000-0000-4000-8000-000000000011"]
+              "args": ["running", "48220e94-2462-5581-8a27-c4e1f5b8360b"]
             }
           ],
           [
@@ -2923,24 +2926,24 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-              "args": ["waiting", "00000000-0000-4000-8000-000000000011"]
+              "args": ["waiting", "48220e94-2462-5581-8a27-c4e1f5b8360b"]
             },
             {
               "kind": "write",
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 4,
                 "task_update",
-                "{\"status\":\"waiting\",\"body\":\"Waiting before dispatch.\",\"reason\":\"waiting\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000011\",\"targetTaskId\":null}",
+                "{\"status\":\"waiting\",\"body\":\"Waiting before dispatch.\",\"reason\":\"waiting\",\"sourceTaskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\",\"targetTaskId\":null}",
                 "agent",
                 1789333200000
               ]
             }
           ]
         ],
-        "reads": 123
+        "reads": 125
       }
     },
     {
@@ -2987,7 +2990,7 @@
             "archived": false
           },
           {
-            "id": "00000000-0000-4000-8000-00000000000a",
+            "id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
             "cwd": "/",
             "title": "Blocked child",
             "workflow_status": "blocked",
@@ -3006,7 +3009,7 @@
             "archived": false
           },
           {
-            "id": "00000000-0000-4000-8000-000000000011",
+            "id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
             "cwd": "/",
             "title": "Waiting child",
             "workflow_status": "waiting",
@@ -3025,11 +3028,11 @@
             "archived": false
           },
           {
-            "id": "00000000-0000-4000-8000-000000000015",
+            "id": "5c53177b-c144-5559-ba46-d30028da090b",
             "cwd": "/",
             "title": "Wake target",
             "workflow_status": "idle",
-            "parent_id": "00000000-0000-4000-8000-000000000011",
+            "parent_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
             "model": "mock-model",
             "mode": "agent",
             "reasoning_effort": "medium",
@@ -3062,17 +3065,17 @@
       },
       "sse": [
         {
-          "taskId": "00000000-0000-4000-8000-000000000015",
+          "taskId": "5c53177b-c144-5559-ba46-d30028da090b",
           "events": [
             {
               "type": "user_message",
-              "taskId": "00000000-0000-4000-8000-000000000015",
+              "taskId": "5c53177b-c144-5559-ba46-d30028da090b",
               "text": "park wake target",
               "clientOpId": "00000000-0000-4000-8000-000000000017"
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000015",
+              "taskId": "5c53177b-c144-5559-ba46-d30028da090b",
               "seq": 1,
               "patch": {
                 "runtime": {
@@ -3087,7 +3090,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000015",
+              "taskId": "5c53177b-c144-5559-ba46-d30028da090b",
               "seq": 2,
               "patch": {
                 "runtime": {
@@ -3100,7 +3103,7 @@
             },
             {
               "type": "message_chunk",
-              "taskId": "00000000-0000-4000-8000-000000000015",
+              "taskId": "5c53177b-c144-5559-ba46-d30028da090b",
               "text": "REGRESSION_WAIT: busy-wake-target"
             }
           ]
@@ -3132,7 +3135,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000015",
+                "5c53177b-c144-5559-ba46-d30028da090b",
                 1,
                 "user_message",
                 "{\"text\":\"park wake target\",\"clientOpId\":\"00000000-0000-4000-8000-000000000017\"}",
@@ -3154,7 +3157,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
-              "args": [1789333200000, "00000000-0000-4000-8000-000000000015"]
+              "args": [1789333200000, "5c53177b-c144-5559-ba46-d30028da090b"]
             }
           ]
         ],
@@ -3171,17 +3174,17 @@
       },
       "sse": [
         {
-          "taskId": "00000000-0000-4000-8000-000000000011",
+          "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
           "events": [
             {
               "type": "user_message",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "text": "queue for busy child",
               "clientOpId": "00000000-0000-4000-8000-000000000018"
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "seq": 5,
               "patch": {
                 "runtime": {
@@ -3196,12 +3199,12 @@
             },
             {
               "type": "system_message",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "kind": "collaboration",
               "messageId": "00000000-0000-4000-8000-000000000019",
-              "sourceTaskId": "00000000-0000-4000-8000-000000000011",
+              "sourceTaskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "sourceLabel": "Waiting child",
-              "targetTaskId": "00000000-0000-4000-8000-000000000015",
+              "targetTaskId": "5c53177b-c144-5559-ba46-d30028da090b",
               "targetLabel": "Wake target",
               "role": "source",
               "title": "@\"Waiting child\" sent @\"Wake target\"",
@@ -3210,7 +3213,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "seq": 6,
               "patch": {
                 "runtime": {
@@ -3223,12 +3226,12 @@
             },
             {
               "type": "message_chunk",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "text": "Waiting with queued child dispatch."
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "seq": 7,
               "patch": {
                 "runtime": {
@@ -3238,7 +3241,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "seq": 8,
               "patch": {
                 "runtime": {
@@ -3251,7 +3254,7 @@
             },
             {
               "type": "prompt_done",
-              "taskId": "00000000-0000-4000-8000-000000000011",
+              "taskId": "48220e94-2462-5581-8a27-c4e1f5b8360b",
               "stopReason": "end_turn",
               "promptId": "prompt-9"
             }
@@ -3303,7 +3306,7 @@
               "sessionId": "00000000-0000-4000-8000-000000000004",
               "tool": "task_send",
               "arguments": {
-                "target": "00000000-0000-4000-8000-000000000015",
+                "target": "5c53177b-c144-5559-ba46-d30028da090b",
                 "body": "wake later"
               },
               "status": 200,
@@ -3353,7 +3356,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 10,
                 "assistant_message",
                 "{\"text\":\"Waiting with queued child dispatch.\"}",
@@ -3368,7 +3371,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 11,
                 "prompt_done",
                 "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-9\"}",
@@ -3383,7 +3386,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 7,
                 "user_message",
                 "{\"text\":\"queue for busy child\",\"clientOpId\":\"00000000-0000-4000-8000-000000000018\"}",
@@ -3399,8 +3402,8 @@
               "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000019",
-                "00000000-0000-4000-8000-000000000011",
-                "00000000-0000-4000-8000-000000000015",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
+                "5c53177b-c144-5559-ba46-d30028da090b",
                 "agent",
                 "wake later",
                 1789333200000
@@ -3412,7 +3415,7 @@
               "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000019",
-                "00000000-0000-4000-8000-000000000015",
+                "5c53177b-c144-5559-ba46-d30028da090b",
                 "target",
                 1789333200000
               ]
@@ -3424,8 +3427,8 @@
               "args": [
                 "00000000-0000-4000-8000-00000000001a",
                 "00000000-0000-4000-8000-000000000019",
-                "00000000-0000-4000-8000-000000000015",
-                "00000000-0000-4000-8000-000000000019:00000000-0000-4000-8000-000000000015",
+                "5c53177b-c144-5559-ba46-d30028da090b",
+                "00000000-0000-4000-8000-000000000019:5c53177b-c144-5559-ba46-d30028da090b",
                 "queued",
                 1789333200000,
                 null,
@@ -3444,7 +3447,7 @@
               "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000019",
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 1789333200000
               ]
             },
@@ -3453,10 +3456,10 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 8,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000019\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000011\",\"sourceLabel\":\"Waiting child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000015\",\"targetLabel\":\"Wake target\",\"role\":\"source\",\"title\":\"@\\\"Waiting child\\\" sent @\\\"Wake target\\\"\",\"body\":\"wake later\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000019\",\"sourceTaskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\",\"sourceLabel\":\"Waiting child\",\"targetTaskId\":\"5c53177b-c144-5559-ba46-d30028da090b\",\"targetLabel\":\"Wake target\",\"role\":\"source\",\"title\":\"@\\\"Waiting child\\\" sent @\\\"Wake target\\\"\",\"body\":\"wake later\"}",
                 "msg:00000000-0000-4000-8000-000000000019",
                 1789333200000
               ]
@@ -3475,7 +3478,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
-              "args": [1789333200000, "00000000-0000-4000-8000-000000000011"]
+              "args": [1789333200000, "48220e94-2462-5581-8a27-c4e1f5b8360b"]
             }
           ],
           [
@@ -3483,17 +3486,17 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-              "args": ["waiting", "00000000-0000-4000-8000-000000000011"]
+              "args": ["waiting", "48220e94-2462-5581-8a27-c4e1f5b8360b"]
             },
             {
               "kind": "write",
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000011",
+                "48220e94-2462-5581-8a27-c4e1f5b8360b",
                 9,
                 "task_update",
-                "{\"status\":\"waiting\",\"body\":\"Only wake source is queued child dispatch.\",\"reason\":\"waiting\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000011\",\"targetTaskId\":null}",
+                "{\"status\":\"waiting\",\"body\":\"Only wake source is queued child dispatch.\",\"reason\":\"waiting\",\"sourceTaskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\",\"targetTaskId\":null}",
                 "agent",
                 1789333200000
               ]
@@ -3537,7 +3540,7 @@
         "last_active_at": 1789333200000
       },
       {
-        "id": "00000000-0000-4000-8000-00000000000a",
+        "id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "cwd": "/",
         "title": "Blocked child",
         "workflow_status": "blocked",
@@ -3552,7 +3555,7 @@
         "last_active_at": 1789333200000
       },
       {
-        "id": "00000000-0000-4000-8000-000000000011",
+        "id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "cwd": "/",
         "title": "Waiting child",
         "workflow_status": "waiting",
@@ -3567,11 +3570,11 @@
         "last_active_at": 1789333200000
       },
       {
-        "id": "00000000-0000-4000-8000-000000000015",
+        "id": "5c53177b-c144-5559-ba46-d30028da090b",
         "cwd": "/",
         "title": "Wake target",
         "workflow_status": "idle",
-        "parent_id": "00000000-0000-4000-8000-000000000011",
+        "parent_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "pending_compact_summary": null,
         "model": "mock-model",
         "mode": "agent",
@@ -3598,19 +3601,19 @@
       {
         "agent_key": "mock",
         "agent_session_id": "00000000-0000-4000-8000-000000000003",
-        "task_id": "00000000-0000-4000-8000-00000000000a",
+        "task_id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "created_at": 1789333200000
       },
       {
         "agent_key": "mock",
         "agent_session_id": "00000000-0000-4000-8000-000000000004",
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "created_at": 1789333200000
       },
       {
         "agent_key": "mock",
         "agent_session_id": "00000000-0000-4000-8000-000000000005",
-        "task_id": "00000000-0000-4000-8000-000000000015",
+        "task_id": "5c53177b-c144-5559-ba46-d30028da090b",
         "created_at": 1789333200000
       }
     ],
@@ -3719,7 +3722,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 7,
         "type": "system_message",
-        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-00000000000a\",\"taskTitle\":\"Blocked child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Blocked child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-00000000000a\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\",\"taskTitle\":\"Blocked child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Blocked child\\\"\",\"body\":\"Task ID: 7573c7dc-2950-5334-bacb-52ebf934e4d9\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
@@ -3728,22 +3731,22 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 8,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"targetLabel\":\"Blocked child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Blocked child\\\"\",\"body\":\"report blocked\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\",\"targetLabel\":\"Blocked child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Blocked child\\\"\",\"body\":\"report blocked\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-00000000000c"
       },
       {
         "id": 14,
-        "task_id": "00000000-0000-4000-8000-00000000000a",
+        "task_id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "seq": 1,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"targetLabel\":\"Blocked child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Blocked child\\\"\",\"body\":\"report blocked\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\",\"targetLabel\":\"Blocked child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Blocked child\\\"\",\"body\":\"report blocked\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-00000000000c"
       },
       {
         "id": 15,
-        "task_id": "00000000-0000-4000-8000-00000000000a",
+        "task_id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "seq": 2,
         "type": "collaboration_prompt",
         "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000c\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8000-000000000001):\\n---8<---\\nreport blocked\\n---8<---\",\"truncated\":false,\"rawSize\":92}",
@@ -3770,19 +3773,19 @@
       },
       {
         "id": 18,
-        "task_id": "00000000-0000-4000-8000-00000000000a",
+        "task_id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "seq": 3,
         "type": "task_update",
-        "data": "{\"status\":\"blocked\",\"body\":\"Need parent input.\",\"reason\":\"settled\",\"sourceTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
+        "data": "{\"status\":\"blocked\",\"body\":\"Need parent input.\",\"reason\":\"settled\",\"sourceTaskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
       {
         "id": 19,
-        "task_id": "00000000-0000-4000-8000-00000000000a",
+        "task_id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "seq": 4,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceLabel\":\"Blocked child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Blocked child\\\" sent @root\",\"body\":\"Task status: blocked\\nNeed parent input.\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\",\"sourceLabel\":\"Blocked child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Blocked child\\\" sent @root\",\"body\":\"Task status: blocked\\nNeed parent input.\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-00000000000e"
       },
@@ -3791,7 +3794,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 11,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceLabel\":\"Blocked child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Blocked child\\\" sent @root\",\"body\":\"Task status: blocked\\nNeed parent input.\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000e\",\"sourceTaskId\":\"7573c7dc-2950-5334-bacb-52ebf934e4d9\",\"sourceLabel\":\"Blocked child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Blocked child\\\" sent @root\",\"body\":\"Task status: blocked\\nNeed parent input.\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-00000000000e"
       },
@@ -3800,7 +3803,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 12,
         "type": "collaboration_prompt",
-        "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000e\"],\"text\":\"From \\\"Blocked child\\\" (task id 00000000-0000-4000-8000-00000000000a):\\n---8<---\\nTask status: blocked\\nNeed parent input.\\n---8<---\",\"truncated\":false,\"rawSize\":126}",
+        "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000e\"],\"text\":\"From \\\"Blocked child\\\" (task id 7573c7dc-2950-5334-bacb-52ebf934e4d9):\\n---8<---\\nTask status: blocked\\nNeed parent input.\\n---8<---\",\"truncated\":false,\"rawSize\":126}",
         "created_at": 1789333200000,
         "from_ref": "system"
       },
@@ -3824,7 +3827,7 @@
       },
       {
         "id": 24,
-        "task_id": "00000000-0000-4000-8000-00000000000a",
+        "task_id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "seq": 5,
         "type": "assistant_message",
         "data": "{\"text\":\"Blocked result sent.\"}",
@@ -3833,7 +3836,7 @@
       },
       {
         "id": 25,
-        "task_id": "00000000-0000-4000-8000-00000000000a",
+        "task_id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "seq": 6,
         "type": "prompt_done",
         "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
@@ -3854,7 +3857,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 16,
         "type": "system_message",
-        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000011\",\"taskTitle\":\"Waiting child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Waiting child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000011\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\",\"taskTitle\":\"Waiting child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Waiting child\\\"\",\"body\":\"Task ID: 48220e94-2462-5581-8a27-c4e1f5b8360b\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
@@ -3863,22 +3866,22 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 17,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000011\",\"targetLabel\":\"Waiting child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Waiting child\\\"\",\"body\":\"build wake target\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\",\"targetLabel\":\"Waiting child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Waiting child\\\"\",\"body\":\"build wake target\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-000000000013"
       },
       {
         "id": 29,
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "seq": 1,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000011\",\"targetLabel\":\"Waiting child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Waiting child\\\"\",\"body\":\"build wake target\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\",\"targetLabel\":\"Waiting child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Waiting child\\\"\",\"body\":\"build wake target\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-000000000013"
       },
       {
         "id": 30,
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "seq": 2,
         "type": "collaboration_prompt",
         "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000013\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8000-000000000001):\\n---8<---\\nbuild wake target\\n---8<---\",\"truncated\":false,\"rawSize\":95}",
@@ -3905,25 +3908,25 @@
       },
       {
         "id": 33,
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "seq": 3,
         "type": "system_message",
-        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000015\",\"taskTitle\":\"Wake target\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Wake target\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000015\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"5c53177b-c144-5559-ba46-d30028da090b\",\"taskTitle\":\"Wake target\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Wake target\\\"\",\"body\":\"Task ID: 5c53177b-c144-5559-ba46-d30028da090b\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
       {
         "id": 34,
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "seq": 4,
         "type": "task_update",
-        "data": "{\"status\":\"waiting\",\"body\":\"Waiting before dispatch.\",\"reason\":\"waiting\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000011\",\"targetTaskId\":null}",
+        "data": "{\"status\":\"waiting\",\"body\":\"Waiting before dispatch.\",\"reason\":\"waiting\",\"sourceTaskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\",\"targetTaskId\":null}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
       {
         "id": 35,
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "seq": 5,
         "type": "assistant_message",
         "data": "{\"text\":\"Wake target created.\"}",
@@ -3932,7 +3935,7 @@
       },
       {
         "id": 36,
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "seq": 6,
         "type": "prompt_done",
         "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-7\"}",
@@ -3941,7 +3944,7 @@
       },
       {
         "id": 37,
-        "task_id": "00000000-0000-4000-8000-000000000015",
+        "task_id": "5c53177b-c144-5559-ba46-d30028da090b",
         "seq": 1,
         "type": "user_message",
         "data": "{\"text\":\"park wake target\",\"clientOpId\":\"00000000-0000-4000-8000-000000000017\"}",
@@ -3950,7 +3953,7 @@
       },
       {
         "id": 38,
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "seq": 7,
         "type": "user_message",
         "data": "{\"text\":\"queue for busy child\",\"clientOpId\":\"00000000-0000-4000-8000-000000000018\"}",
@@ -3959,25 +3962,25 @@
       },
       {
         "id": 39,
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "seq": 8,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000019\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000011\",\"sourceLabel\":\"Waiting child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000015\",\"targetLabel\":\"Wake target\",\"role\":\"source\",\"title\":\"@\\\"Waiting child\\\" sent @\\\"Wake target\\\"\",\"body\":\"wake later\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000019\",\"sourceTaskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\",\"sourceLabel\":\"Waiting child\",\"targetTaskId\":\"5c53177b-c144-5559-ba46-d30028da090b\",\"targetLabel\":\"Wake target\",\"role\":\"source\",\"title\":\"@\\\"Waiting child\\\" sent @\\\"Wake target\\\"\",\"body\":\"wake later\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-000000000019"
       },
       {
         "id": 40,
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "seq": 9,
         "type": "task_update",
-        "data": "{\"status\":\"waiting\",\"body\":\"Only wake source is queued child dispatch.\",\"reason\":\"waiting\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000011\",\"targetTaskId\":null}",
+        "data": "{\"status\":\"waiting\",\"body\":\"Only wake source is queued child dispatch.\",\"reason\":\"waiting\",\"sourceTaskId\":\"48220e94-2462-5581-8a27-c4e1f5b8360b\",\"targetTaskId\":null}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
       {
         "id": 41,
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "seq": 10,
         "type": "assistant_message",
         "data": "{\"text\":\"Waiting with queued child dispatch.\"}",
@@ -3986,7 +3989,7 @@
       },
       {
         "id": 42,
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "seq": 11,
         "type": "prompt_done",
         "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-9\"}",
@@ -4006,14 +4009,14 @@
       {
         "id": "00000000-0000-4000-8000-00000000000c",
         "source_task_id": "00000000-0000-4000-8000-000000000001",
-        "direct_target_task_id": "00000000-0000-4000-8000-00000000000a",
+        "direct_target_task_id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "source_actor": "agent",
         "body": "report blocked",
         "created_at": 1789333200000
       },
       {
         "id": "00000000-0000-4000-8000-00000000000e",
-        "source_task_id": "00000000-0000-4000-8000-00000000000a",
+        "source_task_id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "direct_target_task_id": "00000000-0000-4000-8000-000000000001",
         "source_actor": "agent",
         "body": "Task status: blocked\nNeed parent input.",
@@ -4022,15 +4025,15 @@
       {
         "id": "00000000-0000-4000-8000-000000000013",
         "source_task_id": "00000000-0000-4000-8000-000000000001",
-        "direct_target_task_id": "00000000-0000-4000-8000-000000000011",
+        "direct_target_task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "source_actor": "agent",
         "body": "build wake target",
         "created_at": 1789333200000
       },
       {
         "id": "00000000-0000-4000-8000-000000000019",
-        "source_task_id": "00000000-0000-4000-8000-000000000011",
-        "direct_target_task_id": "00000000-0000-4000-8000-000000000015",
+        "source_task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
+        "direct_target_task_id": "5c53177b-c144-5559-ba46-d30028da090b",
         "source_actor": "agent",
         "body": "wake later",
         "created_at": 1789333200000
@@ -4051,7 +4054,7 @@
       },
       {
         "message_id": "00000000-0000-4000-8000-00000000000c",
-        "task_id": "00000000-0000-4000-8000-00000000000a",
+        "task_id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "role": "target",
         "created_at": 1789333200000
       },
@@ -4069,13 +4072,13 @@
       },
       {
         "message_id": "00000000-0000-4000-8000-00000000000e",
-        "task_id": "00000000-0000-4000-8000-00000000000a",
+        "task_id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "role": "source",
         "created_at": 1789333200000
       },
       {
         "message_id": "00000000-0000-4000-8000-000000000013",
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "role": "target",
         "created_at": 1789333200000
       },
@@ -4087,13 +4090,13 @@
       },
       {
         "message_id": "00000000-0000-4000-8000-000000000019",
-        "task_id": "00000000-0000-4000-8000-000000000015",
+        "task_id": "5c53177b-c144-5559-ba46-d30028da090b",
         "role": "target",
         "created_at": 1789333200000
       },
       {
         "message_id": "00000000-0000-4000-8000-000000000019",
-        "task_id": "00000000-0000-4000-8000-000000000011",
+        "task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
         "role": "source",
         "created_at": 1789333200000
       }
@@ -4118,8 +4121,8 @@
       {
         "id": "00000000-0000-4000-8000-00000000000d",
         "message_id": "00000000-0000-4000-8000-00000000000c",
-        "recipient_task_id": "00000000-0000-4000-8000-00000000000a",
-        "idempotency_key": "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8000-00000000000a",
+        "recipient_task_id": "7573c7dc-2950-5334-bacb-52ebf934e4d9",
+        "idempotency_key": "00000000-0000-4000-8000-00000000000c:7573c7dc-2950-5334-bacb-52ebf934e4d9",
         "status": "delivered",
         "queued_at": 1789333200000,
         "delivered_at": 1789333200000,
@@ -4150,8 +4153,8 @@
       {
         "id": "00000000-0000-4000-8000-000000000014",
         "message_id": "00000000-0000-4000-8000-000000000013",
-        "recipient_task_id": "00000000-0000-4000-8000-000000000011",
-        "idempotency_key": "00000000-0000-4000-8000-000000000013:00000000-0000-4000-8000-000000000011",
+        "recipient_task_id": "48220e94-2462-5581-8a27-c4e1f5b8360b",
+        "idempotency_key": "00000000-0000-4000-8000-000000000013:48220e94-2462-5581-8a27-c4e1f5b8360b",
         "status": "delivered",
         "queued_at": 1789333200000,
         "delivered_at": 1789333200000,
@@ -4166,8 +4169,8 @@
       {
         "id": "00000000-0000-4000-8000-00000000001a",
         "message_id": "00000000-0000-4000-8000-000000000019",
-        "recipient_task_id": "00000000-0000-4000-8000-000000000015",
-        "idempotency_key": "00000000-0000-4000-8000-000000000019:00000000-0000-4000-8000-000000000015",
+        "recipient_task_id": "5c53177b-c144-5559-ba46-d30028da090b",
+        "idempotency_key": "00000000-0000-4000-8000-000000000019:5c53177b-c144-5559-ba46-d30028da090b",
         "status": "queued",
         "queued_at": 1789333200000,
         "delivered_at": null,

@@ -85,6 +85,7 @@ describe("host connection helpers", () => {
     );
 
     const outcome = await connection.createTask({
+      opId: "op-create-1",
       agentId: "copilot",
       parentId: "local-parent",
       title: "Child",
@@ -116,43 +117,117 @@ describe("host connection helpers", () => {
     });
   });
 
-  it("classifies failed and ambiguous create outcomes without retry", async () => {
+  it("classifies rejected create without retry and retries unknown with the same op id", async () => {
+    let rejectCalls = 0;
     const rejectConnection = new HostConnection(
       { url: "http://owner.example", token: "wat_host" },
       {
-        fetch: async () =>
-          new Response(JSON.stringify({ error: "Agent missing" }), {
+        fetch: async () => {
+          rejectCalls += 1;
+          return new Response(JSON.stringify({ error: "Agent missing" }), {
             status: 400,
-          }),
+          });
+        },
       },
     );
     assert.deepEqual(
       await rejectConnection.createTask({
+        opId: "op-reject-1",
         agentId: "missing",
         parentId: "parent",
         source: "auto",
       }),
       { kind: "rejected", status: 400, reason: "Agent missing" },
     );
+    assert.equal(rejectCalls, 1);
 
-    let calls = 0;
+    // Unknown exhausts bounded retries (default 2 -> 3 attempts) with identical X-Client-Op-Id.
+    const unknownOpIds: Array<string | null> = [];
     const unknownConnection = new HostConnection(
       { url: "http://owner.example", token: "wat_host" },
       {
-        fetch: async () => {
-          calls += 1;
+        fetch: async (_input, init) => {
+          unknownOpIds.push(new Headers(init?.headers).get("x-client-op-id"));
           throw new TypeError("connection closed");
         },
       },
     );
     const unknown = await unknownConnection.createTask({
+      opId: "op-unknown-1",
       agentId: "copilot",
       parentId: "parent",
       source: "auto",
     });
 
     assert.equal(unknown.kind, "unknown");
-    assert.equal(calls, 1);
+    assert.equal(unknownOpIds.length, 3);
+    assert.equal(unknownOpIds[0], "op-unknown-1");
+    assert.equal(new Set(unknownOpIds).size, 1);
+
+    // opId: null sends no X-Client-Op-Id header and never retries unknown.
+    let nullCalls = 0;
+    let nullHeader: string | null = "unset";
+    const nullConnection = new HostConnection(
+      { url: "http://owner.example", token: "wat_host" },
+      {
+        fetch: async (_input, init) => {
+          nullCalls += 1;
+          nullHeader = new Headers(init?.headers).get("x-client-op-id");
+          throw new TypeError("connection closed");
+        },
+      },
+    );
+    const nullUnknown = await nullConnection.createTask({
+      opId: null,
+      agentId: "copilot",
+      parentId: "parent",
+      source: "auto",
+    });
+    assert.equal(nullUnknown.kind, "unknown");
+    assert.equal(nullCalls, 1);
+    assert.equal(nullHeader, null);
+
+    // Retrying after unknown converges to the same created task with the same op id.
+    const retryOpIds: Array<string | null> = [];
+    const recoveringConnection = new HostConnection(
+      { url: "http://owner.example", token: "wat_host" },
+      {
+        fetch: async (_input, init) => {
+          retryOpIds.push(new Headers(init?.headers).get("x-client-op-id"));
+          if (retryOpIds.length === 1) {
+            throw new TypeError("response lost after commit");
+          }
+          return Response.json(
+            {
+              id: "remote-child-1",
+              cwd: "/work",
+              cwdDisplay: "~/work",
+              parentId: null,
+              parentAgentId: null,
+              agentId: "copilot",
+              title: "Child",
+              model: null,
+              thinking: null,
+              workflowStatus: "idle",
+              source: "agent",
+              configOptions: [],
+              agentCommands: { epoch: "remote", revision: 0, commands: [] },
+            },
+            { status: 201 },
+          );
+        },
+      },
+    );
+    const recovered = await recoveringConnection.createTask({
+      opId: "op-recover-1",
+      agentId: "copilot",
+      parentId: "parent",
+      title: "Child",
+      source: "agent",
+    });
+    assert.equal(recovered.kind, "success");
+    assert.equal(retryOpIds.length, 2);
+    assert.equal(retryOpIds[0], retryOpIds[1]);
   });
 
   it("keeps literal credentials unchanged", async () => {
@@ -448,7 +523,8 @@ describe("host connection helpers", () => {
   });
 
   it("routes create, status, and event reads through SyncRequestTransport with three-way classification", async () => {
-    const seen: Array<{ opId: string; method: string; path: string }> = [];
+    const seen: Array<{ opId: string | null; method: string; path: string }> =
+      [];
     const responses: Array<
       { status: number; body: unknown } | { error: Error } | { hang: true }
     > = [
@@ -462,6 +538,7 @@ describe("host connection helpers", () => {
     const connection = new HostConnection(
       { url: "http://owner.example", token: "wat_host" },
       {
+        createRetries: 0,
         requestTransport: {
           send: async (opId, req, signal) => {
             seen.push({ opId, method: req.method, path: req.path });
@@ -483,6 +560,7 @@ describe("host connection helpers", () => {
     // createTask: rejected (4xx) and unknown (5xx), no retries
     assert.deepEqual(
       await connection.createTask({
+        opId: "op-sync-1",
         agentId: "mock",
         parentId: "p",
         source: "agent",
@@ -490,6 +568,7 @@ describe("host connection helpers", () => {
       { kind: "rejected", status: 400, reason: "bad_create" },
     );
     const unknownCreate = await connection.createTask({
+      opId: "op-sync-2",
       agentId: "mock",
       parentId: "p",
       source: "agent",
@@ -517,7 +596,12 @@ describe("host connection helpers", () => {
     );
 
     assert.equal(seen.length, 6);
-    assert.ok(seen.every((entry) => entry.opId.length > 0));
+    assert.equal(seen[0]?.opId, "op-sync-1");
+    assert.equal(seen[1]?.opId, "op-sync-2");
+    assert.deepEqual(
+      seen.slice(2).map((entry) => entry.opId),
+      [null, null, null, null],
+    );
     assert.deepEqual(
       seen.map((entry) => `${entry.method} ${entry.path}`),
       [

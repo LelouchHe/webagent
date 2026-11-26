@@ -128,7 +128,7 @@ export interface TaskCreateInput {
   parentId?: string;
   inheritFromTaskId?: string;
   source?: string;
-  clientOpId?: string;
+  opId: string | null;
   workflowStatus?: TaskWorkflowStatus;
 }
 
@@ -202,6 +202,7 @@ export class TaskCreateConfigError extends CreateError {
 }
 
 export interface TaskCreateResult {
+  replayed?: true;
   task: {
     id: string;
     title: string | null;
@@ -222,6 +223,7 @@ export interface TaskCreateResult {
 }
 
 export interface RemoteTaskCreateInput {
+  opId: string | null;
   agentId: string;
   parentId: string;
   title?: string;
@@ -344,10 +346,30 @@ export class TaskCreateInputError extends CreateError {
   }
 }
 
+export class TaskCreateConflictError extends CreateError {
+  readonly kind = "conflict";
+
+  constructor(message = "create_op_conflict") {
+    super(message);
+    this.name = "TaskCreateConflictError";
+  }
+}
+
+export class TaskCreateDeletedError extends CreateError {
+  readonly kind = "deleted";
+
+  constructor(message = "target_deleted") {
+    super(message);
+    this.name = "TaskCreateDeletedError";
+  }
+}
+
 export type TaskCreateError =
   | TaskAgentNotConfiguredError
   | TaskAgentStartError
   | TaskCreateConfigError
+  | TaskCreateConflictError
+  | TaskCreateDeletedError
   | TaskCreateInputError
   | TaskHostNotConfiguredError
   | TaskRemoteCreateConfigError

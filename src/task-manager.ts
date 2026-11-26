@@ -1487,7 +1487,7 @@ export class TaskManager implements ObligationHost {
    * a typed path, and required to be absolute, because a relative cwd would
    * resolve against whatever directory the service process runs in.
    */
-  private resolveTaskCwd(cwd: string | undefined, fallback: string): string {
+  resolveTaskCwd(cwd: string | undefined, fallback = this.defaultCwd): string {
     const taskCwd = canonicalCwd(cwd ?? fallback);
     if (!isAbsolute(taskCwd)) throw new RelativeTaskDirectoryError(taskCwd);
     return taskCwd;
@@ -1512,6 +1512,7 @@ export class TaskManager implements ObligationHost {
     inheritFromTaskId?: string,
     source: string = "auto",
     opts?: {
+      id?: string;
       parentId?: string | null;
       title?: string;
       model?: string;
@@ -1601,6 +1602,7 @@ export class TaskManager implements ObligationHost {
    * path materializes its empty owner slot on first use.
    */
   async createDeferredRemoteTask(input: {
+    id?: string;
     agentId: string;
     cwd?: string;
     source: string;
@@ -1622,7 +1624,7 @@ export class TaskManager implements ObligationHost {
     } catch {
       throw new InvalidTaskDirectoryError(taskCwd);
     }
-    const taskId = randomUUID();
+    const taskId = input.id ?? randomUUID();
     const creationAnchor = buildTaskCreatedSystemMessage({
       taskId,
       taskTitle: input.title ?? taskId,
@@ -1756,6 +1758,7 @@ export class TaskManager implements ObligationHost {
     inheritFromTaskId?: string,
     source: string = "auto",
     opts?: {
+      id?: string;
       parentId?: string | null;
       title?: string;
       model?: string;
@@ -1787,7 +1790,7 @@ export class TaskManager implements ObligationHost {
     const inheritConfig =
       sourceTask !== null &&
       (sourceAgentId === undefined || sourceAgentId === agentId);
-    const taskId = randomUUID();
+    const taskId = opts?.id ?? randomUUID();
     // Mint the task capability and build its mcpServers entry BEFORE the
     // ACP task exists (the definition is carried in task/new itself),
     // so a capability is only ever issued for a task we are about to

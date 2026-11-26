@@ -55,6 +55,7 @@ export function createTaskHost(deps: {
       if (!command.parentId) throw new Error("parent_not_found");
       command.assertRemoteCaller();
       const remote = await deps.remote.create(host, {
+        opId: command.input.opId,
         agentId,
         parentId: command.parentId,
         ...(command.input.title === undefined

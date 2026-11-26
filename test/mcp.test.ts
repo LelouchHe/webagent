@@ -725,6 +725,9 @@ describe("createMcpEndpoint", () => {
         };
         assert.equal(caller.kind, "agent");
         assert.equal(caller.principal.taskId, "web-1");
+        const input = args[1] as { opId?: unknown };
+        assert.equal(typeof input.opId, "string");
+        delete input.opId;
       } else if (kind === "cancel") {
         const command = args[0] as {
           kind: string;

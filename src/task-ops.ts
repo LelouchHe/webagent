@@ -116,6 +116,10 @@ export function createTaskOpsCore(deps: {
           }
         },
       });
+      if (result.replayed) {
+        if (caller.kind === "agent") return { ...result, session: undefined };
+        return result;
+      }
       let taskTitle: string | undefined;
       let taskCreated:
         ReturnType<typeof buildTaskCreatedSystemMessage> | undefined;

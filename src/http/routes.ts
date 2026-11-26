@@ -3294,7 +3294,7 @@ export function createRequestHandler(
               workflowStatus: title ? "idle" : undefined,
               agentId: body.agentId,
               host: body.host,
-              clientOpId: clientOpId ?? undefined,
+              opId: clientOpId,
             },
           );
           const session = created.session;
@@ -3328,6 +3328,16 @@ export function createRequestHandler(
                 json(res, HTTP_STATUS.BAD_REQUEST, {
                   error: classified.clientMessage,
                   code: classified.code,
+                });
+                return;
+              case "conflict":
+                json(res, HTTP_STATUS.CONFLICT, {
+                  error: classified.message,
+                });
+                return;
+              case "deleted":
+                json(res, HTTP_STATUS.NOT_FOUND, {
+                  error: classified.message,
                 });
                 return;
               case "agent_not_configured":

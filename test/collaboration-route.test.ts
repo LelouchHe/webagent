@@ -323,6 +323,7 @@ describe("S3 collaboration write routes", () => {
         parentId: "parent",
         inheritFromTaskId: "parent",
         source: "agent",
+        opId: null,
       },
     );
 

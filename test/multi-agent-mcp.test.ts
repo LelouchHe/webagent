@@ -536,6 +536,7 @@ describe("mcp authority over the production host", () => {
         parentId: source.taskId,
         inheritFromTaskId: source.taskId,
         source: "agent",
+        opId: null,
       },
     );
     await inInherit;

@@ -120,7 +120,7 @@ export class SyncOutbox<TRequest = unknown, TResponse = unknown> {
       return;
     }
     const result = await sendSyncRequest({
-      operationId: entry.id,
+      opId: entry.id,
       request: entry.request,
       timeoutMs: this.options.timeoutMs,
       transport: this.options.transport,

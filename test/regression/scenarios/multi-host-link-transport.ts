@@ -260,7 +260,7 @@ export default scenario<State>({
             ],
           },
           {
-            match: "send two back to back",
+            match: "send held first",
             actions: [
               {
                 type: "mcp",
@@ -272,6 +272,17 @@ export default scenario<State>({
                       body: "held first",
                     },
                   },
+                ],
+              },
+              { type: "reply", text: "Queued first." },
+            ],
+          },
+          {
+            match: "send second after receipt",
+            actions: [
+              {
+                type: "mcp",
+                calls: [
                   {
                     tool: "task_send",
                     arguments: {
@@ -281,7 +292,7 @@ export default scenario<State>({
                   },
                 ],
               },
-              { type: "reply", text: "Queued pair." },
+              { type: "reply", text: "Queued second." },
             ],
           },
           {
@@ -442,6 +453,14 @@ export default scenario<State>({
                           WHERE task_id = '${state.parentId}'
                             AND data LIKE '%Handled after dropped 202.%')`,
           );
+          await waitForRows(
+            state.ownerDb,
+            `SELECT 1 FROM events
+             WHERE task_id = '${readTaskId(state.ownerDb, "Child One")}' AND type = 'prompt_done'
+               AND seq > (SELECT MAX(seq) FROM events
+                          WHERE task_id = '${readTaskId(state.ownerDb, "Child One")}'
+                            AND type = 'task_update')`,
+          );
           await waitSettled(state);
           return { ownerCount };
         },
@@ -483,6 +502,7 @@ export default scenario<State>({
                           WHERE task_id = '${childTwo}'
                             AND type = 'task_update')`,
           );
+          await new Promise((resolve) => setTimeout(resolve, 100));
           link.connect("watch");
           await waitForHost(client, "hub", "owner", "connected");
           await waitForRows(
@@ -513,11 +533,39 @@ export default scenario<State>({
           await client
             .instance("hub")
             .rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
-              text: "send two back to back",
+              text: "send held first",
             });
           await held;
-          // While the first POST response is still held, the receipt for the
-          // first entry arrives over watch and unblocks the second entry.
+          // While the first POST response is still held, owner claims the first
+          // entry and sends its receipt over watch, advancing hub's pushed_pos.
+          await waitForRows(
+            state.ownerDb,
+            `SELECT 1 FROM events
+             WHERE task_id = '${readTaskId(state.ownerDb, "Child One")}' AND type = 'prompt_done'
+               AND seq > (SELECT MAX(seq) FROM events
+                          WHERE task_id = '${readTaskId(state.ownerDb, "Child One")}'
+                            AND data LIKE '%First held claimed.%')`,
+          );
+          await waitForRows(
+            state.hubDb,
+            `SELECT d.status FROM deliveries d
+             JOIN messages m ON m.id = d.message_id
+             WHERE m.body = 'held first' AND d.status = 'delivered'`,
+          );
+          await waitForRows(
+            state.hubDb,
+            `SELECT 1 FROM events
+             WHERE task_id = '${state.parentId}' AND type = 'prompt_done'
+               AND seq > (SELECT MAX(seq) FROM events
+                          WHERE task_id = '${state.parentId}'
+                            AND data LIKE '%Queued first.%')`,
+          );
+          // Now send the second entry while the first 202 is still held.
+          await client
+            .instance("hub")
+            .rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
+              text: "send second after receipt",
+            });
           const secondArrivedBeforeRelease = await waitForRows(
             state.ownerDb,
             `SELECT COUNT(*) AS count FROM messages
