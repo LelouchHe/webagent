@@ -479,7 +479,7 @@ export default tseslint.config(
     rules: { "max-lines": ["error", maxLines(1500)] },
   },
   ...Object.entries({
-    "src/store.ts": 4337,
+    "src/store.ts": 3376,
     "src/http/routes.ts": 3753,
     "src/task-manager.ts": 3279,
     "public/js/events.ts": 2323,
