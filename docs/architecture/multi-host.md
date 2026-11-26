@@ -357,6 +357,124 @@ Round trip of a report, the mirror image:
   |<---------------------------- 202 ----|                                   |
 ```
 
+### Failure notices: one source
+
+A failed agent message is reported by the instance that **sent** it, in the
+same transaction as the first `failed` transition of its sender delivery. The
+receiving instance only closes a matching account, silently.
+
+```text
+ P → R1 message rejected on the owner (the mirror R1 → P works the same way)
+
+ hub (P)                                owner (R1)                         R1 agent
+  |                                       | inbound U queued                  |
+  |                                       |-- drain at turn boundary -------->|
+  |                                       | tx: U queued -> delivered          |
+  |                                       |     + receipt(U, delivered)        |
+  |                                       |<---- ACP rejects the prompt -------|
+  |                                       | tx: U delivered -> failed          |
+  |                                       |     + receipt(U, failed)           |
+  |                                       |   account for edge P→R1 open?      |
+  |                                       |   yes: close it, no notice         |
+  |<== PULL receipt(U, delivered) ========|                                   |
+  | tx: U queued -> delivered             |                                   |
+  |<== PULL receipt(U, failed) ===========|                                   |
+  | tx: U delivered -> failed  (first)    |                                   |
+  |     + audit task_outcome_notice on P  |                                   |
+  |     + system delivery to P            |                                   |
+  |     + applied_pos                     |                                   |
+  | after commit: drain P (wakes P)       |                                   |
+  |                                       |                                   |
+  | a later or repeated receipt for U:    |                                   |
+  |   consumed, no transition, no notice  |                                   |
+```
+
+The four sender-side entries that can produce the first `failed` share one
+Store helper, called only from the winning CAS:
+
+```text
+ receipt(failed) on push apply  ─┐
+ receipt(failed) on pull apply  ─┼─► CAS sender delivery -> failed ─► same tx: audit + system delivery
+ authenticated push rejection   ─┤        (only the winner)              (agent messages and reports only;
+ offline handoff timeout T      ─┘                                        sender Task deleted: status only)
+                                           after commit: drain, broadcast
+```
+
+### Obligation notices over the feed
+
+`no_update`, `no_activity`, and `target_removed` are produced where the account
+lives. When R1's account source is its external parent P, the owner writes a
+`notice` entry into the parent link's outbox; it travels only owner → hub and
+never produces a receipt.
+
+```text
+ hub (P)                                owner (R1)
+  |                                       | account P→R1 open
+  |                                       | R1 ends two turns without task_update
+  |                                       | emitObligationNotice(no_update)
+  |                                       |   source is R1's external parent:
+  |                                       | tx: outbox notice N {source P, target R1,
+  |                                       |       reason, message, targetLabel}
+  |<== PULL notice N =====================|
+  | P live and linked to R1 on this link? |
+  |   yes: tx: audit task_outcome_notice  |
+  |            + system delivery to P     |
+  |            + applied_pos              |
+  |        after commit: drain P          |
+  |   no:  tx: applied_pos only           |
+```
+
+Hard delete of R1 (DELETE or Root exit) cascades its `remote_tasks` row, so
+`deleteTaskInScope` captures the external parent link and R1's title before
+the delete and hands them to the post-commit purge:
+
+```text
+ deleteTaskInScope(R1)
+   capture {external parent P, link, R1 title}      before the cascade
+   tx: delete; queued inbound rows -> failed + receipts
+ after commit:
+   failed inbound row matched the open account?  -> close silently (P gets A1 via receipt)
+   account still open                            -> notice(target_removed) via captured link
+```
+
+### Offline handoff timeout T
+
+Only the hub pusher times out, and only agent messages it has not yet handed
+off. Handed-off messages wait for their receipt; receipts and notices never
+time out.
+
+```text
+ a hub outbox message, as the pusher sees it
+
+            push -> 202, or its receipt arrives first
+   unhanded ─────────────────────────────────────────►  handed off ──► delivered / failed
+   (queued)                                               (by receipt only, no timer)
+      │
+      │ no usable watch, and now >= max(queued_at, offlineSince) + T
+      ▼
+   failed  (remote_handoff_timeout; P notified: "handoff not confirmed")
+      │
+      │ pushed_pos reaches it (T's own tx if it is the head, otherwise the
+      │ tx that hands off the entry before it)
+      ▼
+   absorbed: the same transaction that moves pushed_pos onto or past the
+            entry before it also moves past this one (never past an unhanded
+            receipt); after commit any in-flight attempt is voided
+```
+
+```text
+ offlineSince (in memory)
+   set    when the watch is unusable (never connected, EOF, network failure,
+          protocol stop, watchdog) and unhanded work exists
+   kept   across redials
+   clear  on a watch handshake of the current generation
+   reset  on process restart (counts from start)
+
+ timer: one per pusher, at the earliest deadline; re-checks now >= deadline,
+        offline, cursor, and queued before failing; a failed T transaction
+        commits nothing and is retried no sooner than 1s
+```
+
 ## The loop at a glance
 
 P is a Task on the hub; R1 is its child created on the owner. Each instance
@@ -450,6 +568,28 @@ writes a `queued` inbound delivery with the sender's label snapshot, and the
 owner's normal drain hands it to R1 at a turn boundary, opening the
 collaboration account exactly as a local dispatch. The hub's delivery moves to
 `delivered` or `failed` only through receipts.
+
+The reverse direction is symmetric. R1's `task_send` to its own external parent
+P writes the message, its sender delivery, and an outbox entry on the parent
+link, then returns `queued` without opening an account, as a local child
+messaging its parent. The hub pulls the entry, applies it as an inbound delivery
+to P, and P's drain delivers it; the hub's receipt moves R1's delivery. The
+displayed target label is the `sourceLabel` of the newest inbound row from P on
+that link, or P's short id. R1 still cannot list, query, or read P.
+
+```text
+ hub                                   owner                                R1
+  |                                      |<-------- task_send(P, V) ---------|
+  |                                      | tx: message V + delivery V(queued)|
+  |                                      |     + outbox entry V              |
+  |<== PULL V ===========================|                                   |
+  | tx: inbound delivery V(queued)       |                                   |
+  |     + applied_pos                    |                                   |
+  | drain to P; V queued -> delivered    |                                   |
+  |   + receipt(V, delivered)            |                                   |
+  |-- PUSH receipt(V) ------------------>| tx: delivery V queued -> delivered|
+  |<---------------------------- 202 ----|                                   |
+```
 
 ## Report
 

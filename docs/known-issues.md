@@ -89,7 +89,9 @@ time. An entry without a "closing condition" is a wish, not an issue.
 - **A transient SQLite `SELECT` error in the pusher's `next()` escapes the
   fire-and-forget pump.** `SyncOutbox.pump()` invokes `port.next()` without a
   catch handler (`src/shared/sync/outbox.ts`), so a transient head-read error
-  leaves the pump idle until a subsequent wake. *Closing:* the adapter catches
+  becomes an unhandled promise rejection: under Node's default handling it
+  terminates the process, and otherwise it leaves the pump idle until a
+  subsequent wake. *Closing:* the adapter catches
   head-read errors and schedules a pump retry.
 - **Remote browser routing and lifecycle commands remain local-only.** Cancel,
   rename, archive, and delete do not yet cross hosts, and the browser does not
