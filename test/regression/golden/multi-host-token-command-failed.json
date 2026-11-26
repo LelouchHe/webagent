@@ -7,7 +7,7 @@
         "created": {
           "status": 201,
           "name": "hub-connection",
-          "scope": "api"
+          "scope": "host"
         }
       },
       "instances": [

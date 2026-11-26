@@ -7,7 +7,7 @@
         "created": {
           "status": 201,
           "name": "hub-connection",
-          "scope": "api"
+          "scope": "host"
         }
       },
       "instances": [
@@ -39,7 +39,7 @@
           "body": {
             "ok": true,
             "name": "hub-connection",
-            "scope": "api",
+            "scope": "host",
             "hash": "d57c916a32580f25a19cf044e7df562cf10576d81739e2c683c91402405ece7b"
           }
         },

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { scenario, type Json, type JsonObject } from "../types.ts";
 import {
   EMPTY_MOCK,
-  hubHostConfig,
+  hostTokenPath,
   provisionHostToken,
   readHostToken,
   waitForHost,
@@ -52,8 +52,33 @@ async function waitForRows(dbPath: string, sql: string): Promise<Json> {
   throw new Error(`rows did not arrive: ${sql}`);
 }
 
+async function waitLinkSettled(state: State): Promise<void> {
+  const ownerMax = (
+    readRows(
+      state.ownerDb,
+      `SELECT COALESCE(MAX(pos), 0) AS pos FROM outbox WHERE remote_role = 'parent'`,
+    ) as Array<{ pos: number }>
+  )[0].pos;
+  await waitForRows(
+    state.hubDb,
+    `SELECT 1 WHERE COALESCE((SELECT applied_pos FROM outbox_cursors WHERE remote_role = 'child' AND remote_host = 'owner'), 0) >= ${ownerMax}`,
+  );
+  await waitForRows(
+    state.hubDb,
+    `SELECT 1 WHERE COALESCE((SELECT pushed_pos FROM outbox_cursors WHERE remote_role = 'child' AND remote_host = 'owner'), 0)
+       >= COALESCE((SELECT MAX(pos) FROM outbox WHERE remote_role = 'child' AND remote_host = 'owner'), 0)`,
+  );
+}
+
 export default scenario<State>({
   mock: EMPTY_MOCK,
+  forwarders: {
+    link: {
+      target: "owner",
+      postPath: "/api/v1/link/entries",
+      watchPath: "/api/v1/link/watch",
+    },
+  },
   instances: {
     owner: {
       mock: {
@@ -115,6 +140,24 @@ export default scenario<State>({
                 ],
               },
               { type: "reply", text: "Replay deduplicated." },
+            ],
+          },
+          {
+            match: "unreachable dispatch",
+            actions: [
+              {
+                type: "mcp",
+                calls: [
+                  {
+                    tool: "task_update",
+                    arguments: {
+                      status: "done",
+                      body: "Queued dispatch completed after reconnect.",
+                    },
+                  },
+                ],
+              },
+              { type: "reply", text: "Queued dispatch received." },
             ],
           },
         ],
@@ -184,6 +227,25 @@ export default scenario<State>({
             ],
           },
           {
+            match: "send replayed dispatch",
+            actions: [
+              {
+                type: "mcp",
+                calls: [
+                  { tool: "task_list" },
+                  {
+                    tool: "task_send",
+                    arguments: {
+                      target: "$task:Remote loop child",
+                      body: "replayed dispatch",
+                    },
+                  },
+                ],
+              },
+              { type: "reply", text: "Replayed dispatch sent." },
+            ],
+          },
+          {
             match: "hold parent busy",
             actions: [
               {
@@ -226,7 +288,11 @@ export default scenario<State>({
           },
         ],
       },
-      extraConfig: hubHostConfig,
+      extraConfig: (instances) => [
+        "[hosts.owner]",
+        `url = ${JSON.stringify(instances.hub.forwarders.link)}`,
+        `token = ${JSON.stringify(`!cat ${hostTokenPath(instances)}`)}`,
+      ],
     },
   },
   async setup(context) {
@@ -325,14 +391,15 @@ export default scenario<State>({
             });
           const queuedReports = await waitForRows(
             state.hubDb,
-            `SELECT d.status, d.idempotency_key
+            `SELECT d.status, d.source_category
              FROM deliveries d
-             WHERE d.idempotency_key LIKE 'remote-report:%'
+             WHERE d.source_remote_role = 'child'
+               AND d.source_category = 'report'
                AND d.status = 'queued'
-             ORDER BY d.idempotency_key`,
+             ORDER BY d.queued_at`,
           );
-          // Let the owner turn finish before the hub goes down, so its last
-          // events never race the host connection closing.
+          // Let the owner turn finish and the hub persist its applied cursor
+          // covering the report before the hub restarts.
           await waitForRows(
             state.ownerDb,
             `SELECT 1 FROM events
@@ -340,6 +407,17 @@ export default scenario<State>({
                AND seq > (SELECT MAX(seq) FROM events
                           WHERE task_id = '${readRemoteId(state)}'
                             AND type = 'task_update')`,
+          );
+          const ownerReportPos = readRows(
+            state.ownerDb,
+            `SELECT MAX(pos) AS pos FROM outbox
+             WHERE remote_role = 'parent' AND category = 'report'`,
+          ) as Array<{ pos: number }>;
+          await waitForRows(
+            state.hubDb,
+            `SELECT applied_pos FROM outbox_cursors
+             WHERE remote_role = 'child' AND remote_host = 'owner'
+               AND applied_pos >= ${ownerReportPos[0].pos}`,
           );
           const hubRestart = await client.restart("hub");
           const reconnected = await waitForHost(
@@ -350,11 +428,12 @@ export default scenario<State>({
           );
           const reports = readRows(
             state.hubDb,
-            `SELECT m.source_task_id, m.direct_target_task_id, d.idempotency_key, d.status
+            `SELECT m.source_task_id, m.direct_target_task_id, d.source_category, d.status
              FROM messages m
              JOIN deliveries d ON d.message_id = m.id
-             WHERE d.idempotency_key LIKE 'remote-report:%'
-             ORDER BY d.idempotency_key`,
+             WHERE d.source_remote_role = 'child'
+               AND d.source_category = 'report'
+             ORDER BY d.queued_at`,
           );
           return {
             restart,
@@ -372,14 +451,28 @@ export default scenario<State>({
         action: async (client) => {
           await client.restart("hub");
           await waitForHost(client, "hub", "owner", "connected");
+          // Wait until the persisted applied cursor is still >= the report pos
+          // and the parent has processed the report cleanly without duplicates.
+          const ownerReportPos = readRows(
+            state.ownerDb,
+            `SELECT MAX(pos) AS pos FROM outbox
+             WHERE remote_role = 'parent' AND category = 'report'`,
+          ) as Array<{ pos: number }>;
+          await waitForRows(
+            state.hubDb,
+            `SELECT applied_pos FROM outbox_cursors
+             WHERE remote_role = 'child' AND remote_host = 'owner'
+               AND applied_pos >= ${ownerReportPos[0].pos}`,
+          );
           return {
             reports: readRows(
               state.hubDb,
-              `SELECT m.source_task_id, m.direct_target_task_id, d.idempotency_key
+              `SELECT m.source_task_id, m.direct_target_task_id, d.source_category
                FROM messages m
                JOIN deliveries d ON d.message_id = m.id
-               WHERE d.idempotency_key LIKE 'remote-report:%'
-               ORDER BY d.idempotency_key`,
+               WHERE d.source_remote_role = 'child'
+                 AND d.source_category = 'report'
+               ORDER BY d.queued_at`,
             ),
             links: readRows(
               state.hubDb,
@@ -391,37 +484,29 @@ export default scenario<State>({
       },
       {
         name: "replayed-dispatch-keeps-owner-message-id",
-        action: async () => {
-          const request = () =>
-            fetch(
-              `${state.ownerOrigin}/api/v1/tasks/${state.parentId}/messages`,
-              {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${state.hostToken}`,
-                  "Content-Type": "application/json",
-                  "X-Client-Op-Id": "replay-dispatch-op",
-                },
-                body: JSON.stringify({
-                  targetTaskId: readRemoteId(state),
-                  body: "replayed dispatch",
-                  sourceLabel: "root",
-                }),
-              },
-            ).then(async (response) => ({
-              status: response.status,
-              body: (await response.json()) as Json,
-            }));
-          const first = await request();
-          const second = await request();
-          const messages = await waitForRows(
+        action: async (client) => {
+          await client
+            .instance("hub")
+            .rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
+              text: "send replayed dispatch",
+            });
+          const outboxRows = (await waitForRows(
+            state.hubDb,
+            `SELECT entry_id FROM outbox
+             WHERE remote_role = 'child' AND category = 'message'
+               AND data_json LIKE '%replayed dispatch%'`,
+          )) as Array<{ entry_id: string }>;
+          const entryId = outboxRows[0].entry_id;
+          // Wait for the original dispatch + report + reverse receipt to settle
+          // on both owner and hub before issuing the explicit replay test.
+          await waitForRows(
             state.ownerDb,
-            `SELECT id, COUNT(*) AS count FROM messages
-             WHERE body = 'replayed dispatch'`,
+            `SELECT 1 FROM events
+             WHERE task_id = '${readRemoteId(state)}' AND type = 'prompt_done'
+               AND seq > (SELECT MAX(seq) FROM events
+                          WHERE task_id = '${readRemoteId(state)}'
+                            AND data LIKE '%Replay deduplicated.%')`,
           );
-          // The owner's report reaches the hub asynchronously (watch, apply,
-          // drain, then a hub parent turn). Wait for that turn to finish, so
-          // its writes land in this step on every run.
           await waitForRows(
             state.hubDb,
             `SELECT 1 FROM events
@@ -430,7 +515,36 @@ export default scenario<State>({
                           WHERE task_id = '${state.parentId}'
                             AND data LIKE '%Replay deduplicated.%')`,
           );
-          return { first, second, messages };
+          await waitLinkSettled(state);
+          const replay = (bodyText = "replayed dispatch") =>
+            fetch(`${state.ownerOrigin}/api/v1/link/entries`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${state.hostToken}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                id: entryId,
+                category: "message",
+                data: {
+                  sourceTaskId: state.parentId,
+                  targetTaskId: readRemoteId(state),
+                  sourceLabel: "root",
+                  body: bodyText,
+                },
+              }),
+            }).then(async (response) => ({
+              status: response.status,
+              body: (await response.json()) as Json,
+            }));
+          const replayed = await replay();
+          const conflict = await replay("different body");
+          const messages = readRows(
+            state.ownerDb,
+            `SELECT id, COUNT(*) AS count FROM messages
+             WHERE body = 'replayed dispatch'`,
+          );
+          return { replayed, conflict, messages };
         },
       },
       {
@@ -438,10 +552,16 @@ export default scenario<State>({
         action: (client) =>
           client.instance("owner").rest(
             "POST",
-            `/api/v1/tasks/not-the-external-parent/messages`,
+            "/api/v1/link/entries",
             {
-              targetTaskId: readRemoteId(state),
-              body: "wrong source dispatch",
+              id: "not-a-uuid",
+              category: "message",
+              data: {
+                sourceTaskId: "not-the-external-parent",
+                targetTaskId: readRemoteId(state),
+                sourceLabel: "root",
+                body: "invalid envelope",
+              },
             },
             state.hostToken,
           ),
@@ -449,6 +569,11 @@ export default scenario<State>({
       {
         name: "unreachable-list-and-send",
         async action(client) {
+          const link = client.forwarder("link");
+          // Hold POST closed across owner restart so watch always reconnects
+          // before the offline-queued push lands on owner, eliminating the
+          // watch-vs-pusher backoff race.
+          link.disconnect("post");
           const restart = await client.restart("owner", async () => {
             await waitForHost(client, "hub", "owner", "unreachable");
             const prompt = await client
@@ -464,6 +589,27 @@ export default scenario<State>({
             "owner",
             "connected",
           );
+          link.connect("post");
+          // Wait for the offline-queued dispatch to hand off, complete on owner,
+          // deliver its report back to hub, and push the reverse receipt back to
+          // owner so both instances have settled before the step ends.
+          await waitForRows(
+            state.ownerDb,
+            `SELECT 1 FROM events
+             WHERE task_id = '${readRemoteId(state)}' AND type = 'prompt_done'
+               AND seq > (SELECT MAX(seq) FROM events
+                          WHERE task_id = '${readRemoteId(state)}'
+                            AND data LIKE '%Queued dispatch completed after reconnect.%')`,
+          );
+          await waitForRows(
+            state.hubDb,
+            `SELECT 1 FROM events
+             WHERE task_id = '${state.parentId}' AND type = 'prompt_done'
+               AND seq > (SELECT MAX(seq) FROM events
+                          WHERE task_id = '${state.parentId}'
+                            AND data LIKE '%Queued dispatch completed after reconnect.%')`,
+          );
+          await waitLinkSettled(state);
           return { restart, connected };
         },
       },

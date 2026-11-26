@@ -42,17 +42,18 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - one dispatch/no automatic retry, exact short-agent/parent payload, generation re-check, unknown outcome, local partial-success, and pre-dispatch config rejection
   - Host external parents are required as non-empty strings; owner relay and malformed coordinates are input errors, not transport outcomes
   - deferred owner creation has a same-transaction, non-broadcast creation anchor; aged tasks survive normal empty-task GC while ordinary empty tasks are still removed
-  - coalesced/split SSE frames, stale attempts, catch-up row validation, and
-    report replay that is independent of failed or stalled display reads
-  - mirror workflow/title/execution fields come only from their owning owner
-    fields and events
+  - coalesced/split watch SSE entry frames, stalled handshake timeout and retry,
+    parallel remote status reads within a single short deadline (including
+    blocked credential resolution), status-OK while watch-offline separation
+    (E1), and `SyncRequestTransport` three-way classification for create/status/events
   - an owner-local unarchive does not misclassify an external account, and a
     duplicate queued report remains eligible for one drain
   - only the target's linked external parent opens an external account; a
     remote child's report into its hub parent opens none
-  - host SSE reconnects with the hub's parent ids, creates add a new parent to
-    the open connection, unknown/unlinked parents leak nothing, and each of two
-    hubs sees only its own parent-linked children
+  - host tokens are rejected on `/api/v1/sse-ticket` and `/api/v1/tasks/:id/messages`;
+    non-host tokens are rejected on `/api/v1/link/*`; links are isolated by
+    authenticated token name; token revocation closes active `/api/v1/link/watch`
+    on heartbeat by hash while same-name rotation continues the same link
   - local send and update records commit with their Host write; injected
     failure leaves no delivery/report or closed account
   - local create keeps the baseline post-persistence config/cleanup flow; the
@@ -62,31 +63,42 @@ spot gaps, and decide what still needs to be added without reading every spec.
     rolls back the hub link while retaining the partial-success child id
   - remote `task_created` facts persist bare `agentId` plus `host`; rendering
     shows separate `agent:` and `host:` lines
-  - remote child labels resolve from the live mirror at projection time;
-    process-local labels exist only for an external parent's dispatch and are
-    cleared after projection or failure
+  - inbound remote labels come from the persisted envelope `source_label`
+    snapshot; outbound target labels resolve from the creation `task_created`
+    snapshot (falling back to short id)
   - replayed `task_created` transcript rows display the reference without
     teaching the client that the remote task currently exists
 - `test/regression/scenarios/multi-host-loop.ts`
-  - a remote child appears in `task_list` with mirrored fields; cold
-    `task_query` / `task_read` project owner history without starting ACP
-  - `task_send` reaches the owner, returns its generated message id, records
-    queued facts on both sides, and changes the hub row to delivered when the
-    owner's prompt audit arrives, including after hub restart; a permission request
-    in that delegated turn is auto-answered and leaves no pending permission
-  - owner restart drops the in-memory account but `task_update(done)` falls
-    back to the external parent; the owner writes no local collaboration
-    message, and the report wakes the hub parent exactly once
-  - a busy hub parent queues the report, observes the row as queued, restarts,
-    and catches up to exactly one delivered report after reconnect
-  - hub restart catch-up replays the same report event without duplicating its
-    delivery, while the duplicate row remains drainable if still queued; host
-    disconnect marks the mirror unreachable and send fails visibly; a wrong
-    external parent id cannot dispatch
-  - Core records a remote `Created task` row with separate agent and host fields; the
-    live row marks the child id present without browser navigation
-  - dispatch and report rows share the mirrored remote-child title; the owner
-    receiver row and prompt use the hub parent's carried title
+  - a remote child appears in `task_list` via parallel owner `status` reads;
+    cold `task_query` / `task_read` project owner history without starting ACP
+  - `task_send` queues locally in hub `outbox` + `deliveries`, hands off via
+    `POST /api/v1/link/entries`, and updates hub delivery to `delivered` via
+    owner receipt; `POST /api/v1/link/entries` replays `202` for identical UUID
+    payloads, returns `409` on conflict, and rejects mismatched sources (`400`);
+    offline `task_send` queues locally and delivers after owner reconnect
+  - owner restart preserves external-parent report routing; hub restart guards
+    on persisted `applied_pos` without duplicating reports
+- `test/regression/scenarios/multi-host-link-transport.ts` (controllable `RegressionForwarder`)
+  - POST disconnect queues locally and delivers exactly once after reconnect
+    with bidirectional receipts (`delivered` on both sides)
+  - dropped `202` with watch disconnected retries with the same op id and
+    deduplicates on owner (`count = 1`)
+  - watch disconnect buffers two children's `done` reports and delivers both in
+    commit order on reconnect
+  - receipt arriving over watch while the first POST response is held advances
+    `pushed_pos` and unblocks the second entry before the held response releases
+  - E3: waiting parent with a linked remote child while watch is disconnected
+    suppresses the `No visible wake source` note
+- `test/link-sync.test.ts`, `test/link-outbox.test.ts`, and `test/idempotency-conformance.test.ts`
+  - `LinkSyncOwner`, `LinkSyncHubConsumer`, `LinkSyncHubPusher` (`202`, `401`/`403`
+    credential failure, authenticated `400`/`409`, receipt link fault), post-commit
+    `onOutboxCommitted`, creation title snapshot, deleted-source late receipt,
+    target-deleted replayable `202`, and archive exclusion for outbound rows
+  - reusable `assertIdempotentRoute` conformance helper (`test/fixtures/idempotency.ts`)
+    applied to owner `POST /api/v1/tasks` (host deterministic UUIDv5 via `opIdentity`,
+    caller scoping, `409` conflict, `404 target_deleted` on soft delete) and
+    `POST /api/v1/link/entries`, plus hub `createTask` bounded retries on `unknown`
+    with a single `X-Client-Op-Id`
 - `test/hosts-routes.test.ts` and `test/events.test.ts`
   - an owner task list includes its external parent as an unknown remote entry
     without a host/title, without an added SQL read

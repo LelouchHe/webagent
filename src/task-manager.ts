@@ -683,8 +683,6 @@ export class TaskManager implements ObligationHost {
   /** One microtask recovery per task while an unfinished-work retry is active. */
   private readonly pendingWorkRecoveries = new Set<string>();
   private readonly collaborationSourceLabels = new Map<string, string>();
-  private remoteCollaborationTitle:
-    ((taskId: string) => string | undefined) | undefined;
   /** Latest qualifying agent-runtime activity per task, epoch ms. */
   private readonly lastAgentActivityAt = new Map<string, number>();
   /**
@@ -708,12 +706,6 @@ export class TaskManager implements ObligationHost {
   /** Live-only delivery status refresh for a sender's message mark. */
   private deliveryStatusBroadcast:
     | ((event: Extract<AgentEvent, { type: "collaboration_delivery" }>) => void)
-    | null = null;
-  private collaborationPromptBroadcast:
-    | ((
-        event: Extract<AgentEvent, { type: "collaboration_prompt" }>,
-        seq: number,
-      ) => void)
     | null = null;
   private remoteChildWakeSource: ((taskId: string) => boolean) | null = null;
   /**
@@ -1495,7 +1487,7 @@ export class TaskManager implements ObligationHost {
    * a typed path, and required to be absolute, because a relative cwd would
    * resolve against whatever directory the service process runs in.
    */
-  private resolveTaskCwd(cwd: string | undefined, fallback: string): string {
+  resolveTaskCwd(cwd: string | undefined, fallback = this.defaultCwd): string {
     const taskCwd = canonicalCwd(cwd ?? fallback);
     if (!isAbsolute(taskCwd)) throw new RelativeTaskDirectoryError(taskCwd);
     return taskCwd;
@@ -1520,6 +1512,7 @@ export class TaskManager implements ObligationHost {
     inheritFromTaskId?: string,
     source: string = "auto",
     opts?: {
+      id?: string;
       parentId?: string | null;
       title?: string;
       model?: string;
@@ -1609,6 +1602,7 @@ export class TaskManager implements ObligationHost {
    * path materializes its empty owner slot on first use.
    */
   async createDeferredRemoteTask(input: {
+    id?: string;
     agentId: string;
     cwd?: string;
     source: string;
@@ -1630,7 +1624,7 @@ export class TaskManager implements ObligationHost {
     } catch {
       throw new InvalidTaskDirectoryError(taskCwd);
     }
-    const taskId = randomUUID();
+    const taskId = input.id ?? randomUUID();
     const creationAnchor = buildTaskCreatedSystemMessage({
       taskId,
       taskTitle: input.title ?? taskId,
@@ -1764,6 +1758,7 @@ export class TaskManager implements ObligationHost {
     inheritFromTaskId?: string,
     source: string = "auto",
     opts?: {
+      id?: string;
       parentId?: string | null;
       title?: string;
       model?: string;
@@ -1795,7 +1790,7 @@ export class TaskManager implements ObligationHost {
     const inheritConfig =
       sourceTask !== null &&
       (sourceAgentId === undefined || sourceAgentId === agentId);
-    const taskId = randomUUID();
+    const taskId = opts?.id ?? randomUUID();
     // Mint the task capability and build its mcpServers entry BEFORE the
     // ACP task exists (the definition is carried in task/new itself),
     // so a capability is only ever issued for a task we are about to
@@ -1812,6 +1807,7 @@ export class TaskManager implements ObligationHost {
         taskId,
         taskCwd,
         this.buildNewTaskOptions(mcpServers),
+        execution?.token,
       );
     let configOptions = createdConfigOptions;
     const parentId = opts?.parentId ?? null;
@@ -1839,7 +1835,7 @@ export class TaskManager implements ObligationHost {
       });
       bridge.discardUnboundSession?.(agentSessionId);
       this.endCreatingClaim(taskId);
-      this.capabilities?.revokeByTask(taskId);
+      if (execution?.token) this.capabilities?.revoke(execution.token);
       throw err;
     }
     try {
@@ -3954,27 +3950,12 @@ export class TaskManager implements ObligationHost {
     this.deliveryStatusBroadcast = broadcast;
   }
 
-  setCollaborationPromptBroadcast(
-    broadcast: (
-      event: Extract<AgentEvent, { type: "collaboration_prompt" }>,
-      seq: number,
-    ) => void,
-  ): void {
-    this.collaborationPromptBroadcast = broadcast;
-  }
-
   setRemoteChildWakeSource(check: (taskId: string) => boolean): void {
     this.remoteChildWakeSource = check;
   }
 
   rememberCollaborationSourceLabel(messageId: string, label: string): void {
     this.collaborationSourceLabels.set(messageId, label);
-  }
-
-  setRemoteCollaborationTitle(
-    resolve: (taskId: string) => string | undefined,
-  ): void {
-    this.remoteCollaborationTitle = resolve;
   }
 
   /**
@@ -4234,7 +4215,6 @@ export class TaskManager implements ObligationHost {
     return (
       this.collaborationSourceLabels.get(message.id) ??
       this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
-      this.remoteCollaborationTitle?.(message.source_task_id) ??
       message.source_task_id.slice(0, 8)
     );
   }
@@ -4314,15 +4294,11 @@ export class TaskManager implements ObligationHost {
       const bounded = truncated
         ? `${text.slice(0, MAX_COLLABORATION_PROMPT_AUDIT - 2)}\n…`
         : text;
-      const saved = this.store.saveEvent(
+      this.store.saveEvent(
         taskId,
         "collaboration_prompt",
         { messageIds, text: bounded, truncated, rawSize },
         { from_ref: "system" },
-      );
-      this.collaborationPromptBroadcast?.(
-        { type: "collaboration_prompt", taskId, messageIds },
-        saved.seq,
       );
     } catch (error) {
       slog.warn("collaboration prompt audit failed", {

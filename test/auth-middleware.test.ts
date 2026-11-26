@@ -199,19 +199,29 @@ describe("auth-middleware", () => {
   });
 
   describe("isHostScopeAllowedPath", () => {
-    it("allows only host connection, task read, create, and dispatch routes", () => {
+    it("allows only host link, task read, and create routes", () => {
       assert.equal(isHostScopeAllowedPath("GET", "/api/v1/auth/verify"), true);
-      assert.equal(isHostScopeAllowedPath("POST", "/api/v1/sse-ticket"), true);
+      assert.equal(isHostScopeAllowedPath("POST", "/api/v1/sse-ticket"), false);
       assert.equal(isHostScopeAllowedPath("POST", "/api/v1/tasks"), true);
       assert.equal(isHostScopeAllowedPath("GET", "/api/v1/tasks"), false);
-      assert.equal(isHostScopeAllowedPath("GET", "/api/v1/tasks/abc"), true);
+      assert.equal(isHostScopeAllowedPath("GET", "/api/v1/tasks/abc"), false);
       assert.equal(
         isHostScopeAllowedPath("GET", "/api/v1/tasks/abc/events"),
         true,
       );
       assert.equal(
-        isHostScopeAllowedPath("POST", "/api/v1/tasks/parent/messages"),
+        isHostScopeAllowedPath("GET", "/api/v1/tasks/abc/status"),
         true,
+      );
+      assert.equal(isHostScopeAllowedPath("GET", "/api/v1/link/outbox"), true);
+      assert.equal(isHostScopeAllowedPath("GET", "/api/v1/link/watch"), true);
+      assert.equal(
+        isHostScopeAllowedPath("POST", "/api/v1/link/entries"),
+        true,
+      );
+      assert.equal(
+        isHostScopeAllowedPath("POST", "/api/v1/tasks/parent/messages"),
+        false,
       );
       assert.equal(
         isHostScopeAllowedPath("GET", "/api/v1/tasks/abc/prompt"),

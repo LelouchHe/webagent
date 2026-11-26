@@ -1,6 +1,6 @@
 export interface SyncRequestTransport<TRequest = unknown, TResponse = unknown> {
   send(
-    operationId: string,
+    opId: string | null,
     request: TRequest,
     signal: AbortSignal,
   ): Promise<{ status: number; body: TResponse }>;
@@ -16,11 +16,11 @@ export type SyncRequestResult<TResponse = unknown> =
   | { kind: "rejected"; status: number; body: TResponse }
   | { kind: "unknown"; error: unknown };
 
-export async function sendSyncRequest<
+async function sendSyncRequestOnce<
   TRequest = unknown,
   TResponse = unknown,
 >(input: {
-  operationId: string;
+  opId: string | null;
   request: TRequest;
   timeoutMs: number;
   transport: SyncRequestTransport<TRequest, TResponse>;
@@ -41,7 +41,7 @@ export async function sendSyncRequest<
   }, input.timeoutMs);
   try {
     const response = await Promise.race([
-      input.transport.send(input.operationId, input.request, abort.signal),
+      input.transport.send(input.opId, input.request, abort.signal),
       timedOut,
     ]);
     if ("kind" in response) return response;
@@ -61,4 +61,25 @@ export async function sendSyncRequest<
   } finally {
     input.timer.clearTimeout(timeout);
   }
+}
+
+export async function sendSyncRequest<
+  TRequest = unknown,
+  TResponse = unknown,
+>(input: {
+  opId: string | null;
+  request: TRequest;
+  timeoutMs: number;
+  transport: SyncRequestTransport<TRequest, TResponse>;
+  timer: SyncTimer;
+  retries?: number;
+}): Promise<SyncRequestResult<TResponse>> {
+  const maxRetries =
+    input.opId === null ? 0 : Math.max(0, Math.floor(input.retries ?? 0));
+  let result = await sendSyncRequestOnce(input);
+  for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+    if (result.kind !== "unknown") return result;
+    result = await sendSyncRequestOnce(input);
+  }
+  return result;
 }

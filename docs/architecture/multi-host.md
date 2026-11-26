@@ -23,26 +23,80 @@ continues to address the created Task by its stable Task id.
 
 The owner Task remains a parentless archived top in its local tree. Local
 `parent_id` structure is authoritative; the external relation is used when no
-local parent exists. Links are durable decisions. Host connection state and the
-hub's remote-child display mirror are in memory and never become Task facts.
+local parent exists. Links are durable decisions. Reachability is in memory
+and never becomes a Task fact; there is no remote-child mirror.
 
-Connections use an owner-issued `host`-scoped token. The hub verifies scope
-before opening global SSE. The ticket request carries the hub's
-subscribed local parent ids; the owner returns a connection id and keeps the
-set only for that live connection. Per-Task host SSE is refused.
+Every host call authenticates with an owner-issued `host`-scoped token. Host
+scope reaches only `auth/verify`, the three link routes, task create, and the
+per-Task status and events reads; it has no task list, no browser SSE,
+and no `/tasks/:id/messages`. Per-Task reads are further limited to Tasks whose
+`parent` row names the authenticated token.
 
 There is no multi-host protocol version. Owner and hub must be upgraded
 together; malformed current-wire responses fail as invalid responses.
 
-## Link transport (foundations)
+## Two paths for every remote call
 
-> **Status (03a).** Everything in this section is built and tested, but
-> **dormant**: the owner read/watch/push handlers and the hub consumer are not
-> registered with the HTTP server and no worker runs them. Production traffic
-> still uses the host ticket, host SSE, synchronous dispatch, and report mirror
-> described in the later sections. The cutover (03b) switches dispatch and
-> reports onto this transport and removes the old path. Flows marked
-> *(active from 03b)* describe how the pieces compose once wired.
+A hub talks to an owner in exactly two ways. Anything that changes collaboration
+state and must not be lost travels on the **link**; everything else is a
+**request**.
+
+```text
+                 hub                                              owner
+ +--------------------------------------+               +--------------------------+
+ | link (durable, ordered, receipts)    |               |                          |
+ |   task_send to R1  -> hub outbox  ---|--- PUSH ----->| POST /api/v1/link/entries|
+ |   receipts         -> hub outbox  ---|               |                          |
+ |   reports, receipts <- consumer   <--|--- WATCH -----| GET  /api/v1/link/watch  |
+ |                                   <--|--- READ  -----| GET  /api/v1/link/outbox |
+ +--------------------------------------+               |                          |
+ | request (shared/sync/request)        |               |                          |
+ |   create (opId, bounded retry)    ---|-------------->| POST /api/v1/tasks       |
+ |   task_list / REST list status    ---|-------------->| GET  /tasks/:id/status   |
+ |   task_query / task_read          ---|-------------->| GET  /tasks/:id/events   |
+ +--------------------------------------+               +--------------------------+
+```
+
+| Path | Guarantees | Result on failure |
+| --- | --- | --- |
+| link | committed locally first; delivered once, in order; outcome comes back as a receipt | stays queued; resumes after reconnect |
+| request | one call, three results: success, rejected (owner `4xx`), unknown (network, timeout, `5xx`, unreadable body) | rejected is returned; unknown is retried only when the operation has an op id, otherwise returned |
+
+## Idempotent operations
+
+Every state-changing operation takes a required `opId: string | null` in its
+TypeScript interface (`TaskOps.create`, `sendSyncRequest`). A string promises
+that retrying with the same value is safe; `null` explicitly opts out and is
+never retried. On the wire the op id is `X-Client-Op-Id`; no header means
+`null`.
+
+Idempotency is built into the fact the operation writes, not into a result
+cache. A created Task's id is derived from the op id:
+
+```text
+ taskId = opIdentity(owner Root id, caller scope, opId)      UUIDv5, computed by the owner
+ caller scope = host:<token name> | token:<token name> | agent:<parent Task id>
+```
+
+```text
+ hub                                              owner
+  |-- POST /tasks  X-Client-Op-Id: K ------------>|  id = opIdentity(root, host:hubA, K)
+  |      x  response lost (unknown)               |  writes Task id + parent row (one tx)
+  |-- POST /tasks  X-Client-Op-Id: K (retry) ----->|  Task id exists, same parent edge + agent
+  |<----------------------- 201, same Task id ----|  nothing written; current Task returned
+  | record child edge (already there: no-op)      |
+```
+
+A replay compares only facts fixed at creation (the parent edge or link and the
+agent); it returns the Task as it is now, so a later rename does not turn a
+retry into a conflict. A different parent or agent under the same op id is
+`409 create_op_conflict`; a soft-deleted Task is `404 target_deleted`. A Task
+hard-deleted inside the retry window is recreated by a replay (see Known
+issues). Link pushes follow the same rule: the inbound delivery id is the
+outbox entry id. The remaining mutating REST routes still use the `client_ops`
+result cache until plan step 5.
+
+## Link transport
 
 ### Principles
 
@@ -169,12 +223,13 @@ the agent has seen the message.
 | --- | --- | --- |
 | exact `202` | advances to this entry | handed off |
 | receipt for the head arrives first | advances to this entry | handed off |
-| authenticated rejection (`4xx` after link auth) of a message or report | advances | referenced delivery becomes `failed` |
-| authenticated rejection of a receipt | does not advance | kept; reported as a link fault |
-| credential / link failure (`401`, scope) | does not advance | kept; retried with the same op id once authorization recovers |
+| owner rejection with a link `code` (`link_op_conflict`, `link_protocol_error`) of a message or report | advances | referenced delivery becomes `failed` |
+| owner rejection of a receipt | does not advance | kept; logged as a link fault |
+| any other `4xx` (no link `code`, e.g. a proxy `404`) | does not advance | kept; logged as a link fault |
+| credential failure (`401`, `403`) | does not advance | kept; retried with the same op id once authorization recovers |
 | network error, timeout, `5xx` | does not advance | kept; bounded backoff, same op id |
 
-After a restart the pump resumes after `pushed_pos`. Re-pushing an entry the
+Push failures are logged; they never change the host's reachability state, which only the watch owns. After a restart the pump resumes after `pushed_pos`. Re-pushing an entry the
 owner already accepted is safe: step 3 replays its `202`.
 
 ### Pull: owner to hub
@@ -226,9 +281,9 @@ Push and pull call the same apply with the authenticated link and envelope:
 | Outcome | Durable effect | Transfer progress |
 | --- | --- | --- |
 | persistent receive | business write | advances (`applied_pos`, or the push replay fact) |
-| definite failure, e.g. target Task missing | `message` + inbound delivery written directly as `failed`, plus its receipt | advances; does not block later entries |
+| definite failure: target Task missing (`target_deleted`) or the referenced relation does not exist here (`link_mismatch`, e.g. the owner created R1 but the hub never recorded the child edge) | `message` + inbound delivery written directly as `failed`, plus its receipt | advances; does not block later entries |
 | temporary failure | rolled back | does not advance; retried serially |
-| protocol error, e.g. link mismatch or unknown envelope | nothing | does not advance; push returns `4xx`, pull stops the link |
+| protocol error: invalid envelope or unknown category | nothing | does not advance; push returns `400` with `code: "link_protocol_error"`, pull stops the link |
 
 Apply returns post-commit effects (drain a Task, publish a delivery status,
 wake the outbox, move `pushed_pos`). They run only after the transaction
@@ -262,7 +317,7 @@ commits; replays return no effects. ACP never starts inside the transaction.
   reaper, and GC skip them. Only receipts and authenticated rejection change
   their state.
 
-Round trip of a message *(active from 03b)*:
+Round trip of a message:
 
 ```text
  hub                                   owner                                R1
@@ -278,7 +333,7 @@ Round trip of a message *(active from 03b)*:
   |     + applied_pos                    |                                   |
 ```
 
-Round trip of a report *(active from 03b)*, the mirror image:
+Round trip of a report, the mirror image:
 
 ```text
  hub                                   owner                                R1
@@ -297,164 +352,116 @@ Round trip of a report *(active from 03b)*, the mirror image:
 ## The loop at a glance
 
 P is a Task on the hub; R1 is its child created on the owner. Each instance
-keeps one `remote_tasks` row; nothing else is shared.
+keeps one `remote_tasks` row for the edge and its own outbox and cursors per
+link.
 
 ```text
- P (hub agent, MCP)      hub server                     owner server               R1 (owner Task)
-                         link: child P -> R1@owner      link: parent R1 <- P,
-                         mirror: in memory              external parent id
-   |                          |                               |                          |
- 1 create                     |                               |                          |
-   |-- task_create(mock, owner)>                               |                          |
-    |                          |-- POST /tasks (host token,    | LocalHost creates R1     |
-    |                          |   connection id) ----------->| + subscribe P            |
-    |                          |                               | + parent link, no ACP    |
-    |                          |<----- 201 + create facts -----|                          |
-    |                          | Core: write child link,       |                          |
-    |                          | sender-side Created task row  |                          |
-   |<----------------- R1 id -|                               |                          |
-   |                          |                               |                          |
- 2 discover (every connect)   |                               |                          |
-   |                          |-- SSE ticket parentIds ------>| remember set, return id  |
-   |                          |-- subscribe global SSE ------>| forwards only Tasks whose|
-   |                          |-- snapshot detail/status/ --->| external parent is in set|
-   |                          |<== live events: title, =======|                          |
-   |                          |    state, activity            |                          |
-   |-- task_list ------------>| local family + mirrored       |                          |
-   |<-------------------------| remote children               |                          |
-   |                          | {host, ...};                  |                          |
-   |                          | last values + unreachable     |                          |
-   |                          | while the owner is down       |                          |
-   |                          |                               |                          |
- 3 read                       |                               |                          |
-   |-- task_query/task_read ->| check child link (database)   |                          |
-   |                          |-- GET /tasks/R1/events ------>| pure read, no ACP        |
-   |                          |<------------------- rows -----|                          |
-   |<------- MCP shapes ------| shared task-history projection|                          |
-   |                          |                               |                          |
- 4 dispatch                   |                               |                          |
-   |-- task_send R1 --------->| check child link              |                          |
-   |                          |-- POST /tasks/P/messages ---->| P is R1's parent link    |
-   |                          |   X-Client-Op-Id, sourceLabel | and parent id matches    |
-   |                          |                               | -> agent dispatch queued |
-   |                          |<---------------------- 202 ---|-- drain --------------->| account opens
-   |                          | Core records P's sender row   |                          | (source: external P)
-   |<----- 202 + message id --| queues hub delivery row       |                          |
-   |                          |                               |                          | ... works ...
- 5 report                     |                               |<---- task_update(done) --|
-   |                          |                               | external source: persist |
-   |                          |                               | the task_update event    |
-   |                          |                               | only, no local message   |
-   |                          |<===== SSE task_update ========|                          |
-   |                          | target == P: local message    |                          |
-   |                          | into P, idempotency key       |                          |
-   |                          | remote-report:owner:R1:<seq>  |                          |
-   |<-- drain wakes P --------|                               |                          |
+ P (hub agent)          hub server                         owner server              R1 (owner Task)
+   |                        |                                   |                         |
+ 0 link up (once per owner, not per Task)                       |                         |
+   |                        |== watch(after = applied_pos) ====>|  catch-up, then live     |
+   |                        |   connected = handshake ok        |                         |
+ 1 create                   |                                   |                         |
+   |-- task_create -------->|-- request: POST /tasks, op K ---->| tx: R1 (id from K)      |
+   |                        |<------------------- 201 R1 -------|     + parent row        |
+   |                        | tx: child row + Created task row  |  no ACP until first turn|
+   |<------------ R1 id ----|                                   |                         |
+ 2 list / read              |                                   |                         |
+   |-- task_list ---------->|-- request: GET status (parallel, ~2 s) -->|                 |
+   |<-- family + remote ----|   unreachable if the read fails or the watch is down        |
+   |-- task_query/read ---->|-- request: GET /tasks/R1/events ->|  pure read            |
+ 3 dispatch                 |                                   |                         |
+   |-- task_send R1 ------->| tx: message U + delivery U(queued)|                         |
+   |<- {accepted: true} ----|     + outbox entry U              |                         |
+   |                        |== PUSH U ========================>| tx: inbound delivery U  |
+   |                        |<=========================== 202 ==|-- drain at boundary --->| account opens
+   |                        |<== WATCH receipt(U, delivered) ===|                         |
+ 4 report                   |                                   |<--- task_update(done) --|
+   |                        |                                   | tx: message R + delivery|
+   |                        |<== WATCH R =======================|     R + outbox entry R  |
+   |                        | tx: inbound delivery R + applied  |                         |
+   |<--- drain wakes P -----|== PUSH receipt(R, delivered) ====>|                         |
 ```
-
-The hub decides routing, authorization, and wake sources from the durable
-links only; the mirror feeds `task_list` and nothing else. The owner authorizes
-every push and dispatch against its `parent` link and the request's source id.
-A `202` means the owner enqueued the message and returned its message id. The
-hub starts its delivery row as `queued`; the owner's `collaboration_prompt`
-event moves it to `delivered` live or through reconnect catch-up.
 
 ## Create
 
 MCP `task_create` and REST `POST /api/v1/tasks` use the same Core command with
-separate `agentId` and `host` fields. Core authorizes the caller and builds the
-target directly. The host selector calls either LocalHost or one RemoteHost transport. A Host returns the
-created Task's stable id, title, effective agent, cwd, model, and thinking; it
-does not record the caller-side transcript row.
+separate `agentId` and `host` fields and a required `opId`. MCP generates a new
+op id per call; REST passes `X-Client-Op-Id` or `null`. Core authorizes the
+caller and calls either LocalHost or the RemoteHost transport. A Host returns
+the created Task's stable id, title, effective agent, cwd, model, and thinking;
+it does not record the caller-side transcript row.
 
-The owner accepts a Host create only with a non-empty opaque external
-`parentId`, creates a deferred Task with an empty execution slot, and commits the
-`parent` link in the same transaction. It does not start ACP. After a peer `201`, Core records its `child` link through a caller-generation
-fence and writes the same `Created task` row it writes for a local create. The
-stored facts and display keep `agentId` and `host` separate. A live row proves the id to
-the browser's reference marks; replay does not create that existence fact.
+The remote transport sends one request through `shared/sync/request` with an
+8-second timeout. An unknown result is retried up to twice with the same op id;
+a still-unknown result is returned to the caller. The owner accepts a Host
+create only with a non-empty opaque external `parentId`, derives the Task id
+from the op id (see Idempotent operations), creates a deferred Task with an
+empty execution slot, and commits the `parent` row in the same transaction. It
+does not start ACP. After a `201`, Core records the `child` row through a
+caller-generation fence and writes the same `Created task` row as a local
+create; recording an edge that already exists is a no-op, a different edge is a
+conflict. A concurrent duplicate that loses the primary-key race simply fails,
+cleaning up only what it created.
 
 ## Read
 
 `TaskOps.list/query/read` are asynchronous. `task_list` includes the hub's local
-family plus remote-child entries marked by `host`. REST
-`GET /api/v1/tasks` appends the same remote children after their listed local
-parents; the browser uses them only so a reference to a remote child is not
-shown as removed. The mirror is display-only:
+family plus its remote children marked by `host`. REST `GET /api/v1/tasks`
+appends the same remote children after their listed local parents; the browser
+uses them only so a reference to a remote child is not shown as removed.
+
+Remote fields come from a live status read, not a mirror: the hub reads
+`GET /api/v1/tasks/:id/status` for every remote child in parallel under one
+shared ~2-second deadline that includes credential resolution and parsing.
+Status carries `title`, `workflowStatus`, `executionState`, `lastEventAt`, and
+`lastAgentActivityAt` alongside busy and pending-permission facts. Two facts
+are kept apart: fields from a successful read are shown as read, and
+`unreachable: true` is added when that read fails or the owner's watch is not
+connected.
 
 The owner applies the reverse relation to the same list read: for each listed
-local Task with a `parent` link, it appends that external parent as
+local Task with a `parent` row, it appends that external parent as
 `{host: null, id, parent_id: null, title: null}`. This is a reference
 existence fact, not a browsable local topology.
 
-- the first connect subscribes to SSE, takes one cold snapshot through the
-  owner's existing task read routes, then applies incremental events;
-- a known Task keeps its last values when the owner is unreachable and gains
-  `unreachable: true`;
-- before the first successful snapshot, a remote child contains only its
-  address and unreachable mark;
-- `lastEventAt` and `lastAgentActivityAt` come from owner events.
-
 `task_query` and `task_read` call `GET /api/v1/tasks/:id/events` on the owner
 and use the shared history projector, bounds, and MCP response shapes. These
-reads never start ACP. The hub restricts targets to its own `child` links. The
-owner authorizes host detail, events, and status reads by matching the target's
-`parent` link to the authenticated host token name; host scope has no task-list
-route.
-
-Remote egress may already contain display rewrites. Search cold-reads the
-complete owner history because the owner has no server-side search endpoint.
+reads never start ACP. The hub restricts targets to its own `child` rows; the
+owner authorizes status and events reads by matching the target's `parent` row
+to the authenticated host token name. Search cold-reads the complete owner
+history because the owner has no server-side search endpoint.
 
 ## Dispatch
 
-MCP `task_send` to a linked child synchronously POSTs to the owner's existing
-`/api/v1/tasks/:parentId/messages` route with one `X-Client-Op-Id`. `202` is the
-accepted result; a rejection or visible transport failure is returned to the
-agent. Any retry inside one transport call keeps that operation id. An unknown
-outcome is never retried automatically.
-
-On the owner, host scope may use an external `sourceTaskId` only when it exactly
-names the target's linked parent. The request carries P's `sourceLabel`. The owner keeps it in memory for
-this message, creates an agent-authored target-side delivery, and uses the label
-for both R's receiver row and its `From "…"` prompt. The normal drain opens the
-collaboration account at handoff exactly as a local dispatch. There is no source
-projection on that instance.
-
-For local and remote dispatch, Host only enqueues. Core then writes the caller's
-sender row. Both start `queued`; a remote row becomes `delivered` when the
-owner's persisted `collaboration_prompt` event reports the same returned message
-id. Restart catch-up replays that acknowledgment.
+MCP `task_send` to a linked child writes, in one hub transaction, the message
+(id U), a sender delivery addressed to the remote Task id, and outbox entry U.
+It returns `{accepted: true}`, meaning *queued on this instance*; the owner
+need not be reachable. The pump pushes U (see Push), the owner's inbound apply
+writes a `queued` inbound delivery with the sender's label snapshot, and the
+owner's normal drain hands it to R1 at a turn boundary, opening the
+collaboration account exactly as a local dispatch. The hub's delivery moves to
+`delivered` or `failed` only through receipts.
 
 ## Report
 
-An owner `task_update` always persists its report event. If the obligation
-source is an external parent, or a restart-lost account falls back to the
-external parent link, the owner writes no local collaboration message. A local
-parent remains the fallback when present.
+An owner `task_update(done|blocked)` follows the existing report route: the
+open account's actual source, else a local parent, else the external parent.
+When the route ends at the external parent, the owner writes the report message,
+its delivery, and outbox entry R in the same transaction as the update; a write
+failure rolls back and the update is not reported as successful. The hub's
+watch pulls R, applies it as an inbound delivery to P with `applied_pos` in the
+same transaction, and P's drain wakes P. `task_update(waiting)` is not
+delivered; it does make a Task with a remote-child row count as having a
+visible possible wake source.
 
-The host stream forwards persisted `done` and `blocked` reports with Task-local
-sequence ids. On every connect the hub also cold-reads each linked child's
-events. Local `task_update` and a remote forwarded event both enter one Core
-report operation: enqueue into P, then let the existing drain wake P. The
-remote entry uses a normal local message and queued delivery on the parent. The
-delivery idempotency key is
-`remote-report:<host>:<childId>:<seq>`, so online forwarding and reconnect
-catch-up collapse to one wake. This **old live host-SSE path** has no cursor,
-ACK, receipt, or outbound-state table; the dormant 03a transport foundations do.
-
-`task_update(waiting)` is not delivered as a report. It does make a Task with a
-remote-child link count as having a visible possible wake source.
+Restarts need no catch-up pass: the outbox, cursors, and deliveries are durable.
 
 ```text
- hub restart or reconnect
-   -> for every child link: cold-read GET /tasks/R1/events
-   -> each done/blocked addressed to P is inserted with the same idempotency key
-   -> an undelivered report is delivered once; a delivered one is not repeated
-
- owner restart (in-memory account lost), then R1 calls task_update(done)
-   -> no account: a local parent wins if R1 has one
-   -> otherwise the external parent from the parent link (P)
-   -> the persisted event reaches the hub live or through catch-up -> P wakes
+ hub restart                          owner restart
+   watch(after = applied_pos)           un-pushed entries stay in the outbox
+   -> only entries after the cursor     account lost: report falls back to the
+   pump resumes after pushed_pos           external parent row, enqueued as entry R
 ```
 
 ## Current status
@@ -462,15 +469,15 @@ remote-child link count as having a visible possible wake source.
 | Flow | Implemented |
 | --- | --- |
 | UI `agent@host` create address | Yes |
-| Remote discovery and `task_list` mirror | Yes, best-effort and in-memory |
+| Remote create | Yes, idempotent by op id, bounded retry on unknown |
+| Remote `task_list` fields | Yes, live status reads; `unreachable` on failure or watch down |
 | Remote `task_query` / `task_read` | Yes, cold owner history |
-| Remote `task_send` | Yes, synchronous owner acceptance |
-| Remote `done` / `blocked` report | Yes, event catch-up and local drain |
-| Unreachable discovery and dispatch | Yes |
-| Per-connection parent subscriptions | Yes, rebuilt on reconnect |
+| Remote `task_send` | Yes, link outbox; queued locally, receipts update state |
+| Remote `done` / `blocked` report | Yes, owner outbox pulled by the hub watch |
+| Restart and reconnect | Yes, from durable cursors; no full catch-up |
+| Failure notices for remote outcomes, R1 → P ordinary messages, offline timeout | No (contract-04) |
 | Remote cancel/rename/archive/delete | No |
 | Browser task routing | No |
-| Owner external-source non-update/no-activity/removal notices | No |
-| Incremental reconnect cursor or server-side search | No |
+| Server-side search | No |
 
 See [Known issues](../known-issues.md) for limits and closing conditions.

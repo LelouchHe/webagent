@@ -152,11 +152,10 @@ describe("task list egress with remote children", () => {
       authStore,
       hostRegistry: {
         list: () => [],
-        listRemoteChildrenOf(parentTaskIds) {
+        async listRemoteChildrenOf(parentTaskIds) {
           asked = parentTaskIds;
           return [
             {
-              kind: "remote",
               id: "remote-child",
               relation: "child",
               host: "owner",
@@ -222,7 +221,11 @@ describe("task list egress with remote children", () => {
 
   it("limits host scope reads to the authenticated link", async () => {
     assert.equal((await request(port, "/api/v1/tasks", hostToken)).status, 403);
-    for (const suffix of ["", "/events", "/status"]) {
+    assert.equal(
+      (await request(port, "/api/v1/tasks/remote-owned", hostToken)).status,
+      403,
+    );
+    for (const suffix of ["/events", "/status"]) {
       assert.equal(
         (
           await request(

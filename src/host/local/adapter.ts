@@ -31,9 +31,12 @@ import type {
 import {
   TaskAgentNotConfiguredError,
   TaskAgentStartError,
+  TaskCreateConflictError,
+  TaskCreateDeletedError,
   TaskCreateInputError,
   TaskCreateConfigError,
 } from "../../api/tasks.ts";
+import { opIdentity } from "../../op-identity.ts";
 import {
   buildTaskHistoryQuery,
   buildTaskHistoryRead,
@@ -111,13 +114,8 @@ export function createLocalTaskOps(deps: {
   tasks: TaskManager;
   cancelTimeoutMs?: number;
   broadcastTaskCancelNotice?: (event: TaskCancelNotice) => void;
-  broadcastTaskUpdate?: (event: {
-    taskId: string;
-    seq: number;
-    data: Record<string, unknown>;
-  }) => void;
 }): TaskOps {
-  const { store, tasks, broadcastTaskCancelNotice, broadcastTaskUpdate } = deps;
+  const { store, tasks, broadcastTaskCancelNotice } = deps;
 
   /**
    * The single authority check for one MCP operation. It lives here because
@@ -286,19 +284,10 @@ export function createLocalTaskOps(deps: {
             "Host task creation requires a non-empty parentId",
           );
         }
-        const created = await tasks.createDeferredRemoteTask({
-          agentId: requestedAgent,
-          cwd: input.cwd,
-          source: input.source ?? "host",
-          externalParentId: input.parentId,
-          remoteHost: caller.name,
-          title: input.title,
-          workflowStatus: input.workflowStatus,
-        });
-        const task = requireTask(created.taskId);
-        return {
+        const effectiveSource = input.source ?? "host";
+        const buildHostResult = (task: TaskRow): TaskCreateResult => ({
           task: {
-            id: created.taskId,
+            id: task.id,
             title: task.title,
             agentId: requestedAgent,
             cwd: task.cwd,
@@ -312,9 +301,53 @@ export function createLocalTaskOps(deps: {
             cwdDisplay: abbreviateHomePath(task.cwd),
             parentAgentId: null,
             configOptions: [],
-            agentCommands: tasks.getAgentCommands(created.taskId),
+            agentCommands: tasks.getAgentCommands(task.id),
           },
+        });
+        const verifyReplay = (existing: TaskRow): TaskCreateResult => {
+          if (existing.deleted_at !== null) {
+            throw new TaskCreateDeletedError();
+          }
+          const link = store.getExternalParentLink(existing.id);
+          const existingAgent = store.getBindingAgent(existing.id);
+          if (
+            link?.remote_host !== caller.name ||
+            link.remote_task_id !== input.parentId ||
+            existingAgent !== requestedAgent
+          ) {
+            throw new TaskCreateConflictError();
+          }
+          return buildHostResult(existing);
         };
+        const deterministicId =
+          input.opId !== null
+            ? opIdentity(store.rootTaskId, `host:${caller.name}`, input.opId)
+            : undefined;
+        if (deterministicId) {
+          const existing = store.getTaskIncludingDeleted(deterministicId);
+          if (existing) {
+            return { ...verifyReplay(existing), replayed: true };
+          }
+        }
+        try {
+          const created = await tasks.createDeferredRemoteTask({
+            id: deterministicId,
+            agentId: requestedAgent,
+            cwd: input.cwd,
+            source: effectiveSource,
+            externalParentId: input.parentId,
+            remoteHost: caller.name,
+            title: input.title,
+            workflowStatus: input.workflowStatus,
+          });
+          return buildHostResult(requireTask(created.taskId));
+        } catch (error) {
+          if (deterministicId) {
+            const raced = store.getTaskIncludingDeleted(deterministicId);
+            if (raced) return { ...verifyReplay(raced), replayed: true };
+          }
+          throw error;
+        }
       }
       const agentCaller = caller.kind === "agent" ? caller.principal : null;
       const source =
@@ -331,6 +364,60 @@ export function createLocalTaskOps(deps: {
         if (input.parentId && !store.getParentTask(input.parentId)) {
           throw new Error("parent_not_found");
         }
+      }
+      const localCallerScope =
+        caller.kind === "agent"
+          ? `agent:${caller.principal.taskId}`
+          : `token:${caller.tokenName ?? "anonymous"}`;
+      const localDeterministicId =
+        input.opId !== null
+          ? opIdentity(store.rootTaskId, localCallerScope, input.opId)
+          : undefined;
+      const expectedLocalParentId = agentCaller
+        ? (input.parentId ?? agentCaller.taskId)
+        : (effectiveParentId ?? null);
+      const effectiveLocalSource =
+        input.source ?? (agentCaller ? "agent" : "auto");
+      const verifyLocalReplay = (existing: TaskRow): TaskCreateResult => {
+        if (existing.deleted_at !== null) {
+          throw new TaskCreateDeletedError();
+        }
+        const existingAgent =
+          store.getBindingAgent(existing.id) ?? tasks.defaultAgentId;
+        if (
+          existing.parent_id !== expectedLocalParentId ||
+          (input.agentId !== undefined && existingAgent !== input.agentId)
+        ) {
+          throw new TaskCreateConflictError();
+        }
+        const parentAgentId =
+          existing.parent_id !== null
+            ? (store.getBindingAgent(existing.parent_id) ?? null)
+            : null;
+        return {
+          replayed: true,
+          task: {
+            id: existing.id,
+            title: existing.title,
+            agentId: existingAgent,
+            cwd: existing.cwd,
+            model: existing.model,
+            thinking: existing.reasoning_effort,
+            parentId: existing.parent_id,
+            workflowStatus: existing.workflow_status,
+            source: existing.source,
+          },
+          session: {
+            cwdDisplay: abbreviateHomePath(existing.cwd),
+            parentAgentId,
+            configOptions: tasks.configOptionsForTask(existing.id),
+            agentCommands: tasks.getAgentCommands(existing.id),
+          },
+        };
+      };
+      if (localDeterministicId) {
+        const existing = store.getTaskIncludingDeleted(localDeterministicId);
+        if (existing) return verifyLocalReplay(existing);
       }
       const requestedAgent = input.agentId;
       let targetAgentId: string;
@@ -395,8 +482,11 @@ export function createLocalTaskOps(deps: {
           targetBridge,
           cwd,
           input.inheritFromTaskId,
-          input.source ?? (agentCaller ? "agent" : "auto"),
+          effectiveLocalSource,
           {
+            ...(localDeterministicId === undefined
+              ? {}
+              : { id: localDeterministicId }),
             parentId: input.parentId,
             title: input.title,
             model: input.model,
@@ -418,12 +508,14 @@ export function createLocalTaskOps(deps: {
                   },
                 }
               : {}),
-            ...(input.clientOpId === undefined
-              ? {}
-              : { clientOpId: input.clientOpId }),
+            ...(input.opId === null ? {} : { clientOpId: input.opId }),
           },
         );
       } catch (error) {
+        if (localDeterministicId) {
+          const raced = store.getTaskIncludingDeleted(localDeterministicId);
+          if (raced) return verifyLocalReplay(raced);
+        }
         // The target's own schema refused a requested value. The candidates
         // must be this session's, so they travel on the error rather than
         // being looked up in the agent-level cache after the fact.
@@ -582,29 +674,26 @@ export function createLocalTaskOps(deps: {
       // `waiting` only records the status. `done` and `blocked` settle the
       // target's open account and are delivered to its source, or fall back to
       // the current parent when no account is open.
-      const { silenceWatchMs, event } = tasks.settleAgentUpdate(
+      const { silenceWatchMs } = tasks.settleAgentUpdate(
         sourceTaskId,
         status,
         body,
         ({ targetTaskId, targetIsLocal }) => {
-          if (!targetIsLocal || status === "waiting") return;
+          if (status === "waiting") return;
           recordReport?.({
             sourceTaskId,
             targetTaskId,
+            targetIsLocal,
             status,
             body,
             sourceLabel:
               store.getTask(sourceTaskId)?.title ?? sourceTaskId.slice(0, 8),
-            targetLabel:
-              store.getTask(targetTaskId)?.title ?? targetTaskId.slice(0, 8),
+            targetLabel: targetIsLocal
+              ? (store.getTask(targetTaskId)?.title ?? targetTaskId.slice(0, 8))
+              : targetTaskId.slice(0, 8),
           });
         },
       );
-      broadcastTaskUpdate?.({
-        taskId: sourceTaskId,
-        seq: event.seq,
-        data: JSON.parse(event.data) as Record<string, unknown>,
-      });
       if (silenceWatchMs === undefined) return {};
       return {
         note: `No visible wake source; the requester is notified after ${formatSilence(silenceWatchMs)} without agent activity.`,

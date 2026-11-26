@@ -368,6 +368,14 @@ client safely retry after SSE/network reconnect — same `(task_id,
 client_op_id)` returns the cached response instead of re-executing the side
 effect.
 
+This is a result cache, not idempotency by construction, and it is being
+retired: task create and link pushes derive their ids from the op id instead
+(see [multi-host: Idempotent operations](architecture/multi-host.md#idempotent-operations))
+and never touch this table. `/api/v1/messages` stores under the synthetic key
+`__ingress__`, rows are never pruned in production, and the result is saved
+after the side effect, not in its transaction. Plan step 5 moves the remaining
+routes to construction and drops the table (see Known issues).
+
 | Column | Type | Notes |
 |---|---|---|
 | `task_id` | TEXT NOT NULL | Part of compound PK |

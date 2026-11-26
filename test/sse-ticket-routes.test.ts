@@ -9,6 +9,7 @@ import { createRequestHandler } from "../src/http/routes.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { TicketStore } from "../src/sse-ticket.ts";
 import { SseManager } from "../src/sse-manager.ts";
+import { LinkSyncOwner } from "../src/host/link-sync.ts";
 
 interface Resp {
   status: number;
@@ -91,13 +92,12 @@ describe("SSE ticket flow", () => {
 
     ticketStore = new TicketStore({ ttlMs: 60_000 });
     sseManager = new SseManager(60_000); // long heartbeat (won't fire in test)
-    sseManager.setHostEventParent((taskId) =>
-      store.getExternalParentId(taskId),
-    );
+    const linkSyncOwner = new LinkSyncOwner(store);
 
     const handler = createRequestHandler({
       store,
       tasks: {} as never,
+      linkSyncOwner,
       taskOps: {
         async create(_caller: { kind: string }, input: { parentId?: string }) {
           store.createDeferredRemoteTask({
@@ -254,139 +254,7 @@ describe("SSE ticket flow", () => {
     assert.equal(connected.pendingCount, 0);
   });
 
-  it("routes external-parent events by subscribed parent", async () => {
-    const connectHost = async (
-      rawToken: string,
-      parentIds = rawToken === hostToken
-        ? ["hub-parent"]
-        : ["other-hub-parent"],
-    ) => {
-      const ticketResp = await req(
-        port,
-        "POST",
-        "/api/v1/sse-ticket",
-        {
-          Authorization: `Bearer ${rawToken}`,
-          "Content-Type": "application/json",
-        },
-        JSON.stringify({ parentIds }),
-      );
-      const ticket = JSON.parse(ticketResp.body).ticket as string;
-      let received = "";
-      let connectionId = "";
-      const ready = new Promise<void>((resolve, reject) => {
-        const request = http.request(
-          {
-            hostname: "127.0.0.1",
-            port,
-            path: `/api/v1/events/stream?ticket=${ticket}`,
-            method: "GET",
-          },
-          (response) => {
-            assert.equal(response.statusCode, 200);
-            connectionId = String(response.headers["x-host-connection-id"]);
-            response.on("data", (chunk: Buffer) => {
-              received += chunk.toString();
-              if (received.includes("event: heartbeat")) resolve();
-            });
-            response.on("error", reject);
-          },
-        );
-        request.on("error", reject);
-        request.end();
-      });
-      await ready;
-      return { received: () => received, connectionId: () => connectionId };
-    };
-    const first = await connectHost(hostToken);
-    const second = await connectHost(otherHostToken);
-
-    sseManager.broadcast({
-      type: "task_created",
-      taskId: "owned-by-hub",
-      configOptions: [],
-    } as never);
-    sseManager.broadcast({
-      type: "task_created",
-      taskId: "owned-by-other-hub",
-      configOptions: [],
-    } as never);
-    sseManager.broadcastGlobal({
-      type: "inbox_count_changed",
-      pendingCount: 4,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 30));
-
-    const hostClients = [...sseManager.clients.values()].filter((client) =>
-      ["hub", "other-hub"].includes(client.tokenName ?? ""),
-    );
-    assert.equal(hostClients.length, 2);
-    try {
-      assert.match(first.received(), /event: heartbeat/);
-      assert.match(first.received(), /"type":"connected"/);
-      assert.match(first.received(), /owned-by-hub/);
-      assert.doesNotMatch(first.received(), /owned-by-other-hub/);
-      assert.match(second.received(), /owned-by-other-hub/);
-      assert.doesNotMatch(second.received(), /owned-by-hub(?=[^:])/);
-      const create = await req(
-        port,
-        "POST",
-        "/api/v1/tasks",
-        {
-          Authorization: `Bearer ${hostToken}`,
-          "Content-Type": "application/json",
-          "X-Host-Connection-Id": first.connectionId(),
-        },
-        JSON.stringify({
-          agentId: "mock",
-          parentId: "new-hub-parent",
-          title: "New subscription child",
-        }),
-      );
-      assert.equal(create.status, 201);
-      sseManager.broadcast({
-        type: "task_created",
-        taskId: "new-subscription-child",
-        configOptions: [],
-      } as never);
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      assert.match(first.received(), /new-subscription-child/);
-      assert.doesNotMatch(second.received(), /new-subscription-child/);
-      hostClients.find((client) => client.tokenName === "hub")?.res.destroy();
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      const reconnected = await connectHost(hostToken, [
-        "hub-parent",
-        "new-hub-parent",
-      ]);
-      sseManager.broadcast({
-        type: "task_updated",
-        taskId: "new-subscription-child",
-      } as never);
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      assert.match(reconnected.received(), /new-subscription-child/);
-      const unknown = await connectHost(hostToken, ["unknown-parent"]);
-      sseManager.broadcast({
-        type: "task_created",
-        taskId: "owned-by-hub",
-        configOptions: [],
-      } as never);
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      assert.doesNotMatch(unknown.received(), /owned-by-hub/);
-      for (const received of [first.received(), second.received()]) {
-        assert.doesNotMatch(received, /inbox_count_changed/);
-        assert.doesNotMatch(received, /pendingCount/);
-        assert.doesNotMatch(received, /debugLevel/);
-      }
-    } finally {
-      for (const client of sseManager.clients.values()) {
-        if (client.tokenName === "hub" || client.tokenName === "other-hub") {
-          client.res.destroy();
-        }
-      }
-    }
-  });
-
-  it("rejects host tickets for per-task streams", async () => {
+  it("rejects host tokens on POST /api/v1/sse-ticket and /tasks/:id/messages", async () => {
     const ticketResp = await req(
       port,
       "POST",
@@ -397,17 +265,177 @@ describe("SSE ticket flow", () => {
       },
       JSON.stringify({ parentIds: [] }),
     );
-    const ticket = JSON.parse(ticketResp.body).ticket;
-    const response = await req(
+    assert.equal(ticketResp.status, 403);
+
+    const msgResp = await req(
       port,
-      "GET",
-      `/api/v1/tasks/any/events/stream?ticket=${ticket}`,
+      "POST",
+      "/api/v1/tasks/hub-parent/messages",
+      {
+        Authorization: `Bearer ${hostToken}`,
+        "Content-Type": "application/json",
+      },
+      JSON.stringify({ targetTaskId: "owned-by-hub", body: "hello" }),
+    );
+    assert.equal(msgResp.status, 403);
+  });
+
+  it("rejects non-host tokens on /api/v1/link/* routes and isolates links by token name", async () => {
+    assert.equal(
+      (
+        await req(port, "GET", "/api/v1/link/outbox?after=0", {
+          Authorization: `Bearer ${token}`,
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await req(port, "GET", "/api/v1/link/watch?after=0", {
+          Authorization: `Bearer ${token}`,
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await req(
+          port,
+          "POST",
+          "/api/v1/link/entries",
+          {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          JSON.stringify({}),
+        )
+      ).status,
+      403,
     );
 
-    assert.equal(response.status, 403);
-    assert.deepEqual(JSON.parse(response.body), {
-      error: "Host tickets cannot subscribe to task events",
+    store.enqueueLinkReport({
+      remoteRole: "parent",
+      remoteHost: "hub",
+      sourceTaskId: "owned-by-hub",
+      targetTaskId: "hub-parent",
+      sourceLabel: "Hub child",
+      body: "for-hub-only",
     });
+    const hubOutbox = await req(port, "GET", "/api/v1/link/outbox?after=0", {
+      Authorization: `Bearer ${hostToken}`,
+    });
+    assert.equal(hubOutbox.status, 200);
+    assert.equal(JSON.parse(hubOutbox.body).entries.length, 1);
+
+    const otherOutbox = await req(port, "GET", "/api/v1/link/outbox?after=0", {
+      Authorization: `Bearer ${otherHostToken}`,
+    });
+    assert.equal(otherOutbox.status, 200);
+    assert.equal(JSON.parse(otherOutbox.body).entries.length, 0);
+  });
+
+  it("closes active /api/v1/link/watch on token hash revocation and continues link after same-name rotation", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "webagent-link-revoke-"));
+    const publicDir = join(dir, "public");
+    mkdirSync(publicDir);
+    writeFileSync(join(publicDir, "index.html"), "");
+    const localStore = new Store(dir);
+    const localAuth = new AuthStore(join(dir, "auth.json"));
+    await localAuth.load();
+    const { token: firstToken } = await localAuth.addToken("hub-rot", "host");
+    const owner = new LinkSyncOwner(localStore);
+    const localSse = new SseManager(60_000);
+    const handler = createRequestHandler({
+      store: localStore,
+      authStore: localAuth,
+      linkSyncOwner: owner,
+      sseManager: localSse,
+      publicDir,
+      dataDir: dir,
+      limits: { bash_output: 1024, image_upload: 1024 },
+      serverVersion: "0.0.0-test",
+    });
+    const srv = http.createServer(handler);
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const srvPort = (srv.address() as { port: number }).port;
+    try {
+      let ended = false;
+      let connected = false;
+      await new Promise<void>((resolve, reject) => {
+        const request = http.request(
+          {
+            hostname: "127.0.0.1",
+            port: srvPort,
+            path: "/api/v1/link/watch?after=0",
+            method: "GET",
+            headers: { Authorization: `Bearer ${firstToken}` },
+          },
+          (response) => {
+            assert.equal(response.statusCode, 200);
+            response.on("data", (chunk: Buffer) => {
+              if (!connected && chunk.toString().includes("event: connected")) {
+                connected = true;
+                resolve();
+              }
+            });
+            response.on("end", () => {
+              ended = true;
+            });
+            response.on("error", reject);
+          },
+        );
+        request.on("error", reject);
+        request.end();
+      });
+
+      // Revoke and re-issue with the SAME name: hash changed, so old watch must close on heartbeat.
+      await localAuth.revokeToken("hub-rot");
+      const { token: secondToken } = await localAuth.addToken(
+        "hub-rot",
+        "host",
+      );
+      owner.heartbeat();
+      const deadline = performance.now() + 1_000;
+      const isEnded = () => ended;
+      while (!isEnded() && performance.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      assert.equal(ended, true);
+
+      // Reconnecting with the rotated same-name token reads the same link outbox.
+      localStore.createDeferredRemoteTask({
+        id: "rot-child",
+        cwd: dir,
+        source: "host",
+        agentId: "mock",
+        externalParentId: "rot-parent",
+        remoteHost: "hub-rot",
+        title: "Rot child",
+        creationAnchor: {},
+      });
+      localStore.enqueueLinkReport({
+        remoteRole: "parent",
+        remoteHost: "hub-rot",
+        sourceTaskId: "rot-child",
+        targetTaskId: "rot-parent",
+        sourceLabel: "Rot child",
+        body: "after rotation",
+      });
+      const outbox = await req(srvPort, "GET", "/api/v1/link/outbox?after=0", {
+        Authorization: `Bearer ${secondToken}`,
+      });
+      assert.equal(outbox.status, 200);
+      assert.equal(JSON.parse(outbox.body).entries.length, 1);
+    } finally {
+      await localAuth.close();
+      localStore.close();
+      await new Promise<void>((r) => {
+        srv.close(() => {
+          r();
+        });
+      });
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("ticket is single-use (second open with same ticket fails)", async () => {

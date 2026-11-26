@@ -77,7 +77,7 @@ describe("shared/sync", () => {
     ] as const;
     for (const response of responses) {
       const result = await sendSyncRequest<object, unknown>({
-        operationId: "op",
+        opId: "op",
         request: {},
         timeoutMs: 10,
         timer: clock.api,
@@ -93,9 +93,27 @@ describe("shared/sync", () => {
       );
     }
 
+    // opId: null must never retry unknown even when retries > 0.
+    let nullAttempts = 0;
+    const nullResult = await sendSyncRequest({
+      opId: null,
+      request: {},
+      timeoutMs: 10,
+      retries: 3,
+      timer: clock.api,
+      transport: {
+        send: async () => {
+          nullAttempts += 1;
+          return { status: 503, body: null };
+        },
+      },
+    });
+    assert.equal(nullResult.kind, "unknown");
+    assert.equal(nullAttempts, 1);
+
     let signal: AbortSignal | undefined;
     const pending = sendSyncRequest({
-      operationId: "late",
+      opId: "late",
       request: {},
       timeoutMs: 10,
       timer: clock.api,
@@ -414,7 +432,7 @@ describe("shared/sync", () => {
         },
         transport: {
           send: async (operationId) => {
-            sent.push(operationId);
+            sent.push(operationId!);
             return { status: 503, body: null };
           },
         },
@@ -471,9 +489,9 @@ describe("shared/sync", () => {
         },
         transport: {
           send: (operationId) => {
-            sent.push(operationId);
+            sent.push(operationId!);
             return new Promise((resolveTransport) => {
-              resolvers.set(operationId, resolveTransport);
+              resolvers.set(operationId!, resolveTransport);
             });
           },
         },
@@ -520,10 +538,10 @@ describe("shared/sync", () => {
         },
         transport: {
           send: async (operationId) => {
-            sent.push(operationId);
+            sent.push(operationId!);
             return {
               status: 202,
-              body: { duplicate: accepted.has(operationId) },
+              body: { duplicate: accepted.has(operationId!) },
             };
           },
         },

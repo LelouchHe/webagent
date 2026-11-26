@@ -161,7 +161,12 @@ export class RegressionForwarder {
       (upstream) => {
         exchange.upstreamResponse = upstream;
         upstream.once("end", finish);
-        upstream.once("close", finish);
+        upstream.once("close", () => {
+          if (!response.writableEnded && !response.destroyed) {
+            response.destroy();
+          }
+          finish();
+        });
         if (state && state.dropResponses > 0) {
           state.dropResponses -= 1;
           upstream.destroy();

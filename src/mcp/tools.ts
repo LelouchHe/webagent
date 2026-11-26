@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
@@ -259,6 +260,7 @@ export function registerMcpTools(
                 parentId: principal.taskId,
                 inheritFromTaskId: principal.taskId,
                 source: "agent",
+                opId: randomUUID(),
               },
             )
           ).task.id,
@@ -282,6 +284,9 @@ export function registerMcpTools(
               });
             case "input":
               throw new Error(classified.clientMessage, { cause: error });
+            case "conflict":
+            case "deleted":
+              throw new Error(classified.message, { cause: error });
             case "host_not_configured":
               throw new Error(`Host ${classified.host} is not configured`, {
                 cause: error,
@@ -345,7 +350,8 @@ export function registerMcpTools(
     "task_send",
     {
       description:
-        "Queue a durable message to a visible Task, or hand it synchronously to a linked remote owner. " +
+        "Queue a durable message to a visible Task (local or linked remote child). " +
+        "Accepted means the message is durably queued locally; a linked remote child receives it via the link outbox. " +
         "It is delivered at the recipient's next turn boundary and wakes it. " +
         "An agent's message to its direct child opens or keeps open the account for that edge once it is delivered.",
       inputSchema: {

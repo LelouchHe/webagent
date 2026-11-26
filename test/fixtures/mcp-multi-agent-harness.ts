@@ -199,10 +199,7 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
 
   const createCalls: Array<"user" | "agent" | "host"> = [];
   const localTaskOps = createLocalTaskOps({ store, tasks });
-  const emptyRemote = new HostRegistry(
-    {},
-    { listLinks: () => [], onRemoteEvent: () => {} },
-  );
+  const emptyRemote = new HostRegistry({}, { listLinks: () => [] });
   const core = createTaskOpsCore({
     host: createTaskHost({ local: localTaskOps, remote: emptyRemote }),
     store,

@@ -1,24 +1,17 @@
-import { hashToken } from "../../auth.ts";
-import { isScope } from "../../auth-store.ts";
 import { z } from "zod";
-import {
-  WORKFLOW_STATUSES,
-  type WorkflowStatus,
-} from "../../shared/workflow-status.ts";
+import { WORKFLOW_STATUSES } from "../../shared/workflow-status.ts";
 import { HTTP_STATUS } from "../../http-status.ts";
 import {
-  StreamSupervisor,
-  STREAM_STALL_TIMEOUT_MS,
-  type StreamAttempt,
-  type StreamFailure,
-} from "../../shared/stream-supervisor.ts";
+  sendSyncRequest,
+  type SyncFeedEntry,
+  type SyncFeedTransport,
+  type SyncRequestTransport,
+  type SyncTimer,
+} from "../../shared/sync/index.ts";
 import type { HostConfig } from "../../config.ts";
 import { errorMessage } from "../../types.ts";
 import { resolveHostToken, TokenCommandError } from "./credentials.ts";
-import {
-  type HostConnectionState,
-  type HostUnreachableReason,
-} from "./state.ts";
+import type { HostUnreachableReason } from "./state.ts";
 import type {
   RemoteTaskCreateInput,
   TaskReadInput,
@@ -32,6 +25,7 @@ import {
 } from "../../task-history.ts";
 
 const REQUEST_TIMEOUT_MS = 8_000;
+export const REMOTE_STATUS_TIMEOUT_MS = 2_000;
 
 const ConfigOptionSchema = z.union([
   z.object({
@@ -90,11 +84,21 @@ const TaskEventSchema = z
   })
   .passthrough();
 
-export interface RemoteTaskDetail {
-  id: string;
-  title: string | null;
-  workflowStatus: WorkflowStatus;
-}
+const RemoteTaskStatusSchema = z.object({
+  title: z.string().nullable(),
+  workflowStatus: z.enum(WORKFLOW_STATUSES),
+  executionState: z.enum(["agent", "bash", "idle"]),
+  lastEventAt: z.string().nullable(),
+  lastAgentActivityAt: z.string().nullable(),
+});
+
+export type RemoteTaskStatus = z.infer<typeof RemoteTaskStatusSchema>;
+
+const FeedEntrySchema = z.object({
+  pos: z.number().int().positive(),
+  prev: z.number().int().nonnegative(),
+  data: z.unknown(),
+});
 
 export interface OwnerTaskHistoryEvent extends CanonicalTaskHistoryEvent {
   parsedData: Record<string, unknown>;
@@ -134,39 +138,39 @@ export function decodeOwnerTaskEvents(
 }
 
 export type HostTaskCreateAttempt =
-  | {
-      kind: "success";
-      result: TaskCreateResult;
-      connectionId: string | null;
-    }
+  | { kind: "success"; result: TaskCreateResult }
   | { kind: "rejected"; status: number; reason: string }
   | { kind: "unknown"; reason: string }
   | { kind: "not_sent"; reason: string };
 
-export type HostTaskSendAttempt =
-  | { kind: "accepted"; messageId: string }
-  | { kind: "rejected"; status: number; reason: string }
-  | { kind: "unknown"; reason: string };
+export interface HostHttpRequest {
+  method: "GET" | "POST";
+  path: string;
+  body?: unknown;
+  token?: string;
+  headers?: Record<string, string>;
+  redirect?: RequestRedirect;
+}
 
 export interface HostConnectionOptions {
   fetch?: typeof globalThis.fetch;
-  handshakeTimeoutMs?: number;
-  retryDelay: (failures: number, failure: StreamFailure) => number;
-  onState?: (
-    state: HostConnectionState,
-    reason?: HostUnreachableReason,
-  ) => void;
-  onConnected?: (isCurrent: () => boolean) => Promise<void> | void;
-  onEvent?: (event: HostStreamEvent) => void | Promise<void>;
-  subscriptionParentIds?: () => string[];
+  requestTransport?: SyncRequestTransport<HostHttpRequest, unknown>;
+  timer?: SyncTimer;
+  createRetries?: number;
 }
 
-export interface HostStreamEvent {
-  seq?: number;
-  data: Record<string, unknown>;
-}
+const DEFAULT_TIMER: SyncTimer = {
+  setTimeout: (callback, ms) => {
+    const handle = setTimeout(callback, ms);
+    handle.unref();
+    return handle;
+  },
+  clearTimeout: (handle) => {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
+};
 
-class HostConnectionFailure extends Error {
+export class HostConnectionFailure extends Error {
   readonly reason: HostUnreachableReason;
 
   constructor(reason: HostUnreachableReason, options?: ErrorOptions) {
@@ -181,8 +185,10 @@ function endpoint(baseUrl: string, path: string): string {
 }
 
 async function responseBody(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text.trim()) return null;
   try {
-    return (await response.json()) as unknown;
+    return JSON.parse(text) as unknown;
   } catch {
     return null;
   }
@@ -209,49 +215,46 @@ interface HostFetchOptions {
 export class HostConnection {
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly config: HostConfig;
-  private readonly options: HostConnectionOptions;
-  private readonly supervisor: StreamSupervisor;
+  private readonly requestTransport: SyncRequestTransport<
+    HostHttpRequest,
+    unknown
+  >;
+  private readonly timer: SyncTimer;
+  private readonly createRetries: number;
   private tokenCommand: Promise<string> | null = null;
-  private connectionId: string | null = null;
 
-  constructor(config: HostConfig, options: HostConnectionOptions) {
+  constructor(config: HostConfig, options: HostConnectionOptions = {}) {
     this.config = config;
-    this.options = options;
     this.fetchImpl = options.fetch ?? globalThis.fetch;
-    this.supervisor = new StreamSupervisor({
-      run: (attempt) => this.runAttempt(attempt),
-      retryDelay: options.retryDelay,
-      handshakeTimeoutMs: options.handshakeTimeoutMs ?? STREAM_STALL_TIMEOUT_MS,
-      clock: { now: () => performance.now() },
-      onFailure: ({ kind, error }) => {
-        this.options.onState?.(
-          "unreachable",
-          kind === "stalled" ? "network" : HostConnection.failureReason(error),
-        );
+    this.timer = options.timer ?? DEFAULT_TIMER;
+    this.createRetries = Math.max(0, options.createRetries ?? 2);
+    this.requestTransport = options.requestTransport ?? {
+      send: async (opId, request, signal) => {
+        const token = request.token ?? (await this.resolveToken(signal));
+        const headers =
+          opId !== null
+            ? { ...(request.headers ?? {}), "X-Client-Op-Id": opId }
+            : request.headers;
+        const response = await this.fetchResponse(request.path, {
+          token,
+          method: request.method,
+          body: request.body,
+          headers,
+          redirect: request.redirect,
+          signal,
+          timeoutMs: null,
+        });
+        return {
+          status: response.status,
+          body: await responseBody(response),
+        };
       },
-    });
-  }
-
-  start(): void {
-    this.supervisor.start();
-  }
-
-  stop(): void {
-    this.supervisor.stop();
-  }
-
-  get currentConnectionId(): string | null {
-    return this.connectionId;
-  }
-
-  reconnect(): void {
-    this.supervisor.reconnect();
+    };
   }
 
   async createTask(
     input: RemoteTaskCreateInput,
   ): Promise<HostTaskCreateAttempt> {
-    const connectionId = this.connectionId;
     let token: string;
     try {
       token = await this.resolveToken();
@@ -259,39 +262,38 @@ export class HostConnection {
       return { kind: "not_sent", reason: "Host credential is unavailable" };
     }
 
-    let response: Response;
-    try {
-      response = await this.fetchResponse("/api/v1/tasks", {
-        token,
+    const { opId, ...payload } = input;
+    const outcome = await sendSyncRequest({
+      opId,
+      request: {
         method: "POST",
-        body: input,
-        headers: connectionId
-          ? { "X-Host-Connection-Id": connectionId }
-          : undefined,
+        path: "/api/v1/tasks",
+        body: payload,
+        token,
         redirect: "error",
-      });
-    } catch (error) {
+      },
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      transport: this.requestTransport,
+      timer: this.timer,
+      retries: this.createRetries,
+    });
+    if (outcome.kind === "unknown") {
+      return { kind: "unknown", reason: errorMessage(outcome.error) };
+    }
+    if (outcome.kind === "rejected") {
       return {
-        kind: "unknown",
-        reason: errorMessage(error),
+        kind: "rejected",
+        status: outcome.status,
+        reason: responseError(outcome.body, outcome.status),
       };
     }
-
-    const body = await responseBody(response);
-    if (!response.ok) {
-      const reason = responseError(body, response.status);
-      return response.status >= HTTP_STATUS.BAD_REQUEST &&
-        response.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
-        ? { kind: "rejected", status: response.status, reason }
-        : { kind: "unknown", reason };
-    }
-    if (response.status !== HTTP_STATUS.CREATED) {
+    if (outcome.status !== HTTP_STATUS.CREATED) {
       return {
         kind: "unknown",
-        reason: `Unexpected HTTP ${response.status}`,
+        reason: `Unexpected HTTP ${outcome.status}`,
       };
     }
-    const parsed = TaskCreateResponseSchema.safeParse(body);
+    const parsed = TaskCreateResponseSchema.safeParse(outcome.body);
     if (!parsed.success) {
       return {
         kind: "unknown",
@@ -301,7 +303,6 @@ export class HostConnection {
     const activation = parsed.data;
     return {
       kind: "success",
-      connectionId,
       result: {
         task: {
           id: activation.id,
@@ -325,33 +326,44 @@ export class HostConnection {
   }
 
   async getJson(path: string): Promise<unknown> {
-    const token = await this.resolveToken();
-    const response = await this.fetchResponse(path, {
-      token,
-      redirect: "error",
+    const outcome = await sendSyncRequest({
+      opId: null,
+      request: { method: "GET", path, redirect: "error" },
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      transport: this.requestTransport,
+      timer: this.timer,
     });
-    if (!response.ok) {
-      throw new HostRequestError(path, response.status);
+    if (outcome.kind === "rejected") {
+      throw new HostRequestError(path, outcome.status);
     }
-    try {
-      return (await response.json()) as unknown;
-    } catch (error) {
-      throw new HostConnectionFailure("invalid_response", { cause: error });
+    if (outcome.kind === "unknown") {
+      throw new HostConnectionFailure("network", { cause: outcome.error });
     }
+    if (outcome.body === null) {
+      throw new HostConnectionFailure("invalid_response");
+    }
+    return outcome.body;
   }
 
-  async readTaskDetail(taskId: string): Promise<RemoteTaskDetail> {
-    const raw = await this.getJson(
-      `/api/v1/tasks/${encodeURIComponent(taskId)}`,
-    );
-    const parsed = z
-      .object({
-        id: z.literal(taskId),
-        title: z.string().nullable(),
-        workflowStatus: z.enum(WORKFLOW_STATUSES),
-      })
-      .passthrough()
-      .safeParse(raw);
+  async readTaskStatus(
+    taskId: string,
+    timeoutMs = REMOTE_STATUS_TIMEOUT_MS,
+  ): Promise<RemoteTaskStatus> {
+    const path = `/api/v1/tasks/${encodeURIComponent(taskId)}/status`;
+    const outcome = await sendSyncRequest({
+      opId: null,
+      request: { method: "GET", path, redirect: "error" },
+      timeoutMs,
+      transport: this.requestTransport,
+      timer: this.timer,
+    });
+    if (outcome.kind === "rejected") {
+      throw new HostRequestError(path, outcome.status);
+    }
+    if (outcome.kind === "unknown") {
+      throw new HostConnectionFailure("network", { cause: outcome.error });
+    }
+    const parsed = RemoteTaskStatusSchema.safeParse(outcome.body);
     if (!parsed.success) {
       throw new HostConnectionFailure("invalid_response");
     }
@@ -377,108 +389,32 @@ export class HostConnection {
     });
   }
 
-  async sendTaskMessage(input: {
-    sourceTaskId: string;
-    targetTaskId: string;
-    body: string;
-    clientOpId: string;
-    sourceLabel: string;
-  }): Promise<HostTaskSendAttempt> {
-    let token: string;
-    try {
-      token = await this.resolveToken();
-    } catch (error) {
-      return { kind: "unknown", reason: errorMessage(error) };
-    }
-    let response: Response;
-    try {
-      response = await this.fetchResponse(
-        `/api/v1/tasks/${encodeURIComponent(input.sourceTaskId)}/messages`,
-        {
-          token,
-          method: "POST",
-          body: {
-            targetTaskId: input.targetTaskId,
-            body: input.body,
-            sourceLabel: input.sourceLabel,
-          },
-          headers: { "X-Client-Op-Id": input.clientOpId },
-          redirect: "error",
-        },
-      );
-    } catch (error) {
-      return { kind: "unknown", reason: errorMessage(error) };
-    }
-    const body = await responseBody(response);
-    if (response.status === HTTP_STATUS.ACCEPTED) {
-      if (
-        body &&
-        typeof body === "object" &&
-        typeof (body as { messageId?: unknown }).messageId === "string"
-      ) {
-        return {
-          kind: "accepted",
-          messageId: (body as { messageId: string }).messageId,
-        };
-      }
-      return { kind: "unknown", reason: "Owner returned no message id" };
-    }
-    const reason = responseError(body, response.status);
-    return response.status >= HTTP_STATUS.BAD_REQUEST &&
-      response.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
-      ? { kind: "rejected", status: response.status, reason }
-      : { kind: "unknown", reason };
+  feedTransport(): SyncFeedTransport<unknown> {
+    return {
+      read: (after, signal) => this.readLinkOutbox(after, signal),
+      watch: (input) => this.watchLinkOutbox(input),
+    };
   }
 
-  private async runAttempt(attempt: StreamAttempt): Promise<void> {
-    this.options.onState?.("connecting");
-    const token = await this.resolveToken(attempt);
-    if (!attempt.isCurrent()) return;
-    this.supervisor.beginHandshake(attempt);
-    const caller = await this.request(
-      attempt.signal,
-      "/api/v1/auth/verify",
-      token,
-    );
-    if (!caller || typeof caller !== "object") {
-      throw new HostConnectionFailure("invalid_response");
-    }
-    const identity = caller as { hash?: unknown; scope?: unknown };
-    if (identity.hash !== hashToken(token) || !isScope(identity.scope)) {
-      throw new HostConnectionFailure("invalid_response");
-    }
-    const ticketResponse = await this.fetchResponse("/api/v1/sse-ticket", {
-      signal: attempt.signal,
-      token,
-      method: "POST",
-      body: { parentIds: this.options.subscriptionParentIds?.() ?? [] },
-    });
-    if (!ticketResponse.ok) throw this.httpFailure(ticketResponse.status);
-    let ticketBody: unknown;
-    try {
-      ticketBody = await ticketResponse.json();
-    } catch {
-      throw new HostConnectionFailure("invalid_response");
-    }
-    const ticket =
-      ticketBody && typeof ticketBody === "object"
-        ? (ticketBody as { ticket?: unknown }).ticket
-        : undefined;
-    if (typeof ticket !== "string" || !ticket) {
-      throw new HostConnectionFailure("invalid_response");
-    }
-    const response = await this.fetchResponse(
-      `/api/v1/events/stream?ticket=${encodeURIComponent(ticket)}`,
-      { signal: attempt.signal, timeoutMs: null },
-    );
-    if (!response.ok) throw this.httpFailure(response.status);
-    if (!response.body) throw new HostConnectionFailure("invalid_response");
-    this.connectionId = response.headers.get("X-Host-Connection-Id");
-    try {
-      await this.consume(response.body, attempt);
-    } finally {
-      this.connectionId = null;
-    }
+  pushTransport(): SyncRequestTransport<unknown, unknown> {
+    return {
+      send: async (opId, request, signal) => {
+        const token = await this.resolveToken(signal);
+        const response = await this.fetchResponse("/api/v1/link/entries", {
+          token,
+          method: "POST",
+          body: request,
+          headers: opId !== null ? { "X-Client-Op-Id": opId } : undefined,
+          signal,
+          timeoutMs: null,
+          redirect: "error",
+        });
+        return {
+          status: response.status,
+          body: await responseBody(response),
+        };
+      },
+    };
   }
 
   static failureReason(error: unknown): HostUnreachableReason {
@@ -487,55 +423,76 @@ export class HostConnection {
     return "network";
   }
 
-  private async resolveToken(attempt?: StreamAttempt): Promise<string> {
+  private async readLinkOutbox(
+    after: number,
+    signal: AbortSignal,
+  ): Promise<SyncFeedEntry<unknown>[]> {
+    const token = await this.resolveToken(signal);
+    const response = await this.fetchResponse(
+      `/api/v1/link/outbox?after=${encodeURIComponent(String(after))}&limit=100`,
+      { token, signal, redirect: "error" },
+    );
+    if (!response.ok) throw this.httpFailure(response.status);
+    let raw: unknown;
+    try {
+      raw = (await response.json()) as unknown;
+    } catch {
+      throw new HostConnectionFailure("invalid_response");
+    }
+    const parsed = z
+      .object({ entries: z.array(FeedEntrySchema) })
+      .safeParse(raw);
+    if (!parsed.success) {
+      throw new HostConnectionFailure("invalid_response");
+    }
+    return parsed.data.entries;
+  }
+
+  private async watchLinkOutbox(input: {
+    after: number;
+    signal: AbortSignal;
+    connected(): void;
+    activity(): void;
+    entry(entry: SyncFeedEntry<unknown>): void | Promise<void>;
+  }): Promise<void> {
+    const token = await this.resolveToken(input.signal);
+    if (input.signal.aborted) return;
+    let response: Response;
+    try {
+      response = await this.fetchResponse(
+        `/api/v1/link/watch?after=${encodeURIComponent(String(input.after))}`,
+        { token, signal: input.signal, timeoutMs: null, redirect: "error" },
+      );
+    } catch (error) {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- signal can abort across await
+      if (input.signal.aborted) throw error;
+      throw new HostConnectionFailure("network", { cause: error });
+    }
+    if (!response.ok) throw this.httpFailure(response.status);
+    if (!response.body) throw new HostConnectionFailure("invalid_response");
+    await this.consumeWatch(response.body, input);
+  }
+
+  private async resolveToken(signal?: AbortSignal): Promise<string> {
     while (this.tokenCommand) {
       try {
         await this.tokenCommand;
       } catch {
         // The prior attempt reports its own outcome.
       }
-      if (attempt && !attempt.isCurrent()) {
+      if (signal?.aborted) {
         throw new Error("stale host attempt");
       }
     }
-    if (attempt && !attempt.isCurrent()) {
+    if (signal?.aborted) {
       throw new Error("stale host attempt");
     }
-    const command = resolveHostToken(
-      this.config.token,
-      undefined,
-      attempt?.signal,
-    );
+    const command = resolveHostToken(this.config.token, undefined, signal);
     this.tokenCommand = command;
     try {
       return await command;
     } finally {
       if (this.tokenCommand === command) this.tokenCommand = null;
-    }
-  }
-
-  private async request(
-    signal: AbortSignal,
-    path: string,
-    token?: string,
-    method = "GET",
-  ): Promise<unknown> {
-    let response: Response;
-    try {
-      response = await this.fetchResponse(path, {
-        signal,
-        token,
-        method,
-      });
-    } catch (error) {
-      if (signal.aborted) throw error;
-      throw new HostConnectionFailure("network");
-    }
-    if (!response.ok) throw this.httpFailure(response.status);
-    try {
-      return (await response.json()) as unknown;
-    } catch {
-      throw new HostConnectionFailure("invalid_response");
     }
   }
 
@@ -577,120 +534,57 @@ export class HostConnection {
     );
   }
 
-  // eslint-disable-next-line complexity -- one framed-stream parser owns handshake, heartbeat, and event delivery.
-  private async consume(
+  private async consumeWatch(
     body: ReadableStream<Uint8Array>,
-    attempt: StreamAttempt,
+    input: {
+      signal: AbortSignal;
+      connected(): void;
+      activity(): void;
+      entry(entry: SyncFeedEntry<unknown>): void | Promise<void>;
+    },
   ): Promise<void> {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let connected = false;
-    let refreshPromise: Promise<void> | null = null;
-    let bufferedEvents: HostStreamEvent[] = [];
     try {
-      while (attempt.isCurrent()) {
+      while (!input.signal.aborted) {
         const result = await reader.read();
-        if (!attempt.isCurrent()) return;
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- signal can abort across await
+        if (input.signal.aborted) return;
         if (result.done) throw new HostConnectionFailure("network");
         buffer += decoder.decode(result.value, { stream: true });
         let boundary = buffer.indexOf("\n\n");
         while (boundary >= 0) {
           const frame = buffer.slice(0, boundary);
           buffer = buffer.slice(boundary + 2);
-          const event = frame
-            .split(/\r?\n/)
+          const lines = frame.split(/\r?\n/);
+          const event = lines
             .find((line) => line.startsWith("event:"))
             ?.slice(6)
             .trim();
-          const data = frame
-            .split(/\r?\n/)
+          const data = lines
             .filter((line) => line.startsWith("data:"))
             .map((line) => line.slice(5).trimStart())
             .join("\n");
-          if (!connected && data) {
-            let parsed: { type?: unknown };
+          if (event === "connected") {
+            connected = true;
+            input.connected();
+          } else if (connected && event === "heartbeat") {
+            input.activity();
+          } else if (connected && event === "entry" && data) {
+            let parsedJson: unknown;
             try {
-              parsed = JSON.parse(data) as { type?: unknown };
+              parsedJson = JSON.parse(data) as unknown;
             } catch {
               throw new HostConnectionFailure("invalid_response");
             }
-            if (parsed.type === "connected") {
-              if (!attempt.isCurrent()) return;
-              connected = true;
-              this.supervisor.connected(attempt);
-              if (!attempt.isCurrent()) return;
-              refreshPromise = Promise.resolve(
-                this.options.onConnected?.(() => attempt.isCurrent()),
-              );
-              const ownedRefresh = refreshPromise;
-              void ownedRefresh.then(
-                async () => {
-                  if (!attempt.isCurrent() || refreshPromise !== ownedRefresh)
-                    return;
-                  try {
-                    while (bufferedEvents.length > 0) {
-                      const pending = bufferedEvents;
-                      bufferedEvents = [];
-                      for (const pendingEvent of pending) {
-                        if (!attempt.isCurrent()) return;
-                        await this.options.onEvent?.(pendingEvent);
-                      }
-                    }
-                    if (
-                      attempt.isCurrent() &&
-                      refreshPromise === ownedRefresh
-                    ) {
-                      refreshPromise = null;
-                      this.options.onState?.("connected");
-                    }
-                  } catch {
-                    if (attempt.isCurrent()) this.supervisor.reconnect(attempt);
-                  }
-                },
-                () => {
-                  if (attempt.isCurrent() && refreshPromise === ownedRefresh) {
-                    this.supervisor.reconnect(attempt);
-                  }
-                },
-              );
-              boundary = buffer.indexOf("\n\n");
-              continue;
-            }
-          }
-          if (connected && event !== "heartbeat" && data) {
-            let payload: unknown;
-            try {
-              payload = JSON.parse(data) as unknown;
-            } catch {
+            const parsed = FeedEntrySchema.safeParse(parsedJson);
+            if (!parsed.success) {
               throw new HostConnectionFailure("invalid_response");
             }
-            if (
-              payload &&
-              typeof payload === "object" &&
-              !Array.isArray(payload)
-            ) {
-              const id = frame
-                .split(/\r?\n/)
-                .find((line) => line.startsWith("id:"))
-                ?.slice(3)
-                .trim();
-              const seq = id === undefined ? NaN : Number(id);
-              const streamEvent: HostStreamEvent = {
-                ...(Number.isInteger(seq) ? { seq } : {}),
-                data: payload as Record<string, unknown>,
-              };
-              if (refreshPromise) {
-                bufferedEvents.push(streamEvent);
-              } else {
-                await this.options.onEvent?.(streamEvent);
-              }
-            }
+            await input.entry(parsed.data);
           }
-          if (connected && event === "heartbeat") {
-            this.supervisor.noteActivity(attempt);
-          }
-
           boundary = buffer.indexOf("\n\n");
         }
       }

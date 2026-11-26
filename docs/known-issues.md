@@ -18,16 +18,44 @@ time. An entry without a "closing condition" is a wish, not an issue.
   The durable owner task and hub link are already complete; only follow-up
   display refresh may fail. *Closing:* require presentation to be retriable
   without weakening the durable write.
-- **Owner enqueue and replay-cache handoff retain a crash window.** A process
-  loss after owner dispatch commit but before replay publication can delay the
-  first `collaboration_prompt` acknowledgment until reconnect catch-up.
-  *Closing:* make replay publication restart-recoverable with the enqueue fact.
-
-- **Remote report catch-up is whole-history and cursorless.** Every host
-  connect cold-reads each linked child's full event log and relies on the
-  idempotency key to discard already-seen `task_update` reports. *Closing:* add
-  a persisted or server-owned incremental cursor/ACK protocol without changing
-  Task facts.
+- **Hub and owner must be upgraded together.** Pre-1.0 has no cross-version
+  multi-host wire compatibility; mixing a new hub with an older owner is
+  unsupported. *Closing:* introduce protocol versioning at 1.0 if needed.
+- **A hard-deleted remote child can be recreated if a create retry lands after
+  deletion.** Remote `POST /api/v1/tasks` derives its task id from
+  `opIdentity(ownerRootId, callerLinkName, opId)`. A soft-deleted (shared) task
+  still exists in `tasks` and returns `404 target_deleted` on replay, but a
+  hard-deleted task removes the row so a late retry inside the hub's retry
+  window would insert it again (requires create response loss, immediate hard
+  delete, and retry within the same window). *Closing:* accepted edge case; do
+  not add a tombstone table for it.
+- **`client_ops` is a result cache rather than structural idempotency.**
+  `POST /api/v1/messages` writes under the synthetic task id `__ingress__`;
+  `pruneClientOps` has no production caller so rows grow monotonically (as of
+  2026-11-25, dogfood hub held 515 rows: 245 `__ingress__` and 398 referencing
+  task ids no longer in `tasks`); and results are saved in a separate commit
+  after execution, making replay non-atomic. *Closing:* migrate all mutating
+  REST routes to structural idempotency and delete `client_ops` in plan v7 step
+  5.
+- **Owner entries stay queued indefinitely if a hub never reconnects.** The
+  pull-side outbox does not expire entries when a hub stops dialing. *Closing:*
+  add an explicit host/link removal operation.
+- **A temporary apply failure on one link blocks later entries on that link.**
+  Feed application is strictly serial per link; a transient error retries in
+  place rather than skipping ahead. *Closing:* accepted trade-off until
+  per-task partitioning is ever required.
+- **A pull-side protocol error stops that link until operator intervention.**
+  Relationship mismatches or unknown envelopes stop automatic reconnect for
+  that link without advancing `applied_pos`; other links continue normally.
+  *Closing:* operator fixes the configuration/data and restarts the process.
+- **Re-issuing a revoked host token name to a different hub inherits the old
+  link's outbox and cursor.** Links are identified by `(remote_role,
+  remote_host)` using the token name; reuse a token name only when rotating
+  credentials for the same hub. *Closing:* operational convention.
+- **`outbox.pos` relies on monotonic SQLite `rowid` without online deletion.**
+  No online outbox purge or `VACUUM` path exists yet. *Closing:* before adding
+  outbox compaction, switch to `INTEGER PRIMARY KEY AUTOINCREMENT` and define
+  `prev` truncation rules.
 - **Remote text search fetches the full owner history.** The owner exposes no
   server-side search endpoint, so the hub applies the shared projector after a
   full task-events read. *Closing:* add a bounded history-search route and
@@ -41,17 +69,11 @@ time. An entry without a "closing condition" is a wish, not an issue.
   rename, archive, and delete do not yet cross hosts, and the browser does not
   address remote Task entries. *Closing:* implement the later host lifecycle
   slices with matching authorization and restart semantics.
-- **An owner-side delete does not reach the hub.** The owner's `parent` link
-  cascades with the deleted Task before `task_deleted` is broadcast, so the
-  host filter drops the event; the hub learns only on reconnect, when the
-  child's history read returns 404 and the entry is marked unreachable. Until
-  then the hub still lists the child, and a reference to it reads as existing.
-  *Closing:* the remote archive/delete rules step decides what each side does
-  with its link and forwards the deletion.
-- **The remote-child mirror retains stale addresses until process restart.**
-  Deleted-parent entries and failed-create write-back orphans are display-cache
-  facts, so they are not decisions. *Closing:* evict on link deletion when the
-  remote lifecycle step lands.
+- **An owner-side delete does not reach the hub proactively.** The hub observes
+  a deleted remote child on the next `task_list` / REST status read (404 →
+  `unreachable: true`) or when a dispatched message returns a `target_deleted`
+  receipt. *Closing:* the remote archive/delete rules step decides what each
+  side does with its link and forwards the deletion.
 
 ## Permission and turn lifecycle
 

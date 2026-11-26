@@ -4,7 +4,7 @@
       "name": "setup",
       "response": {
         "rootId": "00000000-0000-4000-8000-000000000001",
-        "childId": "00000000-0000-4000-8000-000000000005"
+        "childId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"
       },
       "sse": [
         {
@@ -151,11 +151,11 @@
               "kind": "task_created",
               "messageId": "00000000-0000-4000-8000-000000000006",
               "sourceTaskId": "00000000-0000-4000-8000-000000000001",
-              "targetTaskId": "00000000-0000-4000-8000-000000000005",
+              "targetTaskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "taskTitle": "Authorization child",
               "role": "source",
               "title": "Created task @\"Authorization child\"",
-              "body": "Task ID: 00000000-0000-4000-8000-000000000005\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
+              "body": "Task ID: ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
             },
             {
               "type": "system_message",
@@ -163,11 +163,11 @@
               "kind": "task_created",
               "messageId": "00000000-0000-4000-8000-000000000008",
               "sourceTaskId": "00000000-0000-4000-8000-000000000001",
-              "targetTaskId": "00000000-0000-4000-8000-000000000007",
+              "targetTaskId": "c13d671c-4eb3-5c12-bac8-cea85dec1375",
               "taskTitle": "Authorization sibling",
               "role": "source",
               "title": "Created task @\"Authorization sibling\"",
-              "body": "Task ID: 00000000-0000-4000-8000-000000000007\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
+              "body": "Task ID: c13d671c-4eb3-5c12-bac8-cea85dec1375\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
             },
             {
               "type": "state_patch",
@@ -219,11 +219,11 @@
           ]
         },
         {
-          "taskId": "00000000-0000-4000-8000-000000000005",
+          "taskId": "c13d671c-4eb3-5c12-bac8-cea85dec1375",
           "events": [
             {
               "type": "available_commands_update",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "c13d671c-4eb3-5c12-bac8-cea85dec1375",
               "commands": [
                 {
                   "name": "context",
@@ -242,119 +242,7 @@
             },
             {
               "type": "task_created",
-              "taskId": "00000000-0000-4000-8000-000000000005",
-              "agentId": "mock",
-              "cwd": "/",
-              "cwdDisplay": "/",
-              "title": "Authorization child",
-              "parentId": "00000000-0000-4000-8000-000000000001",
-              "parentAgentId": "mock",
-              "configOptions": [
-                {
-                  "type": "select",
-                  "id": "model",
-                  "name": "Model",
-                  "category": "model",
-                  "currentValue": "mock-model",
-                  "options": [
-                    {
-                      "value": "mock-model",
-                      "name": "Mock Model"
-                    },
-                    {
-                      "value": "mock-model-2",
-                      "name": "Mock Model 2"
-                    }
-                  ]
-                },
-                {
-                  "type": "select",
-                  "id": "mode",
-                  "name": "Mode",
-                  "category": "mode",
-                  "currentValue": "agent",
-                  "options": [
-                    {
-                      "value": "agent",
-                      "name": "Agent"
-                    },
-                    {
-                      "value": "chat#plan",
-                      "name": "Plan"
-                    },
-                    {
-                      "value": "chat#autopilot",
-                      "name": "Autopilot"
-                    }
-                  ]
-                },
-                {
-                  "type": "select",
-                  "id": "reasoning_effort",
-                  "name": "Reasoning",
-                  "category": "thought_level",
-                  "currentValue": "medium",
-                  "options": [
-                    {
-                      "value": "low",
-                      "name": "Low"
-                    },
-                    {
-                      "value": "medium",
-                      "name": "Medium"
-                    },
-                    {
-                      "value": "high",
-                      "name": "High"
-                    }
-                  ]
-                }
-              ],
-              "agentCommands": {
-                "epoch": "00000000-0000-4000-8000-000000000003",
-                "revision": 1,
-                "commands": [
-                  {
-                    "name": "context",
-                    "description": "Show context usage"
-                  },
-                  {
-                    "name": "compact",
-                    "description": "Compact conversation",
-                    "input": {
-                      "hint": "focus instructions"
-                    }
-                  }
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "taskId": "00000000-0000-4000-8000-000000000007",
-          "events": [
-            {
-              "type": "available_commands_update",
-              "taskId": "00000000-0000-4000-8000-000000000007",
-              "commands": [
-                {
-                  "name": "context",
-                  "description": "Show context usage"
-                },
-                {
-                  "name": "compact",
-                  "description": "Compact conversation",
-                  "input": {
-                    "hint": "focus instructions"
-                  }
-                }
-              ],
-              "epoch": "00000000-0000-4000-8000-000000000003",
-              "revision": 1
-            },
-            {
-              "type": "task_created",
-              "taskId": "00000000-0000-4000-8000-000000000007",
+              "taskId": "c13d671c-4eb3-5c12-bac8-cea85dec1375",
               "agentId": "mock",
               "cwd": "/",
               "cwdDisplay": "/",
@@ -438,7 +326,121 @@
                     }
                   }
                 ]
-              }
+              },
+              "clientOpId": "00000000-0000-4000-8000-000000000007"
+            }
+          ]
+        },
+        {
+          "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+          "events": [
+            {
+              "type": "available_commands_update",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "commands": [
+                {
+                  "name": "context",
+                  "description": "Show context usage"
+                },
+                {
+                  "name": "compact",
+                  "description": "Compact conversation",
+                  "input": {
+                    "hint": "focus instructions"
+                  }
+                }
+              ],
+              "epoch": "00000000-0000-4000-8000-000000000003",
+              "revision": 1
+            },
+            {
+              "type": "task_created",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "agentId": "mock",
+              "cwd": "/",
+              "cwdDisplay": "/",
+              "title": "Authorization child",
+              "parentId": "00000000-0000-4000-8000-000000000001",
+              "parentAgentId": "mock",
+              "configOptions": [
+                {
+                  "type": "select",
+                  "id": "model",
+                  "name": "Model",
+                  "category": "model",
+                  "currentValue": "mock-model",
+                  "options": [
+                    {
+                      "value": "mock-model",
+                      "name": "Mock Model"
+                    },
+                    {
+                      "value": "mock-model-2",
+                      "name": "Mock Model 2"
+                    }
+                  ]
+                },
+                {
+                  "type": "select",
+                  "id": "mode",
+                  "name": "Mode",
+                  "category": "mode",
+                  "currentValue": "agent",
+                  "options": [
+                    {
+                      "value": "agent",
+                      "name": "Agent"
+                    },
+                    {
+                      "value": "chat#plan",
+                      "name": "Plan"
+                    },
+                    {
+                      "value": "chat#autopilot",
+                      "name": "Autopilot"
+                    }
+                  ]
+                },
+                {
+                  "type": "select",
+                  "id": "reasoning_effort",
+                  "name": "Reasoning",
+                  "category": "thought_level",
+                  "currentValue": "medium",
+                  "options": [
+                    {
+                      "value": "low",
+                      "name": "Low"
+                    },
+                    {
+                      "value": "medium",
+                      "name": "Medium"
+                    },
+                    {
+                      "value": "high",
+                      "name": "High"
+                    }
+                  ]
+                }
+              ],
+              "agentCommands": {
+                "epoch": "00000000-0000-4000-8000-000000000003",
+                "revision": 1,
+                "commands": [
+                  {
+                    "name": "context",
+                    "description": "Show context usage"
+                  },
+                  {
+                    "name": "compact",
+                    "description": "Compact conversation",
+                    "input": {
+                      "hint": "focus instructions"
+                    }
+                  }
+                ]
+              },
+              "clientOpId": "00000000-0000-4000-8000-000000000005"
             }
           ]
         }
@@ -497,7 +499,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"taskId\":\"00000000-0000-4000-8000-000000000005\"}"
+                      "text": "{\"taskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\"}"
                     }
                   ]
                 },
@@ -519,7 +521,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"taskId\":\"00000000-0000-4000-8000-000000000007\"}"
+                      "text": "{\"taskId\":\"c13d671c-4eb3-5c12-bac8-cea85dec1375\"}"
                     }
                   ]
                 },
@@ -578,7 +580,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 2,
                 "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Authorization child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Authorization child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "{\"kind\":\"task_created\",\"taskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"taskTitle\":\"Authorization child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Authorization child\\\"\",\"body\":\"Task ID: ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
                 "agent",
                 1789333200000
               ]
@@ -593,7 +595,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 3,
                 "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000007\",\"taskTitle\":\"Authorization sibling\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Authorization sibling\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000007\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "{\"kind\":\"task_created\",\"taskId\":\"c13d671c-4eb3-5c12-bac8-cea85dec1375\",\"taskTitle\":\"Authorization sibling\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Authorization sibling\\\"\",\"body\":\"Task ID: c13d671c-4eb3-5c12-bac8-cea85dec1375\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
                 "agent",
                 1789333200000
               ]
@@ -643,35 +645,7 @@
               "method": "run",
               "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000005",
-                "/",
-                "agent",
-                "00000000-0000-4000-8000-000000000001",
-                "Authorization child",
-                "idle",
-                1789333200000,
-                1789333200000
-              ]
-            },
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-              "args": [
-                "mock",
-                "00000000-0000-4000-8000-000000000002",
-                "00000000-0000-4000-8000-000000000005",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-              "args": [
-                "00000000-0000-4000-8000-000000000007",
+                "c13d671c-4eb3-5c12-bac8-cea85dec1375",
                 "/",
                 "agent",
                 "00000000-0000-4000-8000-000000000001",
@@ -688,7 +662,35 @@
               "args": [
                 "mock",
                 "00000000-0000-4000-8000-000000000003",
-                "00000000-0000-4000-8000-000000000007",
+                "c13d671c-4eb3-5c12-bac8-cea85dec1375",
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "args": [
+                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "/",
+                "agent",
+                "00000000-0000-4000-8000-000000000001",
+                "Authorization child",
+                "idle",
+                1789333200000,
+                1789333200000
+              ]
+            },
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+              "args": [
+                "mock",
+                "00000000-0000-4000-8000-000000000002",
+                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
                 1789333200000
               ]
             }
@@ -706,7 +708,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000005"]
+              "args": ["agent", "c13d671c-4eb3-5c12-bac8-cea85dec1375"]
             }
           ],
           [
@@ -714,7 +716,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000007"]
+              "args": ["agent", "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"]
             }
           ],
           [
@@ -722,7 +724,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-000000000005"]
+              "args": ["mock-model", "c13d671c-4eb3-5c12-bac8-cea85dec1375"]
             }
           ],
           [
@@ -730,7 +732,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-000000000007"]
+              "args": ["mock-model", "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"]
             }
           ],
           [
@@ -738,7 +740,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000005"]
+              "args": ["medium", "c13d671c-4eb3-5c12-bac8-cea85dec1375"]
             }
           ],
           [
@@ -746,11 +748,11 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000007"]
+              "args": ["medium", "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"]
             }
           ]
         ],
-        "reads": 76
+        "reads": 78
       }
     },
     {
@@ -778,7 +780,7 @@
             "archived": false
           },
           {
-            "id": "00000000-0000-4000-8000-000000000005",
+            "id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
             "cwd": "/",
             "title": "Authorization child",
             "workflow_status": "idle",
@@ -797,7 +799,7 @@
             "archived": false
           },
           {
-            "id": "00000000-0000-4000-8000-000000000007",
+            "id": "c13d671c-4eb3-5c12-bac8-cea85dec1375",
             "cwd": "/",
             "title": "Authorization sibling",
             "workflow_status": "idle",
@@ -856,7 +858,7 @@
               "taskId": "00000000-0000-4000-8000-000000000001",
               "kind": "collaboration",
               "messageId": "00000000-0000-4000-8000-00000000000a",
-              "sourceTaskId": "00000000-0000-4000-8000-000000000005",
+              "sourceTaskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "sourceLabel": "Authorization child",
               "targetTaskId": "00000000-0000-4000-8000-000000000001",
               "targetLabel": "root",
@@ -914,17 +916,17 @@
           ]
         },
         {
-          "taskId": "00000000-0000-4000-8000-000000000005",
+          "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
           "events": [
             {
               "type": "user_message",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "text": "read and message parent",
               "clientOpId": "00000000-0000-4000-8000-000000000009"
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "seq": 1,
               "patch": {
                 "runtime": {
@@ -939,10 +941,10 @@
             },
             {
               "type": "system_message",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "kind": "collaboration",
               "messageId": "00000000-0000-4000-8000-00000000000a",
-              "sourceTaskId": "00000000-0000-4000-8000-000000000005",
+              "sourceTaskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "sourceLabel": "Authorization child",
               "targetTaskId": "00000000-0000-4000-8000-000000000001",
               "targetLabel": "root",
@@ -953,14 +955,14 @@
             },
             {
               "type": "collaboration_delivery",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "messageId": "00000000-0000-4000-8000-00000000000a",
               "status": "delivered",
               "deliveredAt": "2026-09-13T21:00:00.000Z"
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "seq": 2,
               "patch": {
                 "runtime": {
@@ -973,12 +975,12 @@
             },
             {
               "type": "message_chunk",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "text": "Parent read and messaged."
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "seq": 3,
               "patch": {
                 "runtime": {
@@ -988,7 +990,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "seq": 4,
               "patch": {
                 "runtime": {
@@ -1001,7 +1003,7 @@
             },
             {
               "type": "prompt_done",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "stopReason": "end_turn",
               "promptId": "prompt-2"
             }
@@ -1016,7 +1018,7 @@
               "kind": "acp",
               "method": "session/prompt",
               "sessionId": "00000000-0000-4000-8000-000000000001",
-              "text": "From \"Authorization child\" (task id 00000000-0000-4000-8000-000000000005):\n---8<---\nhello parent\n---8<---"
+              "text": "From \"Authorization child\" (task id ec89e10d-fdab-5b42-b6b7-955be1a7bbbd):\n---8<---\nhello parent\n---8<---"
             }
           ]
         },
@@ -1070,7 +1072,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8000-000000000005\",\"title\":\"Authorization child\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":null,\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"parent\",\"workflowStatus\":\"idle\",\"executionState\":\"idle\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"}]}"
+                      "text": "{\"tasks\":[{\"id\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"title\":\"Authorization child\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":null,\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"parent\",\"workflowStatus\":\"idle\",\"executionState\":\"idle\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"}]}"
                     }
                   ]
                 },
@@ -1114,7 +1116,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000001\",\"max_seq\":9,\"rows\":[{\"seq\":1,\"type\":\"user_message\",\"bytes\":92,\"field\":\"text\",\"text\":\"create authorization siblings\"},{\"seq\":2,\"type\":\"system_message\",\"bytes\":334,\"title\":\"Created task @\\\"Authorization child\\\"\",\"field\":\"body\",\"text\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"},{\"seq\":3,\"type\":\"system_message\",\"bytes\":338,\"title\":\"Created task @\\\"Authorization sibling\\\"\",\"field\":\"body\",\"text\":\"Task ID: 00000000-0000-4000-8000-000000000007\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"},{\"seq\":4,\"type\":\"assistant_message\",\"bytes\":42,\"field\":\"text\",\"text\":\"Authorization siblings created.\"},{\"seq\":5,\"type\":\"prompt_done\",\"bytes\":47,\"field\":\"stopReason\",\"text\":\"end_turn\"},{\"seq\":6,\"type\":\"system_message\",\"bytes\":324,\"title\":\"@\\\"Authorization child\\\" sent @root\",\"field\":\"body\",\"text\":\"hello parent\"},{\"seq\":7,\"type\":\"collaboration_prompt\",\"bytes\":207,\"field\":\"text\",\"text\":\"From \\\"Authorization child\\\" (task id 00000000-0000-4000-8000-000000000005):\\n---8<---\\nhello parent\\n---8<---\"},{\"seq\":8,\"type\":\"assistant_message\",\"bytes\":39,\"field\":\"text\",\"text\":\"Parent received the message.\"},{\"seq\":9,\"type\":\"prompt_done\",\"bytes\":47,\"field\":\"stopReason\",\"text\":\"end_turn\"}]}"
+                      "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000001\",\"max_seq\":9,\"rows\":[{\"seq\":1,\"type\":\"user_message\",\"bytes\":92,\"field\":\"text\",\"text\":\"create authorization siblings\"},{\"seq\":2,\"type\":\"system_message\",\"bytes\":334,\"title\":\"Created task @\\\"Authorization child\\\"\",\"field\":\"body\",\"text\":\"Task ID: ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"},{\"seq\":3,\"type\":\"system_message\",\"bytes\":338,\"title\":\"Created task @\\\"Authorization sibling\\\"\",\"field\":\"body\",\"text\":\"Task ID: c13d671c-4eb3-5c12-bac8-cea85dec1375\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"},{\"seq\":4,\"type\":\"assistant_message\",\"bytes\":42,\"field\":\"text\",\"text\":\"Authorization siblings created.\"},{\"seq\":5,\"type\":\"prompt_done\",\"bytes\":47,\"field\":\"stopReason\",\"text\":\"end_turn\"},{\"seq\":6,\"type\":\"system_message\",\"bytes\":324,\"title\":\"@\\\"Authorization child\\\" sent @root\",\"field\":\"body\",\"text\":\"hello parent\"},{\"seq\":7,\"type\":\"collaboration_prompt\",\"bytes\":207,\"field\":\"text\",\"text\":\"From \\\"Authorization child\\\" (task id ec89e10d-fdab-5b42-b6b7-955be1a7bbbd):\\n---8<---\\nhello parent\\n---8<---\"},{\"seq\":8,\"type\":\"assistant_message\",\"bytes\":39,\"field\":\"text\",\"text\":\"Parent received the message.\"},{\"seq\":9,\"type\":\"prompt_done\",\"bytes\":47,\"field\":\"stopReason\",\"text\":\"end_turn\"}]}"
                     }
                   ]
                 },
@@ -1158,7 +1160,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 6,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"sourceLabel\":\"Authorization child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Authorization child\\\" sent @root\",\"body\":\"hello parent\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"sourceLabel\":\"Authorization child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Authorization child\\\" sent @root\",\"body\":\"hello parent\"}",
                 "msg:00000000-0000-4000-8000-00000000000a",
                 1789333200000
               ]
@@ -1173,7 +1175,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 7,
                 "collaboration_prompt",
-                "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000a\"],\"text\":\"From \\\"Authorization child\\\" (task id 00000000-0000-4000-8000-000000000005):\\n---8<---\\nhello parent\\n---8<---\",\"truncated\":false,\"rawSize\":105}",
+                "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000a\"],\"text\":\"From \\\"Authorization child\\\" (task id ec89e10d-fdab-5b42-b6b7-955be1a7bbbd):\\n---8<---\\nhello parent\\n---8<---\",\"truncated\":false,\"rawSize\":105}",
                 "system",
                 1789333200000
               ]
@@ -1215,7 +1217,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000005",
+                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
                 1,
                 "user_message",
                 "{\"text\":\"read and message parent\",\"clientOpId\":\"00000000-0000-4000-8000-000000000009\"}",
@@ -1230,7 +1232,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000005",
+                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
                 3,
                 "assistant_message",
                 "{\"text\":\"Parent read and messaged.\"}",
@@ -1245,7 +1247,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000005",
+                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
                 4,
                 "prompt_done",
                 "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
@@ -1261,7 +1263,7 @@
               "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000a",
-                "00000000-0000-4000-8000-000000000005",
+                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
                 "00000000-0000-4000-8000-000000000001",
                 "agent",
                 "hello parent",
@@ -1306,7 +1308,7 @@
               "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000a",
-                "00000000-0000-4000-8000-000000000005",
+                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
                 1789333200000
               ]
             },
@@ -1315,10 +1317,10 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000005",
+                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
                 2,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"sourceLabel\":\"Authorization child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Authorization child\\\" sent @root\",\"body\":\"hello parent\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"sourceLabel\":\"Authorization child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Authorization child\\\" sent @root\",\"body\":\"hello parent\"}",
                 "msg:00000000-0000-4000-8000-00000000000a",
                 1789333200000
               ]
@@ -1349,7 +1351,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
-              "args": [1789333200000, "00000000-0000-4000-8000-000000000005"]
+              "args": [1789333200000, "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"]
             }
           ],
           [
@@ -1382,17 +1384,17 @@
       },
       "sse": [
         {
-          "taskId": "00000000-0000-4000-8000-000000000005",
+          "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
           "events": [
             {
               "type": "user_message",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "text": "reject self and sibling targets",
               "clientOpId": "00000000-0000-4000-8000-00000000000c"
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "seq": 5,
               "patch": {
                 "runtime": {
@@ -1407,7 +1409,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "seq": 6,
               "patch": {
                 "runtime": {
@@ -1420,12 +1422,12 @@
             },
             {
               "type": "message_chunk",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "text": "Rejected targets exercised."
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "seq": 7,
               "patch": {
                 "runtime": {
@@ -1435,7 +1437,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "seq": 8,
               "patch": {
                 "runtime": {
@@ -1448,7 +1450,7 @@
             },
             {
               "type": "prompt_done",
-              "taskId": "00000000-0000-4000-8000-000000000005",
+              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
               "stopReason": "end_turn",
               "promptId": "prompt-4"
             }
@@ -1506,7 +1508,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8000-000000000005\",\"title\":\"Authorization child\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"parent\",\"workflowStatus\":\"idle\",\"executionState\":\"idle\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"}]}"
+                      "text": "{\"tasks\":[{\"id\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"title\":\"Authorization child\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"parent\",\"workflowStatus\":\"idle\",\"executionState\":\"idle\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"}]}"
                     }
                   ]
                 },
@@ -1519,7 +1521,7 @@
               "sessionId": "00000000-0000-4000-8000-000000000002",
               "tool": "task_send",
               "arguments": {
-                "target": "00000000-0000-4000-8000-000000000005",
+                "target": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
                 "body": "self"
               },
               "status": 200,
@@ -1542,7 +1544,7 @@
               "sessionId": "00000000-0000-4000-8000-000000000002",
               "tool": "task_send",
               "arguments": {
-                "target": "00000000-0000-4000-8000-000000000007",
+                "target": "c13d671c-4eb3-5c12-bac8-cea85dec1375",
                 "body": "sibling"
               },
               "status": 200,
@@ -1565,7 +1567,7 @@
               "sessionId": "00000000-0000-4000-8000-000000000002",
               "tool": "task_query",
               "arguments": {
-                "task_id": "00000000-0000-4000-8000-000000000007"
+                "task_id": "c13d671c-4eb3-5c12-bac8-cea85dec1375"
               },
               "status": 200,
               "result": {
@@ -1587,7 +1589,7 @@
               "sessionId": "00000000-0000-4000-8000-000000000002",
               "tool": "task_read",
               "arguments": {
-                "task_id": "00000000-0000-4000-8000-000000000007",
+                "task_id": "c13d671c-4eb3-5c12-bac8-cea85dec1375",
                 "seqs": [1]
               },
               "status": 200,
@@ -1633,7 +1635,7 @@
               "sessionId": "00000000-0000-4000-8000-000000000002",
               "tool": "task_cancel",
               "arguments": {
-                "target": "00000000-0000-4000-8000-000000000005",
+                "target": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
                 "reason": "self"
               },
               "status": 200,
@@ -1656,7 +1658,7 @@
               "sessionId": "00000000-0000-4000-8000-000000000002",
               "tool": "task_cancel",
               "arguments": {
-                "target": "00000000-0000-4000-8000-000000000007",
+                "target": "c13d671c-4eb3-5c12-bac8-cea85dec1375",
                 "reason": "sibling"
               },
               "status": 200,
@@ -1731,7 +1733,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000005",
+                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
                 5,
                 "user_message",
                 "{\"text\":\"reject self and sibling targets\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000c\"}",
@@ -1746,7 +1748,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000005",
+                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
                 6,
                 "assistant_message",
                 "{\"text\":\"Rejected targets exercised.\"}",
@@ -1761,7 +1763,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000005",
+                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
                 7,
                 "prompt_done",
                 "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
@@ -1783,7 +1785,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
-              "args": [1789333200000, "00000000-0000-4000-8000-000000000005"]
+              "args": [1789333200000, "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"]
             }
           ]
         ],
@@ -1809,7 +1811,7 @@
         "last_active_at": 1789333200000
       },
       {
-        "id": "00000000-0000-4000-8000-000000000005",
+        "id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
         "cwd": "/",
         "title": "Authorization child",
         "workflow_status": "idle",
@@ -1824,7 +1826,7 @@
         "last_active_at": 1789333200000
       },
       {
-        "id": "00000000-0000-4000-8000-000000000007",
+        "id": "c13d671c-4eb3-5c12-bac8-cea85dec1375",
         "cwd": "/",
         "title": "Authorization sibling",
         "workflow_status": "idle",
@@ -1849,13 +1851,13 @@
       {
         "agent_key": "mock",
         "agent_session_id": "00000000-0000-4000-8000-000000000002",
-        "task_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
         "created_at": 1789333200000
       },
       {
         "agent_key": "mock",
         "agent_session_id": "00000000-0000-4000-8000-000000000003",
-        "task_id": "00000000-0000-4000-8000-000000000007",
+        "task_id": "c13d671c-4eb3-5c12-bac8-cea85dec1375",
         "created_at": 1789333200000
       }
     ],
@@ -1874,7 +1876,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 2,
         "type": "system_message",
-        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Authorization child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Authorization child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"taskTitle\":\"Authorization child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Authorization child\\\"\",\"body\":\"Task ID: ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
@@ -1883,7 +1885,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 3,
         "type": "system_message",
-        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000007\",\"taskTitle\":\"Authorization sibling\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Authorization sibling\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000007\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"c13d671c-4eb3-5c12-bac8-cea85dec1375\",\"taskTitle\":\"Authorization sibling\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Authorization sibling\\\"\",\"body\":\"Task ID: c13d671c-4eb3-5c12-bac8-cea85dec1375\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
@@ -1907,7 +1909,7 @@
       },
       {
         "id": 6,
-        "task_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
         "seq": 1,
         "type": "user_message",
         "data": "{\"text\":\"read and message parent\",\"clientOpId\":\"00000000-0000-4000-8000-000000000009\"}",
@@ -1916,10 +1918,10 @@
       },
       {
         "id": 7,
-        "task_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
         "seq": 2,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"sourceLabel\":\"Authorization child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Authorization child\\\" sent @root\",\"body\":\"hello parent\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"sourceLabel\":\"Authorization child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Authorization child\\\" sent @root\",\"body\":\"hello parent\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-00000000000a"
       },
@@ -1928,7 +1930,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 6,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000005\",\"sourceLabel\":\"Authorization child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Authorization child\\\" sent @root\",\"body\":\"hello parent\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"sourceLabel\":\"Authorization child\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Authorization child\\\" sent @root\",\"body\":\"hello parent\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-00000000000a"
       },
@@ -1937,7 +1939,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 7,
         "type": "collaboration_prompt",
-        "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000a\"],\"text\":\"From \\\"Authorization child\\\" (task id 00000000-0000-4000-8000-000000000005):\\n---8<---\\nhello parent\\n---8<---\",\"truncated\":false,\"rawSize\":105}",
+        "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000a\"],\"text\":\"From \\\"Authorization child\\\" (task id ec89e10d-fdab-5b42-b6b7-955be1a7bbbd):\\n---8<---\\nhello parent\\n---8<---\",\"truncated\":false,\"rawSize\":105}",
         "created_at": 1789333200000,
         "from_ref": "system"
       },
@@ -1961,7 +1963,7 @@
       },
       {
         "id": 12,
-        "task_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
         "seq": 3,
         "type": "assistant_message",
         "data": "{\"text\":\"Parent read and messaged.\"}",
@@ -1970,7 +1972,7 @@
       },
       {
         "id": 13,
-        "task_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
         "seq": 4,
         "type": "prompt_done",
         "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
@@ -1979,7 +1981,7 @@
       },
       {
         "id": 14,
-        "task_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
         "seq": 5,
         "type": "user_message",
         "data": "{\"text\":\"reject self and sibling targets\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000c\"}",
@@ -1988,7 +1990,7 @@
       },
       {
         "id": 15,
-        "task_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
         "seq": 6,
         "type": "assistant_message",
         "data": "{\"text\":\"Rejected targets exercised.\"}",
@@ -1997,7 +1999,7 @@
       },
       {
         "id": 16,
-        "task_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
         "seq": 7,
         "type": "prompt_done",
         "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
@@ -2008,7 +2010,7 @@
     "messages": [
       {
         "id": "00000000-0000-4000-8000-00000000000a",
-        "source_task_id": "00000000-0000-4000-8000-000000000005",
+        "source_task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
         "direct_target_task_id": "00000000-0000-4000-8000-000000000001",
         "source_actor": "agent",
         "body": "hello parent",
@@ -2024,7 +2026,7 @@
       },
       {
         "message_id": "00000000-0000-4000-8000-00000000000a",
-        "task_id": "00000000-0000-4000-8000-000000000005",
+        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
         "role": "source",
         "created_at": 1789333200000
       }

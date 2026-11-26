@@ -21,11 +21,10 @@ import {
   type TaskCollaborationEvent,
 } from "./local/adapter.ts";
 interface RoutedRemoteHost {
-  listRemoteChildren(taskId: string): TaskListItem[];
+  listRemoteChildren(taskId: string): Promise<TaskListItem[]>;
   resolveRemoteChild: HostRouter["resolveRemoteChild"];
   queryRemote: HostRouter["queryRemote"];
   readRemote: HostRouter["readRemote"];
-  sendRemote: HostRouter["sendRemote"];
 }
 
 type HostRouter = import("./remote/registry.ts").HostRegistry;
@@ -56,6 +55,7 @@ export function createTaskHost(deps: {
       if (!command.parentId) throw new Error("parent_not_found");
       command.assertRemoteCaller();
       const remote = await deps.remote.create(host, {
+        opId: command.input.opId,
         agentId,
         parentId: command.parentId,
         ...(command.input.title === undefined
@@ -86,10 +86,11 @@ export function createRoutedTaskOps(deps: {
     async list(principal) {
       authorize(principal);
       const order = { self: 0, parent: 1, child: 2 } as const;
-      return [
-        ...(await local.list(principal)),
-        ...remote.listRemoteChildren(principal.taskId),
-      ].sort(
+      const [localItems, remoteItems] = await Promise.all([
+        local.list(principal),
+        remote.listRemoteChildren(principal.taskId),
+      ]);
+      return [...localItems, ...remoteItems].sort(
         (left, right) =>
           order[left.relation] - order[right.relation] ||
           left.id.localeCompare(right.id),
@@ -118,10 +119,41 @@ export function createRoutedTaskOps(deps: {
     async send(principal, targetTaskId, body) {
       authorize(principal);
       const target = remote.resolveRemoteChild(principal.taskId, targetTaskId);
-      const source = target ? store.getTask(principal.taskId) : null;
-      const sourceLabel = target
-        ? (source?.title ?? principal.taskId.slice(0, 8))
-        : "";
+      if (target) {
+        const source = store.getTask(principal.taskId);
+        if (!source) throw new Error("execution_replaced");
+        const sourceLabel = source.title ?? principal.taskId.slice(0, 8);
+        const targetLabel =
+          store.getRemoteChildTitle(principal.taskId, target.taskId) ??
+          target.taskId.slice(0, 8);
+        const row = store.enqueueLinkMessage({
+          remoteRole: "child",
+          remoteHost: target.host,
+          sourceTaskId: principal.taskId,
+          targetTaskId: target.taskId,
+          sourceLabel,
+          targetLabel,
+          body,
+        });
+        broadcastCollaboration({
+          messageId: row.entry_id,
+          sourceTaskId: principal.taskId,
+          targetTaskId: target.taskId,
+          sourceLabel,
+          targetLabel,
+          body,
+          taskId: principal.taskId,
+          role: "source",
+          deliveryStatus: "queued",
+        });
+        return {
+          messageId: row.entry_id,
+          deliveryId: row.delivery_id ?? undefined,
+          targetTaskId: target.taskId,
+          targetLabel,
+          sourceLabel,
+        };
+      }
       const record = (performed: TaskSendResult) => {
         authorize(principal);
         store.recordCallerSend({
@@ -134,38 +166,43 @@ export function createRoutedTaskOps(deps: {
           deliveryId: performed.deliveryId,
         });
       };
-      const performed = target
-        ? await remote.sendRemote(target, body, sourceLabel)
-        : await local.send(principal, targetTaskId, body, record);
-      if (target) {
-        authorize(principal);
-        if (!source) throw new Error("execution_replaced");
-        record(performed);
-      }
-      const effectiveSourceLabel = performed.sourceLabel;
+      const performed = await local.send(principal, targetTaskId, body, record);
       broadcastCollaboration({
         messageId: performed.messageId,
         sourceTaskId: principal.taskId,
         targetTaskId: performed.targetTaskId,
-        sourceLabel: effectiveSourceLabel,
+        sourceLabel: performed.sourceLabel,
         targetLabel: performed.targetLabel,
         body,
         taskId: principal.taskId,
         role: "source",
         deliveryStatus: "queued",
       });
-      if (!target) {
-        void tasks.drainCollaborationDeliveries(performed.targetTaskId);
-      }
+      void tasks.drainCollaborationDeliveries(performed.targetTaskId);
       return performed;
     },
     async update(principal, status, body) {
       let afterCommit: (() => void) | undefined;
       const result = await local.update(principal, status, body, (report) => {
         authorize(principal);
+        const text = formatTaskReport(status, body);
+        if (!report.targetIsLocal) {
+          const link = store.getExternalParentLink(report.sourceTaskId);
+          if (link?.remote_task_id !== report.targetTaskId) {
+            throw new Error("external_parent_link_missing");
+          }
+          store.enqueueLinkReport({
+            remoteRole: "parent",
+            remoteHost: link.remote_host,
+            sourceTaskId: report.sourceTaskId,
+            targetTaskId: report.targetTaskId,
+            sourceLabel: report.sourceLabel,
+            body: text,
+          });
+          return;
+        }
         const messageId = randomUUID();
         const deliveryId = randomUUID();
-        const text = formatTaskReport(status, body);
         if (
           !store.enqueueReportDelivery({
             id: messageId,
@@ -205,35 +242,5 @@ export function createRoutedTaskOps(deps: {
       afterCommit?.();
       return result;
     },
-  };
-}
-
-export type EnqueueRemoteReport = (input: {
-  host: string;
-  childId: string;
-  seq: number;
-  sourceTaskId: string;
-  targetTaskId: string;
-  status: "blocked" | "done";
-  body: string;
-}) => boolean;
-
-export function createRemoteReportEnqueuer(deps: {
-  store: Store;
-  tasks: TaskManager;
-}): EnqueueRemoteReport {
-  return (input) => {
-    const messageId = randomUUID();
-    const accepted = deps.store.enqueueReportDelivery({
-      id: messageId,
-      deliveryId: randomUUID(),
-      idempotencyKey: `remote-report:${input.host}:${input.childId}:${input.seq}`,
-      sourceTaskId: input.sourceTaskId,
-      targetTaskId: input.targetTaskId,
-      body: formatTaskReport(input.status, input.body),
-    });
-    if (accepted)
-      void deps.tasks.drainCollaborationDeliveries(input.targetTaskId);
-    return accepted;
   };
 }

@@ -51,7 +51,7 @@ export async function provisionHostToken(
     .instance("owner")
     .rest("POST", "/api/v1/tokens", {
       name: "hub-connection",
-      scope: options.scope ?? "api",
+      scope: options.scope ?? "host",
     });
   const body = response.body as JsonObject;
   if (
