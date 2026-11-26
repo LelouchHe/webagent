@@ -1669,7 +1669,7 @@
                 }
               ]
             ],
-            "reads": 89
+            "reads": 88
           }
         }
       ]
@@ -2693,7 +2693,7 @@
                 }
               ]
             ],
-            "reads": 90
+            "reads": 89
           }
         }
       ]
@@ -2736,7 +2736,7 @@
                   "type": "user_message",
                   "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
                   "text": "finish offline watch two",
-                  "clientOpId": "00000000-0000-4000-8000-00000000000b"
+                  "clientOpId": "00000000-0000-4000-8000-00000000000d"
                 },
                 {
                   "type": "state_patch",
@@ -2868,7 +2868,7 @@
                 {
                   "type": "collaboration_delivery",
                   "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
-                  "messageId": "00000000-0000-4000-8000-00000000000c",
+                  "messageId": "00000000-0000-4000-8000-00000000000b",
                   "status": "delivered",
                   "deliveredAt": "2026-09-13T21:00:00.000Z"
                 }
@@ -3020,7 +3020,7 @@
                     "68982ec8-1159-5422-9468-8588310c17c6",
                     2,
                     "user_message",
-                    "{\"text\":\"finish offline watch two\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000b\"}",
+                    "{\"text\":\"finish offline watch two\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000d\"}",
                     "user",
                     1789333200000
                   ]
@@ -3124,7 +3124,7 @@
                   "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
                   "args": [
                     1789333200000,
-                    "00000000-0000-4000-8000-00000000000d",
+                    "00000000-0000-4000-8000-00000000000c",
                     "queued"
                   ]
                 },
@@ -3330,7 +3330,7 @@
                   "method": "run",
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8000-00000000000b",
                     "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
                     "00000000-0000-4000-8001-000000000001",
                     "agent",
@@ -3343,7 +3343,7 @@
                   "method": "run",
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8000-00000000000b",
                     "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
                     "source",
                     1789333200000
@@ -3354,10 +3354,10 @@
                   "method": "run",
                   "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-00000000000d",
                     "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8000-00000000000b",
                     "00000000-0000-4000-8001-000000000001",
-                    "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-00000000000b:00000000-0000-4000-8001-000000000001",
                     "queued",
                     1789333200000,
                     null,
@@ -3375,13 +3375,13 @@
                   "method": "run",
                   "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8000-00000000000b",
                     "parent",
                     "hub-connection",
                     4,
                     "report",
                     "{\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"Child One\",\"body\":\"Task status: done\\nOffline report one.\"}",
-                    "00000000-0000-4000-8000-00000000000d",
+                    "00000000-0000-4000-8000-00000000000c",
                     1789333200000
                   ]
                 }
@@ -3415,7 +3415,7 @@
                   "type": "system_message",
                   "taskId": "00000000-0000-4000-8001-000000000001",
                   "kind": "collaboration",
-                  "messageId": "00000000-0000-4000-8000-00000000000c",
+                  "messageId": "00000000-0000-4000-8000-00000000000b",
                   "sourceTaskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
                   "sourceLabel": "Child One",
                   "targetTaskId": "00000000-0000-4000-8001-000000000001",
@@ -3566,7 +3566,7 @@
                 {
                   "type": "collaboration_delivery",
                   "taskId": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
-                  "messageId": "00000000-0000-4000-8000-00000000000c",
+                  "messageId": "00000000-0000-4000-8000-00000000000b",
                   "status": "delivered",
                   "deliveredAt": "2026-09-13T21:00:00.000Z"
                 }
@@ -3619,8 +3619,8 @@
                     "00000000-0000-4000-8001-000000000001",
                     22,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"sourceLabel\":\"Child One\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Child One\\\" sent @root\",\"body\":\"Task status: done\\nOffline report one.\"}",
-                    "msg:00000000-0000-4000-8000-00000000000c",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000b\",\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"sourceLabel\":\"Child One\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Child One\\\" sent @root\",\"body\":\"Task status: done\\nOffline report one.\"}",
+                    "msg:00000000-0000-4000-8000-00000000000b",
                     1789333200000
                   ]
                 }
@@ -3634,7 +3634,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     23,
                     "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000c\"],\"text\":\"From \\\"Child One\\\" (task id a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b):\\n---8<---\\nTask status: done\\nOffline report one.\\n---8<---\",\"truncated\":false,\"rawSize\":120}",
+                    "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000b\"],\"text\":\"From \\\"Child One\\\" (task id a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b):\\n---8<---\\nTask status: done\\nOffline report one.\\n---8<---\",\"truncated\":false,\"rawSize\":120}",
                     "system",
                     1789333200000
                   ]
@@ -3736,7 +3736,7 @@
                   "method": "run",
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8000-00000000000b",
                     "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
                     "00000000-0000-4000-8001-000000000001",
                     "agent",
@@ -3749,7 +3749,7 @@
                   "method": "run",
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8000-00000000000b",
                     "00000000-0000-4000-8001-000000000001",
                     "target",
                     1789333200000
@@ -3760,10 +3760,10 @@
                   "method": "run",
                   "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-00000000000c",
-                    "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8000-00000000000b",
+                    "00000000-0000-4000-8000-00000000000b",
                     "00000000-0000-4000-8001-000000000001",
-                    "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-00000000000b:00000000-0000-4000-8001-000000000001",
                     "queued",
                     1789333200000,
                     null,
@@ -3771,7 +3771,7 @@
                     null,
                     "child",
                     "owner",
-                    "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8000-00000000000b",
                     "Child One",
                     "report"
                   ]
@@ -3843,7 +3843,7 @@
                   "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
                   "args": [
                     1789333200000,
-                    "00000000-0000-4000-8000-00000000000c",
+                    "00000000-0000-4000-8000-00000000000b",
                     "queued"
                   ]
                 },
@@ -3857,7 +3857,7 @@
                     "owner",
                     4,
                     "receipt",
-                    "{\"originalEntryId\":\"00000000-0000-4000-8000-00000000000c\",\"status\":\"delivered\"}",
+                    "{\"originalEntryId\":\"00000000-0000-4000-8000-00000000000b\",\"status\":\"delivered\"}",
                     null,
                     1789333200000
                   ]
@@ -6001,15 +6001,6 @@
           },
           {
             "id": 14,
-            "task_id": "68982ec8-1159-5422-9468-8588310c17c6",
-            "seq": 2,
-            "type": "user_message",
-            "data": "{\"text\":\"finish offline watch two\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000b\"}",
-            "created_at": 1789333200000,
-            "from_ref": "user"
-          },
-          {
-            "id": 15,
             "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
             "seq": 13,
             "type": "task_update",
@@ -6018,7 +6009,7 @@
             "from_ref": "agent"
           },
           {
-            "id": 16,
+            "id": 15,
             "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
             "seq": 14,
             "type": "assistant_message",
@@ -6027,13 +6018,22 @@
             "from_ref": "agent"
           },
           {
-            "id": 17,
+            "id": 16,
             "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
             "seq": 15,
             "type": "prompt_done",
             "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
+          },
+          {
+            "id": 17,
+            "task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "seq": 2,
+            "type": "user_message",
+            "data": "{\"text\":\"finish offline watch two\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000d\"}",
+            "created_at": 1789333200000,
+            "from_ref": "user"
           },
           {
             "id": 18,
@@ -6187,7 +6187,7 @@
             "created_at": 1789333200000
           },
           {
-            "id": "00000000-0000-4000-8000-00000000000c",
+            "id": "00000000-0000-4000-8000-00000000000b",
             "source_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "agent",
@@ -6253,7 +6253,7 @@
             "created_at": 1789333200000
           },
           {
-            "message_id": "00000000-0000-4000-8000-00000000000c",
+            "message_id": "00000000-0000-4000-8000-00000000000b",
             "task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
             "role": "source",
             "created_at": 1789333200000
@@ -6349,10 +6349,10 @@
             "source_category": null
           },
           {
-            "id": "00000000-0000-4000-8000-00000000000d",
-            "message_id": "00000000-0000-4000-8000-00000000000c",
+            "id": "00000000-0000-4000-8000-00000000000c",
+            "message_id": "00000000-0000-4000-8000-00000000000b",
             "recipient_task_id": "00000000-0000-4000-8001-000000000001",
-            "idempotency_key": "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8001-000000000001",
+            "idempotency_key": "00000000-0000-4000-8000-00000000000b:00000000-0000-4000-8001-000000000001",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -6661,16 +6661,16 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 22,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000c\",\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"sourceLabel\":\"Child One\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Child One\\\" sent @root\",\"body\":\"Task status: done\\nOffline report one.\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000b\",\"sourceTaskId\":\"a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b\",\"sourceLabel\":\"Child One\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Child One\\\" sent @root\",\"body\":\"Task status: done\\nOffline report one.\"}",
             "created_at": 1789333200000,
-            "from_ref": "msg:00000000-0000-4000-8000-00000000000c"
+            "from_ref": "msg:00000000-0000-4000-8000-00000000000b"
           },
           {
             "id": 23,
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 23,
             "type": "collaboration_prompt",
-            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000c\"],\"text\":\"From \\\"Child One\\\" (task id a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b):\\n---8<---\\nTask status: done\\nOffline report one.\\n---8<---\",\"truncated\":false,\"rawSize\":120}",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000b\"],\"text\":\"From \\\"Child One\\\" (task id a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b):\\n---8<---\\nTask status: done\\nOffline report one.\\n---8<---\",\"truncated\":false,\"rawSize\":120}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -6907,7 +6907,7 @@
             "created_at": 1789333200000
           },
           {
-            "id": "00000000-0000-4000-8000-00000000000c",
+            "id": "00000000-0000-4000-8000-00000000000b",
             "source_task_id": "a11c6a62-9e8f-5d9f-bc9d-3f91f3bc6f3b",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "agent",
@@ -6973,7 +6973,7 @@
             "created_at": 1789333200000
           },
           {
-            "message_id": "00000000-0000-4000-8000-00000000000c",
+            "message_id": "00000000-0000-4000-8000-00000000000b",
             "task_id": "00000000-0000-4000-8001-000000000001",
             "role": "target",
             "created_at": 1789333200000
@@ -7069,10 +7069,10 @@
             "source_category": "report"
           },
           {
-            "id": "00000000-0000-4000-8000-00000000000c",
-            "message_id": "00000000-0000-4000-8000-00000000000c",
+            "id": "00000000-0000-4000-8000-00000000000b",
+            "message_id": "00000000-0000-4000-8000-00000000000b",
             "recipient_task_id": "00000000-0000-4000-8001-000000000001",
-            "idempotency_key": "00000000-0000-4000-8000-00000000000c:00000000-0000-4000-8001-000000000001",
+            "idempotency_key": "00000000-0000-4000-8000-00000000000b:00000000-0000-4000-8001-000000000001",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -7080,7 +7080,7 @@
             "failure_reason": null,
             "source_remote_role": "child",
             "source_remote_host": "owner",
-            "source_entry_id": "00000000-0000-4000-8000-00000000000c",
+            "source_entry_id": "00000000-0000-4000-8000-00000000000b",
             "source_label": "Child One",
             "source_category": "report"
           },

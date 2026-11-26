@@ -332,6 +332,7 @@ export class LinkSyncHubPusher {
     entry: { id: string; position: number; request: LinkEnvelope },
     result: SyncRequestResult<unknown>,
   ): boolean {
+    if (result.kind === "unknown") return false;
     const pushed = this.options.store.getOutboxPushCursor(
       "child",
       this.options.host,
@@ -346,54 +347,51 @@ export class LinkSyncHubPusher {
       );
       return true;
     }
-    if (result.kind === "rejected") {
-      if (
-        result.status === HTTP_STATUS.UNAUTHORIZED ||
-        result.status === HTTP_STATUS.FORBIDDEN
-      ) {
-        log.scope("hosts").warn("link push credential rejected", {
-          host: this.options.host,
-          status: result.status,
-        });
-        this.options.onAuthFailure?.();
-        return false;
-      }
-      const code =
-        result.body &&
-        typeof result.body === "object" &&
-        typeof (result.body as { code?: unknown }).code === "string"
-          ? (result.body as { code: string }).code
-          : null;
-      const isProtocolRejection =
-        code === "link_op_conflict" || code === "link_protocol_error";
-      if (!isProtocolRejection || entry.request.category === "receipt") {
-        log.scope("hosts").warn("link push fault", {
-          host: this.options.host,
-          status: result.status,
-          category: entry.request.category,
-          ...(code ? { code } : {}),
-        });
-        this.options.onLinkFault?.(result);
-        return false;
-      }
-      const reason =
-        result.body &&
-        typeof result.body === "object" &&
-        typeof (result.body as { error?: unknown }).error === "string"
-          ? (result.body as { error: string }).error
-          : code;
-      const effects = this.options.store.rejectOutboxHead(
-        "child",
-        this.options.host,
-        entry.id,
-        reason,
-      );
-      this.options.store.broadcastDeliveryStatus(effects.deliveryStatusIds, {
-        suppressFailureNotice: true,
+    if (
+      result.status === HTTP_STATUS.UNAUTHORIZED ||
+      result.status === HTTP_STATUS.FORBIDDEN
+    ) {
+      log.scope("hosts").warn("link push credential rejected", {
+        host: this.options.host,
+        status: result.status,
       });
-      return true;
+      this.options.onAuthFailure?.();
+      return false;
     }
-    return false;
+    const code =
+      result.body &&
+      typeof result.body === "object" &&
+      typeof (result.body as { code?: unknown }).code === "string"
+        ? (result.body as { code: string }).code
+        : null;
+    const isProtocolRejection =
+      code === "link_op_conflict" || code === "link_protocol_error";
+    if (!isProtocolRejection || entry.request.category === "receipt") {
+      log.scope("hosts").warn("link push fault", {
+        host: this.options.host,
+        status: result.status,
+        category: entry.request.category,
+        ...(code ? { code } : {}),
+      });
+      this.options.onLinkFault?.(result);
+      return false;
+    }
+    const reason =
+      result.body &&
+      typeof result.body === "object" &&
+      typeof (result.body as { error?: unknown }).error === "string"
+        ? (result.body as { error: string }).error
+        : code;
+    const effects = this.options.store.rejectOutboxHead(
+      "child",
+      this.options.host,
+      entry.id,
+      reason,
+    );
+    this.options.store.broadcastDeliveryStatus(effects.deliveryStatusIds, {
+      suppressFailureNotice: true,
+    });
+    return true;
   }
 }
 

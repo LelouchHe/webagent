@@ -52,6 +52,24 @@ async function waitForRows(dbPath: string, sql: string): Promise<Json> {
   throw new Error(`rows did not arrive: ${sql}`);
 }
 
+async function waitLinkSettled(state: State): Promise<void> {
+  const ownerMax = (
+    readRows(
+      state.ownerDb,
+      `SELECT COALESCE(MAX(pos), 0) AS pos FROM outbox WHERE remote_role = 'parent'`,
+    ) as Array<{ pos: number }>
+  )[0].pos;
+  await waitForRows(
+    state.hubDb,
+    `SELECT 1 WHERE COALESCE((SELECT applied_pos FROM outbox_cursors WHERE remote_role = 'child' AND remote_host = 'owner'), 0) >= ${ownerMax}`,
+  );
+  await waitForRows(
+    state.hubDb,
+    `SELECT 1 WHERE COALESCE((SELECT pushed_pos FROM outbox_cursors WHERE remote_role = 'child' AND remote_host = 'owner'), 0)
+       >= COALESCE((SELECT MAX(pos) FROM outbox WHERE remote_role = 'child' AND remote_host = 'owner'), 0)`,
+  );
+}
+
 export default scenario<State>({
   mock: EMPTY_MOCK,
   instances: {
@@ -468,7 +486,16 @@ export default scenario<State>({
                AND data_json LIKE '%replayed dispatch%'`,
           )) as Array<{ entry_id: string }>;
           const entryId = outboxRows[0].entry_id;
-          // Wait for the original dispatch + report to land on hub.
+          // Wait for the original dispatch + report + reverse receipt to settle
+          // on both owner and hub before issuing the explicit replay test.
+          await waitForRows(
+            state.ownerDb,
+            `SELECT 1 FROM events
+             WHERE task_id = '${readRemoteId(state)}' AND type = 'prompt_done'
+               AND seq > (SELECT MAX(seq) FROM events
+                          WHERE task_id = '${readRemoteId(state)}'
+                            AND data LIKE '%Replay deduplicated.%')`,
+          );
           await waitForRows(
             state.hubDb,
             `SELECT 1 FROM events
@@ -477,6 +504,7 @@ export default scenario<State>({
                           WHERE task_id = '${state.parentId}'
                             AND data LIKE '%Replay deduplicated.%')`,
           );
+          await waitLinkSettled(state);
           const replay = (bodyText = "replayed dispatch") =>
             fetch(`${state.ownerOrigin}/api/v1/link/entries`, {
               method: "POST",
@@ -546,7 +574,16 @@ export default scenario<State>({
             "connected",
           );
           // Wait for the offline-queued dispatch to hand off, complete on owner,
-          // and deliver its report back to hub so the final state is settled.
+          // deliver its report back to hub, and push the reverse receipt back to
+          // owner so both instances have settled before the step ends.
+          await waitForRows(
+            state.ownerDb,
+            `SELECT 1 FROM events
+             WHERE task_id = '${readRemoteId(state)}' AND type = 'prompt_done'
+               AND seq > (SELECT MAX(seq) FROM events
+                          WHERE task_id = '${readRemoteId(state)}'
+                            AND data LIKE '%Queued dispatch completed after reconnect.%')`,
+          );
           await waitForRows(
             state.hubDb,
             `SELECT 1 FROM events
@@ -555,6 +592,7 @@ export default scenario<State>({
                           WHERE task_id = '${state.parentId}'
                             AND data LIKE '%Queued dispatch completed after reconnect.%')`,
           );
+          await waitLinkSettled(state);
           return { restart, connected };
         },
       },

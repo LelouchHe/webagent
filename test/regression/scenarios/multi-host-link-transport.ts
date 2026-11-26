@@ -65,8 +65,6 @@ async function waitSettled(state: State): Promise<void> {
     `SELECT 1 WHERE COALESCE((SELECT pushed_pos FROM outbox_cursors WHERE remote_role = 'child' AND remote_host = 'owner'), 0)
        >= COALESCE((SELECT MAX(pos) FROM outbox WHERE remote_role = 'child' AND remote_host = 'owner'), 0)`,
   );
-  // Let post-prompt_done microtasks (e.g. idle drain check) finish before step boundary.
-  await new Promise((resolve) => setTimeout(resolve, 100));
 }
 
 export default scenario<State>({
@@ -381,9 +379,6 @@ export default scenario<State>({
               `SELECT COUNT(*) AS count FROM messages WHERE body = 'queued while post down'`,
             ),
           };
-          // Ensure the initial push attempt hits the disconnected forwarder (503)
-          // before reconnecting so the retry count is deterministic.
-          await new Promise((resolve) => setTimeout(resolve, 100));
           link.connect("post");
           await waitForRows(
             state.hubDb,
@@ -459,7 +454,7 @@ export default scenario<State>({
              WHERE task_id = '${readTaskId(state.ownerDb, "Child One")}' AND type = 'prompt_done'
                AND seq > (SELECT MAX(seq) FROM events
                           WHERE task_id = '${readTaskId(state.ownerDb, "Child One")}'
-                            AND type = 'task_update')`,
+                            AND data LIKE '%Handled after dropped 202.%')`,
           );
           await waitSettled(state);
           return { ownerCount };
@@ -473,9 +468,6 @@ export default scenario<State>({
           const childTwo = readTaskId(state.ownerDb, "Child Two");
           link.disconnect("watch");
           await waitForHost(client, "hub", "owner", "unreachable");
-          // Let owner process the TCP close on the dropped watch socket before
-          // publishing offline reports so subscription cleanup is deterministic.
-          await new Promise((resolve) => setTimeout(resolve, 100));
           await client
             .instance("owner")
             .rest("POST", `/api/v1/tasks/${childOne}/prompt`, {
@@ -487,7 +479,7 @@ export default scenario<State>({
              WHERE task_id = '${childOne}' AND type = 'prompt_done'
                AND seq > (SELECT MAX(seq) FROM events
                           WHERE task_id = '${childOne}'
-                            AND type = 'task_update')`,
+                            AND data LIKE '%Offline report one.%')`,
           );
           await client
             .instance("owner")
@@ -500,9 +492,8 @@ export default scenario<State>({
              WHERE task_id = '${childTwo}' AND type = 'prompt_done'
                AND seq > (SELECT MAX(seq) FROM events
                           WHERE task_id = '${childTwo}'
-                            AND type = 'task_update')`,
+                            AND data LIKE '%Offline report two.%')`,
           );
-          await new Promise((resolve) => setTimeout(resolve, 100));
           link.connect("watch");
           await waitForHost(client, "hub", "owner", "connected");
           await waitForRows(
