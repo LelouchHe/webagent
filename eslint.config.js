@@ -480,7 +480,7 @@ export default tseslint.config(
   },
   ...Object.entries({
     "src/store.ts": 3376,
-    "src/http/routes.ts": 3753,
+    "src/http/routes.ts": 3730,
     "src/task-manager.ts": 3279,
     "public/js/events.ts": 2323,
     "src/bridge.ts": 1046,
